@@ -3,8 +3,14 @@ import { ReactNode } from "react";
 
 const nav = [
   ["Dashboard", "/dashboard"],
+  ["Locations", "/locations"],
   ["Machines", "/machines"],
+  ["Suppliers", "/suppliers"],
   ["Products", "/products"],
+  ["Storage", "/storage-locations"],
+  ["Team", "/team"],
+  ["Machine Slots", "/machine-slots"],
+  ["VMS Mappings", "/vms-mappings"],
   ["Inventory", "/inventory"],
   ["Refills", "/refills"],
   ["Operator", "/operator"],
@@ -15,7 +21,7 @@ const nav = [
 export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen">
-      <aside className="fixed left-0 top-0 hidden h-full w-64 border-r border-slate-200 bg-white p-6 md:block">
+      <aside className="fixed left-0 top-0 hidden h-full w-64 overflow-y-auto border-r border-slate-200 bg-white p-6 md:block">
         <div className="mb-8">
           <div className="text-2xl font-bold tracking-tight">Snacky OS</div>
           <div className="text-sm text-slate-500">Vending operations</div>
