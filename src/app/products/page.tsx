@@ -1,42 +1,6 @@
+import { revalidatePath } from "next/cache";
 import { AppShell } from "@/components/AppShell";
-import { EmptyState } from "@/components/EmptyState";
-import { lyd } from "@/lib/format";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
-export default async function ProductsPage() {
-  const supabase = getSupabaseServerClient();
-  const { data: products } = supabase
-    ? await supabase.from("products").select("id, sku, name, category, cost_price, selling_price, active").order("name")
-    : { data: null };
-
-  return (
-    <AppShell>
-      <h1 className="text-3xl font-bold tracking-tight">Products</h1>
-      <p className="mt-2 text-slate-500">Master list of sellable items, costs, selling prices, categories, and active status.</p>
-
-      <div className="mt-6 rounded-2xl border border-slate-200 bg-white shadow-sm">
-        {!products?.length ? (
-          <EmptyState title="No products yet" body="Add products before importing VMS data, so mapping works correctly." />
-        ) : (
-          <table className="w-full text-left text-sm">
-            <thead className="border-b border-slate-200 text-slate-500">
-              <tr><th className="p-4">SKU</th><th>Name</th><th>Category</th><th>Cost</th><th>Price</th><th>Active</th></tr>
-            </thead>
-            <tbody>
-              {products.map((p: any) => (
-                <tr key={p.id} className="border-b border-slate-100 last:border-0">
-                  <td className="p-4 font-medium">{p.sku}</td>
-                  <td>{p.name}</td>
-                  <td>{p.category}</td>
-                  <td>{lyd(p.cost_price)}</td>
-                  <td>{lyd(p.selling_price)}</td>
-                  <td>{p.active ? "Yes" : "No"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </AppShell>
-  );
-}
+async function save(fd:FormData){"use server";const s=getSupabaseServerClient();if(!s)return;const id=String(fd.get("id")||"");const p={sku:String(fd.get("sku")||"").trim(),barcode:String(fd.get("barcode")||"")||null,name:String(fd.get("name")||"").trim(),category:String(fd.get("category")||"snack"),supplier_id:String(fd.get("supplier_id")||"")||null,cost_price:Number(fd.get("cost_price")||0),selling_price:Number(fd.get("selling_price")||0),case_quantity:Number(fd.get("case_quantity")||1),active:String(fd.get("active")||"true")==="true"};if(!p.sku||!p.name)return;id?await s.from("products").update(p).eq("id",id):await s.from("products").insert(p);revalidatePath('/products');}
+export default async function Page(){const s=getSupabaseServerClient();const {data:products}=s?await s.from("products").select("*").order("name"):{data:[]};const {data:suppliers}=s?await s.from("suppliers").select("id,name").order("name"):{data:[]};return <AppShell><h1 className="text-3xl font-bold">Products</h1><div className="mt-4 space-y-3"><form action={save} className="rounded-xl border bg-white p-4 grid gap-2 md:grid-cols-5"><input required name="sku" placeholder="SKU" className="rounded border p-2"/><input name="barcode" placeholder="Barcode" className="rounded border p-2"/><input required name="name" placeholder="Product name" className="rounded border p-2"/><input required name="category" placeholder="Category" className="rounded border p-2"/><select name="supplier_id" className="rounded border p-2"><option value="">Supplier</option>{suppliers?.map((s:any)=><option key={s.id} value={s.id}>{s.name}</option>)}</select><input type="number" step="0.01" name="cost_price" placeholder="Cost" className="rounded border p-2"/><input type="number" step="0.01" name="selling_price" placeholder="Price" className="rounded border p-2"/><input type="number" name="case_quantity" placeholder="Case qty" className="rounded border p-2"/><select name="active" className="rounded border p-2"><option value="true">Active</option><option value="false">Archived</option></select><button className="rounded bg-slate-900 px-3 py-2 text-white md:col-span-5">Add Product</button></form>{products?.map((p:any)=><form key={p.id} action={save} className="rounded-xl border bg-white p-3 grid gap-2 md:grid-cols-5"><input type="hidden" name="id" defaultValue={p.id}/><input required name="sku" defaultValue={p.sku} className="rounded border p-2"/><input name="barcode" defaultValue={p.barcode||""} className="rounded border p-2"/><input required name="name" defaultValue={p.name} className="rounded border p-2"/><input required name="category" defaultValue={p.category} className="rounded border p-2"/><select name="supplier_id" defaultValue={p.supplier_id||""} className="rounded border p-2"><option value="">Supplier</option>{suppliers?.map((s:any)=><option key={s.id} value={s.id}>{s.name}</option>)}</select><input type="number" step="0.01" name="cost_price" defaultValue={p.cost_price} className="rounded border p-2"/><input type="number" step="0.01" name="selling_price" defaultValue={p.selling_price} className="rounded border p-2"/><input type="number" name="case_quantity" defaultValue={p.case_quantity} className="rounded border p-2"/><select name="active" defaultValue={String(p.active)} className="rounded border p-2"><option value="true">Active</option><option value="false">Archived</option></select><button className="rounded bg-slate-900 px-3 py-2 text-white md:col-span-5">Update</button></form>)}</div></AppShell>}
