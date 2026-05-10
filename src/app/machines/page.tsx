@@ -1,40 +1,7 @@
+import { revalidatePath } from "next/cache";
 import { AppShell } from "@/components/AppShell";
-import { EmptyState } from "@/components/EmptyState";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
-export default async function MachinesPage() {
-  const supabase = getSupabaseServerClient();
-  const { data: machines } = supabase
-    ? await supabase.from("machines").select("id, machine_code, name, status, machine_type, locations(name)").order("name")
-    : { data: null };
-
-  return (
-    <AppShell>
-      <h1 className="text-3xl font-bold tracking-tight">Machines</h1>
-      <p className="mt-2 text-slate-500">Your physical vending machines, VMS IDs, locations, types, and status.</p>
-
-      <div className="mt-6 rounded-2xl border border-slate-200 bg-white shadow-sm">
-        {!machines?.length ? (
-          <EmptyState title="No machines yet" body="Insert seed data or add your first machine in Supabase Studio." />
-        ) : (
-          <table className="w-full text-left text-sm">
-            <thead className="border-b border-slate-200 text-slate-500">
-              <tr><th className="p-4">Code</th><th>Name</th><th>Location</th><th>Type</th><th>Status</th></tr>
-            </thead>
-            <tbody>
-              {machines.map((m: any) => (
-                <tr key={m.id} className="border-b border-slate-100 last:border-0">
-                  <td className="p-4 font-medium">{m.machine_code}</td>
-                  <td>{m.name}</td>
-                  <td>{m.locations?.name ?? "—"}</td>
-                  <td>{m.machine_type}</td>
-                  <td>{m.status}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </AppShell>
-  );
-}
+async function save(fd:FormData){"use server";const s=getSupabaseServerClient();if(!s)return;const id=String(fd.get("id")||"");const p={machine_code:String(fd.get("machine_code")||"").trim(),vms_machine_id:String(fd.get("vms_machine_id")||"")||null,name:String(fd.get("name")||"").trim(),machine_type:String(fd.get("machine_type")||"lift"),location_id:String(fd.get("location_id")||"")||null,rent_amount:Number(fd.get("rent_amount")||0),status:String(fd.get("status")||"planned"),target_nsm:Number(fd.get("target_nsm")||2800),target_uptime_percent:Number(fd.get("target_uptime_percent")||98)};if(!p.machine_code||!p.name)return;id?await s.from("machines").update(p).eq("id",id):await s.from("machines").insert(p);revalidatePath('/machines');}
+export default async function MachinesPage(){const s=getSupabaseServerClient();const {data:machines}=s?await s.from("machines").select("id,machine_code,vms_machine_id,name,status,machine_type,rent_amount,target_nsm,target_uptime_percent,location_id,locations(name)").order("name"):{data:[]};const {data:locs}=s?await s.from("locations").select("id,name").order("name"):{data:[]};
+return <AppShell><h1 className="text-3xl font-bold">Machines</h1><div className="mt-4 space-y-3"><form action={save} className="rounded-xl border bg-white p-4 grid gap-2 md:grid-cols-4"><input required name="machine_code" placeholder="SNK-009" className="rounded border p-2"/><input name="vms_machine_id" placeholder="VMS id" className="rounded border p-2"/><input required name="name" placeholder="Machine name" className="rounded border p-2"/><input name="machine_type" placeholder="lift/non_lift" className="rounded border p-2"/><select name="location_id" className="rounded border p-2"><option value="">Location</option>{locs?.map((l:any)=><option key={l.id} value={l.id}>{l.name}</option>)}</select><input type="number" step="0.01" name="rent_amount" placeholder="Rent" className="rounded border p-2"/><input type="number" step="0.01" name="target_nsm" placeholder="Target NSM" className="rounded border p-2"/><input type="number" step="0.01" name="target_uptime_percent" placeholder="Target Uptime" className="rounded border p-2"/><input name="status" placeholder="status" className="rounded border p-2"/><button className="rounded bg-slate-900 px-3 py-2 text-white md:col-span-4">Add Machine</button></form>{machines?.map((m:any)=><form key={m.id} action={save} className="rounded-xl border bg-white p-3 grid gap-2 md:grid-cols-5"><input type="hidden" name="id" defaultValue={m.id}/><input required name="machine_code" defaultValue={m.machine_code} className="rounded border p-2"/><input name="vms_machine_id" defaultValue={m.vms_machine_id||""} className="rounded border p-2"/><input required name="name" defaultValue={m.name} className="rounded border p-2"/><input name="machine_type" defaultValue={m.machine_type} className="rounded border p-2"/><select name="location_id" defaultValue={m.location_id||""} className="rounded border p-2"><option value="">Location</option>{locs?.map((l:any)=><option key={l.id} value={l.id}>{l.name}</option>)}</select><input type="number" step="0.01" name="rent_amount" defaultValue={m.rent_amount} className="rounded border p-2"/><input type="number" step="0.01" name="target_nsm" defaultValue={m.target_nsm} className="rounded border p-2"/><input type="number" step="0.01" name="target_uptime_percent" defaultValue={m.target_uptime_percent} className="rounded border p-2"/><input name="status" defaultValue={m.status} className="rounded border p-2"/><button className="rounded bg-slate-900 px-3 py-2 text-white md:col-span-5">Update</button></form>)}</div></AppShell>}
