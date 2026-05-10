@@ -5,19 +5,23 @@ create extension if not exists pgcrypto;
 
 -- ---------- ENUMS ----------
 do $$ begin
-  create type machine_status as enum ('planned', 'active', 'inactive', 'maintenance', 'relocated');
+  create type machine_status as enum ('planned', 'incoming', 'standby', 'active', 'inactive', 'maintenance', 'relocated', 'retired');
 exception when duplicate_object then null; end $$;
 
 do $$ begin
-  create type location_type as enum ('school', 'hospital', 'mall', 'university', 'office', 'gym', 'warehouse', 'other');
+  create type location_type as enum ('school', 'hospital', 'mall', 'university', 'office', 'gym', 'warehouse', 'mixed', 'other');
 exception when duplicate_object then null; end $$;
 
 do $$ begin
-  create type team_role as enum ('owner', 'admin', 'supervisor', 'operator', 'warehouse', 'procurement', 'finance');
+  create type team_role as enum ('owner', 'admin', 'supervisor', 'operator', 'warehouse', 'procurement', 'finance', 'viewer');
 exception when duplicate_object then null; end $$;
 
 do $$ begin
   create type route_status as enum ('draft', 'assigned', 'in_progress', 'completed', 'reviewed', 'cancelled');
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  create type route_stop_status as enum ('pending', 'arrived', 'refilling', 'cash_collected', 'completed', 'skipped', 'issue_reported');
 exception when duplicate_object then null; end $$;
 
 do $$ begin
@@ -198,6 +202,8 @@ create table if not exists vms_sales_snapshots (
   product_id uuid references products(id) on delete set null,
   sold_qty integer not null default 0,
   sales_amount numeric(12,2) not null default 0,
+  cash_sales_amount numeric(12,2) not null default 0,
+  card_sales_amount numeric(12,2) not null default 0,
   period_start timestamptz not null,
   period_end timestamptz not null,
   created_at timestamptz not null default now(),
@@ -241,7 +247,7 @@ create table if not exists route_stops (
   route_id uuid not null references routes(id) on delete cascade,
   machine_id uuid not null references machines(id) on delete cascade,
   stop_order integer not null default 1,
-  status text not null default 'pending',
+  status route_stop_status not null default 'pending',
   arrived_at timestamptz,
   completed_at timestamptz,
   notes text,
@@ -266,6 +272,8 @@ create table if not exists refill_order_lines (
   current_qty_vms integer default 0,
   par_qty integer not null,
   suggested_qty integer not null,
+  available_storage_qty integer not null default 0,
+  final_qty_to_take integer not null default 0,
   picked_qty integer default 0,
   filled_qty integer default 0,
   returned_qty integer default 0,
@@ -318,7 +326,7 @@ begin
   new.sla_due_at :=
     case
       when new.priority = 'critical' then new.created_at + interval '24 hours'
-      when new.priority = 'high' then new.created_at + interval '48 hours'
+      when new.priority = 'high' then new.created_at + interval '24 hours'
       else new.created_at + interval '72 hours'
     end;
 
@@ -333,6 +341,7 @@ before insert or update of priority, created_at
 on issues
 for each row
 execute function set_issue_sla_due_at();
+
 -- ---------- PURCHASES ----------
 create table if not exists purchase_orders (
   id uuid primary key default gen_random_uuid(),
@@ -406,6 +415,12 @@ where machine_id is not null and slot_code is not null
 order by machine_id, slot_code, captured_at desc;
 
 create or replace view refill_recommendations as
+with storage_stock as (
+  select product_id, sum(quantity_on_hand)::integer as available_storage_qty
+  from current_inventory_by_location
+  where location_type = 'storage'
+  group by product_id
+)
 select
   m.id as machine_id,
   m.name as machine_name,
@@ -418,6 +433,8 @@ select
   ms.min_qty,
   ms.par_qty,
   greatest(ms.par_qty - coalesce(lvs.current_qty, 0), 0)::integer as suggested_qty,
+  coalesce(ss.available_storage_qty, 0) as available_storage_qty,
+  least(greatest(ms.par_qty - coalesce(lvs.current_qty, 0), 0), coalesce(ss.available_storage_qty, 0))::integer as final_qty_to_take,
   case
     when coalesce(lvs.current_qty, 0) = 0 then 'critical'
     when coalesce(lvs.current_qty, 0) <= ms.min_qty then 'high'
@@ -429,6 +446,7 @@ from machine_slots ms
 join machines m on m.id = ms.machine_id
 join products p on p.id = ms.product_id
 left join latest_vms_stock_by_slot lvs on lvs.machine_id = ms.machine_id and lvs.slot_code = ms.slot_code
+left join storage_stock ss on ss.product_id = p.id
 where ms.active = true
   and m.status = 'active'
   and greatest(ms.par_qty - coalesce(lvs.current_qty, 0), 0) > 0;
