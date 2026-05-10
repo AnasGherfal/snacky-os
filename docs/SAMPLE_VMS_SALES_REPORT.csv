@@ -1,0 +1,8 @@
+machine_id,machine_name,vms_product_id,vms_product_name,sold_qty,total_sales_lyd,cash_sales_lyd,card_sales_lyd,date
+VMS_MACHINE_ID_TBD_001,Hospital Machine 01,VMS_WATER_500,Water 500ml,24,48,30,18,2026-05-09
+VMS_MACHINE_ID_TBD_001,Hospital Machine 01,VMS_PEPSI_330,Pepsi Can 330ml,12,36,26,10,2026-05-09
+VMS_MACHINE_ID_TBD_002,Mall Machine 01,VMS_CHIPS_HOT,Hot Chips,18,54,42,12,2026-05-09
+VMS_MACHINE_ID_TBD_002,Mall Machine 01,VMS_SNICKERS,Snickers,8,40,30,10,2026-05-09
+VMS_MACHINE_ID_TBD_003,Mall Machine 02,VMS_ENERGY_DRINK,Energy Drink,6,36,24,12,2026-05-09
+VMS_MACHINE_ID_TBD_004,Mixed Location Machine 01,VMS_CHIPS_SALT,Salted Chips,10,30,24,6,2026-05-09
+VMS_MACHINE_ID_TBD_005,School Machine 01,VMS_WATER_500,Water 500ml,30,60,50,10,2026-05-09
