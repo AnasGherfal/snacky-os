@@ -37,7 +37,7 @@ do $$ begin
 exception when duplicate_object then null; end $$;
 
 do $$ begin
-  create type inventory_entity_type as enum ('supplier', 'storage', 'operator_bag', 'machine', 'waste', 'adjustment');
+  create type inventory_entity_type as enum ('supplier', '', 'operator_bag', 'machine', 'waste', 'adjustment');
 exception when duplicate_object then null; end $$;
 
 do $$ begin
