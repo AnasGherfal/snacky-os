@@ -1,0 +1,9 @@
+machine_id,machine_name,location,logo,contact,notes,backstock_location_id,shelf_location_id
+2509000371,اتش تي مول,سوق الجمعة,Places_Logos/htMall.webp,TO_CONFIRM,,2509000371,TO_CONFIRM
+2503000216,اتش تي لاند,سوق الجمعة,Places_Logos/htMall.webp,TO_CONFIRM,,2503000216,SHELF_2503000216
+2404120076,الدبلوماسي مول,عين زارة,Places_Logos/dpMall.webp,TO_CONFIRM,,2404120076,SHELF_2404120076
+2503000217,سي كوست,حي دمشق,Places_Logos/seaCoast.webp,TO_CONFIRM,,2503000217,SHELF_2503000217
+2411000046,مستشفى المواصفات,طريق المطار,Places_Logos/almHospital.webp,TO_CONFIRM,,2411000046,SHELF_2411000046
+2509000369,مستشفى الاستقلال,,Machines_Images/4f241ed6.Logo.223116.jpg,TO_CONFIRM,,TO_CONFIRM,SHELF_2509000369
+2509000370,جامعة التحدي,,,TO_CONFIRM,,TO_CONFIRM,TO_CONFIRM
+2510001719,خليج ليبيا,,,TO_CONFIRM,,TO_CONFIRM,TO_CONFIRM
