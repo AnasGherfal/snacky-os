@@ -360,9 +360,38 @@ values
   ('TO_CONFIRM', 'TO_CONFIRM', 'c22010ef', 'Doritos ketchup jalapeno', 'doritos ketchup jalapeno', 'doritosketchupjalapeno')
 )
 insert into vms_product_mappings (vms_product_id, vms_product_name, product_id, match_status)
-select nullif(m.vms_product_number, 'TO_CONFIRM'),coalesce(nullif(m.vms_product_name,''), m.appsheet_item_name),p.id,
-case when m.vms_product_number = 'TO_CONFIRM' then 'needs_review' else 'confirmed' end
-from src_vms_mappings m join products p on p.sku = m.appsheet_item_id
+with normalized_vms_mappings as (
+  select
+    nullif(m.vms_product_number, 'TO_CONFIRM') as vms_product_id,
+    coalesce(nullif(m.vms_product_name,''), m.appsheet_item_name) as vms_product_name,
+    p.id as product_id,
+    case when m.vms_product_number = 'TO_CONFIRM' then 'needs_review' else 'confirmed' end as match_status,
+    m.vms_product_number,
+    m.vms_product_name,
+    m.appsheet_item_name
+  from src_vms_mappings m
+  join products p on p.sku = m.appsheet_item_id
+), deduped_vms_mappings as (
+  select vms_product_id, vms_product_name, product_id, match_status
+  from (
+    select
+      n.*,
+      row_number() over (
+        partition by n.vms_product_id, n.vms_product_name
+        order by
+          -- Keep the most complete row (prefer actual VMS ID/name over TO_CONFIRM placeholders).
+          (case when n.vms_product_number <> 'TO_CONFIRM' then 1 else 0 end +
+           case when n.vms_product_name <> 'TO_CONFIRM' then 1 else 0 end +
+           case when n.appsheet_item_name <> 'TO_CONFIRM' then 1 else 0 end) desc,
+          n.product_id
+      ) as rn
+    from normalized_vms_mappings n
+  ) ranked
+  where rn = 1
+)
+-- Example conflict resolved here: the duplicated "Milka" TO_CONFIRM rows map to one best row deterministically.
+select vms_product_id, vms_product_name, product_id, match_status
+from deduped_vms_mappings
 on conflict (vms_product_id, vms_product_name) do update set product_id = excluded.product_id,match_status = excluded.match_status;
 
 with src_planograms (machine_id, machine_name, point_name, vms_product_number, vms_product_name, inventory_capacity, inventory_quantity, fill_percent_product, slot_code, par_level, min_level) as (
@@ -486,13 +515,40 @@ values
   ('2509000369', 'Istiklal', '', '2.0', 'Water', '60.0', '49.0', '0.8166666667', 'TO_CONFIRM', 'TO_CONFIRM', 'TO_CONFIRM')
 )
 insert into machine_slots (machine_id, slot_code, product_id, capacity, min_qty, par_qty)
-select mm.id,pl.slot_code,pr.id,greatest(1, coalesce(nullif(pl.inventory_capacity,'TO_CONFIRM')::int, 1)),greatest(0, coalesce(nullif(pl.min_level,'TO_CONFIRM')::int, 1)),
-greatest(1, coalesce(nullif(pl.par_level,'TO_CONFIRM')::int, coalesce(nullif(pl.inventory_capacity,'TO_CONFIRM')::int, 1)))
-from src_planograms pl
-join machines mm on mm.vms_machine_id = pl.machine_id
-join vms_product_mappings vpm on vpm.vms_product_id = nullif(pl.vms_product_number, 'TO_CONFIRM') and vpm.vms_product_name = pl.vms_product_name
-join products pr on pr.id = vpm.product_id
-where pl.slot_code <> 'TO_CONFIRM'
+with normalized_machine_slots as (
+  select
+    mm.id as machine_id,
+    pl.slot_code,
+    pr.id as product_id,
+    greatest(1, coalesce(nullif(pl.inventory_capacity,'TO_CONFIRM')::int, 1)) as capacity,
+    greatest(0, coalesce(nullif(pl.min_level,'TO_CONFIRM')::int, 1)) as min_qty,
+    greatest(1, coalesce(nullif(pl.par_level,'TO_CONFIRM')::int, coalesce(nullif(pl.inventory_capacity,'TO_CONFIRM')::int, 1))) as par_qty
+  from src_planograms pl
+  join machines mm on mm.vms_machine_id = pl.machine_id
+  join vms_product_mappings vpm on vpm.vms_product_id = nullif(pl.vms_product_number, 'TO_CONFIRM') and vpm.vms_product_name = pl.vms_product_name
+  join products pr on pr.id = vpm.product_id
+  where pl.slot_code <> 'TO_CONFIRM'
+), deduped_machine_slots as (
+  select machine_id, slot_code, product_id, capacity, min_qty, par_qty
+  from (
+    select
+      n.*,
+      row_number() over (
+        partition by n.machine_id, n.slot_code
+        order by
+          (case when n.par_qty is not null then 1 else 0 end +
+           case when n.min_qty is not null then 1 else 0 end +
+           case when n.capacity is not null then 1 else 0 end) desc,
+          n.par_qty desc,
+          n.capacity desc,
+          n.product_id
+      ) as rn
+    from normalized_machine_slots n
+  ) ranked
+  where rn = 1
+)
+select machine_id, slot_code, product_id, capacity, min_qty, par_qty
+from deduped_machine_slots
 on conflict (machine_id, slot_code) do update set product_id = excluded.product_id,capacity = excluded.capacity,min_qty = excluded.min_qty,par_qty = excluded.par_qty;
 
 with src_storage_inventory (inventory_id, item_id, datetime, amount, source_purchase_id, location_id, reason, operator_email, machine_id, related_refill_id) as (
