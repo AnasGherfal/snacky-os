@@ -205,7 +205,7 @@ values
 insert into products (sku, barcode, name, category, brand, supplier_id, cost_price, selling_price, case_quantity, expiry_sensitive, active)
 select p.sku,nullif(p.barcode,'TO_CONFIRM'),p.name,lower(coalesce(nullif(p.product_group,''), 'snack')),'TO_CONFIRM',
 case when row_number() over(order by p.sku)::int % 2 = 0 then '00000000-0000-0000-0000-000000000301'::uuid else '00000000-0000-0000-0000-000000000302'::uuid end,
-coalesce(nullif(p.purchase_price,'TO_CONFIRM')::numeric, 0),coalesce(nullif(p.selling_price,'TO_CONFIRM')::numeric, 0),coalesce(nullif(p.units_per_box,'TO_CONFIRM')::int, 1),true,true
+coalesce(nullif(p.purchase_price,'TO_CONFIRM')::numeric, 0),coalesce(nullif(p.selling_price,'TO_CONFIRM')::numeric, 0),coalesce(nullif(p.units_per_box,'TO_CONFIRM')::numeric::int, 1),true,true
 from src_products p
 on conflict (sku) do update set name = excluded.name,selling_price = excluded.selling_price,cost_price = excluded.cost_price,case_quantity = excluded.case_quantity,category = excluded.category;
 
@@ -366,24 +366,21 @@ with normalized_vms_mappings as (
     coalesce(nullif(m.vms_product_name,''), m.appsheet_item_name) as vms_product_name,
     p.id as product_id,
     case when m.vms_product_number = 'TO_CONFIRM' then 'needs_review' else 'confirmed' end as match_status,
-    m.vms_product_number,
-    m.vms_product_name,
-    m.appsheet_item_name
+    (case when m.vms_product_number <> 'TO_CONFIRM' then 1 else 0 end +
+     case when m.vms_product_name <> 'TO_CONFIRM' then 1 else 0 end) as completeness_score
   from src_vms_mappings m
   join products p on p.sku = m.appsheet_item_id
 ), deduped_vms_mappings as (
   select vms_product_id, vms_product_name, product_id, match_status
   from (
     select
-      n.*,
+      n.vms_product_id,
+      n.vms_product_name,
+      n.product_id,
+      n.match_status,
       row_number() over (
         partition by n.vms_product_id, n.vms_product_name
-        order by
-          -- Keep the most complete row (prefer actual VMS ID/name over TO_CONFIRM placeholders).
-          (case when n.vms_product_number <> 'TO_CONFIRM' then 1 else 0 end +
-           case when n.vms_product_name <> 'TO_CONFIRM' then 1 else 0 end +
-           case when n.appsheet_item_name <> 'TO_CONFIRM' then 1 else 0 end) desc,
-          n.product_id
+        order by n.completeness_score desc, n.product_id
       ) as rn
     from normalized_vms_mappings n
   ) ranked
@@ -520,9 +517,9 @@ with normalized_machine_slots as (
     mm.id as machine_id,
     pl.slot_code,
     pr.id as product_id,
-    greatest(1, coalesce(nullif(pl.inventory_capacity,'TO_CONFIRM')::int, 1)) as capacity,
-    greatest(0, coalesce(nullif(pl.min_level,'TO_CONFIRM')::int, 1)) as min_qty,
-    greatest(1, coalesce(nullif(pl.par_level,'TO_CONFIRM')::int, coalesce(nullif(pl.inventory_capacity,'TO_CONFIRM')::int, 1))) as par_qty
+    greatest(1, coalesce(nullif(pl.inventory_capacity,'TO_CONFIRM')::numeric::int, 1)) as capacity,
+    greatest(0, coalesce(nullif(pl.min_level,'TO_CONFIRM')::numeric::int, 1)) as min_qty,
+    greatest(1, coalesce(nullif(pl.par_level,'TO_CONFIRM')::numeric::int, coalesce(nullif(pl.inventory_capacity,'TO_CONFIRM')::numeric::int, 1))) as par_qty
   from src_planograms pl
   join machines mm on mm.vms_machine_id = pl.machine_id
   join vms_product_mappings vpm on vpm.vms_product_id = nullif(pl.vms_product_number, 'TO_CONFIRM') and vpm.vms_product_name = pl.vms_product_name
