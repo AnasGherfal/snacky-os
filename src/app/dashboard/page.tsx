@@ -28,8 +28,8 @@ export default async function DashboardPage() {
   return (
     <AppShell>
       <div className="mb-8">
-        <h1 className="text-3xl font-bold tracking-tight">Owner Dashboard</h1>
-        <p className="mt-2 text-slate-500">Today’s control panel: machines, refills, inventory, cash, and issues.</p>
+        <h1 className="page-title">Owner Dashboard</h1>
+        <p className="page-subtitle">Today’s control panel: machines, refills, inventory, cash, and issues.</p>
       </div>
 
       {!counts ? (
@@ -47,13 +47,13 @@ export default async function DashboardPage() {
       )}
 
       <div className="mt-8 grid gap-4 lg:grid-cols-2">
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <section className="surface-card">
           <h2 className="text-lg font-semibold">Next system feature</h2>
           <p className="mt-2 text-sm text-slate-500">
             Build the VMS import screen, product mapping, and refill recommendation workflow. This removes the daily “what should I take?” thinking.
           </p>
         </section>
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <section className="surface-card">
           <h2 className="text-lg font-semibold">Operating rule</h2>
           <p className="mt-2 text-sm text-slate-500">
             Every refill must create inventory movement, cash collection, cleaning checklist, and photo proof. No action should live only in someone’s head.
