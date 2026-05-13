@@ -13,7 +13,7 @@ async function getDashboardData() {
     supabase.from("refill_recommendations").select("machine_name, product_name, suggested_qty, priority").order("suggested_qty", { ascending: false }).limit(8),
     supabase.from("issues").select("id", { count: "exact", head: true }).neq("status", "resolved"),
     supabase.from("current_inventory_by_location").select("product_name, quantity_on_hand").eq("location_type", "storage").lte("quantity_on_hand", 20).order("quantity_on_hand").limit(8),
-    supabase.from("cash_collections").select("machine_id, expected_cash, actual_cash, variance_amount").order("collected_at", { ascending: false }).limit(8),
+    supabase.from("cash_collections").select("machine_id, vms_expected_cash, actual_cash_collected, variance").order("collected_at", { ascending: false }).limit(8),
   ]);
 
   return { machines: machines.count ?? 0, openIssues: issues.count ?? 0, refillRows: refill.data ?? [], lowStorageRows: lowStorage.data ?? [], cashRows: cash.data ?? [] };

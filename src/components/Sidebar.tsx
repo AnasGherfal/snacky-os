@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const navGroups = [
-  { title: "Dashboard", items: [{ label: "Dashboard", href: "/dashboard" }] },
+  { title: "Dashboard", items: [{ label: "Dashboard", href: "/dashboard" }, { label: "Sales", href: "/sales" }, { label: "Products KPI", href: "/products-dashboard" }, { label: "Machines KPI", href: "/machines-dashboard" }, { label: "Inventory KPI", href: "/inventory-dashboard" }] },
   { title: "Operations", items: [{ label: "Refill Recommendations", href: "/refills" }, { label: "Routes", href: "/routes" }, { label: "Operator View", href: "/operator" }] },
   { title: "Assets", items: [{ label: "Machines", href: "/machines" }, { label: "Locations", href: "/locations" }, { label: "Machine Slots", href: "/machine-slots" }] },
   { title: "Inventory", items: [{ label: "Products", href: "/products" }, { label: "Storage Inventory", href: "/inventory" }, { label: "Suppliers", href: "/suppliers" }] },
