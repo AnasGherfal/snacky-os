@@ -34,6 +34,10 @@ export const ar = {
     cashCollections: "تحصيل النقد",
     issues: "الأعطال",
     team: "الفريق",
+    settings: "الإعدادات",
+    operatorProgress: "متابعة المشغّلين",
+    myRoutes: "جولاتي",
+    todaysRoute: "جولة اليوم",
   },
   actions: {
     add: "إضافة",

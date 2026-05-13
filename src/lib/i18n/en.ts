@@ -34,6 +34,10 @@ export const en = {
     cashCollections: "Cash Collections",
     issues: "Issues",
     team: "Team",
+    settings: "Settings",
+    operatorProgress: "Operator Progress",
+    myRoutes: "My Routes",
+    todaysRoute: "Today’s Route",
   },
   actions: {
     add: "Add",

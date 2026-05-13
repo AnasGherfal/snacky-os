@@ -5,7 +5,8 @@ export const supportedLocales = ["en", "ar"] as const;
 
 export type SupportedLocale = (typeof supportedLocales)[number];
 export type TextDirection = "ltr" | "rtl";
-export type Dictionary = typeof en;
+type WidenDictionary<T> = T extends string ? string : { [K in keyof T]: WidenDictionary<T[K]> };
+export type Dictionary = WidenDictionary<typeof en>;
 
 export const dictionaries: Record<SupportedLocale, Dictionary> = { en, ar };
 export const defaultLocale: SupportedLocale = "en";

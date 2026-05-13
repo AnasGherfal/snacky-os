@@ -6,14 +6,25 @@ export type AuthUserContext = {
   id: string;
   role: AppRole;
   teamMemberId?: string | null;
+  activeStatus?: "active" | "inactive";
 };
 
+const ownerAdminRoles = new Set<AppRole>(["owner", "admin"]);
+const supervisorRoles = new Set<AppRole>(["supervisor"]);
 const adminRoles = new Set<AppRole>(["owner", "admin", "supervisor"]);
 const operatorRoles = new Set<AppRole>(["operator"]);
 const financeRoles = new Set<AppRole>(["owner", "admin", "supervisor", "finance"]);
 
 export function isAdminRole(role: AppRole | null | undefined) {
   return role ? adminRoles.has(role) : false;
+}
+
+export function isOwnerAdminRole(role: AppRole | null | undefined) {
+  return role ? ownerAdminRoles.has(role) : false;
+}
+
+export function isSupervisorRole(role: AppRole | null | undefined) {
+  return role ? supervisorRoles.has(role) : false;
 }
 
 export function isOperatorRole(role: AppRole | null | undefined) {
@@ -35,9 +46,39 @@ export function canAccessOperatorRoute(user: AuthUserContext | null | undefined,
 }
 
 export function getDefaultPathForRole(role: AppRole | null | undefined) {
-  return isOperatorRole(role) ? "/operator/routes" : "/dashboard";
+  return isOperatorRole(role) ? "/operator" : "/dashboard";
 }
 
 export function parseAppRole(role: string | null | undefined): AppRole | null {
   return appRoles.includes(role as AppRole) ? (role as AppRole) : null;
+}
+
+const supervisorAllowedPrefixes = [
+  "/dashboard",
+  "/refills",
+  "/routes",
+  "/operator",
+  "/cash-collections",
+  "/issues",
+  "/machines",
+  "/machine-slots",
+  "/inventory",
+];
+const operatorAllowedPrefixes = ["/operator"];
+const warehouseAllowedPrefixes = ["/operator", "/inventory", "/products"];
+const financeAllowedPrefixes = ["/sales", "/cash-collections", "/machines-dashboard"];
+const viewerAllowedPrefixes = ["/dashboard"];
+
+function matchesPrefix(pathname: string, prefixes: string[]) {
+  return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
+export function canAccessPath(user: AuthUserContext | null | undefined, pathname: string) {
+  if (!user || user.activeStatus === "inactive") return false;
+  if (isOwnerAdminRole(user.role)) return true;
+  if (isSupervisorRole(user.role)) return matchesPrefix(pathname, supervisorAllowedPrefixes);
+  if (isOperatorRole(user.role)) return matchesPrefix(pathname, operatorAllowedPrefixes);
+  if (user.role === "warehouse") return matchesPrefix(pathname, warehouseAllowedPrefixes);
+  if (user.role === "finance") return matchesPrefix(pathname, financeAllowedPrefixes);
+  return matchesPrefix(pathname, viewerAllowedPrefixes);
 }
