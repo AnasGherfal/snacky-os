@@ -4,10 +4,14 @@ import { AppShell } from "@/components/AppShell";
 import { FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
+function redirectWithRouteError(message: string): never {
+  redirect(`/routes/new?error=${encodeURIComponent(message)}`);
+}
+
 async function createRoute(fd: FormData) {
   "use server";
   const supabase = getSupabaseServerClient();
-  if (!supabase) return;
+  if (!supabase) redirectWithRouteError("Supabase is not configured.");
 
   const route_date = String(fd.get("route_date") || "").trim();
   const operator_id = String(fd.get("operator_id") || "").trim();
@@ -15,20 +19,8 @@ async function createRoute(fd: FormData) {
   const recommendationSlotIds = fd.getAll("machine_slot_ids").map((value) => String(value)).filter(Boolean);
 
   if (!route_date || !operator_id || (!manualMachineIds.length && !recommendationSlotIds.length)) {
-    return;
+    redirectWithRouteError("Choose a route date, operator, and at least one machine or recommendation.");
   }
-
-  const routeInsert = await supabase
-    .from("routes")
-    .insert({ route_date, operator_id, status: "assigned" })
-    .select("id")
-    .single();
-
-  if (routeInsert.error || !routeInsert.data) {
-    return;
-  }
-
-  const routeId = routeInsert.data.id;
 
   const recommendationsResult = recommendationSlotIds.length
     ? await supabase
@@ -39,18 +31,45 @@ async function createRoute(fd: FormData) {
         .in("machine_slot_id", recommendationSlotIds)
     : { data: [] };
 
+  if ("error" in recommendationsResult && recommendationsResult.error) {
+    redirectWithRouteError("Could not load selected refill recommendations.");
+  }
+
   const recommendationRows = recommendationsResult.data ?? [];
   const recommendationMachineIds = recommendationRows.map((row: any) => row.machine_id).filter(Boolean);
   const selectedMachineIds = Array.from(new Set([...manualMachineIds, ...recommendationMachineIds]));
 
-  if (selectedMachineIds.length) {
-    await supabase.from("route_stops").insert(
-      selectedMachineIds.map((machine_id, index) => ({
-        route_id: routeId,
-        machine_id,
-        stop_order: index + 1,
-      }))
-    );
+  if (!selectedMachineIds.length) {
+    redirectWithRouteError("No valid machines were selected for this route.");
+  }
+
+  const routeInsert = await supabase
+    .from("routes")
+    .insert({ route_date, operator_id, status: "assigned" })
+    .select("id")
+    .single();
+
+  if (routeInsert.error || !routeInsert.data) {
+    redirectWithRouteError("Could not create the route. Check database permissions and try again.");
+  }
+
+  const routeId = routeInsert.data.id;
+  const cleanupRoute = async () => {
+    await supabase.from("refill_orders").delete().eq("route_id", routeId);
+    await supabase.from("routes").delete().eq("id", routeId);
+  };
+
+  const stopsInsert = await supabase.from("route_stops").insert(
+    selectedMachineIds.map((machine_id, index) => ({
+      route_id: routeId,
+      machine_id,
+      stop_order: index + 1,
+    }))
+  );
+
+  if (stopsInsert.error) {
+    await cleanupRoute();
+    redirectWithRouteError("Could not save route stops. The route was not created.");
   }
 
   if (recommendationRows.length) {
@@ -60,37 +79,49 @@ async function createRoute(fd: FormData) {
         Array.from(new Set(recommendationMachineIds)).map((machine_id) => ({
           route_id: routeId,
           machine_id,
-          status: "draft",
+          status: "assigned",
         }))
       )
       .select("id, machine_id");
 
-    if (!refillOrderInsert.error && refillOrderInsert.data) {
-      const orderByMachine = new Map<string, string>();
-      refillOrderInsert.data.forEach((order: any) => {
-        orderByMachine.set(order.machine_id, order.id);
-      });
+    if (refillOrderInsert.error || !refillOrderInsert.data?.length) {
+      await cleanupRoute();
+      redirectWithRouteError("Could not create refill orders. The route was not created.");
+    }
 
-      await supabase.from("refill_order_lines").insert(
-        recommendationRows.map((row: any) => ({
-          refill_order_id: orderByMachine.get(row.machine_id),
-          machine_slot_id: row.machine_slot_id,
-          product_id: row.product_id,
-          current_qty_vms: row.current_qty,
-          par_qty: row.par_qty,
-          suggested_qty: row.suggested_qty,
-          available_storage_qty: row.available_storage_qty,
-          final_qty_to_take: row.final_qty_to_take,
-        }))
-      );
+    const orderByMachine = new Map<string, string>();
+    refillOrderInsert.data.forEach((order: any) => {
+      orderByMachine.set(order.machine_id, order.id);
+    });
+
+    const refillLines = recommendationRows
+      .map((row: any) => ({
+        refill_order_id: orderByMachine.get(row.machine_id),
+        machine_slot_id: row.machine_slot_id,
+        product_id: row.product_id,
+        current_qty_vms: row.current_qty,
+        par_qty: row.par_qty,
+        suggested_qty: row.suggested_qty,
+        available_storage_qty: row.available_storage_qty,
+        final_qty_to_take: row.final_qty_to_take,
+      }))
+      .filter((line: any) => line.refill_order_id);
+
+    const linesInsert = await supabase.from("refill_order_lines").insert(refillLines);
+
+    if (linesInsert.error) {
+      await cleanupRoute();
+      redirectWithRouteError("Could not save refill order lines. The route was not created.");
     }
   }
 
   revalidatePath("/routes");
+  revalidatePath(`/routes/${routeId}`);
   redirect(`/routes/${routeId}`);
 }
 
-export default async function NewRoutePage() {
+export default async function NewRoutePage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+  const { error } = await searchParams;
   const supabase = getSupabaseServerClient();
   const [{ data: operators }, { data: machines }, { data: recommendations }] = supabase
     ? await Promise.all([
@@ -109,6 +140,11 @@ export default async function NewRoutePage() {
     <AppShell>
       <FormPageLayout>
         <PageHeader title="Create route" subtitle="Build a refill route from machine stops and refill recommendations." />
+        {error ? (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">
+            {error}
+          </div>
+        ) : null}
         <form action={createRoute} className="space-y-6">
           <FormSection title="Route overview">
             <div className="grid gap-4 md:grid-cols-2">

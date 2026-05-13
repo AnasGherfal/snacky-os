@@ -3,8 +3,8 @@ import { AppShell } from "@/components/AppShell";
 import { DataTable, EmptyState, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
-export default async function RouteDetailPage({ params }: { params: { id: string } }) {
-  const { id } = params;
+export default async function RouteDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   const supabase = getSupabaseServerClient();
   if (!supabase) notFound();
 
@@ -25,6 +25,8 @@ export default async function RouteDetailPage({ params }: { params: { id: string
   ]);
 
   if (!route) notFound();
+
+  const routeRow: any = route;
 
   const routeStops = stops ?? [];
   const orders = refillOrders ?? [];
@@ -48,19 +50,19 @@ export default async function RouteDetailPage({ params }: { params: { id: string
   return (
     <AppShell>
       <div className="space-y-6">
-        <PageHeader title="Route details" subtitle={`Route for ${route.route_date}`} action={<SecondaryButton href="/routes">Back to routes</SecondaryButton>} />
+        <PageHeader title="Route details" subtitle={`Route for ${routeRow.route_date}`} action={<SecondaryButton href="/routes">Back to routes</SecondaryButton>} />
 
         <div className="grid gap-4 md:grid-cols-3">
           <SectionCard>
             <div className="space-y-2 p-4">
               <div className="text-sm text-slate-500">Status</div>
-              <StatusBadge status={route.status} />
+              <StatusBadge status={routeRow.status} />
             </div>
           </SectionCard>
           <SectionCard>
             <div className="space-y-2 p-4">
               <div className="text-sm text-slate-500">Operator</div>
-              <div>{route.operator?.full_name ?? "Unassigned"}</div>
+              <div>{routeRow.operator?.full_name ?? "Unassigned"}</div>
             </div>
           </SectionCard>
           <SectionCard>

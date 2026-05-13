@@ -17,7 +17,8 @@ function varianceTone(variance: number) {
   return "border-emerald-200 bg-emerald-50 text-emerald-800";
 }
 
-export default async function CashCollectionDetailPage({ params }: { params: { id: string } }) {
+export default async function CashCollectionDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   const supabase = getSupabaseServerClient();
   if (!supabase) notFound();
 
@@ -26,7 +27,7 @@ export default async function CashCollectionDetailPage({ params }: { params: { i
     .select(
       "id, collected_at, vms_expected_cash, actual_cash_collected, variance, review_status, notes, machine:machines(id, name, machine_code), operator:team_members!cash_collections_operator_id_fkey(id, full_name), route:routes(id, route_date, status)"
     )
-    .eq("id", params.id)
+    .eq("id", id)
     .single();
 
   if (!collection) notFound();

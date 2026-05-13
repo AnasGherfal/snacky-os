@@ -4,8 +4,8 @@ import { AppShell } from "@/components/AppShell";
 import { EmptyState, SecondaryButton, StatusBadge, PrimaryButton, SectionCard } from "@/components/ui";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
-export default async function OperatorRouteDetailPage({ params }: { params: { id: string } }) {
-  const { id: routeId } = params;
+export default async function OperatorRouteDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id: routeId } = await params;
   const supabase = getSupabaseServerClient();
   if (!supabase) notFound();
 

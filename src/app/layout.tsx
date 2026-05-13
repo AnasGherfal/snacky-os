@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { I18nProvider } from "@/components/I18nProvider";
+import { getAppLocale, getTextDirection } from "@/lib/i18n";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -7,9 +9,11 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const locale = getAppLocale();
+
   return (
-    <html lang="en">
-      <body>{children}</body>
+    <html lang={locale} dir={getTextDirection(locale)}>
+      <body><I18nProvider initialLocale={locale}>{children}</I18nProvider></body>
     </html>
   );
 }
