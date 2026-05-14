@@ -1,13 +1,21 @@
 import { AppShell } from "@/components/AppShell";
 import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
+import { getCurrentProfile } from "@/lib/auth";
+import { canAccessPath } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { RouteCreatedToast } from "@/app/routes/[id]/RouteCreatedToast";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
 export default async function RouteDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const profile = await getCurrentProfile();
+  if (!profile || !canAccessPath({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/routes")) {
+    redirect("/unauthorized");
+  }
+
   const supabase = getSupabaseServerClient();
   if (!supabase) {
     return (
@@ -69,7 +77,10 @@ export default async function RouteDetailPage({ params }: { params: Promise<{ id
   const routeStops = stops ?? [];
   const orders = refillOrders ?? [];
   const machineIds = Array.from(new Set([...routeStops.map((stop: any) => stop.machine_id), ...orders.map((order: any) => order.machine_id)].filter(Boolean)));
-  const productIds = Array.from(new Set(orders.flatMap((order: any) => order.refill_order_lines?.map((line: any) => line.product_id) ?? []).filter(Boolean)));
+  const productIds = Array.from(new Set([
+    ...orders.flatMap((order: any) => order.refill_order_lines?.map((line: any) => line.product_id) ?? []),
+    ...(routeStock ?? []).map((line: any) => line.product_id),
+  ].filter(Boolean)));
   const [{ data: machines }, { data: products }, { data: movements }, { data: cashCollections }, { data: issues }] = await Promise.all([
     machineIds.length ? supabase.from("machines").select("id, name, machine_code").in("id", machineIds) : Promise.resolve({ data: [] }),
     productIds.length ? supabase.from("products").select("id, name").in("id", productIds) : Promise.resolve({ data: [] }),
@@ -93,6 +104,19 @@ export default async function RouteDetailPage({ params }: { params: Promise<{ id
   ]);
   const machineById = new Map((machines ?? []).map((machine: any) => [machine.id, machine]));
   const productById = new Map((products ?? []).map((product: any) => [product.id, product]));
+  const hasPickMovements = Boolean(movements?.some((movement: any) => movement.reason === "storage_to_operator_bag"));
+  const hasReturnMovements = Boolean(movements?.some((movement: any) => movement.reason === "operator_bag_to_storage"));
+  const completedStopCount = routeStops.filter((stop: any) => stop.status === "completed").length;
+  const timeline = [
+    { label: "Draft", done: true, detail: `Created ${new Date(routeRow.created_at).toLocaleString("en-US")}` },
+    { label: "Assigned", done: ["assigned", "in_progress", "completed", "reviewed"].includes(routeRow.status), detail: operator?.full_name ?? "Operator pending" },
+    { label: "Picked", done: hasPickMovements || ["in_progress", "completed", "reviewed"].includes(routeRow.status), detail: hasPickMovements ? "Storage moved to operator bag" : "Awaiting pick confirmation" },
+    { label: "Stops completed", done: routeStops.length > 0 && completedStopCount === routeStops.length, detail: `${completedStopCount}/${routeStops.length} stops` },
+    { label: "Cash recorded", done: Boolean(cashCollections?.length), detail: `${cashCollections?.length ?? 0} cash records` },
+    { label: "Leftovers returned", done: hasReturnMovements || ["completed", "reviewed"].includes(routeRow.status), detail: hasReturnMovements ? "Operator bag returned to storage" : "Awaiting leftover return" },
+    { label: "Completed", done: ["completed", "reviewed"].includes(routeRow.status), detail: routeRow.completed_at ? new Date(routeRow.completed_at).toLocaleString("en-US") : "Not completed" },
+    { label: "Reviewed", done: routeRow.status === "reviewed", detail: routeRow.status === "reviewed" ? "Admin review complete" : "Pending admin review" },
+  ];
   return (
     <AppShell>
       <RouteCreatedToast />
@@ -146,7 +170,7 @@ export default async function RouteDetailPage({ params }: { params: Promise<{ id
             <DataTable headers={["Product", "Planned", "Picked", "Returned"]}>
               {routeStock.map((item: any) => (
                 <tr key={item.id}>
-                  <td>{item.product?.name ?? "Unknown product"}</td>
+                  <td>{item.product?.name ?? productById.get(item.product_id)?.name ?? "Unknown product"}</td>
                   <td>{item.planned_qty}</td>
                   <td>{item.picked_qty}</td>
                   <td>{item.returned_qty}</td>
@@ -254,6 +278,19 @@ export default async function RouteDetailPage({ params }: { params: Promise<{ id
             )}
           </section>
         </div>
+
+        <section className="surface-card p-4">
+          <h2 className="text-lg font-semibold">Status timeline</h2>
+          <div className="mt-4 grid gap-3 md:grid-cols-4">
+            {timeline.map((item) => (
+              <div key={item.label} className={`rounded-lg border p-3 ${item.done ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-white"}`}>
+                <div className="text-sm font-semibold text-slate-900">{item.label}</div>
+                <div className="mt-1 text-xs text-slate-600">{item.detail}</div>
+                <div className="mt-2"><StatusBadge status={item.done ? "complete" : "pending"} /></div>
+              </div>
+            ))}
+          </div>
+        </section>
       </div>
     </AppShell>
   );

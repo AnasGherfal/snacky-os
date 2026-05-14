@@ -77,21 +77,44 @@ export async function POST(request: Request) {
     return jsonError("Could not verify storage inventory.", 500);
   }
 
-  const storageByProduct = new Map((storageResult.data ?? []).map((row: any) => [String(row.product_id), Number(row.quantity_on_hand ?? 0)]));
+  const storageByProduct = new Map<string, number>();
+  (storageResult.data ?? []).forEach((row: any) => {
+    const productId = String(row.product_id);
+    storageByProduct.set(productId, (storageByProduct.get(productId) ?? 0) + Number(row.quantity_on_hand ?? 0));
+  });
   const stockByProduct = new Map<string, number>();
   requestedRouteStock.forEach((item) => {
     stockByProduct.set(item.productId, (stockByProduct.get(item.productId) ?? 0) + item.quantity);
   });
 
+  const reservedResult = await supabase
+    .from("route_stock_lines")
+    .select("product_id, planned_qty, picked_qty, routes!inner(status)")
+    .in("product_id", Array.from(stockByProduct.keys()))
+    .in("routes.status", ["draft", "assigned"]);
+
+  if (reservedResult.error) {
+    console.error("[routes:create] Failed to verify reserved route stock", { error: reservedResult.error });
+    return jsonError("Could not verify existing route reservations.", 500);
+  }
+
+  const reservedByProduct = new Map<string, number>();
+  (reservedResult.data ?? []).forEach((row: any) => {
+    const productId = String(row.product_id);
+    const reserved = Math.max(0, Number(row.planned_qty ?? 0) - Number(row.picked_qty ?? 0));
+    reservedByProduct.set(productId, (reservedByProduct.get(productId) ?? 0) + reserved);
+  });
+
   for (const [productId, quantity] of stockByProduct) {
-    if (quantity > (storageByProduct.get(productId) ?? 0)) {
+    const available = Math.max(0, (storageByProduct.get(productId) ?? 0) - (reservedByProduct.get(productId) ?? 0));
+    if (quantity > available) {
       return jsonError("One or more selected products exceeds available storage stock.");
     }
   }
 
   const routeInsert = await supabase
     .from("routes")
-    .insert({ route_date: routeDate, operator_id: operatorId, status: "assigned" })
+    .insert({ route_date: routeDate, operator_id: operatorId, status: "assigned", created_by: profile.team_member_id })
     .select("id")
     .single();
 

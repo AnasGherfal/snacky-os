@@ -1,11 +1,19 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { DataTable, EmptyState, PageHeader, PrimaryButton, StatusBadge } from "@/components/ui";
+import { getCurrentProfile } from "@/lib/auth";
+import { canAccessPath } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
 export default async function RoutesPage() {
+  const profile = await getCurrentProfile();
+  if (!profile || !canAccessPath({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/routes")) {
+    redirect("/unauthorized");
+  }
+
   const supabase = getSupabaseServerClient();
   const { data: routes } = supabase
     ? await supabase.from("routes").select("id, route_date, status, operator_id").order("route_date", { ascending: false })

@@ -58,6 +58,26 @@ export async function confirmPickList(routeId: string, pickedItems: { productId:
     const storageId = storages?.[0]?.id;
     if (!storageId) throw new Error("No active storage location found");
 
+    const { data: storageRows, error: storageError } = await supabase
+      .from("current_inventory_by_location")
+      .select("product_id, quantity_on_hand")
+      .eq("location_type", "storage")
+      .eq("location_id", storageId)
+      .in("product_id", Array.from(pickedByProduct.keys()));
+
+    if (storageError) throw storageError;
+    const storageByProduct = new Map<string, number>();
+    (storageRows ?? []).forEach((row: any) => {
+      const productId = String(row.product_id);
+      storageByProduct.set(productId, (storageByProduct.get(productId) ?? 0) + Number(row.quantity_on_hand ?? 0));
+    });
+
+    for (const [productId, quantity] of pickedByProduct) {
+      if (quantity > (storageByProduct.get(productId) ?? 0)) {
+        throw new Error("Picked quantity cannot exceed available storage stock.");
+      }
+    }
+
     const { data: existingMovements } = await supabase
       .from("inventory_movements")
       .select("id")
@@ -310,6 +330,15 @@ export async function completeStop({
 
         if (lineError) throw lineError;
       }
+    }
+
+    if (refillOrderIds.length) {
+      const { error: refillStatusError } = await supabase
+        .from("refill_orders")
+        .update({ status: "completed", completed_at: new Date().toISOString() })
+        .in("id", refillOrderIds);
+
+      if (refillStatusError) throw refillStatusError;
     }
 
     // Get expected cash from latest VMS sales
