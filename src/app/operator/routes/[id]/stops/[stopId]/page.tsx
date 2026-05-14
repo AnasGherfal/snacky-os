@@ -13,6 +13,7 @@ interface StopRefillItem {
   productName: string;
   currentQty: number;
   parQty: number;
+  availableQty?: number;
   filledQty: number;
 }
 
@@ -41,6 +42,9 @@ export default function MachineStopPage({
   const [error, setError] = useState("");
   const [cashCollected, setCashCollected] = useState(0);
   const [notes, setNotes] = useState("");
+  const [issueType, setIssueType] = useState("");
+  const [issuePriority, setIssuePriority] = useState<"critical" | "high" | "normal" | "low">("normal");
+  const [issueDescription, setIssueDescription] = useState("");
   const [filledQtys, setFilledQtys] = useState<Record<string, number>>({});
   const [showCleaningChecklist, setShowCleaningChecklist] = useState(false);
   const [cleaningDone, setCleaningDone] = useState(false);
@@ -54,10 +58,9 @@ export default function MachineStopPage({
         if (!response.ok) throw new Error("Failed to fetch stop data");
         const data = await response.json();
         setStopData(data);
-        // Initialize filled qtys with current quantities
         const initialQtys: Record<string, number> = {};
         data.refillItems?.forEach((item: StopRefillItem) => {
-          initialQtys[item.productId] = item.parQty;
+          initialQtys[item.productId] = Math.min(item.parQty, item.availableQty ?? item.parQty);
         });
         setFilledQtys(initialQtys);
       } catch (err) {
@@ -91,6 +94,7 @@ export default function MachineStopPage({
         filledItems,
         cashCollected,
         notes,
+        issue: issueType && issueDescription ? { issueType, priority: issuePriority, description: issueDescription } : undefined,
       });
 
       router.push(`/operator/routes/${routeId}`);
@@ -125,7 +129,7 @@ export default function MachineStopPage({
       <div className="space-y-6 max-w-4xl">
         <PageHeader
           title={stopData.machineName}
-          subtitle={`${stopData.machineCode} • ${stopData.location}`}
+          subtitle={`${stopData.machineCode} - ${stopData.location}`}
           action={<SecondaryButton href={`/operator/routes/${routeId}`}>Back</SecondaryButton>}
         />
 
@@ -164,16 +168,17 @@ export default function MachineStopPage({
                         <input
                           type="number"
                           min="0"
+                          max={item.availableQty ?? item.parQty}
                           value={filledQtys[item.productId] || 0}
                           onChange={(e) =>
                             setFilledQtys((prev) => ({
                               ...prev,
-                              [item.productId]: Math.max(0, parseInt(e.target.value) || 0),
+                              [item.productId]: Math.max(0, Math.min(item.availableQty ?? item.parQty, parseInt(e.target.value) || 0)),
                             }))
                           }
                           className="field-input w-24"
                         />
-                        <span className="text-sm text-slate-600">units (par: {item.parQty})</span>
+                        <span className="text-sm text-slate-600">units (available: {item.availableQty ?? item.parQty})</span>
                       </div>
                     </div>
                   </div>
@@ -223,6 +228,41 @@ export default function MachineStopPage({
           </div>
         </section>
 
+        {/* Issue Report */}
+        <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
+          <h2 className="text-lg font-semibold mb-4">Issue Report</h2>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <label className="block text-sm font-medium text-slate-800 mb-1">Issue type</label>
+              <input
+                value={issueType}
+                onChange={(event) => setIssueType(event.target.value)}
+                className="field-input"
+                placeholder="e.g. cash jam, display error, cooling issue"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-800 mb-1">Priority</label>
+              <select value={issuePriority} onChange={(event) => setIssuePriority(event.target.value as typeof issuePriority)} className="field-input">
+                <option value="normal">Normal</option>
+                <option value="low">Low</option>
+                <option value="high">High</option>
+                <option value="critical">Critical</option>
+              </select>
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-slate-800 mb-1">Description</label>
+              <textarea
+                value={issueDescription}
+                onChange={(event) => setIssueDescription(event.target.value)}
+                className="field-input"
+                rows={3}
+                placeholder="Describe the problem only if there is an issue to report."
+              />
+            </div>
+          </div>
+        </section>
+
         {/* Cleaning Checklist */}
         <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
           <h2 className="text-lg font-semibold mb-4">Cleaning & Final Check</h2>
@@ -234,7 +274,7 @@ export default function MachineStopPage({
             <div className="flex items-center justify-between">
               <span className="font-medium text-slate-900">Click to expand checklist</span>
               <span className={cleaningDone ? "text-green-600 font-semibold" : "text-slate-600"}>
-                {cleaningDone ? "✓ Completed" : "→"}
+                {cleaningDone ? "Completed" : "Open"}
               </span>
             </div>
           </button>

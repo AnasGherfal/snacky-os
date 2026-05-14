@@ -1,3 +1,62 @@
-import { revalidatePath } from "next/cache";import { AppShell } from "@/components/AppShell";import { getSupabaseServerClient } from "@/lib/supabase-server";
-async function save(fd:FormData){"use server";const s=getSupabaseServerClient();if(!s)return;const id=String(fd.get("id")||"");const p={full_name:String(fd.get("full_name")||"").trim(),phone:String(fd.get("phone")||"")||null,email:String(fd.get("email")||"")||null,role:String(fd.get("role")||"operator"),active:String(fd.get("active")||"true")==="true"};if(!p.full_name)return;id?await s.from("team_members").update(p).eq("id",id):await s.from("team_members").insert(p);revalidatePath('/team');}
-export default async function Page(){const s=getSupabaseServerClient();const {data}=s?await s.from("team_members").select("*").order("full_name"):{data:[]};return <AppShell><h1 className="text-3xl font-bold">Team</h1><div className="mt-4 space-y-2"><form action={save} className="rounded-xl border bg-white p-4 grid gap-2 md:grid-cols-5"><input required name="full_name" placeholder="Full name" className="rounded border p-2"/><input name="phone" placeholder="Phone" className="rounded border p-2"/><input name="email" placeholder="Email" className="rounded border p-2"/><input name="role" placeholder="Role" className="rounded border p-2"/><button className="rounded bg-slate-900 px-3 py-2 text-white">Add</button></form>{data?.map((r:any)=><form key={r.id} action={save} className="rounded-xl border bg-white p-3 grid gap-2 md:grid-cols-6"><input type="hidden" name="id" defaultValue={r.id}/><input required name="full_name" defaultValue={r.full_name} className="rounded border p-2"/><input name="phone" defaultValue={r.phone||""} className="rounded border p-2"/><input name="email" defaultValue={r.email||""} className="rounded border p-2"/><input name="role" defaultValue={r.role} className="rounded border p-2"/><select name="active" defaultValue={String(r.active)} className="rounded border p-2"><option value="true">Active</option><option value="false">Archived</option></select><button className="rounded bg-slate-900 px-3 py-2 text-white md:col-span-6">Update</button></form>)}</div></AppShell>}
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import { AppShell } from "@/components/AppShell";
+import { DataTable, EmptyState, PageHeader, PrimaryButton, StatusBadge } from "@/components/ui";
+import { getCurrentProfile } from "@/lib/auth";
+import { isOwnerAdminRole } from "@/lib/authz";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { formatLastLogin } from "@/lib/team";
+
+export const dynamic = "force-dynamic";
+
+export default async function TeamPage() {
+  const profile = await getCurrentProfile();
+  if (!isOwnerAdminRole(profile?.role)) redirect("/unauthorized");
+
+  const supabase = getSupabaseServerClient();
+  const [{ data: team }, { data: profiles }] = supabase
+    ? await Promise.all([
+        supabase.from("team_members").select("id, full_name, email, phone, role, active").order("full_name"),
+        supabase.from("profiles").select("id, email, team_member_id, last_login_at"),
+      ])
+    : [{ data: [] }, { data: [] }];
+
+  const profileByTeamId = new Map((profiles ?? []).filter((profile: any) => profile.team_member_id).map((profile: any) => [profile.team_member_id, profile]));
+  const profileByEmail = new Map((profiles ?? []).filter((profile: any) => profile.email).map((profile: any) => [String(profile.email).toLowerCase(), profile]));
+
+  return (
+    <AppShell>
+      <PageHeader
+        title="Team"
+        subtitle="Manage Snacky OS users, roles, login links, and operational access."
+        action={<PrimaryButton href="/team/new">Add team member</PrimaryButton>}
+      />
+
+      {!team?.length ? (
+        <EmptyState title="No team members" body="Add admins, supervisors, warehouse users, and operators before assigning routes." />
+      ) : (
+        <DataTable headers={["Full name", "Email", "Phone", "Role", "Status", "Last login", "Actions"]}>
+          {team.map((member: any) => {
+            const profile = profileByTeamId.get(member.id) ?? profileByEmail.get(String(member.email ?? "").toLowerCase());
+
+            return (
+              <tr key={member.id}>
+                <td className="font-medium text-slate-900">{member.full_name}</td>
+                <td>{member.email ?? "-"}</td>
+                <td>{member.phone ?? "-"}</td>
+                <td><StatusBadge status={member.role} /></td>
+                <td><StatusBadge status={member.active ? "active" : "inactive"} /></td>
+                <td>{formatLastLogin(profile?.last_login_at)}</td>
+                <td>
+                  <Link className="link-secondary" href={`/team/${member.id}/edit`}>
+                    Edit
+                  </Link>
+                </td>
+              </tr>
+            );
+          })}
+        </DataTable>
+      )}
+    </AppShell>
+  );
+}

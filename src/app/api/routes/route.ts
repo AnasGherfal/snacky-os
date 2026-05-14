@@ -9,6 +9,7 @@ type CreateRoutePayload = {
   operatorId?: string;
   machineIds?: string[];
   machineSlotIds?: string[];
+  routeStock?: { productId?: string; quantity?: number; available?: number }[];
 };
 
 function jsonError(message: string, status = 400) {
@@ -36,12 +37,16 @@ export async function POST(request: Request) {
   const operatorId = String(payload.operatorId ?? "").trim();
   const manualMachineIds = Array.from(new Set((payload.machineIds ?? []).map(String).filter(Boolean)));
   const recommendationSlotIds = Array.from(new Set((payload.machineSlotIds ?? []).map(String).filter(Boolean)));
+  const requestedRouteStock = (payload.routeStock ?? [])
+    .map((item) => ({ productId: String(item.productId ?? "").trim(), quantity: Math.max(0, Number(item.quantity ?? 0)) }))
+    .filter((item) => item.productId && item.quantity > 0);
 
   if (!routeDate) return jsonError("Route date is required.");
   if (!operatorId) return jsonError("Operator is required when creating an assigned route.");
   if (!manualMachineIds.length && !recommendationSlotIds.length) {
     return jsonError("Select at least one machine stop or refill recommendation.");
   }
+  if (!requestedRouteStock.length) return jsonError("Choose products to take from storage for this route.");
 
   const recommendationsResult = recommendationSlotIds.length
     ? await supabase
@@ -60,6 +65,29 @@ export async function POST(request: Request) {
   const selectedMachineIds = Array.from(new Set([...manualMachineIds, ...recommendationMachineIds]));
 
   if (!selectedMachineIds.length) return jsonError("No valid machines were selected for this route.");
+
+  const storageResult = await supabase
+    .from("current_inventory_by_location")
+    .select("product_id, quantity_on_hand")
+    .eq("location_type", "storage")
+    .in("product_id", requestedRouteStock.map((item) => item.productId));
+
+  if (storageResult.error) {
+    console.error("[routes:create] Failed to verify storage inventory", { error: storageResult.error });
+    return jsonError("Could not verify storage inventory.", 500);
+  }
+
+  const storageByProduct = new Map((storageResult.data ?? []).map((row: any) => [String(row.product_id), Number(row.quantity_on_hand ?? 0)]));
+  const stockByProduct = new Map<string, number>();
+  requestedRouteStock.forEach((item) => {
+    stockByProduct.set(item.productId, (stockByProduct.get(item.productId) ?? 0) + item.quantity);
+  });
+
+  for (const [productId, quantity] of stockByProduct) {
+    if (quantity > (storageByProduct.get(productId) ?? 0)) {
+      return jsonError("One or more selected products exceeds available storage stock.");
+    }
+  }
 
   const routeInsert = await supabase
     .from("routes")
@@ -91,6 +119,20 @@ export async function POST(request: Request) {
     console.error("[routes:create] Failed to insert route stops", { routeId, selectedMachineIds, error: stopsInsert.error });
     await cleanupRoute();
     return jsonError("Could not save route stops. The route was not created.", 500);
+  }
+
+  const routeStockInsert = await supabase.from("route_stock_lines").insert(
+    Array.from(stockByProduct.entries()).map(([productId, quantity]) => ({
+      route_id: routeId,
+      product_id: productId,
+      planned_qty: quantity,
+    })),
+  );
+
+  if (routeStockInsert.error) {
+    console.error("[routes:create] Failed to insert route stock lines", { routeId, error: routeStockInsert.error });
+    await cleanupRoute();
+    return jsonError("Could not save route stock. The route was not created.", 500);
   }
 
   if (recommendationRows.length) {

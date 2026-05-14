@@ -1,12 +1,15 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
-import { EmptyState, SecondaryButton, StatusBadge, PrimaryButton, SectionCard } from "@/components/ui";
+import { EmptyState, ErrorState, SecondaryButton, StatusBadge, PrimaryButton, SectionCard } from "@/components/ui";
+import { getCurrentProfile } from "@/lib/auth";
+import { canAccessOperatorRoute } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export default async function OperatorRouteDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: routeId } = await params;
   const supabase = getSupabaseServerClient();
+  const profile = await getCurrentProfile();
   if (!supabase) notFound();
 
   // Fetch route, stops, and refill order data
@@ -28,6 +31,13 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
   if (!route) notFound();
 
   const routeRow: any = route;
+  if (!canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, routeRow.operator_id)) {
+    return (
+      <AppShell>
+        <ErrorState title="Route unavailable" body="This route is not assigned to you." action={<SecondaryButton href="/operator/routes">Back to routes</SecondaryButton>} />
+      </AppShell>
+    );
+  }
   const routeStops = stops ?? [];
   const completedStops = routeStops.filter((s: any) => s.status === "completed").length;
   const totalStops = routeStops.length;
@@ -41,7 +51,7 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
               Route for {routeRow.route_date}
             </h1>
             <p className="mt-1 text-sm text-slate-500">
-              {routeRow.operator?.full_name} • {totalStops} machine stops
+              {routeRow.operator?.full_name} - {totalStops} machine stops
             </p>
           </div>
           <SecondaryButton href="/operator/routes">Back to routes</SecondaryButton>

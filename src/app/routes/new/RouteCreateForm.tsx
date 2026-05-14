@@ -21,21 +21,32 @@ type Recommendation = {
   machine_name: string;
   machine_code: string;
   slot_code: string;
+  product_id: string;
   product_name: string;
   current_qty: number;
   par_qty: number;
   suggested_qty: number;
+  available_storage_qty: number;
+  final_qty_to_take: number;
+};
+
+type StorageInventory = {
+  product_id: string;
+  product_name: string;
+  quantity_on_hand: number;
 };
 
 export function RouteCreateForm({
   operators,
   machines,
   recommendations,
+  storageInventory,
   defaultRouteDate,
 }: {
   operators: Operator[];
   machines: Machine[];
   recommendations: Recommendation[];
+  storageInventory: StorageInventory[];
   defaultRouteDate: string;
 }) {
   const router = useRouter();
@@ -43,6 +54,7 @@ export function RouteCreateForm({
   const [operatorId, setOperatorId] = useState("");
   const [machineIds, setMachineIds] = useState<string[]>([]);
   const [machineSlotIds, setMachineSlotIds] = useState<string[]>([]);
+  const [routeStock, setRouteStock] = useState<Record<string, number>>({});
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -55,10 +67,41 @@ export function RouteCreateForm({
 
   const toggleValue = (values: string[], value: string) => (values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
 
+  const plannedRouteStock = useMemo(() => {
+    const planned = new Map<string, { productId: string; quantity: number; available: number }>();
+
+    recommendations
+      .filter((row) => machineSlotIds.includes(row.machine_slot_id))
+      .forEach((row) => {
+        const quantity = Number(row.final_qty_to_take ?? row.suggested_qty ?? 0);
+        const current = planned.get(row.product_id);
+        planned.set(row.product_id, {
+          productId: row.product_id,
+          quantity: (current?.quantity ?? 0) + quantity,
+          available: Number(row.available_storage_qty ?? 0),
+        });
+      });
+
+    Object.entries(routeStock).forEach(([productId, quantity]) => {
+      const item = storageInventory.find((row) => row.product_id === productId);
+      const current = planned.get(productId);
+      planned.set(productId, {
+        productId,
+        quantity: (current?.quantity ?? 0) + Math.max(0, Number(quantity)),
+        available: Number(item?.quantity_on_hand ?? current?.available ?? 0),
+      });
+    });
+
+    return Array.from(planned.values()).filter((item) => item.quantity > 0);
+  }, [machineSlotIds, recommendations, routeStock, storageInventory]);
+
   const validate = () => {
     if (!routeDate) return "Route date is required.";
     if (!operatorId) return "Operator is required when creating an assigned route.";
     if (!machineIds.length && !machineSlotIds.length) return "Select at least one machine stop or refill recommendation.";
+    if (!plannedRouteStock.length) return "Choose products to take from storage for this route.";
+    const overPicked = plannedRouteStock.find((item) => item.quantity > item.available);
+    if (overPicked) return "One or more selected products exceeds available storage stock.";
     return "";
   };
 
@@ -78,7 +121,7 @@ export function RouteCreateForm({
       const response = await fetch("/api/routes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ routeDate, operatorId, machineIds, machineSlotIds }),
+        body: JSON.stringify({ routeDate, operatorId, machineIds, machineSlotIds, routeStock: plannedRouteStock }),
       });
       const result = await response.json();
 
@@ -139,6 +182,7 @@ export function RouteCreateForm({
                   <th className="px-3 py-2">Current</th>
                   <th className="px-3 py-2">Par</th>
                   <th className="px-3 py-2">Take</th>
+                  <th className="px-3 py-2">Storage</th>
                 </tr>
               </thead>
               <tbody>
@@ -158,11 +202,62 @@ export function RouteCreateForm({
                     <td className="px-3 py-2">{row.product_name}</td>
                     <td className="px-3 py-2">{row.current_qty}</td>
                     <td className="px-3 py-2">{row.par_qty}</td>
-                    <td className="px-3 py-2 font-semibold">{row.suggested_qty}</td>
+                    <td className="px-3 py-2 font-semibold">{row.final_qty_to_take ?? row.suggested_qty}</td>
+                    <td className="px-3 py-2">{row.available_storage_qty}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </FormSection>
+
+      <FormSection title="Route stock from storage">
+        <p className="text-sm text-slate-500">Confirm the products that will leave storage for this route. Recommendations are included automatically; add extra route stock only when needed.</p>
+        {!storageInventory.length ? (
+          <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
+            No positive storage stock found. Receive inventory movements into storage before creating a stock-carrying route.
+          </div>
+        ) : (
+          <div className="grid gap-3">
+            {storageInventory.map((item) => {
+              const recommendedQty = recommendations
+                .filter((row) => machineSlotIds.includes(row.machine_slot_id) && row.product_id === item.product_id)
+                .reduce((sum, row) => sum + Number(row.final_qty_to_take ?? row.suggested_qty ?? 0), 0);
+              const extraQty = routeStock[item.product_id] ?? 0;
+              const totalQty = recommendedQty + extraQty;
+              const exceedsStock = totalQty > Number(item.quantity_on_hand);
+
+              return (
+                <div key={item.product_id} className={`rounded-xl border bg-white p-4 ${exceedsStock ? "border-rose-300" : "border-slate-200"}`}>
+                  <div className="grid gap-3 md:grid-cols-[1fr_120px_120px_120px] md:items-end">
+                    <div>
+                      <div className="font-medium text-slate-900">{item.product_name}</div>
+                      <div className="text-xs text-slate-500">Available in storage: {item.quantity_on_hand}</div>
+                    </div>
+                    <div className="text-sm">
+                      <div className="text-xs text-slate-500">Recommended</div>
+                      <div className="font-semibold">{recommendedQty}</div>
+                    </div>
+                    <FormField label="Extra">
+                      <input
+                        type="number"
+                        min="0"
+                        max={Math.max(0, Number(item.quantity_on_hand) - recommendedQty)}
+                        value={extraQty}
+                        onChange={(event) => setRouteStock((current) => ({ ...current, [item.product_id]: Math.max(0, Number(event.target.value) || 0) }))}
+                        className="field-input"
+                        disabled={saving}
+                      />
+                    </FormField>
+                    <div className="text-sm">
+                      <div className="text-xs text-slate-500">Route total</div>
+                      <div className={exceedsStock ? "font-semibold text-rose-700" : "font-semibold text-slate-900"}>{totalQty}</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </FormSection>

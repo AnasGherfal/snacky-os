@@ -105,7 +105,10 @@ export async function ensureProfileForAuthUser(user: { id: string; email?: strin
     .eq("id", user.id)
     .maybeSingle();
 
-  if (existingProfile) return existingProfile;
+  if (existingProfile) {
+    await supabase.from("profiles").update({ last_login_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", user.id);
+    return existingProfile;
+  }
   if (existingProfileError?.message?.includes("profiles") || existingProfileError?.code === "42P01" || existingProfileError?.code === "PGRST205") {
     return getProfileFromTeamMember(user.id, user.email ?? null);
   }
@@ -122,6 +125,7 @@ export async function ensureProfileForAuthUser(user: { id: string; email?: strin
     role: parseAppRole(teamMember?.role) ?? "viewer",
     active_status: teamMember ? (teamMember.active ? "active" : "inactive") : "inactive",
     team_member_id: teamMember?.id ?? null,
+    last_login_at: new Date().toISOString(),
   };
 
   const { data: profile, error } = await supabase.from("profiles").insert(payload).select("id, full_name, email, phone, role, active_status, team_member_id").single();

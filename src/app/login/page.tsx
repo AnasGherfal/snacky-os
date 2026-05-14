@@ -9,7 +9,6 @@ async function login(formData: FormData) {
 
   const email = String(formData.get("email") || "").trim();
   const password = String(formData.get("password") || "");
-  const nextPath = String(formData.get("next") || "");
   const supabase = getSupabaseServerClient();
 
   if (!supabase) redirect("/login?error=Supabase%20is%20not%20configured.");
@@ -47,7 +46,7 @@ async function login(formData: FormData) {
     maxAge: 60 * 60 * 24 * 30,
   });
 
-  redirect(nextPath && nextPath.startsWith("/") ? nextPath : getDefaultPathForRole(role));
+  redirect(getDefaultPathForRole(role));
 }
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string; next?: string }> }) {

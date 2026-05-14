@@ -1,20 +1,25 @@
 import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
 import { EmptyState, PageHeader, StatusBadge } from "@/components/ui";
+import { getCurrentProfile } from "@/lib/auth";
+import { isOperatorRole } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export default async function OperatorRoutesPage() {
   const supabase = getSupabaseServerClient();
+  const profile = await getCurrentProfile();
   
-  // Get today's routes (in production, filter by current operator)
-  // For MVP, show all routes assigned to an operator
-  const { data: routes } = supabase
-    ? await supabase
-        .from("routes")
-        .select("id, route_date, status, operator_id, operator(id, full_name), route_stops(id, status)")
-        .gte("route_date", new Date().toISOString().split("T")[0])
-        .order("route_date", { ascending: true })
-    : { data: [] };
+  let routesQuery = supabase
+    ?.from("routes")
+    .select("id, route_date, status, operator_id, operator(id, full_name), route_stops(id, status)")
+    .gte("route_date", new Date().toISOString().split("T")[0])
+    .order("route_date", { ascending: true });
+
+  if (routesQuery && isOperatorRole(profile?.role)) {
+    routesQuery = routesQuery.eq("operator_id", profile?.team_member_id ?? "");
+  }
+
+  const { data: routes } = routesQuery ? await routesQuery : { data: [] };
 
   return (
     <AppShell>
@@ -72,17 +77,6 @@ export default async function OperatorRoutesPage() {
           </div>
         )}
 
-        <div className="mt-8 rounded-lg bg-blue-50 border border-blue-200 p-4">
-          <h3 className="font-semibold text-blue-900 mb-2">How to use this app:</h3>
-          <ol className="text-sm text-blue-800 space-y-1 ml-4 list-decimal">
-            <li>Select a route to start your day</li>
-            <li>Pick stock from storage as instructed</li>
-            <li>Visit each machine stop in order</li>
-            <li>Fill machines with the exact quantities shown</li>
-            <li>Record cash collected at each stop</li>
-            <li>Return any leftovers to storage</li>
-          </ol>
-        </div>
       </div>
     </AppShell>
   );
