@@ -12,35 +12,56 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
   const profile = await getCurrentProfile();
   if (!supabase) notFound();
 
-  // Fetch route, stops, and refill order data
-  const [{ data: route }, { data: stops }] = await Promise.all([
-    supabase
-      .from("routes")
-      .select("id, route_date, status, operator_id, operator(id, full_name)")
-      .eq("id", routeId)
-      .single(),
-    supabase
-      .from("route_stops")
-      .select(
-        `id, stop_order, status, machine_id, machine(id, name, machine_code, location_id)`,
-      )
-      .eq("route_id", routeId)
-      .order("stop_order", { ascending: true }),
-  ]);
+  const { data: route, error: routeError } = await supabase
+    .from("routes")
+    .select("id, route_date, status, operator_id, started_at, completed_at")
+    .eq("id", routeId)
+    .maybeSingle();
 
+  if (routeError) console.error("[operator:route] Failed to load route", { routeId, error: routeError });
   if (!route) notFound();
 
   const routeRow: any = route;
-  if (!canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, routeRow.operator_id)) {
+  const canAccess = canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, routeRow.operator_id);
+
+  const [{ data: operator }, { data: stops, error: stopsError }, { data: routeStock }] = await Promise.all([
+    routeRow.operator_id
+      ? supabase.from("team_members").select("id, full_name").eq("id", routeRow.operator_id).maybeSingle()
+      : Promise.resolve({ data: null }),
+    supabase
+      .from("route_stops")
+      .select("id, stop_order, status, machine_id")
+      .eq("route_id", routeId)
+      .order("stop_order", { ascending: true }),
+    supabase
+      .from("route_stock_lines")
+      .select("id, product_id, planned_qty, picked_qty, returned_qty, product:products(name)")
+      .eq("route_id", routeId),
+  ]);
+  if (stopsError) console.error("[operator:route] Failed to load stops", { routeId, error: stopsError });
+
+  if (!canAccess) {
     return (
       <AppShell>
-        <ErrorState title="Route unavailable" body="This route is not assigned to you." action={<SecondaryButton href="/operator/routes">Back to routes</SecondaryButton>} />
+        <ErrorState
+          title="Route unavailable"
+          body={process.env.NODE_ENV === "development"
+            ? `This route is assigned to ${routeRow.operator_id}. You are matched to team member ${profile?.team_member_id ?? "none"} for auth user ${profile?.id ?? "none"}.`
+            : "This route is not assigned to you."}
+          action={<SecondaryButton href="/operator/routes">Back to routes</SecondaryButton>}
+        />
       </AppShell>
     );
   }
   const routeStops = stops ?? [];
+  const machineIds = routeStops.map((stop: any) => stop.machine_id).filter(Boolean);
+  const { data: machines } = machineIds.length
+    ? await supabase.from("machines").select("id, name, machine_code").in("id", machineIds)
+    : { data: [] };
+  const machineById = new Map((machines ?? []).map((machine: any) => [machine.id, machine]));
   const completedStops = routeStops.filter((s: any) => s.status === "completed").length;
   const totalStops = routeStops.length;
+  const pickItems = routeStock ?? [];
 
   return (
     <AppShell>
@@ -51,7 +72,7 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
               Route for {routeRow.route_date}
             </h1>
             <p className="mt-1 text-sm text-slate-500">
-              {routeRow.operator?.full_name} - {totalStops} machine stops
+              {operator?.full_name ?? "Assigned operator"} - {totalStops} machine stops
             </p>
           </div>
           <SecondaryButton href="/operator/routes">Back to routes</SecondaryButton>
@@ -77,7 +98,7 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
             <div className="p-4">
               <div className="text-sm text-slate-500 mb-1">Action</div>
               {routeRow.status === "draft" || routeRow.status === "assigned" ? (
-                <PrimaryButton href={`/operator/routes/${routeId}/pick-list`}>
+                <PrimaryButton href={`/operator/routes/${routeId}/pick-list?start=1`}>
                   Start Route
                 </PrimaryButton>
               ) : routeRow.status === "in_progress" ? (
@@ -93,12 +114,24 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
 
         {/* Pick List Section */}
         <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
-          <h2 className="text-lg font-semibold mb-4">Refill Summary</h2>
+          <h2 className="text-lg font-semibold mb-4">Pick list</h2>
           {routeRow.status === "draft" || routeRow.status === "assigned" ? (
             <div className="rounded-lg bg-blue-50 border border-blue-200 p-4 text-sm text-blue-800 mb-4">
               <strong>Ready to start?</strong> Click "Start Route" above to view your pick list and begin picking stock from storage.
             </div>
           ) : null}
+          {!pickItems.length ? (
+            <EmptyState title="No pick list yet" body="This route has no products assigned to pick from storage." />
+          ) : (
+            <div className="mb-4 space-y-2">
+              {pickItems.map((item: any) => (
+                <div key={item.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                  <span className="font-medium text-slate-900">{item.product?.name ?? "Unknown product"}</span>
+                  <span>{item.picked_qty || item.planned_qty} / {item.planned_qty} picked</span>
+                </div>
+              ))}
+            </div>
+          )}
           <Link
             href={`/operator/routes/${routeId}/pick-list`}
             className="inline-block rounded-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 transition"
@@ -127,9 +160,9 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
                         {stop.stop_order}
                       </div>
                       <div>
-                        <h3 className="font-semibold text-slate-900">{stop.machine?.name}</h3>
+                        <h3 className="font-semibold text-slate-900">{machineById.get(stop.machine_id)?.name ?? "Unknown machine"}</h3>
                         <p className="text-sm text-slate-500">
-                          Code: {stop.machine?.machine_code}
+                          Code: {machineById.get(stop.machine_id)?.machine_code ?? "-"}
                         </p>
                       </div>
                     </div>

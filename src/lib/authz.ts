@@ -75,6 +75,7 @@ function matchesPrefix(pathname: string, prefixes: string[]) {
 
 export function canAccessPath(user: AuthUserContext | null | undefined, pathname: string) {
   if (!user || user.activeStatus === "inactive") return false;
+  if (pathname === "/account" || pathname.startsWith("/account/")) return true;
   if (isOwnerAdminRole(user.role)) return true;
   if (isSupervisorRole(user.role)) return matchesPrefix(pathname, supervisorAllowedPrefixes);
   if (isOperatorRole(user.role)) return matchesPrefix(pathname, operatorAllowedPrefixes);

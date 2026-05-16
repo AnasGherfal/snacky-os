@@ -1,5 +1,7 @@
 import { AppRole } from "@/lib/authz";
 
+export const tempPasswordCookie = "snacky-temp-password";
+
 export const roleDescriptions: Record<AppRole, string> = {
   owner: "Full system access, company settings, users, operations, financials, and review.",
   admin: "Manages daily operations, master data, routes, users, inventory, and review screens.",

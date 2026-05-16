@@ -11,7 +11,7 @@ export default async function OperatorRoutesPage() {
   
   let routesQuery = supabase
     ?.from("routes")
-    .select("id, route_date, status, operator_id, operator(id, full_name), route_stops(id, status)")
+    .select("id, route_date, status, operator_id, route_stops(id, status)")
     .gte("route_date", new Date().toISOString().split("T")[0])
     .order("route_date", { ascending: true });
 
@@ -19,7 +19,8 @@ export default async function OperatorRoutesPage() {
     routesQuery = routesQuery.eq("operator_id", profile?.team_member_id ?? "");
   }
 
-  const { data: routes } = routesQuery ? await routesQuery : { data: [] };
+  const { data: routes, error } = routesQuery ? await routesQuery : { data: [], error: null };
+  if (error) console.error("[operator:routes] Failed to load assigned routes", { error, authUserId: profile?.id, teamMemberId: profile?.team_member_id });
 
   return (
     <AppShell>
@@ -32,7 +33,7 @@ export default async function OperatorRoutesPage() {
         {!routes?.length ? (
           <EmptyState
             title="No routes assigned"
-            body="Check back later for new route assignments."
+            body={process.env.NODE_ENV === "development" ? `Check assignments for team member ${profile?.team_member_id ?? "not matched"}.` : "Check back later for new route assignments."}
           />
         ) : (
           <div className="space-y-4">

@@ -14,6 +14,7 @@ export type UserProfile = {
   role: AppRole;
   active_status: "active" | "inactive";
   team_member_id: string | null;
+  must_change_password: boolean;
 };
 
 export async function getAuthAccessToken() {
@@ -50,17 +51,19 @@ export async function getCurrentProfile(): Promise<UserProfile | null> {
 
   if (!profile) return getProfileFromTeamMember(userData.user.id, userData.user.email ?? null);
 
-  const role = parseAppRole(profile.role);
+  const linkedTeamMember = profile.team_member_id ? null : await getProfileFromTeamMember(userData.user.id, profile.email ?? userData.user.email ?? null);
+  const role = linkedTeamMember?.role ?? parseAppRole(profile.role);
   if (!role) return null;
 
   return {
     id: profile.id,
-    full_name: profile.full_name,
-    email: profile.email,
-    phone: profile.phone,
+    full_name: linkedTeamMember?.full_name ?? profile.full_name,
+    email: linkedTeamMember?.email ?? profile.email,
+    phone: linkedTeamMember?.phone ?? profile.phone,
     role,
-    active_status: profile.active_status === "inactive" ? "inactive" : "active",
-    team_member_id: profile.team_member_id,
+    active_status: linkedTeamMember?.active_status ?? (profile.active_status === "inactive" ? "inactive" : "active"),
+    team_member_id: profile.team_member_id ?? linkedTeamMember?.team_member_id ?? null,
+    must_change_password: false,
   };
 }
 
@@ -70,11 +73,21 @@ async function getProfileFromTeamMember(authUserId: string, email: string | null
   const supabase = getSupabaseServerClient();
   if (!supabase) return null;
 
-  const { data: teamMember, error } = await supabase
+  let { data: teamMember, error } = await supabase
     .from("team_members")
     .select("id, full_name, email, phone, role, active")
-    .eq("email", email)
+    .eq("auth_user_id", authUserId)
     .maybeSingle();
+
+  if (error || !teamMember) {
+    const fallback = await supabase
+      .from("team_members")
+      .select("id, full_name, email, phone, role, active")
+      .eq("email", email)
+      .maybeSingle();
+    teamMember = fallback.data;
+    error = fallback.error;
+  }
 
   if (error || !teamMember) {
     if (error) console.error("[auth] Failed to load team member fallback profile", { email, error });
@@ -90,9 +103,25 @@ async function getProfileFromTeamMember(authUserId: string, email: string | null
     email: teamMember.email,
     phone: teamMember.phone,
     role,
-    active_status: teamMember.active ? "active" : "inactive",
+    active_status: teamMember.active === false ? "inactive" : "active",
     team_member_id: teamMember.id,
+    must_change_password: false,
   };
+}
+
+async function getTeamMemberForAuthUser(authUserId: string, email: string | null) {
+  const supabase = getSupabaseServerClient();
+  if (!supabase) return null;
+
+  const byAuth = await supabase
+    .from("team_members")
+    .select("id, full_name, email, phone, role, active")
+    .eq("auth_user_id", authUserId)
+    .maybeSingle();
+
+  if (byAuth.data || !email) return byAuth.data;
+  const byEmail = await supabase.from("team_members").select("id, full_name, email, phone, role, active").eq("email", email).maybeSingle();
+  return byEmail.data;
 }
 
 export async function ensureProfileForAuthUser(user: { id: string; email?: string | null; user_metadata?: { full_name?: string } }) {
@@ -113,9 +142,7 @@ export async function ensureProfileForAuthUser(user: { id: string; email?: strin
     return getProfileFromTeamMember(user.id, user.email ?? null);
   }
 
-  const { data: teamMember } = user.email
-    ? await supabase.from("team_members").select("id, full_name, email, phone, role, active").eq("email", user.email).maybeSingle()
-    : { data: null };
+  const teamMember = await getTeamMemberForAuthUser(user.id, user.email ?? null);
 
   const payload = {
     id: user.id,
@@ -123,7 +150,7 @@ export async function ensureProfileForAuthUser(user: { id: string; email?: strin
     email: user.email ?? teamMember?.email ?? null,
     phone: teamMember?.phone ?? null,
     role: parseAppRole(teamMember?.role) ?? "viewer",
-    active_status: teamMember ? (teamMember.active ? "active" : "inactive") : "inactive",
+    active_status: teamMember ? (teamMember.active === false ? "inactive" : "active") : "inactive",
     team_member_id: teamMember?.id ?? null,
     last_login_at: new Date().toISOString(),
   };

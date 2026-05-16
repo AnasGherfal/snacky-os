@@ -39,7 +39,7 @@ export function Sidebar({ role }: { role: AppRole }) {
             </div>
             <div className="space-y-1">
               {items.map((item) => (
-                <Link key={item.href} href={item.href} className={pathname === item.href ? "nav-link-active" : "nav-link"}>
+                <Link key={`${group.titleKey}-${item.labelKey}-${item.href}`} href={item.href} className={pathname === item.href ? "nav-link-active" : "nav-link"}>
                   {dictionary.nav[item.labelKey]}
                 </Link>
               ))}

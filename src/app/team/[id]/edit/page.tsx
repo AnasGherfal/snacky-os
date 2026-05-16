@@ -33,7 +33,7 @@ export default async function EditTeamMemberPage({
 
   const { data: member, error: memberError } = await supabase
     .from("team_members")
-    .select("id, full_name, email, phone, role, active")
+    .select("id, full_name, email, phone, role, active, auth_user_id, must_change_password")
     .eq("id", id)
     .maybeSingle();
 
@@ -61,6 +61,8 @@ export default async function EditTeamMemberPage({
             phone: member.phone,
             role,
             active: member.active,
+            auth_user_id: member.auth_user_id,
+            must_change_password: member.must_change_password,
           }}
         />
       </FormPageLayout>

@@ -1,4 +1,5 @@
 import { FormField, FormSection, SecondaryButton, StatusBadge } from "@/components/ui";
+import { TemporaryPasswordInput } from "@/components/TemporaryPasswordInput";
 import { appRoles, AppRole } from "@/lib/authz";
 import { roleDescriptions } from "@/lib/team";
 
@@ -13,6 +14,8 @@ type TeamMemberFormProps = {
     phone: string | null;
     role: AppRole;
     active: boolean;
+    auth_user_id?: string | null;
+    must_change_password?: boolean;
   };
 };
 
@@ -63,6 +66,18 @@ export function TeamMemberForm({ action, submitLabel, backHref = "/team", member
             ))}
           </div>
         </div>
+      </FormSection>
+
+      <FormSection title={member?.auth_user_id ? "Login access" : "Create login access"}>
+        {member?.auth_user_id ? (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+            This team member is linked to a Supabase Auth login. Generate a new temporary password here only when resetting access.
+            {member.must_change_password ? <div className="mt-2 font-semibold">Password change is currently required.</div> : null}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-500">For operators and team members who need to sign in, create Supabase Auth login access now.</p>
+        )}
+        <TemporaryPasswordInput />
       </FormSection>
 
       <div className="flex flex-col gap-3 sm:flex-row">

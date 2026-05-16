@@ -1,7 +1,7 @@
 import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { getCurrentProfile } from "@/lib/auth";
-import { canAccessPath } from "@/lib/authz";
+import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 type CreateRoutePayload = {
@@ -10,10 +10,16 @@ type CreateRoutePayload = {
   machineIds?: string[];
   machineSlotIds?: string[];
   routeStock?: { productId?: string; quantity?: number; available?: number }[];
+  manualStopItems?: { machineId?: string; productId?: string; quantity?: number }[];
+  adminOverride?: boolean;
 };
 
 function jsonError(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
+}
+
+function isMissingRouteStopItems(error: any) {
+  return error?.code === "PGRST205" && String(error?.message ?? "").includes("route_stop_items");
 }
 
 export async function POST(request: Request) {
@@ -37,16 +43,19 @@ export async function POST(request: Request) {
   const operatorId = String(payload.operatorId ?? "").trim();
   const manualMachineIds = Array.from(new Set((payload.machineIds ?? []).map(String).filter(Boolean)));
   const recommendationSlotIds = Array.from(new Set((payload.machineSlotIds ?? []).map(String).filter(Boolean)));
-  const requestedRouteStock = (payload.routeStock ?? [])
-    .map((item) => ({ productId: String(item.productId ?? "").trim(), quantity: Math.max(0, Number(item.quantity ?? 0)) }))
-    .filter((item) => item.productId && item.quantity > 0);
+  const adminOverride = Boolean(payload.adminOverride);
+  const manualStopItems = (payload.manualStopItems ?? [])
+    .map((item) => ({
+      machineId: String(item.machineId ?? "").trim(),
+      productId: String(item.productId ?? "").trim(),
+      quantity: Math.max(0, Number(item.quantity ?? 0)),
+    }))
+    .filter((item) => item.machineId && item.productId && item.quantity > 0);
 
   if (!routeDate) return jsonError("Route date is required.");
   if (!operatorId) return jsonError("Operator is required when creating an assigned route.");
-  if (!manualMachineIds.length && !recommendationSlotIds.length) {
-    return jsonError("Select at least one machine stop or refill recommendation.");
-  }
-  if (!requestedRouteStock.length) return jsonError("Choose products to take from storage for this route.");
+  if (adminOverride && !isOwnerAdminRole(profile.role)) return jsonError("Only owner or admin can override storage availability.", 403);
+  if (!recommendationSlotIds.length && !manualStopItems.length) return jsonError("Choose machine-level refill items for this route.");
 
   const recommendationsResult = recommendationSlotIds.length
     ? await supabase
@@ -62,53 +71,59 @@ export async function POST(request: Request) {
 
   const recommendationRows = recommendationsResult.data ?? [];
   const recommendationMachineIds = recommendationRows.map((row: any) => row.machine_id).filter(Boolean);
-  const selectedMachineIds = Array.from(new Set([...manualMachineIds, ...recommendationMachineIds]));
-
-  if (!selectedMachineIds.length) return jsonError("No valid machines were selected for this route.");
-
-  const storageResult = await supabase
-    .from("current_inventory_by_location")
-    .select("product_id, quantity_on_hand")
-    .eq("location_type", "storage")
-    .in("product_id", requestedRouteStock.map((item) => item.productId));
-
-  if (storageResult.error) {
-    console.error("[routes:create] Failed to verify storage inventory", { error: storageResult.error });
-    return jsonError("Could not verify storage inventory.", 500);
-  }
-
-  const storageByProduct = new Map<string, number>();
-  (storageResult.data ?? []).forEach((row: any) => {
-    const productId = String(row.product_id);
-    storageByProduct.set(productId, (storageByProduct.get(productId) ?? 0) + Number(row.quantity_on_hand ?? 0));
-  });
+  const selectedMachineIds = Array.from(new Set([...manualMachineIds, ...recommendationMachineIds, ...manualStopItems.map((item) => item.machineId)]));
   const stockByProduct = new Map<string, number>();
-  requestedRouteStock.forEach((item) => {
+  recommendationRows.forEach((row: any) => {
+    const productId = String(row.product_id);
+    const quantity = Math.max(0, Number(row.final_qty_to_take ?? row.suggested_qty ?? 0));
+    if (productId && quantity > 0) stockByProduct.set(productId, (stockByProduct.get(productId) ?? 0) + quantity);
+  });
+  manualStopItems.forEach((item) => {
     stockByProduct.set(item.productId, (stockByProduct.get(item.productId) ?? 0) + item.quantity);
   });
+  if (!stockByProduct.size) return jsonError("Planned machine refill quantities must be greater than zero.");
 
-  const reservedResult = await supabase
-    .from("route_stock_lines")
-    .select("product_id, planned_qty, picked_qty, routes!inner(status)")
-    .in("product_id", Array.from(stockByProduct.keys()))
-    .in("routes.status", ["draft", "assigned"]);
+  if (!adminOverride) {
+    const storageResult = await supabase
+      .from("current_inventory_by_location")
+      .select("product_id, quantity_on_hand")
+      .eq("location_type", "storage")
+      .in("product_id", Array.from(stockByProduct.keys()));
 
-  if (reservedResult.error) {
-    console.error("[routes:create] Failed to verify reserved route stock", { error: reservedResult.error });
-    return jsonError("Could not verify existing route reservations.", 500);
-  }
+    if (storageResult.error) {
+      console.error("[routes:create] Failed to verify storage inventory", { error: storageResult.error });
+      return jsonError("Could not verify storage inventory.", 500);
+    }
 
-  const reservedByProduct = new Map<string, number>();
-  (reservedResult.data ?? []).forEach((row: any) => {
-    const productId = String(row.product_id);
-    const reserved = Math.max(0, Number(row.planned_qty ?? 0) - Number(row.picked_qty ?? 0));
-    reservedByProduct.set(productId, (reservedByProduct.get(productId) ?? 0) + reserved);
-  });
+    const storageByProduct = new Map<string, number>();
+    (storageResult.data ?? []).forEach((row: any) => {
+      const productId = String(row.product_id);
+      storageByProduct.set(productId, (storageByProduct.get(productId) ?? 0) + Number(row.quantity_on_hand ?? 0));
+    });
 
-  for (const [productId, quantity] of stockByProduct) {
-    const available = Math.max(0, (storageByProduct.get(productId) ?? 0) - (reservedByProduct.get(productId) ?? 0));
-    if (quantity > available) {
-      return jsonError("One or more selected products exceeds available storage stock.");
+    const reservedResult = await supabase
+      .from("route_stock_lines")
+      .select("product_id, planned_qty, picked_qty, routes!inner(status)")
+      .in("product_id", Array.from(stockByProduct.keys()))
+      .in("routes.status", ["draft", "assigned"]);
+
+    if (reservedResult.error) {
+      console.error("[routes:create] Failed to verify reserved route stock", { error: reservedResult.error });
+      return jsonError("Could not verify existing route reservations.", 500);
+    }
+
+    const reservedByProduct = new Map<string, number>();
+    (reservedResult.data ?? []).forEach((row: any) => {
+      const productId = String(row.product_id);
+      const reserved = Math.max(0, Number(row.planned_qty ?? 0) - Number(row.picked_qty ?? 0));
+      reservedByProduct.set(productId, (reservedByProduct.get(productId) ?? 0) + reserved);
+    });
+
+    for (const [productId, quantity] of stockByProduct) {
+      const available = Math.max(0, (storageByProduct.get(productId) ?? 0) - (reservedByProduct.get(productId) ?? 0));
+      if (quantity > available) {
+        return jsonError("One or more selected products exceeds available storage stock.");
+      }
     }
   }
 
@@ -126,22 +141,32 @@ export async function POST(request: Request) {
   const routeId = routeInsert.data.id;
   console.info("[routes:create] Route inserted", { routeId, routeDate, operatorId });
   const cleanupRoute = async () => {
+    const stopItemsCleanup = await supabase.from("route_stop_items").delete().eq("route_id", routeId);
+    if (stopItemsCleanup.error && !isMissingRouteStopItems(stopItemsCleanup.error)) {
+      console.error("[routes:create] Failed to cleanup route_stop_items", { routeId, error: stopItemsCleanup.error });
+    }
+    await supabase.from("route_pick_list_items").delete().eq("route_id", routeId);
     await supabase.from("refill_orders").delete().eq("route_id", routeId);
+    await supabase.from("route_stock_lines").delete().eq("route_id", routeId);
     await supabase.from("routes").delete().eq("id", routeId);
   };
 
-  const stopsInsert = await supabase.from("route_stops").insert(
-    selectedMachineIds.map((machineId, index) => ({
-      route_id: routeId,
-      machine_id: machineId,
-      stop_order: index + 1,
-    })),
-  );
+  const stopByMachine = new Map<string, string>();
+  if (selectedMachineIds.length) {
+    const stopsInsert = await supabase.from("route_stops").insert(
+      selectedMachineIds.map((machineId, index) => ({
+        route_id: routeId,
+        machine_id: machineId,
+        stop_order: index + 1,
+      })),
+    ).select("id, machine_id");
 
-  if (stopsInsert.error) {
-    console.error("[routes:create] Failed to insert route stops", { routeId, selectedMachineIds, error: stopsInsert.error });
-    await cleanupRoute();
-    return jsonError("Could not save route stops. The route was not created.", 500);
+    if (stopsInsert.error || !stopsInsert.data?.length) {
+      console.error("[routes:create] Failed to insert route stops", { routeId, selectedMachineIds, error: stopsInsert.error });
+      await cleanupRoute();
+      return jsonError("Could not save route stops. The route was not created.", 500);
+    }
+    stopsInsert.data.forEach((stop: any) => stopByMachine.set(stop.machine_id, stop.id));
   }
 
   const routeStockInsert = await supabase.from("route_stock_lines").insert(
@@ -158,11 +183,51 @@ export async function POST(request: Request) {
     return jsonError("Could not save route stock. The route was not created.", 500);
   }
 
-  if (recommendationRows.length) {
+  const routeStopItems = [
+    ...recommendationRows.map((row: any) => ({
+      route_id: routeId,
+      route_stop_id: stopByMachine.get(row.machine_id),
+      machine_id: row.machine_id,
+      product_id: row.product_id,
+      machine_slot_id: row.machine_slot_id,
+      planned_quantity: Math.max(0, Number(row.final_qty_to_take ?? row.suggested_qty ?? 0)),
+      picked_quantity: null,
+      filled_quantity: null,
+      returned_quantity: null,
+      source: "refill_recommendation",
+    })),
+    ...manualStopItems.map((item) => ({
+      route_id: routeId,
+      route_stop_id: stopByMachine.get(item.machineId),
+      machine_id: item.machineId,
+      product_id: item.productId,
+      machine_slot_id: null,
+      planned_quantity: item.quantity,
+      picked_quantity: null,
+      filled_quantity: null,
+      returned_quantity: null,
+      source: "manual_admin_assignment",
+    })),
+  ].filter((item: any) => item.route_stop_id && item.product_id && item.planned_quantity > 0);
+
+  if (routeStopItems.length) {
+    const stopItemsInsert = await supabase.from("route_stop_items").insert(routeStopItems);
+    if (stopItemsInsert.error) {
+      console.error("[routes:create] Failed to insert route stop items", { routeId, error: stopItemsInsert.error });
+      if (!isMissingRouteStopItems(stopItemsInsert.error)) {
+        await cleanupRoute();
+        return jsonError("Could not save machine-level planned items. The route was not created.", 500);
+      }
+      console.warn("[routes:create] route_stop_items table is missing; continuing with refill_order_lines fallback", { routeId });
+    }
+  }
+
+  if (recommendationRows.length || manualStopItems.length) {
+    const refillMachineIds = Array.from(new Set([...recommendationMachineIds, ...manualStopItems.map((item) => item.machineId)]));
     const refillOrderInsert = await supabase
       .from("refill_orders")
       .insert(
-        Array.from(new Set(recommendationMachineIds)).map((machineId) => ({
+        refillMachineIds.map((machineId) => ({
           route_id: routeId,
           machine_id: machineId,
           status: "assigned",
@@ -171,7 +236,7 @@ export async function POST(request: Request) {
       .select("id, machine_id");
 
     if (refillOrderInsert.error || !refillOrderInsert.data?.length) {
-      console.error("[routes:create] Failed to insert refill orders", { routeId, recommendationMachineIds, error: refillOrderInsert.error });
+      console.error("[routes:create] Failed to insert refill orders", { routeId, refillMachineIds, error: refillOrderInsert.error });
       await cleanupRoute();
       return jsonError("Could not create refill orders. The route was not created.", 500);
     }
@@ -181,7 +246,7 @@ export async function POST(request: Request) {
       orderByMachine.set(order.machine_id, order.id);
     });
 
-    const refillLines = recommendationRows
+    const recommendationLines = recommendationRows
       .map((row: any) => ({
         refill_order_id: orderByMachine.get(row.machine_id),
         machine_slot_id: row.machine_slot_id,
@@ -191,8 +256,23 @@ export async function POST(request: Request) {
         suggested_qty: row.suggested_qty,
         available_storage_qty: row.available_storage_qty,
         final_qty_to_take: row.final_qty_to_take,
+        source: "refill_recommendation",
       }))
       .filter((line: any) => Boolean(line.refill_order_id));
+    const manualLines = manualStopItems
+      .map((item) => ({
+        refill_order_id: orderByMachine.get(item.machineId),
+        machine_slot_id: null,
+        product_id: item.productId,
+        current_qty_vms: 0,
+        par_qty: item.quantity,
+        suggested_qty: item.quantity,
+        available_storage_qty: stockByProduct.get(item.productId) ?? 0,
+        final_qty_to_take: item.quantity,
+        source: "manual_admin_assignment",
+      }))
+      .filter((line: any) => Boolean(line.refill_order_id));
+    const refillLines = [...recommendationLines, ...manualLines];
 
     if (!refillLines.length) {
       console.error("[routes:create] No refill lines matched created orders", { routeId, recommendationRows, orderIds: refillOrderInsert.data });
@@ -200,7 +280,10 @@ export async function POST(request: Request) {
       return jsonError("Could not match refill lines to created refill orders.", 500);
     }
 
-    const linesInsert = await supabase.from("refill_order_lines").insert(refillLines);
+    let linesInsert = await supabase.from("refill_order_lines").insert(refillLines);
+    if (linesInsert.error?.code === "42703" && linesInsert.error.message?.includes("source")) {
+      linesInsert = await supabase.from("refill_order_lines").insert(refillLines.map(({ source, ...line }: any) => line));
+    }
 
     if (linesInsert.error) {
       console.error("[routes:create] Failed to insert refill order lines", { routeId, error: linesInsert.error });

@@ -9,6 +9,10 @@ import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
+function isMissingTable(error: any, tableName: string) {
+  return error?.code === "PGRST205" && String(error?.message ?? "").includes(tableName);
+}
+
 export default async function RouteDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const profile = await getCurrentProfile();
@@ -49,7 +53,7 @@ export default async function RouteDetailPage({ params }: { params: Promise<{ id
   }
 
   const routeRow: any = route;
-  const [{ data: operator }, { data: stops, error: stopsError }, { data: refillOrders, error: refillOrdersError }, { data: routeStock, error: routeStockError }] = await Promise.all([
+  const [{ data: operator }, { data: stops, error: stopsError }, { data: stopItems, error: stopItemsError }, { data: routeStock, error: routeStockError }, { data: fillLines, error: fillLinesError }, { data: pickListItems, error: pickListItemsError }] = await Promise.all([
     routeRow.operator_id
       ? supabase.from("team_members").select("id, full_name").eq("id", routeRow.operator_id).maybeSingle()
       : Promise.resolve({ data: null }),
@@ -59,27 +63,68 @@ export default async function RouteDetailPage({ params }: { params: Promise<{ id
       .eq("route_id", id)
       .order("stop_order", { ascending: true }),
     supabase
-      .from("refill_orders")
-      .select("id, status, machine_id, refill_order_lines(id, product_id, current_qty_vms, par_qty, suggested_qty, available_storage_qty, final_qty_to_take)")
+      .from("route_stop_items")
+      .select("id, route_stop_id, machine_id, product_id, machine_slot_id, planned_quantity, source")
       .eq("route_id", id)
-      .order("machine_id", { ascending: true }),
+      .order("created_at", { ascending: true }),
     supabase
       .from("route_stock_lines")
       .select("id, product_id, planned_qty, picked_qty, returned_qty, product:products(name)")
       .eq("route_id", id)
       .order("created_at", { ascending: true }),
+    supabase
+      .from("route_stop_fill_lines")
+      .select("id, route_stop_id, machine_id, assigned_product_id, product_id, substitute_product_id, action_type, assigned_qty, actual_qty, difference_qty, reason, notes, missing_product_name, needs_review, created_at")
+      .eq("route_id", id)
+      .order("created_at", { ascending: true }),
+    supabase
+      .from("route_pick_list_items")
+      .select("id, product_id, planned_qty, picked_qty, action_type, substituted_for_product_id, reason, notes, needs_review, created_at")
+      .eq("route_id", id)
+      .order("created_at", { ascending: true }),
   ]);
 
   if (stopsError) console.error("[routes:detail] Failed to load route stops", { id, error: stopsError });
-  if (refillOrdersError) console.error("[routes:detail] Failed to load refill orders", { id, error: refillOrdersError });
+  let routeStopItems = stopItems ?? [];
+  if (stopItemsError) {
+    if (isMissingTable(stopItemsError, "route_stop_items")) {
+      const { data: fallbackOrders, error: fallbackError } = await supabase
+        .from("refill_orders")
+        .select("id, machine_id, refill_order_lines(id, machine_slot_id, product_id, final_qty_to_take, suggested_qty)")
+        .eq("route_id", id);
+      if (fallbackError) {
+        console.error("[routes:detail] Failed to load fallback refill lines", { id, error: fallbackError });
+      } else {
+        routeStopItems = (fallbackOrders ?? []).flatMap((order: any) =>
+          (order.refill_order_lines ?? []).map((line: any) => {
+            const stop = (stops ?? []).find((routeStop: any) => routeStop.machine_id === order.machine_id);
+            return {
+              id: line.id,
+              route_stop_id: stop?.id ?? null,
+              machine_id: order.machine_id,
+              product_id: line.product_id,
+              machine_slot_id: line.machine_slot_id,
+              planned_quantity: Number(line.final_qty_to_take ?? line.suggested_qty ?? 0),
+              source: line.machine_slot_id ? "refill_recommendation" : "manual_admin_assignment",
+            };
+          }),
+        );
+      }
+    } else {
+      console.error("[routes:detail] Failed to load route stop items", { id, error: stopItemsError });
+    }
+  }
   if (routeStockError) console.error("[routes:detail] Failed to load route stock", { id, error: routeStockError });
+  if (fillLinesError) console.error("[routes:detail] Failed to load operator fill lines", { id, error: fillLinesError });
+  if (pickListItemsError && !isMissingTable(pickListItemsError, "route_pick_list_items")) console.error("[routes:detail] Failed to load route pick list items", { id, error: pickListItemsError });
 
   const routeStops = stops ?? [];
-  const orders = refillOrders ?? [];
-  const machineIds = Array.from(new Set([...routeStops.map((stop: any) => stop.machine_id), ...orders.map((order: any) => order.machine_id)].filter(Boolean)));
+  const machineIds = Array.from(new Set([...routeStops.map((stop: any) => stop.machine_id), ...(stopItems ?? []).map((item: any) => item.machine_id)].filter(Boolean)));
   const productIds = Array.from(new Set([
-    ...orders.flatMap((order: any) => order.refill_order_lines?.map((line: any) => line.product_id) ?? []),
+    ...routeStopItems.map((line: any) => line.product_id),
     ...(routeStock ?? []).map((line: any) => line.product_id),
+    ...(fillLines ?? []).flatMap((line: any) => [line.assigned_product_id, line.product_id, line.substitute_product_id]),
+    ...(pickListItems ?? []).flatMap((line: any) => [line.product_id, line.substituted_for_product_id]),
   ].filter(Boolean)));
   const [{ data: machines }, { data: products }, { data: movements }, { data: cashCollections }, { data: issues }] = await Promise.all([
     machineIds.length ? supabase.from("machines").select("id, name, machine_code").in("id", machineIds) : Promise.resolve({ data: [] }),
@@ -181,42 +226,100 @@ export default async function RouteDetailPage({ params }: { params: Promise<{ id
         </section>
 
         <section className="surface-card p-4">
-          <h2 className="text-lg font-semibold">Refill order details</h2>
-          {!orders.length ? (
-            <EmptyState title="No refill orders" body="This route does not have any refill orders created yet." />
+          <h2 className="text-lg font-semibold">Machine-level planned items</h2>
+          {!routeStops.length ? (
+            <EmptyState title="No stops added yet" body="Machine-level planned products will appear under each stop." />
           ) : (
             <div className="space-y-6">
-              {orders.map((order: any) => (
-                <div key={order.id} className="rounded-xl border border-slate-200 bg-white p-4">
+              {routeStops.map((stop: any) => {
+                const items = routeStopItems.filter((item: any) => item.route_stop_id === stop.id || item.machine_id === stop.machine_id);
+                return (
+                <div key={stop.id} className="rounded-xl border border-slate-200 bg-white p-4">
                   <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <div className="text-sm text-slate-500">Machine</div>
-                      <div className="font-medium">{machineById.get(order.machine_id)?.name ?? "Unknown machine"}</div>
-                      <div className="text-sm text-slate-500">{machineById.get(order.machine_id)?.machine_code ?? "-"}</div>
+                      <div className="font-medium">{machineById.get(stop.machine_id)?.name ?? "Unknown machine"}</div>
+                      <div className="text-sm text-slate-500">{machineById.get(stop.machine_id)?.machine_code ?? "-"}</div>
                     </div>
-                    <div>
-                      <div className="text-sm text-slate-500">Order status</div>
-                      <StatusBadge status={order.status} />
-                    </div>
+                    <StatusBadge status={stop.status} />
                   </div>
-                  {order.refill_order_lines?.length ? (
-                    <DataTable headers={["Product", "Current", "Par", "Suggested", "Take"]}>
-                      {order.refill_order_lines.map((line: any) => (
+                  {items.length ? (
+                    <DataTable headers={["Product", "Planned qty", "Source"]}>
+                      {items.map((line: any) => (
                         <tr key={line.id}>
                           <td>{productById.get(line.product_id)?.name ?? "Unknown product"}</td>
-                          <td>{line.current_qty_vms}</td>
-                          <td>{line.par_qty}</td>
-                          <td>{line.suggested_qty}</td>
-                          <td>{line.final_qty_to_take}</td>
+                          <td>{line.planned_quantity}</td>
+                          <td>{line.source === "refill_recommendation" ? "Refill recommendation" : "Manual admin assignment"}</td>
                         </tr>
                       ))}
                     </DataTable>
                   ) : (
-                    <div className="text-sm text-slate-500">No lines created for this refill order.</div>
+                    <div className="text-sm text-slate-500">No planned products for this machine.</div>
                   )}
                 </div>
-              ))}
+              )})}
             </div>
+          )}
+        </section>
+
+        <section className="surface-card p-4">
+          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold">Confirmed pick list</h2>
+              <p className="text-sm text-slate-500">Actual products picked before the operator left storage.</p>
+            </div>
+            <StatusBadge status={(pickListItems ?? []).some((line: any) => line.needs_review) ? "needs_review" : "ok"} />
+          </div>
+          {!pickListItems?.length ? (
+            <EmptyState title="Pick list not confirmed" body="The operator has not confirmed storage-to-bag picking for this route yet." />
+          ) : (
+            <DataTable headers={["Product", "Type", "Planned", "Picked", "Review", "Reason"]}>
+              {pickListItems.map((line: any) => (
+                <tr key={line.id}>
+                  <td>{productById.get(line.product_id)?.name ?? "Unknown product"}</td>
+                  <td><StatusBadge status={line.action_type} /></td>
+                  <td>{line.planned_qty}</td>
+                  <td>{line.picked_qty}</td>
+                  <td><StatusBadge status={line.needs_review ? "needs_review" : "ok"} /></td>
+                  <td>
+                    <div>{line.reason ?? "-"}</div>
+                    {line.notes ? <div className="mt-1 text-xs text-slate-500">{line.notes}</div> : null}
+                  </td>
+                </tr>
+              ))}
+            </DataTable>
+          )}
+        </section>
+
+        <section className="surface-card p-4">
+          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold">Operator changes</h2>
+              <p className="text-sm text-slate-500">Actual stop fills, shortages, extras, substitutions, and missing product reports.</p>
+            </div>
+            <StatusBadge status={(fillLines ?? []).some((line: any) => line.needs_review) ? "needs_review" : "ok"} />
+          </div>
+          {!fillLines?.length ? (
+            <EmptyState title="No operator changes recorded" body="Completed stop actuals will appear here after the operator finishes a machine stop." />
+          ) : (
+            <DataTable headers={["Machine", "Type", "Planned product", "Actual product", "Assigned", "Actual", "Diff", "Review", "Reason"]}>
+              {fillLines.map((line: any) => (
+                <tr key={line.id}>
+                  <td>{machineById.get(line.machine_id)?.name ?? "Unknown machine"}</td>
+                  <td><StatusBadge status={line.action_type} /></td>
+                  <td>{line.missing_product_name ?? productById.get(line.assigned_product_id)?.name ?? "-"}</td>
+                  <td>{productById.get(line.product_id)?.name ?? productById.get(line.substitute_product_id)?.name ?? "-"}</td>
+                  <td>{line.assigned_qty}</td>
+                  <td>{line.actual_qty}</td>
+                  <td>{line.difference_qty > 0 ? `+${line.difference_qty}` : line.difference_qty}</td>
+                  <td><StatusBadge status={line.needs_review ? "needs_review" : "ok"} /></td>
+                  <td>
+                    <div>{line.reason ?? "-"}</div>
+                    {line.notes ? <div className="mt-1 text-xs text-slate-500">{line.notes}</div> : null}
+                  </td>
+                </tr>
+              ))}
+            </DataTable>
           )}
         </section>
 

@@ -17,6 +17,34 @@ function parseLocation(value: FormDataEntryValue | null): { type: EntityType; id
   return { type: type as EntityType, id: id || null };
 }
 
+export async function createQuickProduct(formData: FormData) {
+  const profile = await getCurrentProfile();
+  if (!profile || !["owner", "admin", "supervisor"].includes(profile.role)) {
+    throw new Error("You are not authorized to add products.");
+  }
+
+  const supabase = getSupabaseServerClient();
+  if (!supabase) throw new Error("Supabase is not configured.");
+
+  const sku = String(formData.get("sku") || "").trim();
+  const name = String(formData.get("name") || "").trim();
+  if (!sku || !name) throw new Error("SKU and product name are required.");
+
+  const { error } = await supabase.from("products").insert({
+    sku,
+    barcode: String(formData.get("barcode") || "").trim() || null,
+    name,
+    category: String(formData.get("category") || "snack").trim() || "snack",
+    brand: String(formData.get("brand") || "").trim() || null,
+    selling_price: Number(formData.get("selling_price") || 0),
+    cost_price: 0,
+    active: true,
+  });
+
+  if (error) throw error;
+  revalidatePath("/inventory/movements/new");
+}
+
 function movementReason(type: MovementType) {
   if (type === "storage_adjustment") return "stock_count_adjustment";
   return type;

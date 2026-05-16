@@ -3,6 +3,10 @@ import { NextResponse } from "next/server";
 import { getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute } from "@/lib/authz";
 
+function isMissingTable(error: any, tableName: string) {
+  return error?.code === "PGRST205" && String(error?.message ?? "").includes(tableName);
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -15,39 +19,161 @@ export async function GET(
     return NextResponse.json({ error: "Database not available" }, { status: 500 });
   }
 
+  if (!routeId) {
+    return NextResponse.json({ error: "Route id is required" }, { status: 400 });
+  }
+
   try {
-    const { data: route } = await supabase.from("routes").select("id, operator_id").eq("id", routeId).single();
-    if (!route || !canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, route.operator_id)) {
-      return NextResponse.json({ error: "Route not available" }, { status: 403 });
+    const { data: route, error: routeError } = await supabase.from("routes").select("id, operator_id").eq("id", routeId).maybeSingle();
+    if (routeError) throw routeError;
+    if (!route) {
+      return NextResponse.json({ error: "Route not found" }, { status: 404 });
+    }
+    if (!canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, route.operator_id)) {
+      return NextResponse.json({ error: "This route is not assigned to you" }, { status: 403 });
     }
 
-    const { data, error } = await supabase
-      .from("route_stock_lines")
+    let { data: stopItems, error: stopItemsError }: { data: any[] | null; error: any } = await supabase
+      .from("route_stop_items")
       .select(
         `id,
+        route_stop_id,
+        machine_id,
+        machine:machines(id, name, machine_code),
         product_id,
-        planned_qty,
-        picked_qty,
-        product:products(id, name)`
+        planned_quantity,
+        source,
+        product:products(id, name, sku)`
       )
       .eq("route_id", routeId);
 
-    if (error) throw error;
+    if (stopItemsError) {
+      if (!isMissingTable(stopItemsError, "route_stop_items")) throw stopItemsError;
+      const fallback = await supabase
+        .from("refill_orders")
+        .select(
+          `id,
+          machine_id,
+          machine:machines(id, name, machine_code),
+          refill_order_lines(
+            id,
+            machine_slot_id,
+            product_id,
+            final_qty_to_take,
+            suggested_qty,
+            product:products(id, name, sku)
+          )`
+        )
+        .eq("route_id", routeId);
+      if (fallback.error) throw fallback.error;
+      stopItems = (fallback.data ?? []).flatMap((order: any) =>
+        (order.refill_order_lines ?? []).map((line: any) => ({
+          id: line.id,
+          route_stop_id: null,
+          machine_id: order.machine_id,
+          machine: order.machine,
+          product_id: line.product_id,
+          planned_quantity: Number(line.final_qty_to_take ?? line.suggested_qty ?? 0),
+          source: line.machine_slot_id ? "refill_recommendation" : "manual_admin_assignment",
+          product: line.product,
+        })),
+      );
+    }
 
-    const items = (data ?? []).map((line: any) => ({
+    const plannedByProduct = new Map<string, any>();
+    (stopItems ?? []).forEach((line: any) => {
+      const productId = String(line.product_id);
+      const plannedQty = Math.max(0, Number(line.planned_quantity ?? 0));
+      if (!productId || plannedQty <= 0) return;
+      const machine = Array.isArray(line.machine) ? line.machine[0] : line.machine;
+      const product = Array.isArray(line.product) ? line.product[0] : line.product;
+      const current = plannedByProduct.get(productId) ?? {
+        product_id: productId,
+        product_name: product?.name || "Unknown Product",
+        sku: product?.sku ?? null,
+        planned_qty: 0,
+        machine_items: [],
+      };
+      current.planned_qty += plannedQty;
+      current.machine_items.push({
+        route_stop_id: line.route_stop_id,
+        machine_id: line.machine_id,
+        machine_name: machine?.name ?? "Unknown machine",
+        machine_code: machine?.machine_code ?? "-",
+        planned_qty: plannedQty,
+        source: line.source ?? "manual_admin_assignment",
+      });
+      plannedByProduct.set(productId, current);
+    });
+
+    const productIds = Array.from(plannedByProduct.keys());
+    const [storageResult, productOptionsResult] = await Promise.all([
+      productIds.length
+      ? supabase
+          .from("current_inventory_by_location")
+          .select("product_id, quantity_on_hand")
+          .eq("location_type", "storage")
+          .in("product_id", productIds)
+      : Promise.resolve({ data: [], error: null }),
+      supabase.from("products").select("id, sku, barcode, name, category, brand").eq("active", true).order("name"),
+    ]);
+
+    if (storageResult.error) throw storageResult.error;
+    if (productOptionsResult.error) throw productOptionsResult.error;
+
+    const storageByProduct = new Map<string, number>();
+    (storageResult.data ?? []).forEach((row: any) => {
+      const productId = String(row.product_id);
+      storageByProduct.set(productId, (storageByProduct.get(productId) ?? 0) + Number(row.quantity_on_hand ?? 0));
+    });
+
+    const { data: pickListItems, error: pickListError } = productIds.length
+      ? await supabase.from("route_pick_list_items").select("product_id, picked_qty").eq("route_id", routeId).in("product_id", productIds)
+      : { data: [], error: null };
+    if (pickListError && !isMissingTable(pickListError, "route_pick_list_items")) throw pickListError;
+    const pickedByProduct = new Map((pickListItems ?? []).map((line: any) => [String(line.product_id), Number(line.picked_qty ?? 0)]));
+
+    const items = Array.from(plannedByProduct.values()).map((line: any) => ({
       product_id: line.product_id,
-      product_name: line.product?.name || "Unknown Product",
+      product_name: line.product_name,
+      sku: line.sku ?? null,
       planned_qty: Number(line.planned_qty ?? 0),
-      picked_qty: Number(line.picked_qty ?? 0),
-      final_qty_to_take: Number(line.planned_qty ?? 0),
-      suggested_qty: Number(line.planned_qty ?? 0),
+      picked_qty: pickedByProduct.get(String(line.product_id)) ?? 0,
+      available_storage_qty: storageByProduct.get(String(line.product_id)) ?? 0,
+      machine_items: line.machine_items,
     }));
 
-    return NextResponse.json({ items });
+    const allProductIds = (productOptionsResult.data ?? []).map((product: any) => product.id);
+    const optionStorageResult = allProductIds.length
+      ? await supabase.from("current_inventory_by_location").select("product_id, quantity_on_hand").eq("location_type", "storage").in("product_id", allProductIds)
+      : { data: [], error: null };
+    if (optionStorageResult.error) throw optionStorageResult.error;
+    const optionStorageByProduct = new Map<string, number>();
+    (optionStorageResult.data ?? []).forEach((row: any) => {
+      const productId = String(row.product_id);
+      optionStorageByProduct.set(productId, (optionStorageByProduct.get(productId) ?? 0) + Number(row.quantity_on_hand ?? 0));
+    });
+    const productOptions = (productOptionsResult.data ?? []).map((product: any) => ({
+      id: product.id,
+      sku: product.sku,
+      barcode: product.barcode,
+      name: product.name,
+      category: product.category,
+      brand: product.brand,
+      availableStorageQty: optionStorageByProduct.get(String(product.id)) ?? 0,
+    }));
+
+    return NextResponse.json({
+      items,
+      productOptions,
+      debug: process.env.NODE_ENV === "development"
+        ? { routeId, routeStopItemsCount: stopItems?.length ?? 0, aggregatedPickListCount: items.length, routePickListItemsCount: pickListItems?.length ?? 0, operatorTeamMemberId: profile?.team_member_id ?? null }
+        : undefined,
+    });
   } catch (error) {
     console.error("Error fetching pick list:", error);
     return NextResponse.json(
-      { error: "Failed to fetch pick list" },
+      { error: "Failed to fetch pick list", details: error instanceof Error ? error.message : String(error) },
       { status: 500 }
     );
   }

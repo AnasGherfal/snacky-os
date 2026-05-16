@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useI18n } from "@/components/I18nProvider";
 import { AppRole } from "@/lib/authz";
@@ -53,6 +54,9 @@ export function Topbar({ profile }: { profile: TopbarProfile }) {
             <div className="text-xs font-medium text-slate-900">{profile.full_name}</div>
             <div className="text-xs text-slate-500">{profile.role}</div>
           </div>
+          <Link href="/account" className="btn-secondary">
+            Account
+          </Link>
           <div className="inline-flex w-fit rounded-lg border border-slate-200 bg-slate-50 p-1" aria-label="Language">
             <button
               type="button"

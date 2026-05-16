@@ -52,6 +52,135 @@ insert into team_members (full_name, phone, email, role, active)
 select operator_name,phone,operator_email,case when is_admin = '1' then 'admin' else 'operator' end::team_role,active = '1' from src_operators
 on conflict do nothing;
 
+-- Local development login users only. These credentials are documented in docs/LOCAL_DEV.md.
+-- Do not copy these rows or passwords into production.
+insert into auth.users (
+  instance_id,
+  id,
+  aud,
+  role,
+  email,
+  encrypted_password,
+  email_confirmed_at,
+  created_at,
+  updated_at,
+  raw_app_meta_data,
+  raw_user_meta_data,
+  is_super_admin,
+  confirmation_token,
+  email_change,
+  email_change_token_new,
+  recovery_token
+)
+values
+  (
+    '00000000-0000-0000-0000-000000000000',
+    '00000000-0000-0000-0000-000000000101',
+    'authenticated',
+    'authenticated',
+    'admin@snacky.local',
+    crypt('admin123', gen_salt('bf')),
+    now(),
+    now(),
+    now(),
+    '{"provider":"email","providers":["email"]}'::jsonb,
+    '{"full_name":"Local Admin"}'::jsonb,
+    false,
+    '',
+    '',
+    '',
+    ''
+  ),
+  (
+    '00000000-0000-0000-0000-000000000000',
+    '00000000-0000-0000-0000-000000000102',
+    'authenticated',
+    'authenticated',
+    'operator@snacky.local',
+    crypt('operator123', gen_salt('bf')),
+    now(),
+    now(),
+    now(),
+    '{"provider":"email","providers":["email"]}'::jsonb,
+    '{"full_name":"Local Operator"}'::jsonb,
+    false,
+    '',
+    '',
+    '',
+    ''
+  )
+on conflict (id) do update set
+  email = excluded.email,
+  encrypted_password = excluded.encrypted_password,
+  email_confirmed_at = excluded.email_confirmed_at,
+  raw_app_meta_data = excluded.raw_app_meta_data,
+  raw_user_meta_data = excluded.raw_user_meta_data,
+  updated_at = now();
+
+insert into auth.identities (
+  id,
+  provider_id,
+  user_id,
+  identity_data,
+  provider,
+  last_sign_in_at,
+  created_at,
+  updated_at
+)
+values
+  (
+    '00000000-0000-0000-0000-000000000301',
+    '00000000-0000-0000-0000-000000000101',
+    '00000000-0000-0000-0000-000000000101',
+    '{"sub":"00000000-0000-0000-0000-000000000101","email":"admin@snacky.local","email_verified":true,"phone_verified":false}'::jsonb,
+    'email',
+    now(),
+    now(),
+    now()
+  ),
+  (
+    '00000000-0000-0000-0000-000000000302',
+    '00000000-0000-0000-0000-000000000102',
+    '00000000-0000-0000-0000-000000000102',
+    '{"sub":"00000000-0000-0000-0000-000000000102","email":"operator@snacky.local","email_verified":true,"phone_verified":false}'::jsonb,
+    'email',
+    now(),
+    now(),
+    now()
+  )
+on conflict (provider_id, provider) do update set
+  user_id = excluded.user_id,
+  identity_data = excluded.identity_data,
+  updated_at = now();
+
+insert into team_members (id, full_name, phone, email, role, active, auth_user_id, active_status, must_change_password)
+values
+  ('00000000-0000-0000-0000-000000000401', 'Local Admin', null, 'admin@snacky.local', 'admin', true, '00000000-0000-0000-0000-000000000101', 'active', false),
+  ('00000000-0000-0000-0000-000000000402', 'Local Operator', null, 'operator@snacky.local', 'operator', true, '00000000-0000-0000-0000-000000000102', 'active', false)
+on conflict (id) do update set
+  full_name = excluded.full_name,
+  phone = excluded.phone,
+  email = excluded.email,
+  role = excluded.role,
+  active = excluded.active,
+  auth_user_id = excluded.auth_user_id,
+  active_status = excluded.active_status,
+  must_change_password = excluded.must_change_password;
+
+insert into profiles (id, full_name, email, phone, role, active_status, team_member_id, must_change_password)
+values
+  ('00000000-0000-0000-0000-000000000101', 'Local Admin', 'admin@snacky.local', null, 'admin', 'active', '00000000-0000-0000-0000-000000000401', false),
+  ('00000000-0000-0000-0000-000000000102', 'Local Operator', 'operator@snacky.local', null, 'operator', 'active', '00000000-0000-0000-0000-000000000402', false)
+on conflict (id) do update set
+  full_name = excluded.full_name,
+  email = excluded.email,
+  phone = excluded.phone,
+  role = excluded.role,
+  active_status = excluded.active_status,
+  team_member_id = excluded.team_member_id,
+  must_change_password = excluded.must_change_password,
+  updated_at = now();
+
 with src_products (product_id, sku, name, description, image, selling_price, purchase_price, min_stock, importance, product_group, barcode, units_per_box, sku_generated) as (
 values
   ('0087', '0087', 'mr.bite strike', '', 'Items_Images/mr', '4.0', '1.87', '5.0', 'TO_CONFIRM', 'TO_CONFIRM', 'TO_CONFIRM', 'TO_CONFIRM', 'no'),

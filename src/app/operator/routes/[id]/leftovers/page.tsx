@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
-import { PageHeader, SecondaryButton, SectionCard, PrimaryButton } from "@/components/ui";
+import { ErrorState, PageHeader, SecondaryButton, SectionCard } from "@/components/ui";
 import { recordLeftovers, completeRoute } from "@/lib/operator-actions";
 
 interface LeftoverItem {
@@ -12,9 +12,12 @@ interface LeftoverItem {
   quantity: number;
 }
 
-export default function LeftoversPage({ params }: { params: { id: string } }) {
+export default function LeftoversPage() {
   const router = useRouter();
-  const routeId = params.id;
+  const params = useParams<{ id?: string | string[] }>();
+  const rawRouteId = params?.id;
+  const routeId = Array.isArray(rawRouteId) ? rawRouteId[0] ?? "" : rawRouteId ?? "";
+  const routeHref = routeId ? `/operator/routes/${routeId}` : "/operator";
 
   const [items, setItems] = useState<LeftoverItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -24,6 +27,12 @@ export default function LeftoversPage({ params }: { params: { id: string } }) {
 
   useEffect(() => {
     const fetchPickedItems = async () => {
+      if (!routeId) {
+        setError("Route id is missing. Go back to your operator routes and open the route again.");
+        setLoading(false);
+        return;
+      }
+
       try {
         const response = await fetch(`/api/operator/routes/${routeId}/picked-items`);
         if (!response.ok) throw new Error("Failed to fetch picked items");
@@ -78,6 +87,18 @@ export default function LeftoversPage({ params }: { params: { id: string } }) {
     );
   }
 
+  if (!routeId) {
+    return (
+      <AppShell>
+        <ErrorState
+          title="Route id missing"
+          body="This leftovers page was opened without a valid route id."
+          action={<SecondaryButton href="/operator">Back to operator home</SecondaryButton>}
+        />
+      </AppShell>
+    );
+  }
+
   const totalLeftovers = Object.values(leftoverQtys).reduce((a, b) => a + b, 0);
 
   return (
@@ -86,7 +107,7 @@ export default function LeftoversPage({ params }: { params: { id: string } }) {
         <PageHeader
           title="Return Leftovers"
           subtitle="Enter quantities of each product you're returning to storage."
-          action={<SecondaryButton href={`/operator/routes/${routeId}`}>Back</SecondaryButton>}
+          action={<SecondaryButton href={routeHref}>Back</SecondaryButton>}
         />
 
         {error && (
@@ -157,7 +178,7 @@ export default function LeftoversPage({ params }: { params: { id: string } }) {
 
             <div className="flex gap-3">
               <SecondaryButton
-                href={`/operator/routes/${routeId}`}
+                href={routeHref}
                 type="button"
               >
                 Cancel
