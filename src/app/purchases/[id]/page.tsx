@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { cancelPurchase, receivePurchase } from "@/lib/purchase-actions";
 import { DataTable, EmptyState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
+import { getCurrentProfile } from "@/lib/auth";
+import { isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -11,6 +13,8 @@ export const dynamic = "force-dynamic";
 export default async function PurchaseDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; receiptUpload?: string }> }) {
   const { id } = await params;
   const { error = "", receiptUpload = "" } = await searchParams;
+  const profile = await getCurrentProfile();
+  const canManagePurchase = isOwnerAdminRole(profile?.role) || isSupervisorRole(profile?.role) || profile?.role === "warehouse";
   const supabase = getSupabaseServerClient();
   if (!supabase) notFound();
 
@@ -78,14 +82,14 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
             ) : null}
           </div>
           <div className="mt-4 space-y-2">
-            {isDraft ? <Link href={`/purchases/${id}/edit`} className="btn-secondary w-full">Edit purchase</Link> : null}
-            {isDraft ? (
+            {canManagePurchase && isDraft ? <Link href={`/purchases/${id}/edit`} className="btn-secondary w-full">Edit purchase</Link> : null}
+            {canManagePurchase && isDraft ? (
               <form action={receivePurchase}>
                 <input type="hidden" name="id" value={id} />
                 <button className="btn-primary w-full">Receive into storage</button>
               </form>
             ) : null}
-            {isDraft ? (
+            {canManagePurchase && isDraft ? (
               <form action={cancelPurchase}>
                 <input type="hidden" name="id" value={id} />
                 <button className="btn-secondary w-full">Cancel purchase</button>

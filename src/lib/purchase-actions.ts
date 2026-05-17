@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
 import { AppRole, isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
+import { createPurchaseFinancialTransaction } from "@/lib/finance-actions";
 import { resolvePurchaseReceiptUrl } from "@/lib/purchase-receipts";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -244,7 +245,7 @@ export async function updatePurchase(fd: FormData) {
 
 async function receivePurchaseById(id: string) {
   const { profile, supabase } = await requirePurchaseAccess();
-  const { data: purchase, error: purchaseError } = await supabase.from("purchase_orders").select("id, status, supplier_id").eq("id", id).single();
+  const { data: purchase, error: purchaseError } = await supabase.from("purchase_orders").select("id, status, supplier_id, receipt_number, total_amount, manual_total_lyd, calculated_total_lyd").eq("id", id).single();
   if (purchaseError || !purchase) throw new Error("Purchase not found.");
   if (purchase.status === "received") return;
   if (purchase.status === "cancelled") throw new Error("Cancelled purchases cannot be received.");
@@ -315,6 +316,13 @@ async function receivePurchaseById(id: string) {
     .eq("id", id)
     .neq("status", "received");
   if (updateError) throw updateError;
+
+  await createPurchaseFinancialTransaction(
+    supabase,
+    profile,
+    { ...purchase, received_date: new Date().toISOString().slice(0, 10) },
+    Number(purchase.manual_total_lyd ?? purchase.total_amount ?? purchase.calculated_total_lyd ?? 0),
+  );
 
   await logActivity({
     profile,

@@ -1,6 +1,9 @@
+import { redirect } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { PurchaseForm } from "@/components/PurchaseForm";
 import { FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
+import { getCurrentProfile } from "@/lib/auth";
+import { isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
 import { createPurchase } from "@/lib/purchase-actions";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -8,6 +11,9 @@ export const dynamic = "force-dynamic";
 
 export default async function NewPurchasePage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const { error = "" } = await searchParams;
+  const profile = await getCurrentProfile();
+  if (!isOwnerAdminRole(profile?.role) && !isSupervisorRole(profile?.role) && profile?.role !== "warehouse") redirect("/unauthorized");
+
   const supabase = getSupabaseServerClient();
   const [{ data: suppliers }, { data: products }] = supabase
     ? await Promise.all([

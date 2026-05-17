@@ -46,7 +46,10 @@ export function canAccessOperatorRoute(user: AuthUserContext | null | undefined,
 }
 
 export function getDefaultPathForRole(role: AppRole | null | undefined) {
-  return isOperatorRole(role) ? "/operator" : "/dashboard";
+  if (isOperatorRole(role)) return "/operator/routes";
+  if (role === "warehouse") return "/inventory";
+  if (role === "finance") return "/finance";
+  return "/dashboard";
 }
 
 export function parseAppRole(role: string | null | undefined): AppRole | null {
@@ -67,8 +70,8 @@ const supervisorAllowedPrefixes = [
   "/activity",
 ];
 const operatorAllowedPrefixes = ["/operator"];
-const warehouseAllowedPrefixes = ["/operator", "/inventory", "/products", "/purchases"];
-const financeAllowedPrefixes = ["/sales", "/cash-collections", "/machines-dashboard"];
+const warehouseAllowedPrefixes = ["/warehouse", "/operator", "/inventory", "/purchases"];
+const financeAllowedPrefixes = ["/finance", "/cash-collections", "/purchases"];
 const viewerAllowedPrefixes = ["/dashboard"];
 
 function matchesPrefix(pathname: string, prefixes: string[]) {

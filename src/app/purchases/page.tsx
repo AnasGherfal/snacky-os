@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
 import { DataTable, EmptyState, PageHeader, PrimaryButton, StatusBadge } from "@/components/ui";
+import { getCurrentProfile } from "@/lib/auth";
+import { isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -8,6 +10,8 @@ export const dynamic = "force-dynamic";
 
 export default async function PurchasesPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const { error = "" } = await searchParams;
+  const profile = await getCurrentProfile();
+  const canCreatePurchase = isOwnerAdminRole(profile?.role) || isSupervisorRole(profile?.role) || profile?.role === "warehouse";
   const supabase = getSupabaseServerClient();
   const { data: purchases } = supabase
     ? await supabase
@@ -19,7 +23,7 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
 
   return (
     <AppShell>
-      <PageHeader title="Purchases" subtitle="Receive supplier stock into storage through the inventory ledger." action={<PrimaryButton href="/purchases/new">New purchase</PrimaryButton>} />
+      <PageHeader title="Purchases" subtitle="Receive supplier stock into storage through the inventory ledger." action={canCreatePurchase ? <PrimaryButton href="/purchases/new">New purchase</PrimaryButton> : null} />
       {error ? <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{error}</div> : null}
       {!purchases?.length ? (
         <EmptyState title="No purchases yet" body="Create a purchase when stock arrives from a supplier." />
@@ -34,7 +38,7 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
               <td>{String(purchase.payment_method ?? "-").replaceAll("_", " ")}</td>
               <td><StatusBadge status={purchase.status} /></td>
               <td>{purchase.created_by_member?.full_name ?? "-"}</td>
-              <td><div className="flex flex-wrap gap-2"><Link href={`/purchases/${purchase.id}`} className="btn-secondary">View</Link>{purchase.status === "draft" ? <Link href={`/purchases/${purchase.id}/edit`} className="btn-secondary">Edit</Link> : null}</div></td>
+              <td><div className="flex flex-wrap gap-2"><Link href={`/purchases/${purchase.id}`} className="btn-secondary">View</Link>{canCreatePurchase && purchase.status === "draft" ? <Link href={`/purchases/${purchase.id}/edit`} className="btn-secondary">Edit</Link> : null}</div></td>
             </tr>
           ))}
         </DataTable>

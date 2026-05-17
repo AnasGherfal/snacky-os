@@ -21,12 +21,23 @@ function formatEntity(type: string | null | undefined, name: string | null | und
 
 export default async function InventoryPage() {
   const profile = await getCurrentProfile();
-  if (!profile || !canAccessPath({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/inventory")) {
+  const userContext = profile
+    ? { id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }
+    : null;
+
+  if (!profile || !canAccessPath(userContext, "/inventory")) {
     redirect("/unauthorized");
   }
 
   const supabase = getSupabaseServerClient();
-  const canSeeCost = canViewFinancials({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status });
+  const canSeeCost = canViewFinancials(userContext);
+  const inventoryActions = [
+    { label: "Storage", href: "/inventory" },
+    { label: "Movements", href: "/inventory/movements" },
+    { label: "Purchases", href: "/purchases" },
+    ...(canAccessPath(userContext, "/suppliers") ? [{ label: "Suppliers", href: "/suppliers" }] : []),
+    ...(canAccessPath(userContext, "/products") ? [{ label: "Product Management", href: "/products" }] : []),
+  ];
 
   const [{ data: storageRows }, { data: products }, { data: reservedRows }, { data: movements }] = supabase
     ? await Promise.all([
@@ -90,6 +101,14 @@ export default async function InventoryPage() {
         subtitle="Ledger-calculated storage stock, route reservations, available quantity, and movement history."
         action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/inventory/movements">Movement Log</SecondaryButton><PrimaryButton href="/inventory/movements/new">New Stock Movement</PrimaryButton></div>}
       />
+
+      <div className="mb-6 rounded-lg border border-slate-200 bg-white p-3">
+        <div className="flex flex-wrap gap-2">
+          {inventoryActions.map((item) => (
+            <SecondaryButton key={item.href} href={item.href}>{item.label}</SecondaryButton>
+          ))}
+        </div>
+      </div>
 
       {!inventoryRows.length ? (
         <EmptyState title="No storage inventory yet" body="Create inventory movements into storage to populate calculated balances." />

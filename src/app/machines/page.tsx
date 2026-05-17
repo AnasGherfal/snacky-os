@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
-import { DataTable, EmptyState, PageHeader, PrimaryButton, SearchInput, StatusBadge } from "@/components/ui";
+import { DataTable, EmptyState, PageHeader, PrimaryButton, SearchInput, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export default async function MachinesPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
@@ -10,6 +10,14 @@ export default async function MachinesPage({ searchParams }: { searchParams: Pro
   const { data } = query ? (q ? await query.ilike("name", `%${q}%`) : await query) : { data: [] };
 
   return <AppShell><PageHeader title="Machines" subtitle="Machine master records, targets, and installation context." action={<PrimaryButton href="/machines/new">Add machine</PrimaryButton>} />
+    <div className="mb-6 rounded-lg border border-slate-200 bg-white p-3">
+      <div className="flex flex-wrap gap-2">
+        <SecondaryButton href="/machines">Machines</SecondaryButton>
+        <SecondaryButton href="/machine-slots">Planograms</SecondaryButton>
+        <SecondaryButton href="/issues">Issues</SecondaryButton>
+        <SecondaryButton href="/issues?type=maintenance">Maintenance</SecondaryButton>
+      </div>
+    </div>
     <form className="mb-4"><SearchInput placeholder="Search by machine name..." /></form>
     {!data?.length ? <EmptyState title="No machines yet" body="Create your first machine to start refill and route planning." /> :
       <DataTable headers={["Code","Name","Type","Location","Status","Actions"]}>{data.map((m:any)=><tr key={m.id}><td>{m.machine_code}</td><td className="font-medium">{m.name}</td><td>{m.machine_type}</td><td>{m.locations?.name ?? "-"}</td><td><StatusBadge status={m.status} /></td><td><Link href={`/machines/${m.id}/edit`} className="btn-secondary">Edit</Link></td></tr>)}</DataTable>}

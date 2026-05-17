@@ -2,6 +2,8 @@ import { notFound, redirect } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { PurchaseForm } from "@/components/PurchaseForm";
 import { FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
+import { getCurrentProfile } from "@/lib/auth";
+import { isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
 import { updatePurchase } from "@/lib/purchase-actions";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -16,6 +18,9 @@ export default async function EditPurchasePage({
 }) {
   const { id } = await params;
   const { error = "" } = await searchParams;
+  const profile = await getCurrentProfile();
+  if (!isOwnerAdminRole(profile?.role) && !isSupervisorRole(profile?.role) && profile?.role !== "warehouse") redirect("/unauthorized");
+
   const supabase = getSupabaseServerClient();
   if (!supabase) notFound();
 
