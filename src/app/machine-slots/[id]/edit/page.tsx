@@ -2,6 +2,8 @@ import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { AppShell } from "@/components/AppShell";
 import { FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
+import { logActivity } from "@/lib/activity-log";
+import { getCurrentProfile } from "@/lib/auth";
 import { parseMachineSlotForm, validateMachineSlot } from "@/lib/machine-slots";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -9,17 +11,31 @@ async function updateSlot(fd: FormData) {
   "use server";
   const supabase = getSupabaseServerClient();
   if (!supabase) return;
+  const profile = await getCurrentProfile();
 
   const id = String(fd.get("id") || "");
+  const { data: beforeSlot } = await supabase.from("machine_slots").select("*").eq("id", id).maybeSingle();
   const payload = parseMachineSlotForm(fd);
   const error = validateMachineSlot(payload);
   if (error) redirect(`/machine-slots/${id}/edit?error=${encodeURIComponent(error)}`);
 
-  const { error: updateError } = await supabase.from("machine_slots").update(payload).eq("id", id);
+  const { data: afterSlot, error: updateError } = await supabase.from("machine_slots").update(payload).eq("id", id).select("*").maybeSingle();
   if (updateError) {
     console.error("[machine-slots:update] Failed to update slot", { id, payload, error: updateError });
     redirect(`/machine-slots/${id}/edit?error=${encodeURIComponent(updateError.message)}`);
   }
+
+  await logActivity({
+    profile,
+    action: "update",
+    entityType: "machine_planogram",
+    entityId: id,
+    entityLabel: `Slot ${afterSlot?.slot_code ?? payload.slot_code}`,
+    beforeData: beforeSlot,
+    afterData: afterSlot ?? payload,
+    metadata: { machine_id: payload.machine_id, product_id: payload.product_id },
+    summary: `Updated machine planogram slot ${afterSlot?.slot_code ?? payload.slot_code}`,
+  });
 
   revalidatePath("/machine-slots");
   redirect(`/machine-slots?machine_id=${payload.machine_id}`);

@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
+import { ClientAppShell as AppShell } from "@/components/ClientAppShell";
+import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { EmptyState, ErrorState, PageHeader, SecondaryButton } from "@/components/ui";
 import { completeStop } from "@/lib/operator-actions";
 
@@ -35,6 +36,7 @@ interface ProductOption {
   name: string;
   category: string | null;
   brand: string | null;
+  imageUrl?: string | null;
   availableQty: number;
 }
 
@@ -568,8 +570,13 @@ function ProductPicker({ products, value, onChange, label = "Existing product" }
             }}
             className={`w-full rounded-md px-3 py-2 text-left text-sm transition ${product.id === value ? "bg-blue-600 text-white" : "hover:bg-slate-100"}`}
           >
-            <span className="block font-medium">{product.name}</span>
-            <span className={product.id === value ? "text-blue-100" : "text-slate-500"}>{product.sku ?? "No SKU"} - Bag {product.availableQty}</span>
+            <span className="flex items-center gap-3">
+              <ProductThumbnail imageUrl={product.imageUrl} name={product.name} />
+              <span className="min-w-0">
+                <span className="block truncate font-medium">{product.name}</span>
+                <span className={product.id === value ? "text-blue-100" : "text-slate-500"}>{product.sku ?? "No SKU"} - Bag {product.availableQty}</span>
+              </span>
+            </span>
           </button>
         ))}
           {!filtered.length ? <p className="px-3 py-2 text-sm text-slate-500">No products found.</p> : null}

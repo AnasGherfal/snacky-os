@@ -331,12 +331,12 @@ values
   ('7221daf3', '7221daf3', 'Milka', '', 'Items_Images/7221daf3.Image.215201.jpg', 'TO_CONFIRM', 'TO_CONFIRM', '0.0', 'TO_CONFIRM', 'TO_CONFIRM', 'TO_CONFIRM', '0.0', 'no'),
   ('c22010ef', 'c22010ef', 'Doritos ketchup jalapeno', '', 'Items_Images/c22010ef.Image.063449.jpg', '5.0', 'TO_CONFIRM', '5.0', 'TO_CONFIRM', 'Doritos', 'TO_CONFIRM', '15.0', 'no')
 )
-insert into products (sku, barcode, name, category, brand, supplier_id, cost_price, selling_price, case_quantity, expiry_sensitive, active)
+insert into products (sku, barcode, name, category, brand, supplier_id, cost_price, selling_price, current_cost_price_lyd, current_selling_price_lyd, cost_price_source, selling_price_source, case_quantity, expiry_sensitive, active)
 select p.sku,nullif(p.barcode,'TO_CONFIRM'),p.name,lower(coalesce(nullif(p.product_group,''), 'snack')),'TO_CONFIRM',
 case when row_number() over(order by p.sku)::int % 2 = 0 then '00000000-0000-0000-0000-000000000301'::uuid else '00000000-0000-0000-0000-000000000302'::uuid end,
-coalesce(nullif(p.purchase_price,'TO_CONFIRM')::numeric, 0),coalesce(nullif(p.selling_price,'TO_CONFIRM')::numeric, 0),coalesce(nullif(p.units_per_box,'TO_CONFIRM')::numeric::int, 1),true,true
+coalesce(nullif(p.purchase_price,'TO_CONFIRM')::numeric, 0),coalesce(nullif(p.selling_price,'TO_CONFIRM')::numeric, 0),coalesce(nullif(p.purchase_price,'TO_CONFIRM')::numeric, 0),coalesce(nullif(p.selling_price,'TO_CONFIRM')::numeric, 0),'initial_import','initial_import',coalesce(nullif(p.units_per_box,'TO_CONFIRM')::numeric::int, 1),true,true
 from src_products p
-on conflict (sku) do update set name = excluded.name,selling_price = excluded.selling_price,cost_price = excluded.cost_price,case_quantity = excluded.case_quantity,category = excluded.category;
+on conflict (sku) do update set name = excluded.name,selling_price = excluded.selling_price,cost_price = excluded.cost_price,current_selling_price_lyd = case when products.selling_price_source = 'initial_import' then excluded.current_selling_price_lyd else products.current_selling_price_lyd end,current_cost_price_lyd = case when products.cost_price_source = 'initial_import' then excluded.current_cost_price_lyd else products.current_cost_price_lyd end,case_quantity = excluded.case_quantity,category = excluded.category;
 
 with src_vms_mappings (vms_product_number, vms_product_name, appsheet_item_id, appsheet_item_name, clean_name, name_key) as (
 values

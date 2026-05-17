@@ -14,6 +14,16 @@ const statusOptions = [
   { value: "ignored", label: "Ignored", helper: "Product should not affect operations." },
 ];
 
+function formatDate(value: string | null | undefined) {
+  if (!value) return "Not seen yet";
+  return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+}
+
+function formatMoney(value: number | string | null | undefined, decimals = 2) {
+  if (value === null || value === undefined || value === "") return "-";
+  return Number(value).toFixed(decimals);
+}
+
 export default async function EditVmsProductMappingPage({
   params,
   searchParams,
@@ -39,7 +49,7 @@ export default async function EditVmsProductMappingPage({
   const [{ data: mapping, error: mappingError }, { data: products }] = await Promise.all([
     supabase
       .from("vms_product_mappings")
-      .select("id, vms_product_id, vms_product_name, product_id, match_status")
+      .select("id, vms_product_id, vms_product_name, product_id, match_status, vms_selling_price_lyd, vms_cost_price_lyd, latest_vms_machine_id, latest_machine_name, last_seen_at")
       .eq("id", id)
       .maybeSingle(),
     supabase.from("products").select("id, name, sku").eq("active", true).order("name"),
@@ -73,6 +83,18 @@ export default async function EditVmsProductMappingPage({
               </FormField>
               <FormField label="VMS Product Name">
                 <input value={mapping.vms_product_name} readOnly className="field-input bg-slate-50" />
+              </FormField>
+              <FormField label="VMS Selling Price LYD">
+                <input value={formatMoney(mapping.vms_selling_price_lyd)} readOnly className="field-input bg-slate-50" />
+              </FormField>
+              <FormField label="VMS Cost Price LYD" hint="Recorded from VMS only. It does not overwrite latest purchase cost automatically.">
+                <input value={formatMoney(mapping.vms_cost_price_lyd, 4)} readOnly className="field-input bg-slate-50" />
+              </FormField>
+              <FormField label="Latest Machine">
+                <input value={mapping.latest_machine_name || mapping.latest_vms_machine_id || "-"} readOnly className="field-input bg-slate-50" />
+              </FormField>
+              <FormField label="Last Seen">
+                <input value={formatDate(mapping.last_seen_at)} readOnly className="field-input bg-slate-50" />
               </FormField>
             </div>
           </FormSection>

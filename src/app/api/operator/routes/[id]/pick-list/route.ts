@@ -115,7 +115,7 @@ export async function GET(
           .eq("location_type", "storage")
           .in("product_id", productIds)
       : Promise.resolve({ data: [], error: null }),
-      supabase.from("products").select("id, sku, barcode, name, category, brand").eq("active", true).order("name"),
+      supabase.from("products").select("id, sku, barcode, name, category, brand, image_url").eq("active", true).order("name"),
     ]);
 
     if (storageResult.error) throw storageResult.error;
@@ -160,6 +160,7 @@ export async function GET(
       name: product.name,
       category: product.category,
       brand: product.brand,
+      imageUrl: product.image_url,
       availableStorageQty: optionStorageByProduct.get(String(product.id)) ?? 0,
     }));
 

@@ -33,7 +33,7 @@ export default async function NewRoutePage() {
           .from("route_stock_lines")
           .select("product_id, planned_qty, picked_qty, routes!inner(status)")
           .in("routes.status", ["draft", "assigned"]),
-        supabase.from("products").select("id, sku, barcode, name, category, brand, active").eq("active", true).order("name"),
+        supabase.from("products").select("id, sku, barcode, name, category, brand, image_url, active").eq("active", true).order("name"),
         supabase.from("inventory_movements").select("product_id, created_at").order("created_at", { ascending: false }).limit(80),
       ])
     : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }];
@@ -65,6 +65,7 @@ export default async function NewRoutePage() {
       barcode: product.barcode,
       category: product.category,
       brand: product.brand,
+      imageUrl: product.image_url,
       availableQty: availableByProduct.get(product.id) ?? 0,
       storageQty: storageByProduct.get(product.id)?.quantity_on_hand ?? 0,
     }));

@@ -18,7 +18,7 @@ export default async function NewStockMovementPage({ searchParams }: { searchPar
   const supabase = getSupabaseServerClient();
   const [{ data: products }, { data: storageRows }, { data: storages }, { data: operators }, { data: routes }, { data: recentMovements }] = supabase
     ? await Promise.all([
-        supabase.from("products").select("id, sku, barcode, name, category, brand, selling_price").eq("active", true).order("name"),
+        supabase.from("products").select("id, sku, barcode, name, category, brand, image_url, selling_price, current_selling_price_lyd").eq("active", true).order("name"),
         supabase.from("current_inventory_by_location").select("product_id, quantity_on_hand").eq("location_type", "storage"),
         supabase.from("storage_locations").select("id, name").eq("active", true).order("name"),
         supabase.from("team_members").select("id, full_name").eq("role", "operator").eq("active", true).order("full_name"),
@@ -39,7 +39,8 @@ export default async function NewStockMovementPage({ searchParams }: { searchPar
     name: product.name,
     category: product.category,
     brand: product.brand,
-    sellingPrice: Number(product.selling_price ?? 0),
+    imageUrl: product.image_url,
+    sellingPrice: Number(product.current_selling_price_lyd ?? product.selling_price ?? 0),
     storageQty: storageByProduct.get(String(product.id)) ?? 0,
   }));
   const operatorById = Object.fromEntries((operators ?? []).map((operator: any) => [operator.id, operator.full_name]));

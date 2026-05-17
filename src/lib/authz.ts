@@ -63,9 +63,11 @@ const supervisorAllowedPrefixes = [
   "/machines",
   "/machine-slots",
   "/inventory",
+  "/purchases",
+  "/activity",
 ];
 const operatorAllowedPrefixes = ["/operator"];
-const warehouseAllowedPrefixes = ["/operator", "/inventory", "/products"];
+const warehouseAllowedPrefixes = ["/operator", "/inventory", "/products", "/purchases"];
 const financeAllowedPrefixes = ["/sales", "/cash-collections", "/machines-dashboard"];
 const viewerAllowedPrefixes = ["/dashboard"];
 

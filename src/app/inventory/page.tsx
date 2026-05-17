@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
-import { DataTable, EmptyState, PageHeader, PrimaryButton, StatusBadge } from "@/components/ui";
+import { DataTable, EmptyState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canViewFinancials } from "@/lib/authz";
 import { lyd } from "@/lib/format";
@@ -35,7 +35,7 @@ export default async function InventoryPage() {
           .select("product_id, product_name, location_type, quantity_on_hand")
           .eq("location_type", "storage")
           .order("product_name"),
-        supabase.from("products").select("id, sku, name, category, cost_price").order("name"),
+        supabase.from("products").select("id, sku, name, category, cost_price, current_cost_price_lyd").order("name"),
         supabase
           .from("route_stock_lines")
           .select("product_id, planned_qty, picked_qty, routes!inner(status)")
@@ -71,7 +71,7 @@ export default async function InventoryPage() {
         productName: product?.name ?? (storageRows ?? []).find((row: any) => row.product_id === productId)?.product_name ?? "Unknown product",
         sku: product?.sku ?? "-",
         category: product?.category ?? "-",
-        cost: Number(product?.cost_price ?? 0),
+        cost: Number(product?.current_cost_price_lyd ?? product?.cost_price ?? 0),
         currentQty,
         reservedQty,
         availableQty,
@@ -88,7 +88,7 @@ export default async function InventoryPage() {
       <PageHeader
         title="Storage Inventory"
         subtitle="Ledger-calculated storage stock, route reservations, available quantity, and movement history."
-        action={<PrimaryButton href="/inventory/movements/new">New Stock Movement</PrimaryButton>}
+        action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/inventory/movements">Movement Log</SecondaryButton><PrimaryButton href="/inventory/movements/new">New Stock Movement</PrimaryButton></div>}
       />
 
       {!inventoryRows.length ? (

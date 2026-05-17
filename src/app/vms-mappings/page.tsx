@@ -20,8 +20,9 @@ function formatDate(value: string | null | undefined) {
   return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
-function snapshotKey(productId: string | null | undefined, productName: string | null | undefined) {
-  return `${productId ?? ""}::${productName ?? ""}`.toLowerCase();
+function formatMoney(value: number | string | null | undefined, decimals = 2) {
+  if (value === null || value === undefined || value === "") return "-";
+  return Number(value).toFixed(decimals);
 }
 
 export default async function VmsProductMappingPage({
@@ -37,25 +38,12 @@ export default async function VmsProductMappingPage({
   const search = q.trim().toLowerCase();
 
   const supabase = getSupabaseServerClient();
-  const [{ data: mappings }, { data: snapshots }] = supabase
-    ? await Promise.all([
-        supabase
-          .from("vms_product_mappings")
-          .select("id, vms_product_id, vms_product_name, product_id, match_status, updated_at, product:products(id, name, sku)")
-          .order("updated_at", { ascending: false }),
-        supabase
-          .from("vms_stock_snapshots")
-          .select("vms_product_id, vms_product_name, captured_at")
-          .order("captured_at", { ascending: false })
-          .limit(1000),
-      ])
-    : [{ data: [] }, { data: [] }];
-
-  const lastSeenByMapping = new Map<string, string>();
-  (snapshots ?? []).forEach((snapshot: any) => {
-    const key = snapshotKey(snapshot.vms_product_id, snapshot.vms_product_name);
-    if (!lastSeenByMapping.has(key)) lastSeenByMapping.set(key, snapshot.captured_at);
-  });
+  const { data: mappings } = supabase
+    ? await supabase
+        .from("vms_product_mappings")
+        .select("id, vms_product_id, vms_product_name, product_id, match_status, vms_selling_price_lyd, vms_cost_price_lyd, latest_machine_name, last_seen_at, updated_at, product:products(id, name, sku)")
+        .order("updated_at", { ascending: false })
+    : { data: [] };
 
   const rows = (mappings ?? [])
     .filter((mapping: any) => activeStatus === "all" || mapping.match_status === activeStatus)
@@ -130,24 +118,24 @@ export default async function VmsProductMappingPage({
       ) : !rows.length ? (
         <EmptyState title="No mappings match these filters" body="Adjust the search or status filter to view more VMS products." />
       ) : (
-        <DataTable headers={["VMS Product ID", "VMS Product Name", "Snacky Product", "Match Status", "Last Seen", "Actions"]}>
-          {rows.map((mapping: any) => {
-            const lastSeen = lastSeenByMapping.get(snapshotKey(mapping.vms_product_id, mapping.vms_product_name));
-            return (
-              <tr key={mapping.id}>
-                <td>{mapping.vms_product_id ?? "-"}</td>
-                <td className="font-medium text-slate-900">{mapping.vms_product_name}</td>
-                <td>{mapping.product?.name ?? <span className="text-slate-400">Unmapped</span>}</td>
-                <td><StatusBadge status={mapping.match_status} /></td>
-                <td>{formatDate(lastSeen)}</td>
-                <td>
-                  <Link className="link-secondary" href={`/vms-mappings/${mapping.id}/edit`}>
-                    Edit
-                  </Link>
-                </td>
-              </tr>
-            );
-          })}
+        <DataTable headers={["VMS Product ID", "VMS Product Name", "Snacky Product", "VMS Selling", "VMS Cost", "Latest Machine", "Match Status", "Last Seen", "Actions"]}>
+          {rows.map((mapping: any) => (
+            <tr key={mapping.id}>
+              <td>{mapping.vms_product_id ?? "-"}</td>
+              <td className="font-medium text-slate-900">{mapping.vms_product_name}</td>
+              <td>{mapping.product?.name ?? <span className="text-slate-400">Unmapped</span>}</td>
+              <td>{formatMoney(mapping.vms_selling_price_lyd)}</td>
+              <td>{formatMoney(mapping.vms_cost_price_lyd, 4)}</td>
+              <td>{mapping.latest_machine_name ?? "-"}</td>
+              <td><StatusBadge status={mapping.match_status} /></td>
+              <td>{formatDate(mapping.last_seen_at)}</td>
+              <td>
+                <Link className="link-secondary" href={`/vms-mappings/${mapping.id}/edit`}>
+                  Edit
+                </Link>
+              </td>
+            </tr>
+          ))}
         </DataTable>
       )}
     </AppShell>

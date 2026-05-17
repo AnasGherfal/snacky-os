@@ -9,8 +9,8 @@ export default async function ProductsDashboardPage() {
   const supabase = getSupabaseServerClient();
   const [salesResult, productsResult, inventoryResult, stockResult] = supabase
     ? await Promise.all([
-        supabase.from("vms_sales_snapshots").select("id, product_id, sold_qty, sales_amount, period_end, product:products(id, sku, name, cost_price, selling_price)"),
-        supabase.from("products").select("id, sku, name, cost_price, selling_price, active").order("name"),
+        supabase.from("vms_sales_snapshots").select("id, product_id, sold_qty, sales_amount, period_end, product:products(id, sku, name, cost_price, current_cost_price_lyd, selling_price, current_selling_price_lyd)"),
+        supabase.from("products").select("id, sku, name, cost_price, current_cost_price_lyd, selling_price, current_selling_price_lyd, active").order("name"),
         supabase.from("current_inventory_by_location").select("product_id, product_name, location_type, quantity_on_hand"),
         supabase.from("vms_stock_snapshots").select("product_id, current_qty"),
       ])
@@ -31,7 +31,7 @@ export default async function ProductsDashboardPage() {
     const productSales = sales.filter((row) => row.product_id === product.id);
     const units = productSales.reduce((sum, row) => sum + soldQty(row), 0);
     const revenue = productSales.reduce((sum, row) => sum + salesAmount(row), 0);
-    const cost = Number(product.cost_price ?? 0);
+    const cost = Number(product.current_cost_price_lyd ?? product.cost_price ?? 0);
     const hasCost = cost > 0;
     const grossProfit = hasCost ? revenue - units * cost : null;
     const margin = hasCost && revenue > 0 ? (Number(grossProfit) / revenue) * 100 : null;

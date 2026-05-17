@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@supabase/supabase-js";
+import { logActivity } from "@/lib/activity-log";
 import { accessTokenCookie, getCurrentProfile, refreshTokenCookie } from "@/lib/auth";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -52,6 +53,17 @@ export async function changeOwnPassword(formData: FormData) {
 }
 
 export async function logoutFromAccount() {
+  const profile = await getCurrentProfile();
+  if (profile) {
+    await logActivity({
+      profile,
+      action: "logout",
+      entityType: "team_member",
+      entityId: profile.team_member_id,
+      entityLabel: profile.full_name,
+      summary: `${profile.full_name} logged out`,
+    });
+  }
   const cookieStore = await cookies();
   cookieStore.delete(accessTokenCookie);
   cookieStore.delete(refreshTokenCookie);

@@ -2,11 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
-const movementTypes = ["storage_to_operator_bag", "operator_bag_to_storage", "storage_adjustment", "damaged", "expired"] as const;
+const movementTypes = ["storage_to_operator_bag", "operator_bag_to_storage", "storage_adjustment", "damaged", "expired", "manual_correction", "product_substitution"] as const;
 type MovementType = (typeof movementTypes)[number];
 type EntityType = "storage" | "operator_bag" | "waste" | "adjustment";
 
@@ -30,18 +31,33 @@ export async function createQuickProduct(formData: FormData) {
   const name = String(formData.get("name") || "").trim();
   if (!sku || !name) throw new Error("SKU and product name are required.");
 
-  const { error } = await supabase.from("products").insert({
+  const { data, error } = await supabase.from("products").insert({
     sku,
     barcode: String(formData.get("barcode") || "").trim() || null,
     name,
     category: String(formData.get("category") || "snack").trim() || "snack",
     brand: String(formData.get("brand") || "").trim() || null,
     selling_price: Number(formData.get("selling_price") || 0),
+    current_selling_price_lyd: Number(formData.get("selling_price") || 0),
+    selling_price_source: Number(formData.get("selling_price") || 0) > 0 ? "manual" : "initial_import",
     cost_price: 0,
+    current_cost_price_lyd: 0,
+    cost_price_source: "initial_import",
     active: true,
-  });
+  }).select("id, sku, name, category, brand, active").single();
 
   if (error) throw error;
+  if (data) {
+    await logActivity({
+      profile,
+      action: "create",
+      entityType: "product",
+      entityId: data.id,
+      entityLabel: data.name,
+      afterData: data,
+      summary: `Quick-created product ${data.name}`,
+    });
+  }
   revalidatePath("/inventory/movements/new");
 }
 
@@ -82,6 +98,7 @@ export async function createStockMovement(formData: FormData) {
     redirect(`/inventory/movements/new?${params.toString()}`);
   }
   if (!isOwnerAdminRole(profile.role) && adminOverride) fail("Only owner/admin can override available storage.");
+  if (movementType === "manual_correction" && !isOwnerAdminRole(profile.role)) fail("Only owner/admin can create manual correction movements.");
 
   const fromLocation = from as { type: EntityType; id: string | null };
   const toLocation = to as { type: EntityType; id: string | null };
@@ -97,6 +114,9 @@ export async function createStockMovement(formData: FormData) {
   }
   if ((movementType === "damaged" || movementType === "expired") && toLocation.type !== "waste") {
     fail("Damaged and expired stock must move to waste.");
+  }
+  if (movementType === "product_substitution" && !relatedRouteId) {
+    fail("Product substitution movements must be linked to a route.");
   }
 
   if (fromLocation.type === "storage" && !adminOverride) {

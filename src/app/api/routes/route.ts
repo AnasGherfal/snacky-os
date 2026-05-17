@@ -1,5 +1,6 @@
 import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
+import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -302,8 +303,32 @@ export async function POST(request: Request) {
 
   console.info("[routes:create] Route verified; returning redirect id", { routeId });
 
+  await logActivity({
+    profile,
+    action: "create_route",
+    entityType: "route",
+    entityId: routeId,
+    entityLabel: `Route ${routeDate}`,
+    afterData: {
+      id: routeId,
+      route_date: routeDate,
+      operator_id: operatorId,
+      status: "assigned",
+      machine_ids: selectedMachineIds,
+      stock_lines: Array.from(stockByProduct.entries()).map(([productId, quantity]) => ({ product_id: productId, quantity })),
+    },
+    metadata: {
+      recommendation_slot_count: recommendationSlotIds.length,
+      manual_stop_item_count: manualStopItems.length,
+      admin_override: adminOverride,
+    },
+    summary: `Created route for ${routeDate} with ${selectedMachineIds.length} stops`,
+  });
+
   revalidatePath("/routes");
   revalidatePath(`/routes/${routeId}`);
 
   return NextResponse.json({ routeId });
 }
+
+// TODO: Add update_route activity logging when Snacky OS gets a route edit/update endpoint.

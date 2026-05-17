@@ -2,6 +2,66 @@
 
 This document contains local-only setup notes for Snacky OS.
 
+## Start Local Supabase
+
+On Windows, start Supabase without optional services that are not needed for the
+current Snacky OS app:
+
+```bash
+npx supabase start -x logflare,imgproxy,edge-runtime,supavisor
+```
+
+Do not use `analytics`, `storage`, or `pooler` in the exclude list. Newer
+Supabase CLI versions expect the container names `logflare`, `storage-api`, and
+`supavisor`. Keep `storage-api` running because product image uploads use
+Supabase Storage.
+
+Analytics is disabled in `supabase/config.toml` because the local Logflare
+container can fail health checks on Windows unless Docker exposes the daemon on
+`tcp://localhost:2375`.
+
+Local Storage is enabled in `supabase/config.toml` with a public
+`product-images` bucket for product photos.
+
+## Docker Desktop Engine Error
+
+If `npx supabase start` fails with an error like:
+
+```text
+open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified
+```
+
+Supabase cannot reach Docker Desktop's Linux engine. Docker Desktop may be open
+while the backend engine is stopped or not installed correctly.
+
+Check from PowerShell:
+
+```bash
+docker context ls
+docker --context desktop-linux version
+wsl -l -v
+```
+
+Expected state:
+
+- `desktop-linux` is the active Docker context.
+- `docker --context desktop-linux version` shows both `Client` and `Server`.
+- `wsl -l -v` shows Docker's WSL distributions or a usable WSL2 distribution.
+
+If `wsl -l -v` says there are no installed distributions, install/repair WSL2
+and restart Docker Desktop:
+
+```bash
+wsl --install
+wsl --set-default-version 2
+```
+
+Then open Docker Desktop, wait until it says the engine is running, and retry:
+
+```bash
+npx supabase start -x logflare,imgproxy,edge-runtime,supavisor
+```
+
 ## Local Supabase Reset
 
 To rebuild the local database from migrations and seed data:

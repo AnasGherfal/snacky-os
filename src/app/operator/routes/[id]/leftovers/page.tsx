@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
+import { ClientAppShell as AppShell } from "@/components/ClientAppShell";
 import { ErrorState, PageHeader, SecondaryButton, SectionCard } from "@/components/ui";
 import { recordLeftovers, completeRoute } from "@/lib/operator-actions";
 

@@ -2,6 +2,8 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
+import { logActivity } from "@/lib/activity-log";
+import { getCurrentProfile } from "@/lib/auth";
 import { parseMachineSlotForm, validateMachineSlot } from "@/lib/machine-slots";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -9,15 +11,29 @@ async function createSlot(fd: FormData) {
   "use server";
   const supabase = getSupabaseServerClient();
   if (!supabase) redirect("/machine-slots/new?error=Supabase%20is%20not%20configured.");
+  const profile = await getCurrentProfile();
 
   const payload = parseMachineSlotForm(fd);
   const error = validateMachineSlot(payload);
   if (error) redirect(`/machine-slots/new?error=${encodeURIComponent(error)}&machine_id=${encodeURIComponent(payload.machine_id)}`);
 
-  const { error: insertError } = await supabase.from("machine_slots").insert(payload);
+  const { data: slot, error: insertError } = await supabase.from("machine_slots").insert(payload).select("id, machine_id, product_id, slot_code, capacity, min_qty, par_qty, active").single();
   if (insertError) {
     console.error("[machine-slots:create] Failed to insert slot", { payload, error: insertError });
     redirect(`/machine-slots/new?error=${encodeURIComponent(insertError.message)}&machine_id=${encodeURIComponent(payload.machine_id)}`);
+  }
+
+  if (slot) {
+    await logActivity({
+      profile,
+      action: "create",
+      entityType: "machine_planogram",
+      entityId: slot.id,
+      entityLabel: `Slot ${slot.slot_code}`,
+      afterData: slot,
+      metadata: { machine_id: slot.machine_id, product_id: slot.product_id },
+      summary: `Created machine planogram slot ${slot.slot_code}`,
+    });
   }
 
   revalidatePath("/machine-slots");

@@ -1,5 +1,6 @@
 "use server";
 
+import { logActivity } from "@/lib/activity-log";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { calculateCashVariance, getCashCollectionStatus } from "@/lib/cash-collections";
 import { getCurrentProfile } from "@/lib/auth";
@@ -41,6 +42,16 @@ export async function startRoute(routeId: string) {
     .in("status", ["draft", "assigned"]);
 
   if (error) throw error;
+  await logActivity({
+    profile,
+    action: "update",
+    entityType: "route",
+    entityId: routeId,
+    entityLabel: `Route ${routeId.slice(0, 8)}`,
+    beforeData: route,
+    afterData: { status: "in_progress", started_at: route.started_at ?? new Date().toISOString() },
+    summary: "Started route",
+  });
   return { success: true };
 }
 
@@ -288,6 +299,23 @@ export async function confirmPickList(
 
     if (refillError) throw refillError;
 
+    await logActivity({
+      profile,
+      action: "confirm_pick_list",
+      entityType: "route",
+      entityId: routeId,
+      entityLabel: `Route ${routeId.slice(0, 8)}`,
+      afterData: {
+        picked_items: pickedItems,
+        extras,
+        substitutions,
+        movement_count: movements.length,
+        pick_list_count: pickListRows.length,
+      },
+      metadata: { operator_id: route.operator_id },
+      summary: `Confirmed pick list with ${movements.length} inventory movement rows`,
+    });
+
     return { success: true };
   } catch (error) {
     console.error("Error confirming pick list:", error);
@@ -516,6 +544,7 @@ export async function completeStop({
         reason: "operator_bag_to_machine" as const,
         related_route_id: routeId,
         related_route_stop_id: stopId,
+        related_machine_id: machineId,
         created_by: route.operator_id,
         notes: `Filled at machine ${machineId}`,
       }));
@@ -576,7 +605,7 @@ export async function completeStop({
     const variance = calculateCashVariance(cashCollected, expectedCash);
 
     // Create cash collection record
-    const { error: cashError } = await supabase
+    const { data: cashCollection, error: cashError } = await supabase
       .from("cash_collections")
       .insert({
         route_id: routeId,
@@ -586,7 +615,9 @@ export async function completeStop({
         actual_cash_collected: cashCollected,
         review_status: getCashCollectionStatus(null, variance),
         notes,
-      });
+      })
+      .select("id, route_id, machine_id, operator_id, vms_expected_cash, actual_cash_collected, variance, review_status, collected_at")
+      .single();
 
     if (cashError) throw cashError;
 
@@ -616,6 +647,40 @@ export async function completeStop({
       .eq("id", stopId);
 
     if (stopError) throw stopError;
+
+    await logActivity({
+      profile,
+      action: "complete_stop",
+      entityType: "route_stop",
+      entityId: stopId,
+      entityLabel: `Stop ${stopId.slice(0, 8)}`,
+      beforeData: stop,
+      afterData: {
+        status: "completed",
+        route_id: routeId,
+        machine_id: machineId,
+        filled_items: filledItems,
+        extra_items: extraItems,
+        substitutions,
+        missing_products: missingProducts,
+        movement_count: movements.length,
+      },
+      metadata: { route_id: routeId, machine_id: machineId, operator_id: route.operator_id },
+      summary: `Completed route stop with ${movements.length} fill movement rows`,
+    });
+
+    if (cashCollection) {
+      await logActivity({
+        profile,
+        action: "collect_cash",
+        entityType: "cash_collection",
+        entityId: cashCollection.id,
+        entityLabel: `Cash ${cashCollection.id.slice(0, 8)}`,
+        afterData: cashCollection,
+        metadata: { route_id: routeId, machine_id: machineId, operator_id: route.operator_id },
+        summary: `Collected cash with variance ${Number(cashCollection.variance ?? 0).toFixed(2)}`,
+      });
+    }
 
     return { success: true, expectedCash };
   } catch (error) {
@@ -812,6 +877,16 @@ export async function completeRoute(routeId: string) {
       .eq("id", routeId);
 
     if (error) throw error;
+    await logActivity({
+      profile,
+      action: "update",
+      entityType: "route",
+      entityId: routeId,
+      entityLabel: `Route ${routeId.slice(0, 8)}`,
+      beforeData: route,
+      afterData: { status: "completed" },
+      summary: "Completed route",
+    });
     return { success: true };
   } catch (error) {
     console.error("Error completing route:", error);

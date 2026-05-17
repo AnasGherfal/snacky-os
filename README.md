@@ -37,10 +37,12 @@ npm install
 
 ```bash
 npx supabase init
-npx supabase start
+npx supabase start -x logflare,imgproxy,edge-runtime,supavisor
 ```
 
 If the project already has a `supabase` folder, `supabase init` may tell you it is already initialized. That is okay.
+
+On Windows, avoid excluding `analytics`, `storage`, or `pooler`; those are not valid service names for newer Supabase CLI versions. Use `logflare` and `supavisor` instead. Keep `storage-api` running for product image uploads.
 
 ### 3. Reset database and load schema + seed
 

@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useDeferredValue, useMemo, useState, useTransition } from "react";
+import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { FormField, FormSection, SecondaryButton, StatusBadge } from "@/components/ui";
 import { createQuickProduct, createStockMovement } from "@/lib/inventory-actions";
 
@@ -11,6 +12,7 @@ type ProductOption = {
   name: string;
   category: string | null;
   brand: string | null;
+  imageUrl?: string | null;
   sellingPrice: number;
   storageQty: number;
 };
@@ -24,14 +26,12 @@ const movementTypes = [
   { value: "storage_adjustment", label: "Storage adjustment", helper: "Record a stock count adjustment through the ledger." },
   { value: "damaged", label: "Damaged", helper: "Move damaged stock to waste." },
   { value: "expired", label: "Expired", helper: "Move expired stock to waste." },
+  { value: "manual_correction", label: "Manual correction", helper: "Owner/admin correction entry. Old movements stay untouched." },
+  { value: "product_substitution", label: "Product substitution", helper: "Record stock impact from an operator-approved route substitution." },
 ] as const;
 
 function optionValue(type: string, id?: string | null) {
   return `${type}:${id ?? ""}`;
-}
-
-function thumb(name: string) {
-  return name.slice(0, 2).toUpperCase();
 }
 
 export function StockMovementForm({
@@ -62,6 +62,7 @@ export function StockMovementForm({
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [missingProduct, setMissingProduct] = useState("");
   const [isPending, startTransition] = useTransition();
+  const deferredQuery = useDeferredValue(query);
 
   const productById = useMemo(() => new Map(products.map((product) => [product.id, product])), [products]);
   const selectedProduct = selectedProductId ? productById.get(selectedProductId) : null;
@@ -70,12 +71,12 @@ export function StockMovementForm({
     return recent.length ? recent.slice(0, 8) : products.slice(0, 8);
   }, [productById, products, recentProductIds]);
   const filteredProducts = useMemo(() => {
-    const needle = query.trim().toLowerCase();
+    const needle = deferredQuery.trim().toLowerCase();
     if (!needle) return recentProducts;
     return products
       .filter((product) => [product.name, product.sku, product.barcode, product.category, product.brand].some((value) => String(value ?? "").toLowerCase().includes(needle)))
       .slice(0, 30);
-  }, [products, query, recentProducts]);
+  }, [products, deferredQuery, recentProducts]);
 
   const selectProduct = (product: ProductOption) => {
     setSelectedProductId(product.id);
@@ -141,7 +142,7 @@ export function StockMovementForm({
               {filteredProducts.map((product) => (
                 <button key={product.id} type="button" onClick={() => selectProduct(product)} className={`rounded-lg border p-3 text-left transition ${selectedProductId === product.id ? "border-blue-400 bg-blue-50" : "border-slate-200 bg-white hover:border-slate-400"}`}>
                   <div className="flex gap-3">
-                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-slate-100 text-xs font-semibold text-slate-500">{thumb(product.name)}</div>
+                    <ProductThumbnail imageUrl={product.imageUrl} name={product.name} size="md" />
                     <div className="min-w-0 flex-1">
                       <div className="truncate font-medium text-slate-900">{product.name}</div>
                       <div className="text-xs text-slate-500">{product.sku ?? "No SKU"} - {product.category ?? "Uncategorized"} {product.brand ? `- ${product.brand}` : ""}</div>

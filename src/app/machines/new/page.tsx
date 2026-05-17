@@ -2,12 +2,15 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { AppShell } from "@/components/AppShell";
 import { FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
+import { logActivity } from "@/lib/activity-log";
+import { getCurrentProfile } from "@/lib/auth";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 async function createMachine(fd: FormData) {"use server";
  const s=getSupabaseServerClient(); if(!s) return;
+ const profile = await getCurrentProfile();
  const payload={machine_code:String(fd.get("machine_code")||"").trim(),vms_machine_id:String(fd.get("vms_machine_id")||"")||null,name:String(fd.get("name")||"").trim(),machine_type:String(fd.get("machine_type")||"lift"),location_id:String(fd.get("location_id")||"")||null,rent_amount:Number(fd.get("rent_amount")||0),status:String(fd.get("status")||"active"),target_nsm:Number(fd.get("target_nsm")||0),target_uptime_percent:Number(fd.get("target_uptime_percent")||98)};
- if(!payload.machine_code||!payload.name) return; await s.from("machines").insert(payload); revalidatePath("/machines"); redirect("/machines"); }
+ if(!payload.machine_code||!payload.name) return; const { data } = await s.from("machines").insert(payload).select("id, machine_code, name, status, location_id").single(); if (data) { await logActivity({ profile, action: "create", entityType: "machine", entityId: data.id, entityLabel: data.name, afterData: data, summary: `Created machine ${data.name}` }); } revalidatePath("/machines"); redirect("/machines"); }
 
 export default async function NewMachinePage(){const s=getSupabaseServerClient(); const {data:locations}=s?await s.from("locations").select("id,name").order("name"):{data:[]};
 return <AppShell><FormPageLayout><PageHeader title="Create machine" subtitle="Add a machine record with operational targets." />

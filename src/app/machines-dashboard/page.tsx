@@ -9,7 +9,7 @@ export default async function MachinesDashboardPage() {
   const supabase = getSupabaseServerClient();
   const [salesResult, machinesResult, refillResult, stockResult, issuesResult, cashResult] = supabase
     ? await Promise.all([
-        supabase.from("vms_sales_snapshots").select("id, machine_id, product_id, sold_qty, sales_amount, period_end, product:products(id, cost_price)"),
+        supabase.from("vms_sales_snapshots").select("id, machine_id, product_id, sold_qty, sales_amount, period_end, product:products(id, cost_price, current_cost_price_lyd)"),
         supabase.from("machines").select("id, machine_code, name, status, target_nsm, rent_amount, location:locations(id, name)").order("name"),
         supabase.from("refill_orders").select("id, machine_id, status, generated_at, completed_at"),
         supabase.from("vms_stock_snapshots").select("machine_id, current_qty"),
@@ -39,7 +39,7 @@ export default async function MachinesDashboardPage() {
     const nsm = latestMonthSales.reduce((sum, row) => sum + salesAmount(row), 0);
     const targetNsm = Number(machine.target_nsm ?? 0);
     const grossProfitRows = latestMonthSales.map((row) => {
-      const cost = Number(row.product?.cost_price ?? 0);
+      const cost = Number(row.product?.current_cost_price_lyd ?? row.product?.cost_price ?? 0);
       return cost > 0 ? salesAmount(row) - soldQty(row) * cost : null;
     });
     const hasProfitData = grossProfitRows.some((value) => value !== null);

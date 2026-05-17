@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { logActivity } from "@/lib/activity-log";
 import { accessTokenCookie, ensureProfileForAuthUser, refreshTokenCookie } from "@/lib/auth";
 import { getDefaultPathForRole, parseAppRole } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -44,6 +45,24 @@ async function login(formData: FormData) {
     secure: process.env.NODE_ENV === "production",
     path: "/",
     maxAge: 60 * 60 * 24 * 30,
+  });
+
+  await logActivity({
+    profile: {
+      id: profile.id,
+      full_name: profile.full_name,
+      email: profile.email,
+      phone: profile.phone,
+      role,
+      active_status: profile.active_status,
+      team_member_id: profile.team_member_id,
+      must_change_password: false,
+    },
+    action: "login",
+    entityType: "team_member",
+    entityId: profile.team_member_id,
+    entityLabel: profile.full_name,
+    summary: `${profile.full_name} logged in`,
   });
 
   redirect(getDefaultPathForRole(role));

@@ -10,7 +10,7 @@ export default async function InventoryDashboardPage() {
   const [inventoryResult, productsResult, reservedResult, recommendationsResult] = supabase
     ? await Promise.all([
         supabase.from("current_inventory_by_location").select("product_id, product_name, location_type, location_name, quantity_on_hand").order("product_name"),
-        supabase.from("products").select("id, sku, name, cost_price, active").order("name"),
+        supabase.from("products").select("id, sku, name, cost_price, current_cost_price_lyd, active").order("name"),
         supabase
           .from("refill_order_lines")
           .select("product_id, final_qty_to_take, picked_qty, product:products(id, name), refill_order:refill_orders(id, status)")
@@ -23,7 +23,7 @@ export default async function InventoryDashboardPage() {
   const products = (productsResult.data ?? []) as any[];
   const reservedLines = (reservedResult.data ?? []) as any[];
   const recommendations = (recommendationsResult.data ?? []) as any[];
-  const costByProduct = new Map(products.map((product) => [String(product.id), Number(product.cost_price ?? 0)]));
+  const costByProduct = new Map(products.map((product) => [String(product.id), Number(product.current_cost_price_lyd ?? product.cost_price ?? 0)]));
 
   const storageRows = inventory.filter((row) => row.location_type === "storage");
   const operatorBagRows = inventory.filter((row) => row.location_type === "operator_bag");

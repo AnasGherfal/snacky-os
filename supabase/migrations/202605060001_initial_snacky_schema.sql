@@ -112,6 +112,7 @@ create table if not exists products (
   cost_price numeric(12,2) not null default 0,
   selling_price numeric(12,2) not null default 0,
   case_quantity integer default 1,
+  image_url text,
   expiry_sensitive boolean not null default true,
   active boolean not null default true,
   created_at timestamptz not null default now(),

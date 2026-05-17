@@ -194,7 +194,7 @@ export async function GET(
         .eq("reason", "operator_bag_to_machine"),
       supabase
         .from("products")
-        .select("id, sku, barcode, name, category, brand")
+        .select("id, sku, barcode, name, category, brand, image_url")
         .eq("active", true)
         .order("name"),
     ]);
@@ -227,6 +227,7 @@ export async function GET(
       name: product.name,
       category: product.category,
       brand: product.brand,
+      imageUrl: product.image_url,
       availableQty: availableByProduct.get(String(product.id)) ?? 0,
     }));
 

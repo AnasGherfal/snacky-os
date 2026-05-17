@@ -22,6 +22,7 @@ const titleKeys: Record<string, keyof ReturnType<typeof useI18n>["dictionary"]["
   "/locations": "locations",
   "/machine-slots": "machinePlanograms",
   "/inventory": "storageInventory",
+  "/purchases": "purchases",
   "/products": "products",
   "/suppliers": "suppliers",
   "/vms-import": "vmsImport",

@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -80,6 +81,14 @@ function dateValue(input: string) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+function explicitSellingPrice(row: Record<string, string>) {
+  return numberValue(value(row, ["vms_selling_price_lyd", "vms_selling_price", "selling_price_lyd", "selling_price", "unit_price_lyd", "unit_price", "price_lyd", "price"]));
+}
+
+function explicitCostPrice(row: Record<string, string>) {
+  return numberValue(value(row, ["vms_cost_price_lyd", "vms_cost_price", "cost_price_lyd", "cost_price", "unit_cost_lyd", "unit_cost"]));
+}
+
 function productKey(vmsProductId: string, vmsProductName: string) {
   return `${vmsProductId}::${vmsProductName}`.toLowerCase();
 }
@@ -91,6 +100,7 @@ function uniquePush(list: string[], item: string) {
 async function ensureNeedsReviewMapping(
   supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>,
   mappingsByKey: Map<string, any>,
+  profile: Awaited<ReturnType<typeof getCurrentProfile>>,
   vmsProductId: string,
   vmsProductName: string,
 ) {
@@ -104,10 +114,21 @@ async function ensureNeedsReviewMapping(
       vms_product_name: vmsProductName,
       match_status: "needs_review",
     })
-    .select("id, vms_product_id, vms_product_name, product_id, match_status")
+    .select("id, vms_product_id, vms_product_name, product_id, match_status, vms_selling_price_lyd, vms_cost_price_lyd")
     .maybeSingle();
 
   if (data) mappingsByKey.set(key, data);
+  if (data) {
+    await logActivity({
+      profile,
+      action: "create",
+      entityType: "vms_mapping",
+      entityId: data.id,
+      entityLabel: data.vms_product_name,
+      afterData: data,
+      summary: `Created VMS product mapping for ${data.vms_product_name}`,
+    });
+  }
 }
 
 export async function importVmsCsv(formData: FormData) {
@@ -154,7 +175,7 @@ export async function importVmsCsv(formData: FormData) {
 
   const [{ data: machines }, { data: mappings }] = await Promise.all([
     supabase.from("machines").select("id, machine_code, vms_machine_id, name"),
-    supabase.from("vms_product_mappings").select("id, vms_product_id, vms_product_name, product_id, match_status"),
+    supabase.from("vms_product_mappings").select("id, vms_product_id, vms_product_name, product_id, match_status, vms_selling_price_lyd, vms_cost_price_lyd"),
   ]);
 
   const machineByVmsId = new Map<string, any>();
@@ -170,6 +191,8 @@ export async function importVmsCsv(formData: FormData) {
 
   const stockSnapshots: any[] = [];
   const salesSnapshots: any[] = [];
+  const vmsSellingPriceByProductId = new Map<string, number>();
+  const latestMappingRowsById = new Map<string, any>();
 
   for (const [index, row] of rows.entries()) {
     const rowNumber = index + 2;
@@ -178,13 +201,6 @@ export async function importVmsCsv(formData: FormData) {
     const vmsProductId = value(row, ["vms_product_id", "product_id", "product_code"]);
     const vmsProductName = value(row, ["vms_product_name", "product_name"]);
     const machine = machineByVmsId.get(vmsMachineId.toLowerCase());
-
-    if (!machine) {
-      summary.skippedRows += 1;
-      uniquePush(summary.unknownMachines, vmsMachineId || machineName || `Row ${rowNumber}`);
-      summary.errors.push(`Row ${rowNumber}: unknown machine ${vmsMachineId || machineName || "blank"}.`);
-      continue;
-    }
 
     if (!vmsProductName) {
       summary.skippedRows += 1;
@@ -195,14 +211,45 @@ export async function importVmsCsv(formData: FormData) {
     const key = productKey(vmsProductId, vmsProductName);
     let mapping = mappingsByKey.get(key);
     if (!mapping) {
-      await ensureNeedsReviewMapping(supabase, mappingsByKey, vmsProductId, vmsProductName);
+      await ensureNeedsReviewMapping(supabase, mappingsByKey, profile, vmsProductId, vmsProductName);
       mapping = mappingsByKey.get(key);
+    }
+
+    const importedSellingPrice = explicitSellingPrice(row);
+    const importedCostPrice = explicitCostPrice(row);
+    const lastSeenAt = dateValue(value(row, ["last_updated", "captured_at", "date", "period_end", "sales_date"])) ?? new Date();
+
+    if (mapping?.id) {
+      latestMappingRowsById.set(String(mapping.id), {
+        id: mapping.id,
+        vms_product_id: vmsProductId || null,
+        vms_product_name: vmsProductName,
+        vms_selling_price_lyd: importedSellingPrice !== null && importedSellingPrice >= 0 ? importedSellingPrice : mapping.vms_selling_price_lyd ?? null,
+        vms_cost_price_lyd: importedCostPrice !== null && importedCostPrice >= 0 ? importedCostPrice : mapping.vms_cost_price_lyd ?? null,
+        latest_machine_id: machine?.id ?? null,
+        latest_vms_machine_id: vmsMachineId || null,
+        latest_machine_name: machineName || machine?.name || null,
+        last_seen_at: lastSeenAt.toISOString(),
+        last_import_batch_id: batch.id,
+        updated_at: new Date().toISOString(),
+      });
+    }
+
+    if (!machine) {
+      summary.skippedRows += 1;
+      uniquePush(summary.unknownMachines, vmsMachineId || machineName || `Row ${rowNumber}`);
+      summary.errors.push(`Row ${rowNumber}: unknown machine ${vmsMachineId || machineName || "blank"}.`);
+      continue;
     }
 
     if (!mapping?.product_id || mapping.match_status !== "confirmed") {
       summary.skippedRows += 1;
       uniquePush(summary.unmappedProducts, vmsProductId ? `${vmsProductId} - ${vmsProductName}` : vmsProductName);
       continue;
+    }
+
+    if (importedSellingPrice !== null && importedSellingPrice >= 0) {
+      vmsSellingPriceByProductId.set(String(mapping.product_id), importedSellingPrice);
     }
 
     if (importType === "stock") {
@@ -287,6 +334,34 @@ export async function importVmsCsv(formData: FormData) {
     }
   }
 
+  if (latestMappingRowsById.size) {
+    const { error } = await supabase
+      .from("vms_product_mappings")
+      .upsert([...latestMappingRowsById.values()], { onConflict: "id" });
+    if (error) {
+      console.error("[vms-import] VMS product mapping metadata update failed", error);
+      summary.errors.push("VMS product mapping metadata update failed.");
+    }
+  }
+
+  for (const [productId, sellingPrice] of vmsSellingPriceByProductId.entries()) {
+    const { error } = await supabase
+      .from("products")
+      .update({
+        vms_selling_price_lyd: sellingPrice,
+        current_selling_price_lyd: sellingPrice,
+        selling_price: sellingPrice,
+        selling_price_source: "vms",
+        price_updated_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", productId);
+    if (error) {
+      console.error("[vms-import] Product selling price update failed", { productId, error });
+      summary.errors.push("Product selling price update failed.");
+    }
+  }
+
   const status = summary.errors.length || summary.skippedRows ? "completed_with_warnings" : "completed";
   await supabase
     .from("vms_import_batches")
@@ -297,6 +372,17 @@ export async function importVmsCsv(formData: FormData) {
       notes: JSON.stringify(summary),
     })
     .eq("id", batch.id);
+
+  await logActivity({
+    profile,
+    action: "import_vms",
+    entityType: "vms_mapping",
+    entityId: batch.id,
+    entityLabel: `${importType} CSV ${file.name}`,
+    afterData: summary,
+    metadata: { import_type: importType, file_name: file.name },
+    summary: `Imported ${summary.importedRows} ${importType} rows from VMS CSV`,
+  });
 
   revalidatePath("/vms-import");
   revalidatePath("/vms-mappings");

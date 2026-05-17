@@ -3,6 +3,7 @@
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole, parseAppRole } from "@/lib/authz";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
@@ -117,6 +118,16 @@ export async function createTeamMember(formData: FormData) {
     redirect(`/team/${data.id}/edit?error=${encodeURIComponent(error instanceof Error ? error.message : "Could not create login access.")}`);
   }
 
+  await logActivity({
+    profile,
+    action: "create",
+    entityType: "team_member",
+    entityId: data.id,
+    entityLabel: payload.full_name,
+    afterData: { ...payload, login_access_created: String(formData.get("create_login_access") || "") === "yes" },
+    summary: `Created team member ${payload.full_name}`,
+  });
+
   revalidatePath("/team");
   redirect("/team");
 }
@@ -133,7 +144,7 @@ export async function updateTeamMember(formData: FormData) {
   const payload = teamPayload(formData);
   if (!payload.full_name) redirect(`/team/${id}/edit?error=Full%20name%20is%20required.`);
 
-  const { data: existingMember } = await supabase.from("team_members").select("auth_user_id").eq("id", id).maybeSingle();
+  const { data: existingMember } = await supabase.from("team_members").select("*").eq("id", id).maybeSingle();
 
   const { error } = await supabase.from("team_members").update(payload).eq("id", id);
   if (error) {
@@ -152,7 +163,19 @@ export async function updateTeamMember(formData: FormData) {
     redirect(`/team/${id}/edit?error=${encodeURIComponent(error instanceof Error ? error.message : "Could not update login access.")}`);
   }
 
+  await logActivity({
+    profile,
+    action: existingMember?.role !== payload.role ? "change_role" : "update",
+    entityType: "team_member",
+    entityId: id,
+    entityLabel: payload.full_name,
+    beforeData: existingMember,
+    afterData: { ...payload, login_access_updated: String(formData.get("create_login_access") || "") === "yes" },
+    summary: existingMember?.role !== payload.role ? `Changed ${payload.full_name} role to ${payload.role}` : `Updated team member ${payload.full_name}`,
+  });
+
   revalidatePath("/team");
+  revalidatePath(`/team/${id}`);
   revalidatePath(`/team/${id}/edit`);
   redirect("/team");
 }

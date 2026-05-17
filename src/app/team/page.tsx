@@ -87,9 +87,10 @@ export default async function TeamPage() {
                 </td>
                 <td>{formatLastLogin(profile?.last_login_at)}</td>
                 <td>
-                  <Link className="link-secondary" href={`/team/${member.id}/edit`}>
-                    Edit
-                  </Link>
+                  <div className="flex flex-wrap gap-2">
+                    <Link className="link-secondary" href={`/team/${member.id}/activity`}>Activity</Link>
+                    <Link className="link-secondary" href={`/team/${member.id}/edit`}>Edit</Link>
+                  </div>
                 </td>
               </tr>
             );
