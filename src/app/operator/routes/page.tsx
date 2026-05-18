@@ -48,12 +48,14 @@ export default async function OperatorRoutesPage() {
                   href={`/operator/routes/${route.id}`}
                   className="block rounded-lg border border-slate-200 bg-white p-4 hover:shadow-md transition-shadow"
                 >
-                  <div className="flex items-start justify-between mb-3">
-                    <div>
+                  <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
                       <h3 className="font-semibold text-slate-900">{route.route_date}</h3>
                       <p className="text-sm text-slate-500">{totalStops} machine stops</p>
                     </div>
-                    <StatusBadge status={route.status} />
+                    <div className="shrink-0">
+                      <StatusBadge status={route.status} />
+                    </div>
                   </div>
                   
                   <div className="mb-3">

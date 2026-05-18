@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { ClientAppShell as AppShell } from "@/components/ClientAppShell";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
+import { QuantityStepper } from "@/components/QuantityStepper";
 import { EmptyState, ErrorState, PageHeader, SecondaryButton, SectionCard } from "@/components/ui";
 import { confirmPickList, startRoute } from "@/lib/operator-actions";
 
@@ -189,31 +190,29 @@ export default function PickListPage() {
             <div className="space-y-3">
               {pickItems.map((item) => (
                 <div key={item.productId} className="rounded-lg border border-slate-200 bg-white p-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1">
-                      <p className="font-semibold text-slate-900">{item.productName}</p>
-                      <p className="mt-1 text-xs text-slate-500">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0 flex-1">
+                      <p className="break-words font-semibold text-slate-900">{item.productName}</p>
+                      <p className="mt-1 break-words text-xs text-slate-500">
                         SKU: {item.sku ?? "No SKU"} - Planned total: {item.requestedQty} units - Storage: {item.availableStorageQty}
                       </p>
                       <div className="mt-3 space-y-1 rounded-lg border border-slate-200 bg-slate-50 p-3">
                         {item.machineItems.map((machine, index) => (
-                          <div key={`${machine.machineCode}-${index}`} className="flex justify-between gap-3 text-xs text-slate-600">
-                            <span>{machine.machineName} ({machine.machineCode})</span>
-                            <span>{machine.plannedQty} - {machine.source === "manual_admin_assignment" ? "manual" : "recommendation"}</span>
+                          <div key={`${machine.machineCode}-${index}`} className="flex flex-col gap-1 text-xs text-slate-600 sm:flex-row sm:justify-between">
+                            <span className="min-w-0 break-words">{machine.machineName} ({machine.machineCode})</span>
+                            <span className="shrink-0">{machine.plannedQty} - {machine.source === "manual_admin_assignment" ? "manual" : "recommendation"}</span>
                           </div>
                         ))}
                       </div>
                     </div>
-                    <div className="flex shrink-0 items-end gap-2">
-                      <input
-                        type="number"
-                        min="0"
-                        max={item.requestedQty}
+                    <div className="w-full shrink-0 sm:w-44">
+                      <div className="mb-1 text-xs font-medium text-slate-500">Picked units</div>
+                      <QuantityStepper
                         value={item.confirmedQty}
-                        onChange={(event) => updatePickItem(item.productId, { confirmedQty: Math.max(0, Math.min(item.requestedQty, parseInt(event.target.value) || 0)) })}
-                        className="field-input w-20"
+                        max={item.requestedQty}
+                        onChange={(quantity) => updatePickItem(item.productId, { confirmedQty: quantity })}
+                        inputLabel={`${item.productName} picked quantity`}
                       />
-                      <span className="mb-2 text-xs text-slate-500">units</span>
                     </div>
                   </div>
 
@@ -241,11 +240,11 @@ export default function PickListPage() {
 
             <SectionCard>
               <div className="grid grid-cols-2 gap-4 p-4">
-                <div>
+                <div className="min-w-0">
                   <p className="mb-1 text-xs text-slate-500">Products</p>
                   <p className="text-2xl font-bold text-slate-900">{pickItems.length}</p>
                 </div>
-                <div>
+                <div className="min-w-0">
                   <p className="mb-1 text-xs text-slate-500">Picked units</p>
                   <p className="text-2xl font-bold text-slate-900">{pickItems.reduce((sum, item) => sum + item.confirmedQty, 0)}</p>
                 </div>
@@ -253,14 +252,14 @@ export default function PickListPage() {
             </SectionCard>
 
             <section className="rounded-lg border border-slate-200 bg-white p-4">
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h2 className="font-semibold text-slate-900">Operator adjustments before leaving storage</h2>
                   <p className="text-sm text-slate-500">Extras and substitutions are flagged for supervisor review.</p>
                 </div>
-                <div className="flex gap-2">
-                  <button type="button" className="btn-secondary" onClick={addExtra}>Add extra product</button>
-                  <button type="button" className="btn-secondary" onClick={addSubstitution}>Substitute</button>
+                <div className="grid grid-cols-2 gap-2 sm:flex">
+                  <button type="button" className="btn-secondary w-full" onClick={addExtra}>Add extra</button>
+                  <button type="button" className="btn-secondary w-full" onClick={addSubstitution}>Substitute</button>
                 </div>
               </div>
               <div className="mt-4 space-y-3">
@@ -303,11 +302,11 @@ export default function PickListPage() {
               </div>
             </section>
 
-            <div className="flex gap-3">
-              <SecondaryButton href={routeHref} type="button">Cancel</SecondaryButton>
-              <button onClick={handleConfirmPick} disabled={submitting} className="btn-primary flex-1 disabled:cursor-not-allowed disabled:opacity-50">
+            <div className="sticky bottom-3 z-10 -mx-3 flex flex-col gap-2 border-t border-slate-200 bg-slate-100/95 px-3 py-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:border-0 sm:bg-transparent sm:p-0">
+              <button type="button" onClick={handleConfirmPick} disabled={submitting} className="btn-primary w-full flex-1 disabled:cursor-not-allowed disabled:opacity-50">
                 {submitting ? "Confirming..." : "Confirm Pick List"}
               </button>
+              <SecondaryButton href={routeHref} type="button">Cancel</SecondaryButton>
             </div>
           </>
         )}
@@ -342,7 +341,7 @@ function AdjustmentRow({
     .slice(0, 8);
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-      <div className="grid gap-3 md:grid-cols-[1fr_120px_1fr]">
+      <div className="grid gap-3 md:grid-cols-[1fr_140px_1fr]">
         <div>
           <span className="mb-1 block text-sm font-medium text-slate-800">{label}</span>
           <div className="rounded-lg border border-slate-200 bg-white p-2">
@@ -367,7 +366,7 @@ function AdjustmentRow({
                     <ProductThumbnail imageUrl={product.imageUrl} name={product.name} />
                     <span className="min-w-0">
                       <span className="block truncate font-medium">{product.name}</span>
-                      <span className={product.id === productId ? "text-blue-100" : "text-slate-500"}>{product.sku ?? "No SKU"} - Storage {product.availableStorageQty}</span>
+                      <span className={`block truncate ${product.id === productId ? "text-blue-100" : "text-slate-500"}`}>{product.sku ?? "No SKU"} - Storage {product.availableStorageQty}</span>
                     </span>
                   </span>
                 </button>
@@ -378,7 +377,12 @@ function AdjustmentRow({
         </div>
         <label className="block">
           <span className="mb-1 block text-sm font-medium text-slate-800">Qty</span>
-          <input type="number" min="0" max={selected?.availableStorageQty ?? 0} value={quantity} onChange={(event) => onChange({ quantity: Math.max(0, Math.min(selected?.availableStorageQty ?? 0, parseInt(event.target.value) || 0)) })} className="field-input" />
+          <QuantityStepper
+            value={quantity}
+            max={selected?.availableStorageQty ?? 0}
+            onChange={(nextQuantity) => onChange({ quantity: nextQuantity })}
+            inputLabel={`${label} quantity`}
+          />
         </label>
         <label className="block">
           <span className="mb-1 block text-sm font-medium text-slate-800">Reason</span>

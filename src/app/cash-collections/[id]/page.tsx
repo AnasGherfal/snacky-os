@@ -1,6 +1,8 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
+import { getCurrentProfile } from "@/lib/auth";
+import { canAccessPath } from "@/lib/authz";
 import { getCashCollectionStatus, isCriticalCashVariance, isLargeCashVariance } from "@/lib/cash-collections";
 import { reviewCashCollection } from "@/lib/cash-actions";
 import { lyd } from "@/lib/format";
@@ -17,8 +19,20 @@ function varianceTone(variance: number) {
   return "border-emerald-200 bg-emerald-50 text-emerald-800";
 }
 
-export default async function CashCollectionDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function CashCollectionDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ error?: string }>;
+}) {
   const { id } = await params;
+  const { error = "" } = await searchParams;
+  const profile = await getCurrentProfile();
+  if (!profile || !canAccessPath({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/cash-collections")) {
+    redirect("/unauthorized");
+  }
+
   const supabase = getSupabaseServerClient();
   if (!supabase) notFound();
 
@@ -44,6 +58,7 @@ export default async function CashCollectionDetailPage({ params }: { params: Pro
           subtitle={`${collectionRow.machine?.name ?? "Machine"} collected on ${formatDate(collectionRow.collected_at)}`}
           action={<SecondaryButton href="/cash-collections">Back to cash</SecondaryButton>}
         />
+        {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{error}</div> : null}
 
         <div className="grid gap-4 lg:grid-cols-4">
           <SectionCard>

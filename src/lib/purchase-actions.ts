@@ -34,6 +34,11 @@ function parseOptionalMoney(value: FormDataEntryValue | null) {
   return Number.isFinite(parsed) && parsed >= 0 ? roundMoney(parsed) : null;
 }
 
+function parsePaymentStatus(value: FormDataEntryValue | null) {
+  const status = String(value ?? "paid").trim();
+  return ["paid", "unpaid", "partial"].includes(status) ? status : "paid";
+}
+
 function canManagePurchases(role: AppRole | null | undefined) {
   return isOwnerAdminRole(role) || isSupervisorRole(role) || role === "warehouse";
 }
@@ -131,12 +136,13 @@ export async function createPurchase(fd: FormData) {
       order_date: String(fd.get("purchase_date") || new Date().toISOString().slice(0, 10)),
       receipt_number: String(fd.get("receipt_number") || "").trim() || null,
       payment_method: String(fd.get("payment_method") || "cash"),
+      payment_status: parsePaymentStatus(fd.get("payment_status")),
       receipt_url: receiptUrl,
       notes: String(fd.get("notes") || "").trim() || null,
       ...totals,
       created_by: profile.team_member_id,
     })
-    .select("id, receipt_number, status, total_amount")
+    .select("id, receipt_number, status, total_amount, payment_status")
     .single();
 
   if (purchaseError || !purchase) {
@@ -202,6 +208,7 @@ export async function updatePurchase(fd: FormData) {
       order_date: String(fd.get("purchase_date") || new Date().toISOString().slice(0, 10)),
       receipt_number: String(fd.get("receipt_number") || "").trim() || null,
       payment_method: String(fd.get("payment_method") || "cash"),
+      payment_status: parsePaymentStatus(fd.get("payment_status")),
       receipt_url: (receiptUrl ?? existingReceiptUrl) || null,
       notes: String(fd.get("notes") || "").trim() || null,
       ...totals,
@@ -245,9 +252,16 @@ export async function updatePurchase(fd: FormData) {
 
 async function receivePurchaseById(id: string) {
   const { profile, supabase } = await requirePurchaseAccess();
-  const { data: purchase, error: purchaseError } = await supabase.from("purchase_orders").select("id, status, supplier_id, receipt_number, total_amount, manual_total_lyd, calculated_total_lyd").eq("id", id).single();
+  const { data: purchase, error: purchaseError } = await supabase.from("purchase_orders").select("id, status, supplier_id, receipt_number, payment_method, payment_status, receipt_url, total_amount, manual_total_lyd, calculated_total_lyd").eq("id", id).single();
   if (purchaseError || !purchase) throw new Error("Purchase not found.");
-  if (purchase.status === "received") return;
+  const purchaseTotal = Number(purchase.manual_total_lyd ?? purchase.total_amount ?? purchase.calculated_total_lyd ?? 0);
+  const receivedDate = new Date().toISOString().slice(0, 10);
+  if (purchase.status === "received") {
+    if (purchase.payment_status === "paid") {
+      await createPurchaseFinancialTransaction(supabase, profile, { ...purchase, received_date: receivedDate }, purchaseTotal);
+    }
+    return;
+  }
   if (purchase.status === "cancelled") throw new Error("Cancelled purchases cannot be received.");
 
   const { count: existingMovementCount, error: existingError } = await supabase
@@ -256,10 +270,7 @@ async function receivePurchaseById(id: string) {
     .eq("related_purchase_id", id)
     .eq("reason", "purchase_received");
   if (existingError) throw existingError;
-  if (Number(existingMovementCount ?? 0) > 0) return;
-
-  const storageId = await getDefaultStorageId(supabase);
-  if (!storageId) throw new Error("No active storage location found.");
+  const hasExistingReceiptMovements = Number(existingMovementCount ?? 0) > 0;
 
   const { data: lines, error: linesError } = await supabase
     .from("purchase_order_lines")
@@ -272,25 +283,32 @@ async function receivePurchaseById(id: string) {
   const validLines = (lines ?? []).filter((line: any) => Number(line.total_units ?? 0) > 0);
   if (!validLines.length) throw new Error("Purchase has no receivable items.");
 
-  const movements = validLines.map((line: any) => ({
-    product_id: line.product_id,
-    quantity: Number(line.total_units),
-    from_entity_type: "supplier",
-    from_entity_id: purchase.supplier_id,
-    to_entity_type: "storage",
-    to_entity_id: storageId,
-    reason: "purchase_received",
-    related_purchase_id: id,
-    related_purchase_line_id: line.id,
-    unit_cost_lyd: Number(line.unit_cost_lyd ?? line.unit_cost ?? 0),
-    line_total_lyd: Number(line.line_total_lyd ?? line.line_total ?? 0),
-    created_by: profile.team_member_id,
-    notes: "Purchase received",
-  }));
+  let movementCount = Number(existingMovementCount ?? 0);
+  if (!hasExistingReceiptMovements) {
+    const storageId = await getDefaultStorageId(supabase);
+    if (!storageId) throw new Error("No active storage location found.");
 
-  const { error: movementError } = await supabase.from("inventory_movements").insert(movements);
-  if (movementError) {
-    if (movementError.code !== "23505") throw movementError;
+    const movements = validLines.map((line: any) => ({
+      product_id: line.product_id,
+      quantity: Number(line.total_units),
+      from_entity_type: "supplier",
+      from_entity_id: purchase.supplier_id,
+      to_entity_type: "storage",
+      to_entity_id: storageId,
+      reason: "purchase_received",
+      related_purchase_id: id,
+      related_purchase_line_id: line.id,
+      unit_cost_lyd: Number(line.unit_cost_lyd ?? line.unit_cost ?? 0),
+      line_total_lyd: Number(line.line_total_lyd ?? line.line_total ?? 0),
+      created_by: profile.team_member_id,
+      notes: "Purchase received",
+    }));
+
+    const { error: movementError } = await supabase.from("inventory_movements").insert(movements);
+    if (movementError) {
+      if (movementError.code !== "23505") throw movementError;
+    }
+    movementCount = movements.length;
   }
 
   await supabase.from("purchase_order_lines").update({ received_qty: 0 }).eq("purchase_order_id", id);
@@ -312,17 +330,14 @@ async function receivePurchaseById(id: string) {
 
   const { error: updateError } = await supabase
     .from("purchase_orders")
-    .update({ status: "received", received_at: new Date().toISOString(), received_date: new Date().toISOString().slice(0, 10), received_by: profile.team_member_id, updated_at: new Date().toISOString() })
+    .update({ status: "received", received_at: new Date().toISOString(), received_date: receivedDate, received_by: profile.team_member_id, updated_at: new Date().toISOString() })
     .eq("id", id)
     .neq("status", "received");
   if (updateError) throw updateError;
 
-  await createPurchaseFinancialTransaction(
-    supabase,
-    profile,
-    { ...purchase, received_date: new Date().toISOString().slice(0, 10) },
-    Number(purchase.manual_total_lyd ?? purchase.total_amount ?? purchase.calculated_total_lyd ?? 0),
-  );
+  if (purchase.payment_status === "paid") {
+    await createPurchaseFinancialTransaction(supabase, profile, { ...purchase, received_date: receivedDate }, purchaseTotal);
+  }
 
   await logActivity({
     profile,
@@ -330,8 +345,8 @@ async function receivePurchaseById(id: string) {
     entityType: "purchase",
     entityId: id,
     entityLabel: id.slice(0, 8),
-    afterData: { movement_count: movements.length, status: "received" },
-    summary: `Received purchase into storage (${movements.length} inventory movements)`,
+    afterData: { movement_count: movementCount, status: "received", payment_status: purchase.payment_status },
+    summary: `Received purchase into storage (${movementCount} inventory movements)`,
   });
 }
 

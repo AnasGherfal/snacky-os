@@ -622,7 +622,7 @@ export async function completeStop({
     if (cashError) throw cashError;
 
     if (issue?.issueType && issue.description) {
-      const { error: issueError } = await supabase
+      const { data: createdIssue, error: issueError } = await supabase
         .from("issues")
         .insert({
           machine_id: machineId,
@@ -631,9 +631,23 @@ export async function completeStop({
           description: issue.description,
           reported_by: route.operator_id,
           status: "open",
-        });
+        })
+        .select("id, machine_id, issue_type, priority, status, description, created_at")
+        .single();
 
       if (issueError) throw issueError;
+      if (createdIssue) {
+        await logActivity({
+          profile,
+          action: "report_issue",
+          entityType: "issue",
+          entityId: createdIssue.id,
+          entityLabel: issue.issueType,
+          afterData: createdIssue,
+          metadata: { route_id: routeId, machine_id: machineId, operator_id: route.operator_id },
+          summary: `Reported ${issue.priority} machine issue during route stop`,
+        });
+      }
     }
 
     // Update stop status
@@ -716,17 +730,6 @@ export async function recordLeftovers({
     if (!canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, route.operator_id)) {
       throw new Error("You are not authorized to return leftovers for this route");
     }
-    const { data: existingLeftovers } = await supabase
-      .from("inventory_movements")
-      .select("id")
-      .eq("related_route_id", routeId)
-      .eq("reason", "operator_bag_to_storage")
-      .limit(1);
-
-    if (existingLeftovers?.length) {
-      throw new Error("Leftovers have already been recorded for this route.");
-    }
-
     // Get storage location
     const { data: storages } = await supabase
       .from("storage_locations")
@@ -840,6 +843,20 @@ export async function recordLeftovers({
       }
     }
 
+    await logActivity({
+      profile,
+      action: "return_leftovers",
+      entityType: "route",
+      entityId: routeId,
+      entityLabel: `Route ${routeId.slice(0, 8)}`,
+      afterData: {
+        returned_items: Array.from(leftoversByProduct.entries()).map(([productId, quantity]) => ({ product_id: productId, quantity })),
+        movement_count: movements.length,
+      },
+      metadata: { operator_id: route.operator_id, storage_id: storageId },
+      summary: movements.length ? `Returned leftovers with ${movements.length} inventory movement rows` : "Confirmed no leftover stock to return",
+    });
+
     return { success: true };
   } catch (error) {
     console.error("Error recording leftovers:", error);
@@ -870,6 +887,33 @@ export async function completeRoute(routeId: string) {
       .limit(1);
     if (stopsError) throw stopsError;
     if (openStops?.length) throw new Error("Complete every machine stop before closing the route.");
+
+    const [{ data: routeStockLines, error: stockError }, { data: filledMovements, error: filledError }] = await Promise.all([
+      supabase
+        .from("route_stock_lines")
+        .select("product_id, picked_qty, returned_qty")
+        .eq("route_id", routeId),
+      supabase
+        .from("inventory_movements")
+        .select("product_id, quantity")
+        .eq("related_route_id", routeId)
+        .eq("reason", "operator_bag_to_machine"),
+    ]);
+    if (stockError) throw stockError;
+    if (filledError) throw filledError;
+
+    const filledByProduct = new Map<string, number>();
+    (filledMovements ?? []).forEach((movement: any) => {
+      const productId = String(movement.product_id);
+      filledByProduct.set(productId, (filledByProduct.get(productId) ?? 0) + Number(movement.quantity ?? 0));
+    });
+    const unreturnedStock = (routeStockLines ?? []).filter((line: any) => {
+      const pickedQty = Number(line.picked_qty ?? 0);
+      const returnedQty = Number(line.returned_qty ?? 0);
+      const filledQty = filledByProduct.get(String(line.product_id)) ?? 0;
+      return pickedQty - returnedQty - filledQty > 0;
+    });
+    if (unreturnedStock.length) throw new Error("Return all leftover operator bag stock before completing the route.");
 
     const { error } = await supabase
       .from("routes")

@@ -27,6 +27,7 @@ async function createProduct(fd: FormData) {
     current_selling_price_lyd: Number(fd.get("current_selling_price_lyd") || 0),
     cost_price_source: Number(fd.get("current_cost_price_lyd") || 0) > 0 ? "manual" : "initial_import",
     selling_price_source: Number(fd.get("current_selling_price_lyd") || 0) > 0 ? "manual" : "initial_import",
+    import_source: "manual",
     price_updated_at: new Date().toISOString(),
     case_quantity: Number(fd.get("case_quantity") || 1),
     image_url: imageUrl,

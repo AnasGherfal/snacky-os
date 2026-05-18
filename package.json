@@ -6,7 +6,8 @@
     "dev": "next dev --webpack",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "bootstrap:production": "node scripts/bootstrap-production-data.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "latest",
@@ -14,6 +15,7 @@
     "next": "latest",
     "react": "latest",
     "react-dom": "latest",
+    "xlsx": "^0.18.5",
     "zod": "latest"
   },
   "devDependencies": {

@@ -43,6 +43,7 @@ export async function createQuickProduct(formData: FormData) {
     cost_price: 0,
     current_cost_price_lyd: 0,
     cost_price_source: "initial_import",
+    import_source: "manual",
     active: true,
   }).select("id, sku, name, category, brand, active").single();
 

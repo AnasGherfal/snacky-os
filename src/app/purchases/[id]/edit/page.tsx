@@ -27,7 +27,7 @@ export default async function EditPurchasePage({
   const [{ data: purchase }, { data: lines }, { data: suppliers }, { data: products }] = await Promise.all([
     supabase
       .from("purchase_orders")
-      .select("id, supplier_id, status, order_date, receipt_number, payment_method, receipt_url, notes, manual_total_lyd")
+      .select("id, supplier_id, status, order_date, receipt_number, payment_method, payment_status, receipt_url, notes, manual_total_lyd")
       .eq("id", id)
       .single(),
     supabase
@@ -78,6 +78,7 @@ export default async function EditPurchasePage({
             purchaseDate: (purchase as any).order_date,
             receiptNumber: (purchase as any).receipt_number,
             paymentMethod: (purchase as any).payment_method,
+            paymentStatus: (purchase as any).payment_status,
             receiptUrl: (purchase as any).receipt_url,
             notes: (purchase as any).notes,
             manualTotalLyd: (purchase as any).manual_total_lyd === null ? null : Number((purchase as any).manual_total_lyd),

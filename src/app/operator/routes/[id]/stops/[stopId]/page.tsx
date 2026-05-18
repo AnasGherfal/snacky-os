@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ClientAppShell as AppShell } from "@/components/ClientAppShell";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
+import { QuantityStepper } from "@/components/QuantityStepper";
 import { EmptyState, ErrorState, PageHeader, SecondaryButton } from "@/components/ui";
 import { completeStop } from "@/lib/operator-actions";
 
@@ -330,27 +331,25 @@ export default function MachineStopPage() {
                 const maxQty = remainingBagQty(item.productId, actualQty);
                 return (
                   <div key={`${item.refillOrderLineId ?? item.productId}-${item.slotCode}`} className="space-y-4 p-4 md:p-6">
-                    <div className="grid gap-3 md:grid-cols-5">
-                      <div className="md:col-span-2">
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                      <div className="min-w-0 sm:col-span-2 lg:col-span-2">
                         <p className="text-xs text-slate-500">Product</p>
-                        <p className="font-semibold text-slate-900">{item.productName}</p>
+                        <p className="break-words font-semibold text-slate-900">{item.productName}</p>
                         <p className="text-sm text-slate-500">Slot {item.slotCode}</p>
                       </div>
                       <Metric label="Assigned" value={assignedQty} />
                       <Metric label="Bag available" value={item.availableQty ?? 0} />
                       <Metric label="Difference" value={difference > 0 ? `+${difference}` : difference} tone={difference === 0 ? "neutral" : "warn"} />
                     </div>
-                    <div className="grid gap-3 md:grid-cols-[160px_1fr]">
+                    <div className="grid gap-3 md:grid-cols-[220px_1fr]">
                       <label className="block">
                         <span className="mb-1 block text-sm font-medium text-slate-800">Actual filled qty</span>
-                        <input
-                          type="number"
-                          min="0"
-                          max={maxQty}
+                        <QuantityStepper
                           value={actualQty}
-                          onChange={(event) => setAssignedQty(item, parseInt(event.target.value) || 0)}
+                          max={maxQty}
+                          onChange={(quantity) => setAssignedQty(item, quantity)}
                           disabled={unavailableProducts[item.productId]}
-                          className="field-input"
+                          inputLabel={`${item.productName} actual filled quantity`}
                         />
                       </label>
                       <label className="block">
@@ -383,15 +382,15 @@ export default function MachineStopPage() {
         </section>
 
         <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h2 className="text-lg font-semibold">Products added at machine</h2>
               <p className="mt-1 text-sm text-slate-500">Add unplanned products or substitutions from the operator bag. These lines are saved when you complete the stop.</p>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={addExtraProduct} className="btn-secondary">Add product</button>
-              <button type="button" onClick={addSubstitution} className="btn-secondary">Swap product</button>
-              <button type="button" onClick={addMissingReport} className="btn-secondary">Report missing</button>
+            <div className="grid grid-cols-3 gap-2 sm:flex sm:flex-wrap">
+              <button type="button" onClick={addExtraProduct} className="btn-secondary px-2 text-xs sm:px-4 sm:text-sm">Add</button>
+              <button type="button" onClick={addSubstitution} className="btn-secondary px-2 text-xs sm:px-4 sm:text-sm">Swap</button>
+              <button type="button" onClick={addMissingReport} className="btn-secondary px-2 text-xs sm:px-4 sm:text-sm">Missing</button>
             </div>
           </div>
 
@@ -401,7 +400,7 @@ export default function MachineStopPage() {
               const maxQty = line.productId ? remainingBagQty(line.productId, line.quantity) : 0;
               return (
                 <div key={line.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <div className="grid gap-3 md:grid-cols-[1fr_120px_1fr]">
+                  <div className="grid gap-3 md:grid-cols-[1fr_160px_1fr]">
                     <ProductPicker products={stopData.productOptions} value={line.productId} onChange={(productId) => updateExtra(line.id, { productId, quantity: 0 })} label="Extra product" />
                     <QuantityInput value={line.quantity} max={maxQty} onChange={(quantity) => updateExtra(line.id, { quantity })} />
                     <ReasonSelect value={line.reason} onChange={(reason) => updateExtra(line.id, { reason })} />
@@ -426,7 +425,7 @@ export default function MachineStopPage() {
                     </label>
                     <ProductPicker products={stopData.productOptions} value={line.substituteProductId} onChange={(productId) => updateSubstitution(line.id, { substituteProductId: productId, quantity: 0 })} label="Replacement product" />
                   </div>
-                  <div className="mt-3 grid gap-3 md:grid-cols-[120px_1fr]">
+                  <div className="mt-3 grid gap-3 md:grid-cols-[160px_1fr]">
                     <QuantityInput value={line.quantity} max={maxQty} onChange={(quantity) => updateSubstitution(line.id, { quantity })} />
                     <ReasonSelect value={line.reason} onChange={(reason) => updateSubstitution(line.id, { reason })} />
                   </div>
@@ -509,11 +508,11 @@ export default function MachineStopPage() {
           )}
         </section>
 
-        <div className="sticky bottom-4 flex gap-3">
-          <SecondaryButton href={routeHref} type="button">Cancel</SecondaryButton>
-          <button onClick={handleCompleteStop} disabled={submitting || !cleaningDone} className="btn-primary flex-1 disabled:cursor-not-allowed disabled:opacity-50">
+        <div className="sticky bottom-3 z-10 -mx-3 flex flex-col gap-2 border-t border-slate-200 bg-slate-100/95 px-3 py-3 backdrop-blur sm:mx-0 sm:flex-row sm:border-0 sm:bg-transparent sm:p-0">
+          <button onClick={handleCompleteStop} disabled={submitting || !cleaningDone} className="btn-primary w-full flex-1 disabled:cursor-not-allowed disabled:opacity-50">
             {submitting ? "Completing..." : "Complete Stop"}
           </button>
+          <SecondaryButton href={routeHref} type="button">Cancel</SecondaryButton>
         </div>
 
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
@@ -574,7 +573,7 @@ function ProductPicker({ products, value, onChange, label = "Existing product" }
               <ProductThumbnail imageUrl={product.imageUrl} name={product.name} />
               <span className="min-w-0">
                 <span className="block truncate font-medium">{product.name}</span>
-                <span className={product.id === value ? "text-blue-100" : "text-slate-500"}>{product.sku ?? "No SKU"} - Bag {product.availableQty}</span>
+                <span className={`block truncate ${product.id === value ? "text-blue-100" : "text-slate-500"}`}>{product.sku ?? "No SKU"} - Bag {product.availableQty}</span>
               </span>
             </span>
           </button>
@@ -590,7 +589,7 @@ function QuantityInput({ value, max, onChange }: { value: number; max: number; o
   return (
     <label className="block">
       <span className="mb-1 block text-sm font-medium text-slate-800">Quantity</span>
-      <input type="number" min="0" max={max} value={value} onChange={(event) => onChange(Math.max(0, Math.min(max, parseInt(event.target.value) || 0)))} className="field-input" />
+      <QuantityStepper value={value} max={max} onChange={onChange} inputLabel="Quantity" />
       <span className="mt-1 block text-xs text-slate-500">Bag available: {max}</span>
     </label>
   );

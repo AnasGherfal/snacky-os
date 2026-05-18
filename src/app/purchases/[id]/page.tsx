@@ -21,7 +21,7 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
   const [{ data: purchase }, { data: lines }, { data: movements, count: movementCount }] = await Promise.all([
     supabase
       .from("purchase_orders")
-      .select("id, supplier_id, status, order_date, receipt_number, payment_method, receipt_url, total_amount, manual_total_lyd, calculated_total_lyd, total_adjustment_lyd, total_source, notes, received_at, supplier:suppliers(name), created_by_member:team_members!purchase_orders_created_by_fkey(full_name), received_by_member:team_members!purchase_orders_received_by_fkey(full_name)")
+      .select("id, supplier_id, status, order_date, receipt_number, payment_method, payment_status, receipt_url, total_amount, manual_total_lyd, calculated_total_lyd, total_adjustment_lyd, total_source, notes, received_at, supplier:suppliers(name), created_by_member:team_members!purchase_orders_created_by_fkey(full_name), received_by_member:team_members!purchase_orders_received_by_fkey(full_name)")
       .eq("id", id)
       .single(),
     supabase
@@ -60,6 +60,7 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
             <div><div className="text-xs font-medium uppercase text-slate-500">Purchase date</div><div className="font-medium">{purchaseRow.order_date}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Supplier</div><div className="font-medium">{purchaseRow.supplier?.name ?? "-"}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Payment method</div><div className="font-medium">{String(purchaseRow.payment_method ?? "-").replaceAll("_", " ")}</div></div>
+            <div><div className="text-xs font-medium uppercase text-slate-500">Payment status</div><StatusBadge status={purchaseRow.payment_status ?? "paid"} /></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Status</div><StatusBadge status={purchaseRow.status} /></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Created by</div><div>{purchaseRow.created_by_member?.full_name ?? "-"}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Received by</div><div>{purchaseRow.received_by_member?.full_name ?? "-"}</div></div>

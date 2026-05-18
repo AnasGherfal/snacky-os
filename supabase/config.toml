@@ -117,10 +117,25 @@ public = true
 file_size_limit = "5MB"
 allowed_mime_types = ["image/png", "image/jpeg", "image/webp"]
 
-[storage.buckets."purchase-receipts"]
-public = true
+[storage.buckets."receipt-images"]
+public = false
 file_size_limit = "5MB"
 allowed_mime_types = ["image/png", "image/jpeg", "image/webp", "application/pdf"]
+
+[storage.buckets."machine-photos"]
+public = false
+file_size_limit = "10MB"
+allowed_mime_types = ["image/png", "image/jpeg", "image/webp"]
+
+[storage.buckets."refill-photos"]
+public = false
+file_size_limit = "10MB"
+allowed_mime_types = ["image/png", "image/jpeg", "image/webp"]
+
+[storage.buckets."issue-photos"]
+public = false
+file_size_limit = "10MB"
+allowed_mime_types = ["image/png", "image/jpeg", "image/webp"]
 
 # Allow connections via S3 compatible clients
 [storage.s3_protocol]

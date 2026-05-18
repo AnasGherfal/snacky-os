@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { AppShell } from "@/components/AppShell";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
+import { ProductSourceBadge } from "@/components/ProductSourceBadge";
 import { DataTable, EmptyState, FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
@@ -24,35 +25,51 @@ async function updateProduct(fd: FormData) {
   const { data: beforeProduct } = await s.from("products").select("*").eq("id", id).maybeSingle();
   const currentImageUrl = String(fd.get("current_image_url") || "").trim();
   const { imageUrl, uploadUnavailable } = await resolveProductImageUrl(s, fd);
-  const product = {
+  const nextName = String(fd.get("name") || "").trim();
+  const nextCost = Number(fd.get("current_cost_price_lyd") || 0);
+  const nextSelling = Number(fd.get("current_selling_price_lyd") || 0);
+  const previousCost = Number(beforeProduct?.current_cost_price_lyd ?? beforeProduct?.cost_price ?? 0);
+  const previousSelling = Number(beforeProduct?.current_selling_price_lyd ?? beforeProduct?.selling_price ?? 0);
+  const costChanged = nextCost !== previousCost;
+  const sellingChanged = nextSelling !== previousSelling;
+  const product: Record<string, unknown> = {
     sku: String(fd.get("sku") || "").trim(),
     barcode: String(fd.get("barcode") || "") || null,
-    name: String(fd.get("name") || "").trim(),
+    name: nextName,
     category: String(fd.get("category") || "snack"),
     brand: String(fd.get("brand") || "") || null,
     supplier_id: String(fd.get("supplier_id") || "") || null,
-    cost_price: Number(fd.get("current_cost_price_lyd") || 0),
-    selling_price: Number(fd.get("current_selling_price_lyd") || 0),
-    current_cost_price_lyd: Number(fd.get("current_cost_price_lyd") || 0),
-    current_selling_price_lyd: Number(fd.get("current_selling_price_lyd") || 0),
-    cost_price_source: "manual",
-    selling_price_source: "manual",
-    price_updated_at: new Date().toISOString(),
     case_quantity: Number(fd.get("case_quantity") || 1),
     image_url: (imageUrl ?? currentImageUrl) || null,
     active: String(fd.get("active") || "true") === "true",
   };
+  if (costChanged) {
+    Object.assign(product, {
+      cost_price: nextCost,
+      current_cost_price_lyd: nextCost,
+      cost_price_source: "manual",
+      price_updated_at: new Date().toISOString(),
+    });
+  }
+  if (sellingChanged) {
+    Object.assign(product, {
+      selling_price: nextSelling,
+      current_selling_price_lyd: nextSelling,
+      selling_price_source: "manual",
+      price_updated_at: new Date().toISOString(),
+    });
+  }
 
-  const { data: afterProduct } = await s.from("products").update(product).eq("id", id).select("id, sku, name, category, brand, active, current_cost_price_lyd, current_selling_price_lyd").maybeSingle();
+  const { data: afterProduct } = await s.from("products").update(product).eq("id", id).select("id, sku, name, category, brand, active, current_cost_price_lyd, current_selling_price_lyd, cost_price_source, selling_price_source").maybeSingle();
   await logActivity({
     profile,
     action: "update",
     entityType: "product",
     entityId: id,
-    entityLabel: afterProduct?.name ?? product.name,
+    entityLabel: afterProduct?.name ?? nextName,
     beforeData: beforeProduct,
     afterData: afterProduct ?? product,
-    summary: `Updated product ${afterProduct?.name ?? product.name}`,
+    summary: `Updated product ${afterProduct?.name ?? nextName}`,
   });
   revalidatePath("/products");
   revalidatePath(`/products/${id}/edit`);
@@ -118,9 +135,18 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
         </section>
 
         <section id="pricing" className="grid gap-4 md:grid-cols-3">
-          <div className="surface-card"><div className="text-sm text-slate-500">Last purchase cost</div><div className="mt-1 text-2xl font-semibold">{lyd(Number(product.last_purchase_cost_lyd ?? product.current_cost_price_lyd ?? 0))}</div></div>
-          <div className="surface-card"><div className="text-sm text-slate-500">Average cost</div><div className="mt-1 text-2xl font-semibold">{product.average_cost_lyd === null ? "-" : lyd(Number(product.average_cost_lyd))}</div></div>
-          <div className="surface-card"><div className="text-sm text-slate-500">Current selling price</div><div className="mt-1 text-2xl font-semibold">{lyd(Number(product.current_selling_price_lyd ?? product.selling_price ?? 0))}</div></div>
+          <div className="surface-card"><div className="text-sm text-slate-500">Last purchase cost</div><div className="mt-1 text-2xl font-semibold">{lyd(Number(product.last_purchase_cost_lyd ?? product.current_cost_price_lyd ?? 0))}</div><div className="mt-2"><ProductSourceBadge source={product.cost_price_source} /></div></div>
+          <div className="surface-card"><div className="text-sm text-slate-500">Average cost</div><div className="mt-1 text-2xl font-semibold">{product.average_cost_lyd === null ? "-" : lyd(Number(product.average_cost_lyd))}</div><div className="mt-2"><ProductSourceBadge source={product.cost_price_source} /></div></div>
+          <div className="surface-card"><div className="text-sm text-slate-500">Current selling price</div><div className="mt-1 text-2xl font-semibold">{lyd(Number(product.current_selling_price_lyd ?? product.selling_price ?? 0))}</div><div className="mt-2"><ProductSourceBadge source={product.selling_price_source} /></div></div>
+        </section>
+
+        <section className="surface-card">
+          <h2 className="mb-3 text-base font-semibold text-slate-900">Source badges</h2>
+          <div className="grid gap-3 md:grid-cols-3">
+            <div><div className="mb-1 text-xs font-medium uppercase text-slate-500">Product names/codes</div><ProductSourceBadge source={product.import_source} /></div>
+            <div><div className="mb-1 text-xs font-medium uppercase text-slate-500">Machine selling price</div><ProductSourceBadge source={product.selling_price_source} /></div>
+            <div><div className="mb-1 text-xs font-medium uppercase text-slate-500">Snacky cost</div><ProductSourceBadge source={product.cost_price_source} /></div>
+          </div>
         </section>
 
         <FormPageLayout>
@@ -135,8 +161,8 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
               <FormField label="Category" required><select name="category" defaultValue={product.category} className="field-input"><option>drink</option><option>snack</option><option>chocolate</option><option>biscuit</option><option>coffee</option><option>other</option></select></FormField>
               <FormField label="Brand"><input name="brand" defaultValue={product.brand || ""} className="field-input" /></FormField>
               <FormField label="Supplier"><select name="supplier_id" defaultValue={product.supplier_id || ""} className="field-input"><option value="">Select supplier</option>{suppliers?.map((supplier: any) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}</select></FormField>
-              <FormField label="Current Cost Price LYD" hint={`Source: ${String(product.cost_price_source ?? "initial_import").replaceAll("_", " ")}`}><input type="number" step="0.0001" name="current_cost_price_lyd" defaultValue={product.current_cost_price_lyd ?? product.cost_price ?? 0} className="field-input" /></FormField>
-              <FormField label="Current Selling Price LYD" hint={`Source: ${String(product.selling_price_source ?? "initial_import").replaceAll("_", " ")}`}><input type="number" step="0.01" name="current_selling_price_lyd" defaultValue={product.current_selling_price_lyd ?? product.selling_price ?? 0} className="field-input" /></FormField>
+              <FormField label="Current Cost Price LYD" hint="Manual changes relabel cost source as Manual. Purchase receiving remains the preferred cost source."><input type="number" step="0.0001" name="current_cost_price_lyd" defaultValue={product.current_cost_price_lyd ?? product.cost_price ?? 0} className="field-input" /></FormField>
+              <FormField label="Current Selling Price LYD" hint="Manual changes relabel selling source as Manual. VMS Product List remains the preferred machine selling source."><input type="number" step="0.01" name="current_selling_price_lyd" defaultValue={product.current_selling_price_lyd ?? product.selling_price ?? 0} className="field-input" /></FormField>
               <FormField label="VMS Selling Price LYD" hint="Updated by VMS imports when the file provides a selling price."><input value={formatMoney(product.vms_selling_price_lyd)} readOnly className="field-input bg-slate-50" /></FormField>
               <FormField label="Last Purchase Cost LYD" hint="Updated when a purchase is received."><input value={formatMoney(product.last_purchase_cost_lyd, 4)} readOnly className="field-input bg-slate-50" /></FormField>
               <FormField label="Average Cost LYD" hint="Reserved for weighted average cost once enabled."><input value={formatMoney(product.average_cost_lyd, 4)} readOnly className="field-input bg-slate-50" /></FormField>

@@ -16,7 +16,7 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
   const { data: purchases } = supabase
     ? await supabase
         .from("purchase_orders")
-        .select("id, order_date, receipt_number, total_amount, manual_total_lyd, calculated_total_lyd, payment_method, status, created_at, supplier:suppliers(name), created_by_member:team_members!purchase_orders_created_by_fkey(full_name)")
+        .select("id, order_date, receipt_number, total_amount, manual_total_lyd, calculated_total_lyd, payment_method, payment_status, status, created_at, supplier:suppliers(name), created_by_member:team_members!purchase_orders_created_by_fkey(full_name)")
         .order("order_date", { ascending: false })
         .order("created_at", { ascending: false })
     : { data: [] };
@@ -28,7 +28,7 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
       {!purchases?.length ? (
         <EmptyState title="No purchases yet" body="Create a purchase when stock arrives from a supplier." />
       ) : (
-        <DataTable headers={["Date", "Supplier", "Receipt", "Total", "Payment", "Status", "Created by", "Actions"]}>
+        <DataTable headers={["Date", "Supplier", "Receipt", "Total", "Payment", "Payment status", "Status", "Created by", "Actions"]}>
           {purchases.map((purchase: any) => (
             <tr key={purchase.id}>
               <td>{purchase.order_date}</td>
@@ -36,6 +36,7 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
               <td>{purchase.receipt_number ?? "-"}</td>
               <td>{lyd(Number(purchase.manual_total_lyd ?? purchase.total_amount ?? purchase.calculated_total_lyd ?? 0))}</td>
               <td>{String(purchase.payment_method ?? "-").replaceAll("_", " ")}</td>
+              <td><StatusBadge status={purchase.payment_status ?? "paid"} /></td>
               <td><StatusBadge status={purchase.status} /></td>
               <td>{purchase.created_by_member?.full_name ?? "-"}</td>
               <td><div className="flex flex-wrap gap-2"><Link href={`/purchases/${purchase.id}`} className="btn-secondary">View</Link>{canCreatePurchase && purchase.status === "draft" ? <Link href={`/purchases/${purchase.id}/edit`} className="btn-secondary">Edit</Link> : null}</div></td>

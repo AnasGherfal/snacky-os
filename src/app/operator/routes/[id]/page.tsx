@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
-import { EmptyState, ErrorState, SecondaryButton, StatusBadge, PrimaryButton, SectionCard } from "@/components/ui";
+import { EmptyState, ErrorState, SecondaryButton, StatusBadge, SectionCard } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -67,19 +67,21 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
     <AppShell>
       <div className="space-y-6">
         <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-slate-900">
+          <div className="min-w-0">
+            <h1 className="break-words text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">
               Route for {routeRow.route_date}
             </h1>
             <p className="mt-1 text-sm text-slate-500">
               {operator?.full_name ?? "Assigned operator"} - {totalStops} machine stops
             </p>
           </div>
-          <SecondaryButton href="/operator/routes">Back to routes</SecondaryButton>
+          <div className="w-full shrink-0 sm:w-auto [&>*]:w-full sm:[&>*]:w-auto">
+            <SecondaryButton href="/operator/routes">Back to routes</SecondaryButton>
+          </div>
         </div>
 
         {/* Route Status Cards */}
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-3">
           <SectionCard>
             <div className="p-4">
               <div className="text-sm text-slate-500 mb-1">Status</div>
@@ -98,13 +100,13 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
             <div className="p-4">
               <div className="text-sm text-slate-500 mb-1">Action</div>
               {routeRow.status === "draft" || routeRow.status === "assigned" ? (
-                <PrimaryButton href={`/operator/routes/${routeId}/pick-list?start=1`}>
+                <Link href={`/operator/routes/${routeId}/pick-list?start=1`} className="btn-primary w-full">
                   Start Route
-                </PrimaryButton>
+                </Link>
               ) : routeRow.status === "in_progress" ? (
-                <PrimaryButton href={`/operator/routes/${routeId}/leftovers`}>
+                <Link href={`/operator/routes/${routeId}/leftovers`} className="btn-primary w-full">
                   End Route
-                </PrimaryButton>
+                </Link>
               ) : (
                 <div className="text-sm text-slate-600">Route completed</div>
               )}
@@ -125,16 +127,16 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
           ) : (
             <div className="mb-4 space-y-2">
               {pickItems.map((item: any) => (
-                <div key={item.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
-                  <span className="font-medium text-slate-900">{item.product?.name ?? "Unknown product"}</span>
-                  <span>{item.picked_qty || item.planned_qty} / {item.planned_qty} picked</span>
+                <div key={item.id} className="flex flex-col gap-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+                  <span className="min-w-0 break-words font-medium text-slate-900">{item.product?.name ?? "Unknown product"}</span>
+                  <span className="shrink-0 text-slate-600">{item.picked_qty || item.planned_qty} / {item.planned_qty} picked</span>
                 </div>
               ))}
             </div>
           )}
           <Link
             href={`/operator/routes/${routeId}/pick-list`}
-            className="inline-block rounded-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 transition"
+            className="btn-secondary w-full sm:w-auto"
           >
             View Pick List
           </Link>
@@ -154,25 +156,27 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
             <div className="divide-y divide-slate-200">
               {routeStops.map((stop: any) => (
                 <div key={stop.id} className="p-4 md:p-6 hover:bg-slate-50 transition">
-                  <div className="flex items-start justify-between gap-4 mb-3">
-                    <div className="flex items-start gap-4">
-                      <div className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full bg-slate-200 text-sm font-semibold text-slate-700">
+                  <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-slate-200 text-sm font-semibold text-slate-700">
                         {stop.stop_order}
                       </div>
-                      <div>
-                        <h3 className="font-semibold text-slate-900">{machineById.get(stop.machine_id)?.name ?? "Unknown machine"}</h3>
+                      <div className="min-w-0">
+                        <h3 className="break-words font-semibold text-slate-900">{machineById.get(stop.machine_id)?.name ?? "Unknown machine"}</h3>
                         <p className="text-sm text-slate-500">
                           Code: {machineById.get(stop.machine_id)?.machine_code ?? "-"}
                         </p>
                       </div>
                     </div>
-                    <StatusBadge status={stop.status} />
+                    <div className="shrink-0">
+                      <StatusBadge status={stop.status} />
+                    </div>
                   </div>
 
                   {routeRow.status === "in_progress" || routeRow.status === "completed" ? (
                     <Link
                       href={`/operator/routes/${routeId}/stops/${stop.id}`}
-                      className="inline-block rounded-lg border border-blue-300 bg-blue-50 hover:bg-blue-100 px-3 py-1 text-sm font-medium text-blue-700 transition"
+                      className="btn-primary mt-1 w-full sm:w-auto"
                     >
                       {stop.status === "completed" ? "View stop" : "Continue filling"}
                     </Link>

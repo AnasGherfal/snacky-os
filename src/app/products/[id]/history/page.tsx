@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
+import { ProductSourceBadge } from "@/components/ProductSourceBadge";
 import { DataTable, EmptyState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { lyd } from "@/lib/format";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -66,7 +67,7 @@ export default async function ProductHistoryPage({
   const [{ data: product }, { data: users }, { data: inventory }, { data: purchaseLines }, { data: salesRows }, { data: priceLogs }] = await Promise.all([
     supabase
       .from("products")
-      .select("id, sku, name, category, active, current_selling_price_lyd, selling_price, selling_price_source, current_cost_price_lyd, last_purchase_cost_lyd, average_cost_lyd, cost_price_source, price_updated_at")
+      .select("id, sku, name, category, active, import_source, last_vms_seen_at, current_selling_price_lyd, selling_price, selling_price_source, current_cost_price_lyd, last_purchase_cost_lyd, average_cost_lyd, cost_price_source, price_updated_at")
       .eq("id", id)
       .maybeSingle(),
     supabase.from("team_members").select("id, full_name").order("full_name"),
@@ -150,8 +151,8 @@ export default async function ProductHistoryPage({
 
       <section className="mb-6 grid gap-4 md:grid-cols-4">
         <div className="surface-card"><div className="text-sm text-slate-500">Current storage quantity</div><div className="mt-1 text-3xl font-semibold">{storageQty}</div></div>
-        <div className="surface-card"><div className="text-sm text-slate-500">Last purchase cost</div><div className="mt-1 text-2xl font-semibold">{product.last_purchase_cost_lyd === null ? "-" : formatMoney(product.last_purchase_cost_lyd, 4)}</div></div>
-        <div className="surface-card"><div className="text-sm text-slate-500">Current selling price</div><div className="mt-1 text-2xl font-semibold">{formatMoney(product.current_selling_price_lyd ?? product.selling_price)}</div></div>
+        <div className="surface-card"><div className="text-sm text-slate-500">Last purchase cost</div><div className="mt-1 text-2xl font-semibold">{product.last_purchase_cost_lyd === null ? "-" : formatMoney(product.last_purchase_cost_lyd, 4)}</div><div className="mt-2"><ProductSourceBadge source={product.cost_price_source} /></div></div>
+        <div className="surface-card"><div className="text-sm text-slate-500">Current selling price</div><div className="mt-1 text-2xl font-semibold">{formatMoney(product.current_selling_price_lyd ?? product.selling_price)}</div><div className="mt-2"><ProductSourceBadge source={product.selling_price_source} /></div></div>
         <div className="surface-card"><div className="text-sm text-slate-500">Status</div><div className="mt-2"><StatusBadge status={product.active ? "active" : "inactive"} /></div></div>
       </section>
 
@@ -160,6 +161,16 @@ export default async function ProductHistoryPage({
         <div className="surface-card"><div className="text-sm text-slate-500">Operator bag quantity</div><div className="mt-1 text-3xl font-semibold">{bagQty}</div></div>
         <div className="surface-card"><div className="text-sm text-slate-500">Purchase lines</div><div className="mt-1 text-3xl font-semibold">{purchases.length}</div></div>
         <div className="surface-card"><div className="text-sm text-slate-500">VMS sales</div><div className="mt-1 text-3xl font-semibold">{sales.length ? lyd(totalSales) : "-"}</div></div>
+      </section>
+
+      <section className="surface-card mb-6">
+        <h2 className="mb-3 text-base font-semibold text-slate-900">Source badges</h2>
+        <div className="grid gap-3 md:grid-cols-4">
+          <div><div className="mb-1 text-xs font-medium uppercase text-slate-500">Product names/codes</div><ProductSourceBadge source={product.import_source} /></div>
+          <div><div className="mb-1 text-xs font-medium uppercase text-slate-500">Machine selling price</div><ProductSourceBadge source={product.selling_price_source} /></div>
+          <div><div className="mb-1 text-xs font-medium uppercase text-slate-500">Snacky cost</div><ProductSourceBadge source={product.cost_price_source} /></div>
+          <div><div className="mb-1 text-xs font-medium uppercase text-slate-500">Last VMS seen</div><div className="text-sm font-medium">{product.last_vms_seen_at ? formatDate(product.last_vms_seen_at) : "-"}</div></div>
+        </div>
       </section>
 
       <section id="inventory-movements" className="surface-card mb-6">
@@ -255,11 +266,11 @@ export default async function ProductHistoryPage({
         <div className="mb-4 grid gap-3 md:grid-cols-3">
           <div className="rounded-lg border border-slate-200 bg-white p-3">
             <div className="text-xs font-medium uppercase text-slate-500">Selling source</div>
-            <div className="mt-1"><StatusBadge status={String(product.selling_price_source ?? "unknown").replaceAll("_", " ")} /></div>
+            <div className="mt-1"><ProductSourceBadge source={product.selling_price_source} /></div>
           </div>
           <div className="rounded-lg border border-slate-200 bg-white p-3">
             <div className="text-xs font-medium uppercase text-slate-500">Cost source</div>
-            <div className="mt-1"><StatusBadge status={String(product.cost_price_source ?? "unknown").replaceAll("_", " ")} /></div>
+            <div className="mt-1"><ProductSourceBadge source={product.cost_price_source} /></div>
           </div>
           <div className="rounded-lg border border-slate-200 bg-white p-3">
             <div className="text-xs font-medium uppercase text-slate-500">Last price update</div>

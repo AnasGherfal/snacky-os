@@ -50,10 +50,15 @@ export default async function VmsProductMappingPage({
     .filter((mapping: any) => {
       if (!search) return true;
       return (
+        String(mapping.vms_product_id ?? "").toLowerCase().includes(search) ||
         String(mapping.vms_product_name ?? "").toLowerCase().includes(search) ||
+        String(mapping.product?.sku ?? "").toLowerCase().includes(search) ||
         String(mapping.product?.name ?? "").toLowerCase().includes(search)
       );
     });
+  const needsReviewCount = (mappings ?? []).filter((mapping: any) => mapping.match_status === "needs_review").length;
+  const confirmedCount = (mappings ?? []).filter((mapping: any) => mapping.match_status === "confirmed").length;
+  const ignoredCount = (mappings ?? []).filter((mapping: any) => mapping.match_status === "ignored").length;
 
   return (
     <AppShell>
@@ -79,7 +84,7 @@ export default async function VmsProductMappingPage({
             <input
               name="q"
               defaultValue={q}
-              placeholder="Search VMS or Snacky product name..."
+              placeholder="Search VMS ID, VMS name, SKU, or Snacky product..."
               className="field-input"
             />
             <button className="btn-secondary">Search</button>
@@ -99,15 +104,15 @@ export default async function VmsProductMappingPage({
 
         <div className="grid gap-3 md:grid-cols-3">
           <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <div className="mb-2"><StatusBadge status="confirmed" /></div>
-            <p className="text-sm text-slate-600">Confirmed: mapping is trusted and used by imports.</p>
+            <div className="mb-2 flex items-center justify-between gap-2"><StatusBadge status="confirmed" /><span className="text-lg font-semibold text-slate-900">{confirmedCount}</span></div>
+            <p className="text-sm text-slate-600">Confirmed mappings are trusted and used by imports and reprocessing.</p>
           </div>
           <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <div className="mb-2"><StatusBadge status="needs_review" /></div>
-            <p className="text-sm text-slate-600">Needs Review: imported product needs manual matching.</p>
+            <div className="mb-2 flex items-center justify-between gap-2"><StatusBadge status="needs_review" /><span className="text-lg font-semibold text-slate-900">{needsReviewCount}</span></div>
+            <p className="text-sm text-slate-600">Needs Review entries are created from imported VMS product IDs or names that could not be matched.</p>
           </div>
           <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <div className="mb-2"><StatusBadge status="ignored" /></div>
+            <div className="mb-2 flex items-center justify-between gap-2"><StatusBadge status="ignored" /><span className="text-lg font-semibold text-slate-900">{ignoredCount}</span></div>
             <p className="text-sm text-slate-600">Ignored: product should not affect operations.</p>
           </div>
         </div>

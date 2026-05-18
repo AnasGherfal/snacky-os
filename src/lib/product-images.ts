@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
+import { PRODUCT_IMAGE_BUCKET } from "@/lib/storage-buckets";
 
-const PRODUCT_IMAGE_BUCKET = "product-images";
 const PRODUCT_IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"];
 const PRODUCT_IMAGE_MAX_SIZE = 5 * 1024 * 1024;
 

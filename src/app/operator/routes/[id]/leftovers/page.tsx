@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ClientAppShell as AppShell } from "@/components/ClientAppShell";
+import { QuantityStepper } from "@/components/QuantityStepper";
 import { ErrorState, PageHeader, SecondaryButton, SectionCard } from "@/components/ui";
 import { recordLeftovers, completeRoute } from "@/lib/operator-actions";
 
@@ -137,31 +138,21 @@ export default function LeftoversPage() {
             <div className="space-y-3">
               {items.map((item) => (
                 <div key={item.productId} className="rounded-lg border border-slate-200 bg-white p-4">
-                  <div className="flex items-end justify-between gap-4">
-                    <div className="flex-1">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                    <div className="min-w-0 flex-1">
                       <p className="font-semibold text-slate-900">{item.productName}</p>
                       <p className="text-xs text-slate-500 mt-1">
                         Picked: {item.quantity} units
                       </p>
                     </div>
-                    <div className="flex items-end gap-2">
-                      <input
-                        type="number"
-                        min="0"
-                        max={item.quantity}
+                    <div className="w-full sm:w-44">
+                      <div className="mb-1 text-xs font-medium text-slate-500">Return units</div>
+                      <QuantityStepper
                         value={leftoverQtys[item.productId] || 0}
-                        onChange={(e) =>
-                          setLeftoverQtys((prev) => ({
-                            ...prev,
-                            [item.productId]: Math.max(
-                              0,
-                              Math.min(item.quantity, parseInt(e.target.value) || 0)
-                            ),
-                          }))
-                        }
-                        className="field-input w-20"
+                        max={item.quantity}
+                        onChange={(quantity) => setLeftoverQtys((prev) => ({ ...prev, [item.productId]: quantity }))}
+                        inputLabel={`${item.productName} leftover quantity`}
                       />
-                      <span className="text-xs text-slate-500 mb-2">units</span>
                     </div>
                   </div>
                 </div>
@@ -176,13 +167,7 @@ export default function LeftoversPage() {
               </div>
             </SectionCard>
 
-            <div className="flex gap-3">
-              <SecondaryButton
-                href={routeHref}
-                type="button"
-              >
-                Cancel
-              </SecondaryButton>
+            <div className="sticky bottom-3 z-10 -mx-3 flex flex-col gap-2 border-t border-slate-200 bg-slate-100/95 px-3 py-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:border-0 sm:bg-transparent sm:p-0">
               <button
                 onClick={handleCompleteRoute}
                 disabled={submitting}
@@ -190,6 +175,12 @@ export default function LeftoversPage() {
               >
                 {submitting ? "Completing..." : "Complete Route"}
               </button>
+              <SecondaryButton
+                href={routeHref}
+                type="button"
+              >
+                Cancel
+              </SecondaryButton>
             </div>
 
             <div className="rounded-lg bg-amber-50 border border-amber-200 p-4 text-sm text-amber-800">

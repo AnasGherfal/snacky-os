@@ -1,6 +1,9 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { DataTable, EmptyState, PageHeader, SectionCard, StatusBadge } from "@/components/ui";
+import { getCurrentProfile } from "@/lib/auth";
+import { canAccessPath } from "@/lib/authz";
 import { getCashCollectionStatus, isCriticalCashVariance, isLargeCashVariance } from "@/lib/cash-collections";
 import { lyd } from "@/lib/format";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -16,7 +19,13 @@ function varianceClassName(variance: number) {
   return "font-medium text-slate-700";
 }
 
-export default async function CashCollectionsPage() {
+export default async function CashCollectionsPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+  const { error = "" } = await searchParams;
+  const profile = await getCurrentProfile();
+  if (!profile || !canAccessPath({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/cash-collections")) {
+    redirect("/unauthorized");
+  }
+
   const supabase = getSupabaseServerClient();
   const { data: collections } = supabase
     ? await supabase
@@ -38,6 +47,7 @@ export default async function CashCollectionsPage() {
         title="Cash Collections"
         subtitle="Compare operator cash collections against expected VMS cash and resolve variances."
       />
+      {error ? <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{error}</div> : null}
 
       {!supabase ? (
         <EmptyState title="Connect Supabase to activate cash collections" body="Add environment variables and restart the app." />

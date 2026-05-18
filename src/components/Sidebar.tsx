@@ -15,6 +15,7 @@ import {
   ShoppingCart,
   UserCircle,
   Warehouse,
+  X,
 } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useI18n } from "@/components/I18nProvider";
@@ -138,47 +139,83 @@ function isActiveItem(pathname: string, item: NavItem) {
   return matchesPath(pathname, hrefPath);
 }
 
-export function Sidebar({ role }: { role: AppRole }) {
+function SidebarContent({ role, onNavigate }: { role: AppRole; onNavigate?: () => void }) {
   const pathname = usePathname();
   const { dictionary } = useI18n();
   const sections = sectionsForRole(role);
 
   return (
-    <aside className="app-sidebar hidden w-72 shrink-0 border-r border-slate-200 bg-white md:block">
-      <div className="sticky top-0 h-screen overflow-y-auto p-5">
-        <h2 className="text-xl font-semibold">{dictionary.app.name}</h2>
-        <p className="mb-5 text-xs text-slate-500">{dictionary.app.operationsSystem}</p>
+    <>
+      <h2 className="text-xl font-semibold">{dictionary.app.name}</h2>
+      <p className="mb-5 text-xs text-slate-500">{dictionary.app.operationsSystem}</p>
 
-        <nav className="space-y-5" aria-label="Sidebar">
-          {sections.map((section, sectionIndex) => (
-            <div key={`${section.titleKey ?? "primary"}-${sectionIndex}`}>
-              {section.titleKey ? (
-                <div className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  {dictionary.nav[section.titleKey]}
-                </div>
-              ) : null}
-              <div className="space-y-1">
-                {section.items.map((item) => {
-                  const Icon = item.icon;
-                  const active = isActiveItem(pathname, item);
-
-                  return (
-                    <Link
-                      key={`${item.labelKey}-${item.href}`}
-                      href={item.href}
-                      className={active ? "nav-link-active flex items-center gap-2" : "nav-link flex items-center gap-2"}
-                      aria-current={active ? "page" : undefined}
-                    >
-                      <Icon className="h-4 w-4 shrink-0" />
-                      <span>{dictionary.nav[item.labelKey]}</span>
-                    </Link>
-                  );
-                })}
+      <nav className="space-y-5" aria-label="Sidebar">
+        {sections.map((section, sectionIndex) => (
+          <div key={`${section.titleKey ?? "primary"}-${sectionIndex}`}>
+            {section.titleKey ? (
+              <div className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                {dictionary.nav[section.titleKey]}
               </div>
+            ) : null}
+            <div className="space-y-1">
+              {section.items.map((item) => {
+                const Icon = item.icon;
+                const active = isActiveItem(pathname, item);
+
+                return (
+                  <Link
+                    key={`${item.labelKey}-${item.href}`}
+                    href={item.href}
+                    onClick={onNavigate}
+                    className={active ? "nav-link-active flex items-center gap-2" : "nav-link flex items-center gap-2"}
+                    aria-current={active ? "page" : undefined}
+                  >
+                    <Icon className="h-4 w-4 shrink-0" />
+                    <span>{dictionary.nav[item.labelKey]}</span>
+                  </Link>
+                );
+              })}
             </div>
-          ))}
-        </nav>
-      </div>
-    </aside>
+          </div>
+        ))}
+      </nav>
+    </>
+  );
+}
+
+export function Sidebar({ role, mobileOpen = false, onMobileClose }: { role: AppRole; mobileOpen?: boolean; onMobileClose?: () => void }) {
+  return (
+    <>
+      <aside className="app-sidebar hidden w-72 shrink-0 border-r border-slate-200 bg-white md:block">
+        <div className="sticky top-0 h-screen overflow-y-auto p-5">
+          <SidebarContent role={role} />
+        </div>
+      </aside>
+
+      {mobileOpen ? (
+        <div className="fixed inset-0 z-40 md:hidden" role="dialog" aria-modal="true">
+          <button
+            type="button"
+            className="absolute inset-0 bg-slate-950/40"
+            onClick={onMobileClose}
+            aria-label="Close navigation overlay"
+          />
+          <aside className="app-sidebar relative h-full w-[min(20rem,86vw)] overflow-y-auto border-r border-slate-200 bg-white p-5 shadow-xl">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Navigation</div>
+              <button
+                type="button"
+                onClick={onMobileClose}
+                className="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700"
+                aria-label="Close navigation"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <SidebarContent role={role} onNavigate={onMobileClose} />
+          </aside>
+        </div>
+      ) : null}
+    </>
   );
 }

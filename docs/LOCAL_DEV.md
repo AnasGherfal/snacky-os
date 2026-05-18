@@ -20,8 +20,9 @@ Analytics is disabled in `supabase/config.toml` because the local Logflare
 container can fail health checks on Windows unless Docker exposes the daemon on
 `tcp://localhost:2375`.
 
-Local Storage is enabled in `supabase/config.toml` with a public
-`product-images` bucket for product photos.
+Local Storage is enabled in `supabase/config.toml` with the same bucket names as
+production: `product-images`, `receipt-images`, `machine-photos`,
+`refill-photos`, and `issue-photos`.
 
 ## Docker Desktop Engine Error
 

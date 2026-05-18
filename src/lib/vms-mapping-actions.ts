@@ -57,6 +57,7 @@ export async function updateVmsProductMapping(formData: FormData) {
   });
 
   revalidatePath("/vms-mappings");
+  revalidatePath("/vms-import");
   revalidatePath(`/vms-mappings/${id}/edit`);
   redirect("/vms-mappings");
 }

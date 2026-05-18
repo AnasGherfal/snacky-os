@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
-import { DataTable, EmptyState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
+import { EmptyState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOperatorRole } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -37,22 +37,27 @@ export default async function OperatorIssuesPage() {
       {!issues?.length ? (
         <EmptyState title="No issues reported" body="Report machine problems from a route stop while completing your refill workflow." />
       ) : (
-        <DataTable headers={["Created", "Machine", "Type", "Priority", "Status", "SLA", "Description"]}>
+        <div className="space-y-3">
           {issues.map((issue: any) => (
-            <tr key={issue.id}>
-              <td>{formatDate(issue.created_at)}</td>
-              <td>
-                <div className="font-medium text-slate-900">{issue.machine?.name ?? "Unknown machine"}</div>
-                <div className="text-xs text-slate-500">{issue.machine?.machine_code ?? "-"}</div>
-              </td>
-              <td>{issue.issue_type}</td>
-              <td><StatusBadge status={issue.priority} /></td>
-              <td><StatusBadge status={issue.status} /></td>
-              <td>{formatDate(issue.sla_due_at)}</td>
-              <td>{issue.description ?? "-"}</td>
-            </tr>
+            <article key={issue.id} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <div className="text-xs text-slate-500">{formatDate(issue.created_at)}</div>
+                  <h2 className="mt-1 font-semibold text-slate-900">{issue.issue_type}</h2>
+                  <div className="mt-1 text-sm text-slate-500">{issue.machine?.name ?? "Unknown machine"} - {issue.machine?.machine_code ?? "-"}</div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <StatusBadge status={issue.priority} />
+                  <StatusBadge status={issue.status} />
+                </div>
+              </div>
+              <p className="mt-3 text-sm text-slate-700">{issue.description ?? "-"}</p>
+              <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                SLA due: <span className="font-medium text-slate-900">{formatDate(issue.sla_due_at)}</span>
+              </div>
+            </article>
           ))}
-        </DataTable>
+        </div>
       )}
     </AppShell>
   );

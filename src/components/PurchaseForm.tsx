@@ -29,6 +29,7 @@ type InitialPurchase = {
   purchaseDate?: string | null;
   receiptNumber?: string | null;
   paymentMethod?: string | null;
+  paymentStatus?: string | null;
   receiptUrl?: string | null;
   notes?: string | null;
   manualTotalLyd?: number | null;
@@ -124,6 +125,13 @@ export function PurchaseForm({
               <option value="card">Card</option>
               <option value="credit">Credit</option>
               <option value="other">Other</option>
+            </select>
+          </FormField>
+          <FormField label="Payment status" hint="Only paid purchases create a finance money-out transaction when received.">
+            <select name="payment_status" className="field-input" defaultValue={initialPurchase?.paymentStatus ?? "paid"}>
+              <option value="paid">Paid</option>
+              <option value="unpaid">Unpaid / supplier credit</option>
+              <option value="partial">Partially paid</option>
             </select>
           </FormField>
           <FormField label="Receipt upload" hint="PNG, JPG, WEBP, or PDF. Maximum 5MB.">

@@ -149,6 +149,56 @@ export default async function RouteDetailPage({ params }: { params: Promise<{ id
   ]);
   const machineById = new Map((machines ?? []).map((machine: any) => [machine.id, machine]));
   const productById = new Map((products ?? []).map((product: any) => [product.id, product]));
+  const routeActivityQueries: PromiseLike<any>[] = [
+    supabase
+      .from("system_activity_logs")
+      .select("id, action, entity_type, entity_label, actor_name, actor_role, summary, created_at")
+      .eq("entity_type", "route")
+      .eq("entity_id", id)
+      .order("created_at", { ascending: false })
+      .limit(100),
+  ];
+  const stopIds = routeStops.map((stop: any) => stop.id).filter(Boolean);
+  const cashIds = (cashCollections ?? []).map((cash: any) => cash.id).filter(Boolean);
+  if (stopIds.length) {
+    routeActivityQueries.push(
+      supabase
+        .from("system_activity_logs")
+        .select("id, action, entity_type, entity_label, actor_name, actor_role, summary, created_at")
+        .eq("entity_type", "route_stop")
+        .in("entity_id", stopIds)
+        .order("created_at", { ascending: false })
+        .limit(100),
+    );
+  }
+  if (cashIds.length) {
+    routeActivityQueries.push(
+      supabase
+        .from("system_activity_logs")
+        .select("id, action, entity_type, entity_label, actor_name, actor_role, summary, created_at")
+        .eq("entity_type", "cash_collection")
+        .in("entity_id", cashIds)
+        .order("created_at", { ascending: false })
+        .limit(100),
+    );
+  }
+  routeActivityQueries.push(
+    supabase
+      .from("system_activity_logs")
+      .select("id, action, entity_type, entity_label, actor_name, actor_role, summary, created_at")
+      .contains("metadata", { route_id: id })
+      .order("created_at", { ascending: false })
+      .limit(100),
+  );
+  const activityResults = await Promise.all(routeActivityQueries);
+  activityResults.forEach((result: any) => {
+    if (result.error) console.error("[routes:detail] Failed to load route activity", { id, error: result.error });
+  });
+  const routeActivityRows = activityResults
+    .flatMap((result: any) => result.data ?? [])
+    .filter((activity: any, index: number, rows: any[]) => rows.findIndex((row: any) => row.id === activity.id) === index)
+    .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .slice(0, 100);
   const hasPickMovements = Boolean(movements?.some((movement: any) => movement.reason === "storage_to_operator_bag"));
   const hasReturnMovements = Boolean(movements?.some((movement: any) => movement.reason === "operator_bag_to_storage"));
   const completedStopCount = routeStops.filter((stop: any) => stop.status === "completed").length;
@@ -401,6 +451,30 @@ export default async function RouteDetailPage({ params }: { params: Promise<{ id
               </div>
             ))}
           </div>
+        </section>
+
+        <section className="surface-card p-4">
+          <h2 className="text-lg font-semibold">Route activity</h2>
+          <p className="mt-1 text-sm text-slate-500">Audit trail for route creation, picking, stop completion, cash review, issues, and leftover return.</p>
+          {!routeActivityRows.length ? (
+            <div className="mt-4">
+              <EmptyState title="No route activity yet" body="Route actions will appear here as operators and admins work through the route." />
+            </div>
+          ) : (
+            <div className="mt-4">
+              <DataTable headers={["Created", "Action", "Entity", "User", "Summary"]}>
+                {routeActivityRows.map((activity: any) => (
+                  <tr key={activity.id}>
+                    <td>{new Date(activity.created_at).toLocaleString("en-US")}</td>
+                    <td><StatusBadge status={activity.action} /></td>
+                    <td>{String(activity.entity_type ?? "-").replaceAll("_", " ")}</td>
+                    <td>{activity.actor_name ?? activity.actor_role ?? "-"}</td>
+                    <td>{activity.summary ?? activity.entity_label ?? "-"}</td>
+                  </tr>
+                ))}
+              </DataTable>
+            </div>
+          )}
         </section>
       </div>
     </AppShell>
