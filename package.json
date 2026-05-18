@@ -27,7 +27,6 @@
     "eslint": "latest",
     "eslint-config-next": "latest",
     "lightningcss": "^1.32.0",
-    "lightningcss-win32-x64-msvc": "^1.32.0",
     "tailwindcss": "latest",
     "typescript": "latest"
   }
