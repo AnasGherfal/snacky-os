@@ -53,7 +53,7 @@ export const vmsExpectedFields: Record<VmsReportType, VmsFieldDef[]> = {
     { field: "slot_code", label: "Slot code", aliases: ["Slot", "Slot No", "Tray", "Tray No", "Selection", "Channel", "Coil", "slot_code", "selection_code", "channel_no", "رقم الخانة", "رقم الرف", "الخانة"] },
     { field: "tray_number", label: "Tray number", aliases: ["Tray Number", "Tray No", "Tray", "Shelf", "tray_number", "tray_no", "رقم الرف"] },
     { field: "capacity", label: "Capacity", aliases: ["Capacity", "Max Stock", "Full Qty", "Par", "capacity", "max_qty", "par_qty", "السعة"] },
-    { field: "empty_status", label: "Empty status", aliases: ["Empty Status", "Empty", "Empty Tray", "Empty Slot", "Status", "empty_status", "tray_status"] },
+    { field: "empty_status", label: "Empty status", aliases: ["Empty Status", "Empty", "Empty Tray", "Empty Slot", "Out of Stock", "Out Of Stock", "Sold Out", "Status", "empty_status", "tray_status", "out_of_stock", "sold_out"] },
     { field: "updated_at", label: "Updated at", aliases: ["Updated At", "Last Updated", "Date", "Time", "Timestamp", "captured_at", "updated_at", "تاريخ"] },
     { field: "selling_price", label: "Selling price", aliases: ["Selling Price", "Price", "Unit Price", "Retail Price", "selling_price", "sale_price", "سعر البيع"] },
   ],

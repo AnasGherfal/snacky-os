@@ -19,11 +19,13 @@ export function ShellChrome({ children, profile }: { children: ReactNode; profil
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   return (
-    <div className="app-shell min-h-screen overflow-x-hidden bg-slate-100/70 md:flex">
+    <div className="app-shell flex h-screen min-h-0 overflow-hidden bg-slate-100/70">
       <Sidebar role={profile.role} mobileOpen={mobileNavOpen} onMobileClose={() => setMobileNavOpen(false)} />
-      <div className="min-w-0 flex-1">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Topbar profile={profile} onMenuClick={() => setMobileNavOpen(true)} />
-        <main className="mx-auto w-full max-w-7xl px-3 py-4 sm:px-4 md:p-8">{children}</main>
+        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
+          <div className="mx-auto w-full max-w-7xl px-3 py-4 sm:px-4 md:p-8">{children}</div>
+        </main>
       </div>
     </div>
   );

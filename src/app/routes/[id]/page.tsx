@@ -64,7 +64,7 @@ export default async function RouteDetailPage({ params }: { params: Promise<{ id
       .order("stop_order", { ascending: true }),
     supabase
       .from("route_stop_items")
-      .select("id, route_stop_id, machine_id, product_id, machine_slot_id, planned_quantity, source")
+      .select("id, route_stop_id, machine_id, product_id, machine_slot_id, slot_code, planned_quantity, source")
       .eq("route_id", id)
       .order("created_at", { ascending: true }),
     supabase
@@ -90,7 +90,7 @@ export default async function RouteDetailPage({ params }: { params: Promise<{ id
     if (isMissingTable(stopItemsError, "route_stop_items")) {
       const { data: fallbackOrders, error: fallbackError } = await supabase
         .from("refill_orders")
-        .select("id, machine_id, refill_order_lines(id, machine_slot_id, product_id, final_qty_to_take, suggested_qty)")
+        .select("id, machine_id, refill_order_lines(id, machine_slot_id, slot_code, product_id, final_qty_to_take, suggested_qty, source)")
         .eq("route_id", id);
       if (fallbackError) {
         console.error("[routes:detail] Failed to load fallback refill lines", { id, error: fallbackError });
@@ -104,8 +104,9 @@ export default async function RouteDetailPage({ params }: { params: Promise<{ id
               machine_id: order.machine_id,
               product_id: line.product_id,
               machine_slot_id: line.machine_slot_id,
+              slot_code: line.slot_code,
               planned_quantity: Number(line.final_qty_to_take ?? line.suggested_qty ?? 0),
-              source: line.machine_slot_id ? "refill_recommendation" : "manual_admin_assignment",
+              source: line.source ?? (line.machine_slot_id ? "refill_recommendation" : "manual_admin_assignment"),
             };
           }),
         );
@@ -294,9 +295,10 @@ export default async function RouteDetailPage({ params }: { params: Promise<{ id
                     <StatusBadge status={stop.status} />
                   </div>
                   {items.length ? (
-                    <DataTable headers={["Product", "Planned qty", "Source"]}>
+                    <DataTable headers={["Slot", "Product", "Planned qty", "Source"]}>
                       {items.map((line: any) => (
                         <tr key={line.id}>
+                          <td>{line.slot_code ?? "-"}</td>
                           <td>{productById.get(line.product_id)?.name ?? "Unknown product"}</td>
                           <td>{line.planned_quantity}</td>
                           <td>{line.source === "refill_recommendation" ? "Refill recommendation" : "Manual admin assignment"}</td>

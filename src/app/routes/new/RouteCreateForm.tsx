@@ -2,6 +2,7 @@
 
 import { FormEvent, KeyboardEvent, useDeferredValue, useMemo, useState } from "react";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormField, FormSection, SecondaryButton } from "@/components/ui";
 
@@ -17,18 +18,21 @@ type Machine = {
 };
 
 type Recommendation = {
-  machine_slot_id: string;
+  recommendation_key: string;
+  machine_slot_id: string | null;
   machine_id: string;
   machine_name: string;
   machine_code: string;
-  slot_code: string;
+  slot_code: string | null;
   product_id: string;
   product_name: string;
   current_qty: number;
-  par_qty: number;
-  suggested_qty: number;
+  capacity: number | null;
+  par_qty: number | null;
+  suggested_qty: number | null;
   available_storage_qty: number;
-  final_qty_to_take: number;
+  final_qty_to_take: number | null;
+  priority?: string | null;
 };
 
 type ProductPickOption = {
@@ -57,6 +61,14 @@ type ManualStopItem = {
   quantity: number;
 };
 
+function recommendationQuantity(row: Recommendation) {
+  return Math.max(0, Number(row.final_qty_to_take ?? row.suggested_qty ?? 0));
+}
+
+function formatRecommendationQty(value: number | null | undefined) {
+  return value === null || value === undefined ? "Capacity missing" : value;
+}
+
 export function RouteCreateForm({
   operators,
   machines,
@@ -79,7 +91,7 @@ export function RouteCreateForm({
   const [routeDate, setRouteDate] = useState(defaultRouteDate);
   const [operatorId, setOperatorId] = useState("");
   const [machineIds, setMachineIds] = useState<string[]>([]);
-  const [machineSlotIds, setMachineSlotIds] = useState<string[]>([]);
+  const [recommendationKeys, setRecommendationKeys] = useState<string[]>([]);
   const [manualStopItems, setManualStopItems] = useState<ManualStopItem[]>([]);
   const [manualMachineId, setManualMachineId] = useState("");
   const [search, setSearch] = useState("");
@@ -95,13 +107,13 @@ export function RouteCreateForm({
   const recommendationQtyByProduct = useMemo(() => {
     const quantities = new Map<string, number>();
     recommendations
-      .filter((row) => machineSlotIds.includes(row.machine_slot_id))
+      .filter((row) => recommendationKeys.includes(row.recommendation_key))
       .forEach((row) => {
-        const quantity = Number(row.final_qty_to_take ?? row.suggested_qty ?? 0);
+        const quantity = recommendationQuantity(row);
         quantities.set(row.product_id, (quantities.get(row.product_id) ?? 0) + Math.max(0, quantity));
       });
     return quantities;
-  }, [machineSlotIds, recommendations]);
+  }, [recommendationKeys, recommendations]);
 
   const plannedRouteStock = useMemo(() => {
     const manualQtyByProduct = new Map<string, number>();
@@ -136,10 +148,10 @@ export function RouteCreateForm({
 
   const selectedStopCount = useMemo(() => {
     const recommendedMachines = recommendations
-      .filter((row) => machineSlotIds.includes(row.machine_slot_id))
+      .filter((row) => recommendationKeys.includes(row.recommendation_key))
       .map((row) => row.machine_id);
     return new Set([...machineIds, ...recommendedMachines]).size;
-  }, [machineIds, machineSlotIds, recommendations]);
+  }, [machineIds, recommendationKeys, recommendations]);
 
   const recentProducts = useMemo(() => {
     const recent = recentProductIds.map((id) => productsById.get(id)).filter(Boolean) as ProductPickOption[];
@@ -235,7 +247,7 @@ export function RouteCreateForm({
       const response = await fetch("/api/routes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ routeDate, operatorId, machineIds, machineSlotIds, manualStopItems, adminOverride }),
+        body: JSON.stringify({ routeDate, operatorId, machineIds, recommendationKeys, manualStopItems, adminOverride }),
       });
       const result = await response.json();
 
@@ -336,12 +348,12 @@ export function RouteCreateForm({
                 <div className="font-semibold">Product not found</div>
                 <p className="mt-1">Check the barcode, SKU, or product name before adding it to master data.</p>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <a className="btn-secondary" href="/products/new">
+                  <Link className="btn-secondary" href="/products/new">
                     Add product
-                  </a>
-                  <a className="btn-secondary" href={`/issues?missing_product=${encodeURIComponent(notFoundQuery || search.trim())}`}>
+                  </Link>
+                  <Link className="btn-secondary" href={`/issues?missing_product=${encodeURIComponent(notFoundQuery || search.trim())}`}>
                     Report missing product
-                  </a>
+                  </Link>
                 </div>
               </div>
             ) : null}
@@ -459,7 +471,7 @@ export function RouteCreateForm({
       </FormSection>
 
       <FormSection title="Refill recommendation rows">
-        <p className="text-sm text-slate-500">Import available refill lines when VMS stock and machine slots already produced recommendations.</p>
+        <p className="text-sm text-slate-500">Import available refill lines from the latest mapped VMS machine goods stock. Rows with missing capacity need a manual planned quantity.</p>
         {!recommendations.length ? (
           <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
             No active refill recommendations found. You can still build the route manually above.
@@ -474,32 +486,56 @@ export function RouteCreateForm({
                   <th className="px-3 py-2">Slot</th>
                   <th className="px-3 py-2">Product</th>
                   <th className="px-3 py-2">Current</th>
-                  <th className="px-3 py-2">Par</th>
+                  <th className="px-3 py-2">Target</th>
                   <th className="px-3 py-2">Take</th>
                   <th className="px-3 py-2">Storage</th>
+                  <th className="px-3 py-2">Priority</th>
                 </tr>
               </thead>
               <tbody>
-                {recommendations.map((row) => (
-                  <tr key={row.machine_slot_id} className="border-t border-slate-200">
+                {recommendations.map((row) => {
+                  const quantity = recommendationQuantity(row);
+                  const needsManualQuantity = row.suggested_qty === null || row.suggested_qty === undefined;
+                  const hasRouteQuantity = quantity > 0;
+                  const manualQuantity = manualStopItems.find((item) => item.machineId === row.machine_id && item.productId === row.product_id)?.quantity ?? "";
+                  const checkboxDisabled = saving || needsManualQuantity || !hasRouteQuantity;
+
+                  return (
+                  <tr key={row.recommendation_key} className="border-t border-slate-200">
                     <td className="px-3 py-2">
                       <input
                         type="checkbox"
-                        checked={machineSlotIds.includes(row.machine_slot_id)}
-                        onChange={() => setMachineSlotIds((current) => toggleValue(current, row.machine_slot_id))}
+                        checked={recommendationKeys.includes(row.recommendation_key)}
+                        onChange={() => setRecommendationKeys((current) => toggleValue(current, row.recommendation_key))}
                         className="h-4 w-4"
-                        disabled={saving}
+                        disabled={checkboxDisabled}
+                        title={needsManualQuantity ? "Enter a manual quantity for this row." : !hasRouteQuantity ? "No storage is currently available for this recommendation." : undefined}
                       />
                     </td>
                     <td className="px-3 py-2 font-medium">{row.machine_name}</td>
-                    <td className="px-3 py-2">{row.slot_code}</td>
+                    <td className="px-3 py-2">{row.slot_code || "VMS item"}</td>
                     <td className="px-3 py-2">{row.product_name}</td>
                     <td className="px-3 py-2">{row.current_qty}</td>
-                    <td className="px-3 py-2">{row.par_qty}</td>
-                    <td className="px-3 py-2 font-semibold">{row.final_qty_to_take ?? row.suggested_qty}</td>
+                    <td className="px-3 py-2">{formatRecommendationQty(row.capacity ?? row.par_qty)}</td>
+                    <td className="px-3 py-2 font-semibold">
+                      {needsManualQuantity ? (
+                        <input
+                          type="number"
+                          min={0}
+                          value={manualQuantity}
+                          onChange={(event) => setManualStopQty(row.machine_id, row.product_id, Number(event.target.value) || 0)}
+                          className="field-input w-28"
+                          placeholder="Qty"
+                          disabled={saving}
+                          aria-label={`Manual planned quantity for ${row.product_name} at ${row.machine_name}`}
+                        />
+                      ) : quantity}
+                    </td>
                     <td className="px-3 py-2">{row.available_storage_qty}</td>
+                    <td className="px-3 py-2">{row.priority ?? "-"}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

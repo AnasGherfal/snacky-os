@@ -61,6 +61,7 @@ export async function GET(
             product_id,
             final_qty_to_take,
             suggested_qty,
+            source,
             product:products(id, name, sku)
           )`
         )
@@ -74,7 +75,7 @@ export async function GET(
           machine: order.machine,
           product_id: line.product_id,
           planned_quantity: Number(line.final_qty_to_take ?? line.suggested_qty ?? 0),
-          source: line.machine_slot_id ? "refill_recommendation" : "manual_admin_assignment",
+          source: line.source ?? (line.machine_slot_id ? "refill_recommendation" : "manual_admin_assignment"),
           product: line.product,
         })),
       );

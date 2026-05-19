@@ -122,6 +122,7 @@ export async function GET(
       .from("route_stop_items")
       .select(
         `id,
+        slot_code,
         machine_slot_id,
         product_id,
         planned_quantity,
@@ -138,10 +139,12 @@ export async function GET(
           `id,
           refill_order_lines(
             id,
+            slot_code,
             machine_slot_id,
             product_id,
             final_qty_to_take,
             suggested_qty,
+            source,
             product:products(id, name)
           )`
         )
@@ -151,10 +154,11 @@ export async function GET(
       stopPlanItems = (fallback.data ?? []).flatMap((order: any) =>
         (order.refill_order_lines ?? []).map((line: any) => ({
           id: line.id,
+          slot_code: line.slot_code,
           machine_slot_id: line.machine_slot_id,
           product_id: line.product_id,
           planned_quantity: Number(line.final_qty_to_take ?? line.suggested_qty ?? 0),
-          source: line.machine_slot_id ? "refill_recommendation" : "manual_admin_assignment",
+          source: line.source ?? (line.machine_slot_id ? "refill_recommendation" : "manual_admin_assignment"),
           product: line.product,
         })),
       );
@@ -173,7 +177,7 @@ export async function GET(
       refillOrderLineId: null,
       routeStopItemId: line.id,
       machineSlotId: line.machine_slot_id,
-      slotCode: slotMap.get(line.product_id) || "Unknown",
+      slotCode: line.slot_code || slotMap.get(line.product_id) || "VMS item",
       productId: line.product_id,
       productName: (Array.isArray(line.product) ? line.product[0]?.name : line.product?.name) || "Unknown",
       currentQty: 0,

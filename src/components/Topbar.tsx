@@ -54,7 +54,7 @@ export function Topbar({ profile, onMenuClick }: { profile: TopbarProfile; onMen
   };
 
   return (
-    <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur md:px-8">
+    <header className="sticky top-0 z-30 shrink-0 border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur md:px-8">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <button
@@ -89,14 +89,14 @@ export function Topbar({ profile, onMenuClick }: { profile: TopbarProfile; onMen
             <button
               type="button"
               onClick={() => setLocale("en")}
-              className={`rounded-md px-3 py-1.5 text-xs font-semibold ${locale === "en" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-white"}`}
+              className={`rounded-md px-3 py-1.5 text-xs font-semibold ${locale === "en" ? "brand-selected" : "text-slate-600 hover:bg-white"}`}
             >
               {dictionary.language.english}
             </button>
             <button
               type="button"
               onClick={() => setLocale("ar")}
-              className={`rounded-md px-3 py-1.5 text-xs font-semibold ${locale === "ar" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-white"}`}
+              className={`rounded-md px-3 py-1.5 text-xs font-semibold ${locale === "ar" ? "brand-selected" : "text-slate-600 hover:bg-white"}`}
             >
               {dictionary.language.arabic}
             </button>

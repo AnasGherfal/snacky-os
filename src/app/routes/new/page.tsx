@@ -21,7 +21,7 @@ export default async function NewRoutePage() {
         supabase.from("machines").select("id, name, machine_code").eq("status", "active").order("name"),
         supabase
           .from("refill_recommendations")
-          .select("machine_slot_id, machine_id, machine_name, machine_code, slot_code, product_id, product_name, current_qty, par_qty, suggested_qty, available_storage_qty, final_qty_to_take")
+          .select("recommendation_key, machine_slot_id, machine_id, machine_name, machine_code, slot_code, product_id, product_name, current_qty, capacity, par_qty, suggested_qty, available_storage_qty, final_qty_to_take, priority")
           .order("machine_name"),
         supabase
           .from("current_inventory_by_location")

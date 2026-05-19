@@ -9,6 +9,7 @@ type CreateRoutePayload = {
   routeDate?: string;
   operatorId?: string;
   machineIds?: string[];
+  recommendationKeys?: string[];
   machineSlotIds?: string[];
   routeStock?: { productId?: string; quantity?: number; available?: number }[];
   manualStopItems?: { machineId?: string; productId?: string; quantity?: number }[];
@@ -43,7 +44,8 @@ export async function POST(request: Request) {
   const routeDate = String(payload.routeDate ?? "").trim();
   const operatorId = String(payload.operatorId ?? "").trim();
   const manualMachineIds = Array.from(new Set((payload.machineIds ?? []).map(String).filter(Boolean)));
-  const recommendationSlotIds = Array.from(new Set((payload.machineSlotIds ?? []).map(String).filter(Boolean)));
+  const recommendationKeys = Array.from(new Set((payload.recommendationKeys ?? []).map(String).filter(Boolean)));
+  const legacyRecommendationSlotIds = Array.from(new Set((payload.machineSlotIds ?? []).map(String).filter(Boolean)));
   const adminOverride = Boolean(payload.adminOverride);
   const manualStopItems = (payload.manualStopItems ?? [])
     .map((item) => ({
@@ -56,25 +58,31 @@ export async function POST(request: Request) {
   if (!routeDate) return jsonError("Route date is required.");
   if (!operatorId) return jsonError("Operator is required when creating an assigned route.");
   if (adminOverride && !isOwnerAdminRole(profile.role)) return jsonError("Only owner or admin can override storage availability.", 403);
-  if (!recommendationSlotIds.length && !manualStopItems.length) return jsonError("Choose machine-level refill items for this route.");
+  if (!recommendationKeys.length && !legacyRecommendationSlotIds.length && !manualStopItems.length) return jsonError("Choose machine-level refill items for this route.");
 
-  const recommendationsResult = recommendationSlotIds.length
+  const recommendationsResult = recommendationKeys.length
     ? await supabase
         .from("refill_recommendations")
-        .select("machine_id, machine_slot_id, product_id, current_qty, par_qty, suggested_qty, available_storage_qty, final_qty_to_take")
-        .in("machine_slot_id", recommendationSlotIds)
+        .select("recommendation_key, machine_id, machine_slot_id, slot_code, product_id, current_qty, par_qty, suggested_qty, available_storage_qty, final_qty_to_take")
+        .in("recommendation_key", recommendationKeys)
+    : legacyRecommendationSlotIds.length
+      ? await supabase
+          .from("refill_recommendations")
+          .select("recommendation_key, machine_id, machine_slot_id, slot_code, product_id, current_qty, par_qty, suggested_qty, available_storage_qty, final_qty_to_take")
+          .in("machine_slot_id", legacyRecommendationSlotIds)
     : { data: [], error: null };
 
   if (recommendationsResult.error) {
-    console.error("[routes:create] Failed to load selected recommendations", { recommendationSlotIds, error: recommendationsResult.error });
+    console.error("[routes:create] Failed to load selected recommendations", { recommendationKeys, legacyRecommendationSlotIds, error: recommendationsResult.error });
     return jsonError("Could not load selected refill recommendations.", 500);
   }
 
   const recommendationRows = recommendationsResult.data ?? [];
-  const recommendationMachineIds = recommendationRows.map((row: any) => row.machine_id).filter(Boolean);
+  const actionableRecommendationRows = recommendationRows.filter((row: any) => Math.max(0, Number(row.final_qty_to_take ?? row.suggested_qty ?? 0)) > 0);
+  const recommendationMachineIds = actionableRecommendationRows.map((row: any) => row.machine_id).filter(Boolean);
   const selectedMachineIds = Array.from(new Set([...manualMachineIds, ...recommendationMachineIds, ...manualStopItems.map((item) => item.machineId)]));
   const stockByProduct = new Map<string, number>();
-  recommendationRows.forEach((row: any) => {
+  actionableRecommendationRows.forEach((row: any) => {
     const productId = String(row.product_id);
     const quantity = Math.max(0, Number(row.final_qty_to_take ?? row.suggested_qty ?? 0));
     if (productId && quantity > 0) stockByProduct.set(productId, (stockByProduct.get(productId) ?? 0) + quantity);
@@ -82,6 +90,9 @@ export async function POST(request: Request) {
   manualStopItems.forEach((item) => {
     stockByProduct.set(item.productId, (stockByProduct.get(item.productId) ?? 0) + item.quantity);
   });
+  if (recommendationRows.length && !actionableRecommendationRows.length && !manualStopItems.length) {
+    return jsonError("Enter planned quantities for capacity-missing VMS rows before creating a route.");
+  }
   if (!stockByProduct.size) return jsonError("Planned machine refill quantities must be greater than zero.");
 
   if (!adminOverride) {
@@ -185,12 +196,13 @@ export async function POST(request: Request) {
   }
 
   const routeStopItems = [
-    ...recommendationRows.map((row: any) => ({
+    ...actionableRecommendationRows.map((row: any) => ({
       route_id: routeId,
       route_stop_id: stopByMachine.get(row.machine_id),
       machine_id: row.machine_id,
       product_id: row.product_id,
       machine_slot_id: row.machine_slot_id,
+      slot_code: row.slot_code ?? null,
       planned_quantity: Math.max(0, Number(row.final_qty_to_take ?? row.suggested_qty ?? 0)),
       picked_quantity: null,
       filled_quantity: null,
@@ -203,6 +215,7 @@ export async function POST(request: Request) {
       machine_id: item.machineId,
       product_id: item.productId,
       machine_slot_id: null,
+      slot_code: null,
       planned_quantity: item.quantity,
       picked_quantity: null,
       filled_quantity: null,
@@ -223,7 +236,7 @@ export async function POST(request: Request) {
     }
   }
 
-  if (recommendationRows.length || manualStopItems.length) {
+  if (actionableRecommendationRows.length || manualStopItems.length) {
     const refillMachineIds = Array.from(new Set([...recommendationMachineIds, ...manualStopItems.map((item) => item.machineId)]));
     const refillOrderInsert = await supabase
       .from("refill_orders")
@@ -247,10 +260,11 @@ export async function POST(request: Request) {
       orderByMachine.set(order.machine_id, order.id);
     });
 
-    const recommendationLines = recommendationRows
+    const recommendationLines = actionableRecommendationRows
       .map((row: any) => ({
         refill_order_id: orderByMachine.get(row.machine_id),
         machine_slot_id: row.machine_slot_id,
+        slot_code: row.slot_code ?? null,
         product_id: row.product_id,
         current_qty_vms: row.current_qty,
         par_qty: row.par_qty,
@@ -264,6 +278,7 @@ export async function POST(request: Request) {
       .map((item) => ({
         refill_order_id: orderByMachine.get(item.machineId),
         machine_slot_id: null,
+        slot_code: null,
         product_id: item.productId,
         current_qty_vms: 0,
         par_qty: item.quantity,
@@ -276,7 +291,7 @@ export async function POST(request: Request) {
     const refillLines = [...recommendationLines, ...manualLines];
 
     if (!refillLines.length) {
-      console.error("[routes:create] No refill lines matched created orders", { routeId, recommendationRows, orderIds: refillOrderInsert.data });
+      console.error("[routes:create] No refill lines matched created orders", { routeId, recommendationRows: actionableRecommendationRows, orderIds: refillOrderInsert.data });
       await cleanupRoute();
       return jsonError("Could not match refill lines to created refill orders.", 500);
     }
@@ -318,7 +333,8 @@ export async function POST(request: Request) {
       stock_lines: Array.from(stockByProduct.entries()).map(([productId, quantity]) => ({ product_id: productId, quantity })),
     },
     metadata: {
-      recommendation_slot_count: recommendationSlotIds.length,
+      recommendation_count: recommendationKeys.length || legacyRecommendationSlotIds.length,
+      actionable_recommendation_count: actionableRecommendationRows.length,
       manual_stop_item_count: manualStopItems.length,
       admin_override: adminOverride,
     },

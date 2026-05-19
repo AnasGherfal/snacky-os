@@ -1041,7 +1041,7 @@ async function runVmsImport({
         captured_at: capturedAt.toISOString(),
         temperature_c: temperature,
         cash_balance_lyd: cashBalance,
-        tray_status: value(row, ["empty_status", "tray_status", "status", "empty_trays"]) || null,
+        tray_status: value(row, ["empty_status", "out_of_stock", "sold_out", "tray_status", "status", "empty_trays"]) || null,
         metadata: { raw: row },
       });
       summary.importedRows += 1;

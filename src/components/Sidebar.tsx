@@ -1,4 +1,5 @@
 "use client";
+import Image from "next/image";
 import Link from "next/link";
 import type { ComponentType } from "react";
 import {
@@ -146,10 +147,17 @@ function SidebarContent({ role, onNavigate }: { role: AppRole; onNavigate?: () =
 
   return (
     <>
-      <h2 className="text-xl font-semibold">{dictionary.app.name}</h2>
-      <p className="mb-5 text-xs text-slate-500">{dictionary.app.operationsSystem}</p>
+      <div className="mb-6 flex shrink-0 items-center gap-3">
+        <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-full border border-slate-200 bg-white shadow-sm">
+          <Image src="/brand/snacky-logo.png" alt="" fill sizes="48px" className="object-cover" />
+        </div>
+        <div className="min-w-0">
+          <h2 className="truncate text-lg font-semibold text-slate-950">{dictionary.app.name}</h2>
+          <p className="truncate text-xs text-slate-500">{dictionary.app.operationsSystem}</p>
+        </div>
+      </div>
 
-      <nav className="space-y-5" aria-label="Sidebar">
+      <nav className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain pr-1" aria-label="Sidebar">
         {sections.map((section, sectionIndex) => (
           <div key={`${section.titleKey ?? "primary"}-${sectionIndex}`}>
             {section.titleKey ? (
@@ -186,8 +194,8 @@ function SidebarContent({ role, onNavigate }: { role: AppRole; onNavigate?: () =
 export function Sidebar({ role, mobileOpen = false, onMobileClose }: { role: AppRole; mobileOpen?: boolean; onMobileClose?: () => void }) {
   return (
     <>
-      <aside className="app-sidebar hidden w-72 shrink-0 border-r border-slate-200 bg-white md:block">
-        <div className="sticky top-0 h-screen overflow-y-auto p-5">
+      <aside className="app-sidebar hidden h-screen w-72 shrink-0 overflow-hidden border-r border-slate-200 bg-white md:flex md:flex-col">
+        <div className="flex min-h-0 flex-1 flex-col p-5">
           <SidebarContent role={role} />
         </div>
       </aside>
@@ -200,8 +208,8 @@ export function Sidebar({ role, mobileOpen = false, onMobileClose }: { role: App
             onClick={onMobileClose}
             aria-label="Close navigation overlay"
           />
-          <aside className="app-sidebar relative h-full w-[min(20rem,86vw)] overflow-y-auto border-r border-slate-200 bg-white p-5 shadow-xl">
-            <div className="mb-4 flex items-center justify-between gap-3">
+          <aside className="app-sidebar relative flex h-full min-h-0 w-[min(20rem,86vw)] flex-col overflow-hidden border-r border-slate-200 bg-white p-5 shadow-xl">
+            <div className="mb-4 flex shrink-0 items-center justify-between gap-3">
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Navigation</div>
               <button
                 type="button"

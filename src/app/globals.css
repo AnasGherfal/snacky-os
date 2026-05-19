@@ -1,15 +1,36 @@
 @import "tailwindcss";
 
-:root { --background: #f8fafc; --foreground: #0f172a; }
+:root {
+  /* Snacky brand tokens, sampled from the supplied logo artwork. */
+  --snacky-primary: #f5820b;
+  --snacky-primary-hover: #d96f05;
+  --snacky-accent: #3f6f3f;
+  --snacky-accent-hover: #315a31;
+  --snacky-neutral-background: #f8fafc;
+  --snacky-border: #e2e8f0;
+  --snacky-focus-ring: rgb(245 130 11 / 0.22);
+  --background: var(--snacky-neutral-background);
+  --foreground: #0f172a;
+}
 * { box-sizing: border-box; }
 html,
 body {
+  height: 100%;
   max-width: 100%;
   overflow-x: hidden;
 }
 body { margin:0; background: var(--background); color: var(--foreground); font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
 html[lang="ar"] body { font-family: Tahoma, Arial, ui-sans-serif, system-ui, sans-serif; }
 a { color: inherit; text-decoration: none; }
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--snacky-primary);
+  outline-offset: 2px;
+}
 
 [dir="rtl"] .data-table,
 [dir="rtl"] .text-left {
@@ -36,15 +57,22 @@ a { color: inherit; text-decoration: none; }
 }
 
 @layer components {
-  .surface-card { @apply rounded-xl border border-slate-200 bg-white p-5 shadow-sm; }
-  .field-input { @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-base outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200 md:py-2 md:text-sm; }
-  .btn-primary { @apply inline-flex min-h-11 items-center justify-center rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800; }
+  .surface-card { @apply rounded-xl border bg-white p-5 shadow-sm; border-color: var(--snacky-border); }
+  .field-input { @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-base outline-none focus:ring-2 md:py-2 md:text-sm; }
+  .field-input:focus { border-color: var(--snacky-primary); --tw-ring-color: var(--snacky-focus-ring); }
+  .btn-primary { @apply inline-flex min-h-11 items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold text-white; background: var(--snacky-primary); }
+  .btn-primary:hover { background: var(--snacky-primary-hover); }
   .btn-secondary { @apply inline-flex min-h-11 items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50; }
   .btn-danger { @apply inline-flex min-h-11 items-center justify-center rounded-lg bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-700; }
-  .link-secondary { @apply text-sm font-semibold text-slate-700 underline decoration-slate-300 underline-offset-4 hover:text-slate-950; }
-  .nav-link { @apply block rounded-lg px-3 py-3 text-sm text-slate-600 hover:bg-slate-100 hover:text-slate-900 md:py-2; }
-  .nav-link-active { @apply block rounded-lg bg-slate-900 px-3 py-3 text-sm text-white md:py-2; }
-  .table-wrap { @apply overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm; }
+  .link-secondary { @apply text-sm font-semibold underline underline-offset-4; color: var(--snacky-accent); text-decoration-color: rgb(63 111 63 / 0.3); }
+  .link-secondary:hover { color: var(--snacky-primary-hover); text-decoration-color: rgb(245 130 11 / 0.45); }
+  .nav-link { @apply block rounded-lg px-3 py-3 text-sm text-slate-600 hover:bg-slate-100 md:py-2; }
+  .nav-link:hover { color: var(--snacky-accent); }
+  .nav-link-active { @apply block rounded-lg px-3 py-3 text-sm text-white md:py-2; background: var(--snacky-accent); }
+  .nav-link-active:hover { background: var(--snacky-accent-hover); }
+  .brand-selected { background: var(--snacky-accent); color: #fff; }
+  .brand-selected:hover { background: var(--snacky-accent-hover); }
+  .table-wrap { @apply overflow-x-auto rounded-xl border bg-white shadow-sm; border-color: var(--snacky-border); }
   .data-table { @apply min-w-full text-left text-sm; }
   .data-table th { @apply border-b border-slate-200 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500; }
   .data-table td { @apply border-b border-slate-100 px-4 py-3 align-top text-slate-700; }

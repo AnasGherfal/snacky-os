@@ -30,7 +30,7 @@ export default async function MachinePlanogramsPage({ searchParams }: { searchPa
       <div className="space-y-6">
         <PageHeader
           title="Machine Planograms"
-          subtitle="Define which products belong in each machine slot so Snacky OS can calculate refill recommendations."
+          subtitle="Optional Snacky slot rules for future planogram sync. Current refill recommendations come from imported VMS machine goods stock."
           action={<PrimaryButton href={selectedMachineId ? `/machine-slots/new?machine_id=${selectedMachineId}` : "/machine-slots/new"}>Add Slot</PrimaryButton>}
         />
 
@@ -76,7 +76,7 @@ export default async function MachinePlanogramsPage({ searchParams }: { searchPa
 
             {machinesWithoutSlots.length ? (
               <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                <span className="font-semibold">Planogram warning:</span> {machinesWithoutSlots.length} machine{machinesWithoutSlots.length === 1 ? "" : "s"} have no slots. Refill recommendations cannot be generated until each machine has a planogram.
+                <span className="font-semibold">Planograms optional:</span> {machinesWithoutSlots.length} machine{machinesWithoutSlots.length === 1 ? "" : "s"} have no Snacky slots yet. Refill recommendations still use imported VMS machine goods stock while planogram sync is pending.
               </div>
             ) : null}
 
@@ -93,9 +93,9 @@ export default async function MachinePlanogramsPage({ searchParams }: { searchPa
 
               {!selectedSlots.length ? (
                 <div className="space-y-4">
-                  <EmptyState title="No slots configured for this machine yet." body="Add slot records so Snacky OS knows which products belong in each physical slot." />
-                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                    Refill recommendations cannot be generated until this machine has a planogram.
+                  <EmptyState title="No Snacky slots configured for this machine yet." body="That is okay for the current phase. VMS machine goods imports can still generate refill recommendations when products are mapped and capacity is available." />
+                  <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+                    Add slots here only when you want to override VMS capacity with Snacky min/par rules.
                   </div>
                 </div>
               ) : (

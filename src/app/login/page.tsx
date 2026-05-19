@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import Image from "next/image";
 import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { accessTokenCookie, ensureProfileForAuthUser, refreshTokenCookie } from "@/lib/auth";
@@ -72,11 +73,14 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   const { error, next = "" } = await searchParams;
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-100 px-4 py-10">
+    <main className="flex min-h-screen items-center justify-center bg-[var(--snacky-neutral-background)] px-4 py-10">
       <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="mb-6">
-          <h1 className="text-2xl font-semibold text-slate-900">Sign in to Snacky OS</h1>
-          <p className="mt-1 text-sm text-slate-500">Use your Supabase Auth account to access operations.</p>
+        <div className="mb-6 text-center">
+          <div className="relative mx-auto mb-4 h-24 w-24 overflow-hidden rounded-full border border-slate-200 bg-white shadow-sm">
+            <Image src="/brand/snacky-logo.png" alt="Snacky logo" fill sizes="96px" className="object-cover" priority />
+          </div>
+          <h1 className="text-2xl font-semibold text-slate-900">Snacky OS</h1>
+          <p className="mt-1 text-sm text-slate-500">Sign in to manage vending operations.</p>
         </div>
         {error ? <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-800">{error}</div> : null}
         <form action={login} className="space-y-4">
