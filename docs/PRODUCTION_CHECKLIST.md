@@ -21,6 +21,8 @@ Use this before every staging or production launch.
 - [ ] `SUPABASE_SERVICE_ROLE_KEY` is configured only in Vercel server-side env vars.
 - [ ] Supabase Auth Site URL matches `NEXT_PUBLIC_APP_URL`.
 - [ ] Supabase Auth redirect URLs include production and staging or preview URLs.
+- [ ] `profiles` has an authenticated self-read policy using `profiles.id = auth.uid()`.
+- [ ] `team_members` has an authenticated self-read policy using `team_members.auth_user_id = auth.uid()`.
 - [ ] Storage bucket migration has created `product-images`, `receipt-images`, `machine-photos`, `refill-photos`, and `issue-photos`.
 - [ ] `product-images` is public read only; owner/admin write policies exist.
 - [ ] `receipt-images` is private and opens only through authenticated signed URLs.

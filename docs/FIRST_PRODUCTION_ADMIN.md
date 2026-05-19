@@ -4,6 +4,62 @@ Use this once per new Supabase Cloud project before inviting operators.
 
 Do not use the local development users from `supabase/seed.sql` in production.
 
+## Recommended: Use The First Owner Script
+
+From the repository root, point your shell at the Supabase Cloud project and run:
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co \
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-or-secret-key \
+npm run create:first-owner -- --confirm-production-owner --generate-password
+```
+
+PowerShell:
+
+```powershell
+$env:NEXT_PUBLIC_SUPABASE_URL="https://your-project-ref.supabase.co"
+$env:SUPABASE_SERVICE_ROLE_KEY="your-service-role-or-secret-key"
+npm run create:first-owner -- --confirm-production-owner --generate-password
+```
+
+The script defaults to:
+
+- Email: `anas@snacky.ly`
+- Name: `Anas`
+- Role: `owner`
+
+It creates or repairs all three required records:
+
+- Supabase Auth user
+- `public.team_members`
+- `public.profiles`
+
+It refuses local Supabase URLs unless `--allow-local` is passed.
+
+If you want to choose the temporary password yourself, set it with an environment variable instead of `--generate-password`:
+
+```bash
+SNACKY_FIRST_OWNER_TEMP_PASSWORD='replace-with-a-strong-temp-password' \
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co \
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-or-secret-key \
+npm run create:first-owner -- --confirm-production-owner
+```
+
+PowerShell:
+
+```powershell
+$env:SNACKY_FIRST_OWNER_TEMP_PASSWORD="replace-with-a-strong-temp-password"
+$env:NEXT_PUBLIC_SUPABASE_URL="https://your-project-ref.supabase.co"
+$env:SUPABASE_SERVICE_ROLE_KEY="your-service-role-or-secret-key"
+npm run create:first-owner -- --confirm-production-owner
+```
+
+After it succeeds, open `/login`, sign in as `anas@snacky.ly`, then change the password from `/account`.
+
+## Manual Fallback
+
+Use this if you prefer to create the user through the Supabase Dashboard.
+
 ## 1. Create The Auth User
 
 In Supabase Dashboard:

@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "bootstrap:production": "node scripts/bootstrap-production-data.mjs"
+    "bootstrap:production": "node scripts/bootstrap-production-data.mjs",
+    "create:first-owner": "node scripts/create-first-owner.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "latest",

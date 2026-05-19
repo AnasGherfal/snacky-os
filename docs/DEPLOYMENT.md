@@ -53,6 +53,13 @@ In Supabase Auth URL configuration:
    - Custom staging domain, if used.
 3. Keep email/password login enabled if operators and admins will sign in with email and temporary passwords.
 
+The migration `supabase/migrations/202605190002_auth_profile_self_read_policies.sql` adds the minimum authenticated self-read policies needed by the app shell:
+
+- `profiles`: users can read their own profile where `profiles.id = auth.uid()`.
+- `team_members`: users can read their own team member row where `team_members.auth_user_id = auth.uid()`.
+
+These policies prevent login/profile lookup from failing when Row Level Security is enabled for those tables.
+
 ## 5. Configure Vercel
 
 1. Import the Git repository into Vercel as a Next.js app.

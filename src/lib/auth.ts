@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 import { AppRole, getDefaultPathForRole, parseAppRole } from "@/lib/authz";
 
 export const accessTokenCookie = "snacky-auth-access-token";
@@ -17,6 +18,35 @@ export type UserProfile = {
   must_change_password: boolean;
 };
 
+type AuthLookupUser = {
+  id: string;
+  email?: string | null;
+  user_metadata?: { full_name?: string };
+};
+
+type ProfileRow = {
+  id: string;
+  full_name: string;
+  email: string | null;
+  phone: string | null;
+  role: string;
+  active_status: string | null;
+  team_member_id: string | null;
+  must_change_password?: boolean | null;
+};
+
+type TeamMemberRow = {
+  id: string;
+  full_name: string;
+  email: string | null;
+  phone: string | null;
+  role: string;
+  active?: boolean | null;
+  active_status?: string | null;
+  auth_user_id?: string | null;
+  must_change_password?: boolean | null;
+};
+
 export async function getAuthAccessToken() {
   const cookieStore = await cookies();
   return cookieStore.get(accessTokenCookie)?.value ?? null;
@@ -26,7 +56,7 @@ export async function getCurrentProfile(): Promise<UserProfile | null> {
   const accessToken = await getAuthAccessToken();
   if (!accessToken) return null;
 
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseServerClient(accessToken);
   if (!supabase) return null;
 
   const { data: userData, error: userError } = await supabase.auth.getUser(accessToken);
@@ -35,133 +65,176 @@ export async function getCurrentProfile(): Promise<UserProfile | null> {
     return null;
   }
 
-  const { data: profile, error: profileError } = await supabase
-    .from("profiles")
-    .select("id, full_name, email, phone, role, active_status, team_member_id")
-    .eq("id", userData.user.id)
-    .maybeSingle();
-
-  if (profileError) {
-    console.error("[auth] Failed to load profile", { userId: userData.user.id, error: profileError });
-    if (profileError.message?.includes("profiles") || profileError.code === "42P01" || profileError.code === "PGRST205") {
-      return getProfileFromTeamMember(userData.user.id, userData.user.email ?? null);
-    }
-    return null;
-  }
-
-  if (!profile) return getProfileFromTeamMember(userData.user.id, userData.user.email ?? null);
-
-  const linkedTeamMember = profile.team_member_id ? null : await getProfileFromTeamMember(userData.user.id, profile.email ?? userData.user.email ?? null);
-  const role = linkedTeamMember?.role ?? parseAppRole(profile.role);
-  if (!role) return null;
-
-  return {
-    id: profile.id,
-    full_name: linkedTeamMember?.full_name ?? profile.full_name,
-    email: linkedTeamMember?.email ?? profile.email,
-    phone: linkedTeamMember?.phone ?? profile.phone,
-    role,
-    active_status: linkedTeamMember?.active_status ?? (profile.active_status === "inactive" ? "inactive" : "active"),
-    team_member_id: profile.team_member_id ?? linkedTeamMember?.team_member_id ?? null,
-    must_change_password: false,
-  };
+  return loadCanonicalProfile(userData.user, accessToken);
 }
 
-async function getProfileFromTeamMember(authUserId: string, email: string | null): Promise<UserProfile | null> {
-  if (!email) return null;
+function getAuthLookupClient(accessToken?: string | null) {
+  return getSupabaseAdminClient() ?? getSupabaseServerClient(accessToken);
+}
 
-  const supabase = getSupabaseServerClient();
-  if (!supabase) return null;
+function normalizeActiveStatus(value: string | null | undefined): "active" | "inactive" {
+  return value === "inactive" ? "inactive" : "active";
+}
 
-  let { data: teamMember, error } = await supabase
-    .from("team_members")
-    .select("id, full_name, email, phone, role, active")
-    .eq("auth_user_id", authUserId)
-    .maybeSingle();
+function teamMemberActiveStatus(teamMember: TeamMemberRow | null | undefined): "active" | "inactive" | null {
+  if (!teamMember) return null;
+  if (teamMember.active_status === "active" || teamMember.active_status === "inactive") {
+    return teamMember.active_status;
+  }
+  if (teamMember.active === false) return "inactive";
+  return "active";
+}
 
-  if (error || !teamMember) {
-    const fallback = await supabase
+async function getTeamMemberForAuthUser(supabase: SupabaseClient, authUserId: string, teamMemberId?: string | null) {
+  if (teamMemberId) {
+    const byId = await supabase
       .from("team_members")
-      .select("id, full_name, email, phone, role, active")
-      .eq("email", email)
-      .maybeSingle();
-    teamMember = fallback.data;
-    error = fallback.error;
+      .select("id, full_name, email, phone, role, active, active_status, auth_user_id, must_change_password")
+      .eq("id", teamMemberId)
+      .maybeSingle<TeamMemberRow>();
+
+    if (byId.error) return { teamMember: null, error: byId.error };
+    if (byId.data) return { teamMember: byId.data, error: null };
   }
-
-  if (error || !teamMember) {
-    if (error) console.error("[auth] Failed to load team member fallback profile", { email, error });
-    return null;
-  }
-
-  const role = parseAppRole(teamMember.role);
-  if (!role) return null;
-
-  return {
-    id: authUserId,
-    full_name: teamMember.full_name,
-    email: teamMember.email,
-    phone: teamMember.phone,
-    role,
-    active_status: teamMember.active === false ? "inactive" : "active",
-    team_member_id: teamMember.id,
-    must_change_password: false,
-  };
-}
-
-async function getTeamMemberForAuthUser(authUserId: string, email: string | null) {
-  const supabase = getSupabaseServerClient();
-  if (!supabase) return null;
 
   const byAuth = await supabase
     .from("team_members")
-    .select("id, full_name, email, phone, role, active")
+    .select("id, full_name, email, phone, role, active, active_status, auth_user_id, must_change_password")
     .eq("auth_user_id", authUserId)
-    .maybeSingle();
+    .maybeSingle<TeamMemberRow>();
 
-  if (byAuth.data || !email) return byAuth.data;
-  const byEmail = await supabase.from("team_members").select("id, full_name, email, phone, role, active").eq("email", email).maybeSingle();
-  return byEmail.data;
+  return { teamMember: byAuth.data ?? null, error: byAuth.error };
 }
 
-export async function ensureProfileForAuthUser(user: { id: string; email?: string | null; user_metadata?: { full_name?: string } }) {
-  const supabase = getSupabaseServerClient();
+function profileFromRows(user: AuthLookupUser, profile: ProfileRow | null, teamMember: TeamMemberRow | null): UserProfile | null {
+  const role = parseAppRole(profile?.role) ?? parseAppRole(teamMember?.role);
+  if (!role) return null;
+
+  if (profile) {
+    return {
+      id: profile.id,
+      full_name: profile.full_name,
+      email: profile.email,
+      phone: profile.phone,
+      role,
+      active_status: normalizeActiveStatus(profile.active_status),
+      team_member_id: profile.team_member_id ?? teamMember?.id ?? null,
+      must_change_password: Boolean(profile.must_change_password ?? teamMember?.must_change_password ?? false),
+    };
+  }
+
+  if (!teamMember) return null;
+
+  return {
+    id: user.id,
+    full_name: teamMember.full_name,
+    email: teamMember.email ?? user.email ?? null,
+    phone: teamMember.phone,
+    role,
+    active_status: teamMemberActiveStatus(teamMember) ?? "inactive",
+    team_member_id: teamMember.id,
+    must_change_password: Boolean(teamMember.must_change_password ?? false),
+  };
+}
+
+function logProfileLookupFailure(payload: {
+  user: AuthLookupUser;
+  profile: ProfileRow | null;
+  teamMember: TeamMemberRow | null;
+  profileError?: unknown;
+  teamMemberError?: unknown;
+  reason: string;
+}) {
+  console.warn("[auth] Profile lookup failed", {
+    reason: payload.reason,
+    authUserId: payload.user.id,
+    email: payload.user.email ?? null,
+    profileRowFound: Boolean(payload.profile),
+    teamMemberRowFound: Boolean(payload.teamMember),
+    role: payload.profile?.role ?? payload.teamMember?.role ?? null,
+    active_status: payload.profile?.active_status ?? payload.teamMember?.active_status ?? null,
+    profileError: payload.profileError ?? null,
+    teamMemberError: payload.teamMemberError ?? null,
+  });
+}
+
+async function loadCanonicalProfile(user: AuthLookupUser, accessToken?: string | null): Promise<UserProfile | null> {
+  const supabase = getAuthLookupClient(accessToken);
   if (!supabase) return null;
 
   const { data: existingProfile, error: existingProfileError } = await supabase
     .from("profiles")
-    .select("id, full_name, email, phone, role, active_status, team_member_id")
+    .select("id, full_name, email, phone, role, active_status, team_member_id, must_change_password")
     .eq("id", user.id)
-    .maybeSingle();
+    .maybeSingle<ProfileRow>();
 
   if (existingProfile) {
     await supabase.from("profiles").update({ last_login_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", user.id);
-    return existingProfile;
-  }
-  if (existingProfileError?.message?.includes("profiles") || existingProfileError?.code === "42P01" || existingProfileError?.code === "PGRST205") {
-    return getProfileFromTeamMember(user.id, user.email ?? null);
   }
 
-  const teamMember = await getTeamMemberForAuthUser(user.id, user.email ?? null);
+  const { teamMember, error: teamMemberError } = await getTeamMemberForAuthUser(supabase, user.id, existingProfile?.team_member_id);
+  const resolvedProfile = profileFromRows(user, existingProfile ?? null, teamMember);
+
+  if (resolvedProfile) {
+    if (resolvedProfile.active_status !== "active") {
+      logProfileLookupFailure({
+        user,
+        profile: existingProfile ?? null,
+        teamMember,
+        profileError: existingProfileError,
+        teamMemberError,
+        reason: "profile_inactive",
+      });
+    }
+    return resolvedProfile;
+  }
+
+  logProfileLookupFailure({
+    user,
+    profile: existingProfile ?? null,
+    teamMember,
+    profileError: existingProfileError,
+    teamMemberError,
+    reason: existingProfileError ? "profile_query_error" : teamMemberError ? "team_member_query_error" : "missing_or_invalid_profile",
+  });
+
+  return null;
+}
+
+export async function ensureProfileForAuthUser(user: AuthLookupUser, accessToken?: string | null) {
+  const existingProfile = await loadCanonicalProfile(user, accessToken);
+  if (existingProfile) return existingProfile;
+
+  const supabase = getAuthLookupClient(accessToken);
+  if (!supabase) return null;
+
+  const { teamMember } = await getTeamMemberForAuthUser(supabase, user.id);
+  if (!teamMember) return null;
 
   const payload = {
     id: user.id,
-    full_name: teamMember?.full_name ?? user.user_metadata?.full_name ?? user.email ?? "Unassigned user",
-    email: user.email ?? teamMember?.email ?? null,
-    phone: teamMember?.phone ?? null,
-    role: parseAppRole(teamMember?.role) ?? "viewer",
-    active_status: teamMember ? (teamMember.active === false ? "inactive" : "active") : "inactive",
-    team_member_id: teamMember?.id ?? null,
+    full_name: teamMember.full_name ?? user.user_metadata?.full_name ?? user.email ?? "Unassigned user",
+    email: user.email ?? teamMember.email ?? null,
+    phone: teamMember.phone ?? null,
+    role: parseAppRole(teamMember.role) ?? "viewer",
+    active_status: teamMemberActiveStatus(teamMember) ?? "inactive",
+    team_member_id: teamMember.id,
+    must_change_password: Boolean(teamMember.must_change_password ?? false),
     last_login_at: new Date().toISOString(),
   };
 
-  const { data: profile, error } = await supabase.from("profiles").insert(payload).select("id, full_name, email, phone, role, active_status, team_member_id").single();
+  const { data: profile, error } = await supabase
+    .from("profiles")
+    .insert(payload)
+    .select("id, full_name, email, phone, role, active_status, team_member_id, must_change_password")
+    .single<ProfileRow>();
+
   if (error) {
     console.error("[auth] Failed to create profile", { userId: user.id, error });
     return null;
   }
 
-  return profile;
+  return profileFromRows(user, profile, teamMember);
 }
 
 export async function redirectToDefaultForRole(role: AppRole | null | undefined): Promise<never> {

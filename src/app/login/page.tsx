@@ -21,7 +21,7 @@ async function login(formData: FormData) {
     redirect("/login?error=Invalid%20email%20or%20password.");
   }
 
-  const profile = await ensureProfileForAuthUser(data.user);
+  const profile = await ensureProfileForAuthUser(data.user, data.session.access_token);
   const role = parseAppRole(profile?.role);
 
   if (!profile || profile.active_status !== "active" || !role) {
@@ -56,7 +56,7 @@ async function login(formData: FormData) {
       role,
       active_status: profile.active_status,
       team_member_id: profile.team_member_id,
-      must_change_password: false,
+      must_change_password: profile.must_change_password,
     },
     action: "login",
     entityType: "team_member",
