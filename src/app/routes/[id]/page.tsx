@@ -1,10 +1,11 @@
-import { AppShell } from "@/components/AppShell";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canAccessPath } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { RouteCreatedToast } from "@/app/routes/[id]/RouteCreatedToast";
+import { cancelRoute, deleteDraftRoute } from "@/lib/route-actions";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -13,8 +14,9 @@ function isMissingTable(error: any, tableName: string) {
   return error?.code === "PGRST205" && String(error?.message ?? "").includes(tableName);
 }
 
-export default async function RouteDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function RouteDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string }> }) {
   const { id } = await params;
+  const { error = "" } = await searchParams;
   const profile = await getCurrentProfile();
   if (!profile || !canAccessPath({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/routes")) {
     redirect("/unauthorized");
@@ -23,15 +25,15 @@ export default async function RouteDetailPage({ params }: { params: Promise<{ id
   const supabase = getSupabaseServerClient();
   if (!supabase) {
     return (
-      <AppShell>
+      <>
         <ErrorState title="Route unavailable" body="Supabase is not configured, so route details cannot be loaded." action={<SecondaryButton href="/routes">Back to routes</SecondaryButton>} />
-      </AppShell>
+      </>
     );
   }
 
   const { data: route, error: routeError } = await supabase
     .from("routes")
-    .select("id, route_date, operator_id, status, started_at, completed_at, notes, created_at")
+    .select("id, route_date, operator_id, status, started_at, completed_at, cancelled_at, cancelled_by, cancellation_reason, notes, created_at")
     .eq("id", id)
     .maybeSingle();
 
@@ -41,14 +43,19 @@ export default async function RouteDetailPage({ params }: { params: Promise<{ id
 
   if (!route) {
     return (
-      <AppShell>
-        <PageHeader title="Route details" subtitle="This route could not be loaded." action={<SecondaryButton href="/routes">Back to routes</SecondaryButton>} />
+      <>
+        <PageHeader
+          title="Route details"
+          subtitle="This route could not be loaded."
+          breadcrumbs={[{ label: "Operations", href: "/routes" }, { label: "Routes", href: "/routes" }, { label: "Missing route" }]}
+          action={<SecondaryButton href="/routes">Back to routes</SecondaryButton>}
+        />
         <ErrorState
           title="Route not found"
           body="The route may have been deleted, failed to save, or you may not have permission to view it."
           action={<SecondaryButton href="/routes/new">Create route</SecondaryButton>}
         />
-      </AppShell>
+      </>
     );
   }
 
@@ -79,7 +86,7 @@ export default async function RouteDetailPage({ params }: { params: Promise<{ id
       .order("created_at", { ascending: true }),
     supabase
       .from("route_pick_list_items")
-      .select("id, product_id, planned_qty, picked_qty, action_type, substituted_for_product_id, reason, notes, needs_review, created_at")
+      .select("id, product_id, planned_qty, picked_qty, action_type, substituted_for_product_id, reason, notes, needs_review, created_at, product:products!route_pick_list_items_product_id_fkey(id, name), substituted_product:products!route_pick_list_items_substituted_for_product_id_fkey(id, name)")
       .eq("route_id", id)
       .order("created_at", { ascending: true }),
   ]);
@@ -214,10 +221,44 @@ export default async function RouteDetailPage({ params }: { params: Promise<{ id
     { label: "Reviewed", done: routeRow.status === "reviewed", detail: routeRow.status === "reviewed" ? "Admin review complete" : "Pending admin review" },
   ];
   return (
-    <AppShell>
+    <>
       <RouteCreatedToast />
       <div className="space-y-6">
-        <PageHeader title="Route details" subtitle={`Route for ${routeRow.route_date}`} action={<SecondaryButton href="/routes">Back to routes</SecondaryButton>} />
+        <PageHeader
+          title="Route details"
+          subtitle={`Route for ${routeRow.route_date}`}
+          breadcrumbs={[{ label: "Operations", href: "/routes" }, { label: "Routes", href: "/routes" }, { label: routeRow.route_date }]}
+          action={
+            <div className="flex flex-wrap gap-2">
+              <SecondaryButton href="/routes">Back to routes</SecondaryButton>
+              {routeRow.status === "draft" ? (
+                <ConfirmDialog
+                  action={deleteDraftRoute}
+                  triggerLabel="Delete draft"
+                  title="Delete draft route?"
+                  description="Draft routes can be hard-deleted only before inventory, cash, or finance history exists."
+                  confirmLabel="Delete draft"
+                  buttonClassName="btn-danger"
+                  confirmButtonClassName="btn-danger"
+                  hiddenFields={[{ name: "id", value: id }]}
+                />
+              ) : null}
+              {["assigned", "in_progress"].includes(routeRow.status) ? (
+                <ConfirmDialog
+                  action={cancelRoute}
+                  triggerLabel="Cancel route"
+                  title="Cancel route?"
+                  description="Cancelled routes stay in history with their planned work, movements, and operator activity."
+                  confirmLabel="Cancel route"
+                  buttonClassName="btn-danger"
+                  confirmButtonClassName="btn-danger"
+                  hiddenFields={[{ name: "id", value: id }]}
+                />
+              ) : null}
+            </div>
+          }
+        />
+        {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{error}</div> : null}
 
         <div className="grid gap-4 md:grid-cols-3">
           <SectionCard>
@@ -328,13 +369,18 @@ export default async function RouteDetailPage({ params }: { params: Promise<{ id
             <DataTable headers={["Product", "Type", "Planned", "Picked", "Review", "Reason"]}>
               {pickListItems.map((line: any) => (
                 <tr key={line.id}>
-                  <td>{productById.get(line.product_id)?.name ?? "Unknown product"}</td>
+                  <td>{line.product?.name ?? productById.get(line.product_id)?.name ?? "Unknown product"}</td>
                   <td><StatusBadge status={line.action_type} /></td>
                   <td>{line.planned_qty}</td>
                   <td>{line.picked_qty}</td>
                   <td><StatusBadge status={line.needs_review ? "needs_review" : "ok"} /></td>
                   <td>
                     <div>{line.reason ?? "-"}</div>
+                    {line.substituted_for_product_id ? (
+                      <div className="mt-1 text-xs text-slate-500">
+                        Substituted for {line.substituted_product?.name ?? productById.get(line.substituted_for_product_id)?.name ?? "unknown product"}
+                      </div>
+                    ) : null}
                     {line.notes ? <div className="mt-1 text-xs text-slate-500">{line.notes}</div> : null}
                   </td>
                 </tr>
@@ -409,14 +455,14 @@ export default async function RouteDetailPage({ params }: { params: Promise<{ id
             {!cashCollections?.length ? (
               <EmptyState title="No cash collected yet" body="Cash records are created when operators complete machine stops." />
             ) : (
-              <DataTable headers={["Machine", "Expected", "Actual", "Variance", "Status"]}>
+              <DataTable headers={["Machine", "Expected", "Counted", "Variance", "Status"]}>
                 {cashCollections.map((cash: any) => (
                   <tr key={cash.id}>
                     <td>{machineById.get(cash.machine_id)?.name ?? "Unknown machine"}</td>
-                    <td>{lyd(cash.vms_expected_cash)}</td>
-                    <td>{lyd(cash.actual_cash_collected)}</td>
-                    <td>{lyd(cash.variance)}</td>
-                    <td><StatusBadge status={cash.review_status} /></td>
+                    <td>{cash.vms_expected_cash === null ? "-" : lyd(cash.vms_expected_cash)}</td>
+                    <td>{cash.actual_cash_collected === null ? "-" : lyd(cash.actual_cash_collected)}</td>
+                    <td>{cash.variance === null ? "-" : lyd(cash.variance)}</td>
+                    <td><StatusBadge status={String(cash.review_status ?? "").replaceAll("_", " ")} /></td>
                   </tr>
                 ))}
               </DataTable>
@@ -441,6 +487,16 @@ export default async function RouteDetailPage({ params }: { params: Promise<{ id
             )}
           </section>
         </div>
+
+        {routeRow.status === "cancelled" ? (
+          <section className="surface-card p-4">
+            <h2 className="text-lg font-semibold">Cancellation</h2>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <div><div className="text-sm text-slate-500">Cancelled at</div><div className="font-medium">{routeRow.cancelled_at ? new Date(routeRow.cancelled_at).toLocaleString("en-US") : "-"}</div></div>
+              <div><div className="text-sm text-slate-500">Reason</div><div className="font-medium">{routeRow.cancellation_reason ?? "-"}</div></div>
+            </div>
+          </section>
+        ) : null}
 
         <section className="surface-card p-4">
           <h2 className="text-lg font-semibold">Status timeline</h2>
@@ -479,6 +535,6 @@ export default async function RouteDetailPage({ params }: { params: Promise<{ id
           )}
         </section>
       </div>
-    </AppShell>
+    </>
   );
 }

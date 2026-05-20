@@ -5,6 +5,14 @@ import { PRODUCT_IMAGE_BUCKET } from "@/lib/storage-buckets";
 const PRODUCT_IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"];
 const PRODUCT_IMAGE_MAX_SIZE = 5 * 1024 * 1024;
 
+type ProductImageUploadError = "invalid_file" | "storage_unavailable";
+
+type ProductImageUploadResult = {
+  imageUrl: string | null;
+  uploadUnavailable: boolean;
+  uploadError?: ProductImageUploadError;
+};
+
 async function ensureProductImageBucket(supabase: SupabaseClient) {
   const { error: getError } = await supabase.storage.getBucket(PRODUCT_IMAGE_BUCKET);
   if (!getError) {
@@ -31,7 +39,7 @@ async function ensureProductImageBucket(supabase: SupabaseClient) {
   }
 }
 
-export async function resolveProductImageUrl(supabase: SupabaseClient, fd: FormData) {
+export async function resolveProductImageUrl(supabase: SupabaseClient, fd: FormData): Promise<ProductImageUploadResult> {
   const manualUrl = String(fd.get("image_url") || "").trim();
   const file = fd.get("image_file");
 
@@ -40,7 +48,7 @@ export async function resolveProductImageUrl(supabase: SupabaseClient, fd: FormD
   }
 
   if (!PRODUCT_IMAGE_MIME_TYPES.includes(file.type) || file.size > PRODUCT_IMAGE_MAX_SIZE) {
-    return { imageUrl: manualUrl || null, uploadUnavailable: true };
+    return { imageUrl: manualUrl || null, uploadUnavailable: false, uploadError: "invalid_file" };
   }
 
   try {
@@ -61,6 +69,6 @@ export async function resolveProductImageUrl(supabase: SupabaseClient, fd: FormD
     return { imageUrl: data.publicUrl || manualUrl || null, uploadUnavailable: false };
   } catch (error) {
     console.warn("[products] Image upload unavailable", error);
-    return { imageUrl: manualUrl || null, uploadUnavailable: true };
+    return { imageUrl: manualUrl || null, uploadUnavailable: true, uploadError: "storage_unavailable" };
   }
 }

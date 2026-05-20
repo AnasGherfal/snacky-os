@@ -1,5 +1,4 @@
 import { notFound, redirect } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
 import { TeamMemberForm } from "@/components/TeamMemberForm";
 import { ErrorState, FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
@@ -25,9 +24,9 @@ export default async function EditTeamMemberPage({
 
   if (!supabase) {
     return (
-      <AppShell>
+      <>
         <ErrorState title="Team unavailable" body="Supabase is not configured." action={<SecondaryButton href="/team">Back to team</SecondaryButton>} />
-      </AppShell>
+      </>
     );
   }
 
@@ -43,7 +42,7 @@ export default async function EditTeamMemberPage({
   const role = parseAppRole(member.role) ?? "viewer";
 
   return (
-    <AppShell>
+    <>
       <FormPageLayout>
         <PageHeader title="Edit team member" subtitle={`Update role, status, and contact details for ${member.full_name}.`} />
         {error ? (
@@ -66,6 +65,6 @@ export default async function EditTeamMemberPage({
           }}
         />
       </FormPageLayout>
-    </AppShell>
+    </>
   );
 }

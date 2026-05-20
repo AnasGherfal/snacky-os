@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
+import { ActivityLogTable } from "@/app/activity/ActivityLogTable";
 import { DataTable, EmptyState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
@@ -15,11 +15,6 @@ function formatDate(value: string) {
 
 function formatDateTime(value: string | null | undefined) {
   return value ? new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "-";
-}
-
-function prettyJson(value: unknown) {
-  if (!value) return "-";
-  return JSON.stringify(value, null, 2);
 }
 
 function inDateRange<T extends Record<string, any>>(rows: T[] | null | undefined, key: keyof T, dateFrom: string, dateTo: string) {
@@ -60,7 +55,7 @@ export default async function TeamMemberActivityPage({
 
   let activityQuery = supabase
     .from("system_activity_logs")
-    .select("id, action, entity_type, entity_id, entity_label, summary, before_data, after_data, metadata, created_at")
+    .select("id, actor_name, actor_role, action, entity_type, entity_id, entity_label, summary, before_data, after_data, metadata, created_at, actor:team_members(full_name)")
     .eq("actor_team_member_id", id);
 
   if (filters.action) activityQuery = activityQuery.eq("action", filters.action);
@@ -113,7 +108,7 @@ export default async function TeamMemberActivityPage({
   const totalCashVariance = cashRows.reduce((sum, row) => sum + Number(row.variance ?? 0), 0);
 
   return (
-    <AppShell>
+    <>
       <PageHeader
         title={`${member.full_name} Activity`}
         subtitle={`${member.email ?? "No email"} - audited actions, movements, routes, cash, and issues for this team member.`}
@@ -154,24 +149,7 @@ export default async function TeamMemberActivityPage({
         {!rows.length ? (
           <EmptyState title="No audited actions found" body="Actions appear here only when system_activity_logs rows exist for this team member." />
         ) : (
-          <DataTable headers={["Date / Time", "Action", "Entity", "Summary", "Details"]}>
-            {rows.map((row: any) => (
-              <tr key={row.id}>
-                <td>{formatDateTime(row.created_at)}</td>
-                <td><StatusBadge status={String(row.action).replaceAll("_", " ")} /></td>
-                <td>{row.entity_label ?? row.entity_type}{row.entity_id ? <div className="text-xs text-slate-500">{row.entity_type} {String(row.entity_id).slice(0, 8)}</div> : null}</td>
-                <td>{row.summary ?? "-"}</td>
-                <td>
-                  <details className="max-w-xl">
-                    <summary className="cursor-pointer text-sm font-medium text-slate-700">View JSON</summary>
-                    <div className="mt-3 grid gap-3 text-xs">
-                      <pre className="overflow-auto rounded-lg bg-slate-950 p-3 text-slate-100">{prettyJson({ before: row.before_data, after: row.after_data, metadata: row.metadata })}</pre>
-                    </div>
-                  </details>
-                </td>
-              </tr>
-            ))}
-          </DataTable>
+          <ActivityLogTable rows={rows as any} />
         )}
       </section>
 
@@ -221,15 +199,15 @@ export default async function TeamMemberActivityPage({
           {!cashRows.length ? (
             <EmptyState title="No cash collections" body="Cash records collected by this team member will appear here." />
           ) : (
-            <DataTable headers={["Date / Time", "Machine", "Expected", "Actual", "Variance", "Status"]}>
+            <DataTable headers={["Date / Time", "Machine", "Expected", "Counted", "Variance", "Status"]}>
               {cashRows.map((cash: any) => (
                 <tr key={cash.id}>
                   <td>{formatDateTime(cash.collected_at)}</td>
                   <td>{cash.machine?.name ?? "-"}</td>
-                  <td>{lyd(Number(cash.vms_expected_cash ?? 0))}</td>
-                  <td>{lyd(Number(cash.actual_cash_collected ?? 0))}</td>
-                  <td>{lyd(Number(cash.variance ?? 0))}</td>
-                  <td><StatusBadge status={cash.review_status} /></td>
+                  <td>{cash.vms_expected_cash === null ? "-" : lyd(Number(cash.vms_expected_cash ?? 0))}</td>
+                  <td>{cash.actual_cash_collected === null ? "-" : lyd(Number(cash.actual_cash_collected ?? 0))}</td>
+                  <td>{cash.variance === null ? "-" : lyd(Number(cash.variance ?? 0))}</td>
+                  <td><StatusBadge status={String(cash.review_status ?? "").replaceAll("_", " ")} /></td>
                 </tr>
               ))}
             </DataTable>
@@ -255,6 +233,6 @@ export default async function TeamMemberActivityPage({
           )}
         </div>
       </section>
-    </AppShell>
+    </>
   );
 }

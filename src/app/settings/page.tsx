@@ -1,7 +1,6 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
-import { FormField, FormSection, PageHeader, SectionCard, StatusBadge } from "@/components/ui";
+import { EmptyState, FormField, FormSection, PageHeader, SectionCard, StatusBadge } from "@/components/ui";
 import { accessTokenCookie, getCurrentProfile, refreshTokenCookie } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
 
@@ -19,7 +18,7 @@ export default async function SettingsPage() {
   if (!isOwnerAdminRole(profile?.role)) redirect("/unauthorized");
 
   return (
-    <AppShell>
+    <>
       <PageHeader title="Settings" subtitle="Company defaults, language preference, and account controls." />
 
       <div className="grid gap-6 xl:grid-cols-[1fr_380px]">
@@ -40,7 +39,7 @@ export default async function SettingsPage() {
               </FormField>
             </div>
             <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
-              Company settings are placeholders for the MVP. They are displayed here so the operating system has a clear home for defaults before they become editable.
+              Company defaults are read-only during this phase so operational screens stay stable.
             </div>
           </FormSection>
 
@@ -57,6 +56,11 @@ export default async function SettingsPage() {
               </div>
             </div>
           </FormSection>
+
+          <EmptyState
+            title="Editable settings are not enabled yet"
+            body="The next step is to store company defaults in Supabase with audited changes. For now, these values document the operating assumptions used across Snacky OS."
+          />
         </div>
 
         <SectionCard>
@@ -79,6 +83,6 @@ export default async function SettingsPage() {
           </div>
         </SectionCard>
       </div>
-    </AppShell>
+    </>
   );
 }

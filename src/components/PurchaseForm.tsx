@@ -1,6 +1,7 @@
 "use client";
 
 import { useDeferredValue, useMemo, useState } from "react";
+import { QuantityStepper } from "@/components/QuantityStepper";
 import { FormField, FormSection } from "@/components/ui";
 
 type SupplierOption = { id: string; name: string };
@@ -41,6 +42,24 @@ function newLine(line?: Partial<PurchaseLine>): PurchaseLine {
 
 function money(value: number) {
   return `LYD ${value.toFixed(2)}`;
+}
+
+function UnitStepper({
+  label,
+  value,
+  min = 0,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min?: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <FormField label={label}>
+      <QuantityStepper value={value} min={min} onChange={onChange} inputLabel={label} />
+    </FormField>
+  );
 }
 
 export function PurchaseForm({
@@ -104,7 +123,7 @@ export function PurchaseForm({
       <input type="hidden" name="current_receipt_url" value={initialPurchase?.receiptUrl ?? ""} />
       <input type="hidden" name="lines_json" value={linesJson} />
 
-      <FormSection title="Purchase details">
+      <FormSection title="Purchase details" description="Record the supplier, receipt, payment state, and supporting receipt reference before receiving stock.">
         <div className="grid gap-4 md:grid-cols-2">
           <FormField label="Supplier">
             <select name="supplier_id" className="field-input" defaultValue={initialPurchase?.supplierId ?? ""}>
@@ -131,10 +150,10 @@ export function PurchaseForm({
             <select name="payment_status" className="field-input" defaultValue={initialPurchase?.paymentStatus ?? "paid"}>
               <option value="paid">Paid</option>
               <option value="unpaid">Unpaid / supplier credit</option>
-              <option value="partial">Partially paid</option>
+              <option value="partially_paid">Partially paid</option>
             </select>
           </FormField>
-          <FormField label="Receipt upload" hint="PNG, JPG, WEBP, or PDF. Maximum 5MB.">
+          <FormField label="Receipt upload" hint="Stored privately in receipt-images when Supabase Storage is configured. PNG, JPG, WEBP, or PDF. Maximum 5MB.">
             <input name="receipt_file" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" className="field-input" />
           </FormField>
           <FormField label="Receipt URL fallback">
@@ -148,7 +167,7 @@ export function PurchaseForm({
         </div>
       </FormSection>
 
-      <FormSection title="Purchased items">
+      <FormSection title="Purchased items" description="Add every product from the receipt. Box, case, and loose quantities are converted into total received units.">
         <div className="space-y-4">
           {enrichedLines.map((line, index) => {
             const query = String(deferredSearch[line.id] ?? "").trim().toLowerCase();
@@ -167,7 +186,7 @@ export function PurchaseForm({
                   </button>
                 </div>
 
-                <div className="grid gap-3 lg:grid-cols-[1.6fr_repeat(6,minmax(92px,1fr))]">
+                <div className="grid gap-3 lg:grid-cols-[1.6fr_repeat(4,minmax(108px,1fr))]">
                   <div>
                     <label className="mb-1 block text-sm font-medium text-slate-800">Product</label>
                     <input
@@ -176,35 +195,33 @@ export function PurchaseForm({
                       className="field-input"
                       placeholder="Search product"
                     />
-                    <div className="mt-2 max-h-44 overflow-y-auto rounded-lg border border-slate-200 bg-white">
+                    <div className="mt-2 max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-white">
                       {options.map((product) => (
-                        <button key={product.id} type="button" onClick={() => selectProduct(line, product)} className={`block w-full px-3 py-2 text-left text-sm hover:bg-slate-50 ${line.productId === product.id ? "bg-blue-50" : ""}`}>
-                          <span className="block font-medium text-slate-900">{product.name}</span>
-                          <span className="text-xs text-slate-500">{product.sku ?? "No SKU"} - case {product.caseQuantity || 1}</span>
+                        <button key={product.id} type="button" onClick={() => selectProduct(line, product)} className={`block min-h-14 w-full px-3 py-2 text-left text-sm transition-colors hover:bg-slate-50 ${line.productId === product.id ? "brand-selected" : ""}`}>
+                          <span className={`block font-medium ${line.productId === product.id ? "text-white" : "text-slate-900"}`}>{product.name}</span>
+                          <span className={`text-xs ${line.productId === product.id ? "text-white/80" : "text-slate-500"}`}>{product.sku ?? "No SKU"} - case {product.caseQuantity || 1}</span>
                         </button>
                       ))}
                     </div>
                   </div>
-                  <FormField label="Boxes / cases">
-                    <input type="number" min={0} value={line.boxesQty} onChange={(event) => updateLine(line.id, { boxesQty: Number(event.target.value) || 0 })} className="field-input" />
-                  </FormField>
-                  <FormField label="Units / box">
-                    <input type="number" min={1} value={line.unitsPerBox} onChange={(event) => updateLine(line.id, { unitsPerBox: Number(event.target.value) || 1 })} className="field-input" />
-                  </FormField>
-                  <FormField label="Loose units">
-                    <input type="number" min={0} value={line.looseUnitsQty} onChange={(event) => updateLine(line.id, { looseUnitsQty: Number(event.target.value) || 0 })} className="field-input" />
-                  </FormField>
+                  <UnitStepper label="Boxes / cases" value={line.boxesQty} onChange={(boxesQty) => updateLine(line.id, { boxesQty })} />
+                  <UnitStepper label="Units / box" value={line.unitsPerBox} min={1} onChange={(unitsPerBox) => updateLine(line.id, { unitsPerBox })} />
+                  <UnitStepper label="Loose units" value={line.looseUnitsQty} onChange={(looseUnitsQty) => updateLine(line.id, { looseUnitsQty })} />
                   <FormField label="Unit cost">
                     <input type="number" min={0} step="0.0001" value={Number(line.unitCost.toFixed(4))} onChange={(event) => updateLine(line.id, { unitCost: Number(event.target.value) || 0, pricingMode: "unit" })} className="field-input" />
                   </FormField>
-                  <FormField label="Line total">
-                    <input type="number" min={0} step="0.01" value={Number(line.lineTotal.toFixed(2))} onChange={(event) => updateLine(line.id, { lineTotal: Number(event.target.value) || 0, pricingMode: "total" })} className="field-input" />
-                  </FormField>
-                  <div className="rounded-lg bg-slate-50 p-3 text-sm">
+                  <div className="rounded-lg bg-slate-50 p-3 text-sm lg:col-span-5">
                     <div className="text-xs font-medium text-slate-500">Calculated</div>
-                    <div className="mt-1 font-semibold text-slate-900">{line.totalUnits} units</div>
-                    <div className="text-slate-600">{money(line.lineTotal)}</div>
-                    <div className="text-xs text-slate-500">{money(line.unitCost)} / unit</div>
+                    <div className="mt-1 grid gap-2 sm:grid-cols-3">
+                      <div><span className="font-semibold text-slate-900">{line.totalUnits}</span> units</div>
+                      <div className="text-slate-700">{money(line.lineTotal)}</div>
+                      <div className="text-slate-500">{money(line.unitCost)} / unit</div>
+                    </div>
+                  </div>
+                  <div className="lg:col-span-5">
+                    <FormField label="Override line total">
+                      <input type="number" min={0} step="0.01" value={Number(line.lineTotal.toFixed(2))} onChange={(event) => updateLine(line.id, { lineTotal: Number(event.target.value) || 0, pricingMode: "total" })} className="field-input" />
+                    </FormField>
                   </div>
                 </div>
               </div>
@@ -220,7 +237,7 @@ export function PurchaseForm({
         </div>
       </FormSection>
 
-      <FormSection title="Receipt total">
+      <FormSection title="Receipt total" description="Compare the calculated product total with the supplier receipt total so rounding, discounts, or delivery adjustments are visible.">
         <div className="grid gap-4 md:grid-cols-[1fr_1fr] md:items-start">
           <FormField label="Receipt Total LYD" hint="Use receipt total if the supplier invoice total differs because of discounts, rounding, delivery, or mixed pricing.">
             <input
@@ -246,7 +263,7 @@ export function PurchaseForm({
         </div>
       </FormSection>
 
-      <div className="flex flex-col gap-3 sm:flex-row">
+      <div className="sticky bottom-3 z-10 -mx-3 flex flex-col gap-3 border-t border-slate-200 bg-slate-100/95 px-3 py-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:border-0 sm:bg-transparent sm:p-0">
         <button className="btn-secondary" name="submit_action" value="draft">{submitLabel}</button>
         {!initialPurchase?.id ? <button className="btn-primary" name="submit_action" value="received">Save and receive</button> : null}
       </div>

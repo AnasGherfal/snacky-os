@@ -2,11 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ClientAppShell as AppShell } from "@/components/ClientAppShell";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { QuantityStepper } from "@/components/QuantityStepper";
-import { EmptyState, ErrorState, PageHeader, SecondaryButton } from "@/components/ui";
-import { completeStop } from "@/lib/operator-actions";
+import { EmptyState, ErrorState, LoadingState, PageHeader, SecondaryButton } from "@/components/ui";
+import { completeStop, uploadRefillProofPhoto } from "@/lib/operator-actions";
 
 const reasonOptions = [
   "Product not available in storage",
@@ -110,7 +109,8 @@ export default function MachineStopPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState<StopLoadError | null>(null);
-  const [cashCollected, setCashCollected] = useState(0);
+  const [cashCollected, setCashCollected] = useState(true);
+  const [cashBagId, setCashBagId] = useState("");
   const [notes, setNotes] = useState("");
   const [issueType, setIssueType] = useState("");
   const [issuePriority, setIssuePriority] = useState<"critical" | "high" | "normal" | "low">("normal");
@@ -124,6 +124,7 @@ export default function MachineStopPage() {
   const [showCleaningChecklist, setShowCleaningChecklist] = useState(false);
   const [cleaningDone, setCleaningDone] = useState(false);
   const [finalPhotoName, setFinalPhotoName] = useState("");
+  const [finalPhotoFile, setFinalPhotoFile] = useState<File | null>(null);
 
   const productById = useMemo(() => new Map((stopData?.productOptions ?? []).map((product) => [product.id, product])), [stopData]);
   const assignedByProduct = useMemo(() => new Map((stopData?.refillItems ?? []).map((item) => [item.productId, item])), [stopData]);
@@ -134,6 +135,15 @@ export default function MachineStopPage() {
     substitutions.forEach((line) => reserved.set(line.substituteProductId, (reserved.get(line.substituteProductId) ?? 0) + Number(line.quantity ?? 0)));
     return reserved;
   }, [filledQtys, extraProducts, substitutions]);
+  const fillStatusPreview = useMemo(() => {
+    if (!stopData) return "full";
+    const hasShortage = stopData.refillItems.some((item) => {
+      const assignedQty = Number(item.assignedQty ?? item.parQty ?? 0);
+      const actualQty = Number(filledQtys[item.productId] ?? 0);
+      return Boolean(unavailableProducts[item.productId]) || actualQty < assignedQty;
+    });
+    return hasShortage || missingReports.some((item) => item.productName.trim()) ? "partial" : "full";
+  }, [filledQtys, missingReports, stopData, unavailableProducts]);
 
   useEffect(() => {
     const fetchStopData = async () => {
@@ -234,10 +244,21 @@ export default function MachineStopPage() {
       setError("Please complete the cleaning checklist before finishing.");
       return;
     }
+    if (!finalPhotoFile) {
+      setError("Please take or upload the final machine photo before completing the stop.");
+      return;
+    }
 
     setSubmitting(true);
     setError("");
     try {
+      const photoFormData = new FormData();
+      photoFormData.append("routeId", routeId);
+      photoFormData.append("stopId", stopId);
+      photoFormData.append("machineId", stopData.machineId);
+      photoFormData.append("photo", finalPhotoFile);
+      const proofPhoto = await uploadRefillProofPhoto(photoFormData);
+
       await completeStop({
         stopId,
         routeId,
@@ -261,7 +282,12 @@ export default function MachineStopPage() {
           .filter((item) => item.productName.trim())
           .map((item) => ({ productName: item.productName.trim(), reason: item.reason, notes: item.notes || undefined })),
         cashCollected,
+        cashBagId,
         notes,
+        completionPhotoUrl: proofPhoto.photoUrl,
+        completionPhotoPath: proofPhoto.photoPath,
+        completionPhotoOriginalName: proofPhoto.originalName,
+        completionPhotoUploadUnavailable: proofPhoto.uploadUnavailable,
         issue: issueType && issueDescription ? { issueType, priority: issuePriority, description: issueDescription } : undefined,
       });
 
@@ -273,18 +299,12 @@ export default function MachineStopPage() {
   };
 
   if (loading) {
-    return (
-      <AppShell>
-        <div className="flex items-center justify-center py-12">
-          <p className="text-slate-500">Loading machine details...</p>
-        </div>
-      </AppShell>
-    );
+    return <LoadingState variant="detail" />;
   }
 
   if (!stopData) {
     return (
-      <AppShell>
+      <>
         <div className="space-y-4">
           <ErrorState
             title={loadError?.title ?? "Stop could not be loaded"}
@@ -293,12 +313,12 @@ export default function MachineStopPage() {
           />
           {loadError?.debug ? <DebugDetails debug={loadError.debug} /> : null}
         </div>
-      </AppShell>
+      </>
     );
   }
 
   return (
-    <AppShell>
+    <>
       <div className="max-w-5xl space-y-6">
         <PageHeader
           title={stopData.machineName}
@@ -387,10 +407,10 @@ export default function MachineStopPage() {
               <h2 className="text-lg font-semibold">Products added at machine</h2>
               <p className="mt-1 text-sm text-slate-500">Add unplanned products or substitutions from the operator bag. These lines are saved when you complete the stop.</p>
             </div>
-            <div className="grid grid-cols-3 gap-2 sm:flex sm:flex-wrap">
-              <button type="button" onClick={addExtraProduct} className="btn-secondary px-2 text-xs sm:px-4 sm:text-sm">Add</button>
-              <button type="button" onClick={addSubstitution} className="btn-secondary px-2 text-xs sm:px-4 sm:text-sm">Swap</button>
-              <button type="button" onClick={addMissingReport} className="btn-secondary px-2 text-xs sm:px-4 sm:text-sm">Missing</button>
+            <div className="grid gap-2 sm:flex sm:flex-wrap">
+              <button type="button" onClick={addExtraProduct} className="btn-secondary w-full sm:w-auto">Add product</button>
+              <button type="button" onClick={addSubstitution} className="btn-secondary w-full sm:w-auto">Substitute</button>
+              <button type="button" onClick={addMissingReport} className="btn-secondary w-full sm:w-auto">Report missing</button>
             </div>
           </div>
 
@@ -458,6 +478,8 @@ export default function MachineStopPage() {
         <CashAndIssueSections
           cashCollected={cashCollected}
           setCashCollected={setCashCollected}
+          cashBagId={cashBagId}
+          setCashBagId={setCashBagId}
           notes={notes}
           setNotes={setNotes}
           issueType={issueType}
@@ -469,16 +491,27 @@ export default function MachineStopPage() {
         />
 
         <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
-          <h2 className="mb-2 text-lg font-semibold">Final photo</h2>
-          <p className="mb-4 text-sm text-slate-500">Take this after filling the machine and cleaning the glass.</p>
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold">Refill proof</h2>
+              <p className="mt-1 text-sm text-slate-500">Take the photo after filling the machine and cleaning the glass.</p>
+            </div>
+            <div className={fillStatusPreview === "full" ? "rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm font-semibold text-green-800" : "rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800"}>
+              {fillStatusPreview === "full" ? "Full refill" : "Partial refill"}
+            </div>
+          </div>
           <input
             type="file"
             accept="image/*"
             capture="environment"
-            onChange={(event) => setFinalPhotoName(event.target.files?.[0]?.name ?? "")}
+            onChange={(event) => {
+              const file = event.target.files?.[0] ?? null;
+              setFinalPhotoFile(file);
+              setFinalPhotoName(file?.name ?? "");
+            }}
             className="field-input"
           />
-          {finalPhotoName ? <p className="mt-2 text-sm text-slate-600">Selected: {finalPhotoName}</p> : null}
+          {finalPhotoName ? <p className="mt-2 text-sm text-slate-600">Selected: {finalPhotoName}</p> : <p className="mt-2 text-sm text-amber-700">Final photo is required before completion.</p>}
         </section>
 
         <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
@@ -521,7 +554,7 @@ export default function MachineStopPage() {
 
         {stopData.debug ? <DebugDetails debug={stopData.debug} /> : null}
       </div>
-    </AppShell>
+    </>
   );
 }
 
@@ -550,12 +583,12 @@ function ProductPicker({ products, value, onChange, label = "Existing product" }
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          className="w-full rounded-md border-0 px-2 py-2 text-sm outline-none ring-0"
+          className="min-h-12 w-full rounded-md border-0 px-2 py-2 text-base outline-none ring-0 md:text-sm"
           placeholder={selected ? `${selected.name} - ${selected.sku ?? "No SKU"}` : "Search name, SKU, barcode, category, or brand"}
         />
         <div className="mt-2 max-h-56 space-y-1 overflow-y-auto">
           {selected && !query.trim() ? (
-            <div className="rounded-md bg-blue-50 px-3 py-2 text-sm font-medium text-blue-800">
+            <div className="rounded-md bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
               Selected: {selected.name} - Bag {selected.availableQty}
             </div>
           ) : null}
@@ -567,13 +600,13 @@ function ProductPicker({ products, value, onChange, label = "Existing product" }
               onChange(product.id);
               setQuery("");
             }}
-            className={`w-full rounded-md px-3 py-2 text-left text-sm transition ${product.id === value ? "bg-blue-600 text-white" : "hover:bg-slate-100"}`}
+            className={`min-h-14 w-full rounded-md px-3 py-2 text-left text-sm transition ${product.id === value ? "brand-selected" : "hover:bg-slate-100"}`}
           >
             <span className="flex items-center gap-3">
               <ProductThumbnail imageUrl={product.imageUrl} name={product.name} />
               <span className="min-w-0">
                 <span className="block truncate font-medium">{product.name}</span>
-                <span className={`block truncate ${product.id === value ? "text-blue-100" : "text-slate-500"}`}>{product.sku ?? "No SKU"} - Bag {product.availableQty}</span>
+                <span className={`block truncate ${product.id === value ? "text-white/80" : "text-slate-500"}`}>{product.sku ?? "No SKU"} - Bag {product.availableQty}</span>
               </span>
             </span>
           </button>
@@ -609,6 +642,8 @@ function ReasonSelect({ value, onChange }: { value: string; onChange: (reason: s
 function CashAndIssueSections({
   cashCollected,
   setCashCollected,
+  cashBagId,
+  setCashBagId,
   notes,
   setNotes,
   issueType,
@@ -618,8 +653,10 @@ function CashAndIssueSections({
   issueDescription,
   setIssueDescription,
 }: {
-  cashCollected: number;
-  setCashCollected: (value: number) => void;
+  cashCollected: boolean;
+  setCashCollected: (value: boolean) => void;
+  cashBagId: string;
+  setCashBagId: (value: string) => void;
   notes: string;
   setNotes: (value: string) => void;
   issueType: string;
@@ -634,12 +671,21 @@ function CashAndIssueSections({
       <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
         <h2 className="mb-4 text-lg font-semibold">Cash Collection</h2>
         <div className="space-y-4">
-          <label className="block">
-            <span className="mb-1 block text-sm font-medium text-slate-800">Actual cash collected</span>
-            <div className="flex items-center gap-2">
-              <span className="text-slate-500">LYD</span>
-              <input type="number" step="0.01" min="0" value={cashCollected} onChange={(event) => setCashCollected(parseFloat(event.target.value) || 0)} className="field-input flex-1" placeholder="0.00" />
+          <div>
+            <span className="mb-2 block text-sm font-medium text-slate-800">Cash collected from machine</span>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" onClick={() => setCashCollected(true)} className={cashCollected ? "btn-primary" : "btn-secondary"}>
+                Yes
+              </button>
+              <button type="button" onClick={() => setCashCollected(false)} className={!cashCollected ? "btn-primary" : "btn-secondary"}>
+                No
+              </button>
             </div>
+            <p className="mt-2 text-xs text-slate-500">Operators only mark collection. Finance counts the envelope later.</p>
+          </div>
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium text-slate-800">Cash bag / envelope ID</span>
+            <input value={cashBagId} onChange={(event) => setCashBagId(event.target.value)} className="field-input" placeholder="Envelope ID optional" />
           </label>
           <label className="block">
             <span className="mb-1 block text-sm font-medium text-slate-800">Stop notes</span>

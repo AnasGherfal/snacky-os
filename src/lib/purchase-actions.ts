@@ -36,7 +36,8 @@ function parseOptionalMoney(value: FormDataEntryValue | null) {
 
 function parsePaymentStatus(value: FormDataEntryValue | null) {
   const status = String(value ?? "paid").trim();
-  return ["paid", "unpaid", "partial"].includes(status) ? status : "paid";
+  if (status === "partial") return "partially_paid";
+  return ["paid", "unpaid", "partially_paid", "voided"].includes(status) ? status : "paid";
 }
 
 function canManagePurchases(role: AppRole | null | undefined) {
@@ -104,6 +105,17 @@ function fail(path: string, message: string): never {
   redirect(`${path}?${params.toString()}`);
 }
 
+function clean(value: FormDataEntryValue | null) {
+  return String(value ?? "").trim();
+}
+
+function requireConfirmedReason(formData: FormData, path: string) {
+  if (clean(formData.get("confirm_action")) !== "yes") fail(path, "Confirmation is required.");
+  const reason = clean(formData.get("reason"));
+  if (!reason) fail(path, "Reason is required.");
+  return reason;
+}
+
 async function requirePurchaseAccess() {
   const profile = await getCurrentProfile();
   if (!profile || !canManagePurchases(profile.role)) redirect("/unauthorized");
@@ -113,7 +125,25 @@ async function requirePurchaseAccess() {
 }
 
 async function getDefaultStorageId(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>) {
-  const { data: storage, error } = await supabase.from("storage_locations").select("id").eq("active", true).order("name").limit(1).maybeSingle();
+  const { data: mainStorage, error: mainStorageError } = await supabase
+    .from("storage_locations")
+    .select("id")
+    .eq("active", true)
+    .eq("location_type", "main_storage")
+    .order("name")
+    .limit(1)
+    .maybeSingle();
+  if (mainStorageError) throw mainStorageError;
+  if (mainStorage?.id) return mainStorage.id;
+
+  const { data: storage, error } = await supabase
+    .from("storage_locations")
+    .select("id")
+    .eq("active", true)
+    .in("location_type", ["vehicle", "temporary", "other"])
+    .order("name")
+    .limit(1)
+    .maybeSingle();
   if (error) throw error;
   return storage?.id ?? null;
 }
@@ -123,7 +153,7 @@ export async function createPurchase(fd: FormData) {
   const lines = parseLines(fd.get("lines_json"));
   if (!lines.length) fail("/purchases/new", "Add at least one purchased item.");
 
-  const { receiptUrl, uploadUnavailable } = await resolvePurchaseReceiptUrl(supabase, fd);
+  const { receiptUrl, uploadUnavailable, uploadError } = await resolvePurchaseReceiptUrl(supabase, fd);
   const lineRows = buildLineRows(lines);
   const totals = buildTotals(fd, lineRows.reduce((sum, line) => sum + Number(line.line_total), 0));
   const submitAction = String(fd.get("submit_action") || "draft");
@@ -177,7 +207,8 @@ export async function createPurchase(fd: FormData) {
 
   revalidatePath("/purchases");
   revalidatePath("/inventory");
-  redirect(uploadUnavailable ? `/purchases/${purchase.id}?receiptUpload=storage-unavailable` : `/purchases/${purchase.id}`);
+  const receiptUpload = uploadError === "invalid_file" ? "invalid-file" : uploadUnavailable ? "storage-unavailable" : "";
+  redirect(receiptUpload ? `/purchases/${purchase.id}?receiptUpload=${receiptUpload}` : `/purchases/${purchase.id}`);
 }
 
 export async function updatePurchase(fd: FormData) {
@@ -196,7 +227,7 @@ export async function updatePurchase(fd: FormData) {
   const lines = parseLines(fd.get("lines_json"));
   if (!lines.length) fail(`/purchases/${id}/edit`, "Add at least one purchased item.");
 
-  const { receiptUrl, uploadUnavailable } = await resolvePurchaseReceiptUrl(supabase, fd);
+  const { receiptUrl, uploadUnavailable, uploadError } = await resolvePurchaseReceiptUrl(supabase, fd);
   const existingReceiptUrl = String(fd.get("current_receipt_url") || current.receipt_url || "").trim();
   const lineRows = buildLineRows(lines);
   const totals = buildTotals(fd, lineRows.reduce((sum, line) => sum + Number(line.line_total), 0));
@@ -247,7 +278,8 @@ export async function updatePurchase(fd: FormData) {
   revalidatePath("/purchases");
   revalidatePath(`/purchases/${id}`);
   revalidatePath(`/purchases/${id}/edit`);
-  redirect(uploadUnavailable ? `/purchases/${id}?receiptUpload=storage-unavailable` : `/purchases/${id}`);
+  const receiptUpload = uploadError === "invalid_file" ? "invalid-file" : uploadUnavailable ? "storage-unavailable" : "";
+  redirect(receiptUpload ? `/purchases/${id}?receiptUpload=${receiptUpload}` : `/purchases/${id}`);
 }
 
 async function receivePurchaseById(id: string) {
@@ -262,7 +294,7 @@ async function receivePurchaseById(id: string) {
     }
     return;
   }
-  if (purchase.status === "cancelled") throw new Error("Cancelled purchases cannot be received.");
+  if (purchase.status === "cancelled" || purchase.status === "voided") throw new Error("Cancelled or voided purchases cannot be received.");
 
   const { count: existingMovementCount, error: existingError } = await supabase
     .from("inventory_movements")
@@ -366,24 +398,290 @@ export async function receivePurchase(fd: FormData) {
   redirect(`/purchases/${id}`);
 }
 
+export async function markPurchasePaid(fd: FormData) {
+  const { profile, supabase } = await requirePurchaseAccess();
+  const id = String(fd.get("id") || "");
+  if (!id) redirect("/purchases");
+  const path = `/purchases/${id}`;
+  const reason = requireConfirmedReason(fd, path);
+
+  const { data: purchase, error: purchaseError } = await supabase
+    .from("purchase_orders")
+    .select("id, status, supplier_id, receipt_number, payment_method, payment_status, receipt_url, total_amount, manual_total_lyd, calculated_total_lyd, received_date, received_at")
+    .eq("id", id)
+    .maybeSingle();
+  if (purchaseError || !purchase) fail("/purchases", "Purchase not found.");
+  if (purchase.status !== "received") fail(path, "Only received purchases can be marked paid.");
+  if (purchase.payment_status === "voided" || purchase.status === "voided") fail(path, "Voided purchases cannot be paid.");
+
+  const paidPurchase = {
+    ...purchase,
+    payment_status: "paid",
+    received_date: purchase.received_date ?? String(purchase.received_at ?? new Date().toISOString()).slice(0, 10),
+  };
+  const purchaseTotal = Number(purchase.manual_total_lyd ?? purchase.total_amount ?? purchase.calculated_total_lyd ?? 0);
+
+  const { data: after, error: updateError } = await supabase
+    .from("purchase_orders")
+    .update({ payment_status: "paid", updated_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("status", "received")
+    .select("*")
+    .single();
+  if (updateError) {
+    console.error("[purchases] Failed to mark purchase paid", updateError);
+    fail(path, "Could not mark purchase as paid.");
+  }
+
+  try {
+    await createPurchaseFinancialTransaction(supabase, profile, paidPurchase, purchaseTotal);
+  } catch (error) {
+    console.error("[purchases] Failed to create payment transaction", error);
+    fail(path, "Purchase was marked paid, but the money-out finance transaction could not be created.");
+  }
+
+  await logActivity({
+    profile,
+    action: "pay_purchase",
+    entityType: "purchase",
+    entityId: id,
+    entityLabel: purchase.receipt_number ?? id.slice(0, 8),
+    beforeData: purchase,
+    afterData: after,
+    metadata: { reason, amount: purchaseTotal },
+    summary: "Marked purchase paid and ensured money-out finance transaction",
+  });
+
+  revalidatePath("/purchases");
+  revalidatePath(`/purchases/${id}`);
+  revalidatePath("/finance");
+  revalidatePath("/finance/transactions");
+  redirect(`/purchases/${id}`);
+}
+
 export async function cancelPurchase(fd: FormData) {
   const { profile, supabase } = await requirePurchaseAccess();
   const id = String(fd.get("id") || "");
   if (!id) redirect("/purchases");
-  const { data: purchase } = await supabase.from("purchase_orders").select("status").eq("id", id).single();
+  const path = `/purchases/${id}`;
+  const reason = requireConfirmedReason(fd, path);
+  const { data: purchase } = await supabase.from("purchase_orders").select("*").eq("id", id).single();
   if (purchase?.status === "received") redirect(`/purchases/${id}?error=Received%20purchases%20cannot%20be%20cancelled.`);
-  await supabase.from("purchase_orders").update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", id).neq("status", "received");
+  if (purchase?.status === "voided") redirect(`/purchases/${id}?error=Voided%20purchases%20cannot%20be%20cancelled.`);
+  const { data: after } = await supabase.from("purchase_orders").update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", id).neq("status", "received").select("*").single();
   await logActivity({
     profile,
-    action: "archive",
+    action: "cancel",
     entityType: "purchase",
     entityId: id,
     entityLabel: id.slice(0, 8),
     beforeData: purchase,
-    afterData: { status: "cancelled" },
+    afterData: after ?? { status: "cancelled" },
+    metadata: { reason },
     summary: "Cancelled purchase",
   });
   revalidatePath("/purchases");
   revalidatePath(`/purchases/${id}`);
+  redirect(`/purchases/${id}`);
+}
+
+export async function deleteDraftPurchase(fd: FormData) {
+  const { profile, supabase } = await requirePurchaseAccess();
+  const id = String(fd.get("id") || "");
+  if (!id) redirect("/purchases");
+  const path = `/purchases/${id}`;
+  const reason = requireConfirmedReason(fd, path);
+
+  const { data: purchase, error: purchaseError } = await supabase.from("purchase_orders").select("*").eq("id", id).maybeSingle();
+  if (purchaseError || !purchase) fail("/purchases", "Purchase not found.");
+  if (purchase.status !== "draft") fail(path, "Only draft purchases can be hard-deleted.");
+
+  const [{ count: movementCount, error: movementError }, { count: financeCount, error: financeError }] = await Promise.all([
+    supabase.from("inventory_movements").select("id", { count: "exact", head: true }).eq("related_purchase_id", id),
+    supabase.from("financial_transactions").select("id", { count: "exact", head: true }).eq("related_purchase_id", id),
+  ]);
+  if (movementError || financeError) {
+    console.error("[purchases] Failed to verify draft delete safety", movementError ?? financeError);
+    fail(path, "Could not verify purchase history.");
+  }
+  if (Number(movementCount ?? 0) > 0 || Number(financeCount ?? 0) > 0) {
+    fail(path, "This purchase already has inventory or finance history. Void or cancel it instead.");
+  }
+
+  const { data: lines } = await supabase.from("purchase_order_lines").select("*").eq("purchase_order_id", id);
+  const { error: lineDeleteError } = await supabase.from("purchase_order_lines").delete().eq("purchase_order_id", id);
+  if (lineDeleteError) {
+    console.error("[purchases] Failed to delete draft purchase lines", lineDeleteError);
+    fail(path, "Could not delete purchase lines.");
+  }
+
+  const { error } = await supabase.from("purchase_orders").delete().eq("id", id).eq("status", "draft");
+  if (error) {
+    console.error("[purchases] Failed to delete draft purchase", error);
+    fail(path, "Could not delete draft purchase.");
+  }
+
+  await logActivity({
+    profile,
+    action: "delete",
+    entityType: "purchase",
+    entityId: id,
+    entityLabel: purchase.receipt_number ?? id.slice(0, 8),
+    beforeData: { purchase, lines },
+    metadata: { reason },
+    summary: "Hard-deleted draft purchase",
+  });
+
+  revalidatePath("/purchases");
+  revalidatePath("/inventory");
+  redirect("/purchases");
+}
+
+export async function voidReceivedPurchase(fd: FormData) {
+  const { profile, supabase } = await requirePurchaseAccess();
+  const id = String(fd.get("id") || "");
+  if (!id) redirect("/purchases");
+  const path = `/purchases/${id}`;
+  const reason = requireConfirmedReason(fd, path);
+
+  const { data: purchase, error: purchaseError } = await supabase.from("purchase_orders").select("*").eq("id", id).maybeSingle();
+  if (purchaseError || !purchase) fail("/purchases", "Purchase not found.");
+  if (purchase.status !== "received") fail(path, "Only received purchases can be voided.");
+
+  const { data: receiptMovements, error: movementsError } = await supabase
+    .from("inventory_movements")
+    .select("*")
+    .eq("related_purchase_id", id)
+    .eq("reason", "purchase_received")
+    .order("created_at");
+  if (movementsError) {
+    console.error("[purchases] Failed to load receipt movements for void", movementsError);
+    fail(path, "Could not load purchase receipt movements.");
+  }
+
+  const movementIds = (receiptMovements ?? []).map((movement: any) => movement.id);
+  let existingReversalCount = 0;
+  if (movementIds.length) {
+    const { count, error } = await supabase.from("inventory_movements").select("id", { count: "exact", head: true }).in("reversed_movement_id", movementIds);
+    if (error) {
+      console.error("[purchases] Failed to verify purchase reversal status", error);
+      fail(path, "Could not verify purchase reversal status.");
+    }
+    existingReversalCount = count ?? 0;
+  }
+  if (existingReversalCount > 0) fail(path, "This purchase already has reversal movements.");
+
+  const now = new Date().toISOString();
+  const reversalRows = (receiptMovements ?? []).map((movement: any) => ({
+    product_id: movement.product_id,
+    quantity: Number(movement.quantity ?? 0),
+    from_entity_type: movement.to_entity_type,
+    from_entity_id: movement.to_entity_id,
+    to_entity_type: movement.from_entity_type,
+    to_entity_id: movement.from_entity_id,
+    reason: "manual_correction",
+    related_purchase_id: id,
+    related_purchase_line_id: movement.related_purchase_line_id ?? null,
+    related_route_id: movement.related_route_id ?? null,
+    related_route_stop_id: movement.related_route_stop_id ?? null,
+    related_machine_id: movement.related_machine_id ?? null,
+    unit_cost_lyd: movement.unit_cost_lyd ?? null,
+    line_total_lyd: movement.line_total_lyd === null || movement.line_total_lyd === undefined ? null : -Math.abs(Number(movement.line_total_lyd)),
+    reversed_movement_id: movement.id,
+    correction_reason: reason,
+    created_by: profile.team_member_id,
+    notes: `Voided purchase ${purchase.receipt_number ?? id.slice(0, 8)}: ${reason}`,
+  }));
+
+  if (reversalRows.length) {
+    const { error } = await supabase.from("inventory_movements").insert(reversalRows);
+    if (error) {
+      console.error("[purchases] Failed to create purchase reversal movements", error);
+      fail(path, "Could not create reversal inventory movements.");
+    }
+  }
+
+  await supabase.from("purchase_order_lines").update({ received_qty: 0 }).eq("purchase_order_id", id);
+
+  const { data: voidedPurchase, error: voidError } = await supabase
+    .from("purchase_orders")
+    .update({
+      status: "voided",
+      payment_status: "voided",
+      voided_at: now,
+      voided_by: profile.team_member_id,
+      void_reason: reason,
+      updated_at: now,
+    })
+    .eq("id", id)
+    .eq("status", "received")
+    .select("*")
+    .single();
+  if (voidError) {
+    console.error("[purchases] Failed to void purchase", voidError);
+    fail(path, "Could not void purchase.");
+  }
+
+  const { data: financeBefore } = await supabase
+    .from("financial_transactions")
+    .select("*")
+    .eq("related_purchase_id", id)
+    .eq("transaction_kind", "product_purchase")
+    .eq("transaction_status", "active");
+
+  if (financeBefore?.length) {
+    const financeIds = financeBefore.map((row: any) => row.id);
+    const { data: financeAfter, error: financeError } = await supabase
+      .from("financial_transactions")
+      .update({
+        transaction_status: "voided",
+        voided_at: now,
+        voided_by: profile.team_member_id,
+        status_reason: reason,
+        updated_at: now,
+      })
+      .in("id", financeIds)
+      .select("*");
+    if (financeError) {
+      console.error("[purchases] Failed to void purchase financial transaction", financeError);
+      fail(path, "Purchase was reversed, but the financial transaction could not be voided.");
+    }
+
+    for (const financeRow of financeAfter ?? []) {
+      await logActivity({
+        profile,
+        action: "void",
+        entityType: "financial_transaction",
+        entityId: financeRow.id,
+        entityLabel: "Purchase financial transaction",
+        beforeData: financeBefore.find((row: any) => row.id === financeRow.id),
+        afterData: financeRow,
+        metadata: { reason, related_purchase_id: id },
+        summary: "Voided financial transaction linked to a voided purchase",
+      });
+    }
+  }
+
+  await logActivity({
+    profile,
+    action: "void",
+    entityType: "purchase",
+    entityId: id,
+    entityLabel: purchase.receipt_number ?? id.slice(0, 8),
+    beforeData: purchase,
+    afterData: voidedPurchase,
+    metadata: {
+      reason,
+      reversal_movement_count: reversalRows.length,
+      financial_transaction_count: financeBefore?.length ?? 0,
+    },
+    summary: `Voided received purchase and created ${reversalRows.length} reversal movements`,
+  });
+
+  revalidatePath("/purchases");
+  revalidatePath(`/purchases/${id}`);
+  revalidatePath("/inventory");
+  revalidatePath("/finance");
+  revalidatePath("/finance/transactions");
   redirect(`/purchases/${id}`);
 }

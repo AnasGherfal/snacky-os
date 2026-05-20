@@ -1,17 +1,14 @@
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
 import { ActivityLogTable } from "@/app/activity/ActivityLogTable";
 import { EmptyState, ErrorState, PageHeader, SecondaryButton } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
-import { AppRole, appRoles, isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
+import { AppRole, appRoles, isOwnerAdminRole } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
-const operationalEntityTypes = new Set(["route", "route_stop", "inventory_movement", "cash_collection", "issue"]);
-
 function canViewActivity(role: AppRole | null | undefined) {
-  return isOwnerAdminRole(role) || isSupervisorRole(role);
+  return isOwnerAdminRole(role);
 }
 
 export default async function ActivityLogPage({
@@ -26,9 +23,9 @@ export default async function ActivityLogPage({
   const supabase = getSupabaseServerClient();
   if (!supabase) {
     return (
-      <AppShell>
+      <>
         <ErrorState title="Activity log unavailable" body="Supabase is not configured, so Snacky OS cannot load system_activity_logs." action={<SecondaryButton href="/dashboard">Back to dashboard</SecondaryButton>} />
-      </AppShell>
+      </>
     );
   }
 
@@ -46,7 +43,6 @@ export default async function ActivityLogPage({
       if (entity_type) query = query.eq("entity_type", entity_type);
       if (date_from) query = query.gte("created_at", `${date_from}T00:00:00`);
       if (date_to) query = query.lte("created_at", `${date_to}T23:59:59`);
-      if (isSupervisorRole(profile.role)) query = query.in("entity_type", [...operationalEntityTypes]);
       return query.order("created_at", { ascending: false }).limit(300);
     })(),
   ]);
@@ -55,9 +51,9 @@ export default async function ActivityLogPage({
   if (loadError) {
     console.error("[activity] Failed to load system_activity_logs", loadError);
     return (
-      <AppShell>
+      <>
         <ErrorState title="Could not load activity log" body="The activity page reads real system_activity_logs rows, but the database query failed." action={<SecondaryButton href="/activity">Retry</SecondaryButton>} />
-      </AppShell>
+      </>
     );
   }
 
@@ -67,11 +63,11 @@ export default async function ActivityLogPage({
     return [row.actor_name, row.actor_role, row.action, row.entity_type, row.entity_label, row.summary, JSON.stringify(row.metadata ?? {})].join(" ").toLowerCase().includes(search);
   });
   const actionOptions = Array.from(new Set((actions ?? []).map((row: any) => row.action).filter(Boolean)));
-  const entityOptions = Array.from(new Set((entityTypes ?? []).map((row: any) => row.entity_type).filter((type: string) => type && (!isSupervisorRole(profile.role) || operationalEntityTypes.has(type)))));
-  const roleOptions = appRoles.filter((item) => !isSupervisorRole(profile.role) || item === "supervisor" || item === "operator" || item === "warehouse");
+  const entityOptions = Array.from(new Set((entityTypes ?? []).map((row: any) => row.entity_type).filter(Boolean)));
+  const roleOptions = appRoles;
 
   return (
-    <AppShell>
+    <>
       <PageHeader title="System Activity Log" subtitle="Audit trail of user actions recorded by Snacky OS." />
 
       <section className="surface-card mb-6">
@@ -104,6 +100,6 @@ export default async function ActivityLogPage({
       ) : (
         <ActivityLogTable rows={rows as any} />
       )}
-    </AppShell>
+    </>
   );
 }

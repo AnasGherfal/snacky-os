@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import type { ReactNode } from "react";
-import { AppShell } from "@/components/AppShell";
 import { FinanceTransactionStatusActions } from "@/components/FinanceTransactionStatusActions";
 import { PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
@@ -57,10 +56,15 @@ export default async function FinanceTransactionDetailPage({
   ]);
 
   return (
-    <AppShell>
+    <>
       <PageHeader
         title="Finance Transaction"
         subtitle="Ledger detail, source context, and audit-safe status actions."
+        breadcrumbs={[
+          { label: "Finance", href: "/finance" },
+          { label: "Transactions", href: "/finance/transactions" },
+          { label: row.description ? String(row.description).slice(0, 40) : id.slice(0, 8) },
+        ]}
         action={<SecondaryButton href="/finance/transactions">Back to transactions</SecondaryButton>}
       />
       {flags.error ? <div className="fixed right-5 top-5 z-50 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-800 shadow-lg">{flags.error}</div> : null}
@@ -117,6 +121,6 @@ export default async function FinanceTransactionDetailPage({
         </div>
         {row.status_reason ? <p className="mt-4 rounded-lg bg-slate-50 p-3 text-sm text-slate-600">{row.status_reason}</p> : null}
       </section>
-    </AppShell>
+    </>
   );
 }

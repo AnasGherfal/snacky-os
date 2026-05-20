@@ -1,12 +1,50 @@
 import Link from "next/link";
-import { AppShell } from "@/components/AppShell";
-import { DataTable, PageHeader, PrimaryButton, StatusBadge } from "@/components/ui";
+import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export default async function LocationsPage() {
-  const s = getSupabaseServerClient();
-  const { data } = s ? await s.from("locations").select("id,name,location_type,rent_amount,status").order("name") : { data: [] };
-  return <AppShell><PageHeader title="Locations" subtitle="Manage real site master data from Supabase." action={<PrimaryButton href="/locations/new">Add location</PrimaryButton>} />
-    <DataTable headers={["Name","Type","Rent","Status","Actions"]}>{data?.map((r:any)=><tr key={r.id}><td>{r.name}</td><td>{r.location_type}</td><td>{Number(r.rent_amount||0).toFixed(2)}</td><td><StatusBadge status={r.status}/></td><td><Link className="btn-secondary" href={`/locations/${r.id}`}>Edit</Link></td></tr>)}</DataTable>
-  </AppShell>;
+  const supabase = getSupabaseServerClient();
+  if (!supabase) {
+    return (
+      <>
+        <ErrorState title="Locations unavailable" body="Supabase is not configured, so Snacky OS cannot load site locations." />
+      </>
+    );
+  }
+
+  const { data, error } = await supabase.from("locations").select("id,name,location_type,rent_amount,status").order("name");
+  if (error) {
+    console.error("[locations] Failed to load locations", error);
+    return (
+      <>
+        <ErrorState title="Could not load locations" body="Snacky OS could not load site location records from Supabase." action={<SecondaryButton href="/locations">Retry</SecondaryButton>} />
+      </>
+    );
+  }
+
+  return (
+    <>
+      <PageHeader
+        title="Locations"
+        subtitle="Manage customer sites, venue records, rent context, and machine installation locations."
+        breadcrumbs={[{ label: "Machines", href: "/machines" }, { label: "Locations" }]}
+        action={<PrimaryButton href="/locations/new">Add location</PrimaryButton>}
+      />
+      {!data?.length ? (
+        <EmptyState title="No locations yet" body="Create site locations before linking machines, rent, and operating context." action={<PrimaryButton href="/locations/new">Add location</PrimaryButton>} />
+      ) : (
+        <DataTable headers={["Name", "Type", "Rent", "Status", "Actions"]}>
+          {data.map((location: any) => (
+            <tr key={location.id}>
+              <td className="font-medium text-slate-900">{location.name}</td>
+              <td>{location.location_type}</td>
+              <td>{Number(location.rent_amount || 0).toFixed(2)}</td>
+              <td><StatusBadge status={location.status} /></td>
+              <td><Link className="btn-secondary" href={`/locations/${location.id}`}>Edit</Link></td>
+            </tr>
+          ))}
+        </DataTable>
+      )}
+    </>
+  );
 }

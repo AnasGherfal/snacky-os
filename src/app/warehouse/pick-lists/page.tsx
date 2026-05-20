@@ -1,4 +1,3 @@
-import { AppShell } from "@/components/AppShell";
 import { DataTable, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -22,7 +21,7 @@ export default async function WarehousePickListsPage() {
   const operatorById = new Map((operators ?? []).map((operator: any) => [operator.id, operator.full_name]));
 
   return (
-    <AppShell>
+    <>
       <PageHeader title="Pick Lists" subtitle="Storage pick demand for draft, assigned, and in-progress routes." />
 
       {!routeRows.length ? (
@@ -50,6 +49,6 @@ export default async function WarehousePickListsPage() {
           })}
         </DataTable>
       )}
-    </AppShell>
+    </>
   );
 }

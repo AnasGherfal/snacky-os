@@ -1,6 +1,7 @@
 "use client";
 
 import { ReactNode, useState } from "react";
+import { ModuleTabsLayout } from "@/components/ModuleTabsLayout";
 import { Sidebar } from "@/components/Sidebar";
 import { Topbar } from "@/components/Topbar";
 import { AppRole } from "@/lib/authz";
@@ -19,12 +20,14 @@ export function ShellChrome({ children, profile }: { children: ReactNode; profil
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   return (
-    <div className="app-shell flex h-screen min-h-0 overflow-hidden bg-slate-100/70">
+    <div className="app-shell flex h-dvh min-h-0 overflow-hidden bg-slate-100/70">
       <Sidebar role={profile.role} mobileOpen={mobileNavOpen} onMobileClose={() => setMobileNavOpen(false)} />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Topbar profile={profile} onMenuClick={() => setMobileNavOpen(true)} />
         <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
-          <div className="mx-auto w-full max-w-7xl px-3 py-4 sm:px-4 md:p-8">{children}</div>
+          <div className="mx-auto w-full max-w-7xl px-3 py-4 sm:px-4 md:p-8">
+            <ModuleTabsLayout profile={profile}>{children}</ModuleTabsLayout>
+          </div>
         </main>
       </div>
     </div>

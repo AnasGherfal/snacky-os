@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { AppShell } from "@/components/AppShell";
 import { PageHeader } from "@/components/ui";
+import { requireCurrentProfileForPath } from "@/lib/auth";
 
 const reportLinks = [
   { title: "Sales Dashboard", href: "/sales", description: "VMS sales by day, machine, location, product, and payment type." },
@@ -10,18 +10,19 @@ const reportLinks = [
 ];
 
 export default async function ReportsPage() {
+  await requireCurrentProfileForPath("/reports");
   return (
-    <AppShell>
+    <>
       <PageHeader title="Reports" subtitle="KPI dashboards for sales, products, machines, and inventory." />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {reportLinks.map((item) => (
-          <Link key={item.href} href={item.href} className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm transition hover:border-slate-300 hover:shadow-md">
+          <Link key={item.href} href={item.href} className="surface-card block transition hover:border-slate-300 hover:shadow-md">
             <div className="text-base font-semibold text-slate-900">{item.title}</div>
             <p className="mt-2 text-sm leading-6 text-slate-500">{item.description}</p>
           </Link>
         ))}
       </div>
-    </AppShell>
+    </>
   );
 }

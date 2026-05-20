@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
 import { EmptyState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOperatorRole } from "@/lib/authz";
@@ -27,7 +26,7 @@ export default async function OperatorIssuesPage() {
   const { data: issues } = query ? await query : { data: [] };
 
   return (
-    <AppShell>
+    <>
       <PageHeader
         title="Issues"
         subtitle="Machine issues you reported from route execution screens."
@@ -59,6 +58,6 @@ export default async function OperatorIssuesPage() {
           ))}
         </div>
       )}
-    </AppShell>
+    </>
   );
 }

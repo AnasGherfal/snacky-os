@@ -77,7 +77,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
       <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="mb-6 text-center">
           <div className="relative mx-auto mb-4 h-24 w-24 overflow-hidden rounded-full border border-slate-200 bg-white shadow-sm">
-            <Image src="/brand/snacky-logo.png" alt="Snacky logo" fill sizes="96px" className="object-cover" priority />
+            <Image src="/brand/snacky-logo.png" alt="Snacky logo" fill sizes="96px" className="object-contain" priority />
           </div>
           <h1 className="text-2xl font-semibold text-slate-900">Snacky OS</h1>
           <p className="mt-1 text-sm text-slate-500">Sign in to manage vending operations.</p>

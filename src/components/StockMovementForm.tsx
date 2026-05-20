@@ -113,7 +113,7 @@ export function StockMovementForm({
       <input type="hidden" name="product_id" value={selectedProductId} />
       <input type="hidden" name="quantity" value={quantity} />
 
-      <FormSection title="Movement details">
+      <FormSection title="Movement details" description="Choose the product, quantity, reason, and optional route context for this ledger movement.">
         <div className="grid gap-4 md:grid-cols-2">
           <div className="md:col-span-2">
             <div className="mb-2 flex items-center justify-between gap-3">
@@ -140,13 +140,13 @@ export function StockMovementForm({
             ) : null}
             <div className="mt-3 grid gap-2 md:grid-cols-2">
               {filteredProducts.map((product) => (
-                <button key={product.id} type="button" onClick={() => selectProduct(product)} className={`rounded-lg border p-3 text-left transition ${selectedProductId === product.id ? "border-blue-400 bg-blue-50" : "border-slate-200 bg-white hover:border-slate-400"}`}>
+                <button key={product.id} type="button" onClick={() => selectProduct(product)} className={`rounded-lg border p-3 text-left transition ${selectedProductId === product.id ? "brand-selected border-transparent" : "border-slate-200 bg-white hover:border-slate-400"}`}>
                   <div className="flex gap-3">
                     <ProductThumbnail imageUrl={product.imageUrl} name={product.name} size="md" />
                     <div className="min-w-0 flex-1">
-                      <div className="truncate font-medium text-slate-900">{product.name}</div>
-                      <div className="text-xs text-slate-500">{product.sku ?? "No SKU"} - {product.category ?? "Uncategorized"} {product.brand ? `- ${product.brand}` : ""}</div>
-                      <div className="mt-1 text-xs text-slate-600">
+                      <div className={`truncate font-medium ${selectedProductId === product.id ? "text-white" : "text-slate-900"}`}>{product.name}</div>
+                      <div className={`text-xs ${selectedProductId === product.id ? "text-white/80" : "text-slate-500"}`}>{product.sku ?? "No SKU"} - {product.category ?? "Uncategorized"} {product.brand ? `- ${product.brand}` : ""}</div>
+                      <div className={`mt-1 text-xs ${selectedProductId === product.id ? "text-white/90" : "text-slate-600"}`}>
                         Storage {product.storageQty}
                         {canSeeSellingPrice ? ` - Selling LYD ${product.sellingPrice.toFixed(2)}` : ""}
                       </div>
@@ -182,7 +182,7 @@ export function StockMovementForm({
         </div>
       </FormSection>
 
-      <FormSection title="From and to">
+      <FormSection title="From and to" description="Stock must move between explicit locations so balances remain audit-friendly.">
         <div className="grid gap-4 md:grid-cols-2">
           <FormField label="From location/type" required>
             <select name="from_location" required className="field-input">
@@ -207,7 +207,7 @@ export function StockMovementForm({
         </div>
       </FormSection>
 
-      <FormSection title="Notes and override">
+      <FormSection title="Notes and override" description="Use notes for count references, supervisor context, or correction reasons.">
         <FormField label="Notes">
           <textarea name="notes" rows={4} className="field-input" placeholder="Reason, count reference, route handoff notes, or supervisor approval." />
         </FormField>

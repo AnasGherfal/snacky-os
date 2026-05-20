@@ -1,19 +1,18 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { AppShell } from "@/components/AppShell";
-import { FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
+import { ErrorState, FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
 import { logActivity } from "@/lib/activity-log";
-import { getCurrentProfile } from "@/lib/auth";
+import { requireCurrentProfileForPath } from "@/lib/auth";
 import { resolveProductImageUrl } from "@/lib/product-images";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 async function createProduct(fd: FormData) {
   "use server";
+  const profile = await requireCurrentProfileForPath("/products/new");
   const s = getSupabaseServerClient();
-  if (!s) return;
-  const profile = await getCurrentProfile();
+  if (!s) redirect("/products/new?error=Supabase%20is%20not%20configured.");
 
-  const { imageUrl, uploadUnavailable } = await resolveProductImageUrl(s, fd);
+  const { imageUrl, uploadUnavailable, uploadError } = await resolveProductImageUrl(s, fd);
   const product = {
     sku: String(fd.get("sku") || "").trim(),
     barcode: String(fd.get("barcode") || "") || null,
@@ -34,31 +33,52 @@ async function createProduct(fd: FormData) {
     active: String(fd.get("active") || "true") === "true",
   };
 
-  if (!product.sku || !product.name) return;
-  const { data } = await s.from("products").insert(product).select("id, sku, name, category, brand, active").single();
-  if (data) {
-    await logActivity({
-      profile,
-      action: "create",
-      entityType: "product",
-      entityId: data.id,
-      entityLabel: data.name,
-      afterData: data,
-      summary: `Created product ${data.name}`,
-    });
+  if (!product.sku || !product.name) redirect("/products/new?error=SKU%20and%20product%20name%20are%20required.");
+  const { data, error } = await s.from("products").insert(product).select("id, sku, name, category, brand, active").single();
+  if (error || !data) {
+    console.error("[products] Failed to create product", error);
+    redirect("/products/new?error=Could%20not%20create%20product.");
   }
+  await logActivity({
+    profile,
+    action: "create",
+    entityType: "product",
+    entityId: data.id,
+    entityLabel: data.name,
+    afterData: data,
+    summary: `Created product ${data.name}`,
+  });
   revalidatePath("/products");
-  redirect(uploadUnavailable ? "/products?imageUpload=storage-unavailable" : "/products");
+  const imageUpload = uploadError === "invalid_file" ? "invalid-file" : uploadUnavailable ? "storage-unavailable" : "";
+  redirect(imageUpload ? `/products?imageUpload=${imageUpload}` : "/products");
 }
 
-export default async function NewProductPage() {
+export default async function NewProductPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+  await requireCurrentProfileForPath("/products/new");
+  const params = await searchParams;
   const s = getSupabaseServerClient();
-  const { data: suppliers } = s ? await s.from("suppliers").select("id,name").order("name") : { data: [] };
+  if (!s) {
+    return (
+      <>
+        <ErrorState title="Products unavailable" body="Supabase is not configured, so Snacky OS cannot create products." />
+      </>
+    );
+  }
+  const { data: suppliers, error: suppliersError } = await s.from("suppliers").select("id,name").order("name");
+  if (suppliersError) {
+    console.error("[products] Failed to load suppliers for product form", suppliersError);
+    return (
+      <>
+        <ErrorState title="Could not load product form" body="Snacky OS could not load suppliers for the product form." action={<SecondaryButton href="/products">Back to products</SecondaryButton>} />
+      </>
+    );
+  }
 
   return (
-    <AppShell>
+    <>
       <FormPageLayout>
         <PageHeader title="Create product" subtitle="Add a product used in machines and storage operations." />
+        {params.error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{params.error}</div> : null}
         <form action={createProduct} className="space-y-5">
           <FormSection title="Product details">
             <div className="grid gap-4 md:grid-cols-2">
@@ -77,7 +97,7 @@ export default async function NewProductPage() {
 
           <FormSection title="Product image">
             <div className="grid gap-4 md:grid-cols-2">
-              <FormField label="Upload image" hint="Stored in the local product image bucket. PNG, JPG, and WEBP are supported. Maximum 5MB.">
+              <FormField label="Upload image" hint="Stored in product-images when Supabase Storage is configured. PNG, JPG, and WEBP are supported. Maximum 5MB.">
                 <input name="image_file" type="file" accept="image/png,image/jpeg,image/webp" className="field-input" />
               </FormField>
               <FormField label="Image URL fallback" hint="Optional public URL if you do not upload a file.">
@@ -89,6 +109,6 @@ export default async function NewProductPage() {
           <div className="flex gap-3"><PrimaryButton>Save product</PrimaryButton><SecondaryButton href="/products">Cancel</SecondaryButton></div>
         </form>
       </FormPageLayout>
-    </AppShell>
+    </>
   );
 }

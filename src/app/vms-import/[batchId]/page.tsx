@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
 import { DataTable, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
@@ -149,7 +148,7 @@ export default async function VmsImportBatchDetailPage({
   const importedRows = rowList.filter((row) => row.validation_status === "imported");
 
   return (
-    <AppShell>
+    <>
       <PageHeader
         title="VMS Import Batch"
         subtitle={`${batch.file_name ?? "VMS file"} - ${reportLabel(batch.report_type ?? batch.source_type)}`}
@@ -297,6 +296,6 @@ export default async function VmsImportBatchDetailPage({
           </DataTable>
         )}
       </section>
-    </AppShell>
+    </>
   );
 }

@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { AppShell } from "@/components/AppShell";
 import { DataTable, EmptyState, PageHeader, PrimaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -26,7 +25,7 @@ export default async function MachinePlanogramsPage({ searchParams }: { searchPa
   const machinesWithoutSlots = machineRows.filter((machine) => !slotRows.some((slot) => slot.machine_id === machine.id));
 
   return (
-    <AppShell>
+    <>
       <div className="space-y-6">
         <PageHeader
           title="Machine Planograms"
@@ -85,7 +84,7 @@ export default async function MachinePlanogramsPage({ searchParams }: { searchPa
                 <div>
                   <h2 className="text-lg font-semibold text-slate-900">{selectedMachine?.name ?? "Machine"}</h2>
                   <p className="mt-1 text-sm text-slate-500">
-                    {selectedMachine?.machine_code ?? "No code"} · {selectedSlots.length} configured slot{selectedSlots.length === 1 ? "" : "s"}
+                    {selectedMachine?.machine_code ?? "No code"} - {selectedSlots.length} configured slot{selectedSlots.length === 1 ? "" : "s"}
                   </p>
                 </div>
                 <PrimaryButton href={selectedMachineId ? `/machine-slots/new?machine_id=${selectedMachineId}` : "/machine-slots/new"}>Add Slot</PrimaryButton>
@@ -130,6 +129,6 @@ export default async function MachinePlanogramsPage({ searchParams }: { searchPa
           </>
         )}
       </div>
-    </AppShell>
+    </>
   );
 }

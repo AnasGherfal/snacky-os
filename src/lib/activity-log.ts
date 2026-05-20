@@ -16,12 +16,14 @@ type ActivityInput = {
   summary?: string | null;
 };
 
-const sensitiveKeyPattern = /password|secret|token|apikey|api_key|service_role|authorization|cookie/i;
-const sensitiveTextPattern =
-  /(password|temporary password|secret|api[_ -]?key|service[_ -]?role|authorization|bearer|refresh[_ -]?token|access[_ -]?token)\s*[:=]\s*["']?[^"',\s}]+/gi;
+const sensitiveKeyPattern =
+  /password|secret|token|api[_-]?key|apikey|service[_-]?role|authorization|cookie|private[_-]?key|client[_-]?secret|credential|session|jwt/i;
+const sensitiveAssignmentPattern =
+  /(temporary[_ -]?password|password|supabase[_ -]?service[_ -]?role[_ -]?key|service[_ -]?role[_ -]?key|service[_ -]?role|client[_ -]?secret|private[_ -]?key|secret|api[_ -]?key|authorization|refresh[_ -]?token|access[_ -]?token|token|jwt|session)\s*[:=]\s*["']?[^"',\s}]+/gi;
+const bearerTokenPattern = /\b(Bearer)\s+[A-Za-z0-9._~+/-]+=*/gi;
 
 function scrubText(value: string) {
-  return value.replace(sensitiveTextPattern, "$1=[redacted]");
+  return value.replace(sensitiveAssignmentPattern, "$1=[redacted]").replace(bearerTokenPattern, "$1 [redacted]");
 }
 
 function sanitize(value: unknown): unknown {

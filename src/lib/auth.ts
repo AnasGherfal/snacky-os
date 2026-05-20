@@ -1,8 +1,10 @@
+import "server-only";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { cache } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
-import { AppRole, getDefaultPathForRole, parseAppRole } from "@/lib/authz";
+import { AppRole, canAccessPath, getDefaultPathForRole, parseAppRole } from "@/lib/authz";
 
 export const accessTokenCookie = "snacky-auth-access-token";
 export const refreshTokenCookie = "snacky-auth-refresh-token";
@@ -52,7 +54,7 @@ export async function getAuthAccessToken() {
   return cookieStore.get(accessTokenCookie)?.value ?? null;
 }
 
-export async function getCurrentProfile(): Promise<UserProfile | null> {
+export const getCurrentProfile = cache(async function getCurrentProfile(): Promise<UserProfile | null> {
   const accessToken = await getAuthAccessToken();
   if (!accessToken) return null;
 
@@ -66,7 +68,7 @@ export async function getCurrentProfile(): Promise<UserProfile | null> {
   }
 
   return loadCanonicalProfile(userData.user, accessToken);
-}
+});
 
 function getAuthLookupClient(accessToken?: string | null) {
   return getSupabaseAdminClient() ?? getSupabaseServerClient(accessToken);
@@ -168,10 +170,6 @@ async function loadCanonicalProfile(user: AuthLookupUser, accessToken?: string |
     .eq("id", user.id)
     .maybeSingle<ProfileRow>();
 
-  if (existingProfile) {
-    await supabase.from("profiles").update({ last_login_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", user.id);
-  }
-
   const { teamMember, error: teamMemberError } = await getTeamMemberForAuthUser(supabase, user.id, existingProfile?.team_member_id);
   const resolvedProfile = profileFromRows(user, existingProfile ?? null, teamMember);
 
@@ -203,10 +201,12 @@ async function loadCanonicalProfile(user: AuthLookupUser, accessToken?: string |
 
 export async function ensureProfileForAuthUser(user: AuthLookupUser, accessToken?: string | null) {
   const existingProfile = await loadCanonicalProfile(user, accessToken);
-  if (existingProfile) return existingProfile;
-
   const supabase = getAuthLookupClient(accessToken);
   if (!supabase) return null;
+  if (existingProfile) {
+    await supabase.from("profiles").update({ last_login_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", user.id);
+    return existingProfile;
+  }
 
   const { teamMember } = await getTeamMemberForAuthUser(supabase, user.id);
   if (!teamMember) return null;
@@ -239,4 +239,24 @@ export async function ensureProfileForAuthUser(user: AuthLookupUser, accessToken
 
 export async function redirectToDefaultForRole(role: AppRole | null | undefined): Promise<never> {
   redirect(getDefaultPathForRole(role));
+}
+
+export async function requireCurrentProfileForPath(pathname: string): Promise<UserProfile> {
+  const profile = await getCurrentProfile();
+  if (!profile) redirect(`/login?next=${encodeURIComponent(pathname)}`);
+  if (
+    profile.active_status !== "active" ||
+    !canAccessPath(
+      {
+        id: profile.id,
+        role: profile.role,
+        teamMemberId: profile.team_member_id,
+        activeStatus: profile.active_status,
+      },
+      pathname,
+    )
+  ) {
+    redirect("/unauthorized");
+  }
+  return profile;
 }

@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
 import { FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canViewFinancials } from "@/lib/authz";
@@ -22,9 +21,17 @@ export default async function NewFinanceTransactionPage({ searchParams }: { sear
     : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }];
 
   return (
-    <AppShell>
+    <>
       <FormPageLayout>
-        <PageHeader title="New financial transaction" subtitle="Manual money in/out after the historical import." />
+        <PageHeader
+          title="New financial transaction"
+          subtitle="Manual money in/out after the historical import."
+          breadcrumbs={[
+            { label: "Finance", href: "/finance" },
+            { label: "Transactions", href: "/finance/transactions" },
+            { label: "New transaction" },
+          ]}
+        />
         {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{error}</div> : null}
         <form action={createManualFinancialTransaction} className="space-y-5">
           <FormSection title="Transaction">
@@ -50,6 +57,6 @@ export default async function NewFinanceTransactionPage({ searchParams }: { sear
           <div className="flex gap-3"><PrimaryButton>Save transaction</PrimaryButton><SecondaryButton href="/finance/transactions">Cancel</SecondaryButton></div>
         </form>
       </FormPageLayout>
-    </AppShell>
+    </>
   );
 }

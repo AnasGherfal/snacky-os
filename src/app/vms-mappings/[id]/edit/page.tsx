@@ -1,5 +1,4 @@
 import { notFound, redirect } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
 import { ErrorState, FormField, FormPageLayout, FormSection, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
@@ -40,9 +39,9 @@ export default async function EditVmsProductMappingPage({
 
   if (!supabase) {
     return (
-      <AppShell>
+      <>
         <ErrorState title="Mapping unavailable" body="Supabase is not configured." action={<SecondaryButton href="/vms-mappings">Back to mappings</SecondaryButton>} />
-      </AppShell>
+      </>
     );
   }
 
@@ -59,7 +58,7 @@ export default async function EditVmsProductMappingPage({
   if (!mapping) notFound();
 
   return (
-    <AppShell>
+    <>
       <FormPageLayout>
         <PageHeader
           title="Edit VMS Product Mapping"
@@ -138,6 +137,6 @@ export default async function EditVmsProductMappingPage({
           </div>
         </form>
       </FormPageLayout>
-    </AppShell>
+    </>
   );
 }

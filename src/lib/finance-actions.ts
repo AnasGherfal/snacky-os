@@ -337,11 +337,14 @@ export async function updateFinancialTransactionStatus(formData: FormData) {
   const id = String(formData.get("id") || "");
   const status = String(formData.get("transaction_status") || "");
   const confirmBalanceRemoval = String(formData.get("confirm_balance_removal") || "") === "yes";
+  const statusReason = optionalText(formData.get("status_reason"));
   if (!["voided", "archived"].includes(status)) redirect(`/finance/transactions/${id}?error=Choose%20void%20or%20archive.`);
   if (!confirmBalanceRemoval) redirect(`/finance/transactions/${id}?error=Confirmation%20is%20required.`);
+  if (!statusReason) redirect(`/finance/transactions/${id}?error=Reason%20is%20required.`);
 
   const { data: before } = await supabase.from("financial_transactions").select("*").eq("id", id).maybeSingle();
   if (!before) redirect("/finance/transactions?error=Transaction%20not%20found.");
+  if ((before.transaction_status ?? "active") !== "active") redirect(`/finance/transactions/${id}?error=Only%20active%20transactions%20can%20be%20voided%20or%20archived.`);
 
   const now = new Date().toISOString();
   const payload =
@@ -350,14 +353,14 @@ export async function updateFinancialTransactionStatus(formData: FormData) {
           transaction_status: "voided",
           voided_at: now,
           voided_by: profile?.team_member_id ?? null,
-          status_reason: optionalText(formData.get("status_reason")),
+          status_reason: statusReason,
           updated_at: now,
         }
       : {
           transaction_status: "archived",
           archived_at: now,
           archived_by: profile?.team_member_id ?? null,
-          status_reason: optionalText(formData.get("status_reason")),
+          status_reason: statusReason,
           updated_at: now,
         };
 
@@ -372,6 +375,7 @@ export async function updateFinancialTransactionStatus(formData: FormData) {
     entityLabel: "Financial transaction",
     beforeData: before,
     afterData: after,
+    metadata: { reason: statusReason },
     summary: status === "voided" ? "Voided financial transaction" : "Archived financial transaction",
   });
 
@@ -402,29 +406,33 @@ export async function createPurchaseFinancialTransaction(supabase: NonNullable<R
     created_by: profile?.team_member_id ?? null,
     updated_at: new Date().toISOString(),
   };
-  const { data: existing } = await supabase.from("financial_transactions").select("id").eq("transaction_kind", "product_purchase").eq("related_purchase_id", purchase.id).maybeSingle();
+  const { data: existing, error: existingError } = await supabase.from("financial_transactions").select("id").eq("transaction_kind", "product_purchase").eq("related_purchase_id", purchase.id).maybeSingle();
+  if (existingError) throw existingError;
   if (existing?.id) {
-    await supabase.from("financial_transactions").update(payload).eq("id", existing.id);
+    const { error } = await supabase.from("financial_transactions").update(payload).eq("id", existing.id);
+    if (error) throw error;
   } else {
-    await supabase.from("financial_transactions").insert(payload);
+    const { error } = await supabase.from("financial_transactions").insert(payload);
+    if (error) throw error;
   }
   revalidatePath("/finance");
   revalidatePath("/finance/transactions");
 }
 
 export async function createCashCollectionFinancialTransaction(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>, profile: Awaited<ReturnType<typeof getCurrentProfile>>, cash: any) {
-  const amount = Number(cash?.actual_cash_collected ?? 0);
-  if (!cash?.id || amount <= 0) return;
+  if (!cash?.id) return;
+  const parsedAmount = Number(cash?.actual_cash_collected ?? 0);
+  const amount = Number.isFinite(parsedAmount) ? Math.max(0, Math.round(parsedAmount * 100) / 100) : 0;
   const payload = {
-    transaction_date: String(cash.collected_at ?? new Date().toISOString()).slice(0, 10),
+    transaction_date: String(cash.counted_at ?? cash.collected_at ?? new Date().toISOString()).slice(0, 10),
     direction: "money_in",
     transaction_kind: "cash_collection",
     transaction_type: "Cash Collection",
-    description: `Confirmed cash collection ${cash.id}`,
+    description: cash.cash_bag_id ? `Cash collection ${cash.cash_bag_id}` : `Confirmed cash collection ${cash.id.slice(0, 8)}`,
     amount,
     signed_amount: Math.abs(amount),
-    bucket: "Inflow",
-    final_bucket: "Inflow",
+    bucket: "Cash Collection",
+    final_bucket: "Cash Collection",
     review_status: "confirmed",
     needs_review: false,
     transaction_status: "active",
@@ -435,12 +443,88 @@ export async function createCashCollectionFinancialTransaction(supabase: NonNull
     created_by: profile?.team_member_id ?? cash.operator_id ?? null,
     updated_at: new Date().toISOString(),
   };
-  const { data: existing } = await supabase.from("financial_transactions").select("id").eq("transaction_kind", "cash_collection").eq("related_cash_collection_id", cash.id).maybeSingle();
-  if (existing?.id) {
-    await supabase.from("financial_transactions").update(payload).eq("id", existing.id);
-  } else {
-    await supabase.from("financial_transactions").insert(payload);
+  const { data: existingRows, error: existingError } = await supabase
+    .from("financial_transactions")
+    .select("id, transaction_status, created_at")
+    .eq("transaction_kind", "cash_collection")
+    .eq("related_cash_collection_id", cash.id)
+    .order("created_at", { ascending: true });
+  if (existingError) throw existingError;
+
+  const existing = existingRows?.find((row: any) => (row.transaction_status ?? "active") === "active") ?? existingRows?.[0];
+  const duplicateActiveIds = (existingRows ?? [])
+    .filter((row: any) => row.id !== existing?.id && (row.transaction_status ?? "active") === "active")
+    .map((row: any) => row.id);
+
+  if (duplicateActiveIds.length) {
+    const { error: duplicateError } = await supabase
+      .from("financial_transactions")
+      .update({
+        transaction_status: "voided",
+        voided_at: new Date().toISOString(),
+        voided_by: profile?.team_member_id ?? null,
+        status_reason: "Duplicate cash collection transaction superseded by the active linked transaction.",
+        updated_at: new Date().toISOString(),
+      })
+      .in("id", duplicateActiveIds);
+    if (duplicateError) throw duplicateError;
   }
+
+  if (existing?.id) {
+    const { error } = await supabase.from("financial_transactions").update(payload).eq("id", existing.id);
+    if (error) throw error;
+  } else {
+    const { error } = await supabase.from("financial_transactions").insert(payload);
+    if (error) throw error;
+  }
+  revalidatePath("/finance");
+  revalidatePath("/finance/transactions");
+}
+
+export async function clearCashCollectionFinancialTransaction(
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>,
+  profile: Awaited<ReturnType<typeof getCurrentProfile>>,
+  cashCollectionId: string,
+  reason = "Cash count was cleared before finance confirmation.",
+) {
+  const { data: activeRows, error: activeError } = await supabase
+    .from("financial_transactions")
+    .select("*")
+    .eq("transaction_kind", "cash_collection")
+    .eq("related_cash_collection_id", cashCollectionId)
+    .eq("transaction_status", "active");
+  if (activeError) throw activeError;
+  if (!activeRows?.length) return;
+
+  const now = new Date().toISOString();
+  const activeIds = activeRows.map((row: any) => row.id);
+  const { data: updatedRows, error: updateError } = await supabase
+    .from("financial_transactions")
+    .update({
+      transaction_status: "voided",
+      voided_at: now,
+      voided_by: profile?.team_member_id ?? null,
+      status_reason: reason,
+      updated_at: now,
+    })
+    .in("id", activeIds)
+    .select("*");
+  if (updateError) throw updateError;
+
+  for (const financeRow of updatedRows ?? []) {
+    await logActivity({
+      profile,
+      action: "void",
+      entityType: "financial_transaction",
+      entityId: financeRow.id,
+      entityLabel: "Cash collection financial transaction",
+      beforeData: activeRows.find((row: any) => row.id === financeRow.id),
+      afterData: financeRow,
+      metadata: { reason, related_cash_collection_id: cashCollectionId },
+      summary: "Voided linked cash finance transaction after the counted amount was cleared",
+    });
+  }
+
   revalidatePath("/finance");
   revalidatePath("/finance/transactions");
 }

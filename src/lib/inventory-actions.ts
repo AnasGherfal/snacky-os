@@ -18,6 +18,21 @@ function parseLocation(value: FormDataEntryValue | null): { type: EntityType; id
   return { type: type as EntityType, id: id || null };
 }
 
+function clean(value: FormDataEntryValue | null) {
+  return String(value ?? "").trim();
+}
+
+function fail(path: string, message: string): never {
+  redirect(`${path}?error=${encodeURIComponent(message)}`);
+}
+
+function requireConfirmedReason(formData: FormData, path: string) {
+  if (clean(formData.get("confirm_action")) !== "yes") fail(path, "Confirmation is required.");
+  const reason = clean(formData.get("reason"));
+  if (!reason) fail(path, "Reason is required.");
+  return reason;
+}
+
 export async function createQuickProduct(formData: FormData) {
   const profile = await getCurrentProfile();
   if (!profile || !["owner", "admin", "supervisor"].includes(profile.role)) {
@@ -196,4 +211,77 @@ export async function createStockMovement(formData: FormData) {
   revalidatePath("/inventory/movements/new");
   if (relatedRouteId) revalidatePath(`/routes/${relatedRouteId}`);
   redirect("/inventory");
+}
+
+export async function createInventoryMovementCorrection(formData: FormData) {
+  const profile = await getCurrentProfile();
+  if (!profile || !isOwnerAdminRole(profile.role)) redirect("/unauthorized");
+
+  const supabase = getSupabaseServerClient();
+  if (!supabase) fail("/inventory/movements", "Supabase is not configured.");
+
+  const id = clean(formData.get("id"));
+  if (!id) redirect("/inventory/movements");
+  const reason = requireConfirmedReason(formData, "/inventory/movements");
+
+  const { data: movement, error: movementError } = await supabase.from("inventory_movements").select("*").eq("id", id).maybeSingle();
+  if (movementError || !movement) fail("/inventory/movements", "Inventory movement not found.");
+
+  const { count: existingCorrectionCount, error: correctionCheckError } = await supabase
+    .from("inventory_movements")
+    .select("id", { count: "exact", head: true })
+    .eq("reversed_movement_id", id);
+  if (correctionCheckError) {
+    console.error("[inventory:movement] Failed to verify correction status", correctionCheckError);
+    fail("/inventory/movements", "Could not verify correction status.");
+  }
+  if (Number(existingCorrectionCount ?? 0) > 0) {
+    fail("/inventory/movements", "This movement already has a correction. Correct the latest correction movement instead.");
+  }
+
+  const payload = {
+    product_id: movement.product_id,
+    quantity: Number(movement.quantity ?? 0),
+    from_entity_type: movement.to_entity_type,
+    from_entity_id: movement.to_entity_id,
+    to_entity_type: movement.from_entity_type,
+    to_entity_id: movement.from_entity_id,
+    reason: "manual_correction",
+    related_route_id: movement.related_route_id ?? null,
+    related_route_stop_id: movement.related_route_stop_id ?? null,
+    related_purchase_id: movement.related_purchase_id ?? null,
+    related_purchase_line_id: movement.related_purchase_line_id ?? null,
+    related_machine_id: movement.related_machine_id ?? null,
+    unit_cost_lyd: movement.unit_cost_lyd ?? null,
+    line_total_lyd: movement.line_total_lyd === null || movement.line_total_lyd === undefined ? null : -Math.abs(Number(movement.line_total_lyd)),
+    reversed_movement_id: id,
+    correction_reason: reason,
+    created_by: profile.team_member_id,
+    notes: `Correction for movement ${id.slice(0, 8)}: ${reason}`,
+  };
+
+  const { data: correction, error } = await supabase.from("inventory_movements").insert(payload).select("*").single();
+  if (error) {
+    console.error("[inventory:movement] Failed to create correction", error);
+    fail("/inventory/movements", "Could not create correction movement.");
+  }
+
+  await logActivity({
+    profile,
+    action: "correction",
+    entityType: "inventory_movement",
+    entityId: correction.id,
+    entityLabel: `Correction ${correction.id.slice(0, 8)}`,
+    beforeData: movement,
+    afterData: correction,
+    metadata: { reason, reversed_movement_id: id },
+    summary: `Created correction movement for ${id.slice(0, 8)}`,
+  });
+
+  revalidatePath("/inventory");
+  revalidatePath("/inventory/movements");
+  if (movement.related_route_id) revalidatePath(`/routes/${movement.related_route_id}`);
+  if (movement.related_purchase_id) revalidatePath(`/purchases/${movement.related_purchase_id}`);
+  revalidatePath(`/products/${movement.product_id}/history`);
+  redirect(`/inventory/movements?corrected=${id.slice(0, 8)}`);
 }

@@ -10,9 +10,29 @@ Official references:
 - Supabase Next.js guide: https://supabase.com/docs/guides/with-nextjs
 - Next.js PWA guide: https://nextjs.org/docs/app/guides/progressive-web-apps
 
+Related Snacky OS docs:
+
+- Environment rules: [ENVIRONMENTS.md](./ENVIRONMENTS.md)
+- Production checklist: [PRODUCTION_CHECKLIST.md](./PRODUCTION_CHECKLIST.md)
+- Security checklist: [SECURITY_CHECKLIST.md](./SECURITY_CHECKLIST.md)
+- Storage setup: [STORAGE_SETUP.md](./STORAGE_SETUP.md)
+- Phone install guide: [PWA_INSTALL.md](./PWA_INSTALL.md)
+
+## 0. Environment Model
+
+Snacky OS uses separate app and database environments:
+
+| Environment | App | Database |
+| --- | --- | --- |
+| Local development | Local Next.js dev server | Local Supabase by default, or staging Supabase when intentionally configured |
+| Staging | Vercel staging or Preview deployment | Supabase staging |
+| Production | Vercel production deployment | Supabase production |
+
+Vercel environment variables must use the matching cloud Supabase values for staging and production. Do not deploy staging with production Supabase values unless you are intentionally running a production support task.
+
 ## 1. Create The Supabase Cloud Project
 
-1. Create a Supabase project in the Supabase dashboard.
+1. Create separate Supabase projects for staging and production.
 2. Copy the project API URL from the project's API settings.
 3. Copy the public client key:
    - Legacy projects: use the `anon` key.
@@ -24,7 +44,7 @@ Official references:
 
 ## 2. Apply Database Migrations
 
-From this repository root:
+Use migrations for schema changes. From this repository root, link to the correct Supabase project for the environment:
 
 ```bash
 npx supabase login
@@ -32,7 +52,7 @@ npx supabase link --project-ref <your-project-ref>
 npx supabase db push
 ```
 
-Use `db push` for migrations. Do not run `supabase db reset` against staging or production.
+Run migrations against staging first, test the release, then apply the same migrations to production. Do not run `supabase db reset` against staging or production. Never run `db reset` on production.
 
 ## 3. Seed Policy
 
@@ -40,17 +60,17 @@ Do not run `supabase/seed.sql` against staging or production by default.
 
 That seed file is useful for local development snapshots and includes local-only login users such as `admin@snacky.local` and `operator@snacky.local`. For production, create the first real admin user using [FIRST_PRODUCTION_ADMIN.md](./FIRST_PRODUCTION_ADMIN.md), then enter business data through the app flows or run the one-time production bootstrap in [PRODUCTION_BOOTSTRAP.md](./PRODUCTION_BOOTSTRAP.md).
 
-If you intentionally need to import historical Snacky data into staging, remove local-only Auth users and any test credentials before running a custom import.
+Use bootstrap/import flows for initial real data. If you intentionally need to import historical Snacky data into staging or production, remove local-only Auth users and any test credentials before running a custom import. Test the import in staging before production.
 
 ## 4. Configure Supabase Auth
 
 In Supabase Auth URL configuration:
 
-1. Set Site URL to the deployed app URL, for example `https://snacky-os.vercel.app`.
-2. Add redirect URLs for every Vercel environment you will test:
+1. Set Site URL to the deployed app URL for the environment, for example `https://snacky-os.vercel.app`.
+2. Add redirect URLs for every app domain you will test:
    - Production domain.
-   - Preview deployment pattern or branch URL, if used.
    - Custom staging domain, if used.
+   - Vercel Preview deployment pattern or branch URL, if used.
 3. Keep email/password login enabled if operators and admins will sign in with email and temporary passwords.
 
 The migration `supabase/migrations/202605190002_auth_profile_self_read_policies.sql` adds the minimum authenticated self-read policies needed by the app shell:
@@ -65,7 +85,7 @@ These policies prevent login/profile lookup from failing when Row Level Security
 1. Import the Git repository into Vercel as a Next.js app.
 2. Set the build command to `npm run build`.
 3. Set the install command to the Vercel default or `npm install`.
-4. Add these environment variables for Preview and Production:
+4. Add these environment variables for Preview/Staging and Production, using the matching Supabase project values:
 
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
@@ -76,6 +96,21 @@ NEXT_PUBLIC_APP_LOCALE=en
 ```
 
 `SUPABASE_SERVICE_ROLE_KEY` is required for Team screens that create or reset Supabase Auth users. It must only exist as a server-side Vercel environment variable.
+
+Preview/Staging should point to Supabase staging. Production should point to Supabase production. Neither deployed environment should use `localhost`, `127.0.0.1`, or local Supabase URLs.
+
+Optional server-side VMS API variables, when the XY/Xingyuan sync is enabled:
+
+```bash
+XY_VMS_ENABLED=true
+XY_VMS_BASE_URL=http://175.6.71.238:8090/service-api/api
+XY_VMS_MERCHANT_ID=your-merchant-id
+XY_VMS_KEY=your-xy-key
+XY_VMS_SECRET=your-xy-secret
+XY_VMS_SIGNING_MODE=signed
+```
+
+Do not prefix XY credentials with `NEXT_PUBLIC_`. They are read only by server-only sync code and must be configured separately for Preview/Staging and Production.
 
 ## 6. Supabase Storage Buckets
 
@@ -97,6 +132,8 @@ issue-photos/<route-id>/<issue-or-file-name>.jpg
 ```
 
 Uploaded receipt files are stored in the private `receipt-images` bucket and opened through `/api/storage/receipt-images/...`, which creates short-lived signed URLs after checking app permissions.
+
+See `docs/STORAGE_SETUP.md` for the full Storage setup and upload safety checklist.
 
 ## 7. Deploy
 
@@ -134,6 +171,22 @@ npx vercel --prod
    - Service worker loads at `/sw.js`.
    - Offline fallback loads at `/offline.html`.
    - Browser install option appears on supported mobile browsers over HTTPS.
+9. Follow [PWA_INSTALL.md](./PWA_INSTALL.md) on an iPhone or Android device.
+10. Test owner/admin/operator roles:
+   - Owner/admin can access finance, team, settings, VMS import, and audit logs.
+   - Operator can access assigned operator routes.
+   - Operator cannot access finance, team, settings, VMS import, admin pages, product costs, or profit data.
+11. Test finance and warehouse roles:
+    - Finance can access finance, finance transactions, purchases, and cash review workflows.
+    - Finance cannot access `/activity`, `/admin`, `/team`, `/settings`, or `/vms-import`.
+    - Warehouse can access inventory, inventory movements, storage locations, and purchases.
+    - Warehouse cannot access `/finance`, `/activity`, `/admin`, `/team`, `/settings`, or `/vms-import`.
+12. Confirm response headers on the deployed app:
+    - `X-Frame-Options: DENY`
+    - `X-Content-Type-Options: nosniff`
+    - `Referrer-Policy: strict-origin-when-cross-origin`
+    - `Permissions-Policy` is present.
+    - Do not add strict CSP until tested.
 
 ## 9. Rollback
 

@@ -1,5 +1,4 @@
-import { AppShell } from "@/components/AppShell";
-import { FormPageLayout, PageHeader } from "@/components/ui";
+import { ErrorState, FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -15,30 +14,54 @@ export default async function NewRoutePage() {
   }
 
   const supabase = getSupabaseServerClient();
-  const [{ data: operators }, { data: machines }, { data: recommendations }, { data: storageInventory }, { data: reservedStock }, { data: products }, { data: recentMovements }] = supabase
-    ? await Promise.all([
-        supabase.from("team_members").select("id, full_name").eq("role", "operator").eq("active", true).order("full_name"),
-        supabase.from("machines").select("id, name, machine_code").eq("status", "active").order("name"),
-        supabase
-          .from("refill_recommendations")
-          .select("recommendation_key, machine_slot_id, machine_id, machine_name, machine_code, slot_code, product_id, product_name, current_qty, capacity, par_qty, suggested_qty, available_storage_qty, final_qty_to_take, priority")
-          .order("machine_name"),
-        supabase
-          .from("current_inventory_by_location")
-          .select("product_id, product_name, quantity_on_hand")
-          .eq("location_type", "storage")
-          .gt("quantity_on_hand", 0)
-          .order("product_name"),
-        supabase
-          .from("route_stock_lines")
-          .select("product_id, planned_qty, picked_qty, routes!inner(status)")
-          .in("routes.status", ["draft", "assigned"]),
-        supabase.from("products").select("id, sku, barcode, name, category, brand, image_url, active").eq("active", true).order("name"),
-        supabase.from("inventory_movements").select("product_id, created_at").order("created_at", { ascending: false }).limit(80),
-      ])
-    : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }];
+  if (!supabase) {
+    return (
+      <>
+        <ErrorState title="Route creation unavailable" body="Supabase is not configured, so Snacky OS cannot create routes." action={<SecondaryButton href="/routes">Back to routes</SecondaryButton>} />
+      </>
+    );
+  }
+  const [
+    { data: operators, error: operatorsError },
+    { data: machines, error: machinesError },
+    { data: recommendations, error: recommendationsError },
+    { data: storageInventory, error: storageError },
+    { data: reservedStock, error: reservedError },
+    { data: products, error: productsError },
+    { data: recentMovements, error: movementsError },
+  ] = await Promise.all([
+    supabase.from("team_members").select("id, full_name").eq("role", "operator").eq("active", true).order("full_name"),
+    supabase.from("machines").select("id, name, machine_code").eq("status", "active").order("name"),
+    supabase
+      .from("refill_recommendations")
+      .select("recommendation_key, machine_slot_id, machine_id, machine_name, machine_code, slot_code, product_id, product_name, current_qty, capacity, par_qty, suggested_qty, available_storage_qty, final_qty_to_take, priority")
+      .order("machine_name"),
+    supabase
+      .from("current_inventory_by_location")
+      .select("product_id, product_name, quantity_on_hand")
+      .eq("location_type", "storage")
+      .gt("quantity_on_hand", 0)
+      .order("product_name"),
+    supabase
+      .from("route_stock_lines")
+      .select("product_id, planned_qty, picked_qty, routes!inner(status)")
+      .in("routes.status", ["draft", "assigned"]),
+    supabase.from("products").select("id, sku, barcode, name, category, brand, image_url, active").eq("active", true).order("name"),
+    supabase.from("inventory_movements").select("product_id, created_at").order("created_at", { ascending: false }).limit(80),
+  ]);
+  const loadError = operatorsError ?? machinesError ?? recommendationsError ?? storageError ?? reservedError ?? productsError ?? movementsError;
+  if (loadError) {
+    console.error("[routes:new] Failed to load route creation data", loadError);
+    return (
+      <>
+        <ErrorState title="Could not load route builder" body="Snacky OS could not load operators, machines, recommendations, storage, or products for route creation." action={<SecondaryButton href="/routes/new">Retry</SecondaryButton>} />
+      </>
+    );
+  }
 
   const today = new Date().toISOString().slice(0, 10);
+  const activeProductIds = new Set((products ?? []).map((product: any) => product.id));
+  const activeRecommendations = (recommendations ?? []).filter((recommendation: any) => activeProductIds.has(recommendation.product_id));
   const storageByProduct = new Map<string, { product_id: string; product_name: string; quantity_on_hand: number }>();
   (storageInventory ?? []).forEach((row: any) => {
     const current = storageByProduct.get(row.product_id);
@@ -72,13 +95,13 @@ export default async function NewRoutePage() {
   const recentProductIds = Array.from(new Set((recentMovements ?? []).map((row: any) => row.product_id).filter(Boolean))).slice(0, 12);
 
   return (
-    <AppShell>
+    <>
       <FormPageLayout>
         <PageHeader title="Create route" subtitle="Build a route with stops, refill recommendations, or a fast manual pick list from storage." />
         <RouteCreateForm
           operators={operators ?? []}
           machines={machines ?? []}
-          recommendations={recommendations ?? []}
+          recommendations={activeRecommendations}
           storageInventory={availableStorage}
           products={productCatalog}
           recentProductIds={recentProductIds}
@@ -86,6 +109,6 @@ export default async function NewRoutePage() {
           defaultRouteDate={today}
         />
       </FormPageLayout>
-    </AppShell>
+    </>
   );
 }

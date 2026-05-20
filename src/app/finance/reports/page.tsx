@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
 import { DataTable, EmptyState, PageHeader, SecondaryButton } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canViewFinancials } from "@/lib/authz";
@@ -25,8 +24,8 @@ export default async function FinanceReportsPage() {
   const bucketRows = Array.from(byBucket.entries()).map(([bucket, amount]) => ({ bucket, amount })).sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
 
   return (
-    <AppShell>
-      <PageHeader title="Finance Reports" subtitle="Approved active money in/out from Snacky OS financial transactions." action={<SecondaryButton href="/finance">Back to finance</SecondaryButton>} />
+    <>
+      <PageHeader title="Finance Reports" subtitle="Active money in/out from Snacky OS financial transactions." action={<SecondaryButton href="/finance">Back to finance</SecondaryButton>} />
       <section className="mb-6 grid gap-4 md:grid-cols-4">
         <div className="surface-card"><div className="text-sm text-slate-500">Money in</div><div className="mt-1 text-3xl font-semibold">{lyd(moneyIn)}</div></div>
         <div className="surface-card"><div className="text-sm text-slate-500">Money out</div><div className="mt-1 text-3xl font-semibold">{lyd(moneyOut)}</div></div>
@@ -40,6 +39,6 @@ export default async function FinanceReportsPage() {
           {bucketRows.map((row) => <tr key={row.bucket}><td>{row.bucket}</td><td className="font-semibold">{lyd(row.amount)}</td></tr>)}
         </DataTable>
       )}
-    </AppShell>
+    </>
   );
 }

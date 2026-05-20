@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "bootstrap:production": "node scripts/bootstrap-production-data.mjs",
-    "create:first-owner": "node scripts/create-first-owner.mjs"
+    "create:first-owner": "node scripts/create-first-owner.mjs",
+    "import:machine-refills": "node scripts/import-machine-refills.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "latest",

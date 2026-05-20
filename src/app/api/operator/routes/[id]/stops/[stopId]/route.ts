@@ -32,6 +32,16 @@ function isMissingTable(error: any, tableName: string) {
   return error?.code === "PGRST205" && String(error?.message ?? "").includes(tableName);
 }
 
+function errorMessage(error: unknown) {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    const row = error as { message?: unknown; details?: unknown; hint?: unknown };
+    return String(row.message ?? row.details ?? row.hint ?? "Unknown database error");
+  }
+  return "Unknown database error";
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string; stopId: string }> }
@@ -173,23 +183,48 @@ export async function GET(
 
     const slotMap = new Map(slots?.map((s: any) => [s.product_id, s.slot_code]) ?? []);
 
-    const lineItems = (stopPlanItems ?? []).map((line: any) => ({
-      refillOrderLineId: null,
-      routeStopItemId: line.id,
-      machineSlotId: line.machine_slot_id,
-      slotCode: line.slot_code || slotMap.get(line.product_id) || "VMS item",
-      productId: line.product_id,
-      productName: (Array.isArray(line.product) ? line.product[0]?.name : line.product?.name) || "Unknown",
-      currentQty: 0,
-      assignedQty: Number(line.planned_quantity ?? 0),
-      parQty: Number(line.planned_quantity ?? 0),
-      filledQty: 0,
+    const plannedByProduct = new Map<string, any>();
+    (stopPlanItems ?? []).forEach((line: any) => {
+      const productId = String(line.product_id ?? "");
+      if (!productId) return;
+      const product = Array.isArray(line.product) ? line.product[0] : line.product;
+      const slotCode = line.slot_code || slotMap.get(line.product_id) || "VMS item";
+      const assignedQty = Number(line.planned_quantity ?? 0);
+      const current = plannedByProduct.get(productId) ?? {
+        refillOrderLineId: null,
+        routeStopItemId: line.id,
+        machineSlotId: line.machine_slot_id,
+        slotCodes: new Set<string>(),
+        productId,
+        productName: product?.name || "Unknown",
+        currentQty: 0,
+        assignedQty: 0,
+        parQty: 0,
+        filledQty: 0,
+      };
+      current.slotCodes.add(slotCode);
+      current.assignedQty += assignedQty;
+      current.parQty += assignedQty;
+      plannedByProduct.set(productId, current);
+    });
+
+    const lineItems = Array.from(plannedByProduct.values()).map((line: any) => ({
+      refillOrderLineId: line.refillOrderLineId,
+      routeStopItemId: line.routeStopItemId,
+      machineSlotId: line.machineSlotId,
+      slotCode: Array.from(line.slotCodes).join(", "),
+      productId: line.productId,
+      productName: line.productName,
+      currentQty: line.currentQty,
+      assignedQty: line.assignedQty,
+      parQty: line.parQty,
+      filledQty: line.filledQty,
     }));
 
     const [{ data: pickListItems, error: pickListError }, { data: fillMovements, error: fillMovementsError }, { data: products, error: productsError }] = await Promise.all([
       supabase
         .from("route_pick_list_items")
-        .select("product_id, picked_qty, product:products!route_pick_list_items_product_id_fkey(id, name)")
+        .select("product_id, picked_qty, product:products!route_pick_list_items_product_id_fkey(id, name), substituted_product:products!route_pick_list_items_substituted_for_product_id_fkey(id, name)")
         .eq("route_id", routeId),
       supabase
         .from("inventory_movements")
@@ -212,11 +247,15 @@ export async function GET(
       filledByProduct.set(productId, (filledByProduct.get(productId) ?? 0) + Number(movement.quantity ?? 0));
     });
 
-    const availableByProduct = new Map<string, number>();
+    const pickedByProduct = new Map<string, number>();
     (pickListItems ?? []).forEach((line: any) => {
       const productId = String(line.product_id);
-      const availableQty = Math.max(0, Number(line.picked_qty ?? 0) - (filledByProduct.get(productId) ?? 0));
-      availableByProduct.set(productId, availableQty);
+      pickedByProduct.set(productId, (pickedByProduct.get(productId) ?? 0) + Number(line.picked_qty ?? 0));
+    });
+
+    const availableByProduct = new Map<string, number>();
+    pickedByProduct.forEach((pickedQty, productId) => {
+      availableByProduct.set(productId, Math.max(0, pickedQty - (filledByProduct.get(productId) ?? 0)));
     });
 
     lineItems.forEach((item: any) => {
@@ -251,7 +290,7 @@ export async function GET(
     return NextResponse.json(
       {
         error: "Failed to fetch stop data",
-        details: process.env.NODE_ENV === "development" ? (error instanceof Error ? error.message : String(error)) : undefined,
+        details: process.env.NODE_ENV === "development" ? errorMessage(error) : undefined,
         debug: buildDebugDetails({ profile, routeId, stopId, route, stop }),
       },
       { status: 500 }

@@ -3,6 +3,9 @@ const OFFLINE_URL = "/offline.html";
 const CORE_ASSETS = [
   OFFLINE_URL,
   "/manifest.webmanifest",
+  "/brand/snacky-logo.png",
+  "/icons/favicon-32.png",
+  "/icons/apple-touch-icon.png",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
   "/icons/maskable-icon-512.png"

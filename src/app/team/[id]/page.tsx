@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DataTable, EmptyState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { deactivateTeamMember } from "@/lib/team-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -18,17 +19,17 @@ export default async function TeamMemberActivityPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ action?: string; date_from?: string; date_to?: string }>;
+  searchParams: Promise<{ action?: string; date_from?: string; date_to?: string; error?: string }>;
 }) {
   const profile = await getCurrentProfile();
   if (!isOwnerAdminRole(profile?.role)) redirect("/unauthorized");
 
   const { id } = await params;
-  const { action = "", date_from = "", date_to = "" } = await searchParams;
+  const { action = "", date_from = "", date_to = "", error = "" } = await searchParams;
   const supabase = getSupabaseServerClient();
   if (!supabase) notFound();
 
-  const { data: member } = await supabase.from("team_members").select("id, full_name, email, phone, role, active_status").eq("id", id).maybeSingle();
+  const { data: member } = await supabase.from("team_members").select("id, full_name, email, phone, role, active, active_status").eq("id", id).maybeSingle();
   if (!member) notFound();
 
   let activityQuery = supabase
@@ -68,15 +69,38 @@ export default async function TeamMemberActivityPage({
   const actionOptions = Array.from(new Set((actions ?? []).map((row: any) => row.action).filter(Boolean)));
 
   return (
-    <AppShell>
+    <>
       <PageHeader
         title={member.full_name}
         subtitle="Team member activity, route execution, movement history, cash variance, and issue reporting."
-        action={<SecondaryButton href={`/team/${id}/edit`}>Edit member</SecondaryButton>}
+        breadcrumbs={[
+          { label: "Admin", href: "/admin" },
+          { label: "Team", href: "/team" },
+          { label: member.full_name },
+        ]}
+        action={
+          <div className="flex flex-wrap gap-2">
+            <SecondaryButton href={`/team/${id}/edit`}>Edit member</SecondaryButton>
+            {member.active_status !== "inactive" && member.active !== false ? (
+              <ConfirmDialog
+                action={deactivateTeamMember}
+                triggerLabel="Deactivate member"
+                title="Deactivate team member?"
+                description="Deactivated users cannot access Snacky OS. Their activity, route, inventory, cash, and issue history stays intact."
+                confirmLabel="Deactivate member"
+                buttonClassName="btn-danger"
+                confirmButtonClassName="btn-danger"
+                hiddenFields={[{ name: "id", value: id }]}
+              />
+            ) : null}
+          </div>
+        }
       />
+      {error ? <div className="mb-5 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{error}</div> : null}
 
-      <section className="grid gap-4 md:grid-cols-4">
+      <section className="grid gap-4 md:grid-cols-5">
         <div className="surface-card"><div className="text-sm text-slate-500">Role</div><div className="mt-2"><StatusBadge status={member.role} /></div></div>
+        <div className="surface-card"><div className="text-sm text-slate-500">Status</div><div className="mt-2"><StatusBadge status={member.active_status ?? (member.active === false ? "inactive" : "active")} /></div></div>
         <div className="surface-card"><div className="text-sm text-slate-500">Assigned routes</div><div className="mt-1 text-3xl font-semibold">{routeRows.length}</div></div>
         <div className="surface-card"><div className="text-sm text-slate-500">Completed routes</div><div className="mt-1 text-3xl font-semibold">{completedRoutes}</div></div>
         <div className="surface-card"><div className="text-sm text-slate-500">Cash records</div><div className="mt-1 text-3xl font-semibold">{cash?.length ?? 0}</div></div>
@@ -123,7 +147,7 @@ export default async function TeamMemberActivityPage({
           <h2 className="mb-4 text-lg font-semibold text-slate-900">Cash variances</h2>
           {!cash?.length ? <EmptyState title="No cash collections" body="Cash collection records entered by this user will appear here." /> : (
             <DataTable headers={["Date", "Machine", "Actual", "Variance", "Status"]}>
-              {cash.map((row: any) => <tr key={row.id}><td>{formatDate(row.collected_at)}</td><td>{row.machine?.name ?? "-"}</td><td>{lyd(Number(row.actual_cash_collected ?? 0))}</td><td>{lyd(Number(row.variance ?? 0))}</td><td><StatusBadge status={row.review_status} /></td></tr>)}
+              {cash.map((row: any) => <tr key={row.id}><td>{formatDate(row.collected_at)}</td><td>{row.machine?.name ?? "-"}</td><td>{row.actual_cash_collected === null ? "-" : lyd(Number(row.actual_cash_collected ?? 0))}</td><td>{row.variance === null ? "-" : lyd(Number(row.variance ?? 0))}</td><td><StatusBadge status={String(row.review_status ?? "").replaceAll("_", " ")} /></td></tr>)}
             </DataTable>
           )}
         </div>
@@ -136,6 +160,6 @@ export default async function TeamMemberActivityPage({
           )}
         </div>
       </section>
-    </AppShell>
+    </>
   );
 }

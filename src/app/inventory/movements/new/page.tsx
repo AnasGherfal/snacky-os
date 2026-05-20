@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
 import { FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
 import { StockMovementForm } from "@/components/StockMovementForm";
 import { getCurrentProfile } from "@/lib/auth";
@@ -20,7 +19,7 @@ export default async function NewStockMovementPage({ searchParams }: { searchPar
     ? await Promise.all([
         supabase.from("products").select("id, sku, barcode, name, category, brand, image_url, selling_price, current_selling_price_lyd").eq("active", true).order("name"),
         supabase.from("current_inventory_by_location").select("product_id, quantity_on_hand").eq("location_type", "storage"),
-        supabase.from("storage_locations").select("id, name").eq("active", true).order("name"),
+        supabase.from("storage_locations").select("id, name").eq("active", true).in("location_type", ["main_storage", "vehicle", "temporary", "other"]).order("name"),
         supabase.from("team_members").select("id, full_name").eq("role", "operator").eq("active", true).order("full_name"),
         supabase.from("routes").select("id, route_date, operator_id, status").in("status", ["draft", "assigned", "in_progress"]).order("route_date", { ascending: false }),
         supabase.from("inventory_movements").select("product_id, created_at").order("created_at", { ascending: false }).limit(100),
@@ -48,7 +47,7 @@ export default async function NewStockMovementPage({ searchParams }: { searchPar
   const canQuickAddProduct = ["owner", "admin", "supervisor"].includes(profile.role);
 
   return (
-    <AppShell>
+    <>
       <FormPageLayout>
         <PageHeader title="New Stock Movement" subtitle="Fast ledger movement with searchable product selection." action={<SecondaryButton href="/inventory">Back to inventory</SecondaryButton>} />
 
@@ -66,6 +65,6 @@ export default async function NewStockMovementPage({ searchParams }: { searchPar
           canQuickAddProduct={canQuickAddProduct}
         />
       </FormPageLayout>
-    </AppShell>
+    </>
   );
 }

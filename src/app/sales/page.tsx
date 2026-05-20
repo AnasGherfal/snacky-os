@@ -1,6 +1,6 @@
-import { AppShell } from "@/components/AppShell";
 import { BarList, KpiSection } from "@/components/KpiDashboard";
 import { DataTable, EmptyState, PageHeader } from "@/components/ui";
+import { requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
 import { dateKey, formatInteger, groupSum, locationName, machineName, monthKey, productName, salesAmount, soldQty } from "@/lib/kpi";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -10,6 +10,7 @@ function chronologicalSales(rows: { label: string; value: number }[]) {
 }
 
 export default async function SalesDashboardPage() {
+  await requireCurrentProfileForPath("/sales");
   const supabase = getSupabaseServerClient();
   const { data } = supabase
     ? await supabase
@@ -17,6 +18,7 @@ export default async function SalesDashboardPage() {
         .select(
           "id, machine_id, product_id, sold_qty, sales_amount, cash_sales_amount, card_sales_amount, period_start, period_end, machine:machines(id, name, machine_code, location:locations(id, name)), product:products(id, name, sku)"
         )
+        .eq("import_row_status", "imported")
         .order("period_end", { ascending: false })
     : { data: null };
 
@@ -33,7 +35,7 @@ export default async function SalesDashboardPage() {
   const hasTenderBreakdown = totalCash > 0 || totalCard > 0;
 
   return (
-    <AppShell>
+    <>
       <PageHeader title="Sales Dashboard" subtitle="VMS sales performance by day, machine, location, product, and payment type." />
 
       {!supabase ? (
@@ -90,6 +92,6 @@ export default async function SalesDashboardPage() {
           </KpiSection>
         </div>
       )}
-    </AppShell>
+    </>
   );
 }

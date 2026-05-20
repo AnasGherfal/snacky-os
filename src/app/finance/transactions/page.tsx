@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
-import { DataTable, EmptyState, PageHeader, PrimaryButton, StatusBadge } from "@/components/ui";
+import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canViewFinancials } from "@/lib/authz";
 import { isBalanceAffectingTransaction, signedAmount } from "@/lib/finance-balance";
@@ -72,24 +71,39 @@ export default async function FinanceTransactionsPage({
   if (!canAccess(profile)) redirect("/unauthorized");
   const params = await searchParams;
   const supabase = getSupabaseServerClient();
+  if (!supabase) {
+    return (
+      <>
+        <ErrorState title="Finance transactions unavailable" body="Supabase is not configured, so Snacky OS cannot load the money ledger." />
+      </>
+    );
+  }
   const statusFilter = params.status ?? "active";
 
   let query = supabase
-    ?.from("financial_transactions")
+    .from("financial_transactions")
     .select("id, transaction_date, direction, transaction_kind, transaction_type, description, notes, amount, signed_amount, final_bucket, payment_method, transaction_status, review_status, needs_review, source_sheet, source_row, related_purchase_id, related_cash_collection_id, related_route_id, related_machine_id, related_location_id, receipt_url, created_at")
     .order("transaction_date", { ascending: false })
     .limit(1000);
 
-  if (query && statusFilter !== "all") query = query.eq("transaction_status", statusFilter);
-  if (query && params.review === "needs_review") query = query.eq("needs_review", true);
-  if (query && params.review === "confirmed") query = query.eq("review_status", "confirmed");
-  if (query && params.review === "reviewed") query = query.eq("review_status", "reviewed");
-  if (query && params.direction) query = query.eq("direction", params.direction);
-  if (query && params.kind) query = query.eq("transaction_kind", params.kind);
-  if (query && params.date_from) query = query.gte("transaction_date", params.date_from);
-  if (query && params.date_to) query = query.lte("transaction_date", params.date_to);
+  if (statusFilter !== "all") query = query.eq("transaction_status", statusFilter);
+  if (params.review === "needs_review") query = query.eq("needs_review", true);
+  if (params.review === "confirmed") query = query.eq("review_status", "confirmed");
+  if (params.review === "reviewed") query = query.eq("review_status", "reviewed");
+  if (params.direction) query = query.eq("direction", params.direction);
+  if (params.kind) query = query.eq("transaction_kind", params.kind);
+  if (params.date_from) query = query.gte("transaction_date", params.date_from);
+  if (params.date_to) query = query.lte("transaction_date", params.date_to);
 
-  const { data } = query ? await query : { data: [] };
+  const { data, error: transactionsError } = await query;
+  if (transactionsError) {
+    console.error("[finance] Failed to load transactions", transactionsError);
+    return (
+      <>
+        <ErrorState title="Could not load transactions" body="Snacky OS could not load the finance transaction ledger from Supabase." action={<SecondaryButton href="/finance/transactions">Retry</SecondaryButton>} />
+      </>
+    );
+  }
   const search = String(params.q ?? "").trim().toLowerCase();
   const rows = ((data ?? []) as any[]).filter((row) => {
     if (!search) return true;
@@ -97,18 +111,16 @@ export default async function FinanceTransactionsPage({
   });
 
   const maps = { purchases: new Map<string, any>(), routes: new Map<string, any>(), machines: new Map<string, any>(), locations: new Map<string, any>() };
-  if (supabase) {
-    const [purchases, routes, machines, locations] = await Promise.all([
-      fetchByIds(supabase, "purchase_orders", "id, receipt_number, order_date", rows.map((row) => row.related_purchase_id).filter(Boolean)),
-      fetchByIds(supabase, "routes", "id, route_date, status", rows.map((row) => row.related_route_id).filter(Boolean)),
-      fetchByIds(supabase, "machines", "id, name, machine_code", rows.map((row) => row.related_machine_id).filter(Boolean)),
-      fetchByIds(supabase, "locations", "id, name", rows.map((row) => row.related_location_id).filter(Boolean)),
-    ]);
-    purchases.forEach((row: any) => maps.purchases.set(row.id, row));
-    routes.forEach((row: any) => maps.routes.set(row.id, row));
-    machines.forEach((row: any) => maps.machines.set(row.id, row));
-    locations.forEach((row: any) => maps.locations.set(row.id, row));
-  }
+  const [purchases, routes, machines, locations] = await Promise.all([
+    fetchByIds(supabase, "purchase_orders", "id, receipt_number, order_date", rows.map((row) => row.related_purchase_id).filter(Boolean)),
+    fetchByIds(supabase, "routes", "id, route_date, status", rows.map((row) => row.related_route_id).filter(Boolean)),
+    fetchByIds(supabase, "machines", "id, name, machine_code", rows.map((row) => row.related_machine_id).filter(Boolean)),
+    fetchByIds(supabase, "locations", "id, name", rows.map((row) => row.related_location_id).filter(Boolean)),
+  ]);
+  purchases.forEach((row: any) => maps.purchases.set(row.id, row));
+  routes.forEach((row: any) => maps.routes.set(row.id, row));
+  machines.forEach((row: any) => maps.machines.set(row.id, row));
+  locations.forEach((row: any) => maps.locations.set(row.id, row));
 
   const balanceRows = rows.filter(isBalanceAffectingTransaction);
   const moneyIn = balanceRows.filter((row) => row.direction === "money_in").reduce((sum, row) => sum + signedAmount(row), 0);
@@ -116,7 +128,7 @@ export default async function FinanceTransactionsPage({
   const net = balanceRows.reduce((sum, row) => sum + signedAmount(row), 0);
 
   return (
-    <AppShell>
+    <>
       <PageHeader title="Financial Transactions" subtitle="Editable money in/out ledger. Only approved active rows affect balance." action={<PrimaryButton href="/finance/transactions/new">Add transaction</PrimaryButton>} />
       {params.error ? <div className="fixed right-5 top-5 z-50 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-800 shadow-lg">{params.error}</div> : null}
       {params.saved ? <div className="fixed right-5 top-5 z-50 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800 shadow-lg">Transaction saved.</div> : null}
@@ -160,6 +172,6 @@ export default async function FinanceTransactionsPage({
           ))}
         </DataTable>
       )}
-    </AppShell>
+    </>
   );
 }

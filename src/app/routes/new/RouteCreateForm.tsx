@@ -249,15 +249,14 @@ export function RouteCreateForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ routeDate, operatorId, machineIds, recommendationKeys, manualStopItems, adminOverride }),
       });
-      const result = await response.json();
+      const result = await response.json().catch(() => ({ error: "Could not read the route creation response." }));
 
       if (!response.ok || !result.routeId) {
         throw new Error(result.error || "Could not create the route.");
       }
 
       window.sessionStorage.setItem("snacky-route-created", "Route created successfully.");
-      router.push(`/routes/${result.routeId}`);
-      router.refresh();
+      router.replace(`/routes/${result.routeId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create the route.");
       setSaving(false);

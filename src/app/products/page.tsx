@@ -1,8 +1,8 @@
 import Link from "next/link";
-import { AppShell } from "@/components/AppShell";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { ProductSourceBadge } from "@/components/ProductSourceBadge";
-import { DataTable, EmptyState, PageHeader, PrimaryButton, SearchInput, StatusBadge } from "@/components/ui";
+import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SearchInput, SecondaryButton, StatusBadge } from "@/components/ui";
+import { requireCurrentProfileForPath } from "@/lib/auth";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 function formatMoney(value: number | string | null | undefined, decimals = 2) {
@@ -11,10 +11,26 @@ function formatMoney(value: number | string | null | undefined, decimals = 2) {
 }
 
 export default async function ProductsPage({ searchParams }: { searchParams: Promise<{ q?: string; imageUpload?: string }> }) {
+  await requireCurrentProfileForPath("/products");
   const { q = "", imageUpload = "" } = await searchParams;
   const s = getSupabaseServerClient();
+  if (!s) {
+    return (
+      <>
+        <ErrorState title="Products unavailable" body="Supabase is not configured, so Snacky OS cannot load the product catalog." />
+      </>
+    );
+  }
   const query = s?.from("products").select("id,sku,barcode,name,category,brand,import_source,last_vms_seen_at,selling_price,current_selling_price_lyd,vms_selling_price_lyd,selling_price_source,current_cost_price_lyd,last_purchase_cost_lyd,average_cost_lyd,cost_price_source,active,image_url,suppliers(name)").order("name");
-  const { data: productRows } = query ? await query : { data: [] };
+  const { data: productRows, error: productsError } = query ? await query : { data: [], error: null };
+  if (productsError) {
+    console.error("[products] Failed to load products", productsError);
+    return (
+      <>
+        <ErrorState title="Could not load products" body="Snacky OS could not load real products from Supabase." action={<SecondaryButton href="/products">Retry</SecondaryButton>} />
+      </>
+    );
+  }
   const search = q.trim().toLowerCase();
   const data = search
     ? (productRows ?? []).filter((product: any) =>
@@ -22,13 +38,19 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
           .some((value) => String(value ?? "").toLowerCase().includes(search)),
       )
     : productRows;
+  const imageUploadMessage =
+    imageUpload === "storage-unavailable"
+      ? "Storage is not configured in this environment. Use image URL for now."
+      : imageUpload === "invalid-file"
+        ? "Image upload must be a PNG, JPG, or WEBP file that is 5MB or smaller. Use image URL for now."
+        : "";
 
   return (
-    <AppShell>
+    <>
       <PageHeader title="Products" subtitle="Product catalog used in VMS mapping, slot planning, and inventory ledger." action={<PrimaryButton href="/products/new">Add product</PrimaryButton>} />
-      {imageUpload === "storage-unavailable" ? (
+      {imageUploadMessage ? (
         <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-          Image upload is unavailable locally. You can paste an image URL instead.
+          {imageUploadMessage}
         </div>
       ) : null}
       <form className="mb-4"><SearchInput placeholder="Search by SKU, VMS code, barcode, or product name..." /></form>
@@ -58,6 +80,6 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
             ))}
           </DataTable>
         </>}
-    </AppShell>
+    </>
   );
 }

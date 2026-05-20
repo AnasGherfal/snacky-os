@@ -24,7 +24,7 @@ export function TeamMemberForm({ action, submitLabel, backHref = "/team", member
     <form action={action} className="space-y-6">
       {member ? <input type="hidden" name="id" value={member.id} /> : null}
 
-      <FormSection title="Team member">
+      <FormSection title="Team member" description="Keep identity and contact details clean so assignments, logs, and route work can be traced to the right person.">
         <div className="grid gap-4 md:grid-cols-2">
           <FormField label="Full name" required>
             <input name="full_name" defaultValue={member?.full_name ?? ""} required className="field-input" autoComplete="name" />
@@ -35,16 +35,14 @@ export function TeamMemberForm({ action, submitLabel, backHref = "/team", member
           <FormField label="Phone">
             <input name="phone" defaultValue={member?.phone ?? ""} className="field-input" autoComplete="tel" />
           </FormField>
-          <FormField label="Status">
-            <select name="active" defaultValue={String(member?.active ?? true)} className="field-input">
-              <option value="true">Active</option>
-              <option value="false">Inactive</option>
-            </select>
+          <FormField label="Status" hint="Use the safe deactivate action from the activity page to disable login access.">
+            <input type="hidden" name="active" value={String(member?.active ?? true)} />
+            <input value={(member?.active ?? true) ? "Active" : "Inactive"} readOnly className="field-input bg-slate-50" />
           </FormField>
         </div>
       </FormSection>
 
-      <FormSection title="Role and access">
+      <FormSection title="Role and access" description="Roles control which modules are visible. Operators stay focused on assigned route execution.">
         <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
           <FormField label="Role" required>
             <select name="role" defaultValue={member?.role ?? "operator"} className="field-input">
@@ -68,7 +66,7 @@ export function TeamMemberForm({ action, submitLabel, backHref = "/team", member
         </div>
       </FormSection>
 
-      <FormSection title={member?.auth_user_id ? "Login access" : "Create login access"}>
+      <FormSection title={member?.auth_user_id ? "Login access" : "Create login access"} description="Use temporary passwords only for account setup or reset; activity history remains attached to this team member.">
         {member?.auth_user_id ? (
           <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
             This team member is linked to a Supabase Auth login. Generate a new temporary password here only when resetting access.

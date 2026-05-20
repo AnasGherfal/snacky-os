@@ -1,7 +1,9 @@
 "use client";
+import Image from "next/image";
 import Link from "next/link";
 import { Menu, UserCircle } from "lucide-react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useState } from "react";
 import { useI18n } from "@/components/I18nProvider";
 import { AppRole } from "@/lib/authz";
 
@@ -40,17 +42,25 @@ const titleKeys: Record<string, keyof ReturnType<typeof useI18n>["dictionary"]["
   "/issues": "issues",
   "/team": "team",
   "/settings": "settings",
+  "/install": "install",
   "/account": "account",
 };
 
 export function Topbar({ profile, onMenuClick }: { profile: TopbarProfile; onMenuClick?: () => void }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const [loggingOut, setLoggingOut] = useState(false);
   const { locale, dictionary, setLocale } = useI18n();
   const titleKey = titleKeys[pathname];
 
   const logout = async () => {
-    await fetch("/api/auth/logout", { method: "POST" });
-    window.location.href = "/login";
+    setLoggingOut(true);
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } finally {
+      router.replace("/login");
+      router.refresh();
+    }
   };
 
   return (
@@ -65,6 +75,9 @@ export function Topbar({ profile, onMenuClick }: { profile: TopbarProfile; onMen
           >
             <Menu className="h-5 w-5" />
           </button>
+          <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-full border border-slate-200 bg-white shadow-sm md:hidden">
+            <Image src="/brand/snacky-logo.png" alt="" fill sizes="36px" className="object-contain" />
+          </div>
           <div className="min-w-0">
             <div className="truncate text-sm font-medium text-slate-900">{titleKey ? dictionary.nav[titleKey] : dictionary.app.name}</div>
             <div className="truncate text-xs text-slate-500">{dictionary.app.subtitle}</div>
@@ -101,8 +114,8 @@ export function Topbar({ profile, onMenuClick }: { profile: TopbarProfile; onMen
               {dictionary.language.arabic}
             </button>
           </div>
-          <button type="button" onClick={logout} className="btn-secondary hidden sm:inline-flex">
-            Logout
+          <button type="button" onClick={logout} disabled={loggingOut} className="btn-secondary hidden sm:inline-flex disabled:opacity-60">
+            {loggingOut ? "Signing out" : "Logout"}
           </button>
         </div>
       </div>

@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
-import { DataTable, EmptyState, FormField, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
+import { DataTable, EmptyState, ErrorState, FormField, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canViewFinancials } from "@/lib/authz";
 import { isBalanceAffectingTransaction, signedAmount } from "@/lib/finance-balance";
@@ -125,17 +124,31 @@ export default async function FinancePage({
   const params = await searchParams;
   const periodRange = resolvePeriod(params);
   const supabase = getSupabaseServerClient();
-  const [settingsResult, transactionsResult] = supabase
-    ? await Promise.all([
-        supabase.from("finance_settings").select("opening_balance, opening_balance_date, default_currency, updated_at").eq("id", "default").maybeSingle(),
-        supabase
-          .from("financial_transactions")
-          .select("id, transaction_date, direction, transaction_kind, transaction_type, description, signed_amount, final_bucket, review_status, needs_review, transaction_status")
-          .eq("transaction_status", "active")
-          .order("transaction_date", { ascending: false })
-          .limit(10000),
-      ])
-    : [{ data: null, error: null }, { data: [], error: null }];
+  if (!supabase) {
+    return (
+      <>
+        <ErrorState title="Finance unavailable" body="Supabase is not configured, so Snacky OS cannot load finance data." />
+      </>
+    );
+  }
+  const [settingsResult, transactionsResult] = await Promise.all([
+    supabase.from("finance_settings").select("opening_balance, opening_balance_date, default_currency, updated_at").eq("id", "default").maybeSingle(),
+    supabase
+      .from("financial_transactions")
+      .select("id, transaction_date, direction, transaction_kind, transaction_type, description, signed_amount, final_bucket, review_status, needs_review, transaction_status")
+      .eq("transaction_status", "active")
+      .order("transaction_date", { ascending: false })
+      .limit(10000),
+  ]);
+
+  if (transactionsResult.error) {
+    console.error("[finance] Failed to load finance transactions", transactionsResult.error);
+    return (
+      <>
+        <ErrorState title="Could not load finance" body="Snacky OS could not load active financial transactions from Supabase." action={<SecondaryButton href="/finance">Retry</SecondaryButton>} />
+      </>
+    );
+  }
 
   const settings = settingsResult.error ? null : (settingsResult.data as any);
   const rows = ((transactionsResult.data ?? []) as FinanceRow[]).filter((row) => row.transaction_date);
@@ -163,7 +176,7 @@ export default async function FinancePage({
   ];
 
   return (
-    <AppShell>
+    <>
       <PageHeader
         title="Finance"
         subtitle="Actual balance and cash flow from Snacky OS financial transactions."
@@ -172,19 +185,6 @@ export default async function FinancePage({
 
       {params.settingsError ? <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{params.settingsError}</div> : null}
       {params.settingsSaved ? <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">Finance settings saved.</div> : null}
-
-      <div className="mb-6 rounded-lg border border-slate-200 bg-white p-3">
-        <div className="flex flex-wrap gap-2">
-          <SecondaryButton href="/finance/transactions">Transactions</SecondaryButton>
-          <SecondaryButton href="/cash-collections">Cash Collections</SecondaryButton>
-          <SecondaryButton href="/finance/transactions?q=rent">Rent</SecondaryButton>
-          <SecondaryButton href="/finance/transactions?q=machine%20investment">Machine Investments</SecondaryButton>
-          <SecondaryButton href="/finance/transactions?direction=money_out">Expenses</SecondaryButton>
-          <SecondaryButton href="/finance/transactions?direction=money_in">Revenue</SecondaryButton>
-          <SecondaryButton href="/finance/reports">Reports</SecondaryButton>
-          <SecondaryButton href="/finance/import">Import History</SecondaryButton>
-        </div>
-      </div>
 
       <section className="surface-card mb-6">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
@@ -216,19 +216,19 @@ export default async function FinancePage({
           value={openingBalanceIsSet ? money(openingBalance, currency) : "Not set"}
           note={openingBalanceIsSet ? `As of ${settings?.opening_balance_date ?? "not dated"}` : "Set this in Finance Settings"}
         />
-        <StatCard label="Total Money In" value={money(totalMoneyIn, currency)} note="Approved active finance ledger inflows" tone="positive" />
-        <StatCard label="Total Money Out" value={money(totalMoneyOut, currency)} note="Approved active finance ledger outflows" tone="negative" />
+        <StatCard label="Total Money In" value={money(totalMoneyIn, currency)} note="Active finance ledger inflows" tone="positive" />
+        <StatCard label="Total Money Out" value={money(totalMoneyOut, currency)} note="Active finance ledger outflows" tone="negative" />
         <StatCard
           label="Current Balance"
           value={money(currentBalance, currency)}
-          note="Opening balance + approved active money in - approved active money out"
+          note="Opening balance + active money in - active money out"
           tone={currentBalance < 0 ? "negative" : "strong"}
         />
       </section>
 
       <section className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <StatCard label={`Revenue ${periodRange.suffix}`} value={money(periodMoneyIn, currency)} note="Approved actual money in, not VMS sales reports" tone="positive" />
-        <StatCard label={`Expenses ${periodRange.suffix}`} value={money(periodMoneyOut, currency)} note="Approved actual money out" tone="negative" />
+        <StatCard label={`Revenue ${periodRange.suffix}`} value={money(periodMoneyIn, currency)} note="Actual active money in, not VMS sales reports" tone="positive" />
+        <StatCard label={`Expenses ${periodRange.suffix}`} value={money(periodMoneyOut, currency)} note="Actual active money out" tone="negative" />
         <StatCard label={`Net Cash Flow ${periodRange.suffix}`} value={money(periodNet, currency)} note="Money in minus money out" tone={periodNet < 0 ? "negative" : "positive"} />
         <StatCard label={`Purchases ${periodRange.suffix}`} value={money(purchases, currency)} note="Paid or received product purchases" />
         <StatCard label={`Rent ${periodRange.suffix}`} value={money(rent, currency)} note="Rent-labelled finance transactions" />
@@ -282,6 +282,6 @@ export default async function FinancePage({
         </DataTable>
       )}
       <div className="mt-4"><Link href="/finance/transactions" className="link-secondary">Open all transactions</Link></div>
-    </AppShell>
+    </>
   );
 }

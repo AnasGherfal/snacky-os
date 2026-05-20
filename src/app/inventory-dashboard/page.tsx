@@ -1,11 +1,12 @@
-import { AppShell } from "@/components/AppShell";
 import { BarList, KpiSection } from "@/components/KpiDashboard";
 import { DataTable, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
+import { requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
 import { LOW_STORAGE_QTY, formatInteger } from "@/lib/kpi";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export default async function InventoryDashboardPage() {
+  await requireCurrentProfileForPath("/inventory-dashboard");
   const supabase = getSupabaseServerClient();
   const [inventoryResult, productsResult, reservedResult, recommendationsResult] = supabase
     ? await Promise.all([
@@ -74,7 +75,7 @@ export default async function InventoryDashboardPage() {
     .slice(0, 20);
 
   return (
-    <AppShell>
+    <>
       <PageHeader title="Inventory Dashboard" subtitle="Ledger-based storage, operator bag, machine inventory, reservations, and suggested purchases." />
 
       {!supabase ? (
@@ -182,6 +183,6 @@ export default async function InventoryDashboardPage() {
           </div>
         </div>
       )}
-    </AppShell>
+    </>
   );
 }

@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ProductSourceBadge } from "@/components/ProductSourceBadge";
 import { DataTable, EmptyState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
+import { requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
+import { activateProduct, archiveProduct, deleteProduct, getProductHistoryCounts, productHasBusinessHistory } from "@/lib/product-actions";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -57,14 +59,15 @@ export default async function ProductHistoryPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ reason?: string; user_id?: string; date_from?: string; date_to?: string; q?: string }>;
+  searchParams: Promise<{ reason?: string; user_id?: string; date_from?: string; date_to?: string; q?: string; error?: string }>;
 }) {
   const { id } = await params;
+  await requireCurrentProfileForPath(`/products/${id}/history`);
   const filters = await searchParams;
   const supabase = getSupabaseServerClient();
   if (!supabase) notFound();
 
-  const [{ data: product }, { data: users }, { data: inventory }, { data: purchaseLines }, { data: salesRows }, { data: priceLogs }] = await Promise.all([
+  const [{ data: product }, { data: users }, { data: inventory }, { data: purchaseLines }, { data: salesRows }, { data: priceLogs }, historyCounts] = await Promise.all([
     supabase
       .from("products")
       .select("id, sku, name, category, active, import_source, last_vms_seen_at, current_selling_price_lyd, selling_price, selling_price_source, current_cost_price_lyd, last_purchase_cost_lyd, average_cost_lyd, cost_price_source, price_updated_at")
@@ -82,6 +85,7 @@ export default async function ProductHistoryPage({
       .from("vms_sales_snapshots")
       .select("id, machine_id, sold_qty, sales_amount, cash_sales_amount, card_sales_amount, period_start, period_end, machine:machines(name, machine_code)")
       .eq("product_id", id)
+      .eq("import_row_status", "imported")
       .order("period_end", { ascending: false })
       .limit(200),
     supabase
@@ -91,8 +95,10 @@ export default async function ProductHistoryPage({
       .eq("entity_id", id)
       .order("created_at", { ascending: false })
       .limit(100),
+    getProductHistoryCounts(supabase, id),
   ]);
   if (!product) notFound();
+  const hasBusinessHistory = await productHasBusinessHistory(historyCounts);
 
   let query = supabase
     .from("inventory_movements")
@@ -135,18 +141,59 @@ export default async function ProductHistoryPage({
     .filter((log) => log.beforeSelling !== log.afterSelling || log.beforeCost !== log.afterCost);
 
   return (
-    <AppShell>
+    <>
       <PageHeader
         title={`${product.name} Movement History`}
         subtitle={`${product.sku ?? "No SKU"} - append-only inventory ledger for this product.`}
-        action={<SecondaryButton href="/products">Back to products</SecondaryButton>}
+        breadcrumbs={[
+          { label: "Inventory", href: "/inventory" },
+          { label: "Products", href: "/products" },
+          { label: product.name },
+        ]}
+        action={
+          <div className="flex flex-wrap gap-2">
+            <SecondaryButton href="/products">Back to products</SecondaryButton>
+            <SecondaryButton href={`/products/${id}/edit`}>Edit product</SecondaryButton>
+            {product.active && hasBusinessHistory ? (
+              <ConfirmDialog
+                action={archiveProduct}
+                triggerLabel="Archive Product"
+                title="Archive product?"
+                description="Archived products stay visible in history but are hidden from new purchases, routes, and manual movements."
+                confirmLabel="Archive product"
+                buttonClassName="btn-secondary"
+                hiddenFields={[{ name: "id", value: id }]}
+              />
+            ) : null}
+            {!product.active ? (
+              <form action={activateProduct}>
+                <input type="hidden" name="id" value={id} />
+                <button className="btn-secondary">Activate Product</button>
+              </form>
+            ) : null}
+            {!hasBusinessHistory ? (
+              <ConfirmDialog
+                action={deleteProduct}
+                triggerLabel="Delete Product"
+                title="Delete product permanently?"
+                description="This product has no purchases, movements, route usage, VMS mappings, sales snapshots, or stock snapshots."
+                confirmLabel="Delete product"
+                buttonClassName="btn-danger"
+                confirmButtonClassName="btn-danger"
+                hiddenFields={[{ name: "id", value: id }]}
+              />
+            ) : null}
+          </div>
+        }
       />
 
+      {filters.error ? <div className="mb-5 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{filters.error}</div> : null}
+
       <nav className="mb-6 flex flex-wrap gap-2">
-        <a href="#inventory-movements" className="btn-secondary">Inventory Movements</a>
-        <a href="#purchases" className="btn-secondary">Purchases</a>
-        <a href="#sales" className="btn-secondary">Sales</a>
-        <a href="#price-history" className="btn-secondary">Price History</a>
+        <Link href="#inventory-movements" className="btn-secondary">Inventory Movements</Link>
+        <Link href="#purchases" className="btn-secondary">Purchases</Link>
+        <Link href="#sales" className="btn-secondary">Sales</Link>
+        <Link href="#price-history" className="btn-secondary">Price History</Link>
       </nav>
 
       <section className="mb-6 grid gap-4 md:grid-cols-4">
@@ -295,6 +342,6 @@ export default async function ProductHistoryPage({
           </DataTable>
         )}
       </section>
-    </AppShell>
+    </>
   );
 }

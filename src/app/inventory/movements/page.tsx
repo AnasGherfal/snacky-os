@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
-import { canAccessPath } from "@/lib/authz";
+import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
+import { createInventoryMovementCorrection } from "@/lib/inventory-actions";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -85,25 +86,28 @@ export default async function InventoryMovementsPage({
     machine_id?: string;
     date_from?: string;
     date_to?: string;
+    error?: string;
+    corrected?: string;
   }>;
 }) {
   const profile = await getCurrentProfile();
   if (!profile || !canAccessPath({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/inventory/movements")) {
     redirect("/unauthorized");
   }
+  const canCreateCorrections = isOwnerAdminRole(profile.role);
 
   const params = await searchParams;
   const supabase = getSupabaseServerClient();
 
   if (!supabase) {
     return (
-      <AppShell>
+      <>
         <ErrorState
           title="Inventory movement log unavailable"
           body="Supabase is not configured, so Snacky OS cannot load real inventory_movements rows."
           action={<SecondaryButton href="/inventory">Back to inventory</SecondaryButton>}
         />
-      </AppShell>
+      </>
     );
   }
 
@@ -127,19 +131,19 @@ export default async function InventoryMovementsPage({
   if (setupError) {
     console.error("[inventory:movements] Failed to load filter data", setupError);
     return (
-      <AppShell>
+      <>
         <ErrorState
           title="Could not load movement filters"
           body="Snacky OS could not load the product, user, route, purchase, machine, or storage data needed for the movement log."
           action={<SecondaryButton href="/inventory">Back to inventory</SecondaryButton>}
         />
-      </AppShell>
+      </>
     );
   }
 
   let movementQuery = supabase
     ?.from("inventory_movements")
-    .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, related_route_id, related_route_stop_id, related_purchase_id, related_purchase_line_id, related_machine_id, notes, created_by, created_at, product:products(id, sku, name), created_by_member:team_members(id, full_name)")
+    .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, related_route_id, related_route_stop_id, related_purchase_id, related_purchase_line_id, related_machine_id, reversed_movement_id, correction_reason, notes, created_by, created_at, product:products(id, sku, name), created_by_member:team_members(id, full_name)")
     .order("created_at", { ascending: false })
     .limit(500);
 
@@ -156,13 +160,13 @@ export default async function InventoryMovementsPage({
   if (movementError) {
     console.error("[inventory:movements] Failed to load inventory_movements", movementError);
     return (
-      <AppShell>
+      <>
         <ErrorState
           title="Could not load inventory movements"
           body="The movement log reads directly from inventory_movements, but that query failed. No fake rows are shown."
           action={<SecondaryButton href="/inventory/movements">Retry</SecondaryButton>}
         />
-      </AppShell>
+      </>
     );
   }
 
@@ -184,12 +188,15 @@ export default async function InventoryMovementsPage({
   });
 
   return (
-    <AppShell>
+    <>
       <PageHeader
         title="Inventory Movement Log"
         subtitle="Append-only product movement ledger for purchases, route picks, fills, returns, waste, and corrections."
         action={<PrimaryButton href="/inventory/movements/new">New correction movement</PrimaryButton>}
       />
+
+      {params.error ? <div className="mb-5 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{params.error}</div> : null}
+      {params.corrected ? <div className="mb-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900">Correction created for movement {params.corrected}.</div> : null}
 
       <section className="surface-card mb-6 space-y-4">
         <form className="grid gap-3 md:grid-cols-3 xl:grid-cols-4">
@@ -230,35 +237,120 @@ export default async function InventoryMovementsPage({
       {!movements.length ? (
         <EmptyState title="No movements match these filters" body="Inventory movements will appear here when purchases are received, routes are executed, or correction movements are created." />
       ) : (
-        <DataTable headers={["Date / Time", "Product", "SKU", "Qty", "From type", "From label", "To type", "To label", "Reason", "Route", "Purchase", "Machine", "User", "Notes"]}>
-          {movements.map((movement: any) => (
-            <tr key={movement.id}>
-              <td>{formatDate(movement.created_at)}</td>
-              <td>
-                {movement.product?.id ? (
-                  <Link href={`/products/${movement.product.id}`} className="link-secondary font-medium">
-                    {movement.product?.name ?? "Unknown product"}
-                  </Link>
-                ) : (
-                  <span className="font-medium text-slate-900">Unknown product</span>
-                )}
-              </td>
-              <td>{movement.product?.sku ?? "-"}</td>
-              <td className="font-semibold">{movement.quantity}</td>
-              <td><StatusBadge status={entityTypeLabel(movement.from_entity_type)} /></td>
-              <td>{entityLabel(movement.from_entity_type, movement.from_entity_id, labelMaps)}</td>
-              <td><StatusBadge status={entityTypeLabel(movement.to_entity_type)} /></td>
-              <td>{entityLabel(movement.to_entity_type, movement.to_entity_id, labelMaps)}</td>
-              <td><StatusBadge status={String(movement.reason).replaceAll("_", " ")} /></td>
-              <td>{movement.related_route_id ? <Link href={`/routes/${movement.related_route_id}`} className="link-secondary">{routeLabel(movement.related_route_id, routeById)}</Link> : "-"}</td>
-              <td>{movement.related_purchase_id ? <Link href={`/purchases/${movement.related_purchase_id}`} className="link-secondary">{purchaseLabel(movement.related_purchase_id, purchaseById)}</Link> : "-"}</td>
-              <td>{machineLabel(movement.related_machine_id, machineById)}</td>
-              <td>{movement.created_by_member?.full_name ?? "-"}</td>
-              <td>{movement.notes ?? "-"}</td>
-            </tr>
-          ))}
-        </DataTable>
+        <>
+          <div className="space-y-3 xl:hidden">
+            {movements.map((movement: any) => (
+              <article key={movement.id} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-xs text-slate-500">{formatDate(movement.created_at)}</div>
+                    <div className="mt-1 break-words text-base font-semibold text-slate-900">
+                      {movement.product?.id ? (
+                        <Link href={`/products/${movement.product.id}`} className="link-secondary text-base">
+                          {movement.product?.name ?? "Unknown product"}
+                        </Link>
+                      ) : (
+                        "Unknown product"
+                      )}
+                    </div>
+                    <div className="mt-1 text-sm text-slate-500">{movement.product?.sku ?? "No SKU"}</div>
+                  </div>
+                  <div className="rounded-lg bg-slate-100 px-3 py-2 text-center">
+                    <div className="text-xs text-slate-500">Qty</div>
+                    <div className="text-lg font-semibold text-slate-900">{movement.quantity}</div>
+                  </div>
+                </div>
+                <div className="mt-4 grid gap-3">
+                  <div className="rounded-lg bg-slate-50 p-3">
+                    <div className="text-xs font-medium uppercase tracking-wide text-slate-500">From</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <StatusBadge status={entityTypeLabel(movement.from_entity_type)} />
+                      <span className="text-sm text-slate-700">{entityLabel(movement.from_entity_type, movement.from_entity_id, labelMaps)}</span>
+                    </div>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 p-3">
+                    <div className="text-xs font-medium uppercase tracking-wide text-slate-500">To</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <StatusBadge status={entityTypeLabel(movement.to_entity_type)} />
+                      <span className="text-sm text-slate-700">{entityLabel(movement.to_entity_type, movement.to_entity_id, labelMaps)}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <StatusBadge status={String(movement.reason).replaceAll("_", " ")} />
+                  {movement.related_route_id ? <Link href={`/routes/${movement.related_route_id}`} className="link-secondary">{routeLabel(movement.related_route_id, routeById)}</Link> : null}
+                  {movement.related_purchase_id ? <Link href={`/purchases/${movement.related_purchase_id}`} className="link-secondary">{purchaseLabel(movement.related_purchase_id, purchaseById)}</Link> : null}
+                </div>
+                <div className="mt-3 text-sm text-slate-600">
+                  <div>Machine: {machineLabel(movement.related_machine_id, machineById)}</div>
+                  <div>User: {movement.created_by_member?.full_name ?? "-"}</div>
+                  {movement.notes ? <div className="mt-1 break-words">Notes: {movement.notes}</div> : null}
+                </div>
+                {canCreateCorrections ? (
+                  <div className="mt-4">
+                    <ConfirmDialog
+                      action={createInventoryMovementCorrection}
+                      triggerLabel="Create Correction"
+                      title="Create correction movement?"
+                      description="This will add a new opposite ledger movement. The original inventory movement will stay unchanged."
+                      confirmLabel="Create correction"
+                      buttonClassName="btn-secondary w-full px-3 py-2"
+                      confirmButtonClassName="btn-danger"
+                      hiddenFields={[{ name: "id", value: movement.id }]}
+                    />
+                  </div>
+                ) : null}
+              </article>
+            ))}
+          </div>
+          <div className="hidden xl:block">
+            <DataTable headers={["Date / Time", "Product", "SKU", "Qty", "From type", "From label", "To type", "To label", "Reason", "Route", "Purchase", "Machine", "User", "Notes", "Actions"]}>
+              {movements.map((movement: any) => (
+                <tr key={movement.id}>
+                  <td>{formatDate(movement.created_at)}</td>
+                  <td>
+                    {movement.product?.id ? (
+                      <Link href={`/products/${movement.product.id}`} className="link-secondary font-medium">
+                        {movement.product?.name ?? "Unknown product"}
+                      </Link>
+                    ) : (
+                      <span className="font-medium text-slate-900">Unknown product</span>
+                    )}
+                  </td>
+                  <td>{movement.product?.sku ?? "-"}</td>
+                  <td className="font-semibold">{movement.quantity}</td>
+                  <td><StatusBadge status={entityTypeLabel(movement.from_entity_type)} /></td>
+                  <td>{entityLabel(movement.from_entity_type, movement.from_entity_id, labelMaps)}</td>
+                  <td><StatusBadge status={entityTypeLabel(movement.to_entity_type)} /></td>
+                  <td>{entityLabel(movement.to_entity_type, movement.to_entity_id, labelMaps)}</td>
+                  <td><StatusBadge status={String(movement.reason).replaceAll("_", " ")} /></td>
+                  <td>{movement.related_route_id ? <Link href={`/routes/${movement.related_route_id}`} className="link-secondary">{routeLabel(movement.related_route_id, routeById)}</Link> : "-"}</td>
+                  <td>{movement.related_purchase_id ? <Link href={`/purchases/${movement.related_purchase_id}`} className="link-secondary">{purchaseLabel(movement.related_purchase_id, purchaseById)}</Link> : "-"}</td>
+                  <td>{machineLabel(movement.related_machine_id, machineById)}</td>
+                  <td>{movement.created_by_member?.full_name ?? "-"}</td>
+                  <td>{movement.notes ?? "-"}</td>
+                  <td>
+                    {canCreateCorrections ? (
+                      <ConfirmDialog
+                        action={createInventoryMovementCorrection}
+                        triggerLabel="Create Correction"
+                        title="Create correction movement?"
+                        description="This will add a new opposite ledger movement. The original inventory movement will stay unchanged."
+                        confirmLabel="Create correction"
+                        buttonClassName="btn-secondary px-3 py-2"
+                        confirmButtonClassName="btn-danger"
+                        hiddenFields={[{ name: "id", value: movement.id }]}
+                      />
+                    ) : (
+                      <span className="text-sm text-slate-500">-</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </DataTable>
+          </div>
+        </>
       )}
-    </AppShell>
+    </>
   );
 }

@@ -5,6 +5,14 @@ import { RECEIPT_IMAGE_BUCKET } from "@/lib/storage-buckets";
 const RECEIPT_MIME_TYPES = ["image/png", "image/jpeg", "image/webp", "application/pdf"];
 const RECEIPT_MAX_SIZE = 5 * 1024 * 1024;
 
+type PurchaseReceiptUploadError = "invalid_file" | "storage_unavailable";
+
+type PurchaseReceiptUploadResult = {
+  receiptUrl: string | null;
+  uploadUnavailable: boolean;
+  uploadError?: PurchaseReceiptUploadError;
+};
+
 async function ensureReceiptBucket(supabase: SupabaseClient) {
   const config = {
     public: false,
@@ -25,7 +33,7 @@ async function ensureReceiptBucket(supabase: SupabaseClient) {
   }
 }
 
-export async function resolvePurchaseReceiptUrl(supabase: SupabaseClient, fd: FormData) {
+export async function resolvePurchaseReceiptUrl(supabase: SupabaseClient, fd: FormData): Promise<PurchaseReceiptUploadResult> {
   const manualUrl = String(fd.get("receipt_url") || "").trim();
   const file = fd.get("receipt_file");
 
@@ -34,7 +42,7 @@ export async function resolvePurchaseReceiptUrl(supabase: SupabaseClient, fd: Fo
   }
 
   if (!RECEIPT_MIME_TYPES.includes(file.type) || file.size > RECEIPT_MAX_SIZE) {
-    return { receiptUrl: manualUrl || null, uploadUnavailable: true };
+    return { receiptUrl: manualUrl || null, uploadUnavailable: false, uploadError: "invalid_file" };
   }
 
   try {
@@ -54,6 +62,6 @@ export async function resolvePurchaseReceiptUrl(supabase: SupabaseClient, fd: Fo
     return { receiptUrl: `/api/storage/${RECEIPT_IMAGE_BUCKET}/${encodeURIComponent(path)}`, uploadUnavailable: false };
   } catch (error) {
     console.warn("[purchases] Receipt upload unavailable", error);
-    return { receiptUrl: manualUrl || null, uploadUnavailable: true };
+    return { receiptUrl: manualUrl || null, uploadUnavailable: true, uploadError: "storage_unavailable" };
   }
 }

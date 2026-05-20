@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { AppShell } from "@/components/AppShell";
-import { EmptyState, ErrorState, SecondaryButton, StatusBadge, SectionCard } from "@/components/ui";
+import { EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge, SectionCard } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -42,7 +41,7 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
 
   if (!canAccess) {
     return (
-      <AppShell>
+      <>
         <ErrorState
           title="Route unavailable"
           body={process.env.NODE_ENV === "development"
@@ -50,7 +49,7 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
             : "This route is not assigned to you."}
           action={<SecondaryButton href="/operator/routes">Back to routes</SecondaryButton>}
         />
-      </AppShell>
+      </>
     );
   }
   const routeStops = stops ?? [];
@@ -62,23 +61,21 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
   const completedStops = routeStops.filter((s: any) => s.status === "completed").length;
   const totalStops = routeStops.length;
   const pickItems = routeStock ?? [];
+  const primaryAction =
+    routeRow.status === "draft" || routeRow.status === "assigned"
+      ? { href: `/operator/routes/${routeId}/pick-list?start=1`, label: "Start Route" }
+      : routeRow.status === "in_progress"
+        ? { href: `/operator/routes/${routeId}/leftovers`, label: "End Route" }
+        : null;
 
   return (
-    <AppShell>
+    <>
       <div className="space-y-6">
-        <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <h1 className="break-words text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">
-              Route for {routeRow.route_date}
-            </h1>
-            <p className="mt-1 text-sm text-slate-500">
-              {operator?.full_name ?? "Assigned operator"} - {totalStops} machine stops
-            </p>
-          </div>
-          <div className="w-full shrink-0 sm:w-auto [&>*]:w-full sm:[&>*]:w-auto">
-            <SecondaryButton href="/operator/routes">Back to routes</SecondaryButton>
-          </div>
-        </div>
+        <PageHeader
+          title={`Route for ${routeRow.route_date}`}
+          subtitle={`${operator?.full_name ?? "Assigned operator"} - ${totalStops} machine stops`}
+          action={<SecondaryButton href="/operator/routes">Back to routes</SecondaryButton>}
+        />
 
         {/* Route Status Cards */}
         <div className="grid gap-3 sm:grid-cols-3">
@@ -99,13 +96,9 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
           <SectionCard>
             <div className="p-4">
               <div className="text-sm text-slate-500 mb-1">Action</div>
-              {routeRow.status === "draft" || routeRow.status === "assigned" ? (
-                <Link href={`/operator/routes/${routeId}/pick-list?start=1`} className="btn-primary w-full">
-                  Start Route
-                </Link>
-              ) : routeRow.status === "in_progress" ? (
-                <Link href={`/operator/routes/${routeId}/leftovers`} className="btn-primary w-full">
-                  End Route
+              {primaryAction ? (
+                <Link href={primaryAction.href} className="btn-primary w-full text-base">
+                  {primaryAction.label}
                 </Link>
               ) : (
                 <div className="text-sm text-slate-600">Route completed</div>
@@ -118,7 +111,7 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
         <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
           <h2 className="text-lg font-semibold mb-4">Pick list</h2>
           {routeRow.status === "draft" || routeRow.status === "assigned" ? (
-            <div className="rounded-lg bg-blue-50 border border-blue-200 p-4 text-sm text-blue-800 mb-4">
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
               <strong>Ready to start?</strong> Click "Start Route" above to view your pick list and begin picking stock from storage.
             </div>
           ) : null}
@@ -176,7 +169,7 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
                   {routeRow.status === "in_progress" || routeRow.status === "completed" ? (
                     <Link
                       href={`/operator/routes/${routeId}/stops/${stop.id}`}
-                      className="btn-primary mt-1 w-full sm:w-auto"
+                      className="btn-primary mt-1 w-full text-base sm:w-auto"
                     >
                       {stop.status === "completed" ? "View stop" : "Continue filling"}
                     </Link>
@@ -186,7 +179,15 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
             </div>
           )}
         </section>
+
+        {primaryAction ? (
+          <div className="sticky bottom-3 z-10 -mx-3 border-t border-slate-200 bg-slate-100/95 px-3 py-3 backdrop-blur sm:hidden">
+            <Link href={primaryAction.href} className="btn-primary w-full text-base">
+              {primaryAction.label}
+            </Link>
+          </div>
+        ) : null}
       </div>
-    </AppShell>
+    </>
   );
 }

@@ -1,5 +1,4 @@
 import { notFound, redirect } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
 import { FinanceTransactionStatusActions } from "@/components/FinanceTransactionStatusActions";
 import { FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
@@ -48,11 +47,17 @@ export default async function EditFinanceTransactionPage({
   const row = transaction as any;
 
   return (
-    <AppShell>
+    <>
       <FormPageLayout>
         <PageHeader
           title={row.needs_review ? "Review transaction" : "Edit transaction"}
           subtitle="Update the finance ledger safely. Voiding or archiving keeps the audit trail."
+          breadcrumbs={[
+            { label: "Finance", href: "/finance" },
+            { label: "Transactions", href: "/finance/transactions" },
+            { label: row.description ? String(row.description).slice(0, 40) : id.slice(0, 8), href: `/finance/transactions/${id}` },
+            { label: row.needs_review ? "Review transaction" : "Edit transaction" },
+          ]}
           action={<SecondaryButton href={`/finance/transactions/${id}`}>Back to detail</SecondaryButton>}
         />
         {error ? <div className="fixed right-5 top-5 z-50 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-800 shadow-lg">{error}</div> : null}
@@ -149,6 +154,6 @@ export default async function EditFinanceTransactionPage({
           <FinanceTransactionStatusActions id={id} status={row.transaction_status ?? "active"} />
         </FormSection>
       </FormPageLayout>
-    </AppShell>
+    </>
   );
 }

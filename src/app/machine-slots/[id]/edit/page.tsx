@@ -1,6 +1,5 @@
 import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { AppShell } from "@/components/AppShell";
 import { FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
@@ -56,7 +55,7 @@ export default async function EditMachineSlotPage({ params, searchParams }: { pa
   if (!slot) notFound();
 
   return (
-    <AppShell>
+    <>
       <FormPageLayout>
         <PageHeader title="Edit Slot" subtitle="Update the product assignment and refill rules for this machine slot." action={<SecondaryButton href={`/machine-slots?machine_id=${slot.machine_id}`}>Back to planogram</SecondaryButton>} />
         {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{error}</div> : null}
@@ -104,6 +103,6 @@ export default async function EditMachineSlotPage({ params, searchParams }: { pa
           </div>
         </form>
       </FormPageLayout>
-    </AppShell>
+    </>
   );
 }

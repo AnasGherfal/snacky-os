@@ -604,6 +604,35 @@ async function applyMachineStatus(
   await supabase.from("machines").update(updates).eq("id", machineId);
 }
 
+async function markStaleSnapshotRows(
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>,
+  table: "vms_stock_snapshots" | "vms_sales_snapshots",
+  batchId: string,
+  activeRowNumbers: number[],
+) {
+  const stalePayload = { import_row_status: "reprocessed_stale" };
+  if (!activeRowNumbers.length) {
+    const { error } = await supabase.from(table).update(stalePayload).eq("import_batch_id", batchId);
+    if (error) throw error;
+    return;
+  }
+
+  const uniqueRowNumbers = Array.from(new Set(activeRowNumbers)).sort((a, b) => a - b);
+  const { error: nullError } = await supabase
+    .from(table)
+    .update(stalePayload)
+    .eq("import_batch_id", batchId)
+    .is("import_row_number", null);
+  if (nullError) throw nullError;
+
+  const { error } = await supabase
+    .from(table)
+    .update(stalePayload)
+    .eq("import_batch_id", batchId)
+    .not("import_row_number", "in", `(${uniqueRowNumbers.join(",")})`);
+  if (error) throw error;
+}
+
 async function runVmsImport({
   supabase,
   profile,
@@ -689,10 +718,6 @@ async function runVmsImport({
       })
       .eq("id", batch.id);
 
-    await Promise.all([
-      supabase.from("vms_stock_snapshots").delete().eq("import_batch_id", batch.id),
-      supabase.from("vms_sales_snapshots").delete().eq("import_batch_id", batch.id),
-    ]);
   } else {
     const { data: newBatch, error: batchError } = await supabase
       .from("vms_import_batches")
@@ -1030,6 +1055,8 @@ async function runVmsImport({
       await applyMachineStatus(supabase, machine.id, row, capturedAt);
       stockSnapshots.push({
         import_batch_id: batch.id,
+        import_row_number: rowNumber,
+        import_row_status: "imported",
         machine_id: machine.id,
         vms_machine_id: identifier,
         slot_code: value(row, ["slot_code", "slot", "slot_no", "selection", "selection_code", "selection_no", "tray", "tray_code", "channel", "channel_no", "coil"]),
@@ -1065,6 +1092,8 @@ async function runVmsImport({
     periodEnd.setHours(23, 59, 59, 999);
     salesSnapshots.push({
       import_batch_id: batch.id,
+      import_row_number: rowNumber,
+      import_row_status: "imported",
       machine_id: machine.id,
       product_id: productId,
       sold_qty: Math.max(0, Math.floor(soldQty ?? 0)),
@@ -1082,22 +1111,50 @@ async function runVmsImport({
   }
 
   if (stockSnapshots.length) {
-    const { error } = await supabase.from("vms_stock_snapshots").insert(stockSnapshots);
+    const { error } = await supabase.from("vms_stock_snapshots").upsert(stockSnapshots, { onConflict: "import_batch_id,import_row_number" });
     if (error) {
-      console.error("[vms-import] Stock snapshot insert failed", error);
-      summary.errors.push("Stock snapshot insert failed.");
+      console.error("[vms-import] Stock snapshot upsert failed", error);
+      summary.errors.push("Stock snapshot save failed.");
       summary.skippedRows += stockSnapshots.length;
       summary.importedRows -= stockSnapshots.length;
+    } else if (existingBatchId) {
+      try {
+        await markStaleSnapshotRows(supabase, "vms_stock_snapshots", batch.id, stockSnapshots.map((row) => Number(row.import_row_number)).filter(Number.isFinite));
+      } catch (staleError) {
+        console.error("[vms-import] Stock stale marking failed", staleError);
+        summary.errors.push("Old stock snapshot rows could not be marked stale.");
+      }
+    }
+  } else if (existingBatchId && reportType === "stock") {
+    try {
+      await markStaleSnapshotRows(supabase, "vms_stock_snapshots", batch.id, []);
+    } catch (staleError) {
+      console.error("[vms-import] Stock stale marking failed", staleError);
+      summary.errors.push("Old stock snapshot rows could not be marked stale.");
     }
   }
 
   if (salesSnapshots.length) {
-    const { error } = await supabase.from("vms_sales_snapshots").insert(salesSnapshots);
+    const { error } = await supabase.from("vms_sales_snapshots").upsert(salesSnapshots, { onConflict: "import_batch_id,import_row_number" });
     if (error) {
-      console.error("[vms-import] Sales snapshot insert failed", error);
-      summary.errors.push("Sales snapshot insert failed.");
+      console.error("[vms-import] Sales snapshot upsert failed", error);
+      summary.errors.push("Sales snapshot save failed.");
       summary.skippedRows += salesSnapshots.length;
       summary.importedRows -= salesSnapshots.length;
+    } else if (existingBatchId) {
+      try {
+        await markStaleSnapshotRows(supabase, "vms_sales_snapshots", batch.id, salesSnapshots.map((row) => Number(row.import_row_number)).filter(Number.isFinite));
+      } catch (staleError) {
+        console.error("[vms-import] Sales stale marking failed", staleError);
+        summary.errors.push("Old sales snapshot rows could not be marked stale.");
+      }
+    }
+  } else if (existingBatchId && reportType === "sales") {
+    try {
+      await markStaleSnapshotRows(supabase, "vms_sales_snapshots", batch.id, []);
+    } catch (staleError) {
+      console.error("[vms-import] Sales stale marking failed", staleError);
+      summary.errors.push("Old sales snapshot rows could not be marked stale.");
     }
   }
 

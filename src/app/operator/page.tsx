@@ -1,6 +1,5 @@
 import Link from "next/link";
-import { AppShell } from "@/components/AppShell";
-import { EmptyState, PageHeader, PrimaryButton, SectionCard, StatusBadge } from "@/components/ui";
+import { EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOperatorRole } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -12,8 +11,16 @@ export default async function OperatorPage() {
   const profile = await getCurrentProfile();
   const today = new Date().toISOString().split("T")[0];
 
+  if (!supabase) {
+    return (
+      <>
+        <ErrorState title="Operator routes unavailable" body="Supabase is not configured, so Snacky OS cannot load assigned routes." />
+      </>
+    );
+  }
+
   let routesQuery = supabase
-    ?.from("routes")
+    .from("routes")
     .select("id, route_date, status, operator_id, route_stops(id, status)")
     .gte("route_date", today)
     .order("route_date", { ascending: true });
@@ -22,10 +29,18 @@ export default async function OperatorPage() {
     routesQuery = routesQuery.eq("operator_id", profile?.team_member_id ?? "");
   }
 
-  const { data: routes } = routesQuery ? await routesQuery : { data: [] };
+  const { data: routes, error: routesError } = await routesQuery;
+  if (routesError) {
+    console.error("[operator] Failed to load assigned routes", routesError);
+    return (
+      <>
+        <ErrorState title="Could not load assigned routes" body="Snacky OS could not load the operator route list." action={<SecondaryButton href="/operator">Retry</SecondaryButton>} />
+      </>
+    );
+  }
 
   return (
-    <AppShell>
+    <>
       <div className="space-y-6">
         <PageHeader
           title="Operator"
@@ -73,6 +88,6 @@ export default async function OperatorPage() {
           </div>
         </SectionCard>
       </div>
-    </AppShell>
+    </>
   );
 }

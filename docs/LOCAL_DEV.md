@@ -24,6 +24,9 @@ Local Storage is enabled in `supabase/config.toml` with the same bucket names as
 production: `product-images`, `receipt-images`, `machine-photos`,
 `refill-photos`, and `issue-photos`.
 
+See `docs/STORAGE_SETUP.md` for bucket visibility, upload limits, and the
+expected local fallback behavior when Storage is unavailable.
+
 ## Docker Desktop Engine Error
 
 If `npx supabase start` fails with an error like:

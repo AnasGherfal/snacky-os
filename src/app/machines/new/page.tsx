@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { AppShell } from "@/components/AppShell";
 import { FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
@@ -13,7 +12,7 @@ async function createMachine(fd: FormData) {"use server";
  if(!payload.machine_code||!payload.name) return; const { data } = await s.from("machines").insert(payload).select("id, machine_code, name, status, location_id").single(); if (data) { await logActivity({ profile, action: "create", entityType: "machine", entityId: data.id, entityLabel: data.name, afterData: data, summary: `Created machine ${data.name}` }); } revalidatePath("/machines"); redirect("/machines"); }
 
 export default async function NewMachinePage(){const s=getSupabaseServerClient(); const {data:locations}=s?await s.from("locations").select("id,name").order("name"):{data:[]};
-return <AppShell><FormPageLayout><PageHeader title="Create machine" subtitle="Add a machine record with operational targets." />
+return <><FormPageLayout><PageHeader title="Create machine" subtitle="Add a machine record with operational targets." breadcrumbs={[{ label: "Machines", href: "/machines" }, { label: "Create machine" }]} />
 <form action={createMachine} className="space-y-5"><FormSection title="Machine details"><div className="grid gap-4 md:grid-cols-2">
 <FormField label="Internal Machine Code" required hint="Snacky's internal code, e.g. SNK-001."><input required name="machine_code" placeholder="SNK-001" className="field-input"/></FormField>
 <FormField label="VMS Machine ID" hint="The exact machine ID/code used in the VMS export."><input name="vms_machine_id" placeholder="VMS-AB12" className="field-input"/></FormField>
@@ -24,4 +23,4 @@ return <AppShell><FormPageLayout><PageHeader title="Create machine" subtitle="Ad
 <FormField label="Rent LYD" hint="Monthly rent paid for this location, if applicable."><input type="number" step="0.01" name="rent_amount" placeholder="0.00" className="field-input"/></FormField>
 <FormField label="Target NSM" hint="Target net sales per month for this machine."><input type="number" step="0.01" name="target_nsm" placeholder="2800" className="field-input"/></FormField>
 <FormField label="Target Uptime %" hint="Target machine uptime, usually 98%."><input type="number" step="0.01" name="target_uptime_percent" placeholder="98" className="field-input"/></FormField>
-</div></FormSection><div className="flex gap-3"><PrimaryButton>Save machine</PrimaryButton><SecondaryButton href="/machines">Cancel</SecondaryButton></div></form></FormPageLayout></AppShell>}
+</div></FormSection><div className="flex gap-3"><PrimaryButton>Save machine</PrimaryButton><SecondaryButton href="/machines">Cancel</SecondaryButton></div></form></FormPageLayout></>}

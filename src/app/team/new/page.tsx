@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
 import { TeamMemberForm } from "@/components/TeamMemberForm";
 import { FormPageLayout, PageHeader } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
@@ -13,7 +12,7 @@ export default async function NewTeamMemberPage({ searchParams }: { searchParams
   const { error } = await searchParams;
 
   return (
-    <AppShell>
+    <>
       <FormPageLayout>
         <PageHeader title="Add team member" subtitle="Create the operational team record and assign the correct Snacky OS role." />
         {error ? (
@@ -23,6 +22,6 @@ export default async function NewTeamMemberPage({ searchParams }: { searchParams
         ) : null}
         <TeamMemberForm action={createTeamMember} submitLabel="Create member" />
       </FormPageLayout>
-    </AppShell>
+    </>
   );
 }

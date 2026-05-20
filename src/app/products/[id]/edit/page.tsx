@@ -1,11 +1,11 @@
+import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { AppShell } from "@/components/AppShell";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { ProductSourceBadge } from "@/components/ProductSourceBadge";
 import { DataTable, EmptyState, FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { logActivity } from "@/lib/activity-log";
-import { getCurrentProfile } from "@/lib/auth";
+import { requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
 import { resolveProductImageUrl } from "@/lib/product-images";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -17,14 +17,14 @@ function formatMoney(value: number | string | null | undefined, decimals = 2) {
 
 async function updateProduct(fd: FormData) {
   "use server";
+  const id = String(fd.get("id"));
+  const profile = await requireCurrentProfileForPath(`/products/${id}/edit`);
   const s = getSupabaseServerClient();
   if (!s) return;
-  const profile = await getCurrentProfile();
 
-  const id = String(fd.get("id"));
   const { data: beforeProduct } = await s.from("products").select("*").eq("id", id).maybeSingle();
   const currentImageUrl = String(fd.get("current_image_url") || "").trim();
-  const { imageUrl, uploadUnavailable } = await resolveProductImageUrl(s, fd);
+  const { imageUrl, uploadUnavailable, uploadError } = await resolveProductImageUrl(s, fd);
   const nextName = String(fd.get("name") || "").trim();
   const nextCost = Number(fd.get("current_cost_price_lyd") || 0);
   const nextSelling = Number(fd.get("current_selling_price_lyd") || 0);
@@ -41,7 +41,7 @@ async function updateProduct(fd: FormData) {
     supplier_id: String(fd.get("supplier_id") || "") || null,
     case_quantity: Number(fd.get("case_quantity") || 1),
     image_url: (imageUrl ?? currentImageUrl) || null,
-    active: String(fd.get("active") || "true") === "true",
+    active: String(fd.get("active") || String(beforeProduct?.active ?? true)) === "true",
   };
   if (costChanged) {
     Object.assign(product, {
@@ -73,11 +73,13 @@ async function updateProduct(fd: FormData) {
   });
   revalidatePath("/products");
   revalidatePath(`/products/${id}/edit`);
-  redirect(uploadUnavailable ? "/products?imageUpload=storage-unavailable" : "/products");
+  const imageUpload = uploadError === "invalid_file" ? "invalid-file" : uploadUnavailable ? "storage-unavailable" : "";
+  redirect(imageUpload ? `/products?imageUpload=${imageUpload}` : "/products");
 }
 
 export default async function EditProductPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  await requireCurrentProfileForPath(`/products/${id}/edit`);
   const s = getSupabaseServerClient();
   if (!s) notFound();
 
@@ -101,6 +103,7 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
       .from("vms_sales_snapshots")
       .select("id, sold_qty, sales_amount, cash_sales_amount, card_sales_amount, period_end, machine:machines(name)")
       .eq("product_id", id)
+      .eq("import_row_status", "imported")
       .order("period_end", { ascending: false })
       .limit(100),
   ]);
@@ -109,13 +112,13 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
   const quantityFor = (type: string) => inventoryRows.filter((row) => row.location_type === type).reduce((sum, row) => sum + Number(row.quantity_on_hand ?? 0), 0);
 
   return (
-    <AppShell>
+    <>
       <div className="space-y-6">
         <PageHeader title={product.name} subtitle="Product profile, pricing, inventory, movement history, sales, and purchases." action={<SecondaryButton href={`/products/${id}/history`}>Movement History</SecondaryButton>} />
 
         <nav className="flex flex-wrap gap-2">
           {["Overview", "Pricing", "Inventory", "Movement History", "Sales", "Purchases"].map((label) => (
-            <a key={label} href={`#${label.toLowerCase().replaceAll(" ", "-")}`} className="btn-secondary">{label}</a>
+            <Link key={label} href={`#${label.toLowerCase().replaceAll(" ", "-")}`} className="btn-secondary">{label}</Link>
           ))}
         </nav>
 
@@ -167,7 +170,10 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
               <FormField label="Last Purchase Cost LYD" hint="Updated when a purchase is received."><input value={formatMoney(product.last_purchase_cost_lyd, 4)} readOnly className="field-input bg-slate-50" /></FormField>
               <FormField label="Average Cost LYD" hint="Reserved for weighted average cost once enabled."><input value={formatMoney(product.average_cost_lyd, 4)} readOnly className="field-input bg-slate-50" /></FormField>
               <FormField label="Case Quantity"><input type="number" name="case_quantity" defaultValue={product.case_quantity ?? 1} className="field-input" /></FormField>
-              <FormField label="Active"><select name="active" defaultValue={String(product.active)} className="field-input"><option value="true">Active</option><option value="false">Inactive</option></select></FormField>
+              <FormField label="Status" hint="Use the safe archive/delete controls on Movement History to change product availability.">
+                <input type="hidden" name="active" value={String(product.active)} />
+                <input value={product.active ? "Active" : "Archived"} readOnly className="field-input bg-slate-50" />
+              </FormField>
             </div>
           </FormSection>
 
@@ -177,7 +183,7 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
                 <span className="mb-1 block text-sm font-medium text-slate-800">Current</span>
                 <ProductThumbnail imageUrl={product.image_url} name={product.name} size="md" />
               </div>
-              <FormField label="Upload replacement" hint="Stored in the local product image bucket. PNG, JPG, and WEBP are supported. Maximum 5MB.">
+              <FormField label="Upload replacement" hint="Stored in product-images when Supabase Storage is configured. PNG, JPG, and WEBP are supported. Maximum 5MB.">
                 <input name="image_file" type="file" accept="image/png,image/jpeg,image/webp" className="field-input" />
               </FormField>
               <FormField label="Image URL fallback" hint="Optional public URL if you do not upload a file.">
@@ -238,7 +244,7 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
               {purchaseLines.map((line: any) => (
                 <tr key={line.id}>
                   <td>{line.purchase?.order_date ?? "-"}</td>
-                  <td>{line.purchase?.id ? <a className="link-secondary" href={`/purchases/${line.purchase.id}`}>{line.purchase.receipt_number ?? line.purchase.id.slice(0, 8)}</a> : "-"}</td>
+                  <td>{line.purchase?.id ? <Link className="link-secondary" href={`/purchases/${line.purchase.id}`}>{line.purchase.receipt_number ?? line.purchase.id.slice(0, 8)}</Link> : "-"}</td>
                   <td>{line.purchase?.supplier?.name ?? "-"}</td>
                   <td><StatusBadge status={line.purchase?.status ?? "-"} /></td>
                   <td>{line.total_units}</td>
@@ -250,6 +256,6 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
           )}
         </section>
       </div>
-    </AppShell>
+    </>
   );
 }

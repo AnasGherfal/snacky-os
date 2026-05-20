@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
-import { DataTable, EmptyState, FormField, PageHeader, SectionCard, StatusBadge } from "@/components/ui";
+import { DataTable, EmptyState, ErrorState, FormField, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
 import { completeVmsImport, prepareVmsImport } from "@/lib/vms-import-actions";
@@ -361,26 +360,48 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
   if (params.batchId) redirect(`/vms-import/${params.batchId}`);
 
   const supabase = getSupabaseServerClient();
-  const [{ data: batches }, { data: preview }] = supabase
-    ? await Promise.all([
-        supabase
-          .from("vms_import_batches")
-          .select("id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, status, row_count, rows_imported, rows_skipped, error_count, notes, last_reprocessed_at, reprocess_count")
-          .order("imported_at", { ascending: false })
-          .limit(20),
-        params.previewId
-          ? supabase
-              .from("vms_import_previews")
-              .select("id, file_name, file_type, file_size_bytes, report_type, sheets, created_at")
-              .eq("id", params.previewId)
-              .maybeSingle()
-          : Promise.resolve({ data: null }),
-      ])
-    : [{ data: [] }, { data: null }];
+  if (!supabase) {
+    return (
+      <>
+        <ErrorState title="VMS import unavailable" body="Supabase is not configured, so Snacky OS cannot upload or review VMS files." />
+      </>
+    );
+  }
+  const [{ data: batches, error: batchesError }, { data: preview, error: previewError }] = await Promise.all([
+    supabase
+      .from("vms_import_batches")
+      .select("id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, status, row_count, rows_imported, rows_skipped, error_count, notes, last_reprocessed_at, reprocess_count")
+      .order("imported_at", { ascending: false })
+      .limit(20),
+    params.previewId
+      ? supabase
+          .from("vms_import_previews")
+          .select("id, file_name, file_type, file_size_bytes, report_type, sheets, created_at")
+          .eq("id", params.previewId)
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+  ]);
+  const importLoadError = batchesError ?? previewError;
+  if (importLoadError) {
+    console.error("[vms-import] Failed to load import page", importLoadError);
+    return (
+      <>
+        <ErrorState title="Could not load VMS import" body="Snacky OS could not load VMS import batches or the selected preview." action={<SecondaryButton href="/vms-import">Retry</SecondaryButton>} />
+      </>
+    );
+  }
   const importerIds = [...new Set((batches ?? []).map((batch: any) => batch.imported_by).filter(Boolean))];
-  const { data: importers } = supabase && importerIds.length
+  const { data: importers, error: importersError } = importerIds.length
     ? await supabase.from("team_members").select("id, full_name").in("id", importerIds)
-    : { data: [] };
+    : { data: [], error: null };
+  if (importersError) {
+    console.error("[vms-import] Failed to load importers", importersError);
+    return (
+      <>
+        <ErrorState title="Could not load VMS importers" body="Import batches loaded, but Snacky OS could not load the user names attached to them." action={<SecondaryButton href="/vms-import">Retry</SecondaryButton>} />
+      </>
+    );
+  }
   const importerById = new Map((importers ?? []).map((member: any) => [String(member.id), member.full_name]));
 
   const previewSheets = ((preview?.sheets ?? []) as PreviewSheet[]).filter((sheet) => sheet.rows?.length);
@@ -402,12 +423,21 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
   const currentStep = clampStep(params.step, Boolean(preview));
 
   let validation: VmsValidationResult | null = null;
-  if (supabase && selectedSheet && currentStep >= 5) {
-    const [{ data: machines }, { data: mappings }, { data: products }] = await Promise.all([
+  if (selectedSheet && currentStep >= 5) {
+    const [{ data: machines, error: machinesError }, { data: mappings, error: mappingsError }, { data: products, error: productsError }] = await Promise.all([
       supabase.from("machines").select("id, machine_code, vms_machine_id, name"),
       supabase.from("vms_product_mappings").select("id, vms_product_id, vms_product_name, product_id, match_status"),
       supabase.from("products").select("id, sku, barcode, name"),
     ]);
+    const validationLoadError = machinesError ?? mappingsError ?? productsError;
+    if (validationLoadError) {
+      console.error("[vms-import] Failed to load validation references", validationLoadError);
+      return (
+        <>
+          <ErrorState title="Could not validate VMS rows" body="Snacky OS could not load machines, mappings, or products needed to validate the import." action={<SecondaryButton href="/vms-import">Start over</SecondaryButton>} />
+        </>
+      );
+    }
     validation = validateVmsRows({
       reportType: selectedReportType,
       rows: mappedRows,
@@ -430,7 +460,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
   };
 
   return (
-    <AppShell>
+    <>
       <PageHeader
         title="VMS Import"
         subtitle="A step-by-step import wizard for VMS Excel and CSV reports."
@@ -637,6 +667,20 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
               <StatCard label="Warnings" value={validation.warningRows} />
             </div>
           ) : null}
+          <div>
+            <h3 className="mb-3 text-base font-semibold text-slate-900">Normalized row preview</h3>
+            {!mappedPreviewRows.length ? (
+              <EmptyState title="No normalized rows" body="Choose a different header row, sheet, or column mapping." />
+            ) : (
+              <DataTable headers={previewFields.map((field) => field.label)}>
+                {mappedPreviewRows.map((row, index) => (
+                  <tr key={index}>
+                    {previewFields.map((field) => <td key={field.field} className="max-w-48">{row[field.field] || "-"}</td>)}
+                  </tr>
+                ))}
+              </DataTable>
+            )}
+          </div>
           {validation?.reviewRowsList.length ? (
             <DataTable headers={["Row", "Status", "Reasons", "Machine", "Product", "Original row data"]}>
               {validation.reviewRowsList.slice(0, 100).map((row) => (
@@ -749,6 +793,6 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
           </DataTable>
         )}
       </section>
-    </AppShell>
+    </>
   );
 }

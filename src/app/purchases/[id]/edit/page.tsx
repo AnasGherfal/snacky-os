@@ -1,5 +1,4 @@
 import { notFound, redirect } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
 import { PurchaseForm } from "@/components/PurchaseForm";
 import { FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
@@ -14,10 +13,11 @@ export default async function EditPurchasePage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; module?: string }>;
 }) {
   const { id } = await params;
-  const { error = "" } = await searchParams;
+  const { error = "", module = "" } = await searchParams;
+  const moduleQuery = module === "finance" ? "?module=finance" : "";
   const profile = await getCurrentProfile();
   if (!isOwnerAdminRole(profile?.role) && !isSupervisorRole(profile?.role) && profile?.role !== "warehouse") redirect("/unauthorized");
 
@@ -41,7 +41,7 @@ export default async function EditPurchasePage({
   ]);
 
   if (!purchase) notFound();
-  if ((purchase as any).status !== "draft") redirect(`/purchases/${id}?error=Only%20draft%20purchases%20can%20be%20edited.`);
+  if ((purchase as any).status !== "draft") redirect(`/purchases/${id}${moduleQuery ? `${moduleQuery}&` : "?"}error=Only%20draft%20purchases%20can%20be%20edited.`);
 
   const productOptions = (products ?? []).map((product: any) => ({
     id: product.id,
@@ -64,9 +64,19 @@ export default async function EditPurchasePage({
   }));
 
   return (
-    <AppShell>
+    <>
       <FormPageLayout>
-        <PageHeader title="Edit purchase" subtitle="Update draft receipt details, totals, and purchased items before receiving." action={<SecondaryButton href={`/purchases/${id}`}>Back to purchase</SecondaryButton>} />
+        <PageHeader
+          title="Edit purchase"
+          subtitle="Update draft receipt details, totals, and purchased items before receiving."
+          breadcrumbs={[
+            { label: module === "finance" ? "Finance" : "Inventory", href: module === "finance" ? "/finance" : "/inventory" },
+            { label: "Purchases", href: `/purchases${moduleQuery}` },
+            { label: (purchase as any).receipt_number ?? id.slice(0, 8), href: `/purchases/${id}${moduleQuery}` },
+            { label: "Edit purchase" },
+          ]}
+          action={<SecondaryButton href={`/purchases/${id}${moduleQuery}`}>Back to purchase</SecondaryButton>}
+        />
         {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{error}</div> : null}
         <PurchaseForm
           action={updatePurchase}
@@ -87,6 +97,6 @@ export default async function EditPurchasePage({
           submitLabel="Save changes"
         />
       </FormPageLayout>
-    </AppShell>
+    </>
   );
 }

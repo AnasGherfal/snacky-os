@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
 import { DataTable, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
@@ -61,7 +60,7 @@ export default async function VmsProductMappingPage({
   const ignoredCount = (mappings ?? []).filter((mapping: any) => mapping.match_status === "ignored").length;
 
   return (
-    <AppShell>
+    <>
       <PageHeader
         title="VMS Product Mapping"
         subtitle="Match product names from VMS reports to Snacky products so sales, stock, and refill recommendations work correctly."
@@ -143,6 +142,6 @@ export default async function VmsProductMappingPage({
           ))}
         </DataTable>
       )}
-    </AppShell>
+    </>
   );
 }

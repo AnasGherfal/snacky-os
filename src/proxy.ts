@@ -8,7 +8,7 @@ function isPublicPath(pathname: string) {
   return publicPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 }
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-pathname", pathname);

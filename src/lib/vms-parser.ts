@@ -35,7 +35,7 @@ export type VmsMappingDetection = {
 };
 
 export const vmsReportTypes: { value: VmsReportType; label: string }[] = [
-  { value: "stock", label: "Stock / tray status" },
+  { value: "stock", label: "Machine Goods / Stock" },
   { value: "sales", label: "Sales statistics" },
   { value: "product_list", label: "Product list" },
   { value: "machine_status", label: "Machine status" },

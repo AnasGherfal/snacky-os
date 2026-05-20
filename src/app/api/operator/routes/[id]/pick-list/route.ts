@@ -7,6 +7,16 @@ function isMissingTable(error: any, tableName: string) {
   return error?.code === "PGRST205" && String(error?.message ?? "").includes(tableName);
 }
 
+function errorMessage(error: unknown) {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    const row = error as { message?: unknown; details?: unknown; hint?: unknown };
+    return String(row.message ?? row.details ?? row.hint ?? "Unknown database error");
+  }
+  return "Unknown database error";
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -132,14 +142,27 @@ export async function GET(
       ? await supabase.from("route_pick_list_items").select("product_id, picked_qty").eq("route_id", routeId).in("product_id", productIds)
       : { data: [], error: null };
     if (pickListError && !isMissingTable(pickListError, "route_pick_list_items")) throw pickListError;
-    const pickedByProduct = new Map((pickListItems ?? []).map((line: any) => [String(line.product_id), Number(line.picked_qty ?? 0)]));
+    const pickedByProduct = new Map<string, number>();
+    (pickListItems ?? []).forEach((line: any) => {
+      const productId = String(line.product_id);
+      pickedByProduct.set(productId, (pickedByProduct.get(productId) ?? 0) + Number(line.picked_qty ?? 0));
+    });
+
+    const { data: pickMovements, error: pickMovementError } = await supabase
+      .from("inventory_movements")
+      .select("id")
+      .eq("related_route_id", routeId)
+      .eq("reason", "storage_to_operator_bag")
+      .limit(1);
+    if (pickMovementError) throw pickMovementError;
+    const confirmed = Boolean(pickMovements?.length);
 
     const items = Array.from(plannedByProduct.values()).map((line: any) => ({
       product_id: line.product_id,
       product_name: line.product_name,
       sku: line.sku ?? null,
       planned_qty: Number(line.planned_qty ?? 0),
-      picked_qty: pickedByProduct.get(String(line.product_id)) ?? 0,
+      picked_qty: pickedByProduct.has(String(line.product_id)) ? pickedByProduct.get(String(line.product_id)) : null,
       available_storage_qty: storageByProduct.get(String(line.product_id)) ?? 0,
       machine_items: line.machine_items,
     }));
@@ -168,6 +191,7 @@ export async function GET(
     return NextResponse.json({
       items,
       productOptions,
+      confirmed,
       debug: process.env.NODE_ENV === "development"
         ? { routeId, routeStopItemsCount: stopItems?.length ?? 0, aggregatedPickListCount: items.length, routePickListItemsCount: pickListItems?.length ?? 0, operatorTeamMemberId: profile?.team_member_id ?? null }
         : undefined,
@@ -175,7 +199,7 @@ export async function GET(
   } catch (error) {
     console.error("Error fetching pick list:", error);
     return NextResponse.json(
-      { error: "Failed to fetch pick list", details: error instanceof Error ? error.message : String(error) },
+      { error: "Failed to fetch pick list", details: errorMessage(error) },
       { status: 500 }
     );
   }

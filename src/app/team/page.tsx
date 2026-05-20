@@ -1,8 +1,7 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
-import { DataTable, EmptyState, PageHeader, PrimaryButton, StatusBadge } from "@/components/ui";
+import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -26,18 +25,32 @@ export default async function TeamPage() {
   const tempPassword = parseTempPasswordCookie(cookieStore.get(tempPasswordCookie)?.value);
 
   const supabase = getSupabaseServerClient();
-  const [{ data: team }, { data: profiles }] = supabase
-    ? await Promise.all([
-        supabase.from("team_members").select("id, full_name, email, phone, role, active, active_status, auth_user_id, must_change_password").order("full_name"),
-        supabase.from("profiles").select("id, email, team_member_id, last_login_at"),
-      ])
-    : [{ data: [] }, { data: [] }];
+  if (!supabase) {
+    return (
+      <>
+        <ErrorState title="Team unavailable" body="Supabase is not configured, so Snacky OS cannot load team members." />
+      </>
+    );
+  }
+  const [{ data: team, error: teamError }, { data: profiles, error: profilesError }] = await Promise.all([
+    supabase.from("team_members").select("id, full_name, email, phone, role, active, active_status, auth_user_id, must_change_password").order("full_name"),
+    supabase.from("profiles").select("id, email, team_member_id, last_login_at"),
+  ]);
+  const loadError = teamError ?? profilesError;
+  if (loadError) {
+    console.error("[team] Failed to load team page", loadError);
+    return (
+      <>
+        <ErrorState title="Could not load team" body="Snacky OS could not load team members or login profile metadata." action={<SecondaryButton href="/team">Retry</SecondaryButton>} />
+      </>
+    );
+  }
 
   const profileByTeamId = new Map((profiles ?? []).filter((profile: any) => profile.team_member_id).map((profile: any) => [profile.team_member_id, profile]));
   const profileByEmail = new Map((profiles ?? []).filter((profile: any) => profile.email).map((profile: any) => [String(profile.email).toLowerCase(), profile]));
 
   return (
-    <AppShell>
+    <>
       <PageHeader
         title="Team"
         subtitle="Manage Snacky OS users, roles, login links, and operational access."
@@ -97,6 +110,6 @@ export default async function TeamPage() {
           })}
         </DataTable>
       )}
-    </AppShell>
+    </>
   );
 }

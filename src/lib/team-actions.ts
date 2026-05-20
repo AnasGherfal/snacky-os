@@ -22,6 +22,17 @@ function teamPayload(formData: FormData) {
   };
 }
 
+function clean(value: FormDataEntryValue | null) {
+  return String(value ?? "").trim();
+}
+
+function requireConfirmedReason(formData: FormData, path: string) {
+  if (clean(formData.get("confirm_action")) !== "yes") redirect(`${path}?error=Confirmation%20is%20required.`);
+  const reason = clean(formData.get("reason"));
+  if (!reason) redirect(`${path}?error=Reason%20is%20required.`);
+  return reason;
+}
+
 async function setTemporaryPasswordBanner(payload: { fullName: string; email: string; password: string }) {
   const cookieStore = await cookies();
   cookieStore.set(tempPasswordCookie, encodeURIComponent(JSON.stringify(payload)), {
@@ -145,6 +156,9 @@ export async function updateTeamMember(formData: FormData) {
   if (!payload.full_name) redirect(`/team/${id}/edit?error=Full%20name%20is%20required.`);
 
   const { data: existingMember } = await supabase.from("team_members").select("*").eq("id", id).maybeSingle();
+  const deactivationReason = existingMember?.active_status !== "inactive" && payload.active_status === "inactive"
+    ? requireConfirmedReason(formData, `/team/${id}`)
+    : null;
 
   const { error } = await supabase.from("team_members").update(payload).eq("id", id);
   if (error) {
@@ -171,6 +185,7 @@ export async function updateTeamMember(formData: FormData) {
     entityLabel: payload.full_name,
     beforeData: existingMember,
     afterData: { ...payload, login_access_updated: String(formData.get("create_login_access") || "") === "yes" },
+    metadata: deactivationReason ? { reason: deactivationReason } : undefined,
     summary: existingMember?.role !== payload.role ? `Changed ${payload.full_name} role to ${payload.role}` : `Updated team member ${payload.full_name}`,
   });
 
@@ -178,4 +193,53 @@ export async function updateTeamMember(formData: FormData) {
   revalidatePath(`/team/${id}`);
   revalidatePath(`/team/${id}/edit`);
   redirect("/team");
+}
+
+export async function deactivateTeamMember(formData: FormData) {
+  const profile = await getCurrentProfile();
+  if (!isOwnerAdminRole(profile?.role)) redirect("/unauthorized");
+
+  const id = clean(formData.get("id"));
+  if (!id) redirect("/team");
+  if (id === profile?.team_member_id) redirect(`/team/${id}?error=You%20cannot%20deactivate%20your%20own%20account.`);
+  const reason = requireConfirmedReason(formData, `/team/${id}`);
+
+  const supabase = getSupabaseServerClient();
+  if (!supabase) redirect(`/team/${id}?error=Supabase%20is%20not%20configured.`);
+
+  const { data: before } = await supabase.from("team_members").select("*").eq("id", id).maybeSingle();
+  if (!before) redirect("/team?error=Team%20member%20not%20found.");
+  if (before.active_status === "inactive" || before.active === false) redirect(`/team/${id}?error=Team%20member%20is%20already%20inactive.`);
+
+  const payload = {
+    active: false,
+    active_status: "inactive",
+  };
+  const { data: after, error } = await supabase.from("team_members").update(payload).eq("id", id).select("*").single();
+  if (error) {
+    console.error("[team:deactivate] Failed to deactivate team member", { id, error });
+    redirect(`/team/${id}?error=Could%20not%20deactivate%20team%20member.`);
+  }
+
+  await supabase
+    .from("profiles")
+    .update({ active_status: "inactive", updated_at: new Date().toISOString() })
+    .or(`team_member_id.eq.${id}${before.auth_user_id ? `,id.eq.${before.auth_user_id}` : ""}${before.email ? `,email.eq.${before.email}` : ""}`);
+
+  await logActivity({
+    profile,
+    action: "deactivate",
+    entityType: "team_member",
+    entityId: id,
+    entityLabel: after.full_name,
+    beforeData: before,
+    afterData: after,
+    metadata: { reason },
+    summary: `Deactivated team member ${after.full_name}`,
+  });
+
+  revalidatePath("/team");
+  revalidatePath(`/team/${id}`);
+  revalidatePath(`/team/${id}/edit`);
+  redirect(`/team/${id}`);
 }

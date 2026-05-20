@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
 import { DataTable, EmptyState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canViewFinancials } from "@/lib/authz";
@@ -123,7 +122,7 @@ export default async function FinanceImportPage({ searchParams }: { searchParams
   const loadWarning = stagedResult.error?.message || existingResult.error?.message || null;
 
   return (
-    <AppShell>
+    <>
       <PageHeader
         title="Finance Import"
         subtitle="Import clear spreadsheet rows automatically and stage only unclear rows for review."
@@ -213,6 +212,6 @@ export default async function FinanceImportPage({ searchParams }: { searchParams
           </DataTable>
         </section>
       )}
-    </AppShell>
+    </>
   );
 }

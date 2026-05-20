@@ -2,9 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ClientAppShell as AppShell } from "@/components/ClientAppShell";
 import { QuantityStepper } from "@/components/QuantityStepper";
-import { ErrorState, PageHeader, SecondaryButton, SectionCard } from "@/components/ui";
+import { ErrorState, LoadingState, PageHeader, SecondaryButton, SectionCard } from "@/components/ui";
 import { recordLeftovers, completeRoute } from "@/lib/operator-actions";
 
 interface LeftoverItem {
@@ -79,31 +78,25 @@ export default function LeftoversPage() {
   };
 
   if (loading) {
-    return (
-      <AppShell>
-        <div className="flex items-center justify-center py-12">
-          <p className="text-slate-500">Loading picked items...</p>
-        </div>
-      </AppShell>
-    );
+    return <LoadingState variant="cards" cards={3} />;
   }
 
   if (!routeId) {
     return (
-      <AppShell>
+      <>
         <ErrorState
           title="Route id missing"
           body="This leftovers page was opened without a valid route id."
           action={<SecondaryButton href="/operator">Back to operator home</SecondaryButton>}
         />
-      </AppShell>
+      </>
     );
   }
 
   const totalLeftovers = Object.values(leftoverQtys).reduce((a, b) => a + b, 0);
 
   return (
-    <AppShell>
+    <>
       <div className="space-y-6 max-w-2xl">
         <PageHeader
           title="Return Leftovers"
@@ -118,9 +111,9 @@ export default function LeftoversPage() {
         )}
 
         {items.length === 0 ? (
-          <div className="rounded-lg bg-blue-50 border border-blue-200 p-6 text-center">
-            <p className="text-blue-800 font-medium">No items to return</p>
-            <p className="text-sm text-blue-700 mt-1">You used all the stock you picked.</p>
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-6 text-center">
+            <p className="font-medium text-emerald-800">No items to return</p>
+            <p className="mt-1 text-sm text-emerald-700">You used all the stock you picked.</p>
             <button
               onClick={handleCompleteRoute}
               disabled={submitting}
@@ -131,7 +124,7 @@ export default function LeftoversPage() {
           </div>
         ) : (
           <>
-            <div className="rounded-lg bg-blue-50 border border-blue-200 p-4 text-sm text-blue-800">
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
               <strong>Instructions:</strong> Enter the quantity of each item you're returning to storage. Leave blank or 0 for items you used completely.
             </div>
 
@@ -189,6 +182,6 @@ export default function LeftoversPage() {
           </>
         )}
       </div>
-    </AppShell>
+    </>
   );
 }

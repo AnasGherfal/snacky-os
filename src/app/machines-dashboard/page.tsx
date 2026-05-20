@@ -1,26 +1,29 @@
-import { AppShell } from "@/components/AppShell";
 import { BarList, KpiSection } from "@/components/KpiDashboard";
 import { DataTable, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
+import { requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
 import { formatInteger, formatLydOrDash, groupCount, latestObservedMonth, monthKey, salesAmount, soldQty } from "@/lib/kpi";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export default async function MachinesDashboardPage() {
+  await requireCurrentProfileForPath("/machines-dashboard");
   const supabase = getSupabaseServerClient();
-  const [salesResult, machinesResult, refillResult, stockResult, issuesResult, cashResult] = supabase
+  const [salesResult, machinesResult, refillResult, historicalRefillResult, stockResult, issuesResult, cashResult] = supabase
     ? await Promise.all([
-        supabase.from("vms_sales_snapshots").select("id, machine_id, product_id, sold_qty, sales_amount, period_end, product:products(id, cost_price, current_cost_price_lyd)"),
+        supabase.from("vms_sales_snapshots").select("id, machine_id, product_id, sold_qty, sales_amount, period_end, product:products(id, cost_price, current_cost_price_lyd)").eq("import_row_status", "imported"),
         supabase.from("machines").select("id, machine_code, name, status, target_nsm, rent_amount, location:locations(id, name)").order("name"),
         supabase.from("refill_orders").select("id, machine_id, status, generated_at, completed_at"),
-        supabase.from("vms_stock_snapshots").select("machine_id, current_qty"),
+        supabase.from("machine_refill_history").select("id, machine_id, machine_name, fill_status, issues_found, refill_at"),
+        supabase.from("vms_stock_snapshots").select("machine_id, current_qty").eq("import_row_status", "imported"),
         supabase.from("issues").select("id, machine_id, status"),
         supabase.from("cash_collections").select("machine_id, variance"),
       ])
-    : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }];
+    : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }];
 
   const sales = (salesResult.data ?? []) as any[];
   const machines = (machinesResult.data ?? []) as any[];
   const refills = (refillResult.data ?? []) as any[];
+  const historicalRefills = (historicalRefillResult.data ?? []) as any[];
   const stockouts = groupCount(((stockResult.data ?? []) as any[]).filter((row) => Number(row.current_qty ?? 0) <= 0 && row.machine_id), (row) => String(row.machine_id));
   const issues = groupCount(((issuesResult.data ?? []) as any[]).filter((row) => row.machine_id), (row) => String(row.machine_id));
   const openIssues = groupCount(((issuesResult.data ?? []) as any[]).filter((row) => row.machine_id && row.status !== "resolved" && row.status !== "closed"), (row) => String(row.machine_id));
@@ -32,6 +35,7 @@ export default async function MachinesDashboardPage() {
 
   const latestMonth = latestObservedMonth(sales);
   const completedRefills = refills.filter((row) => row.status === "completed" || row.completed_at);
+  const historicalRefillCounts = groupCount(historicalRefills.filter((row) => row.machine_id), (row) => String(row.machine_id));
   const machineMetrics = machines.map((machine) => {
     const machineSales = sales.filter((row) => row.machine_id === machine.id);
     const latestMonthSales = latestMonth ? machineSales.filter((row) => monthKey(row.period_end) === latestMonth) : [];
@@ -56,7 +60,7 @@ export default async function MachinesDashboardPage() {
       nsm,
       targetNsm,
       targetGap: nsm - targetNsm,
-      refillCount: completedRefills.filter((row) => row.machine_id === machine.id).length,
+      refillCount: completedRefills.filter((row) => row.machine_id === machine.id).length + (historicalRefillCounts.get(String(machine.id)) ?? 0),
       stockoutCount: stockouts.get(String(machine.id)) ?? 0,
       issueCount: issues.get(String(machine.id)) ?? 0,
       openIssueCount: openIssues.get(String(machine.id)) ?? 0,
@@ -72,7 +76,7 @@ export default async function MachinesDashboardPage() {
   const targetComparison = [...machineMetrics].filter((row) => row.targetNsm > 0).sort((a, b) => b.targetGap - a.targetGap).slice(0, 10);
 
   return (
-    <AppShell>
+    <>
       <PageHeader title="Machine Dashboard" subtitle="Machine sales, NSM, refills, stockouts, issues, cash variance, and rent-aware profit." />
 
       {!supabase ? (
@@ -127,6 +131,6 @@ export default async function MachinesDashboardPage() {
           </KpiSection>
         </div>
       )}
-    </AppShell>
+    </>
   );
 }

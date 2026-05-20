@@ -1,24 +1,44 @@
 # Production Checklist
 
-Use this before every staging or production launch.
+Use this before every staging or production launch. For environment rules, see [ENVIRONMENTS.md](./ENVIRONMENTS.md).
+
+## Environment Separation
+
+- [ ] Local development is using local Supabase, or staging Supabase only when intentionally configured.
+- [ ] Staging uses Supabase staging and Vercel staging/Preview.
+- [ ] Production uses Supabase production and Vercel production.
+- [ ] Vercel Preview/Staging environment variables do not point to production Supabase.
+- [ ] Vercel Production environment variables do not point to local or staging Supabase.
+- [ ] `NEXT_PUBLIC_APP_URL` matches the deployed domain for each environment.
+- [ ] Supabase Auth Site URL and redirect URLs include the app domains for staging and production.
 
 ## Build And Configuration
 
 - [ ] `npm run build` passes.
 - [ ] `.env.example` lists every required runtime variable.
 - [ ] Vercel Preview and Production have separate environment variable values where needed.
-- [ ] `NEXT_PUBLIC_APP_URL` matches the deployed domain for the environment.
 - [ ] No real secrets are committed to Git.
 - [ ] No local Supabase development URL is used by deployed environments.
+- [ ] `NEXT_PUBLIC_SUPABASE_SERVICE_ROLE` is not configured in any environment.
+- [ ] `NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY` is not configured in any environment.
+- [ ] Security headers are present: `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, and `Permissions-Policy`.
+- [ ] No strict Content Security Policy is enabled unless it has been tested with Supabase, Storage signed URLs, PWA assets, and image loading.
 
 ## Supabase
 
 - [ ] Migrations have been applied with `npx supabase db push`.
+- [ ] Schema changes were made through migrations, not manual production edits.
+- [ ] Migrations were applied and tested in staging before production.
+- [ ] `supabase db reset` was not run against staging.
+- [ ] `supabase db reset` was never run against production.
 - [ ] `supabase/seed.sql` was not run against production unless it was intentionally sanitized first.
+- [ ] Initial real data was loaded through bootstrap/import flows, not local demo seed data.
+- [ ] Historical imports were tested in staging before production.
 - [ ] Production bootstrap was dry-run first with `npm run bootstrap:production -- --dry-run`.
 - [ ] Production bootstrap was run at most once per environment with `--confirm-production-bootstrap`.
 - [ ] First production admin is created with a real email.
 - [ ] `SUPABASE_SERVICE_ROLE_KEY` is configured only in Vercel server-side env vars.
+- [ ] Service-role search results are limited to server-only code, scripts, and docs with placeholders.
 - [ ] Supabase Auth Site URL matches `NEXT_PUBLIC_APP_URL`.
 - [ ] Supabase Auth redirect URLs include production and staging or preview URLs.
 - [ ] `profiles` has an authenticated self-read policy using `profiles.id = auth.uid()`.
@@ -40,6 +60,9 @@ Use this before every staging or production launch.
 - [ ] The deployed site is served over HTTPS.
 - [ ] Mobile browser offers install/add-to-home-screen where supported.
 - [ ] Offline navigation shows the offline fallback page, not a browser network error.
+- [ ] iPhone install was tested with Safari, Share, Add to Home Screen.
+- [ ] Android install was tested with Chrome, Menu, Add to Home Screen or Install App.
+- [ ] `/install` instructions match [PWA_INSTALL.md](./PWA_INSTALL.md).
 
 ## Phone Operator Test
 
@@ -58,8 +81,16 @@ Test on a real phone or a 390px wide responsive viewport.
 ## Access Control
 
 - [ ] Owner/admin can access dashboards, team, master data, imports, routes, inventory, cash, and finance screens.
+- [ ] Owner/admin can create or edit team members and review activity logs.
+- [ ] Finance can access finance and cash review workflows.
+- [ ] Finance cannot access `/activity`, `/admin`, `/team`, `/settings`, or `/vms-import`.
+- [ ] Warehouse/supervisor access matches the intended operations permissions.
+- [ ] Warehouse can access inventory, inventory movements, storage locations, and purchases.
+- [ ] Warehouse cannot access `/finance`, `/activity`, `/admin`, `/team`, `/settings`, or `/vms-import`.
 - [ ] Operator can access only operator routes and execution screens.
 - [ ] Operator cannot access product cost/profit or finance screens.
+- [ ] Operator cannot access team, settings, admin pages, or VMS import.
+- [ ] Unauthorized pages show the polished Unauthorized page.
 - [ ] Inactive users are redirected away from the app.
 - [ ] A user without a configured Snacky OS profile cannot enter the app.
 

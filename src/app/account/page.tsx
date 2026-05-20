@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
 import { FormField, FormSection, PageHeader, SectionCard, StatusBadge } from "@/components/ui";
 import { changeOwnPassword, logoutFromAccount } from "@/lib/account-actions";
 import { getCurrentProfile } from "@/lib/auth";
@@ -12,7 +11,7 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
   const { error, success } = await searchParams;
 
   return (
-    <AppShell>
+    <>
       <PageHeader title="Account" subtitle="View your Snacky OS profile, change your password, or log out." />
 
       <div className="grid gap-6 xl:grid-cols-[1fr_420px]">
@@ -69,6 +68,6 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
           </SectionCard>
         </div>
       </div>
-    </AppShell>
+    </>
   );
 }

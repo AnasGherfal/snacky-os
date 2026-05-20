@@ -1,7 +1,8 @@
 "use client";
 import Image from "next/image";
-import Link from "next/link";
+import Link, { useLinkStatus } from "next/link";
 import type { ComponentType } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertCircle,
   Banknote,
@@ -9,16 +10,12 @@ import {
   Boxes,
   ClipboardList,
   LayoutDashboard,
-  ListChecks,
-  Package,
-  ReceiptText,
   ShieldCheck,
-  ShoppingCart,
   UserCircle,
   Warehouse,
   X,
 } from "lucide-react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useI18n } from "@/components/I18nProvider";
 import { AppRole } from "@/lib/authz";
 
@@ -36,19 +33,52 @@ type NavSection = {
 };
 
 const dashboardItem: NavItem = { labelKey: "dashboard", href: "/dashboard", icon: LayoutDashboard, exact: true };
-const routesItem: NavItem = { labelKey: "routes", href: "/routes", icon: ClipboardList };
-const refillsItem: NavItem = { labelKey: "refillRecommendations", href: "/refills", icon: ListChecks };
-const storageItem: NavItem = { labelKey: "storage", href: "/inventory", icon: Warehouse, activePrefixes: ["/inventory"] };
-const storageExactItem: NavItem = { labelKey: "storage", href: "/inventory", icon: Warehouse, exact: true };
-const movementsItem: NavItem = { labelKey: "movements", href: "/inventory/movements", icon: Boxes };
-const purchasesItem: NavItem = { labelKey: "purchases", href: "/purchases", icon: ShoppingCart };
-const productsItem: NavItem = { labelKey: "products", href: "/products", icon: Package };
-const machinesItem: NavItem = { labelKey: "machines", href: "/machines", icon: Boxes };
-const planogramsItem: NavItem = { labelKey: "planograms", href: "/machine-slots", icon: ListChecks };
-const issuesItem: NavItem = { labelKey: "issues", href: "/issues", icon: AlertCircle };
-const financeOverviewItem: NavItem = { labelKey: "financeOverview", href: "/finance", icon: Banknote, exact: true };
-const financeTransactionsItem: NavItem = { labelKey: "financeTransactions", href: "/finance/transactions", icon: ReceiptText };
-const cashCollectionsItem: NavItem = { labelKey: "cashCollections", href: "/cash-collections", icon: Banknote };
+const operationsItem: NavItem = {
+  labelKey: "operations",
+  href: "/routes",
+  icon: ClipboardList,
+  activePrefixes: ["/routes", "/refills"],
+};
+const operatorOperationsItem: NavItem = {
+  labelKey: "myRoutes",
+  href: "/operator/routes",
+  icon: ClipboardList,
+  activePrefixes: ["/operator/routes"],
+};
+const operatorIssuesItem: NavItem = {
+  labelKey: "issues",
+  href: "/operator/issues",
+  icon: AlertCircle,
+};
+const accountItem: NavItem = {
+  labelKey: "account",
+  href: "/account",
+  icon: UserCircle,
+};
+const warehouseOperationsItem: NavItem = {
+  labelKey: "operations",
+  href: "/warehouse/pick-lists",
+  icon: ClipboardList,
+  activePrefixes: ["/warehouse", "/operator"],
+};
+const inventoryItem: NavItem = {
+  labelKey: "inventory",
+  href: "/inventory",
+  icon: Warehouse,
+  activePrefixes: ["/inventory", "/products", "/purchases", "/storage-locations", "/suppliers"],
+};
+const machinesItem: NavItem = {
+  labelKey: "machinesGroup",
+  href: "/machines",
+  icon: Boxes,
+  activePrefixes: ["/machines", "/machine-slots", "/issues"],
+};
+const financeItem: NavItem = {
+  labelKey: "finance",
+  href: "/finance",
+  icon: Banknote,
+  activePrefixes: ["/finance", "/cash-collections"],
+};
 const reportsItem: NavItem = {
   labelKey: "reports",
   href: "/reports",
@@ -59,62 +89,30 @@ const adminItem: NavItem = {
   labelKey: "admin",
   href: "/admin",
   icon: ShieldCheck,
-  activePrefixes: ["/admin", "/team", "/settings", "/vms-import", "/vms-mappings", "/activity", "/storage-locations", "/suppliers"],
+  activePrefixes: ["/admin", "/team", "/settings", "/vms-import", "/vms-mappings", "/activity"],
 };
-const accountItem: NavItem = { labelKey: "account", href: "/account", icon: UserCircle };
 
 const ownerAdminNav: NavSection[] = [
-  { items: [dashboardItem] },
-  { titleKey: "operations", items: [routesItem, refillsItem] },
-  { titleKey: "inventory", items: [storageItem, purchasesItem, productsItem] },
-  { titleKey: "machinesGroup", items: [machinesItem, planogramsItem, issuesItem] },
-  { titleKey: "finance", items: [financeOverviewItem, financeTransactionsItem, cashCollectionsItem] },
-  { items: [reportsItem, adminItem] },
+  { items: [dashboardItem, operationsItem, inventoryItem, machinesItem, financeItem, reportsItem, adminItem] },
 ];
 
 const supervisorNav: NavSection[] = [
-  { items: [dashboardItem] },
-  { titleKey: "operations", items: [routesItem, refillsItem] },
-  { titleKey: "inventory", items: [storageItem, purchasesItem] },
-  { titleKey: "machinesGroup", items: [machinesItem, planogramsItem, issuesItem] },
+  { items: [dashboardItem, operationsItem, inventoryItem, machinesItem] },
 ];
 
 const operatorNav: NavSection[] = [
-  {
-    items: [
-      { labelKey: "myRoutes", href: "/operator/routes", icon: ClipboardList },
-      { labelKey: "issues", href: "/operator/issues", icon: AlertCircle },
-      accountItem,
-    ],
-  },
+  { items: [operatorOperationsItem, operatorIssuesItem, accountItem] },
 ];
 
 const warehouseNav: NavSection[] = [
-  {
-    items: [
-      storageExactItem,
-      purchasesItem,
-      movementsItem,
-      { labelKey: "pickLists", href: "/warehouse/pick-lists", icon: ClipboardList },
-      accountItem,
-    ],
-  },
+  { items: [inventoryItem, warehouseOperationsItem] },
 ];
 
 const financeNav: NavSection[] = [
-  {
-    items: [
-      financeOverviewItem,
-      financeTransactionsItem,
-      cashCollectionsItem,
-      purchasesItem,
-      { labelKey: "reports", href: "/finance/reports", icon: BarChart3 },
-      accountItem,
-    ],
-  },
+  { items: [financeItem] },
 ];
 
-const viewerNav: NavSection[] = [{ items: [dashboardItem, accountItem] }];
+const viewerNav: NavSection[] = [{ items: [dashboardItem] }];
 
 function sectionsForRole(role: AppRole) {
   if (role === "owner" || role === "admin") return ownerAdminNav;
@@ -129,6 +127,10 @@ function pathWithoutQuery(href: string) {
   return href.split("?")[0] || href;
 }
 
+function searchFromHref(href: string) {
+  return href.split("?")[1]?.split("#")[0] ?? "";
+}
+
 function matchesPath(pathname: string, prefix: string) {
   return pathname === prefix || pathname.startsWith(`${prefix}/`);
 }
@@ -140,16 +142,44 @@ function isActiveItem(pathname: string, item: NavItem) {
   return matchesPath(pathname, hrefPath);
 }
 
+function NavPendingIndicator() {
+  const { pending } = useLinkStatus();
+
+  return (
+    <span
+      aria-hidden="true"
+      className={`ms-auto h-1.5 w-1.5 shrink-0 rounded-full bg-current transition-opacity ${pending ? "animate-pulse opacity-70" : "opacity-0"}`}
+    />
+  );
+}
+
 function SidebarContent({ role, onNavigate }: { role: AppRole; onNavigate?: () => void }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const currentSearch = searchParams.toString();
   const { dictionary } = useI18n();
   const sections = sectionsForRole(role);
+  const [optimisticHref, setOptimisticHref] = useState<string | null>(null);
+  const activePathname = optimisticHref ? pathWithoutQuery(optimisticHref) : pathname;
+  const activeSearchParams = new URLSearchParams(optimisticHref ? searchFromHref(optimisticHref) : currentSearch);
+  const moduleParam = activeSearchParams.get("module") ?? (role === "finance" && matchesPath(activePathname, "/purchases") ? "finance" : null);
+
+  useEffect(() => {
+    setOptimisticHref(null);
+  }, [pathname, currentSearch]);
+
+  useEffect(() => {
+    sections.forEach((section) => {
+      section.items.forEach((item) => router.prefetch(item.href));
+    });
+  }, [router, sections]);
 
   return (
     <>
       <div className="mb-6 flex shrink-0 items-center gap-3">
         <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-full border border-slate-200 bg-white shadow-sm">
-          <Image src="/brand/snacky-logo.png" alt="" fill sizes="48px" className="object-cover" />
+          <Image src="/brand/snacky-logo.png" alt="" fill sizes="48px" className="object-contain" />
         </div>
         <div className="min-w-0">
           <h2 className="truncate text-lg font-semibold text-slate-950">{dictionary.app.name}</h2>
@@ -168,18 +198,29 @@ function SidebarContent({ role, onNavigate }: { role: AppRole; onNavigate?: () =
             <div className="space-y-1">
               {section.items.map((item) => {
                 const Icon = item.icon;
-                const active = isActiveItem(pathname, item);
+                const active =
+                  matchesPath(activePathname, "/purchases") && moduleParam === "finance"
+                    ? item.labelKey === "finance"
+                    : matchesPath(activePathname, "/purchases")
+                      ? item.labelKey === "inventory"
+                      : isActiveItem(activePathname, item);
 
                 return (
                   <Link
                     key={`${item.labelKey}-${item.href}`}
                     href={item.href}
-                    onClick={onNavigate}
+                    prefetch={true}
+                    onClick={(event) => {
+                      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+                      setOptimisticHref(item.href);
+                      onNavigate?.();
+                    }}
                     className={active ? "nav-link-active flex items-center gap-2" : "nav-link flex items-center gap-2"}
                     aria-current={active ? "page" : undefined}
                   >
                     <Icon className="h-4 w-4 shrink-0" />
-                    <span>{dictionary.nav[item.labelKey]}</span>
+                    <span className="min-w-0 truncate">{dictionary.nav[item.labelKey]}</span>
+                    <NavPendingIndicator />
                   </Link>
                 );
               })}
@@ -194,7 +235,7 @@ function SidebarContent({ role, onNavigate }: { role: AppRole; onNavigate?: () =
 export function Sidebar({ role, mobileOpen = false, onMobileClose }: { role: AppRole; mobileOpen?: boolean; onMobileClose?: () => void }) {
   return (
     <>
-      <aside className="app-sidebar hidden h-screen w-72 shrink-0 overflow-hidden border-r border-slate-200 bg-white md:flex md:flex-col">
+      <aside className="app-sidebar sticky top-0 hidden h-dvh w-72 shrink-0 overflow-hidden border-r border-slate-200 bg-white md:flex md:flex-col">
         <div className="flex min-h-0 flex-1 flex-col p-5">
           <SidebarContent role={role} />
         </div>

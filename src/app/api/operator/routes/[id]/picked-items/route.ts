@@ -3,6 +3,16 @@ import { NextResponse } from "next/server";
 import { getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute } from "@/lib/authz";
 
+function errorMessage(error: unknown) {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    const row = error as { message?: unknown; details?: unknown; hint?: unknown };
+    return String(row.message ?? row.details ?? row.hint ?? "Unknown database error");
+  }
+  return "Unknown database error";
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -16,7 +26,8 @@ export async function GET(
   }
 
   try {
-    const { data: route } = await supabase.from("routes").select("id, operator_id").eq("id", routeId).single();
+    const { data: route, error: routeError } = await supabase.from("routes").select("id, operator_id").eq("id", routeId).maybeSingle();
+    if (routeError) throw routeError;
     if (!route || !canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, route.operator_id)) {
       return NextResponse.json({ error: "Route not available" }, { status: 403 });
     }
@@ -54,7 +65,7 @@ export async function GET(
   } catch (error) {
     console.error("Error fetching picked items:", error);
     return NextResponse.json(
-      { error: "Failed to fetch picked items" },
+      { error: "Failed to fetch picked items", details: process.env.NODE_ENV === "development" ? errorMessage(error) : undefined },
       { status: 500 }
     );
   }

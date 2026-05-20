@@ -1,97 +1,234 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/AppShell";
-import { DataTable, EmptyState, PageHeader, SectionCard, StatusBadge } from "@/components/ui";
+import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileRecordCard, PageHeader, PrimaryButton, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
-import { canAccessPath } from "@/lib/authz";
+import { canAccessPath, canViewFinancials } from "@/lib/authz";
 import { getCashCollectionStatus, isCriticalCashVariance, isLargeCashVariance } from "@/lib/cash-collections";
 import { lyd } from "@/lib/format";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+
+const statusOptions = ["pending_collection", "collected_pending_count", "counted_confirmed", "variance_review", "voided"];
 
 function formatDate(value: string | null) {
   if (!value) return "-";
   return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
-function varianceClassName(variance: number) {
+function money(value: number | string | null | undefined) {
+  return value === null || value === undefined ? "-" : lyd(Number(value));
+}
+
+function varianceClassName(variance: number | null | undefined) {
+  if (variance === null || variance === undefined) return "font-medium text-slate-500";
   if (isCriticalCashVariance(variance)) return "font-semibold text-rose-700";
   if (isLargeCashVariance(variance)) return "font-semibold text-amber-700";
   return "font-medium text-slate-700";
 }
 
-export default async function CashCollectionsPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
-  const { error = "" } = await searchParams;
+export default async function CashCollectionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{
+    error?: string;
+    status?: string;
+    machine_id?: string;
+    operator_id?: string;
+    date_from?: string;
+    date_to?: string;
+    variance_review?: string;
+  }>;
+}) {
+  const params = await searchParams;
   const profile = await getCurrentProfile();
   if (!profile || !canAccessPath({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/cash-collections")) {
     redirect("/unauthorized");
   }
+  const canReviewMoney = canViewFinancials({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status });
 
   const supabase = getSupabaseServerClient();
-  const { data: collections } = supabase
-    ? await supabase
-        .from("cash_collections")
-        .select(
-          "id, collected_at, vms_expected_cash, actual_cash_collected, variance, review_status, machine:machines(id, name, machine_code), operator:team_members!cash_collections_operator_id_fkey(id, full_name), route:routes(id, route_date)"
-        )
-        .order("collected_at", { ascending: false })
-    : { data: null };
+  if (!supabase) {
+    return (
+      <>
+        <ErrorState title="Cash collections unavailable" body="Supabase is not configured, so Snacky OS cannot load cash collections." />
+      </>
+    );
+  }
+
+  const [{ data: machines, error: machinesError }, { data: operators, error: operatorsError }] = await Promise.all([
+    supabase.from("machines").select("id, name, machine_code").order("name"),
+    supabase.from("team_members").select("id, full_name").order("full_name"),
+  ]);
+  const filterLoadError = machinesError ?? operatorsError;
+  if (filterLoadError) {
+    console.error("[cash] Failed to load cash collection filters", filterLoadError);
+    return (
+      <>
+        <ErrorState title="Could not load cash filters" body="Snacky OS could not load machine or operator options for cash collections." action={<SecondaryButton href="/cash-collections">Retry</SecondaryButton>} />
+      </>
+    );
+  }
+
+  let query = supabase
+    .from("cash_collections")
+    .select(
+      "id, route_id, machine_id, operator_id, collected_at, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, counted_at, notes, machine:machines(id, name, machine_code), operator:team_members!cash_collections_operator_id_fkey(id, full_name), route:routes(id, route_date)",
+    )
+    .order("collected_at", { ascending: false })
+    .limit(500);
+
+  const statusFilter = params.variance_review === "1" ? "variance_review" : params.status;
+  if (statusFilter && statusOptions.includes(statusFilter)) query = query.eq("review_status", statusFilter);
+  if (params.machine_id) query = query.eq("machine_id", params.machine_id);
+  if (params.operator_id) query = query.eq("operator_id", params.operator_id);
+  if (params.date_from) query = query.gte("collected_at", `${params.date_from}T00:00:00`);
+  if (params.date_to) query = query.lte("collected_at", `${params.date_to}T23:59:59`);
+
+  const { data: collections, error: collectionsError } = await query;
+  if (collectionsError) {
+    console.error("[cash] Failed to load cash collections", collectionsError);
+    return (
+      <>
+        <ErrorState title="Could not load cash collections" body="The cash collection page reads real Supabase rows, but the query failed." action={<SecondaryButton href="/cash-collections">Retry</SecondaryButton>} />
+      </>
+    );
+  }
 
   const rows = collections ?? [];
-  const totalExpected = rows.reduce((sum: number, row: any) => sum + Number(row.vms_expected_cash ?? 0), 0);
-  const totalActual = rows.reduce((sum: number, row: any) => sum + Number(row.actual_cash_collected ?? 0), 0);
-  const openReviews = rows.filter((row: any) => getCashCollectionStatus(row.review_status, row.variance) === "needs_review").length;
+  const cashIds = rows.map((row: any) => row.id);
+  const { data: financeRows, error: financeError } = cashIds.length
+    ? await supabase
+        .from("financial_transactions")
+        .select("id, related_cash_collection_id, transaction_status")
+        .in("related_cash_collection_id", cashIds)
+        .eq("transaction_kind", "cash_collection")
+    : { data: [], error: null };
+  if (financeError) {
+    console.error("[cash] Failed to load linked finance rows", financeError);
+    return (
+      <>
+        <ErrorState title="Could not load cash finance links" body="Cash collections loaded, but linked finance transactions could not be read." action={<SecondaryButton href="/cash-collections">Retry</SecondaryButton>} />
+      </>
+    );
+  }
+  const financeByCashId = new Map((financeRows ?? []).map((row: any) => [row.related_cash_collection_id, row]));
+  const activeRows = rows.filter((row: any) => getCashCollectionStatus(row.review_status, row.variance) !== "voided");
+  const totalExpected = activeRows.reduce((sum: number, row: any) => sum + Number(row.vms_expected_cash ?? 0), 0);
+  const totalCounted = activeRows.reduce((sum: number, row: any) => sum + Number(row.actual_cash_collected ?? 0), 0);
+  const pendingCount = rows.filter((row: any) => row.review_status === "collected_pending_count").length;
+  const reviewCount = rows.filter((row: any) => getCashCollectionStatus(row.review_status, row.variance) === "variance_review").length;
 
   return (
-    <AppShell>
+    <>
       <PageHeader
         title="Cash Collections"
-        subtitle="Compare operator cash collections against expected VMS cash and resolve variances."
+        subtitle="Track route cash pickup, finance counting, variances, and linked money-in transactions."
+        action={canReviewMoney ? <PrimaryButton href="/cash-collections/new">New cash collection</PrimaryButton> : undefined}
       />
-      {error ? <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{error}</div> : null}
+      {params.error ? <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{params.error}</div> : null}
 
-      {!supabase ? (
-        <EmptyState title="Connect Supabase to activate cash collections" body="Add environment variables and restart the app." />
-      ) : !rows.length ? (
-        <EmptyState title="No cash collections yet" body="Completed operator machine stops will appear here after cash is recorded." />
+      <section className="surface-card mb-6">
+        <form className="grid gap-3 md:grid-cols-3 xl:grid-cols-7">
+          <select name="status" defaultValue={params.status ?? ""} className="field-input">
+            <option value="">All statuses</option>
+            {statusOptions.map((status) => <option key={status} value={status}>{status.replaceAll("_", " ")}</option>)}
+          </select>
+          <select name="machine_id" defaultValue={params.machine_id ?? ""} className="field-input">
+            <option value="">All machines</option>
+            {machines?.map((machine: any) => <option key={machine.id} value={machine.id}>{machine.name}{machine.machine_code ? ` (${machine.machine_code})` : ""}</option>)}
+          </select>
+          <select name="operator_id" defaultValue={params.operator_id ?? ""} className="field-input">
+            <option value="">All operators</option>
+            {operators?.map((operator: any) => <option key={operator.id} value={operator.id}>{operator.full_name}</option>)}
+          </select>
+          <input name="date_from" type="date" defaultValue={params.date_from ?? ""} className="field-input" />
+          <input name="date_to" type="date" defaultValue={params.date_to ?? ""} className="field-input" />
+          <label className="flex min-h-11 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700">
+            <input type="checkbox" name="variance_review" value="1" defaultChecked={params.variance_review === "1"} />
+            Variance review
+          </label>
+          <div className="grid gap-2 sm:flex">
+            <button className="btn-primary w-full sm:w-auto">Filter</button>
+            <Link href="/cash-collections" className="btn-secondary w-full sm:w-auto">Reset</Link>
+          </div>
+        </form>
+      </section>
+
+      {!rows.length ? (
+        <EmptyState title="No cash collections found" body="Manual collections and route cash pickups will appear here when real cash records exist." />
       ) : (
         <div className="space-y-6">
-          <div className="grid gap-4 sm:grid-cols-3">
-            <SectionCard>
-              <div className="text-sm text-slate-500">Expected cash</div>
-              <div className="mt-2 text-2xl font-semibold text-slate-900">{lyd(totalExpected)}</div>
-            </SectionCard>
-            <SectionCard>
-              <div className="text-sm text-slate-500">Actual collected</div>
-              <div className="mt-2 text-2xl font-semibold text-slate-900">{lyd(totalActual)}</div>
-            </SectionCard>
-            <SectionCard>
-              <div className="text-sm text-slate-500">Needs review</div>
-              <div className="mt-2 text-2xl font-semibold text-slate-900">{openReviews}</div>
-            </SectionCard>
+          <div className="grid gap-4 sm:grid-cols-4">
+            <SectionCard><div className="text-sm text-slate-500">Expected cash</div><div className="mt-2 text-2xl font-semibold text-slate-900">{lyd(totalExpected)}</div></SectionCard>
+            <SectionCard><div className="text-sm text-slate-500">Counted amount</div><div className="mt-2 text-2xl font-semibold text-slate-900">{lyd(totalCounted)}</div></SectionCard>
+            <SectionCard><div className="text-sm text-slate-500">Pending count</div><div className="mt-2 text-2xl font-semibold text-slate-900">{pendingCount}</div></SectionCard>
+            <SectionCard><div className="text-sm text-slate-500">Variance review</div><div className="mt-2 text-2xl font-semibold text-slate-900">{reviewCount}</div></SectionCard>
           </div>
 
-          <DataTable headers={["Date", "Machine", "Operator", "Route", "Expected", "Actual", "Variance", "Status", "Review"]}>
+          <MobileCardList>
             {rows.map((collection: any) => {
-              const variance = Number(collection.variance ?? 0);
+              const variance = collection.variance === null || collection.variance === undefined ? null : Number(collection.variance);
               const status = getCashCollectionStatus(collection.review_status, variance);
+              const finance = financeByCashId.get(collection.id);
 
               return (
-                <tr key={collection.id} className={isLargeCashVariance(variance) && status !== "resolved" ? "bg-amber-50/60" : undefined}>
-                  <td>{formatDate(collection.collected_at)}</td>
+                <MobileRecordCard key={collection.id} className={status === "variance_review" ? "border-amber-200 bg-amber-50/50" : undefined}>
+                  <div className="mb-3 flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h2 className="break-words text-base font-semibold text-slate-900">{collection.machine?.name ?? "Unknown machine"}</h2>
+                      <p className="mt-1 text-xs text-slate-500">{collection.machine?.machine_code ?? "-"} - {formatDate(collection.collected_at)}</p>
+                    </div>
+                    <StatusBadge status={status.replaceAll("_", " ")} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <MobileField label="Expected">{money(collection.vms_expected_cash)}</MobileField>
+                    <MobileField label="Counted">{money(collection.actual_cash_collected)}</MobileField>
+                    <MobileField label="Variance"><span className={varianceClassName(variance)}>{money(variance)}</span></MobileField>
+                    <MobileField label="Collected by">{collection.operator?.full_name ?? "Unassigned"}</MobileField>
+                    <MobileField label="Route">{collection.route?.id ? <Link href={`/routes/${collection.route.id}`} className="link-secondary">{collection.route.route_date}</Link> : "-"}</MobileField>
+                    <MobileField label="Finance">
+                      {finance?.id ? <Link href={`/finance/transactions/${finance.id}`} className="link-secondary">{finance.transaction_status ?? "posted"}</Link> : <span className="text-slate-500">Pending</span>}
+                    </MobileField>
+                  </div>
+                  <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                    <Link className="btn-secondary w-full" href={`/cash-collections/${collection.id}`}>Open</Link>
+                    {canReviewMoney && status !== "voided" ? <Link className="btn-secondary w-full" href={`/cash-collections/${collection.id}/edit`}>Edit</Link> : null}
+                  </div>
+                </MobileRecordCard>
+              );
+            })}
+          </MobileCardList>
+
+          <DataTable className="hidden md:block" headers={["Machine", "Route", "Collected by", "Collected date", "Expected cash", "Counted amount", "Variance", "Status", "Finance", "Actions"]}>
+            {rows.map((collection: any) => {
+              const variance = collection.variance === null || collection.variance === undefined ? null : Number(collection.variance);
+              const status = getCashCollectionStatus(collection.review_status, variance);
+              const finance = financeByCashId.get(collection.id);
+
+              return (
+                <tr key={collection.id} className={status === "variance_review" ? "bg-amber-50/60" : undefined}>
                   <td>
                     <div className="font-medium text-slate-900">{collection.machine?.name ?? "Unknown machine"}</div>
                     <div className="text-xs text-slate-500">{collection.machine?.machine_code ?? "-"}</div>
                   </td>
+                  <td>{collection.route?.id ? <Link href={`/routes/${collection.route.id}`} className="link-secondary">{collection.route.route_date}</Link> : "-"}</td>
                   <td>{collection.operator?.full_name ?? "Unassigned"}</td>
-                  <td>{collection.route?.route_date ?? "-"}</td>
-                  <td>{lyd(collection.vms_expected_cash)}</td>
-                  <td>{lyd(collection.actual_cash_collected)}</td>
-                  <td className={varianceClassName(variance)}>{lyd(variance)}</td>
-                  <td><StatusBadge status={status} /></td>
+                  <td>{formatDate(collection.collected_at)}</td>
+                  <td>{money(collection.vms_expected_cash)}</td>
+                  <td>{money(collection.actual_cash_collected)}</td>
+                  <td className={varianceClassName(variance)}>{money(variance)}</td>
+                  <td><StatusBadge status={status.replaceAll("_", " ")} /></td>
                   <td>
-                    <Link className="link-secondary" href={`/cash-collections/${collection.id}`}>
-                      Open
-                    </Link>
+                    {finance?.id ? (
+                      <Link href={`/finance/transactions/${finance.id}`} className="link-secondary">{finance.transaction_status ?? "posted"}</Link>
+                    ) : (
+                      <span className="text-sm text-slate-500">Pending</span>
+                    )}
+                  </td>
+                  <td>
+                    <div className="flex flex-wrap gap-2">
+                      <Link className="btn-secondary px-3 py-2" href={`/cash-collections/${collection.id}`}>Open</Link>
+                      {canReviewMoney && status !== "voided" ? <Link className="btn-secondary px-3 py-2" href={`/cash-collections/${collection.id}/edit`}>Edit</Link> : null}
+                    </div>
                   </td>
                 </tr>
               );
@@ -99,6 +236,6 @@ export default async function CashCollectionsPage({ searchParams }: { searchPara
           </DataTable>
         </div>
       )}
-    </AppShell>
+    </>
   );
 }

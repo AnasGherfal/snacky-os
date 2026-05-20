@@ -1,6 +1,5 @@
 import Link from "next/link";
-import { AppShell } from "@/components/AppShell";
-import { EmptyState, PageHeader, StatusBadge } from "@/components/ui";
+import { EmptyState, ErrorState, PageHeader, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOperatorRole } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -8,9 +7,17 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 export default async function OperatorRoutesPage() {
   const supabase = getSupabaseServerClient();
   const profile = await getCurrentProfile();
+
+  if (!supabase) {
+    return (
+      <>
+        <ErrorState title="Routes unavailable" body="Supabase is not configured, so Snacky OS cannot load assigned operator routes." />
+      </>
+    );
+  }
   
   let routesQuery = supabase
-    ?.from("routes")
+    .from("routes")
     .select("id, route_date, status, operator_id, route_stops(id, status)")
     .gte("route_date", new Date().toISOString().split("T")[0])
     .order("route_date", { ascending: true });
@@ -19,11 +26,18 @@ export default async function OperatorRoutesPage() {
     routesQuery = routesQuery.eq("operator_id", profile?.team_member_id ?? "");
   }
 
-  const { data: routes, error } = routesQuery ? await routesQuery : { data: [], error: null };
-  if (error) console.error("[operator:routes] Failed to load assigned routes", { error, authUserId: profile?.id, teamMemberId: profile?.team_member_id });
+  const { data: routes, error } = await routesQuery;
+  if (error) {
+    console.error("[operator:routes] Failed to load assigned routes", { error, authUserId: profile?.id, teamMemberId: profile?.team_member_id });
+    return (
+      <>
+        <ErrorState title="Could not load routes" body="Snacky OS could not load your assigned operator routes." />
+      </>
+    );
+  }
 
   return (
-    <AppShell>
+    <>
       <div className="space-y-6">
         <PageHeader
           title="My Routes"
@@ -81,6 +95,6 @@ export default async function OperatorRoutesPage() {
         )}
 
       </div>
-    </AppShell>
+    </>
   );
 }

@@ -1,0 +1,2 @@
+[27392:27172:0520/141949.390:ERROR:chrome\installer\util\google_update_settings_win.cc:517] Failed opening key Software\Microsoft\EdgeUpdate\ClientStateMedium\{56EB18F8-B008-4CBD-B6D2-8C97FE7E9062} to set usagestats; result: 5
+[27392:27172:0520/141949.399:ERROR:chrome\installer\util\google_update_settings_win.cc:550] Failed opening key Software\Microsoft\EdgeUpdate\ClientStateMedium\{56EB18F8-B008-4CBD-B6D2-8C97FE7E9062} to set urlstats; result: 5

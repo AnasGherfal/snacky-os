@@ -6,8 +6,8 @@ import { DataTable, StatusBadge } from "@/components/ui";
 type ActivityRow = {
   id: string;
   created_at: string;
-  actor_name: string | null;
-  actor_role: string | null;
+  actor_name?: string | null;
+  actor_role?: string | null;
   action: string;
   entity_type: string;
   entity_id: string | null;
@@ -28,6 +28,10 @@ function prettyJson(value: unknown) {
   return JSON.stringify(value, null, 2);
 }
 
+function actorLabel(row: ActivityRow) {
+  return row.actor?.full_name ?? row.actor_name ?? "-";
+}
+
 export function ActivityLogTable({ rows }: { rows: ActivityRow[] }) {
   const [selectedRow, setSelectedRow] = useState<ActivityRow | null>(null);
 
@@ -37,7 +41,7 @@ export function ActivityLogTable({ rows }: { rows: ActivityRow[] }) {
         {rows.map((row) => (
           <tr key={row.id}>
             <td>{formatDate(row.created_at)}</td>
-            <td>{row.actor?.full_name ?? row.actor_name ?? "-"}</td>
+            <td>{actorLabel(row)}</td>
             <td>{row.actor_role ? <StatusBadge status={row.actor_role} /> : "-"}</td>
             <td><StatusBadge status={String(row.action).replaceAll("_", " ")} /></td>
             <td>{String(row.entity_type).replaceAll("_", " ")}</td>
@@ -56,20 +60,23 @@ export function ActivityLogTable({ rows }: { rows: ActivityRow[] }) {
       </DataTable>
 
       {selectedRow ? (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/40 p-4 sm:items-center" role="dialog" aria-modal="true">
-          <div className="max-h-[88vh] w-full max-w-5xl overflow-hidden rounded-lg bg-white shadow-xl">
+        <div className="fixed inset-0 z-50 bg-slate-950/40" role="dialog" aria-modal="true" onClick={() => setSelectedRow(null)}>
+          <div className="ml-auto flex h-full w-full max-w-3xl flex-col bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
             <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-5">
               <div>
                 <h2 className="text-lg font-semibold text-slate-950">Activity details</h2>
                 <p className="mt-1 text-sm text-slate-500">
                   {formatDate(selectedRow.created_at)} - {selectedRow.action.replaceAll("_", " ")} - {selectedRow.entity_type.replaceAll("_", " ")}
                 </p>
+                <p className="mt-1 text-sm text-slate-500">
+                  {actorLabel(selectedRow)}{selectedRow.actor_role ? ` - ${selectedRow.actor_role}` : ""}
+                </p>
               </div>
               <button type="button" className="btn-secondary" onClick={() => setSelectedRow(null)}>
                 Close
               </button>
             </div>
-            <div className="grid max-h-[70vh] gap-4 overflow-auto p-5 lg:grid-cols-3">
+            <div className="grid flex-1 gap-4 overflow-auto p-5 lg:grid-cols-3">
               <section>
                 <h3 className="mb-2 text-sm font-semibold text-slate-800">Before data</h3>
                 <pre className="min-h-48 overflow-auto rounded-lg bg-slate-950 p-3 text-xs text-slate-100">{prettyJson(selectedRow.before_data)}</pre>

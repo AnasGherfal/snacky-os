@@ -19,7 +19,7 @@ body {
   max-width: 100%;
   overflow-x: hidden;
 }
-body { margin:0; background: var(--background); color: var(--foreground); font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+body { margin:0; background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%); color: var(--foreground); font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
 html[lang="ar"] body { font-family: Tahoma, Arial, ui-sans-serif, system-ui, sans-serif; }
 a { color: inherit; text-decoration: none; }
 
@@ -57,13 +57,16 @@ textarea:focus-visible {
 }
 
 @layer components {
-  .surface-card { @apply rounded-xl border bg-white p-5 shadow-sm; border-color: var(--snacky-border); }
+  .surface-card { @apply rounded-lg border bg-white p-4 shadow-sm md:p-5; border-color: var(--snacky-border); box-shadow: 0 1px 2px rgb(15 23 42 / 0.05), 0 8px 24px rgb(15 23 42 / 0.03); }
   .field-input { @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-base outline-none focus:ring-2 md:py-2 md:text-sm; }
   .field-input:focus { border-color: var(--snacky-primary); --tw-ring-color: var(--snacky-focus-ring); }
-  .btn-primary { @apply inline-flex min-h-11 items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold text-white; background: var(--snacky-primary); }
+  .btn-primary { @apply inline-flex min-h-12 items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold text-white md:min-h-11; background: var(--snacky-primary); }
   .btn-primary:hover { background: var(--snacky-primary-hover); }
-  .btn-secondary { @apply inline-flex min-h-11 items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50; }
-  .btn-danger { @apply inline-flex min-h-11 items-center justify-center rounded-lg bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-700; }
+  .btn-primary:disabled { @apply cursor-not-allowed opacity-60; }
+  .btn-secondary { @apply inline-flex min-h-12 items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 md:min-h-11; }
+  .btn-secondary:disabled { @apply cursor-not-allowed opacity-60; }
+  .btn-danger { @apply inline-flex min-h-12 items-center justify-center rounded-lg bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-700 md:min-h-11; }
+  .btn-danger:disabled { @apply cursor-not-allowed opacity-60; }
   .link-secondary { @apply text-sm font-semibold underline underline-offset-4; color: var(--snacky-accent); text-decoration-color: rgb(63 111 63 / 0.3); }
   .link-secondary:hover { color: var(--snacky-primary-hover); text-decoration-color: rgb(245 130 11 / 0.45); }
   .nav-link { @apply block rounded-lg px-3 py-3 text-sm text-slate-600 hover:bg-slate-100 md:py-2; }
@@ -72,16 +75,18 @@ textarea:focus-visible {
   .nav-link-active:hover { background: var(--snacky-accent-hover); }
   .brand-selected { background: var(--snacky-accent); color: #fff; }
   .brand-selected:hover { background: var(--snacky-accent-hover); }
-  .table-wrap { @apply overflow-x-auto rounded-xl border bg-white shadow-sm; border-color: var(--snacky-border); }
+  .table-wrap { @apply overflow-x-auto rounded-lg border bg-white shadow-sm; border-color: var(--snacky-border); }
   .data-table { @apply min-w-full text-left text-sm; }
-  .data-table th { @apply border-b border-slate-200 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500; }
+  .data-table th { @apply whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500; }
   .data-table td { @apply border-b border-slate-100 px-4 py-3 align-top text-slate-700; }
+  .data-table tbody tr { @apply transition-colors; }
+  .data-table tbody tr:hover { @apply bg-slate-50/70; }
   .data-table tbody tr:last-child td { @apply border-b-0; }
-  .status-badge { @apply inline-flex rounded-full px-2.5 py-1 text-xs font-medium; }
-  .status-danger { @apply bg-rose-100 text-rose-700; }
-  .status-warn { @apply bg-amber-100 text-amber-700; }
-  .status-ok { @apply bg-emerald-100 text-emerald-700; }
-  .status-neutral { @apply bg-slate-100 text-slate-700; }
+  .status-badge { @apply inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold leading-none; }
+  .status-danger { @apply border-rose-200 bg-rose-50 text-rose-700; }
+  .status-warn { @apply border-amber-200 bg-amber-50 text-amber-800; }
+  .status-ok { @apply border-emerald-200 bg-emerald-50 text-emerald-700; }
+  .status-neutral { @apply border-slate-200 bg-slate-100 text-slate-700; }
 }
 
 .btn-primary,

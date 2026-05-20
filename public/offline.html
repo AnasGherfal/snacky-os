@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#0f172a" />
+    <meta name="theme-color" content="#3f6f3f" />
     <title>Snacky OS Offline</title>
     <style>
       :root {
@@ -13,6 +13,8 @@
         --text: #0f172a;
         --muted: #64748b;
         --border: #cbd5e1;
+        --brand: #3f6f3f;
+        --brand-hover: #315a31;
       }
 
       * {
@@ -40,15 +42,13 @@
       }
 
       .mark {
-        display: grid;
         width: 56px;
         height: 56px;
-        place-items: center;
-        border-radius: 14px;
-        background: #0f172a;
-        color: #ffffff;
-        font-size: 28px;
-        font-weight: 800;
+        border: 1px solid var(--border);
+        border-radius: 50%;
+        background: #ffffff;
+        box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+        object-fit: contain;
       }
 
       h1 {
@@ -69,16 +69,21 @@
         margin-top: 20px;
         border: 0;
         border-radius: 10px;
-        background: #0f172a;
+        background: var(--brand);
         color: #ffffff;
         font: inherit;
         font-weight: 700;
+        cursor: pointer;
+      }
+
+      button:hover {
+        background: var(--brand-hover);
       }
     </style>
   </head>
   <body>
     <main>
-      <div class="mark">S</div>
+      <img class="mark" src="/brand/snacky-logo.png" alt="Snacky logo" />
       <h1>You are offline</h1>
       <p>Snacky OS needs a connection for live routes, inventory, cash collection, and imports. Reconnect and try again.</p>
       <button type="button" onclick="window.location.reload()">Try again</button>

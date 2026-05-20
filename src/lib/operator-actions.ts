@@ -1,13 +1,156 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { logActivity } from "@/lib/activity-log";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
-import { calculateCashVariance, getCashCollectionStatus } from "@/lib/cash-collections";
+import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 import { getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute } from "@/lib/authz";
+import { REFILL_PHOTO_BUCKET } from "@/lib/storage-buckets";
+
+const REFILL_PHOTO_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"];
+const REFILL_PHOTO_MAX_SIZE = 10 * 1024 * 1024;
 
 function isMissingTable(error: any, tableName: string) {
   return error?.code === "PGRST205" && String(error?.message ?? "").includes(tableName);
+}
+
+function getErrorMessage(error: unknown, fallback = "Something went wrong.") {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string" && error.trim()) return error;
+  if (error && typeof error === "object") {
+    const row = error as { message?: unknown; details?: unknown; hint?: unknown; error?: unknown };
+    return String(row.message ?? row.details ?? row.hint ?? row.error ?? fallback);
+  }
+  return fallback;
+}
+
+function throwActionError(error: unknown, fallback?: string): never {
+  throw new Error(getErrorMessage(error, fallback));
+}
+
+function revalidateRouteWorkflow(routeId: string) {
+  revalidatePath("/operator");
+  revalidatePath("/operator/routes");
+  revalidatePath(`/operator/routes/${routeId}`);
+  revalidatePath(`/operator/routes/${routeId}/pick-list`);
+  revalidatePath(`/operator/routes/${routeId}/leftovers`);
+  revalidatePath("/routes");
+  revalidatePath(`/routes/${routeId}`);
+  revalidatePath("/inventory");
+  revalidatePath("/inventory/movements");
+  revalidatePath("/cash-collections");
+  revalidatePath("/refills");
+  revalidatePath("/machines-dashboard");
+}
+
+function mergeNotes(existing: string | undefined, next: string | undefined) {
+  const parts = [existing, next].map((part) => String(part ?? "").trim()).filter(Boolean);
+  return parts.length ? Array.from(new Set(parts)).join(" | ") : undefined;
+}
+
+function safeFileSegment(value: string, fallback: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9._-]/g, "-").replace(/-+/g, "-") || fallback;
+}
+
+async function ensureRefillPhotoBucket() {
+  const storageClient = getSupabaseAdminClient();
+  if (!storageClient) return null;
+
+  const config = {
+    public: false,
+    fileSizeLimit: "10MB",
+    allowedMimeTypes: REFILL_PHOTO_MIME_TYPES,
+  };
+
+  const { error: getError } = await storageClient.storage.getBucket(REFILL_PHOTO_BUCKET);
+  if (!getError) {
+    const { error: updateError } = await storageClient.storage.updateBucket(REFILL_PHOTO_BUCKET, config);
+    if (updateError) console.warn("[operator] Could not update refill photo bucket settings", updateError);
+    return storageClient;
+  }
+
+  const { error: createError } = await storageClient.storage.createBucket(REFILL_PHOTO_BUCKET, config);
+  if (createError && !createError.message.toLowerCase().includes("already exists")) throw createError;
+  return storageClient;
+}
+
+export async function uploadRefillProofPhoto(formData: FormData) {
+  const routeId = String(formData.get("routeId") || "").trim();
+  const stopId = String(formData.get("stopId") || "").trim();
+  const machineId = String(formData.get("machineId") || "").trim();
+  const file = formData.get("photo");
+
+  if (!routeId || !stopId || !machineId) throw new Error("Route, stop, and machine are required for the refill photo.");
+  if (!(file instanceof File) || file.size === 0) throw new Error("Take or upload the final machine photo before completing the stop.");
+  if (!REFILL_PHOTO_MIME_TYPES.includes(file.type) || file.size > REFILL_PHOTO_MAX_SIZE) {
+    throw new Error("Final photo must be PNG, JPG, or WEBP and under 10MB.");
+  }
+
+  const supabase = getSupabaseServerClient();
+  if (!supabase) throw new Error("No Supabase client");
+
+  const profile = await getCurrentProfile();
+  const { data: route, error: routeError } = await supabase
+    .from("routes")
+    .select("id, operator_id")
+    .eq("id", routeId)
+    .maybeSingle();
+
+  if (routeError) throwActionError(routeError, "Could not load this route for the refill photo.");
+  if (!route) throw new Error("Route not found");
+  if (!canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, route.operator_id)) {
+    throw new Error("You are not authorized to upload a photo for this route.");
+  }
+
+  const { data: stop, error: stopError } = await supabase
+    .from("route_stops")
+    .select("id, route_id, machine_id")
+    .eq("id", stopId)
+    .maybeSingle();
+  if (stopError) throwActionError(stopError, "Could not load this stop for the refill photo.");
+  if (!stop || stop.route_id !== routeId || stop.machine_id !== machineId) {
+    throw new Error("This stop does not belong to the selected route.");
+  }
+
+  const originalName = file.name || "refill-photo";
+  const extension = safeFileSegment(originalName.split(".").pop() || "jpg", "jpg");
+  const objectName = `${safeFileSegment(stopId, "stop")}-${Date.now()}.${extension}`;
+  const objectPath = `${routeId}/${objectName}`;
+
+  try {
+    const storageClient = await ensureRefillPhotoBucket();
+    if (!storageClient) {
+      return {
+        photoUrl: null,
+        photoPath: `storage-unavailable/${routeId}/${safeFileSegment(stopId, "stop")}/${safeFileSegment(originalName, "refill-photo")}`,
+        originalName,
+        uploadUnavailable: true,
+      };
+    }
+
+    const { error } = await storageClient.storage.from(REFILL_PHOTO_BUCKET).upload(objectPath, file, {
+      cacheControl: "31536000",
+      contentType: file.type,
+      upsert: true,
+    });
+
+    if (error) throw error;
+
+    return {
+      photoUrl: `/api/storage/${REFILL_PHOTO_BUCKET}/${encodeURIComponent(routeId)}/${encodeURIComponent(objectName)}`,
+      photoPath: objectPath,
+      originalName,
+      uploadUnavailable: false,
+    };
+  } catch (error) {
+    console.warn("[operator] Refill photo upload unavailable", error);
+    return {
+      photoUrl: null,
+      photoPath: `storage-unavailable/${routeId}/${safeFileSegment(stopId, "stop")}/${safeFileSegment(originalName, "refill-photo")}`,
+      originalName,
+      uploadUnavailable: true,
+    };
+  }
 }
 
 export async function startRoute(routeId: string) {
@@ -22,7 +165,7 @@ export async function startRoute(routeId: string) {
     .eq("id", routeId)
     .maybeSingle();
 
-  if (routeError) throw routeError;
+  if (routeError) throwActionError(routeError, "Could not load this route.");
   if (!route) throw new Error("Route not found");
   if (!canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, route.operator_id)) {
     throw new Error("You are not authorized to start this route");
@@ -41,7 +184,8 @@ export async function startRoute(routeId: string) {
     .eq("operator_id", route.operator_id)
     .in("status", ["draft", "assigned"]);
 
-  if (error) throw error;
+  if (error) throwActionError(error, "Could not start this route.");
+  revalidateRouteWorkflow(routeId);
   await logActivity({
     profile,
     action: "update",
@@ -70,28 +214,17 @@ export async function confirmPickList(
 
   try {
     const profile = await getCurrentProfile();
-    // Get route details
     const { data: route, error: routeError } = await supabase
       .from("routes")
       .select("id, operator_id")
       .eq("id", routeId)
-      .single();
+      .maybeSingle();
 
-    if (routeError || !route) throw new Error("Route not found");
+    if (routeError) throwActionError(routeError, "Could not load this route.");
+    if (!route) throw new Error("Route not found");
     if (!canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, route.operator_id)) {
       throw new Error("You are not authorized to pick stock for this route");
     }
-    const actualPickLines = [
-      ...pickedItems.map((item) => ({ productId: item.productId, quantity: item.quantity })),
-      ...extras.map((item) => ({ productId: item.productId, quantity: item.quantity })),
-      ...substitutions.map((item) => ({ productId: item.substituteProductId, quantity: item.quantity })),
-    ];
-    const pickedByProduct = new Map<string, number>();
-    actualPickLines.forEach((item) => {
-      const productId = String(item.productId);
-      const quantity = Math.max(0, Number(item.quantity ?? 0));
-      if (productId && quantity > 0) pickedByProduct.set(productId, (pickedByProduct.get(productId) ?? 0) + quantity);
-    });
 
     let { data: routeStopItems, error: stopItemsError }: { data: any[] | null; error: any } = await supabase
       .from("route_stop_items")
@@ -99,12 +232,12 @@ export async function confirmPickList(
       .eq("route_id", routeId);
 
     if (stopItemsError) {
-      if (!isMissingTable(stopItemsError, "route_stop_items")) throw stopItemsError;
+      if (!isMissingTable(stopItemsError, "route_stop_items")) throwActionError(stopItemsError, "Could not load the route plan.");
       const fallback = await supabase
         .from("refill_orders")
         .select("id, refill_order_lines(product_id, final_qty_to_take, suggested_qty)")
         .eq("route_id", routeId);
-      if (fallback.error) throw fallback.error;
+      if (fallback.error) throwActionError(fallback.error, "Could not load the route plan.");
       routeStopItems = (fallback.data ?? []).flatMap((order: any) =>
         (order.refill_order_lines ?? []).map((line: any) => ({
           product_id: line.product_id,
@@ -120,32 +253,148 @@ export async function confirmPickList(
       plannedByProduct.set(productId, (plannedByProduct.get(productId) ?? 0) + Number(line.planned_quantity ?? 0));
     });
 
-    // Get storage location ID (for now assume there's a default storage)
+    const normalizedPickedItems = new Map<string, { productId: string; quantity: number; plannedQty: number; reason?: string; notes?: string }>();
+    pickedItems.forEach((item) => {
+      const productId = String(item.productId ?? "").trim();
+      if (!productId) return;
+      const current = normalizedPickedItems.get(productId);
+      const quantity = Math.max(0, Number(item.quantity ?? 0));
+      const plannedQty = Math.max(0, Number(item.plannedQty ?? plannedByProduct.get(productId) ?? 0));
+      normalizedPickedItems.set(productId, {
+        productId,
+        quantity: (current?.quantity ?? 0) + quantity,
+        plannedQty: current ? current.plannedQty : plannedQty,
+        reason: item.reason || current?.reason,
+        notes: mergeNotes(current?.notes, item.notes),
+      });
+    });
+
+    const normalizedExtras = new Map<string, { productId: string; quantity: number; reason: string; notes?: string }>();
+    extras.forEach((item) => {
+      const productId = String(item.productId ?? "").trim();
+      const quantity = Math.max(0, Number(item.quantity ?? 0));
+      if (!productId || quantity <= 0) return;
+
+      if (plannedByProduct.has(productId)) {
+        const current = normalizedPickedItems.get(productId) ?? {
+          productId,
+          quantity: 0,
+          plannedQty: plannedByProduct.get(productId) ?? 0,
+          reason: item.reason,
+          notes: undefined,
+        };
+        normalizedPickedItems.set(productId, {
+          ...current,
+          quantity: current.quantity + quantity,
+          reason: item.reason || current.reason,
+          notes: mergeNotes(current.notes, item.notes),
+        });
+        return;
+      }
+
+      const current = normalizedExtras.get(productId);
+      normalizedExtras.set(productId, {
+        productId,
+        quantity: (current?.quantity ?? 0) + quantity,
+        reason: item.reason || current?.reason || "Other",
+        notes: mergeNotes(current?.notes, item.notes),
+      });
+    });
+
+    const normalizedSubstitutions = new Map<string, { plannedProductId: string; substituteProductId: string; quantity: number; reason: string; notes?: string }>();
+    substitutions.forEach((item) => {
+      const plannedProductId = String(item.plannedProductId ?? "").trim();
+      const substituteProductId = String(item.substituteProductId ?? "").trim();
+      const quantity = Math.max(0, Number(item.quantity ?? 0));
+      if (!plannedProductId || !substituteProductId || quantity <= 0) return;
+
+      if (plannedProductId === substituteProductId) {
+        const current = normalizedPickedItems.get(plannedProductId) ?? {
+          productId: plannedProductId,
+          quantity: 0,
+          plannedQty: plannedByProduct.get(plannedProductId) ?? 0,
+          reason: item.reason,
+          notes: undefined,
+        };
+        normalizedPickedItems.set(plannedProductId, {
+          ...current,
+          quantity: current.quantity + quantity,
+          reason: item.reason || current.reason,
+          notes: mergeNotes(current.notes, item.notes),
+        });
+        return;
+      }
+
+      const key = `${plannedProductId}:${substituteProductId}`;
+      const current = normalizedSubstitutions.get(key);
+      normalizedSubstitutions.set(key, {
+        plannedProductId,
+        substituteProductId,
+        quantity: (current?.quantity ?? 0) + quantity,
+        reason: item.reason || current?.reason || "Other",
+        notes: mergeNotes(current?.notes, item.notes),
+      });
+    });
+
+    const pickedItemRows = Array.from(normalizedPickedItems.values());
+    const extraRows = Array.from(normalizedExtras.values());
+    const substitutionRows = Array.from(normalizedSubstitutions.values());
+    const actualPickLines = [
+      ...pickedItemRows.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+      ...extraRows.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+      ...substitutionRows.map((item) => ({ productId: item.substituteProductId, quantity: item.quantity })),
+    ];
+    const pickedByProduct = new Map<string, number>();
+    actualPickLines.forEach((item) => {
+      const productId = String(item.productId);
+      const quantity = Math.max(0, Number(item.quantity ?? 0));
+      if (productId && quantity > 0) pickedByProduct.set(productId, (pickedByProduct.get(productId) ?? 0) + quantity);
+    });
+    if (!pickedByProduct.size) throw new Error("No stock quantities were picked.");
+
     const { data: storages } = await supabase
       .from("storage_locations")
       .select("id")
       .eq("active", true)
-      .limit(1);
+      .in("location_type", ["main_storage", "vehicle", "temporary", "other"])
+      .order("location_type")
+      .order("name");
 
-    const storageId = storages?.[0]?.id;
-    if (!storageId) throw new Error("No active storage location found");
+    const activeStorageIds = (storages ?? []).map((storage: any) => storage.id).filter(Boolean);
+    if (!activeStorageIds.length) throw new Error("No active storage location found");
 
     const { data: storageRows, error: storageError } = await supabase
       .from("current_inventory_by_location")
-      .select("product_id, quantity_on_hand")
+      .select("product_id, location_id, quantity_on_hand")
       .eq("location_type", "storage")
-      .eq("location_id", storageId)
+      .in("location_id", activeStorageIds)
       .in("product_id", Array.from(pickedByProduct.keys()));
 
-    if (storageError) throw storageError;
-    const storageByProduct = new Map<string, number>();
+    if (storageError) throwActionError(storageError, "Could not verify storage stock.");
+    const storageByProduct = new Map<string, { locationId: string; quantity: number }[]>();
     (storageRows ?? []).forEach((row: any) => {
       const productId = String(row.product_id);
-      storageByProduct.set(productId, (storageByProduct.get(productId) ?? 0) + Number(row.quantity_on_hand ?? 0));
+      const locationId = String(row.location_id ?? "");
+      const quantity = Math.max(0, Number(row.quantity_on_hand ?? 0));
+      if (!productId || !locationId || quantity <= 0) return;
+      storageByProduct.set(productId, [...(storageByProduct.get(productId) ?? []), { locationId, quantity }]);
     });
 
+    const stockAllocations: { productId: string; locationId: string; quantity: number }[] = [];
     for (const [productId, quantity] of pickedByProduct) {
-      if (quantity > (storageByProduct.get(productId) ?? 0)) {
+      let remaining = quantity;
+      const locations = [...(storageByProduct.get(productId) ?? [])].sort((a, b) => b.quantity - a.quantity);
+
+      for (const location of locations) {
+        if (remaining <= 0) break;
+        const allocated = Math.min(remaining, location.quantity);
+        if (allocated > 0) {
+          stockAllocations.push({ productId, locationId: location.locationId, quantity: allocated });
+          remaining -= allocated;
+        }
+      }
+
+      if (remaining > 0) {
         throw new Error("Picked quantity cannot exceed available storage stock.");
       }
     }
@@ -162,12 +411,12 @@ export async function confirmPickList(
     }
 
     // Create inventory movements for each picked item
-    const movements = Array.from(pickedByProduct.entries())
+    const movements = stockAllocations
       .map((item) => ({
-        product_id: item[0],
-        quantity: item[1],
+        product_id: item.productId,
+        quantity: item.quantity,
         from_entity_type: "storage" as const,
-        from_entity_id: storageId,
+        from_entity_id: item.locationId,
         to_entity_type: "operator_bag" as const,
         to_entity_id: route.operator_id,
         reason: "storage_to_operator_bag" as const,
@@ -182,10 +431,10 @@ export async function confirmPickList(
       .from("inventory_movements")
       .insert(movements);
 
-    if (movementError) throw movementError;
+    if (movementError) throwActionError(movementError, "Could not create storage-to-bag inventory movements.");
 
     const pickListRows = [
-      ...pickedItems.map((item) => {
+      ...pickedItemRows.map((item) => {
         const plannedQty = plannedByProduct.get(String(item.productId)) ?? Number(item.plannedQty ?? 0);
         const pickedQty = Math.max(0, Number(item.quantity ?? 0));
         return {
@@ -200,7 +449,7 @@ export async function confirmPickList(
           created_by: route.operator_id,
         };
       }),
-      ...extras.map((item) => ({
+      ...extraRows.map((item) => ({
         route_id: routeId,
         product_id: item.productId,
         planned_qty: 0,
@@ -211,7 +460,7 @@ export async function confirmPickList(
         needs_review: true,
         created_by: route.operator_id,
       })),
-      ...substitutions.map((item) => ({
+      ...substitutionRows.map((item) => ({
         route_id: routeId,
         product_id: item.substituteProductId,
         planned_qty: 0,
@@ -227,13 +476,14 @@ export async function confirmPickList(
 
     if (pickListRows.length) {
       const { error: pickListError } = await supabase.from("route_pick_list_items").insert(pickListRows);
-      if (pickListError && !isMissingTable(pickListError, "route_pick_list_items")) throw pickListError;
+      if (pickListError && !isMissingTable(pickListError, "route_pick_list_items")) throwActionError(pickListError, "Could not save the confirmed pick list.");
     }
 
-    const { data: routeOrders } = await supabase
+    const { data: routeOrders, error: routeOrdersError } = await supabase
       .from("refill_orders")
       .select("id, refill_order_lines(id, product_id, final_qty_to_take, suggested_qty)")
       .eq("route_id", routeId);
+    if (routeOrdersError) throwActionError(routeOrdersError, "Could not load refill order lines.");
     const linesByProduct = new Map<string, any[]>();
     routeOrders?.forEach((order: any) => {
       order.refill_order_lines?.forEach((line: any) => {
@@ -241,12 +491,6 @@ export async function confirmPickList(
         linesByProduct.set(key, [...(linesByProduct.get(key) ?? []), line]);
       });
     });
-
-    const { data: routeStockLines, error: routeStockError } = await supabase
-      .from("route_stock_lines")
-      .select("id, product_id")
-      .eq("route_id", routeId);
-    if (routeStockError) throw routeStockError;
 
     const stockLineRows = Array.from(new Set([...Array.from(plannedByProduct.keys()), ...Array.from(pickedByProduct.keys())])).map((productId) => ({
       route_id: routeId,
@@ -261,10 +505,10 @@ export async function confirmPickList(
         .from("route_stock_lines")
         .upsert(stockLineRows, { onConflict: "route_id,product_id" });
 
-      if (stockLineError) throw stockLineError;
+      if (stockLineError) throwActionError(stockLineError, "Could not update route stock totals.");
     }
 
-    for (const item of pickedItems.filter((entry) => Number(entry.quantity) >= 0)) {
+    for (const item of pickedItemRows.filter((entry) => Number(entry.quantity) >= 0)) {
       let remaining = Number(item.quantity);
       const lines = linesByProduct.get(String(item.productId)) ?? [];
 
@@ -278,7 +522,7 @@ export async function confirmPickList(
           .update({ picked_qty: pickedQty })
           .eq("id", line.id);
 
-        if (lineError) throw lineError;
+        if (lineError) throwActionError(lineError, "Could not update refill line picked quantities.");
       }
     }
 
@@ -288,7 +532,7 @@ export async function confirmPickList(
       .update({ status: "in_progress", started_at: new Date().toISOString() })
       .eq("id", routeId);
 
-    if (statusError) throw statusError;
+    if (statusError) throwActionError(statusError, "Could not start this route after picking stock.");
 
     // Update all refill orders for this route to picked
     const { error: refillError } = await supabase
@@ -297,7 +541,7 @@ export async function confirmPickList(
       .eq("route_id", routeId)
       .eq("status", "assigned");
 
-    if (refillError) throw refillError;
+    if (refillError) throwActionError(refillError, "Could not update refill order status.");
 
     await logActivity({
       profile,
@@ -316,10 +560,11 @@ export async function confirmPickList(
       summary: `Confirmed pick list with ${movements.length} inventory movement rows`,
     });
 
+    revalidateRouteWorkflow(routeId);
     return { success: true };
   } catch (error) {
     console.error("Error confirming pick list:", error);
-    throw error;
+    throw new Error(getErrorMessage(error, "Could not confirm the pick list."));
   }
 }
 
@@ -337,11 +582,11 @@ export async function arrivedAtStop(stopId: string) {
       .update({ status: "arrived", arrived_at: new Date().toISOString() })
       .eq("id", stopId);
 
-    if (error) throw error;
+    if (error) throwActionError(error, "Could not mark arrival at this stop.");
     return { success: true };
   } catch (error) {
     console.error("Error marking arrival:", error);
-    throw error;
+    throw new Error(getErrorMessage(error, "Could not mark arrival at this stop."));
   }
 }
 
@@ -359,7 +604,12 @@ export async function completeStop({
   substitutions = [],
   missingProducts = [],
   cashCollected,
+  cashBagId,
   notes,
+  completionPhotoUrl,
+  completionPhotoPath,
+  completionPhotoOriginalName,
+  completionPhotoUploadUnavailable,
   issue,
 }: {
   stopId: string;
@@ -369,8 +619,13 @@ export async function completeStop({
   extraItems?: { productId: string; quantity: number; reason: string; notes?: string }[];
   substitutions?: { assignedProductId: string; substituteProductId: string; quantity: number; reason: string; notes?: string }[];
   missingProducts?: { productName: string; reason: string; notes?: string }[];
-  cashCollected: number;
+  cashCollected: boolean;
+  cashBagId?: string;
   notes?: string;
+  completionPhotoUrl?: string | null;
+  completionPhotoPath?: string | null;
+  completionPhotoOriginalName?: string | null;
+  completionPhotoUploadUnavailable?: boolean;
   issue?: {
     issueType: string;
     priority: "critical" | "high" | "normal" | "low";
@@ -382,25 +637,53 @@ export async function completeStop({
 
   try {
     const profile = await getCurrentProfile();
+    const completedAt = new Date().toISOString();
+    const hasCompletionPhoto = Boolean(
+      completionPhotoUrl?.trim() ||
+      completionPhotoPath?.trim() ||
+      completionPhotoOriginalName?.trim(),
+    );
+    if (!hasCompletionPhoto) throw new Error("Take or upload a final machine photo before completing the stop.");
+
     // Get route to find operator
-    const { data: route } = await supabase
+    const { data: route, error: routeError } = await supabase
       .from("routes")
       .select("id, operator_id")
       .eq("id", routeId)
-      .single();
+      .maybeSingle();
 
+    if (routeError) throwActionError(routeError, "Could not load this route.");
     if (!route) throw new Error("Route not found");
     if (!canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, route.operator_id)) {
       throw new Error("You are not authorized to complete this stop");
     }
 
-    const { data: stop } = await supabase.from("route_stops").select("id, route_id, machine_id, status").eq("id", stopId).single();
+    const { data: stop, error: stopError } = await supabase.from("route_stops").select("id, route_id, machine_id, status").eq("id", stopId).maybeSingle();
+    if (stopError) throwActionError(stopError, "Could not load this stop.");
     if (!stop || stop.route_id !== routeId || stop.machine_id !== machineId) {
       throw new Error("This stop does not belong to the selected route.");
     }
     if (stop?.status === "completed") {
       throw new Error("This stop has already been completed.");
     }
+
+    const [{ data: machine, error: machineError }, { data: operatorMember, error: operatorError }] = await Promise.all([
+      supabase
+        .from("machines")
+        .select("id, name, machine_code")
+        .eq("id", machineId)
+        .maybeSingle(),
+      route.operator_id
+        ? supabase
+            .from("team_members")
+            .select("id, full_name, email")
+            .eq("id", route.operator_id)
+            .maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+    ]);
+
+    if (machineError) throwActionError(machineError, "Could not load this machine.");
+    if (operatorError) throwActionError(operatorError, "Could not load the route operator.");
 
     const { data: existingFillMovements } = await supabase
       .from("inventory_movements")
@@ -417,14 +700,14 @@ export async function completeStop({
       .from("route_stock_lines")
       .select("product_id, picked_qty, returned_qty")
       .eq("route_id", routeId);
-    if (stockError) throw stockError;
+    if (stockError) throwActionError(stockError, "Could not load picked stock for this route.");
 
     const { data: existingRouteFills, error: fillsError } = await supabase
       .from("inventory_movements")
       .select("product_id, quantity")
       .eq("related_route_id", routeId)
       .eq("reason", "operator_bag_to_machine");
-    if (fillsError) throw fillsError;
+    if (fillsError) throwActionError(fillsError, "Could not verify previous machine fills.");
 
     const filledSoFar = new Map<string, number>();
     (existingRouteFills ?? []).forEach((movement: any) => {
@@ -454,6 +737,13 @@ export async function completeStop({
     }
 
     const assignedProductIds = new Set(filledItems.map((item) => String(item.productId)));
+    const hasShortage = filledItems.some((item) => {
+      const assignedQty = Math.max(0, Number(item.assignedQty ?? 0));
+      const actualQty = Math.max(0, Number(item.quantity ?? 0));
+      return Boolean(item.unavailable) || actualQty < assignedQty;
+    });
+    const fillStatus = hasShortage || missingProducts.some((item) => item.productName.trim()) ? "partial" : "full";
+    const hasIssueReport = Boolean(issue?.issueType && issue.description);
     const fillAuditRows = [
       ...filledItems.map((item) => {
         const assignedQty = Math.max(0, Number(item.assignedQty ?? 0));
@@ -554,7 +844,7 @@ export async function completeStop({
         .from("inventory_movements")
         .insert(movements);
 
-      if (movementError) throw movementError;
+      if (movementError) throwActionError(movementError, "Could not create machine fill inventory movements.");
     }
 
     if (fillAuditRows.length) {
@@ -562,7 +852,7 @@ export async function completeStop({
         .from("route_stop_fill_lines")
         .insert(fillAuditRows);
 
-      if (auditError) throw auditError;
+      if (auditError) throwActionError(auditError, "Could not save machine stop fill lines.");
     }
 
     const { data: refillOrders } = await supabase
@@ -580,17 +870,17 @@ export async function completeStop({
           .eq("product_id", item.productId)
           .in("refill_order_id", refillOrderIds);
 
-        if (lineError) throw lineError;
+        if (lineError) throwActionError(lineError, "Could not update refill line filled quantities.");
       }
     }
 
     if (refillOrderIds.length) {
       const { error: refillStatusError } = await supabase
         .from("refill_orders")
-        .update({ status: "completed", completed_at: new Date().toISOString() })
+        .update({ status: "completed", completed_at: completedAt })
         .in("id", refillOrderIds);
 
-      if (refillStatusError) throw refillStatusError;
+      if (refillStatusError) throwActionError(refillStatusError, "Could not update refill order status.");
     }
 
     // Get expected cash from latest VMS sales
@@ -598,11 +888,13 @@ export async function completeStop({
       .from("vms_sales_snapshots")
       .select("cash_sales_amount")
       .eq("machine_id", machineId)
+      .eq("import_row_status", "imported")
       .order("period_end", { ascending: false })
       .limit(1);
 
-    const expectedCash = Number(sales?.[0]?.cash_sales_amount ?? 0);
-    const variance = calculateCashVariance(cashCollected, expectedCash);
+    const expectedCash = sales?.[0]?.cash_sales_amount === null || sales?.[0]?.cash_sales_amount === undefined
+      ? null
+      : Number(sales?.[0]?.cash_sales_amount ?? 0);
 
     // Create cash collection record
     const { data: cashCollection, error: cashError } = await supabase
@@ -612,15 +904,17 @@ export async function completeStop({
         machine_id: machineId,
         operator_id: route.operator_id,
         vms_expected_cash: expectedCash,
-        actual_cash_collected: cashCollected,
-        review_status: getCashCollectionStatus(null, variance),
+        actual_cash_collected: null,
+        review_status: cashCollected ? "collected_pending_count" : "pending_collection",
+        cash_bag_id: cashBagId?.trim() || null,
         notes,
       })
-      .select("id, route_id, machine_id, operator_id, vms_expected_cash, actual_cash_collected, variance, review_status, collected_at")
+      .select("id, route_id, machine_id, operator_id, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, collected_at")
       .single();
 
-    if (cashError) throw cashError;
+    if (cashError) throwActionError(cashError, "Could not create the cash collection record.");
 
+    let linkedIssueId: string | null = null;
     if (issue?.issueType && issue.description) {
       const { data: createdIssue, error: issueError } = await supabase
         .from("issues")
@@ -632,11 +926,12 @@ export async function completeStop({
           reported_by: route.operator_id,
           status: "open",
         })
-        .select("id, machine_id, issue_type, priority, status, description, created_at")
-        .single();
+          .select("id, machine_id, issue_type, priority, status, description, created_at")
+          .single();
 
-      if (issueError) throw issueError;
+      if (issueError) throwActionError(issueError, "Could not save the issue report.");
       if (createdIssue) {
+        linkedIssueId = createdIssue.id;
         await logActivity({
           profile,
           action: "report_issue",
@@ -650,17 +945,65 @@ export async function completeStop({
       }
     }
 
+    const machineLabel = machine?.name ?? machine?.machine_code ?? machineId;
+    const { data: refillHistory, error: refillHistoryError } = await supabase
+      .from("machine_refill_history")
+      .upsert({
+        legacy_refill_id: `route_stop:${stopId}`,
+        refill_at: completedAt,
+        machine_id: machineId,
+        machine_name: machineLabel,
+        operator_id: route.operator_id,
+        operator_email: operatorMember?.email ?? profile?.email ?? null,
+        machine_photo_url: completionPhotoUrl?.trim() || null,
+        machine_photo_path: completionPhotoPath?.trim() || completionPhotoOriginalName?.trim() || null,
+        fill_status: fillStatus,
+        issues_found: hasIssueReport,
+        issue_notes: issue?.description?.trim() || null,
+        linked_issue_id: linkedIssueId,
+        route_id: routeId,
+        route_stop_id: stopId,
+        source_file: "Snacky OS operator completion",
+        source_row: null,
+        import_status: "imported",
+        raw_record: {
+          route_id: routeId,
+          route_stop_id: stopId,
+          machine_id: machineId,
+          machine_code: machine?.machine_code ?? null,
+          machine_name: machineLabel,
+          operator_id: route.operator_id,
+          operator_name: operatorMember?.full_name ?? null,
+          cash_collected: cashCollected,
+          cash_bag_id: cashBagId?.trim() || null,
+          notes: notes?.trim() || null,
+          fill_status: fillStatus,
+          filled_items: filledItems,
+          extra_items: extraItems,
+          substitutions,
+          missing_products: missingProducts,
+          completion_photo_original_name: completionPhotoOriginalName?.trim() || null,
+          completion_photo_upload_unavailable: Boolean(completionPhotoUploadUnavailable),
+          movement_count: movements.length,
+        },
+        updated_at: completedAt,
+      }, { onConflict: "legacy_refill_id" })
+      .select("id, legacy_refill_id, refill_at, machine_id, machine_name, operator_id, fill_status, issues_found, machine_photo_url, machine_photo_path, linked_issue_id")
+      .single();
+
+    if (refillHistoryError) throwActionError(refillHistoryError, "Could not save the machine refill proof.");
+
     // Update stop status
-    const { error: stopError } = await supabase
+    const { error: stopUpdateError } = await supabase
       .from("route_stops")
       .update({
         status: "completed",
-        completed_at: new Date().toISOString(),
+        completed_at: completedAt,
         notes,
       })
       .eq("id", stopId);
 
-    if (stopError) throw stopError;
+    if (stopUpdateError) throwActionError(stopUpdateError, "Could not complete this stop.");
 
     await logActivity({
       profile,
@@ -677,11 +1020,26 @@ export async function completeStop({
         extra_items: extraItems,
         substitutions,
         missing_products: missingProducts,
+        fill_status: fillStatus,
+        refill_history_id: refillHistory?.id ?? null,
         movement_count: movements.length,
       },
       metadata: { route_id: routeId, machine_id: machineId, operator_id: route.operator_id },
       summary: `Completed route stop with ${movements.length} fill movement rows`,
     });
+
+    if (refillHistory) {
+      await logActivity({
+        profile,
+        action: "create_refill_proof",
+        entityType: "machine_refill_history",
+        entityId: refillHistory.id,
+        entityLabel: machineLabel,
+        afterData: refillHistory,
+        metadata: { route_id: routeId, route_stop_id: stopId, machine_id: machineId, operator_id: route.operator_id },
+        summary: `Saved ${fillStatus} machine refill proof`,
+      });
+    }
 
     if (cashCollection) {
       await logActivity({
@@ -692,14 +1050,15 @@ export async function completeStop({
         entityLabel: `Cash ${cashCollection.id.slice(0, 8)}`,
         afterData: cashCollection,
         metadata: { route_id: routeId, machine_id: machineId, operator_id: route.operator_id },
-        summary: `Collected cash with variance ${Number(cashCollection.variance ?? 0).toFixed(2)}`,
+        summary: cashCollected ? "Operator marked cash collected; pending count" : "Operator marked cash not collected",
       });
     }
 
+    revalidateRouteWorkflow(routeId);
     return { success: true, expectedCash };
   } catch (error) {
     console.error("Error completing stop:", error);
-    throw error;
+    throw new Error(getErrorMessage(error, "Could not complete this stop."));
   }
 }
 
@@ -720,12 +1079,13 @@ export async function recordLeftovers({
   try {
     const profile = await getCurrentProfile();
     // Get route to find operator
-    const { data: route } = await supabase
+    const { data: route, error: routeError } = await supabase
       .from("routes")
       .select("id, operator_id")
       .eq("id", routeId)
-      .single();
+      .maybeSingle();
 
+    if (routeError) throwActionError(routeError, "Could not load this route.");
     if (!route) throw new Error("Route not found");
     if (!canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, route.operator_id)) {
       throw new Error("You are not authorized to return leftovers for this route");
@@ -735,6 +1095,9 @@ export async function recordLeftovers({
       .from("storage_locations")
       .select("id")
       .eq("active", true)
+      .in("location_type", ["main_storage", "vehicle", "temporary", "other"])
+      .order("location_type")
+      .order("name")
       .limit(1);
 
     const storageId = storages?.[0]?.id;
@@ -752,14 +1115,14 @@ export async function recordLeftovers({
       .from("route_stock_lines")
       .select("id, product_id, picked_qty, returned_qty")
       .eq("route_id", routeId);
-    if (routeStockError) throw routeStockError;
+    if (routeStockError) throwActionError(routeStockError, "Could not load route stock.");
 
     const { data: filledMovements, error: filledError } = await supabase
       .from("inventory_movements")
       .select("product_id, quantity")
       .eq("related_route_id", routeId)
       .eq("reason", "operator_bag_to_machine");
-    if (filledError) throw filledError;
+    if (filledError) throwActionError(filledError, "Could not verify filled route stock.");
 
     const filledByProduct = new Map<string, number>();
     (filledMovements ?? []).forEach((movement: any) => {
@@ -798,7 +1161,7 @@ export async function recordLeftovers({
         .from("inventory_movements")
         .insert(movements);
 
-      if (movementError) throw movementError;
+      if (movementError) throwActionError(movementError, "Could not create leftover return movements.");
     }
 
     for (const line of routeStockLines ?? []) {
@@ -808,7 +1171,7 @@ export async function recordLeftovers({
         .from("route_stock_lines")
         .update({ returned_qty: Number(line.returned_qty ?? 0) + returnQty, updated_at: new Date().toISOString() })
         .eq("id", line.id);
-      if (stockLineError) throw stockLineError;
+      if (stockLineError) throwActionError(stockLineError, "Could not update route stock returns.");
     }
 
     const { data: routeOrders } = await supabase
@@ -838,7 +1201,7 @@ export async function recordLeftovers({
             .update({ returned_qty: Number(line.returned_qty ?? 0) + returnedQty })
             .eq("id", line.id);
 
-          if (lineError) throw lineError;
+          if (lineError) throwActionError(lineError, "Could not update refill line returns.");
         }
       }
     }
@@ -857,10 +1220,11 @@ export async function recordLeftovers({
       summary: movements.length ? `Returned leftovers with ${movements.length} inventory movement rows` : "Confirmed no leftover stock to return",
     });
 
+    revalidateRouteWorkflow(routeId);
     return { success: true };
   } catch (error) {
     console.error("Error recording leftovers:", error);
-    throw error;
+    throw new Error(getErrorMessage(error, "Could not record route leftovers."));
   }
 }
 
@@ -874,7 +1238,8 @@ export async function completeRoute(routeId: string) {
 
   try {
     const profile = await getCurrentProfile();
-    const { data: route } = await supabase.from("routes").select("id, operator_id").eq("id", routeId).single();
+    const { data: route, error: routeError } = await supabase.from("routes").select("id, operator_id").eq("id", routeId).maybeSingle();
+    if (routeError) throwActionError(routeError, "Could not load this route.");
     if (!route) throw new Error("Route not found");
     if (!canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, route.operator_id)) {
       throw new Error("You are not authorized to complete this route");
@@ -885,7 +1250,7 @@ export async function completeRoute(routeId: string) {
       .eq("route_id", routeId)
       .neq("status", "completed")
       .limit(1);
-    if (stopsError) throw stopsError;
+    if (stopsError) throwActionError(stopsError, "Could not verify route stop status.");
     if (openStops?.length) throw new Error("Complete every machine stop before closing the route.");
 
     const [{ data: routeStockLines, error: stockError }, { data: filledMovements, error: filledError }] = await Promise.all([
@@ -899,8 +1264,8 @@ export async function completeRoute(routeId: string) {
         .eq("related_route_id", routeId)
         .eq("reason", "operator_bag_to_machine"),
     ]);
-    if (stockError) throw stockError;
-    if (filledError) throw filledError;
+    if (stockError) throwActionError(stockError, "Could not load route stock.");
+    if (filledError) throwActionError(filledError, "Could not verify filled route stock.");
 
     const filledByProduct = new Map<string, number>();
     (filledMovements ?? []).forEach((movement: any) => {
@@ -920,7 +1285,7 @@ export async function completeRoute(routeId: string) {
       .update({ status: "completed", completed_at: new Date().toISOString() })
       .eq("id", routeId);
 
-    if (error) throw error;
+    if (error) throwActionError(error, "Could not complete this route.");
     await logActivity({
       profile,
       action: "update",
@@ -931,10 +1296,11 @@ export async function completeRoute(routeId: string) {
       afterData: { status: "completed" },
       summary: "Completed route",
     });
+    revalidateRouteWorkflow(routeId);
     return { success: true };
   } catch (error) {
     console.error("Error completing route:", error);
-    throw error;
+    throw new Error(getErrorMessage(error, "Could not complete this route."));
   }
 }
 
@@ -969,10 +1335,10 @@ export async function reportIssue({
         status: "open",
       });
 
-    if (error) throw error;
+    if (error) throwActionError(error, "Could not report this issue.");
     return { success: true };
   } catch (error) {
     console.error("Error reporting issue:", error);
-    throw error;
+    throw new Error(getErrorMessage(error, "Could not report this issue."));
   }
 }

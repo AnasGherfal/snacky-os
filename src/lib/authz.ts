@@ -14,6 +14,7 @@ const supervisorRoles = new Set<AppRole>(["supervisor"]);
 const adminRoles = new Set<AppRole>(["owner", "admin", "supervisor"]);
 const operatorRoles = new Set<AppRole>(["operator"]);
 const financeRoles = new Set<AppRole>(["owner", "admin", "supervisor", "finance"]);
+const storageLocationRoles = new Set<AppRole>(["owner", "admin", "supervisor", "warehouse"]);
 
 export function isAdminRole(role: AppRole | null | undefined) {
   return role ? adminRoles.has(role) : false;
@@ -37,6 +38,10 @@ export function canManageOperations(user: AuthUserContext | null | undefined) {
 
 export function canViewFinancials(user: AuthUserContext | null | undefined) {
   return user?.role ? financeRoles.has(user.role) : false;
+}
+
+export function canManageStorageLocations(role: AppRole | null | undefined) {
+  return role ? storageLocationRoles.has(role) : false;
 }
 
 export function canAccessOperatorRoute(user: AuthUserContext | null | undefined, routeOperatorId: string | null | undefined) {
@@ -66,11 +71,11 @@ const supervisorAllowedPrefixes = [
   "/machines",
   "/machine-slots",
   "/inventory",
+  "/storage-locations",
   "/purchases",
-  "/activity",
 ];
 const operatorAllowedPrefixes = ["/operator"];
-const warehouseAllowedPrefixes = ["/warehouse", "/operator", "/inventory", "/purchases"];
+const warehouseAllowedPrefixes = ["/warehouse", "/operator", "/inventory", "/storage-locations", "/purchases"];
 const financeAllowedPrefixes = ["/finance", "/cash-collections", "/purchases"];
 const viewerAllowedPrefixes = ["/dashboard"];
 
@@ -81,6 +86,7 @@ function matchesPrefix(pathname: string, prefixes: string[]) {
 export function canAccessPath(user: AuthUserContext | null | undefined, pathname: string) {
   if (!user || user.activeStatus === "inactive") return false;
   if (pathname === "/account" || pathname.startsWith("/account/")) return true;
+  if (pathname === "/install" || pathname.startsWith("/install/")) return true;
   if (isOwnerAdminRole(user.role)) return true;
   if (isSupervisorRole(user.role)) return matchesPrefix(pathname, supervisorAllowedPrefixes);
   if (isOperatorRole(user.role)) return matchesPrefix(pathname, operatorAllowedPrefixes);

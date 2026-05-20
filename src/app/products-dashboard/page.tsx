@@ -1,18 +1,19 @@
-import { AppShell } from "@/components/AppShell";
 import { BarList, KpiSection } from "@/components/KpiDashboard";
 import { DataTable, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
+import { requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
 import { formatDays, formatInteger, formatLydOrDash, formatPctOrDash, groupCount, observedDayCount, salesAmount, soldQty } from "@/lib/kpi";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export default async function ProductsDashboardPage() {
+  await requireCurrentProfileForPath("/products-dashboard");
   const supabase = getSupabaseServerClient();
   const [salesResult, productsResult, inventoryResult, stockResult] = supabase
     ? await Promise.all([
-        supabase.from("vms_sales_snapshots").select("id, product_id, sold_qty, sales_amount, period_end, product:products(id, sku, name, cost_price, current_cost_price_lyd, selling_price, current_selling_price_lyd)"),
+        supabase.from("vms_sales_snapshots").select("id, product_id, sold_qty, sales_amount, period_end, product:products(id, sku, name, cost_price, current_cost_price_lyd, selling_price, current_selling_price_lyd)").eq("import_row_status", "imported"),
         supabase.from("products").select("id, sku, name, cost_price, current_cost_price_lyd, selling_price, current_selling_price_lyd, active").order("name"),
         supabase.from("current_inventory_by_location").select("product_id, product_name, location_type, quantity_on_hand"),
-        supabase.from("vms_stock_snapshots").select("product_id, current_qty"),
+        supabase.from("vms_stock_snapshots").select("product_id, current_qty").eq("import_row_status", "imported"),
       ])
     : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }];
 
@@ -62,7 +63,7 @@ export default async function ProductsDashboardPage() {
   const hasAnyCost = metrics.some((row) => row.grossProfit !== null);
 
   return (
-    <AppShell>
+    <>
       <PageHeader title="Product Dashboard" subtitle="Product velocity, revenue, margin, stockouts, and storage coverage." />
 
       {!supabase ? (
@@ -120,6 +121,6 @@ export default async function ProductsDashboardPage() {
           </KpiSection>
         </div>
       )}
-    </AppShell>
+    </>
   );
 }
