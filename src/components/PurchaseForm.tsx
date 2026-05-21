@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useDeferredValue, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { FormField, FormSection } from "@/components/ui";
 import type { PurchaseSubmitResult } from "@/lib/purchase-actions";
 import type { ReceiptConfidenceLabel, ReceiptLineAction, ReceiptScanDraft } from "@/lib/receipt-scan-types";
@@ -12,11 +13,15 @@ type ProductOption = {
   id: string;
   sku: string | null;
   barcode: string | null;
+  imageUrl: string | null;
   name: string;
   category: string | null;
   brand: string | null;
   caseQuantity: number;
   costPrice: number;
+  lastPurchaseCost: number | null;
+  currentStorageQty: number;
+  vmsNames: string[];
 };
 type PurchaseLine = {
   id: string;
@@ -53,6 +58,16 @@ type InitialPurchase = {
   manualTotalLyd?: number | null;
 };
 
+type PurchaseDetailsState = {
+  supplierId: string;
+  purchaseDate: string;
+  receiptNumber: string;
+  paymentMethod: string;
+  paymentStatus: string;
+  receiptUrl: string;
+  notes: string;
+};
+
 function newLine(line?: Partial<PurchaseLine>): PurchaseLine {
   const receiptLineName = line?.receiptLineName ?? null;
   const id = globalThis.crypto?.randomUUID?.() ?? `line-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -84,6 +99,22 @@ function newLine(line?: Partial<PurchaseLine>): PurchaseLine {
 
 function money(value: number) {
   return `LYD ${value.toFixed(2)}`;
+}
+
+function todayDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function detailsFromInitial(initialPurchase?: InitialPurchase): PurchaseDetailsState {
+  return {
+    supplierId: initialPurchase?.supplierId ?? "",
+    purchaseDate: initialPurchase?.purchaseDate ?? todayDate(),
+    receiptNumber: initialPurchase?.receiptNumber ?? "",
+    paymentMethod: initialPurchase?.paymentMethod ?? "cash",
+    paymentStatus: initialPurchase?.paymentStatus ?? "paid",
+    receiptUrl: initialPurchase?.receiptUrl ?? "",
+    notes: initialPurchase?.notes ?? "",
+  };
 }
 
 function confidenceTone(label: ReceiptConfidenceLabel | null) {
@@ -175,6 +206,174 @@ function confidenceText(label: ReceiptConfidenceLabel | null, score: number | nu
   return score === null ? display : `${display} ${(score * 100).toFixed(0)}%`;
 }
 
+function lineFromScan(scanLine: ReceiptScanDraft["lines"][number]): Partial<PurchaseLine> {
+  const quantity = Math.max(0, Math.round(Number(scanLine.quantity || 0)));
+  return {
+    productId: "",
+    boxesQty: 0,
+    unitsPerBox: 1,
+    looseUnitsQty: quantity,
+    unitCost: Number(scanLine.unitCost || 0),
+    lineTotal: Number(scanLine.lineTotal || 0),
+    pricingMode: scanLine.lineTotal > 0 ? "total" : "unit",
+    receiptLineName: scanLine.receiptItemName,
+    suggestedProductId: scanLine.suggestedProductId,
+    suggestedProductName: scanLine.suggestedProductName,
+    suggestedProductSku: scanLine.suggestedProductSku,
+    confidenceScore: scanLine.confidenceScore,
+    confidenceLabel: scanLine.confidenceLabel,
+    matchAction: "change",
+    newProductName: scanLine.receiptItemName,
+    newProductCaseQuantity: 1,
+  };
+}
+
+function normalizeProductSearch(value: string | null | undefined) {
+  return String(value ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\u0600-\u06ff]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function productSearchText(product: ProductOption) {
+  return normalizeProductSearch([
+    product.name,
+    product.sku,
+    product.barcode,
+    product.brand,
+    product.category,
+    ...product.vmsNames,
+  ]
+    .filter(Boolean)
+    .join(" "));
+}
+
+function lineHasManualInput(line: PurchaseLine & { totalUnits?: number }) {
+  return Boolean(
+    line.productId ||
+      line.receiptLineName?.trim() ||
+      line.boxesQty > 0 ||
+      line.looseUnitsQty > 0 ||
+      line.unitCost > 0 ||
+      line.lineTotal > 0 ||
+      (line.totalUnits ?? 0) > 0,
+  );
+}
+
+function isPristineLine(line: PurchaseLine & { totalUnits?: number }) {
+  return !lineHasManualInput(line) && line.unitsPerBox === 1 && line.matchAction === "change";
+}
+
+function isProductSelectionError(error: string | undefined) {
+  return Boolean(error?.startsWith("Choose a product"));
+}
+
+function ProductCombobox({
+  lineId,
+  value,
+  selectedProductId,
+  products,
+  canAddProducts,
+  disabled,
+  onSearchChange,
+  onSelect,
+  error,
+}: {
+  lineId: string;
+  value: string;
+  selectedProductId: string;
+  products: ProductOption[];
+  canAddProducts: boolean;
+  disabled?: boolean;
+  onSearchChange: (value: string) => void;
+  onSelect: (product: ProductOption) => void;
+  error?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const hasSearch = value.trim().length > 0;
+
+  return (
+    <div className="relative">
+      <label htmlFor={`purchase-product-${lineId}`} className="mb-1 block text-sm font-medium text-slate-800">Product</label>
+      <input
+        id={`purchase-product-${lineId}`}
+        value={value}
+        onFocus={() => setOpen(true)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") setOpen(false);
+        }}
+        onChange={(event) => {
+          onSearchChange(event.target.value);
+          setOpen(true);
+        }}
+        onBlur={() => {
+          window.setTimeout(() => setOpen(false), 120);
+        }}
+        className="field-input"
+        placeholder="Search product name, SKU, barcode, brand, category, VMS name"
+        autoComplete="off"
+        disabled={disabled}
+        aria-expanded={open}
+        aria-controls={`purchase-product-results-${lineId}`}
+      />
+      <input type="hidden" value={selectedProductId} readOnly aria-hidden="true" />
+      {open && !disabled ? (
+        <div id={`purchase-product-results-${lineId}`} className="absolute z-30 mt-2 max-h-72 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+          {products.length ? products.map((product) => {
+            const selected = selectedProductId === product.id;
+            const lastPurchaseCost = product.lastPurchaseCost;
+            return (
+              <button
+                key={product.id}
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  onSelect(product);
+                  setOpen(false);
+                }}
+                className={`flex w-full items-center gap-3 px-3 py-3 text-left text-sm transition-colors hover:bg-slate-50 ${selected ? "brand-selected" : ""}`}
+              >
+                <ProductThumbnail imageUrl={product.imageUrl} name={product.name} />
+                <span className="min-w-0 flex-1">
+                  <span className={`block truncate font-semibold ${selected ? "text-white" : "text-slate-900"}`}>{product.name}</span>
+                  <span className={`mt-0.5 block truncate text-xs ${selected ? "text-white/80" : "text-slate-500"}`}>
+                    {product.sku ?? "No SKU"} | {product.barcode ?? "No barcode"} | {product.brand ?? product.category ?? "Uncategorized"}
+                  </span>
+                  <span className={`mt-1 block text-xs ${selected ? "text-white/80" : "text-slate-500"}`}>
+                    Storage {Number(product.currentStorageQty || 0)} | Last purchase {lastPurchaseCost === null ? "-" : money(Number(lastPurchaseCost))}
+                  </span>
+                </span>
+              </button>
+            );
+          }) : (
+            <div className="p-4 text-sm text-slate-600">
+              {hasSearch ? (
+                <>
+                  <div className="font-medium text-slate-900">No products found</div>
+                  <div className="mt-1 text-slate-500">Typed text is only a search. Select a product before saving.</div>
+                  {canAddProducts ? (
+                    <Link href="/products/new" className="mt-3 inline-flex btn-secondary">
+                      Quick add product
+                    </Link>
+                  ) : (
+                    <div className="mt-2 text-xs font-medium text-slate-500">Ask an owner/admin to add a missing product.</div>
+                  )}
+                </>
+              ) : (
+                "Start typing to search products."
+              )}
+            </div>
+          )}
+        </div>
+      ) : null}
+      {error ? <p className="mt-2 text-xs font-medium text-rose-700">{error}</p> : null}
+    </div>
+  );
+}
+
 export function PurchaseForm({
   action,
   suppliers,
@@ -182,6 +381,7 @@ export function PurchaseForm({
   initialPurchase,
   initialLines,
   receiptScan,
+  appliedScanKey = 0,
   canAddProducts = false,
   submitLabel = "Save draft",
 }: {
@@ -191,19 +391,47 @@ export function PurchaseForm({
   initialPurchase?: InitialPurchase;
   initialLines?: Partial<PurchaseLine>[];
   receiptScan?: ReceiptScanDraft | null;
+  appliedScanKey?: number;
   canAddProducts?: boolean;
   submitLabel?: string;
 }) {
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const submittingRef = useRef(false);
+  const lastAppliedScanKey = useRef(0);
+  const [details, setDetails] = useState<PurchaseDetailsState>(() => detailsFromInitial(initialPurchase));
   const [lines, setLines] = useState<PurchaseLine[]>(() => initialLines?.length ? initialLines.map((line) => newLine(line)) : [newLine()]);
   const [manualTotal, setManualTotal] = useState<string>(() => initialPurchase?.manualTotalLyd === null || initialPurchase?.manualTotalLyd === undefined ? "" : String(initialPurchase.manualTotalLyd));
   const [searchByLine, setSearchByLine] = useState<Record<string, string>>({});
   const [submitIntent, setSubmitIntent] = useState<"draft" | "received" | null>(null);
   const [submitMessage, setSubmitMessage] = useState<{ type: "success" | "error"; text: string; debug?: string } | null>(null);
-  const deferredSearch = useDeferredValue(searchByLine);
+  const [detailsErrors, setDetailsErrors] = useState<{ purchaseDate?: string }>({});
+  const [lineErrors, setLineErrors] = useState<Record<string, string>>({});
   const productById = useMemo(() => new Map(products.map((product) => [product.id, product])), [products]);
+
+  useEffect(() => {
+    if (!receiptScan || appliedScanKey <= 0 || appliedScanKey === lastAppliedScanKey.current) return;
+    lastAppliedScanKey.current = appliedScanKey;
+    setDetails((current) => ({
+      supplierId: current.supplierId || receiptScan.supplierId || "",
+      purchaseDate: current.purchaseDate || receiptScan.receiptDate || todayDate(),
+      receiptNumber: current.receiptNumber || receiptScan.receiptNumber || "",
+      paymentMethod: current.paymentMethod,
+      paymentStatus: current.paymentStatus,
+      receiptUrl: current.receiptUrl || receiptScan.fileUrl || "",
+      notes: current.notes,
+    }));
+    setManualTotal((current) => (current.trim() || receiptScan.totalAmount === null || receiptScan.totalAmount === undefined ? current : String(receiptScan.totalAmount)));
+    if (receiptScan.lines.length) {
+      const extractedLines = receiptScan.lines.map((line) => newLine(lineFromScan(line)));
+      setLines((current) => {
+        if (current.length === 1 && isPristineLine(current[0])) return extractedLines;
+        return [...current, ...extractedLines];
+      });
+      setSearchByLine({});
+    }
+    setSubmitMessage({ type: "success", text: "Extracted receipt fields were applied. Existing manual entries were kept; review every line before saving." });
+  }, [appliedScanKey, receiptScan]);
 
   const enrichedLines = useMemo(
     () =>
@@ -243,12 +471,17 @@ export function PurchaseForm({
 
   const updateLine = (id: string, patch: Partial<PurchaseLine>) => {
     setLines((current) => current.map((line) => (line.id === id ? { ...line, ...patch } : line)));
+    setLineErrors((current) => {
+      if (!current[id]) return current;
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
   };
 
   const selectProduct = (line: PurchaseLine, product: ProductOption) => {
     updateLine(line.id, {
       productId: product.id,
-      unitsPerBox: Math.max(1, Number(product.caseQuantity || 1)),
       matchAction: line.receiptLineName && line.matchAction !== "accept" ? "change" : line.matchAction,
     });
     setSearchByLine((current) => ({ ...current, [line.id]: product.name }));
@@ -285,63 +518,59 @@ export function PurchaseForm({
   };
 
   const productOptionsForLine = (line: PurchaseLine) => {
-    const query = String(deferredSearch[line.id] ?? "").trim().toLowerCase();
+    const query = normalizeProductSearch(searchByLine[line.id]);
     if (!query) {
       const selected = productById.get(line.productId);
       return selected ? [selected] : [];
     }
-    return products.filter((product) => [product.name, product.sku, product.barcode, product.category, product.brand].some((value) => String(value ?? "").toLowerCase().includes(query))).slice(0, 8);
+    return products.filter((product) => productSearchText(product).includes(query)).slice(0, 8);
   };
 
   const renderProductPicker = (line: PurchaseLine & { product?: ProductOption }) => {
     const options = productOptionsForLine(line);
-    const query = String(deferredSearch[line.id] ?? "").trim();
     return (
-      <div>
-        <label className="mb-1 block text-sm font-medium text-slate-800">Product</label>
-        <input
-          value={searchByLine[line.id] ?? line.product?.name ?? ""}
-          onChange={(event) => {
-            setSearchByLine((current) => ({ ...current, [line.id]: event.target.value }));
-            if (line.receiptLineName) updateLine(line.id, { matchAction: "change" });
-          }}
-          className="field-input"
-          placeholder="Search product"
-          disabled={line.matchAction === "ignore"}
-        />
-        <div className="mt-2 max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-white">
-          {options.length ? options.map((product) => (
-            <button
-              key={product.id}
-              type="button"
-              onClick={() => selectProduct(line, product)}
-              className={`block min-h-14 w-full px-3 py-2 text-left text-sm transition-colors hover:bg-slate-50 ${line.productId === product.id ? "brand-selected" : ""}`}
-              disabled={line.matchAction === "ignore"}
-            >
-              <span className={`block font-medium ${line.productId === product.id ? "text-white" : "text-slate-900"}`}>{product.name}</span>
-              <span className={`text-xs ${line.productId === product.id ? "text-white/80" : "text-slate-500"}`}>
-                {product.sku ?? "No SKU"} - {product.barcode ?? "No barcode"} - case {product.caseQuantity || 1}
-              </span>
-            </button>
-          )) : (
-            <div className="p-3 text-sm text-slate-500">
-              {query ? (
-                canAddProducts ? (
-                  <Link href="/products/new" className="link-secondary">Product not found. Add product</Link>
-                ) : (
-                  "Product not found. Ask an admin to add it."
-                )
-              ) : (
-                "Start typing to search products."
-              )}
-            </div>
-          )}
-        </div>
-      </div>
+      <ProductCombobox
+        lineId={line.id}
+        value={searchByLine[line.id] ?? line.product?.name ?? ""}
+        selectedProductId={line.productId}
+        products={options}
+        canAddProducts={canAddProducts}
+        disabled={line.matchAction === "ignore"}
+        error={isProductSelectionError(lineErrors[line.id]) ? lineErrors[line.id] : undefined}
+        onSearchChange={(value) => {
+          setSearchByLine((current) => ({ ...current, [line.id]: value }));
+          updateLine(line.id, { productId: "", matchAction: line.receiptLineName ? "change" : line.matchAction });
+        }}
+        onSelect={(product) => selectProduct(line, product)}
+      />
     );
   };
 
   const validateBeforeSubmit = () => {
+    const nextDetailsErrors: typeof detailsErrors = {};
+    const nextLineErrors: Record<string, string> = {};
+
+    if (!details.purchaseDate) nextDetailsErrors.purchaseDate = "Enter a purchase date.";
+
+    for (const line of enrichedLines) {
+      const typedSearch = String(searchByLine[line.id] ?? "").trim();
+      const started = lineHasManualInput(line) || typedSearch.length > 0;
+      if (line.matchAction === "ignore" || !started) continue;
+      if (line.matchAction === "create") {
+        if (!line.newProductName.trim()) nextLineErrors[line.id] = "Enter the new product name before saving.";
+      } else if (!line.productId) {
+        nextLineErrors[line.id] = "Choose a product from the search results. Typed text alone is only a search.";
+      }
+      if ((line.productId || line.matchAction === "create") && line.totalUnits <= 0) {
+        nextLineErrors[line.id] = "Quantity must be greater than zero.";
+      }
+    }
+
+    setDetailsErrors(nextDetailsErrors);
+    setLineErrors(nextLineErrors);
+    if (nextDetailsErrors.purchaseDate) return "Enter a purchase date.";
+    if (Object.keys(nextLineErrors).length) return "Fix the highlighted purchase lines.";
+
     const included = enrichedLines.filter((line) => line.included);
     if (!included.length) return "Add at least one purchased item.";
     const missingProduct = included.find((line) => line.matchAction !== "create" && !line.productId);
@@ -394,7 +623,7 @@ export function PurchaseForm({
   };
 
   return (
-    <form ref={formRef} onSubmit={handleSubmit} className="space-y-5" noValidate>
+    <form id="manual-purchase-entry" ref={formRef} onSubmit={handleSubmit} className="space-y-5" noValidate>
       {initialPurchase?.id ? <input type="hidden" name="id" value={initialPurchase.id} /> : null}
       <input type="hidden" name="receipt_scan_result_id" value={receiptScan?.scanResultId ?? ""} />
       <input type="hidden" name="current_receipt_url" value={initialPurchase?.receiptUrl ?? ""} />
@@ -414,19 +643,20 @@ export function PurchaseForm({
       <FormSection title="Purchase details" description="Record the supplier, receipt, payment state, and supporting receipt reference before receiving stock.">
         <div className="grid gap-4 md:grid-cols-2">
           <FormField label="Supplier">
-            <select name="supplier_id" className="field-input" defaultValue={initialPurchase?.supplierId ?? ""}>
+            <select name="supplier_id" className="field-input" value={details.supplierId} onChange={(event) => setDetails((current) => ({ ...current, supplierId: event.target.value }))}>
               <option value="">Select supplier</option>
               {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
             </select>
           </FormField>
           <FormField label="Purchase date" required>
-            <input name="purchase_date" type="date" required defaultValue={initialPurchase?.purchaseDate ?? new Date().toISOString().slice(0, 10)} className="field-input" />
+            <input name="purchase_date" type="date" required value={details.purchaseDate} onChange={(event) => setDetails((current) => ({ ...current, purchaseDate: event.target.value }))} className="field-input" />
+            {detailsErrors.purchaseDate ? <p className="mt-2 text-xs font-medium text-rose-700">{detailsErrors.purchaseDate}</p> : null}
           </FormField>
           <FormField label="Receipt / invoice number">
-            <input name="receipt_number" className="field-input" placeholder="INV-1024" defaultValue={initialPurchase?.receiptNumber ?? ""} />
+            <input name="receipt_number" className="field-input" placeholder="INV-1024" value={details.receiptNumber} onChange={(event) => setDetails((current) => ({ ...current, receiptNumber: event.target.value }))} />
           </FormField>
           <FormField label="Payment method">
-            <select name="payment_method" className="field-input" defaultValue={initialPurchase?.paymentMethod ?? "cash"}>
+            <select name="payment_method" className="field-input" value={details.paymentMethod} onChange={(event) => setDetails((current) => ({ ...current, paymentMethod: event.target.value }))}>
               <option value="cash">Cash</option>
               <option value="bank_transfer">Bank transfer</option>
               <option value="card">Card</option>
@@ -435,7 +665,7 @@ export function PurchaseForm({
             </select>
           </FormField>
           <FormField label="Payment status" hint="Only paid purchases create a finance money-out transaction when received.">
-            <select name="payment_status" className="field-input" defaultValue={initialPurchase?.paymentStatus ?? "paid"}>
+            <select name="payment_status" className="field-input" value={details.paymentStatus} onChange={(event) => setDetails((current) => ({ ...current, paymentStatus: event.target.value }))}>
               <option value="paid">Paid</option>
               <option value="unpaid">Unpaid / supplier credit</option>
               <option value="partially_paid">Partially paid</option>
@@ -445,17 +675,17 @@ export function PurchaseForm({
             <input name="receipt_file" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" className="field-input" />
           </FormField>
           <FormField label="Receipt URL fallback">
-            <input name="receipt_url" type="url" className="field-input" placeholder="https://example.com/receipt.jpg" defaultValue={initialPurchase?.receiptUrl ?? ""} />
+            <input name="receipt_url" type="url" className="field-input" placeholder="https://example.com/receipt.jpg" value={details.receiptUrl} onChange={(event) => setDetails((current) => ({ ...current, receiptUrl: event.target.value }))} />
           </FormField>
           <div className="md:col-span-2">
             <FormField label="Notes">
-              <textarea name="notes" rows={3} className="field-input" placeholder="Delivery notes, supplier comments, or payment reference." defaultValue={initialPurchase?.notes ?? ""} />
+              <textarea name="notes" rows={3} className="field-input" placeholder="Delivery notes, supplier comments, or payment reference." value={details.notes} onChange={(event) => setDetails((current) => ({ ...current, notes: event.target.value }))} />
             </FormField>
           </div>
         </div>
       </FormSection>
 
-      {receiptScan ? (
+      {receiptScan?.lines.length ? (
         <FormSection title="Receipt line review" description="AI extraction may be wrong. Review before receiving purchase. Low confidence matches are ignored until you approve them.">
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">
             AI extraction may be wrong. Review before receiving purchase.
@@ -472,6 +702,7 @@ export function PurchaseForm({
                     Remove
                   </button>
                 </div>
+                {lineErrors[line.id] && !isProductSelectionError(lineErrors[line.id]) ? <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-800">{lineErrors[line.id]}</div> : null}
 
                 <div className="grid gap-3 lg:grid-cols-[1.3fr_1fr_1fr]">
                   <FormField label="Receipt item name">
@@ -594,6 +825,7 @@ export function PurchaseForm({
                     Remove
                   </button>
                 </div>
+                {lineErrors[line.id] && !isProductSelectionError(lineErrors[line.id]) ? <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-800">{lineErrors[line.id]}</div> : null}
 
                 <div className="grid gap-3 lg:grid-cols-[1.6fr_repeat(4,minmax(108px,1fr))]">
                   {renderProductPicker(line)}
