@@ -2,9 +2,9 @@
 
 Use this only for the first Supabase Cloud staging or production data load.
 
-The production bootstrap is separate from local development seed data:
+The production bootstrap is separate from the SQL seed:
 
-- Development seed: `supabase/seed.sql`, used with local `npx supabase db reset`.
+- Business-data seed: `supabase/seed.sql`, used with local `npx supabase db reset` or cloud `npx supabase db push --include-seed`. It loads the local business dataset but skips team/Auth users.
 - Production bootstrap: `scripts/bootstrap-production-data.mjs`, used after migrations on Supabase Cloud.
 
 Never run `npx supabase db reset` against production.
@@ -30,7 +30,7 @@ The script reads `docs/current-data` and imports:
 - Suppliers referenced by purchase history
 - Historical purchases and purchase lines from `purchases.csv`
 
-It does not create local development login users, and it does not run `supabase/seed.sql`.
+It does not create Auth users or team members, and it does not run `supabase/seed.sql`.
 
 Purchase history is imported as purchase records and lines only. It does not replay purchase receipt inventory movements, because current storage stock is established by the opening-balance `inventory_movements`. Replaying historical purchases as stock movements would double count inventory.
 

@@ -31,8 +31,8 @@ Use this before every staging or production launch. For environment rules, see [
 - [ ] Migrations were applied and tested in staging before production.
 - [ ] `supabase db reset` was not run against staging.
 - [ ] `supabase db reset` was never run against production.
-- [ ] `supabase/seed.sql` was not run against production unless it was intentionally sanitized first.
-- [ ] Initial real data was loaded through bootstrap/import flows, not local demo seed data.
+- [ ] `supabase/seed.sql` was run only if you intentionally want the cloud-safe business seed, and it was tested in staging first.
+- [ ] Auth users and team access were created through Supabase Auth or the app Team page, not seed SQL.
 - [ ] Historical imports were tested in staging before production.
 - [ ] Production bootstrap was dry-run first with `npm run bootstrap:production -- --dry-run`.
 - [ ] Production bootstrap was run at most once per environment with `--confirm-production-bootstrap`.

@@ -45,7 +45,7 @@ Production uses:
 - Cloud environment variables from the Supabase production project.
 - Auth redirect URLs that include the production app domain.
 
-Production contains real business history. Do not run `supabase db reset`, local seed data, demo seed data, or destructive test imports against production.
+Production contains real business history. Do not run `supabase db reset`, demo seed data, or destructive test imports against production. Run the cloud-safe business seed only when you intentionally want the local business dataset in that environment.
 
 ## Environment Variables
 
@@ -108,13 +108,14 @@ Rules:
 
 - Local reset is allowed only for local development.
 - Never run `supabase db reset` on production.
-- Do not run `supabase/seed.sql` on production.
-- Use bootstrap/import flows for initial real data.
+- `supabase/seed.sql` is business-data only and can be run intentionally with `npx supabase db push --include-seed`; test this in staging before production.
+- Use bootstrap/import flows for larger initial real-data loads.
 - Test imports in staging before production.
 
 Initial data should come from:
 
 - The first production admin flow in `docs/FIRST_PRODUCTION_ADMIN.md`.
+- The cloud-safe business seed in `supabase/seed.sql`, when you want the local business dataset without team/Auth users.
 - The production bootstrap flow in `docs/PRODUCTION_BOOTSTRAP.md`.
 - Controlled import scripts for real Snacky history.
 - App screens for master data and daily operations.

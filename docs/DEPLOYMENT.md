@@ -56,11 +56,17 @@ Run migrations against staging first, test the release, then apply the same migr
 
 ## 3. Seed Policy
 
-Do not run `supabase/seed.sql` against staging or production by default.
+`supabase/seed.sql` is a business-data seed only. It can be run locally with `npx supabase db reset` or against Supabase Cloud with:
 
-That seed file is useful for local development snapshots and includes local-only login users such as `admin@snacky.local` and `operator@snacky.local`. For production, create the first real admin user using [FIRST_PRODUCTION_ADMIN.md](./FIRST_PRODUCTION_ADMIN.md), then enter business data through the app flows or run the one-time production bootstrap in [PRODUCTION_BOOTSTRAP.md](./PRODUCTION_BOOTSTRAP.md).
+```bash
+npx supabase db push --include-seed
+```
 
-Use bootstrap/import flows for initial real data. If you intentionally need to import historical Snacky data into staging or production, remove local-only Auth users and any test credentials before running a custom import. Test the import in staging before production.
+The seed inserts operating data such as products, machines, locations, storage locations, suppliers, VMS mappings, machine slots, purchases, purchase lines, financial transactions, and inventory movements. It does not create team members, Supabase Auth users, Auth identities, login sessions, tokens, or passwords.
+
+Create Auth users through Supabase Auth or the app Team page. For production, create the first real admin user using [FIRST_PRODUCTION_ADMIN.md](./FIRST_PRODUCTION_ADMIN.md), then enter additional team members through the app flows. The seed should not be used to overwrite an existing cloud owner user.
+
+Use bootstrap/import flows for larger initial real-data loads. If you intentionally need to import historical Snacky data into staging or production, test the import in staging before production.
 
 ## 4. Configure Supabase Auth
 
