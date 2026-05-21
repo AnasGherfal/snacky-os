@@ -21,7 +21,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
       </>
     );
   }
-  const query = s?.from("products").select("id,sku,barcode,name,category,brand,import_source,last_vms_seen_at,selling_price,current_selling_price_lyd,vms_selling_price_lyd,selling_price_source,current_cost_price_lyd,last_purchase_cost_lyd,average_cost_lyd,cost_price_source,active,image_url,suppliers(name)").order("name");
+  const query = s?.from("products").select("id,sku,barcode,name,category,brand,case_quantity,import_source,last_vms_seen_at,selling_price,current_selling_price_lyd,vms_selling_price_lyd,selling_price_source,current_cost_price_lyd,last_purchase_cost_lyd,average_cost_lyd,cost_price_source,active,image_url,suppliers(name)").order("name");
   const { data: productRows, error: productsError } = query ? await query : { data: [], error: null };
   if (productsError) {
     console.error("[products] Failed to load products", productsError);
@@ -59,13 +59,14 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
           <div className="mb-3 text-sm text-slate-500">
             Showing {data.length} product{data.length === 1 ? "" : "s"}{search ? ` matching "${q}"` : ""}.
           </div>
-          <DataTable headers={["Image", "SKU", "Product", "Category", "Supplier", "Product Source", "Current Selling", "VMS Selling", "Last Purchase Cost", "Average Cost", "Selling Source", "Cost Source", "Status", "Actions"]}>
+          <DataTable headers={["Image", "SKU", "Product", "Category", "Case Qty", "Supplier", "Product Source", "Current Selling", "VMS Selling", "Last Purchase Cost", "Average Cost", "Selling Source", "Cost Source", "Status", "Actions"]}>
             {data.map((product: any) => (
               <tr key={product.id}>
                 <td><ProductThumbnail imageUrl={product.image_url} name={product.name} /></td>
                 <td>{product.sku}</td>
                 <td className="font-medium">{product.name}</td>
                 <td>{product.category}</td>
+                <td>{product.case_quantity ?? 1}</td>
                 <td>{product.suppliers?.name ?? "-"}</td>
                 <td><ProductSourceBadge source={product.import_source} /></td>
                 <td>{formatMoney(product.current_selling_price_lyd ?? product.selling_price)}</td>

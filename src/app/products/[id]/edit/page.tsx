@@ -39,7 +39,7 @@ async function updateProduct(fd: FormData) {
     category: String(fd.get("category") || "snack"),
     brand: String(fd.get("brand") || "") || null,
     supplier_id: String(fd.get("supplier_id") || "") || null,
-    case_quantity: Number(fd.get("case_quantity") || 1),
+    case_quantity: Math.max(1, Math.floor(Number(fd.get("case_quantity") || 1) || 1)),
     image_url: (imageUrl ?? currentImageUrl) || null,
     active: String(fd.get("active") || String(beforeProduct?.active ?? true)) === "true",
   };
@@ -122,7 +122,7 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
           ))}
         </nav>
 
-        <section id="overview" className="grid gap-4 md:grid-cols-3">
+        <section id="overview" className="grid gap-4 md:grid-cols-4">
           <div className="surface-card">
             <div className="text-sm text-slate-500">Storage quantity</div>
             <div className="mt-1 text-3xl font-semibold text-slate-900">{quantityFor("storage")}</div>
@@ -134,6 +134,10 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
           <div className="surface-card">
             <div className="text-sm text-slate-500">Operator bag quantity</div>
             <div className="mt-1 text-3xl font-semibold text-slate-900">{quantityFor("operator_bag")}</div>
+          </div>
+          <div className="surface-card">
+            <div className="text-sm text-slate-500">Units per box</div>
+            <div className="mt-1 text-3xl font-semibold text-slate-900">{product.case_quantity ?? 1}</div>
           </div>
         </section>
 
@@ -169,7 +173,7 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
               <FormField label="VMS Selling Price LYD" hint="Updated by VMS imports when the file provides a selling price."><input value={formatMoney(product.vms_selling_price_lyd)} readOnly className="field-input bg-slate-50" /></FormField>
               <FormField label="Last Purchase Cost LYD" hint="Updated when a purchase is received."><input value={formatMoney(product.last_purchase_cost_lyd, 4)} readOnly className="field-input bg-slate-50" /></FormField>
               <FormField label="Average Cost LYD" hint="Reserved for weighted average cost once enabled."><input value={formatMoney(product.average_cost_lyd, 4)} readOnly className="field-input bg-slate-50" /></FormField>
-              <FormField label="Case Quantity"><input type="number" name="case_quantity" defaultValue={product.case_quantity ?? 1} className="field-input" /></FormField>
+              <FormField label="Units per box / Case quantity" hint="Used when receiving purchases. Example: Pepsi box = 24 cans."><input type="number" min="1" name="case_quantity" defaultValue={product.case_quantity ?? 1} className="field-input" /></FormField>
               <FormField label="Status" hint="Use the safe archive/delete controls on Movement History to change product availability.">
                 <input type="hidden" name="active" value={String(product.active)} />
                 <input value={product.active ? "Active" : "Archived"} readOnly className="field-input bg-slate-50" />

@@ -28,7 +28,7 @@ async function createProduct(fd: FormData) {
     selling_price_source: Number(fd.get("current_selling_price_lyd") || 0) > 0 ? "manual" : "initial_import",
     import_source: "manual",
     price_updated_at: new Date().toISOString(),
-    case_quantity: Number(fd.get("case_quantity") || 1),
+    case_quantity: Math.max(1, Math.floor(Number(fd.get("case_quantity") || 1) || 1)),
     image_url: imageUrl,
     active: String(fd.get("active") || "true") === "true",
   };
@@ -90,7 +90,7 @@ export default async function NewProductPage({ searchParams }: { searchParams: P
               <FormField label="Supplier"><select name="supplier_id" className="field-input"><option value="">Select supplier</option>{suppliers?.map((supplier: any) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}</select></FormField>
               <FormField label="Manual Cost Price LYD" hint="Fallback only. Received purchases will replace this with latest purchase cost."><input type="number" step="0.0001" name="current_cost_price_lyd" placeholder="1.2000" className="field-input" /></FormField>
               <FormField label="Selling Price LYD" hint="Manual selling price until a VMS price import updates it."><input type="number" step="0.01" name="current_selling_price_lyd" placeholder="2.00" className="field-input" /></FormField>
-              <FormField label="Case Quantity" hint="Units per carton/case."><input type="number" name="case_quantity" placeholder="24" className="field-input" /></FormField>
+              <FormField label="Units per box / Case quantity" hint="Used when receiving purchases. Example: Pepsi box = 24 cans."><input type="number" min="1" name="case_quantity" placeholder="24" className="field-input" /></FormField>
               <FormField label="Active" hint="Inactive products stay in history but are hidden from new operations."><select name="active" className="field-input"><option value="true">Active</option><option value="false">Inactive</option></select></FormField>
             </div>
           </FormSection>

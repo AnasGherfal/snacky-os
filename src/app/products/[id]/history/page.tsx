@@ -70,7 +70,7 @@ export default async function ProductHistoryPage({
   const [{ data: product }, { data: users }, { data: inventory }, { data: purchaseLines }, { data: salesRows }, { data: priceLogs }, historyCounts] = await Promise.all([
     supabase
       .from("products")
-      .select("id, sku, name, category, active, import_source, last_vms_seen_at, current_selling_price_lyd, selling_price, selling_price_source, current_cost_price_lyd, last_purchase_cost_lyd, average_cost_lyd, cost_price_source, price_updated_at")
+      .select("id, sku, name, category, case_quantity, active, import_source, last_vms_seen_at, current_selling_price_lyd, selling_price, selling_price_source, current_cost_price_lyd, last_purchase_cost_lyd, average_cost_lyd, cost_price_source, price_updated_at")
       .eq("id", id)
       .maybeSingle(),
     supabase.from("team_members").select("id, full_name").order("full_name"),
@@ -196,8 +196,9 @@ export default async function ProductHistoryPage({
         <Link href="#price-history" className="btn-secondary">Price History</Link>
       </nav>
 
-      <section className="mb-6 grid gap-4 md:grid-cols-4">
+      <section className="mb-6 grid gap-4 md:grid-cols-5">
         <div className="surface-card"><div className="text-sm text-slate-500">Current storage quantity</div><div className="mt-1 text-3xl font-semibold">{storageQty}</div></div>
+        <div className="surface-card"><div className="text-sm text-slate-500">Units per box</div><div className="mt-1 text-3xl font-semibold">{product.case_quantity ?? 1}</div></div>
         <div className="surface-card"><div className="text-sm text-slate-500">Last purchase cost</div><div className="mt-1 text-2xl font-semibold">{product.last_purchase_cost_lyd === null ? "-" : formatMoney(product.last_purchase_cost_lyd, 4)}</div><div className="mt-2"><ProductSourceBadge source={product.cost_price_source} /></div></div>
         <div className="surface-card"><div className="text-sm text-slate-500">Current selling price</div><div className="mt-1 text-2xl font-semibold">{formatMoney(product.current_selling_price_lyd ?? product.selling_price)}</div><div className="mt-2"><ProductSourceBadge source={product.selling_price_source} /></div></div>
         <div className="surface-card"><div className="text-sm text-slate-500">Status</div><div className="mt-2"><StatusBadge status={product.active ? "active" : "inactive"} /></div></div>

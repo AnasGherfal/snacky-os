@@ -16,8 +16,14 @@ type ProductOption = {
   category: string | null;
   brand: string | null;
   caseQuantity: number;
+  case_quantity: number;
+  unitsPerBox: number | null;
+  units_per_box: number | null;
   costPrice: number;
+  currentCostPrice: number | null;
+  current_cost_price_lyd: number | null;
   lastPurchaseCost: number | null;
+  last_purchase_cost_lyd: number | null;
   currentStorageQty: number;
   vmsNames: string[];
 };

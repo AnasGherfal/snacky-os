@@ -18,8 +18,14 @@ type ProductOption = {
   category: string | null;
   brand: string | null;
   caseQuantity: number;
+  case_quantity: number;
+  unitsPerBox: number | null;
+  units_per_box: number | null;
   costPrice: number;
+  currentCostPrice: number | null;
+  current_cost_price_lyd: number | null;
   lastPurchaseCost: number | null;
+  last_purchase_cost_lyd: number | null;
   currentStorageQty: number;
   vmsNames: string[];
 };
@@ -271,6 +277,17 @@ function isProductSelectionError(error: string | undefined) {
   return Boolean(error?.startsWith("Choose a product"));
 }
 
+function productUnitsPerBox(product: ProductOption | null | undefined) {
+  return Math.max(1, Math.floor(Number(product?.unitsPerBox ?? product?.units_per_box ?? product?.caseQuantity ?? product?.case_quantity ?? 1) || 1));
+}
+
+function unitsPerBoxHint(line: PurchaseLine & { product?: ProductOption }) {
+  if (!line.productId || !line.product) return "Select a product to pull its packaging size, or enter units manually.";
+  const productUnits = productUnitsPerBox(line.product);
+  if (line.unitsPerBox !== productUnits) return "Overridden for this purchase only.";
+  return "Units per box pulled from product packaging. You can override it for this purchase.";
+}
+
 function ProductCombobox({
   lineId,
   value,
@@ -324,7 +341,7 @@ function ProductCombobox({
         <div id={`purchase-product-results-${lineId}`} className="absolute z-30 mt-2 max-h-72 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
           {products.length ? products.map((product) => {
             const selected = selectedProductId === product.id;
-            const lastPurchaseCost = product.lastPurchaseCost;
+            const lastPurchaseCost = product.lastPurchaseCost ?? product.last_purchase_cost_lyd;
             return (
               <button
                 key={product.id}
@@ -343,7 +360,7 @@ function ProductCombobox({
                     {product.sku ?? "No SKU"} | {product.barcode ?? "No barcode"} | {product.brand ?? product.category ?? "Uncategorized"}
                   </span>
                   <span className={`mt-1 block text-xs ${selected ? "text-white/80" : "text-slate-500"}`}>
-                    Storage {Number(product.currentStorageQty || 0)} | Last purchase {lastPurchaseCost === null ? "-" : money(Number(lastPurchaseCost))}
+                    Case {productUnitsPerBox(product)} | Storage {Number(product.currentStorageQty || 0)} | Last purchase {lastPurchaseCost === null ? "-" : money(Number(lastPurchaseCost))}
                   </span>
                 </span>
               </button>
@@ -482,6 +499,7 @@ export function PurchaseForm({
   const selectProduct = (line: PurchaseLine, product: ProductOption) => {
     updateLine(line.id, {
       productId: product.id,
+      unitsPerBox: productUnitsPerBox(product),
       matchAction: line.receiptLineName && line.matchAction !== "accept" ? "change" : line.matchAction,
     });
     setSearchByLine((current) => ({ ...current, [line.id]: product.name }));
@@ -490,7 +508,8 @@ export function PurchaseForm({
   const setLineAction = (line: PurchaseLine, action: ReceiptLineAction) => {
     if (action === "accept") {
       if (!line.suggestedProductId) return;
-      updateLine(line.id, { matchAction: "accept", productId: line.suggestedProductId });
+      const suggestedProduct = productById.get(line.suggestedProductId);
+      updateLine(line.id, { matchAction: "accept", productId: line.suggestedProductId, unitsPerBox: productUnitsPerBox(suggestedProduct) });
       setSearchByLine((current) => ({ ...current, [line.id]: line.suggestedProductName ?? "" }));
       return;
     }
@@ -545,6 +564,67 @@ export function PurchaseForm({
       />
     );
   };
+
+  const renderLineMathFields = (line: PurchaseLine & { product?: ProductOption; totalUnits: number; unitCost: number; lineTotal: number }) => (
+    <>
+      <FormField label="Boxes / Cases" hint="Full cartons or cases.">
+        <PurchaseNumberInput
+          value={line.boxesQty}
+          onChange={(boxesQty) => updateLine(line.id, { boxesQty })}
+          integer
+          suffix="boxes"
+          placeholder="2"
+          disabled={line.matchAction === "ignore"}
+        />
+      </FormField>
+      <FormField label="Units per Box" hint={unitsPerBoxHint(line)}>
+        <PurchaseNumberInput
+          value={line.unitsPerBox}
+          onChange={(unitsPerBox) => updateLine(line.id, { unitsPerBox: Math.max(1, unitsPerBox) })}
+          integer
+          min={1}
+          suffix="units"
+          placeholder="24"
+          disabled={line.matchAction === "ignore"}
+        />
+      </FormField>
+      <FormField label="Loose Units" hint="Extra single units.">
+        <PurchaseNumberInput
+          value={line.looseUnitsQty}
+          onChange={(looseUnitsQty) => updateLine(line.id, { looseUnitsQty })}
+          integer
+          suffix="units"
+          placeholder="3"
+          disabled={line.matchAction === "ignore"}
+        />
+      </FormField>
+      <FormField label="Total Units" hint="Calculated automatically.">
+        <div className="flex min-h-12 items-center justify-end rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-base font-semibold tabular-nums text-slate-900 md:min-h-11 md:py-2 md:text-sm">
+          {line.totalUnits}
+        </div>
+      </FormField>
+      <FormField label="Unit Cost">
+        <PurchaseNumberInput
+          value={line.unitCost}
+          onChange={(unitCost) => updateLine(line.id, { unitCost, pricingMode: "unit" })}
+          precision={4}
+          prefix="LYD"
+          placeholder="1.2500"
+          disabled={line.matchAction === "ignore"}
+        />
+      </FormField>
+      <FormField label="Line Total">
+        <PurchaseNumberInput
+          value={line.lineTotal}
+          onChange={(lineTotal) => updateLine(line.id, { lineTotal, pricingMode: "total" })}
+          precision={2}
+          prefix="LYD"
+          placeholder="153.00"
+          disabled={line.matchAction === "ignore"}
+        />
+      </FormField>
+    </>
+  );
 
   const validateBeforeSubmit = () => {
     const nextDetailsErrors: typeof detailsErrors = {};
@@ -735,7 +815,7 @@ export function PurchaseForm({
                   </FormField>
                 </div>
 
-                <div className="mt-3 grid gap-3 lg:grid-cols-[1.4fr_repeat(3,minmax(120px,1fr))]">
+                <div className="mt-3 grid gap-3 lg:grid-cols-[1.6fr_repeat(6,minmax(108px,1fr))]">
                   {line.matchAction === "create" ? (
                     <div className="space-y-3">
                       <FormField label="New product name" required>
@@ -769,36 +849,7 @@ export function PurchaseForm({
                     renderProductPicker(line)
                   )}
 
-                  <FormField label="Quantity">
-                    <PurchaseNumberInput
-                      value={line.looseUnitsQty}
-                      onChange={(value) => updateLine(line.id, { boxesQty: 0, unitsPerBox: 1, looseUnitsQty: value })}
-                      integer
-                      suffix="units"
-                      placeholder="24"
-                      disabled={line.matchAction === "ignore"}
-                    />
-                  </FormField>
-                  <FormField label="Unit cost">
-                    <PurchaseNumberInput
-                      value={line.unitCost}
-                      onChange={(value) => updateLine(line.id, { unitCost: value, pricingMode: "unit" })}
-                      precision={4}
-                      prefix="LYD"
-                      placeholder="1.2500"
-                      disabled={line.matchAction === "ignore"}
-                    />
-                  </FormField>
-                  <FormField label="Line total">
-                    <PurchaseNumberInput
-                      value={line.lineTotal}
-                      onChange={(value) => updateLine(line.id, { lineTotal: value, pricingMode: "total" })}
-                      precision={2}
-                      prefix="LYD"
-                      placeholder="30.00"
-                      disabled={line.matchAction === "ignore"}
-                    />
-                  </FormField>
+                  {renderLineMathFields(line)}
                 </div>
               </div>
             ))}
@@ -827,33 +878,9 @@ export function PurchaseForm({
                 </div>
                 {lineErrors[line.id] && !isProductSelectionError(lineErrors[line.id]) ? <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-800">{lineErrors[line.id]}</div> : null}
 
-                <div className="grid gap-3 lg:grid-cols-[1.6fr_repeat(4,minmax(108px,1fr))]">
+                <div className="grid gap-3 lg:grid-cols-[1.6fr_repeat(6,minmax(108px,1fr))]">
                   {renderProductPicker(line)}
-                  <FormField label="Boxes / cases" hint="Full cartons or cases.">
-                    <PurchaseNumberInput value={line.boxesQty} onChange={(boxesQty) => updateLine(line.id, { boxesQty })} integer suffix="boxes" placeholder="2" />
-                  </FormField>
-                  <FormField label="Units / box" hint="Case pack size.">
-                    <PurchaseNumberInput value={line.unitsPerBox} onChange={(unitsPerBox) => updateLine(line.id, { unitsPerBox: Math.max(1, unitsPerBox) })} integer min={1} suffix="units" placeholder="24" />
-                  </FormField>
-                  <FormField label="Loose units" hint="Extra single units.">
-                    <PurchaseNumberInput value={line.looseUnitsQty} onChange={(looseUnitsQty) => updateLine(line.id, { looseUnitsQty })} integer suffix="units" placeholder="6" />
-                  </FormField>
-                  <FormField label="Unit cost">
-                    <PurchaseNumberInput value={line.unitCost} onChange={(unitCost) => updateLine(line.id, { unitCost, pricingMode: "unit" })} precision={4} prefix="LYD" placeholder="1.2500" />
-                  </FormField>
-                  <div className="rounded-lg bg-slate-50 p-3 text-sm lg:col-span-5">
-                    <div className="text-xs font-medium text-slate-500">Calculated</div>
-                    <div className="mt-1 grid gap-2 sm:grid-cols-3">
-                      <div><span className="font-semibold text-slate-900">{line.totalUnits}</span> units</div>
-                      <div className="text-slate-700">{money(line.lineTotal)}</div>
-                      <div className="text-slate-500">{money(line.unitCost)} / unit</div>
-                    </div>
-                  </div>
-                  <div className="lg:col-span-5">
-                    <FormField label="Override line total">
-                      <PurchaseNumberInput value={line.lineTotal} onChange={(lineTotal) => updateLine(line.id, { lineTotal, pricingMode: "total" })} precision={2} prefix="LYD" placeholder="30.00" />
-                    </FormField>
-                  </div>
+                  {renderLineMathFields(line)}
                 </div>
               </div>
             ))}
