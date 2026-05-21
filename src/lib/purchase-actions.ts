@@ -521,7 +521,7 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
 
 async function receivePurchaseById(id: string) {
   const { profile, supabase } = await requirePurchaseAccess();
-  const { data: purchase, error: purchaseError } = await supabase.from("purchase_orders").select("id, status, supplier_id, receipt_number, payment_method, payment_status, receipt_url, total_amount, manual_total_lyd, calculated_total_lyd").eq("id", id).single();
+  const { data: purchase, error: purchaseError } = await supabase.from("purchase_orders").select("*").eq("id", id).single();
   if (purchaseError || !purchase) throw new Error("Purchase not found.");
   const purchaseTotal = Number(purchase.manual_total_lyd ?? purchase.total_amount ?? purchase.calculated_total_lyd ?? 0);
   const receivedDate = new Date().toISOString().slice(0, 10);
@@ -644,7 +644,7 @@ export async function markPurchasePaid(fd: FormData) {
 
   const { data: purchase, error: purchaseError } = await supabase
     .from("purchase_orders")
-    .select("id, status, supplier_id, receipt_number, payment_method, payment_status, receipt_url, total_amount, manual_total_lyd, calculated_total_lyd, received_date, received_at")
+    .select("*")
     .eq("id", id)
     .maybeSingle();
   if (purchaseError || !purchase) fail("/purchases", "Purchase not found.");
@@ -654,7 +654,6 @@ export async function markPurchasePaid(fd: FormData) {
   const paidPurchase = {
     ...purchase,
     payment_status: "paid",
-    received_date: purchase.received_date ?? String(purchase.received_at ?? new Date().toISOString()).slice(0, 10),
   };
   const purchaseTotal = Number(purchase.manual_total_lyd ?? purchase.total_amount ?? purchase.calculated_total_lyd ?? 0);
 
@@ -671,7 +670,7 @@ export async function markPurchasePaid(fd: FormData) {
   }
 
   try {
-    await createPurchaseFinancialTransaction(supabase, profile, paidPurchase, purchaseTotal);
+    await createPurchaseFinancialTransaction(supabase, profile, { ...paidPurchase, ...after }, purchaseTotal);
   } catch (error) {
     console.error("[purchases] Failed to create payment transaction", error);
     fail(path, "Purchase was marked paid, but the money-out finance transaction could not be created.");

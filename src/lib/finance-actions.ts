@@ -13,6 +13,7 @@ import {
   FINANCE_SOURCE_SHEET,
   readFinanceImportRows,
 } from "@/lib/finance-import";
+import { resolvePurchaseFinanceTransactionDate } from "@/lib/purchase-finance-date";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 function requireFinance(profile: Awaited<ReturnType<typeof getCurrentProfile>>) {
@@ -387,8 +388,9 @@ export async function updateFinancialTransactionStatus(formData: FormData) {
 
 export async function createPurchaseFinancialTransaction(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>, profile: Awaited<ReturnType<typeof getCurrentProfile>>, purchase: any, amount: number) {
   if (!purchase?.id || !amount || amount <= 0) return;
+  const transactionDate = resolvePurchaseFinanceTransactionDate(purchase);
   const payload = {
-    transaction_date: purchase.received_date ?? new Date().toISOString().slice(0, 10),
+    transaction_date: transactionDate,
     direction: "money_out",
     transaction_kind: "product_purchase",
     transaction_type: "Product Restocking",

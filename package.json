@@ -7,6 +7,7 @@
     "build": "node scripts/next-build.mjs",
     "start": "next start",
     "lint": "eslint",
+    "test:purchase-finance-date": "node --experimental-strip-types --test scripts/test-purchase-finance-date.mjs",
     "bootstrap:production": "node scripts/bootstrap-production-data.mjs",
     "create:first-owner": "node scripts/create-first-owner.mjs",
     "import:machine-refills": "node scripts/import-machine-refills.mjs"

@@ -6,6 +6,7 @@ import { DataTable, EmptyState, PageHeader, SecondaryButton, StatusBadge } from 
 import { requireCurrentProfileForPath } from "@/lib/auth";
 import { isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
+import { dateOnly } from "@/lib/purchase-finance-date";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +23,7 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
   const [{ data: purchase }, { data: lines }, { data: movements, count: movementCount }, { data: financeRows }] = await Promise.all([
     supabase
       .from("purchase_orders")
-      .select("id, supplier_id, status, order_date, receipt_number, payment_method, payment_status, receipt_url, total_amount, manual_total_lyd, calculated_total_lyd, total_adjustment_lyd, total_source, notes, received_date, received_at, voided_at, void_reason, supplier:suppliers(name), created_by_member:team_members!purchase_orders_created_by_fkey(full_name), received_by_member:team_members!purchase_orders_received_by_fkey(full_name)")
+      .select("*, supplier:suppliers(name), created_by_member:team_members!purchase_orders_created_by_fkey(full_name), received_by_member:team_members!purchase_orders_received_by_fkey(full_name)")
       .eq("id", id)
       .single(),
     supabase
@@ -52,6 +53,10 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
   const hasReceiptMovements = movementRows.some((movement: any) => movement.reason === "purchase_received") || Number(movementCount ?? 0) > 0;
   const activeFinanceRows = (financeRows ?? []).filter((row: any) => row.transaction_status === "active");
   const hasActiveFinance = activeFinanceRows.length > 0;
+  const activeFinanceTransaction = activeFinanceRows[0] ?? null;
+  const linkedFinanceTransaction = activeFinanceTransaction ?? financeRows?.[0] ?? null;
+  const paymentDate = dateOnly(purchaseRow.payment_date) ?? dateOnly(purchaseRow.paid_at);
+  const linkedFinanceTransactionDate = dateOnly(linkedFinanceTransaction?.transaction_date);
   const calculatedTotal = Number(purchaseRow.calculated_total_lyd ?? purchaseRow.total_amount ?? 0);
   const displayTotal = Number(purchaseRow.manual_total_lyd ?? purchaseRow.total_amount ?? calculatedTotal);
   const totalAdjustment = Number(purchaseRow.total_adjustment_lyd ?? displayTotal - calculatedTotal);
@@ -86,13 +91,15 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
             <div><div className="text-xs font-medium uppercase text-slate-500">Supplier</div><div className="font-medium">{purchaseRow.supplier?.name ?? "-"}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Payment method</div><div className="font-medium">{String(purchaseRow.payment_method ?? "-").replaceAll("_", " ")}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Payment status</div><StatusBadge status={purchaseRow.payment_status ?? "paid"} /></div>
+            <div><div className="text-xs font-medium uppercase text-slate-500">Payment date</div><div className="font-medium">{paymentDate ?? "-"}</div></div>
+            <div><div className="text-xs font-medium uppercase text-slate-500">Linked finance transaction date</div><div className="font-medium">{linkedFinanceTransactionDate ?? "-"}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Status</div><StatusBadge status={purchaseRow.status} /></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Created by</div><div>{purchaseRow.created_by_member?.full_name ?? "-"}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Received by</div><div>{purchaseRow.received_by_member?.full_name ?? "-"}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Voided at</div><div>{purchaseRow.voided_at ? new Date(purchaseRow.voided_at).toLocaleString("en-US") : "-"}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Receipt</div>{purchaseRow.receipt_url ? <a className="link-secondary" href={purchaseRow.receipt_url} target="_blank" rel="noreferrer">Open receipt</a> : <span>-</span>}</div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Inventory movement</div><div>{hasReceiptMovements ? "Created" : "Not created"}</div></div>
-            <div><div className="text-xs font-medium uppercase text-slate-500">Finance transaction</div><div>{hasActiveFinance ? <Link href={`/finance/transactions/${activeFinanceRows[0].id}`} className="link-secondary">Created</Link> : "Not created"}</div></div>
+            <div><div className="text-xs font-medium uppercase text-slate-500">Finance transaction</div><div>{hasActiveFinance ? <Link href={`/finance/transactions/${activeFinanceTransaction.id}`} className="link-secondary">Created</Link> : "Not created"}</div></div>
           </div>
           {purchaseRow.notes ? <p className="mt-4 rounded-lg bg-slate-50 p-3 text-sm text-slate-600">{purchaseRow.notes}</p> : null}
           {purchaseRow.void_reason ? <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">Void reason: {purchaseRow.void_reason}</p> : null}
