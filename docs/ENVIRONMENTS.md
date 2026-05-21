@@ -70,11 +70,12 @@ Optional server-only provider variables:
 
 ```bash
 XY_VMS_ENABLED=true
-XY_VMS_BASE_URL=http://175.6.71.238:8090/service-api/api
-XY_VMS_MERCHANT_ID=your-merchant-id
+XY_VMS_BASE_URL=https://xcx.xynetweb.com/service-api/api
+XY_VMS_MERCHANT_ID=6591
 XY_VMS_KEY=your-xy-key
 XY_VMS_SECRET=your-xy-secret
 XY_VMS_SIGNING_MODE=signed
+XY_VMS_TIMEOUT_MS=20000
 ```
 
 Optional server-only XY web dashboard fallback variables:

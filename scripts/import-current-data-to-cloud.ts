@@ -244,7 +244,8 @@ async function loadCurrentDataFiles(): Promise<CurrentDataFiles> {
     products,
     machines,
     storageLocations,
-    vmsMappings,
+    normalizedVmsMappings,
+    rawVmsMappings,
     machineSlots,
     combinedPurchases,
     splitPurchaseOrders,
@@ -259,7 +260,8 @@ async function loadCurrentDataFiles(): Promise<CurrentDataFiles> {
     readCsvCandidates(fileByKey, ["products.csv", "Items - Items.csv"]),
     readCsvCandidates(fileByKey, ["machines.csv", "Items - Machines.csv"]),
     readCsvCandidates(fileByKey, ["storage_locations.csv"]),
-    readCsvCandidates(fileByKey, ["vms_product_mappings.csv", "Items - Item_Mapping.csv"]),
+    readCsvCandidates(fileByKey, ["vms_product_mappings.csv"]),
+    readCsvCandidates(fileByKey, ["Items - Item_Mapping.csv"]),
     readCsvCandidates(fileByKey, ["machine_slots.csv", "machine_planograms.csv"]),
     readCsvCandidates(fileByKey, ["purchases.csv"]),
     readCsvCandidates(fileByKey, ["Items - Purchases.csv"]),
@@ -270,18 +272,23 @@ async function loadCurrentDataFiles(): Promise<CurrentDataFiles> {
     readCsvCandidates(fileByKey, ["financial_transactions.csv"]),
   ]);
 
-  const purchasesAreCombined = combinedPurchases.length > 0;
+  const allStorageInventory = [...storageInventory, ...inventoryOld, ...inventory];
+  const hasSplitPurchases = splitPurchaseOrders.length > 0 || splitPurchaseLines.length > 0;
+  const allPurchaseOrders = hasSplitPurchases ? splitPurchaseOrders : combinedPurchases;
+  const allPurchaseLines = splitPurchaseLines.length > 0 ? splitPurchaseLines : combinedPurchases;
+  const purchasesAreCombined = !hasSplitPurchases && combinedPurchases.length > 0;
+  const allVmsMappings = [...normalizedVmsMappings, ...rawVmsMappings];
   return {
     locations,
     suppliers,
     products,
     machines,
     storageLocations,
-    storageInventory: storageInventory.length ? storageInventory : [...inventoryOld, ...inventory],
-    vmsMappings,
+    storageInventory: allStorageInventory,
+    vmsMappings: allVmsMappings,
     machineSlots,
-    purchaseOrders: purchasesAreCombined ? combinedPurchases : splitPurchaseOrders,
-    purchaseLines: purchasesAreCombined ? combinedPurchases : splitPurchaseLines,
+    purchaseOrders: allPurchaseOrders,
+    purchaseLines: allPurchaseLines,
     purchasesAreCombined,
     financialTransactions,
     loadedFiles: filenames,
@@ -367,8 +374,27 @@ function parseDateTime(value: unknown) {
 }
 
 function parseDateOnly(value: unknown) {
+  const raw = cleanValue(value, { fixEncoding: false });
+  if (!raw) return null;
+
+  const mdyMatch = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?$/);
+  if (mdyMatch) {
+    const [, month, day, year] = mdyMatch;
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  }
+
+  const ymdMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T].*)?$/);
+  if (ymdMatch) {
+    const [, year, month, day] = ymdMatch;
+    return `${year}-${month}-${day}`;
+  }
+
   const parsed = parseDateTime(value);
   return parsed ? parsed.slice(0, 10) : null;
+}
+
+function purchaseDate(row: SourceRow) {
+  return parseDateOnly(cell(row, "datetime", "date_time", "date", "order_date", "received_date"));
 }
 
 function completenessScore(row: SourceRow) {
@@ -522,6 +548,46 @@ function productPayload(row: SourceRow): DbPayload | null {
     import_source: "current_data_import",
     updated_at: new Date().toISOString(),
   };
+}
+
+function buildProductImportRows(files: CurrentDataFiles) {
+  const rows = [...files.products];
+  const existingSkus = new Set(rows.map((row) => normalizeExternalId(cell(row, "sku", "product_id", "item_id"))).filter(Boolean));
+  const placeholders = new Map<string, SourceRow>();
+
+  const addPlaceholder = (sourceRow: SourceRow, sku: string | null, name?: string | null) => {
+    if (!sku || existingSkus.has(sku) || placeholders.has(sku)) return;
+    placeholders.set(sku, {
+      sourceFile: sourceRow.sourceFile,
+      sourceRow: sourceRow.sourceRow,
+      values: {
+        sku,
+        product_id: sku,
+        name: name ?? `Imported item ${sku}`,
+        product_group: "needs_review",
+        purchase_price: "0",
+        selling_price: "0",
+        units_per_box: "1",
+      },
+    });
+  };
+
+  for (const row of files.storageInventory) {
+    addPlaceholder(row, normalizeExternalId(cell(row, "item_id", "product_id", "sku")));
+  }
+  for (const row of files.purchaseLines) {
+    addPlaceholder(row, normalizeExternalId(cell(row, "item_id", "product_id", "sku")));
+  }
+  for (const row of files.vmsMappings) {
+    addPlaceholder(
+      row,
+      normalizeExternalId(cell(row, "appsheet_item_id", "app_sheet_item_id", "item_id", "sku", "product_id")),
+      text(row, "appsheet_item_name", "app_sheet_item_name"),
+    );
+  }
+
+  rows.push(...placeholders.values());
+  return rows;
 }
 
 async function importProducts(supabase: SupabaseClient, rows: SourceRow[]) {
@@ -1061,7 +1127,8 @@ function purchaseOrderPayload(
   const supplier = supplierName ? supplierByName.get(supplierName) : null;
   const operatorEmail = normalizeKey(cell(row, "operator_email"));
   const teamMember = operatorEmail ? teamMemberByEmail.get(operatorEmail) : null;
-  const orderDate = parseDateOnly(cell(row, "datetime", "date")) ?? new Date().toISOString().slice(0, 10);
+  const orderDate = purchaseDate(row);
+  if (!orderDate) return null;
   const sourceCalculatedTotal = roundMoney(numberValue(cell(row, "calculated_total"), 0));
   const sourceReceiptTotal = roundMoney(numberValue(cell(row, "receipt_total"), 0));
   const lineCalculatedTotal = roundMoney(group.lineRows.reduce((sum, line) => {
@@ -1075,6 +1142,8 @@ function purchaseOrderPayload(
   const sourceNotes = text(row, "notes");
   const notes = [
     `current_data_import:purchase:${group.sourceId}`,
+    `source_file=${row.sourceFile}`,
+    `source_row=${row.sourceRow}`,
     operatorEmail ? `operator_email=${operatorEmail}` : null,
     receiptPhoto ? `source_receipt_photo=${receiptPhoto}` : null,
     sourceNotes ? `source_notes=${sourceNotes}` : null,
@@ -1126,6 +1195,10 @@ async function importPurchaseOrders(
 
   for (const group of validGroups) {
     const payload = purchaseOrderPayload(group, supplierByName, teamMemberByEmail);
+    if (!payload) {
+      skipRow(table, group.orderRow, "missing/invalid purchase date");
+      continue;
+    }
     const existing = existingByReceipt.get(group.sourceId);
     if (existing) {
       const id = dbString(existing, "id");
@@ -1355,6 +1428,94 @@ async function importInventoryMovements(
   );
 }
 
+function purchaseFinancePayload(group: PurchaseGroup, order: PurchaseOrderRef, lineRefs: PurchaseLineRef[]) {
+  const orderDate = purchaseDate(group.orderRow);
+  if (!orderDate) return null;
+  const supplierName = text(group.orderRow, "supplier");
+  const receiptTotal = roundMoney(numberValue(cell(group.orderRow, "receipt_total"), 0));
+  const calculatedTotal = roundMoney(numberValue(cell(group.orderRow, "calculated_total"), 0));
+  const lineTotal = roundMoney(lineRefs.reduce((sum, line) => sum + Number(line.line_total_lyd ?? 0), 0));
+  const amount = receiptTotal > 0 ? receiptTotal : calculatedTotal > 0 ? calculatedTotal : lineTotal;
+  if (amount <= 0) return null;
+
+  const description = `Product purchase ${group.sourceId}${supplierName ? ` - ${supplierName}` : ""}`;
+  return {
+    transaction_date: orderDate,
+    direction: "money_out",
+    transaction_kind: "product_purchase",
+    transaction_type: "Product Purchase",
+    location: supplierName ?? "Purchases",
+    description,
+    amount,
+    signed_amount: -Math.abs(amount),
+    bucket: "Outflow",
+    bucket_override: null,
+    final_bucket: "Product Purchases",
+    review_status: "confirmed",
+    needs_review: false,
+    source_sheet: `current_data_purchases:${group.orderRow.sourceFile}`,
+    source_row: group.orderRow.sourceRow,
+    source_file: `docs/current-data/${group.orderRow.sourceFile}`,
+    original_description: description,
+    import_status: "imported",
+    transaction_status: "active",
+    payment_method: "cash",
+    related_purchase_id: order.id,
+    metadata: {
+      current_data_import: true,
+      generated_from_purchase_import: true,
+      source_purchase_id: group.sourceId,
+      source_file: group.orderRow.sourceFile,
+      source_row: group.orderRow.sourceRow,
+    },
+    updated_at: new Date().toISOString(),
+  };
+}
+
+async function importPurchaseFinancialTransactions(
+  supabase: SupabaseClient,
+  groups: PurchaseGroup[],
+  purchaseOrderBySourceId: Map<string, PurchaseOrderRef>,
+  purchaseLineByPurchaseAndProduct: Map<string, PurchaseLineRef>,
+) {
+  const table = "financial_transactions";
+  addRowsRead(table, groups.length);
+  const purchaseIds = [...purchaseOrderBySourceId.values()].map((order) => order.id).filter((id) => !id.startsWith("dry-run-"));
+  const existing = await fetchByIn(supabase, table, "id, related_purchase_id", "related_purchase_id", purchaseIds);
+  const existingByPurchaseId = new Map(existing.flatMap((row) => {
+    const purchaseId = dbString(row, "related_purchase_id");
+    return purchaseId ? [[purchaseId, row] as const] : [];
+  }));
+
+  for (const group of groups) {
+    const order = purchaseOrderBySourceId.get(group.sourceId);
+    if (!order) {
+      skipRow(table, group.orderRow, "purchase finance transaction skipped because purchase order was not imported");
+      continue;
+    }
+
+    const lineRefs = [...purchaseLineByPurchaseAndProduct.values()].filter((line) => line.sourcePurchaseId === group.sourceId);
+    const payload = purchaseFinancePayload(group, order, lineRefs);
+    if (!payload) {
+      skipRow(table, group.orderRow, "purchase finance transaction skipped because purchase total is zero");
+      continue;
+    }
+
+    const existingRow = existingByPurchaseId.get(order.id);
+    const existingId = existingRow ? dbString(existingRow, "id") : null;
+    if (existingId) {
+      await updateRowById(supabase, table, existingId, payload, group.orderRow);
+    } else {
+      await writeEntries(
+        supabase,
+        table,
+        [{ payload, sourceRow: group.orderRow, syntheticId: `dry-run-purchase-finance-${group.sourceId}` }],
+        { mode: "insert", select: "id, related_purchase_id" },
+      );
+    }
+  }
+}
+
 function financePayload(row: SourceRow): DbPayload | null {
   const transactionDate = parseDateOnly(cell(row, "date", "transaction_date"));
   const signedAmount = roundMoney(numberValue(cell(row, "signed_amount", "amount"), Number.NaN));
@@ -1417,11 +1578,40 @@ async function importFinancialTransactions(supabase: SupabaseClient, rows: Sourc
     return [{ payload, sourceRow: row, syntheticId: `dry-run-finance-${row.sourceRow}` }];
   });
 
+  const existingRows: DbRow[] = [];
+  for (const group of chunks(entries.map((entry) => Number(entry.payload.source_row)).filter((value) => Number.isFinite(value)))) {
+    const { data, error } = await supabase
+      .from(table)
+      .select("id, source_sheet, source_row")
+      .eq("source_sheet", FINANCE_SOURCE_SHEET)
+      .in("source_row", group);
+    if (error) throw new Error(`${table}: ${error.message}`);
+    existingRows.push(...((data ?? []) as unknown as DbRow[]));
+  }
+
+  const existingBySourceRow = new Map<string, DbRow>();
+  for (const row of existingRows) {
+    const sourceRow = row.source_row === null || row.source_row === undefined ? null : String(row.source_row);
+    if (sourceRow && !existingBySourceRow.has(sourceRow)) existingBySourceRow.set(sourceRow, row);
+  }
+
+  const insertEntries: WriteEntry[] = [];
+  for (const entry of entries) {
+    const sourceRow = String(entry.payload.source_row);
+    const existing = existingBySourceRow.get(sourceRow);
+    const id = existing ? dbString(existing, "id") : null;
+    if (id) {
+      await updateRowById(supabase, table, id, entry.payload, entry.sourceRow);
+    } else {
+      insertEntries.push(entry);
+    }
+  }
+
   await writeEntries(
     supabase,
     table,
-    entries,
-    { mode: "upsert", onConflict: "source_sheet,source_row", select: "id, source_sheet, source_row" },
+    insertEntries,
+    { mode: "insert", select: "id, source_sheet, source_row" },
   );
 }
 
@@ -1499,7 +1689,8 @@ async function main() {
 
   const locationByName = await runStep("locations", () => importLocations(supabase, files), new Map<string, string>());
   const supplierByName = await runStep("suppliers", () => importSuppliers(supabase, files), new Map<string, DbRow>());
-  const productBySku = await runStep("products", () => importProducts(supabase, files.products), new Map<string, ProductRef>());
+  const productImportRows = buildProductImportRows(files);
+  const productBySku = await runStep("products", () => importProducts(supabase, productImportRows), new Map<string, ProductRef>());
   const machines = await runStep(
     "machines",
     () => importMachines(supabase, files.machines, locationByName),
@@ -1520,6 +1711,11 @@ async function main() {
   await runStep(
     "inventory_movements",
     () => importInventoryMovements(supabase, files.storageInventory, productBySku, storageByName, purchaseOrderBySourceId, purchaseLineByPurchaseAndProduct),
+    undefined,
+  );
+  await runStep(
+    "financial_transactions",
+    () => importPurchaseFinancialTransactions(supabase, purchaseGroups, purchaseOrderBySourceId, purchaseLineByPurchaseAndProduct),
     undefined,
   );
   await runStep("financial_transactions", () => importFinancialTransactions(supabase, files.financialTransactions), undefined);

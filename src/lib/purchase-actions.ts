@@ -17,7 +17,29 @@ type PurchaseLineInput = {
   unitCost: number;
   lineTotal: number;
   pricingMode: "unit" | "total";
+  receiptLineName: string | null;
+  matchAction: "accept" | "change" | "create" | "ignore";
+  matchConfidence: number | null;
+  newProduct: {
+    name: string;
+    sku: string;
+    barcode: string | null;
+    brand: string | null;
+    category: string;
+    caseQuantity: number;
+  } | null;
 };
+
+type SupabaseServer = NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+
+export type PurchaseSubmitResult = {
+  ok: boolean;
+  message: string;
+  redirectTo?: string;
+  debugMessage?: string;
+};
+
+class PurchaseFormError extends Error {}
 
 function roundMoney(value: number) {
   return Math.round(value * 100) / 100;
@@ -40,6 +62,32 @@ function parsePaymentStatus(value: FormDataEntryValue | null) {
   return ["paid", "unpaid", "partially_paid", "voided"].includes(status) ? status : "paid";
 }
 
+function parseLineAction(value: unknown): PurchaseLineInput["matchAction"] {
+  return value === "accept" || value === "change" || value === "create" || value === "ignore" ? value : "change";
+}
+
+function cleanOptionalString(value: unknown) {
+  const text = String(value ?? "").trim();
+  return text || null;
+}
+
+function parseNewProduct(value: unknown): PurchaseLineInput["newProduct"] {
+  const row = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const name = String(row.name ?? "").trim();
+  const sku = String(row.sku ?? "").trim();
+  const category = String(row.category ?? "snack").trim() || "snack";
+  const caseQuantity = Math.max(1, Math.floor(Number(row.caseQuantity ?? row.case_quantity ?? 1) || 1));
+  if (!name && !sku) return null;
+  return {
+    name,
+    sku,
+    barcode: cleanOptionalString(row.barcode),
+    brand: cleanOptionalString(row.brand),
+    category,
+    caseQuantity,
+  };
+}
+
 function canManagePurchases(role: AppRole | null | undefined) {
   return isOwnerAdminRole(role) || isSupervisorRole(role) || role === "warehouse";
 }
@@ -49,16 +97,23 @@ function parseLines(raw: FormDataEntryValue | null): PurchaseLineInput[] {
     const parsed = JSON.parse(String(raw || "[]"));
     if (!Array.isArray(parsed)) return [];
     return parsed
-      .map((line): PurchaseLineInput => ({
-        productId: String(line.productId || ""),
-        boxesQty: Math.max(0, Math.floor(Number(line.boxesQty || 0))),
-        unitsPerBox: Math.max(1, Math.floor(Number(line.unitsPerBox || 1))),
-        looseUnitsQty: Math.max(0, Math.floor(Number(line.looseUnitsQty || 0))),
-        unitCost: Math.max(0, Number(line.unitCost || 0)),
-        lineTotal: Math.max(0, Number(line.lineTotal || 0)),
-        pricingMode: line.pricingMode === "total" ? "total" : "unit",
-      }))
-      .filter((line) => line.productId && line.boxesQty * line.unitsPerBox + line.looseUnitsQty > 0);
+      .map((line): PurchaseLineInput => {
+        const matchAction = parseLineAction(line.matchAction);
+        return {
+          productId: String(line.productId || ""),
+          boxesQty: Math.max(0, Math.floor(Number(line.boxesQty || 0))),
+          unitsPerBox: Math.max(1, Math.floor(Number(line.unitsPerBox || 1))),
+          looseUnitsQty: Math.max(0, Math.floor(Number(line.looseUnitsQty || 0))),
+          unitCost: Math.max(0, Number(line.unitCost || 0)),
+          lineTotal: Math.max(0, Number(line.lineTotal || 0)),
+          pricingMode: line.pricingMode === "total" ? "total" : "unit",
+          receiptLineName: cleanOptionalString(line.receiptLineName),
+          matchAction,
+          matchConfidence: line.matchConfidence === null || line.matchConfidence === undefined ? null : Math.max(0, Math.min(1, Number(line.matchConfidence || 0))),
+          newProduct: parseNewProduct(line.newProduct),
+        };
+      })
+      .filter((line) => line.matchAction !== "ignore" && (line.productId || line.matchAction === "create") && line.boxesQty * line.unitsPerBox + line.looseUnitsQty > 0);
   } catch {
     return [];
   }
@@ -100,9 +155,156 @@ function buildTotals(fd: FormData, calculatedTotal: number) {
   };
 }
 
+function sanitizeSku(value: string) {
+  return value
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+}
+
+function receiptSkuFallback(index: number) {
+  return `RCPT-${Date.now().toString(36).toUpperCase()}-${index + 1}`;
+}
+
+async function uniqueSku(supabase: SupabaseServer, preferredSku: string, fallbackName: string, index: number) {
+  const base = sanitizeSku(preferredSku) || sanitizeSku(fallbackName).slice(0, 32) || receiptSkuFallback(index);
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const candidate = attempt === 0 ? base : `${base}-${attempt + 1}`;
+    const { data, error } = await supabase.from("products").select("id").eq("sku", candidate).maybeSingle();
+    if (error) throw error;
+    if (!data) return candidate;
+  }
+  return `${base}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
+}
+
+async function resolvePurchaseLines({
+  supabase,
+  profile,
+  lines,
+  supplierId,
+}: {
+  supabase: SupabaseServer;
+  profile: Awaited<ReturnType<typeof getCurrentProfile>>;
+  lines: PurchaseLineInput[];
+  supplierId: string | null;
+}) {
+  const resolvedLines: PurchaseLineInput[] = [];
+
+  for (const [index, line] of lines.entries()) {
+    if (line.matchAction !== "create") {
+      resolvedLines.push(line);
+      continue;
+    }
+
+    const productName = line.newProduct?.name || line.receiptLineName || "";
+    if (!productName.trim()) formError("Product name is required for receipt-created products.");
+    if (!isOwnerAdminRole(profile?.role)) formError("Only owner/admin can create new products from receipt lines.");
+
+    let sku = "";
+    try {
+      sku = await uniqueSku(supabase, line.newProduct?.sku ?? "", productName, index);
+    } catch (error) {
+      console.error("[purchases] Failed to generate product SKU for receipt line", error);
+      formError("Could not create product from receipt line.");
+    }
+
+    const unitCost = roundUnitCost(line.unitCost || (line.lineTotal > 0 && line.looseUnitsQty > 0 ? line.lineTotal / line.looseUnitsQty : 0));
+    const { data: product, error } = await supabase
+      .from("products")
+      .insert({
+        sku,
+        barcode: line.newProduct?.barcode ?? null,
+        name: productName.trim(),
+        category: line.newProduct?.category || "snack",
+        brand: line.newProduct?.brand ?? null,
+        supplier_id: supplierId,
+        cost_price: unitCost,
+        selling_price: 0,
+        current_cost_price_lyd: unitCost,
+        last_purchase_cost_lyd: unitCost,
+        cost_price_source: unitCost > 0 ? "latest_purchase" : "manual",
+        import_source: "receipt_scan",
+        price_updated_at: new Date().toISOString(),
+        case_quantity: line.newProduct?.caseQuantity ?? Math.max(1, line.unitsPerBox),
+        active: true,
+      })
+      .select("id, sku, name, category, brand, active")
+      .single();
+
+    if (error || !product) {
+      console.error("[purchases] Failed to create receipt product", error);
+      formError("Could not create product from receipt line.");
+    }
+
+    if (profile) {
+      await logActivity({
+        profile,
+        action: "create",
+        entityType: "product",
+        entityId: product.id,
+        entityLabel: product.name,
+        afterData: product,
+        summary: `Created product ${product.name} from receipt review`,
+      });
+    }
+
+    resolvedLines.push({ ...line, productId: product.id });
+  }
+
+  return resolvedLines.filter((line) => line.productId);
+}
+
+async function saveApprovedReceiptAliases(supabase: SupabaseServer, profile: Awaited<ReturnType<typeof getCurrentProfile>>, lines: PurchaseLineInput[]) {
+  const seen = new Set<string>();
+  const rows = lines
+    .filter((line) => line.productId && line.receiptLineName && line.matchAction !== "ignore")
+    .map((line) => ({
+      alias_name: line.receiptLineName as string,
+      product_id: line.productId,
+      source: "receipt",
+      confidence: line.matchConfidence,
+      approved_by: profile?.team_member_id ?? null,
+    }))
+    .filter((row) => {
+      const key = `${row.alias_name.trim().toLowerCase()}::${row.product_id}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return row.alias_name.trim().length > 0;
+    });
+
+  if (!rows.length) return;
+  const { error } = await supabase.from("product_aliases").upsert(rows, { onConflict: "alias_name,product_id" });
+  if (error) console.warn("[purchases] Could not save receipt product aliases", error);
+}
+
+async function linkReceiptScanResult(supabase: SupabaseServer, scanResultId: string, purchaseId: string) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(scanResultId)) return;
+  const { error } = await supabase.from("receipt_scan_results").update({ purchase_id: purchaseId }).eq("id", scanResultId);
+  if (error) console.warn("[purchases] Could not link receipt scan result to purchase", error);
+}
+
 function fail(path: string, message: string): never {
   const params = new URLSearchParams({ error: message });
   redirect(`${path}?${params.toString()}`);
+}
+
+function formError(message: string): never {
+  throw new PurchaseFormError(message);
+}
+
+function purchaseSubmitError(error: unknown, fallback: string): PurchaseSubmitResult {
+  if (typeof error === "object" && error && "digest" in error && String((error as { digest?: unknown }).digest).startsWith("NEXT_REDIRECT")) {
+    throw error;
+  }
+  if (error instanceof PurchaseFormError) return { ok: false, message: error.message };
+  console.error("[purchases] Purchase submit failed", error);
+  return {
+    ok: false,
+    message: fallback,
+    debugMessage: process.env.NODE_ENV !== "production" && error instanceof Error ? error.message : undefined,
+  };
 }
 
 function clean(value: FormDataEntryValue | null) {
@@ -148,138 +350,173 @@ async function getDefaultStorageId(supabase: NonNullable<ReturnType<typeof getSu
   return storage?.id ?? null;
 }
 
-export async function createPurchase(fd: FormData) {
-  const { profile, supabase } = await requirePurchaseAccess();
-  const lines = parseLines(fd.get("lines_json"));
-  if (!lines.length) fail("/purchases/new", "Add at least one purchased item.");
+export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult> {
+  try {
+    const { profile, supabase } = await requirePurchaseAccess();
+    let lines = parseLines(fd.get("lines_json"));
+    if (!lines.length) formError("Add at least one purchased item.");
 
-  const { receiptUrl, uploadUnavailable, uploadError } = await resolvePurchaseReceiptUrl(supabase, fd);
-  const lineRows = buildLineRows(lines);
-  const totals = buildTotals(fd, lineRows.reduce((sum, line) => sum + Number(line.line_total), 0));
-  const submitAction = String(fd.get("submit_action") || "draft");
+    const supplierId = String(fd.get("supplier_id") || "") || null;
+    lines = await resolvePurchaseLines({ supabase, profile, lines, supplierId });
+    if (!lines.length) formError("Add at least one purchased item.");
 
-  const { data: purchase, error: purchaseError } = await supabase
-    .from("purchase_orders")
-    .insert({
-      supplier_id: String(fd.get("supplier_id") || "") || null,
-      status: "draft",
-      order_date: String(fd.get("purchase_date") || new Date().toISOString().slice(0, 10)),
-      receipt_number: String(fd.get("receipt_number") || "").trim() || null,
-      payment_method: String(fd.get("payment_method") || "cash"),
-      payment_status: parsePaymentStatus(fd.get("payment_status")),
-      receipt_url: receiptUrl,
-      notes: String(fd.get("notes") || "").trim() || null,
-      ...totals,
-      created_by: profile.team_member_id,
-    })
-    .select("id, receipt_number, status, total_amount, payment_status")
-    .single();
+    const { receiptUrl, uploadUnavailable, uploadError } = await resolvePurchaseReceiptUrl(supabase, fd);
+    const lineRows = buildLineRows(lines);
+    const totals = buildTotals(fd, lineRows.reduce((sum, line) => sum + Number(line.line_total), 0));
+    const submitAction = String(fd.get("submit_action") || "draft");
 
-  if (purchaseError || !purchase) {
-    console.error("[purchases] Failed to create purchase", purchaseError);
-    fail("/purchases/new", "Could not create purchase.");
-  }
+    const { data: purchase, error: purchaseError } = await supabase
+      .from("purchase_orders")
+      .insert({
+        supplier_id: supplierId,
+        status: "draft",
+        order_date: String(fd.get("purchase_date") || new Date().toISOString().slice(0, 10)),
+        receipt_number: String(fd.get("receipt_number") || "").trim() || null,
+        payment_method: String(fd.get("payment_method") || "cash"),
+        payment_status: parsePaymentStatus(fd.get("payment_status")),
+        receipt_url: receiptUrl,
+        notes: String(fd.get("notes") || "").trim() || null,
+        ...totals,
+        created_by: profile.team_member_id,
+      })
+      .select("id, receipt_number, status, total_amount, payment_status")
+      .single();
 
-  const { error: linesError } = await supabase.from("purchase_order_lines").insert(lineRows.map((line) => ({ ...line, purchase_order_id: purchase.id })));
-  if (linesError) {
-    console.error("[purchases] Failed to create purchase lines", linesError);
-    fail("/purchases/new", "Could not create purchase items.");
-  }
-
-  await logActivity({
-    profile,
-    action: "create",
-    entityType: "purchase",
-    entityId: purchase.id,
-    entityLabel: String(fd.get("receipt_number") || purchase.id.slice(0, 8)),
-    afterData: { ...purchase, line_count: lineRows.length, total_amount: totals.total_amount },
-    summary: `Created purchase with ${lineRows.length} line items`,
-  });
-
-  if (submitAction === "received") {
-    try {
-      await receivePurchaseById(purchase.id);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Purchase was saved but could not be received.";
-      redirect(`/purchases/${purchase.id}?error=${encodeURIComponent(message)}`);
+    if (purchaseError || !purchase) {
+      console.error("[purchases] Failed to create purchase", purchaseError);
+      formError("Could not create purchase.");
     }
-  }
 
-  revalidatePath("/purchases");
-  revalidatePath("/inventory");
-  const receiptUpload = uploadError === "invalid_file" ? "invalid-file" : uploadUnavailable ? "storage-unavailable" : "";
-  redirect(receiptUpload ? `/purchases/${purchase.id}?receiptUpload=${receiptUpload}` : `/purchases/${purchase.id}`);
+    const { error: linesError } = await supabase.from("purchase_order_lines").insert(lineRows.map((line) => ({ ...line, purchase_order_id: purchase.id })));
+    if (linesError) {
+      console.error("[purchases] Failed to create purchase lines", linesError);
+      formError("Could not create purchase items.");
+    }
+
+    await saveApprovedReceiptAliases(supabase, profile, lines);
+    await linkReceiptScanResult(supabase, String(fd.get("receipt_scan_result_id") || ""), purchase.id);
+
+    await logActivity({
+      profile,
+      action: "create",
+      entityType: "purchase",
+      entityId: purchase.id,
+      entityLabel: String(fd.get("receipt_number") || purchase.id.slice(0, 8)),
+      afterData: { ...purchase, line_count: lineRows.length, total_amount: totals.total_amount },
+      summary: `Created purchase with ${lineRows.length} line items`,
+    });
+
+    if (submitAction === "received") {
+      await receivePurchaseById(purchase.id);
+    }
+
+    revalidatePath("/purchases");
+    revalidatePath("/inventory");
+    const receiptUpload = uploadError === "invalid_file" ? "invalid-file" : uploadUnavailable ? "storage-unavailable" : "";
+    const params = new URLSearchParams({ purchaseSaved: submitAction === "received" ? "received" : "draft" });
+    if (receiptUpload) params.set("receiptUpload", receiptUpload);
+    return {
+      ok: true,
+      message: submitAction === "received" ? "Purchase received and inventory updated." : "Purchase saved as draft.",
+      redirectTo: `/purchases/${purchase.id}?${params.toString()}`,
+    };
+  } catch (error) {
+    return purchaseSubmitError(error, "Could not save purchase.");
+  }
 }
 
-export async function updatePurchase(fd: FormData) {
-  const { profile, supabase } = await requirePurchaseAccess();
-  const id = String(fd.get("id") || "");
-  if (!id) redirect("/purchases");
+export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult> {
+  try {
+    const { profile, supabase } = await requirePurchaseAccess();
+    const id = String(fd.get("id") || "");
+    if (!id) formError("Purchase id is missing.");
 
-  const { data: current, error: currentError } = await supabase
-    .from("purchase_orders")
-    .select("*")
-    .eq("id", id)
-    .single();
-  if (currentError || !current) fail(`/purchases/${id}/edit`, "Purchase not found.");
-  if (current.status !== "draft") fail(`/purchases/${id}`, "Only draft purchases can be edited.");
+    const { data: current, error: currentError } = await supabase
+      .from("purchase_orders")
+      .select("*")
+      .eq("id", id)
+      .single();
+    if (currentError || !current) formError("Purchase not found.");
+    if (current.status !== "draft") formError("Only draft purchases can be edited.");
 
-  const lines = parseLines(fd.get("lines_json"));
-  if (!lines.length) fail(`/purchases/${id}/edit`, "Add at least one purchased item.");
+    let lines = parseLines(fd.get("lines_json"));
+    if (!lines.length) formError("Add at least one purchased item.");
 
-  const { receiptUrl, uploadUnavailable, uploadError } = await resolvePurchaseReceiptUrl(supabase, fd);
-  const existingReceiptUrl = String(fd.get("current_receipt_url") || current.receipt_url || "").trim();
-  const lineRows = buildLineRows(lines);
-  const totals = buildTotals(fd, lineRows.reduce((sum, line) => sum + Number(line.line_total), 0));
+    const supplierId = String(fd.get("supplier_id") || "") || null;
+    lines = await resolvePurchaseLines({ supabase, profile, lines, supplierId });
+    if (!lines.length) formError("Add at least one purchased item.");
 
-  const { error: updateError } = await supabase
-    .from("purchase_orders")
-    .update({
-      supplier_id: String(fd.get("supplier_id") || "") || null,
-      order_date: String(fd.get("purchase_date") || new Date().toISOString().slice(0, 10)),
-      receipt_number: String(fd.get("receipt_number") || "").trim() || null,
-      payment_method: String(fd.get("payment_method") || "cash"),
-      payment_status: parsePaymentStatus(fd.get("payment_status")),
-      receipt_url: (receiptUrl ?? existingReceiptUrl) || null,
-      notes: String(fd.get("notes") || "").trim() || null,
-      ...totals,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", id)
-    .eq("status", "draft");
-  if (updateError) {
-    console.error("[purchases] Failed to update purchase", updateError);
-    fail(`/purchases/${id}/edit`, "Could not update purchase.");
+    const { receiptUrl, uploadUnavailable, uploadError } = await resolvePurchaseReceiptUrl(supabase, fd);
+    const existingReceiptUrl = String(fd.get("current_receipt_url") || current.receipt_url || "").trim();
+    const lineRows = buildLineRows(lines);
+    const totals = buildTotals(fd, lineRows.reduce((sum, line) => sum + Number(line.line_total), 0));
+    const submitAction = String(fd.get("submit_action") || "draft");
+
+    const { error: updateError } = await supabase
+      .from("purchase_orders")
+      .update({
+        supplier_id: supplierId,
+        order_date: String(fd.get("purchase_date") || new Date().toISOString().slice(0, 10)),
+        receipt_number: String(fd.get("receipt_number") || "").trim() || null,
+        payment_method: String(fd.get("payment_method") || "cash"),
+        payment_status: parsePaymentStatus(fd.get("payment_status")),
+        receipt_url: (receiptUrl ?? existingReceiptUrl) || null,
+        notes: String(fd.get("notes") || "").trim() || null,
+        ...totals,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id)
+      .eq("status", "draft");
+    if (updateError) {
+      console.error("[purchases] Failed to update purchase", updateError);
+      formError("Could not update purchase.");
+    }
+
+    const { error: deleteError } = await supabase.from("purchase_order_lines").delete().eq("purchase_order_id", id);
+    if (deleteError) {
+      console.error("[purchases] Failed to replace purchase lines", deleteError);
+      formError("Could not update purchase items.");
+    }
+
+    const { error: linesError } = await supabase.from("purchase_order_lines").insert(lineRows.map((line) => ({ ...line, purchase_order_id: id })));
+    if (linesError) {
+      console.error("[purchases] Failed to save purchase lines", linesError);
+      formError("Could not save purchase items.");
+    }
+
+    await saveApprovedReceiptAliases(supabase, profile, lines);
+    await linkReceiptScanResult(supabase, String(fd.get("receipt_scan_result_id") || ""), id);
+
+    await logActivity({
+      profile,
+      action: "update",
+      entityType: "purchase",
+      entityId: id,
+      entityLabel: String(fd.get("receipt_number") || id.slice(0, 8)),
+      beforeData: current,
+      afterData: { line_count: lineRows.length, ...totals },
+      summary: "Updated draft purchase",
+    });
+
+    if (submitAction === "received") {
+      await receivePurchaseById(id);
+    }
+
+    revalidatePath("/purchases");
+    revalidatePath(`/purchases/${id}`);
+    revalidatePath(`/purchases/${id}/edit`);
+    revalidatePath("/inventory");
+    const receiptUpload = uploadError === "invalid_file" ? "invalid-file" : uploadUnavailable ? "storage-unavailable" : "";
+    const params = new URLSearchParams({ purchaseSaved: submitAction === "received" ? "received" : "draft" });
+    if (receiptUpload) params.set("receiptUpload", receiptUpload);
+    return {
+      ok: true,
+      message: submitAction === "received" ? "Purchase received and inventory updated." : "Purchase saved as draft.",
+      redirectTo: `/purchases/${id}?${params.toString()}`,
+    };
+  } catch (error) {
+    return purchaseSubmitError(error, "Could not update purchase.");
   }
-
-  const { error: deleteError } = await supabase.from("purchase_order_lines").delete().eq("purchase_order_id", id);
-  if (deleteError) {
-    console.error("[purchases] Failed to replace purchase lines", deleteError);
-    fail(`/purchases/${id}/edit`, "Could not update purchase items.");
-  }
-
-  const { error: linesError } = await supabase.from("purchase_order_lines").insert(lineRows.map((line) => ({ ...line, purchase_order_id: id })));
-  if (linesError) {
-    console.error("[purchases] Failed to save purchase lines", linesError);
-    fail(`/purchases/${id}/edit`, "Could not save purchase items.");
-  }
-
-  await logActivity({
-    profile,
-    action: "update",
-    entityType: "purchase",
-    entityId: id,
-    entityLabel: String(fd.get("receipt_number") || id.slice(0, 8)),
-    beforeData: current,
-    afterData: { line_count: lineRows.length, ...totals },
-    summary: "Updated draft purchase",
-  });
-
-  revalidatePath("/purchases");
-  revalidatePath(`/purchases/${id}`);
-  revalidatePath(`/purchases/${id}/edit`);
-  const receiptUpload = uploadError === "invalid_file" ? "invalid-file" : uploadUnavailable ? "storage-unavailable" : "";
-  redirect(receiptUpload ? `/purchases/${id}?receiptUpload=${receiptUpload}` : `/purchases/${id}`);
 }
 
 async function receivePurchaseById(id: string) {

@@ -2,8 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { RECEIPT_IMAGE_BUCKET } from "@/lib/storage-buckets";
 
-const RECEIPT_MIME_TYPES = ["image/png", "image/jpeg", "image/webp", "application/pdf"];
-const RECEIPT_MAX_SIZE = 5 * 1024 * 1024;
+export const RECEIPT_MIME_TYPES = ["image/png", "image/jpeg", "image/webp", "application/pdf"];
+export const RECEIPT_MAX_SIZE = 5 * 1024 * 1024;
 
 type PurchaseReceiptUploadError = "invalid_file" | "storage_unavailable";
 

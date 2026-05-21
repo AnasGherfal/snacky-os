@@ -3,11 +3,11 @@ import { revalidatePath } from "next/cache";
 import { logActivity } from "@/lib/activity-log";
 import type { UserProfile } from "@/lib/auth";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
-import { assertXyVmsReady, callXyApi, callXyApiRaw, getXyVmsConfig, type XyApiRawResult, type XyVmsConfig, type XyVmsEndpoint, type XyVmsParams } from "@/lib/xy-vms-api";
+import { XyApiError, assertXyVmsReady, buildXyRequestDebug, callXyApi, callXyApiRaw, getXyVmsConfig, type XyApiRawResult, type XyRequestDebug, type XyVmsConfig, type XyVmsEndpoint, type XyVmsParams } from "@/lib/xy-vms-api";
 
 type SupabaseServer = NonNullable<ReturnType<typeof getSupabaseServerClient>>;
 type SyncRunStatus = "running" | "completed" | "completed_with_warnings" | "failed";
-type SyncType = "machines" | "products" | "machine_goods" | "machine_status" | "test_unsigned" | "all";
+type SyncType = "machines" | "products" | "machine_goods" | "machine_status" | "test_official" | "test_unsigned" | "all";
 type JsonRecord = Record<string, unknown>;
 
 type SyncOptions = {
@@ -139,6 +139,35 @@ function safeErrorMessage(error: unknown) {
   return String(error ?? "Unknown error");
 }
 
+function redactXyString(value: string, config: XyVmsConfig) {
+  let redacted = value;
+  [
+    [config.secret, config.maskedSecret],
+    [config.key, config.maskedKey],
+  ].forEach(([raw, masked]) => {
+    if (raw) redacted = redacted.split(raw).join(masked);
+  });
+  return redacted;
+}
+
+function sanitizeForLog<T>(value: T, config: XyVmsConfig): T {
+  if (typeof value === "string") return redactXyString(value, config) as T;
+  try {
+    const serialized = JSON.stringify(value);
+    return serialized ? (JSON.parse(redactXyString(serialized, config)) as T) : value;
+  } catch {
+    return value;
+  }
+}
+
+function sanitizeStatsForLog(stats: SyncStats, config: XyVmsConfig): SyncStats {
+  return {
+    ...stats,
+    errors: stats.errors.map((error) => redactXyString(error, config)),
+    responseSummary: sanitizeForLog(stats.responseSummary, config),
+  };
+}
+
 function arrayify(value: unknown): JsonRecord[] {
   if (Array.isArray(value)) return value.filter((item) => item && typeof item === "object") as JsonRecord[];
   if (value && typeof value === "object") {
@@ -155,20 +184,23 @@ function summarizeRawResponse(endpoint: XyVmsEndpoint, result: XyApiRawResult): 
   const rows = arrayify(result.response.data);
   return {
     endpoint,
+    requestDebug: result.requestDebug,
     httpStatus: result.httpStatus,
     xyCode: result.response.code ?? null,
     message: result.response.message ?? null,
     dataRowCount: rows.length,
     sampleRows: rows.slice(0, 3),
+    requestSigned: result.requestSigned,
   };
 }
 
-function failedEndpointSummary(endpoint: XyVmsEndpoint, error: unknown): JsonRecord {
+function failedEndpointSummary(endpoint: XyVmsEndpoint, error: unknown, requestDebug?: XyRequestDebug): JsonRecord {
   return {
     endpoint,
-    httpStatus: null,
-    xyCode: null,
-    message: safeErrorMessage(error),
+    requestDebug: error instanceof XyApiError ? error.requestDebug ?? requestDebug ?? null : requestDebug ?? null,
+    httpStatus: error instanceof XyApiError ? error.status ?? null : null,
+    xyCode: error instanceof XyApiError ? error.code ?? error.response?.code ?? null : null,
+    message: error instanceof XyApiError ? error.response?.message ?? error.message : safeErrorMessage(error),
     dataRowCount: 0,
     sampleRows: [],
   };
@@ -187,9 +219,18 @@ function summaryMessage(summary: JsonRecord) {
   return String(summary.message ?? "");
 }
 
+function summaryHttpOk(summary: JsonRecord) {
+  const status = Number(summary.httpStatus ?? 0);
+  return status >= 200 && status < 300;
+}
+
 function looksLikeAuthSignFailure(summary: JsonRecord) {
   const value = `${summaryCode(summary)} ${summaryMessage(summary)}`.toLowerCase();
   return ["auth", "author", "key", "secret", "sign", "signature", "timestamp", "encrypt", "token", "permission"].some((word) => value.includes(word));
+}
+
+function officialAuthFailureMessage(summary: JsonRecord) {
+  return looksLikeAuthSignFailure(summary) ? "XY signature/key authentication failed. Check key, secret, timestamp, and reqData." : null;
 }
 
 function assertUnsignedTestReady(config: XyVmsConfig) {
@@ -248,6 +289,52 @@ function xyProductIdentity(row: JsonRecord) {
   };
 }
 
+function cleanProductText(input: unknown) {
+  return String(input ?? "").trim();
+}
+
+function stableProductHash(input: string) {
+  let hash = 5381;
+  for (let index = 0; index < input.length; index += 1) {
+    hash = (hash * 33) ^ input.charCodeAt(index);
+  }
+  return (hash >>> 0).toString(36).toUpperCase();
+}
+
+function generatedXyProductSku(identity: ReturnType<typeof xyProductIdentity>) {
+  const directSource = cleanProductText(identity.thirdPartyProductId) || cleanProductText(identity.vmsProductId) || cleanProductText(identity.barcode);
+  if (directSource) return directSource.slice(0, 96);
+
+  const productName = cleanProductText(identity.productName);
+  const asciiName = productName
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 36);
+  const hash = stableProductHash(productName || "xy-product");
+  return asciiName ? `XY-${asciiName}-${hash}` : `XY-${hash}`;
+}
+
+function addProductReference(resolver: ProductResolver, product: ProductReference) {
+  resolver.productsById.set(product.id, product);
+  const skuKey = normalizeKey(product.sku);
+  const barcodeKey = normalizeKey(product.barcode);
+  const nameKey = normalizeKey(product.name);
+  if (skuKey) resolver.productsBySku.set(skuKey, product);
+  if (barcodeKey) resolver.productsByBarcode.set(barcodeKey, product);
+  if (nameKey) resolver.productsByName.set(nameKey, product);
+}
+
+function xyProductCategory(row: JsonRecord) {
+  return firstText(row, ["spfl", "splb", "lbmc", "category", "product_category", "type"]) || "snack";
+}
+
+function xyProductBrand(row: JsonRecord) {
+  return firstText(row, ["pp", "ppmc", "brand", "manufacturer"]);
+}
+
 function findProduct(resolver: ProductResolver, row: JsonRecord) {
   const identity = xyProductIdentity(row);
   const mapping = findMapping(resolver, identity.vmsProductId, identity.productName);
@@ -296,18 +383,62 @@ async function loadProductResolver(supabase: SupabaseServer): Promise<ProductRes
   const productRows = (products ?? []) as ProductReference[];
   const mappingRows = (mappings ?? []) as MappingReference[];
 
-  productRows.forEach((product) => {
-    resolver.productsById.set(product.id, product);
-    const skuKey = normalizeKey(product.sku);
-    const barcodeKey = normalizeKey(product.barcode);
-    const nameKey = normalizeKey(product.name);
-    if (skuKey) resolver.productsBySku.set(skuKey, product);
-    if (barcodeKey) resolver.productsByBarcode.set(barcodeKey, product);
-    if (nameKey) resolver.productsByName.set(nameKey, product);
-  });
+  productRows.forEach((product) => addProductReference(resolver, product));
 
   mappingRows.forEach((mapping) => addMappingReference(resolver, mapping));
   return resolver;
+}
+
+async function createMissingXyProductFromRow(supabase: SupabaseServer, resolver: ProductResolver, row: JsonRecord, capturedAt: string) {
+  const identity = xyProductIdentity(row);
+  const productName = identity.productName || identity.thirdPartyProductId || identity.vmsProductId || identity.barcode;
+  if (!productName) return { product: null, action: "skipped" as const, error: "XY product row is missing a product name and identifier." };
+
+  const sku = generatedXyProductSku(identity);
+  const now = new Date().toISOString();
+  const sellingPrice = identity.sellingPrice !== null && identity.sellingPrice >= 0 ? identity.sellingPrice : 0;
+  const payload = {
+    sku,
+    barcode: identity.barcode || null,
+    name: productName,
+    category: xyProductCategory(row),
+    brand: xyProductBrand(row) || null,
+    cost_price: 0,
+    selling_price: sellingPrice,
+    current_cost_price_lyd: 0,
+    current_selling_price_lyd: sellingPrice,
+    cost_price_source: "initial_import",
+    selling_price_source: identity.sellingPrice !== null && identity.sellingPrice >= 0 ? "vms" : "initial_import",
+    price_updated_at: identity.sellingPrice !== null && identity.sellingPrice >= 0 ? now : null,
+    vms_selling_price_lyd: identity.sellingPrice !== null && identity.sellingPrice >= 0 ? identity.sellingPrice : null,
+    image_url: identity.imageUrl || null,
+    import_source: "vms_import",
+    last_vms_seen_at: capturedAt,
+    active: true,
+  };
+
+  const { data, error } = await supabase
+    .from("products")
+    .insert(payload)
+    .select("id, sku, barcode, name")
+    .maybeSingle();
+
+  if (error) {
+    const { data: duplicate, error: duplicateError } = await supabase
+      .from("products")
+      .select("id, sku, barcode, name")
+      .eq("sku", sku)
+      .maybeSingle();
+    if (duplicateError) return { product: null, action: "invalid" as const, error: duplicateError.message };
+    if (duplicate?.id) {
+      addProductReference(resolver, duplicate);
+      return { product: duplicate as ProductReference, action: "updated" as const, error: null };
+    }
+    return { product: null, action: "invalid" as const, error: error.message };
+  }
+
+  if (data) addProductReference(resolver, data);
+  return { product: data as ProductReference | null, action: "created" as const, error: null };
 }
 
 async function upsertXyProductMapping({
@@ -425,6 +556,7 @@ async function createSyncRun(supabase: SupabaseServer, syncType: SyncType, profi
         base_url: config.baseUrl,
         merchant_id: config.maskedMerchantId,
         key: config.maskedKey,
+        secret: config.maskedSecret,
         signing_mode: config.signingMode,
       },
     })
@@ -525,30 +657,32 @@ async function runXySync(syncType: SyncType, options: SyncOptions, work: (contex
       syncRunId,
       capturedAt: new Date().toISOString(),
     });
-    const status = syncRunStatus(stats);
+    const safeStats = sanitizeStatsForLog(stats, config);
+    const status = syncRunStatus(safeStats);
     const message =
       status === "completed"
         ? `Completed XY VMS ${syncType.replaceAll("_", " ")} sync`
         : status === "failed"
           ? `XY VMS ${syncType.replaceAll("_", " ")} sync failed`
           : `Completed XY VMS ${syncType.replaceAll("_", " ")} sync with warnings`;
-    await finishSyncRun({ supabase, profile, syncRunId, syncType, status, stats, message });
+    await finishSyncRun({ supabase, profile, syncRunId, syncType, status, stats: safeStats, message });
     revalidateXyPages();
-    return { syncRunId, status, ...stats };
+    return { syncRunId, status, ...safeStats };
   } catch (error) {
     const stats = emptyStats();
     stats.errors.push(safeErrorMessage(error));
+    const safeStats = sanitizeStatsForLog(stats, config);
     await finishSyncRun({
       supabase,
       profile,
       syncRunId,
       syncType,
       status: "failed",
-      stats,
+      stats: safeStats,
       message: `XY VMS ${syncType.replaceAll("_", " ")} sync failed`,
     });
     revalidateXyPages();
-    return { syncRunId, status: "failed" as const, ...stats };
+    return { syncRunId, status: "failed" as const, ...safeStats };
   }
 }
 
@@ -688,9 +822,20 @@ async function syncProductsWork(context: SyncContext) {
   for (const row of rows) {
     const identity = xyProductIdentity(row);
     const product = findProduct(resolver, row);
-    const productId = product?.id ?? null;
+    let productId = product?.id ?? null;
 
     try {
+      if (!productId) {
+        const created = await createMissingXyProductFromRow(context.supabase, resolver, row, context.capturedAt);
+        if (created.product?.id) {
+          productId = created.product.id;
+          if (created.action === "created") stats.rowsImported += 1;
+          else stats.rowsUpdated += 1;
+        } else if (created.error) {
+          stats.errors.push(`Product ${identity.productName || identity.vmsProductId || "unknown"} was not auto-created: ${created.error}`);
+        }
+      }
+
       await upsertXyProductMapping({
         supabase: context.supabase,
         resolver,
@@ -928,6 +1073,32 @@ async function syncMachineStatusWork(context: SyncContext) {
   return stats;
 }
 
+async function testOfficialEndpoint(context: SyncContext, endpoint: XyVmsEndpoint, params: XyVmsParams) {
+  const requestDebug = buildXyRequestDebug(endpoint, params, context.config);
+  try {
+    const result = await callXyApiRaw(endpoint, params);
+    return { result, summary: summarizeRawResponse(endpoint, result) };
+  } catch (error) {
+    return { result: null, summary: failedEndpointSummary(endpoint, error, requestDebug) };
+  }
+}
+
+async function testOfficialApiWork(context: SyncContext) {
+  const stats = emptyStats();
+  const machineTest = await testOfficialEndpoint(context, "queryMachine", { shbh: context.config.merchantId });
+
+  stats.responseSummary.queryMachine = machineTest.summary;
+  stats.rowCount += summaryRowCount(machineTest.summary);
+
+  if (!summaryHttpOk(machineTest.summary) || summaryCode(machineTest.summary) !== "1") {
+    const authMessage = officialAuthFailureMessage(machineTest.summary);
+    if (authMessage) stats.errors.push(authMessage);
+    stats.errors.push(`queryMachine failed: ${summaryMessage(machineTest.summary) || "No response message."}`);
+  }
+
+  return stats;
+}
+
 async function testUnsignedEndpoint(context: SyncContext, endpoint: XyVmsEndpoint, params: XyVmsParams) {
   try {
     const result = await callXyApiRaw(endpoint, params, { signingMode: "unsigned" });
@@ -1012,6 +1183,10 @@ export async function syncXyMachineGoods(options: SyncOptions = {}) {
 
 export async function syncXyMachineStatus(options: SyncOptions = {}) {
   return runXySync("machine_status", options, syncMachineStatusWork);
+}
+
+export async function testXyOfficialApi(options: SyncOptions = {}) {
+  return runXySync("test_official", options, testOfficialApiWork);
 }
 
 export async function testXyUnsignedMerchant(options: SyncOptions = {}) {

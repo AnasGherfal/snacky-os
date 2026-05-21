@@ -9,6 +9,7 @@ import {
   syncXyMachines,
   syncXyMachineStatus,
   syncXyProducts,
+  testXyOfficialApi,
   testXyUnsignedMerchant,
 } from "@/lib/xy-vms-sync";
 import { testXyWebDashboard } from "@/lib/xy-web-sync";
@@ -42,6 +43,11 @@ export async function syncXyMachineStatusAction() {
 export async function syncXyAllAction() {
   const profile = await requireOwnerAdmin();
   await syncXyAll({ profile });
+}
+
+export async function testXyOfficialApiAction() {
+  const profile = await requireOwnerAdmin();
+  await testXyOfficialApi({ profile });
 }
 
 export async function testXyUnsignedMerchantAction() {

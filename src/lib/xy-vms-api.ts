@@ -14,6 +14,7 @@ export type XyApiResponse<T = unknown> = {
   code?: string | number;
   message?: string;
   data?: T;
+  rawEnvelope?: unknown;
   [key: string]: unknown;
 };
 
@@ -26,6 +27,16 @@ export type XyApiRawResult<T = unknown> = {
   response: XyApiResponse<T>;
   responseText: string;
   requestSigned: boolean;
+  requestDebug: XyRequestDebug;
+};
+
+export type XyRequestDebug = {
+  endpoint: XyVmsEndpoint;
+  businessParams: Record<string, string | number | boolean>;
+  reqData: string;
+  timestamp: string;
+  maskedKey: string;
+  maskedSign: string | null;
 };
 
 export type XyVmsConfig = {
@@ -39,6 +50,7 @@ export type XyVmsConfig = {
   includeAuthFields: boolean;
   maskedMerchantId: string;
   maskedKey: string;
+  maskedSecret: string;
   ready: boolean;
   missing: string[];
 };
@@ -48,18 +60,21 @@ export class XyApiError extends Error {
   code?: string | number;
   status?: number;
   response?: XyApiResponse;
+  requestDebug?: XyRequestDebug;
 
-  constructor(message: string, options: { endpoint: string; code?: string | number; status?: number; response?: XyApiResponse }) {
+  constructor(message: string, options: { endpoint: string; code?: string | number; status?: number; response?: XyApiResponse; requestDebug?: XyRequestDebug }) {
     super(message);
     this.name = "XyApiError";
     this.endpoint = options.endpoint;
     this.code = options.code;
     this.status = options.status;
     this.response = options.response;
+    this.requestDebug = options.requestDebug;
   }
 }
 
-const defaultBaseUrl = "http://175.6.71.238:8090/service-api/api";
+const defaultBaseUrl = "https://xcx.xynetweb.com/service-api/api";
+const signingFields = new Set(["key", "secret", "timestamp", "sign"]);
 
 function envFlag(value: string | undefined, defaultValue: boolean) {
   if (value === undefined || value === "") return defaultValue;
@@ -79,14 +94,37 @@ function cleanBaseUrl(baseUrl: string) {
   return baseUrl.replace(/\/+$/, "");
 }
 
-function cleanParams(params: XyVmsParams) {
+function responseHasNestedEnvelope(value: XyApiResponse) {
+  return (
+    value.data &&
+    typeof value.data === "object" &&
+    !Array.isArray(value.data) &&
+    ("code" in value.data || "message" in value.data || "data" in value.data)
+  );
+}
+
+function normalizeXyApiResponse<T = unknown>(value: XyApiResponse): XyApiResponse<T> {
+  if (!responseHasNestedEnvelope(value)) return value as XyApiResponse<T>;
+
+  const nested = value.data as XyApiResponse<T>;
+  return {
+    ...nested,
+    rawEnvelope: value,
+  };
+}
+
+function cleanParams(params: XyVmsParams, options: { excludeSigningFields?: boolean } = {}) {
   return Object.fromEntries(
-    Object.entries(params).filter(([, value]) => value !== undefined && value !== null),
+    Object.entries(params).filter(([key, value]) => {
+      if (value === undefined || value === null) return false;
+      if (typeof value === "string" && value.trim() === "") return false;
+      return !(options.excludeSigningFields && signingFields.has(key));
+    }),
   ) as Record<string, string | number | boolean>;
 }
 
-function reqData(params: XyVmsParams) {
-  return Object.entries(cleanParams(params))
+export function buildXyReqData(params: XyVmsParams) {
+  return Object.entries(cleanParams(params, { excludeSigningFields: true }))
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([key, value]) => `${key}=${String(value)}`)
     .join("&");
@@ -107,8 +145,22 @@ export function maskSecret(value: string | null | undefined) {
 export function buildXySign(secret: string, timestamp: string | number, params: XyVmsParams) {
   return crypto
     .createHash("md5")
-    .update(`${secret}${String(timestamp)}${reqData(params)}`, "utf8")
+    .update(`${secret}${String(timestamp)}${buildXyReqData(params)}`, "utf8")
     .digest("hex");
+}
+
+export function buildXyRequestDebug(endpoint: XyVmsEndpoint, params: XyVmsParams, config = getXyVmsConfig(), timestamp = timestamp13()): XyRequestDebug {
+  const businessParams = cleanParams(params, { excludeSigningFields: true });
+  const sign = config.signingMode === "signed" && config.secret ? buildXySign(config.secret, timestamp, businessParams) : null;
+
+  return {
+    endpoint,
+    businessParams,
+    reqData: buildXyReqData(businessParams),
+    timestamp,
+    maskedKey: maskSecret(config.key),
+    maskedSign: sign ? maskSecret(sign) : null,
+  };
 }
 
 export function getXyVmsConfig(): XyVmsConfig {
@@ -117,7 +169,7 @@ export function getXyVmsConfig(): XyVmsConfig {
   const merchantId = String(process.env.XY_VMS_MERCHANT_ID ?? "").trim();
   const key = String(process.env.XY_VMS_KEY ?? "").trim();
   const secret = String(process.env.XY_VMS_SECRET ?? "").trim();
-  const timeoutMs = envNumber(process.env.XY_VMS_TIMEOUT_MS, 30000);
+  const timeoutMs = envNumber(process.env.XY_VMS_TIMEOUT_MS, 20000);
   const enabled = envFlag(process.env.XY_VMS_ENABLED, false);
   const includeAuthFields = signingMode === "signed";
   const missing = [
@@ -139,6 +191,7 @@ export function getXyVmsConfig(): XyVmsConfig {
     includeAuthFields,
     maskedMerchantId: maskSecret(merchantId),
     maskedKey: maskSecret(key),
+    maskedSecret: maskSecret(secret),
     ready: missing.length === 0,
     missing,
   };
@@ -168,15 +221,20 @@ export async function callXyApiRaw<T = unknown>(
     throw new Error(`XY VMS API is not ready: ${missing.join(", ")}.`);
   }
 
-  const businessParams = cleanParams(params);
   const timestamp = timestamp13();
-  const body: Record<string, string | number | boolean> = { ...businessParams };
+  const requestDebug = buildXyRequestDebug(endpoint, params, config, timestamp);
+  const { businessParams } = requestDebug;
+  let body: Record<string, string | number | boolean>;
 
   if (includeAuthFields) {
-    body.key = config.key;
-    body.secret = config.secret;
-    body.timestamp = timestamp;
-    body.sign = buildXySign(config.secret, timestamp, businessParams);
+    body = {
+      key: config.key,
+      timestamp,
+      sign: buildXySign(config.secret, timestamp, businessParams),
+      ...businessParams,
+    };
+  } else {
+    body = { ...businessParams };
   }
 
   const cleanPath = cleanEndpoint(endpoint);
@@ -197,9 +255,15 @@ export async function callXyApiRaw<T = unknown>(
         endpoint,
         status: 0,
         response: { code: "timeout", message: `Timed out after ${config.timeoutMs}ms` },
+        requestDebug,
       });
     }
-    throw error;
+    throw new XyApiError(`Network error: ${error instanceof Error ? error.message : String(error ?? "Could not reach XY API")}`, {
+      endpoint,
+      status: 0,
+      response: { code: "network_error", message: error instanceof Error ? error.message : String(error ?? "Could not reach XY API") },
+      requestDebug,
+    });
   } finally {
     clearTimeout(timeout);
   }
@@ -207,12 +271,13 @@ export async function callXyApiRaw<T = unknown>(
   const text = await response.text();
   let json: XyApiResponse<T>;
   try {
-    json = text ? (JSON.parse(text) as XyApiResponse<T>) : {};
+    json = normalizeXyApiResponse<T>(text ? (JSON.parse(text) as XyApiResponse) : {});
   } catch {
     throw new XyApiError(`XY ${endpoint} returned a non-JSON response.`, {
       endpoint,
       status: response.status,
       response: { code: response.status, message: text.slice(0, 300) },
+      requestDebug,
     });
   }
 
@@ -223,6 +288,7 @@ export async function callXyApiRaw<T = unknown>(
     response: json,
     responseText: text,
     requestSigned: includeAuthFields,
+    requestDebug,
   };
 }
 
@@ -235,6 +301,7 @@ export async function callXyApi<T = unknown>(endpoint: XyVmsEndpoint, params: Xy
       endpoint,
       status: httpStatus,
       response,
+      requestDebug: result.requestDebug,
     });
   }
 
@@ -244,6 +311,7 @@ export async function callXyApi<T = unknown>(endpoint: XyVmsEndpoint, params: Xy
       code: response.code,
       status: httpStatus,
       response,
+      requestDebug: result.requestDebug,
     });
   }
 

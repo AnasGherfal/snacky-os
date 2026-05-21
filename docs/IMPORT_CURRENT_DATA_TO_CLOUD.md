@@ -21,6 +21,7 @@ The script imports business data only:
 - `financial_transactions`
 
 It also understands the raw AppSheet-style filenames when they are placed in `docs/current-data`, such as `Items - Purchases.csv`, `Items - PurchaseLines.csv`, `Items - Inventory.csv`, and `Items - Inventory_Old.csv`.
+If raw split purchase files are present, `Items - Purchases.csv` and `Items - PurchaseLines.csv` are treated as the current purchase source of truth instead of the older combined `purchases.csv`. Inventory CSVs are still merged and deduplicated by source IDs so the importer can capture all historical ledger rows. Paid imported purchases also create active `product_purchase` money-out rows in `financial_transactions`, even when no standalone `financial_transactions.csv` is present.
 
 It does not import `auth.users`, sessions, tokens, passwords, or Supabase Auth data.
 
@@ -62,6 +63,7 @@ npx tsx scripts/import-current-data-to-cloud.ts --data-dir docs/current-data --d
 - Uses upsert where the schema has a usable conflict key.
 - Deduplicates source rows before writing and keeps the most complete duplicate row.
 - Skips bad rows instead of failing the whole import.
+- Skips purchase rows that do not have a real source date; it never fills missing purchase dates with today's date.
 - Logs skipped rows with file, row number, and reason.
 - Prints a summary with rows read, rows imported, rows skipped, existing rows skipped, and errors by table.
 

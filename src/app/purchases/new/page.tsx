@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { PurchaseForm } from "@/components/PurchaseForm";
+import { NewPurchaseWithReceiptScan } from "@/components/NewPurchaseWithReceiptScan";
 import { ErrorState, FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
@@ -24,21 +24,15 @@ export default async function NewPurchasePage({ searchParams }: { searchParams: 
   }
   const [{ data: suppliers, error: suppliersError }, { data: products, error: productsError }] = await Promise.all([
     supabase.from("suppliers").select("id, name").order("name"),
-    supabase.from("products").select("id, sku, name, category, brand, case_quantity").eq("active", true).order("name"),
+    supabase.from("products").select("id, sku, barcode, name, category, brand, case_quantity").eq("active", true).order("name"),
   ]);
   const loadError = suppliersError ?? productsError;
-  if (loadError) {
-    console.error("[purchases] Failed to load new purchase form", loadError);
-    return (
-      <>
-        <ErrorState title="Could not load purchase form" body="Snacky OS could not load suppliers or products for purchase entry." action={<SecondaryButton href={`/purchases${moduleQuery}`}>Back</SecondaryButton>} />
-      </>
-    );
-  }
+  if (loadError) console.error("[purchases] Failed to load new purchase form lists", loadError);
 
   const productOptions = (products ?? []).map((product: any) => ({
     id: product.id,
     sku: product.sku,
+    barcode: product.barcode,
     name: product.name,
     category: product.category,
     brand: product.brand,
@@ -60,7 +54,12 @@ export default async function NewPurchasePage({ searchParams }: { searchParams: 
           action={<SecondaryButton href={`/purchases${moduleQuery}`}>Back</SecondaryButton>}
         />
         {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{error}</div> : null}
-        <PurchaseForm action={createPurchase} suppliers={suppliers ?? []} products={productOptions} />
+        {loadError ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            Product or supplier lists could not fully load. You can keep the draft on screen, retry the page, or continue once the lists appear.
+          </div>
+        ) : null}
+        <NewPurchaseWithReceiptScan action={createPurchase} suppliers={suppliers ?? []} products={productOptions} canAddProducts={isOwnerAdminRole(profile?.role)} />
       </FormPageLayout>
     </>
   );

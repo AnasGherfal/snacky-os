@@ -13,7 +13,7 @@ import {
   syncXyMachinesAction,
   syncXyMachineStatusAction,
   syncXyProductsAction,
-  testXyUnsignedMerchantAction,
+  testXyOfficialApiAction,
   testXyWebDashboardAction,
 } from "@/lib/xy-vms-actions";
 
@@ -50,11 +50,20 @@ type XySyncRunRow = {
 
 type XyEndpointSummary = {
   endpoint?: string | null;
+  requestDebug?: {
+    endpoint?: string | null;
+    businessParams?: Record<string, unknown> | null;
+    reqData?: string | null;
+    timestamp?: string | null;
+    maskedKey?: string | null;
+    maskedSign?: string | null;
+  } | null;
   httpStatus?: number | null;
   xyCode?: string | number | null;
   message?: string | null;
   dataRowCount?: number | null;
   sampleRows?: unknown;
+  requestSigned?: boolean | null;
 };
 
 type XyWebDashboardSummary = {
@@ -84,15 +93,19 @@ function SyncForm({
   label,
   icon: Icon,
   primary = false,
+  disabled = false,
+  title,
 }: {
   action: (formData?: FormData) => Promise<void>;
   label: string;
   icon: ComponentType<{ className?: string }>;
   primary?: boolean;
+  disabled?: boolean;
+  title?: string;
 }) {
   return (
     <form action={action}>
-      <button type="submit" className={`${primary ? "btn-primary" : "btn-secondary"} inline-flex w-full items-center justify-center gap-2`}>
+      <button type="submit" disabled={disabled} title={title} className={`${primary ? "btn-primary" : "btn-secondary"} inline-flex w-full items-center justify-center gap-2`}>
         <Icon className="h-4 w-4" />
         <span>{label}</span>
       </button>
@@ -110,9 +123,33 @@ function webDashboardSummary(value: unknown): XyWebDashboardSummary | null {
   return value as XyWebDashboardSummary;
 }
 
+function officialQueryMachineSucceeded(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const summary = (value as Record<string, unknown>).queryMachine as XyEndpointSummary | undefined;
+  const httpStatus = Number(summary?.httpStatus ?? 0);
+  return httpStatus >= 200 && httpStatus < 300 && String(summary?.xyCode ?? "") === "1" && Number(summary?.dataRowCount ?? 0) > 0;
+}
+
 function sampleRowsText(value: unknown) {
   if (!Array.isArray(value) || !value.length) return "-";
   return JSON.stringify(value, null, 2);
+}
+
+function debugText(summary: XyEndpointSummary) {
+  const debug = summary.requestDebug;
+  if (!debug) return "-";
+  return JSON.stringify(
+    {
+      endpoint: debug.endpoint ?? summary.endpoint ?? "-",
+      businessParams: debug.businessParams ?? {},
+      reqData: debug.reqData ?? "",
+      timestamp: debug.timestamp ?? "",
+      maskedKey: debug.maskedKey ?? "Not set",
+      maskedSign: debug.maskedSign ?? "Not set",
+    },
+    null,
+    2,
+  );
 }
 
 export default async function AdminVmsApiPage() {
@@ -168,9 +205,12 @@ export default async function AdminVmsApiPage() {
   }
 
   const runs = (runsResult.data ?? []) as XySyncRunRow[];
-  const lastCompleted = runs.find((run) => run.provider === "xy" && run.sync_type !== "web_dashboard_test" && run.completed_at);
-  const latestUnsignedTest = runs.find((run) => run.provider === "xy" && run.sync_type === "test_unsigned");
-  const latestUnsignedEndpointSummaries = endpointSummaries(latestUnsignedTest?.response_summary);
+  const lastCompleted = runs.find((run) => run.provider === "xy" && !String(run.sync_type ?? "").startsWith("test_") && run.completed_at);
+  const latestOfficialTest = runs.find((run) => run.provider === "xy" && run.sync_type === "test_official");
+  const latestOfficialEndpointSummaries = endpointSummaries(latestOfficialTest?.response_summary);
+  const officialTestPassed = officialQueryMachineSucceeded(latestOfficialTest?.response_summary);
+  const syncDisabled = !config.ready || !officialTestPassed;
+  const syncDisabledTitle = !config.ready ? "Complete the server-side official XY configuration first." : "Run a successful official queryMachine test first.";
   const latestWebTest = runs.find((run) => run.sync_type === "web_dashboard_test");
   const latestWebDashboardSummary = webDashboardSummary(latestWebTest?.response_summary);
 
@@ -189,8 +229,10 @@ export default async function AdminVmsApiPage() {
           </div>
           <div className="text-2xl font-semibold text-slate-900">{status.label}</div>
           <div className="mt-3 space-y-1 text-sm text-slate-600">
+            <div className="break-all">Base URL: {config.baseUrl}</div>
             <div>Merchant: {config.maskedMerchantId}</div>
             <div>Key: {config.maskedKey}</div>
+            <div>Secret: {config.secret ? "Configured" : "Not set"}</div>
             <div>Signing: {config.signingMode}</div>
           </div>
         </section>
@@ -248,7 +290,7 @@ export default async function AdminVmsApiPage() {
         </div>
       ) : null}
 
-      {!webConfig.ready ? (
+      {webConfig.enabled && !webConfig.ready ? (
         <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
           Missing server-side XY web dashboard fallback configuration: {webConfig.missing.join(", ")}. Keep the Authorization token server-only and do not use `NEXT_PUBLIC_`.
         </div>
@@ -263,16 +305,16 @@ export default async function AdminVmsApiPage() {
           <CheckCircle2 className="h-5 w-5 text-emerald-600" />
         </div>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <SyncForm action={testXyWebDashboardAction} label="Test Web Dashboard API" icon={TestTube2} />
-          <SyncForm action={testXyUnsignedMerchantAction} label={`Test Unsigned Merchant ${config.merchantId || "Not set"}`} icon={TestTube2} />
-          <SyncForm action={syncXyMachinesAction} label="Sync Machines" icon={Boxes} />
-          <SyncForm action={syncXyProductsAction} label="Sync Products" icon={PackageSearch} />
-          <SyncForm action={syncXyMachineGoodsAction} label="Sync Machine Goods / Stock" icon={DatabaseZap} />
-          <SyncForm action={syncXyMachineStatusAction} label="Sync Machine Status" icon={RadioTower} />
-          <SyncForm action={syncXyAllAction} label="Sync All" icon={RefreshCw} primary />
+          <SyncForm action={testXyOfficialApiAction} label="Test Official Signed API" icon={TestTube2} primary />
+          <SyncForm action={syncXyMachinesAction} label="Sync Machines" icon={Boxes} disabled={syncDisabled} title={syncDisabled ? syncDisabledTitle : undefined} />
+          <SyncForm action={syncXyProductsAction} label="Sync Products" icon={PackageSearch} disabled={syncDisabled} title={syncDisabled ? syncDisabledTitle : undefined} />
+          <SyncForm action={syncXyMachineGoodsAction} label="Sync Machine Goods / Stock" icon={DatabaseZap} disabled={syncDisabled} title={syncDisabled ? syncDisabledTitle : undefined} />
+          <SyncForm action={syncXyMachineStatusAction} label="Sync Machine Status" icon={RadioTower} disabled={syncDisabled} title={syncDisabled ? syncDisabledTitle : undefined} />
+          <SyncForm action={syncXyAllAction} label="Sync All" icon={RefreshCw} disabled={syncDisabled} title={syncDisabled ? syncDisabledTitle : undefined} />
+          <SyncForm action={testXyWebDashboardAction} label="Test Web Dashboard Fallback" icon={Globe2} />
         </div>
         <p className="mt-4 text-xs leading-5 text-slate-500">
-          Confirm with XY whether `key`, `secret`, `sign`, and `timestamp` must be included in the request body. The signing helper is active unless `XY_VMS_SIGNING_MODE=unsigned`.
+          Official signed calls send `shbh`, `jqbh` when needed, `key`, `timestamp`, and `sign`. The secret stays server-side and is only used to calculate the MD5 signature.
         </p>
       </section>
 
@@ -310,31 +352,36 @@ export default async function AdminVmsApiPage() {
         </section>
       ) : null}
 
-      {latestUnsignedTest ? (
+      {latestOfficialTest ? (
         <section className="surface-card mb-6">
           <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <h2 className="text-base font-semibold text-slate-900">Latest Unsigned Test</h2>
-              <p className="mt-1 text-sm leading-6 text-slate-500">Raw response summary from unsigned XY calls. This test does not import data.</p>
+              <h2 className="text-base font-semibold text-slate-900">Latest Official XY API Test</h2>
+              <p className="mt-1 text-sm leading-6 text-slate-500">queryMachine diagnostics from the official API path. This test does not import data.</p>
             </div>
-            <StatusBadge status={latestUnsignedTest.status} />
+            <StatusBadge status={latestOfficialTest.status} />
           </div>
-          {latestUnsignedTest.error_count ? (
+          {latestOfficialTest.error_count ? (
             <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
-              {compactErrors(latestUnsignedTest.errors)}
+              {compactErrors(latestOfficialTest.errors)}
             </div>
           ) : null}
-          {!latestUnsignedEndpointSummaries.length ? (
-            <EmptyState title="No endpoint summaries saved" body="Run the unsigned merchant test again after applying the latest migration." />
+          {!latestOfficialEndpointSummaries.length ? (
+            <EmptyState title="No endpoint summaries saved" body="Run the official XY API test again." />
           ) : (
-            <DataTable headers={["Endpoint", "HTTP", "XY code", "Message", "Rows", "Sample first 3 rows"]}>
-              {latestUnsignedEndpointSummaries.map((summary) => (
+            <DataTable headers={["Endpoint", "HTTP", "XY code", "Message", "Rows", "Signing debug", "Sample first 3 machines"]}>
+              {latestOfficialEndpointSummaries.map((summary) => (
                 <tr key={String(summary.endpoint ?? summary.message ?? "endpoint")}>
                   <td className="font-medium">{summary.endpoint ?? "-"}</td>
                   <td>{summary.httpStatus ?? "-"}</td>
                   <td>{summary.xyCode ?? "-"}</td>
                   <td>{summary.message ?? "-"}</td>
                   <td>{summary.dataRowCount ?? 0}</td>
+                  <td>
+                    <pre className="max-h-44 max-w-md overflow-auto whitespace-pre-wrap rounded bg-slate-50 p-3 text-xs text-slate-700">
+                      {debugText(summary)}
+                    </pre>
+                  </td>
                   <td>
                     {Array.isArray(summary.sampleRows) && summary.sampleRows.length ? (
                       <pre className="max-h-44 max-w-xl overflow-auto whitespace-pre-wrap rounded bg-slate-50 p-3 text-xs text-slate-700">

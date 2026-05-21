@@ -24,7 +24,7 @@ export default async function EditPurchasePage({
   const supabase = getSupabaseServerClient();
   if (!supabase) notFound();
 
-  const [{ data: purchase }, { data: lines }, { data: suppliers }, { data: products }] = await Promise.all([
+  const [{ data: purchase, error: purchaseError }, { data: lines, error: linesError }, { data: suppliers, error: suppliersError }, { data: products, error: productsError }] = await Promise.all([
     supabase
       .from("purchase_orders")
       .select("id, supplier_id, status, order_date, receipt_number, payment_method, payment_status, receipt_url, notes, manual_total_lyd")
@@ -37,8 +37,13 @@ export default async function EditPurchasePage({
       .order("line_position")
       .order("created_at"),
     supabase.from("suppliers").select("id, name").order("name"),
-    supabase.from("products").select("id, sku, name, category, brand, case_quantity").eq("active", true).order("name"),
+    supabase.from("products").select("id, sku, barcode, name, category, brand, case_quantity").eq("active", true).order("name"),
   ]);
+
+  if (purchaseError) console.error("[purchases] Failed to load purchase for edit", purchaseError);
+  if (linesError) console.error("[purchases] Failed to load purchase lines for edit", linesError);
+  const listLoadError = suppliersError ?? productsError;
+  if (listLoadError) console.error("[purchases] Failed to load purchase edit lists", listLoadError);
 
   if (!purchase) notFound();
   if ((purchase as any).status !== "draft") redirect(`/purchases/${id}${moduleQuery ? `${moduleQuery}&` : "?"}error=Only%20draft%20purchases%20can%20be%20edited.`);
@@ -46,6 +51,7 @@ export default async function EditPurchasePage({
   const productOptions = (products ?? []).map((product: any) => ({
     id: product.id,
     sku: product.sku,
+    barcode: product.barcode,
     name: product.name,
     category: product.category,
     brand: product.brand,
@@ -78,10 +84,16 @@ export default async function EditPurchasePage({
           action={<SecondaryButton href={`/purchases/${id}${moduleQuery}`}>Back to purchase</SecondaryButton>}
         />
         {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{error}</div> : null}
+        {listLoadError ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            Product or supplier lists could not fully load. The draft stayed on screen; retry the page before saving if a product is missing.
+          </div>
+        ) : null}
         <PurchaseForm
           action={updatePurchase}
           suppliers={suppliers ?? []}
           products={productOptions}
+          canAddProducts={isOwnerAdminRole(profile?.role)}
           initialPurchase={{
             id,
             supplierId: (purchase as any).supplier_id,
