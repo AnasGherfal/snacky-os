@@ -59,8 +59,11 @@ Run migrations against staging first, test the release, then apply the same migr
 `supabase/seed.sql` is a business-data seed only. It can be run locally with `npx supabase db reset` or against Supabase Cloud with:
 
 ```bash
+npx supabase db push
 npx supabase db push --include-seed
 ```
+
+The seed helper functions `public.snacky_seed_clean_text`, `public.snacky_seed_numeric`, and `public.snacky_seed_date` live in migrations, not in `supabase/seed.sql`. Run `npx supabase db push` first so Supabase Cloud applies those helper functions, then run `npx supabase db push --include-seed` to load cloud business data.
 
 The seed inserts operating data such as products, machines, locations, storage locations, suppliers, VMS mappings, machine slots, purchases, purchase lines, financial transactions, and inventory movements. It does not create team members, Supabase Auth users, Auth identities, login sessions, tokens, or passwords.
 
