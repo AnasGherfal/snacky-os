@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { logActivity } from "@/lib/activity-log";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 import { getCurrentProfile } from "@/lib/auth";
-import { canAccessOperatorRoute } from "@/lib/authz";
+import { canAccessOperatorRoute, canExecuteRoutes } from "@/lib/authz";
 import { REFILL_PHOTO_BUCKET } from "@/lib/storage-buckets";
 
 const REFILL_PHOTO_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"];
@@ -159,15 +159,17 @@ export async function startRoute(routeId: string) {
   if (!routeId) throw new Error("Route id is required");
 
   const profile = await getCurrentProfile();
+  if (!profile || !canExecuteRoutes(profile.role)) throw new Error("You are not authorized to start routes.");
+  if (!profile.team_member_id) throw new Error("Your account is not linked to a team member, so it cannot claim a route.");
   const { data: route, error: routeError } = await supabase
     .from("routes")
-    .select("id, operator_id, status, started_at")
+    .select("id, route_date, operator_id, status, started_at")
     .eq("id", routeId)
     .maybeSingle();
 
   if (routeError) throwActionError(routeError, "Could not load this route.");
   if (!route) throw new Error("Route not found");
-  if (!canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, route.operator_id)) {
+  if (!canAccessOperatorRoute({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, route.operator_id)) {
     throw new Error("You are not authorized to start this route");
   }
   if (!["draft", "assigned", "in_progress"].includes(String(route.status))) {
@@ -177,24 +179,41 @@ export async function startRoute(routeId: string) {
     return { success: true };
   }
 
-  const { error } = await supabase
-    .from("routes")
-    .update({ status: "in_progress", started_at: route.started_at ?? new Date().toISOString() })
-    .eq("id", routeId)
-    .eq("operator_id", route.operator_id)
-    .in("status", ["draft", "assigned"]);
+  const now = new Date().toISOString();
+  const startUpdate = route.operator_id
+    ? await supabase
+        .from("routes")
+        .update({ status: "in_progress", started_at: route.started_at ?? now })
+        .eq("id", routeId)
+        .eq("operator_id", route.operator_id)
+        .in("status", ["draft", "assigned"])
+        .select("id, route_date, operator_id, status, started_at")
+        .maybeSingle()
+    : await supabase
+        .from("routes")
+        .update({ operator_id: profile.team_member_id, status: "in_progress", started_at: now })
+        .eq("id", routeId)
+        .is("operator_id", null)
+        .in("status", ["draft", "assigned"])
+        .select("id, route_date, operator_id, status, started_at")
+        .maybeSingle();
 
-  if (error) throwActionError(error, "Could not start this route.");
+  if (startUpdate.error) throwActionError(startUpdate.error, "Could not start this route.");
+  if (!startUpdate.data) {
+    if (!route.operator_id) throw new Error("This route was already claimed by another user.");
+    throw new Error("This route could not be started because its status changed.");
+  }
   revalidateRouteWorkflow(routeId);
   await logActivity({
     profile,
-    action: "update",
+    action: route.operator_id ? "start_route" : "claim_route",
     entityType: "route",
     entityId: routeId,
-    entityLabel: `Route ${routeId.slice(0, 8)}`,
+    entityLabel: `Route ${route.route_date ?? routeId.slice(0, 8)}`,
     beforeData: route,
-    afterData: { status: "in_progress", started_at: route.started_at ?? new Date().toISOString() },
-    summary: "Started route",
+    afterData: startUpdate.data,
+    metadata: { operator_id: startUpdate.data.operator_id },
+    summary: route.operator_id ? "Started route" : "Claimed and started available route",
   });
   return { success: true };
 }

@@ -1,11 +1,12 @@
 import { redirect } from "next/navigation";
 import type { ComponentType } from "react";
-import { Activity, AlertTriangle, Boxes, CheckCircle2, DatabaseZap, PackageSearch, RadioTower, RefreshCw, TestTube2 } from "lucide-react";
+import { Activity, AlertTriangle, Boxes, CheckCircle2, DatabaseZap, Globe2, PackageSearch, RadioTower, RefreshCw, TestTube2 } from "lucide-react";
 import { DataTable, EmptyState, ErrorState, PageHeader, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getXyVmsConfig } from "@/lib/xy-vms-api";
+import { getXyWebApiConfig } from "@/lib/xy-web-api";
 import {
   syncXyAllAction,
   syncXyMachineGoodsAction,
@@ -13,6 +14,7 @@ import {
   syncXyMachineStatusAction,
   syncXyProductsAction,
   testXyUnsignedMerchantAction,
+  testXyWebDashboardAction,
 } from "@/lib/xy-vms-actions";
 
 export const dynamic = "force-dynamic";
@@ -30,6 +32,7 @@ function compactErrors(value: unknown) {
 
 type XySyncRunRow = {
   id: string;
+  provider: string | null;
   sync_type: string | null;
   status: string | null;
   row_count: number | null;
@@ -54,7 +57,23 @@ type XyEndpointSummary = {
   sampleRows?: unknown;
 };
 
+type XyWebDashboardSummary = {
+  endpoint?: string | null;
+  httpStatus?: number | null;
+  success?: boolean | null;
+  rowCount?: number | null;
+  sampleRows?: unknown;
+  message?: string | null;
+  error?: string | null;
+};
+
 function connectionStatus(config: ReturnType<typeof getXyVmsConfig>) {
+  if (!config.enabled) return { status: "disabled", label: "Disabled" };
+  if (!config.ready) return { status: "needs_configuration", label: "Needs configuration" };
+  return { status: "ready", label: "Ready" };
+}
+
+function webConnectionStatus(config: ReturnType<typeof getXyWebApiConfig>) {
   if (!config.enabled) return { status: "disabled", label: "Disabled" };
   if (!config.ready) return { status: "needs_configuration", label: "Needs configuration" };
   return { status: "ready", label: "Ready" };
@@ -86,6 +105,11 @@ function endpointSummaries(value: unknown) {
   return Object.values(value as Record<string, unknown>).filter((item): item is XyEndpointSummary => Boolean(item && typeof item === "object" && !Array.isArray(item)));
 }
 
+function webDashboardSummary(value: unknown): XyWebDashboardSummary | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as XyWebDashboardSummary;
+}
+
 function sampleRowsText(value: unknown) {
   if (!Array.isArray(value) || !value.length) return "-";
   return JSON.stringify(value, null, 2);
@@ -96,7 +120,9 @@ export default async function AdminVmsApiPage() {
   if (!profile || !isOwnerAdminRole(profile.role)) redirect("/unauthorized");
 
   const config = getXyVmsConfig();
+  const webConfig = getXyWebApiConfig();
   const status = connectionStatus(config);
+  const webStatus = webConnectionStatus(webConfig);
   const supabase = getSupabaseServerClient();
   if (!supabase) {
     return (
@@ -115,8 +141,8 @@ export default async function AdminVmsApiPage() {
   ] = await Promise.all([
     supabase
       .from("vms_sync_runs")
-      .select("id, sync_type, status, row_count, rows_imported, rows_updated, rows_skipped, error_count, message, errors, response_summary, started_at, completed_at, created_at")
-      .eq("provider", "xy")
+      .select("id, provider, sync_type, status, row_count, rows_imported, rows_updated, rows_skipped, error_count, message, errors, response_summary, started_at, completed_at, created_at")
+      .in("provider", ["xy", "xy_web"])
       .order("created_at", { ascending: false })
       .limit(25),
     supabase.from("vms_product_catalog_snapshots").select("id", { count: "exact", head: true }),
@@ -142,9 +168,11 @@ export default async function AdminVmsApiPage() {
   }
 
   const runs = (runsResult.data ?? []) as XySyncRunRow[];
-  const lastCompleted = runs.find((run) => run.completed_at);
-  const latestUnsignedTest = runs.find((run) => run.sync_type === "test_unsigned");
+  const lastCompleted = runs.find((run) => run.provider === "xy" && run.sync_type !== "web_dashboard_test" && run.completed_at);
+  const latestUnsignedTest = runs.find((run) => run.provider === "xy" && run.sync_type === "test_unsigned");
   const latestUnsignedEndpointSummaries = endpointSummaries(latestUnsignedTest?.response_summary);
+  const latestWebTest = runs.find((run) => run.sync_type === "web_dashboard_test");
+  const latestWebDashboardSummary = webDashboardSummary(latestWebTest?.response_summary);
 
   return (
     <>
@@ -153,10 +181,10 @@ export default async function AdminVmsApiPage() {
         subtitle="Server-side Xingyuan sync for machines, VMS products, aisle goods stock, and machine status."
       />
 
-      <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <section className="surface-card">
           <div className="mb-3 flex items-center justify-between gap-3">
-            <div className="text-sm font-medium text-slate-500">Connection</div>
+            <div className="text-sm font-medium text-slate-500">Official API</div>
             <StatusBadge status={status.status} />
           </div>
           <div className="text-2xl font-semibold text-slate-900">{status.label}</div>
@@ -164,6 +192,22 @@ export default async function AdminVmsApiPage() {
             <div>Merchant: {config.maskedMerchantId}</div>
             <div>Key: {config.maskedKey}</div>
             <div>Signing: {config.signingMode}</div>
+          </div>
+        </section>
+
+        <section className="surface-card">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
+              <Globe2 className="h-4 w-4" />
+              Web Fallback
+            </div>
+            <StatusBadge status={webStatus.status} />
+          </div>
+          <div className="text-2xl font-semibold text-slate-900">{webStatus.label}</div>
+          <div className="mt-3 space-y-1 text-sm text-slate-600">
+            <div>Merchant: {webConfig.maskedMerchantId}</div>
+            <div>Authorization: {webConfig.maskedAuthorization}</div>
+            <div>Language/channel: {webConfig.language || "-"} / {webConfig.channel || "-"}</div>
           </div>
         </section>
 
@@ -204,6 +248,12 @@ export default async function AdminVmsApiPage() {
         </div>
       ) : null}
 
+      {!webConfig.ready ? (
+        <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
+          Missing server-side XY web dashboard fallback configuration: {webConfig.missing.join(", ")}. Keep the Authorization token server-only and do not use `NEXT_PUBLIC_`.
+        </div>
+      ) : null}
+
       <section className="surface-card mb-6">
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
@@ -212,7 +262,8 @@ export default async function AdminVmsApiPage() {
           </div>
           <CheckCircle2 className="h-5 w-5 text-emerald-600" />
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <SyncForm action={testXyWebDashboardAction} label="Test Web Dashboard API" icon={TestTube2} />
           <SyncForm action={testXyUnsignedMerchantAction} label={`Test Unsigned Merchant ${config.merchantId || "Not set"}`} icon={TestTube2} />
           <SyncForm action={syncXyMachinesAction} label="Sync Machines" icon={Boxes} />
           <SyncForm action={syncXyProductsAction} label="Sync Products" icon={PackageSearch} />
@@ -224,6 +275,40 @@ export default async function AdminVmsApiPage() {
           Confirm with XY whether `key`, `secret`, `sign`, and `timestamp` must be included in the request body. The signing helper is active unless `XY_VMS_SIGNING_MODE=unsigned`.
         </p>
       </section>
+
+      {latestWebTest ? (
+        <section className="surface-card mb-6">
+          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">Latest Web Dashboard Test</h2>
+              <p className="mt-1 text-sm leading-6 text-slate-500">Fallback web-dashboard API check only. It logs diagnostics and does not import data.</p>
+            </div>
+            <StatusBadge status={latestWebTest.status} />
+          </div>
+          {!latestWebDashboardSummary ? (
+            <EmptyState title="No web dashboard summary saved" body="Run the web dashboard test again after applying the latest code." />
+          ) : (
+            <DataTable headers={["Endpoint", "HTTP", "Result", "Rows", "Raw message/error", "Sample first 3 rows"]}>
+              <tr>
+                <td className="font-medium">{latestWebDashboardSummary.endpoint ?? "/archives/queryMerchant"}</td>
+                <td>{latestWebDashboardSummary.httpStatus ?? "-"}</td>
+                <td>
+                  <StatusBadge status={latestWebDashboardSummary.success ? "completed" : "failed"} />
+                </td>
+                <td>{latestWebDashboardSummary.rowCount ?? 0}</td>
+                <td>{latestWebDashboardSummary.message || latestWebDashboardSummary.error || "-"}</td>
+                <td>
+                  {Array.isArray(latestWebDashboardSummary.sampleRows) && latestWebDashboardSummary.sampleRows.length ? (
+                    <pre className="max-h-44 max-w-xl overflow-auto whitespace-pre-wrap rounded bg-slate-50 p-3 text-xs text-slate-700">
+                      {sampleRowsText(latestWebDashboardSummary.sampleRows)}
+                    </pre>
+                  ) : "-"}
+                </td>
+              </tr>
+            </DataTable>
+          )}
+        </section>
+      ) : null}
 
       {latestUnsignedTest ? (
         <section className="surface-card mb-6">
@@ -267,10 +352,11 @@ export default async function AdminVmsApiPage() {
       {!runs.length ? (
         <EmptyState title="No XY sync runs yet" body="Run a manual sync to create the first server-side log." />
       ) : (
-        <DataTable headers={["Started", "Type", "Status", "Rows", "Imported", "Updated", "Skipped", "Errors", "Message"]}>
+        <DataTable headers={["Started", "Provider", "Type", "Status", "Rows", "Imported", "Updated", "Skipped", "Errors", "Message"]}>
           {runs.map((run) => (
             <tr key={run.id}>
               <td>{formatDate(run.started_at ?? run.created_at)}</td>
+              <td className="font-medium">{run.provider === "xy_web" ? "XY Web" : "XY API"}</td>
               <td className="font-medium">{String(run.sync_type ?? "").replaceAll("_", " ")}</td>
               <td><StatusBadge status={run.status} /></td>
               <td>{run.row_count ?? 0}</td>

@@ -77,9 +77,21 @@ XY_VMS_SECRET=your-xy-secret
 XY_VMS_SIGNING_MODE=signed
 ```
 
+Optional server-only XY web dashboard fallback variables:
+
+```bash
+XY_WEB_API_BASE_URL=https://xcx.xynetweb.com/sram
+XY_WEB_API_AUTHORIZATION=your-current-web-dashboard-authorization-token
+XY_WEB_MERCHANT_ID=6591
+XY_WEB_LANGUAGE=en
+XY_WEB_CHANNEL=1
+XY_WEB_ENABLED=true
+```
+
 Rules:
 
 - XY VMS credentials are server-only and must never use `NEXT_PUBLIC_`.
+- XY web dashboard Authorization tokens are temporary server-only values. Do not store them in the database, browser code, screenshots, or commits.
 - Staging and production should use separate provider credentials if the provider supports it.
 - If a provider only offers production credentials, test imports in staging with uploaded XLS/XLSX/CSV files instead of live sync.
 - Any local URL in Vercel Preview or Production environment variables is a release blocker.

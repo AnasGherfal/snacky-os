@@ -63,7 +63,7 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
   const pickItems = routeStock ?? [];
   const primaryAction =
     routeRow.status === "draft" || routeRow.status === "assigned"
-      ? { href: `/operator/routes/${routeId}/pick-list?start=1`, label: "Start Route" }
+      ? { href: `/operator/routes/${routeId}/pick-list?start=1`, label: routeRow.operator_id ? "Start Route" : "Claim & Start" }
       : routeRow.status === "in_progress"
         ? { href: `/operator/routes/${routeId}/leftovers`, label: "End Route" }
         : null;
@@ -73,7 +73,7 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
       <div className="space-y-6">
         <PageHeader
           title={`Route for ${routeRow.route_date}`}
-          subtitle={`${operator?.full_name ?? "Assigned operator"} - ${totalStops} machine stops`}
+          subtitle={`${operator?.full_name ?? "Available to claim"} - ${totalStops} machine stops`}
           action={<SecondaryButton href="/operator/routes">Back to routes</SecondaryButton>}
         />
 
@@ -112,7 +112,7 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
           <h2 className="text-lg font-semibold mb-4">Pick list</h2>
           {routeRow.status === "draft" || routeRow.status === "assigned" ? (
             <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-              <strong>Ready to start?</strong> Click "Start Route" above to view your pick list and begin picking stock from storage.
+              <strong>Ready to start?</strong> Click "{routeRow.operator_id ? "Start Route" : "Claim & Start"}" above to view your pick list and begin picking stock from storage.
             </div>
           ) : null}
           {!pickItems.length ? (

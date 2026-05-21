@@ -55,6 +55,7 @@ export const en = {
     install: "Install",
     operatorProgress: "Operator Progress",
     myRoutes: "My Routes",
+    availableRoutes: "Available Routes",
     todaysRoute: "Today’s Route",
   },
   actions: {

@@ -1,12 +1,16 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { EmptyState, ErrorState, PageHeader, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
-import { isOperatorRole } from "@/lib/authz";
+import { canExecuteRoutes } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
-export default async function OperatorRoutesPage() {
+export default async function OperatorRoutesPage({ searchParams }: { searchParams: Promise<{ view?: string }> }) {
+  const { view = "my" } = await searchParams;
+  const showAvailable = view === "available";
   const supabase = getSupabaseServerClient();
   const profile = await getCurrentProfile();
+  if (!profile || !canExecuteRoutes(profile.role)) redirect("/unauthorized");
 
   if (!supabase) {
     return (
@@ -22,8 +26,10 @@ export default async function OperatorRoutesPage() {
     .gte("route_date", new Date().toISOString().split("T")[0])
     .order("route_date", { ascending: true });
 
-  if (routesQuery && isOperatorRole(profile?.role)) {
-    routesQuery = routesQuery.eq("operator_id", profile?.team_member_id ?? "");
+  if (showAvailable) {
+    routesQuery = routesQuery.is("operator_id", null).in("status", ["draft", "assigned"]);
+  } else {
+    routesQuery = routesQuery.eq("operator_id", profile.team_member_id ?? "");
   }
 
   const { data: routes, error } = await routesQuery;
@@ -40,14 +46,18 @@ export default async function OperatorRoutesPage() {
     <>
       <div className="space-y-6">
         <PageHeader
-          title="My Routes"
-          subtitle="View and execute your assigned routes for today."
+          title={showAvailable ? "Available Routes" : "My Routes"}
+          subtitle={showAvailable ? "Claim an unassigned route when you are ready to execute it." : "View and execute your assigned routes for today."}
         />
+        <div className="flex flex-wrap gap-2">
+          <Link href="/operator/routes" className={!showAvailable ? "btn-primary" : "btn-secondary"}>My Routes</Link>
+          <Link href="/operator/routes?view=available" className={showAvailable ? "btn-primary" : "btn-secondary"}>Available Routes</Link>
+        </div>
 
         {!routes?.length ? (
           <EmptyState
-            title="No routes assigned"
-            body={process.env.NODE_ENV === "development" ? `Check assignments for team member ${profile?.team_member_id ?? "not matched"}.` : "Check back later for new route assignments."}
+            title={showAvailable ? "No available routes" : "No routes assigned"}
+            body={showAvailable ? "Unassigned routes will appear here when admin leaves them available." : process.env.NODE_ENV === "development" ? `Check assignments for team member ${profile?.team_member_id ?? "not matched"}.` : "Check back later for new route assignments."}
           />
         ) : (
           <div className="space-y-4">
@@ -65,7 +75,7 @@ export default async function OperatorRoutesPage() {
                   <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
                       <h3 className="font-semibold text-slate-900">{route.route_date}</h3>
-                      <p className="text-sm text-slate-500">{totalStops} machine stops</p>
+                      <p className="text-sm text-slate-500">{totalStops} machine stops{showAvailable ? " - available to claim" : ""}</p>
                     </div>
                     <div className="shrink-0">
                       <StatusBadge status={route.status} />

@@ -9,6 +9,7 @@ import { FormField, FormSection, SecondaryButton } from "@/components/ui";
 type Operator = {
   id: string;
   full_name: string;
+  role?: string | null;
 };
 
 type Machine = {
@@ -89,6 +90,7 @@ export function RouteCreateForm({
 }) {
   const router = useRouter();
   const [routeDate, setRouteDate] = useState(defaultRouteDate);
+  const [assignmentMode, setAssignmentMode] = useState<"unassigned" | "assigned">("unassigned");
   const [operatorId, setOperatorId] = useState("");
   const [machineIds, setMachineIds] = useState<string[]>([]);
   const [recommendationKeys, setRecommendationKeys] = useState<string[]>([]);
@@ -224,7 +226,7 @@ export function RouteCreateForm({
 
   const validate = () => {
     if (!routeDate) return "Route date is required.";
-    if (!operatorId) return "Operator is required when creating an assigned route.";
+    if (assignmentMode === "assigned" && !operatorId) return "Choose a route performer or leave this route unassigned.";
     if (!plannedRouteStock.length) return "Choose products to take from storage for this route.";
     const overPicked = plannedRouteStock.find((item) => item.quantity > item.available);
     if (overPicked && !adminOverride) return "One or more selected products exceeds available storage stock.";
@@ -247,7 +249,7 @@ export function RouteCreateForm({
       const response = await fetch("/api/routes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ routeDate, operatorId, machineIds, recommendationKeys, manualStopItems, adminOverride }),
+        body: JSON.stringify({ routeDate, assignmentMode, operatorId: assignmentMode === "assigned" ? operatorId : "", machineIds, recommendationKeys, manualStopItems, adminOverride }),
       });
       const result = await response.json().catch(() => ({ error: "Could not read the route creation response." }));
 
@@ -278,16 +280,53 @@ export function RouteCreateForm({
           <FormField label="Route date" required>
             <input type="date" value={routeDate} onChange={(event) => setRouteDate(event.target.value)} className="field-input" required disabled={saving} />
           </FormField>
-          <FormField label="Operator" required>
-            <select value={operatorId} onChange={(event) => setOperatorId(event.target.value)} className="field-input" required disabled={saving}>
-              <option value="">Select operator</option>
-              {operators.map((operator) => (
-                <option key={operator.id} value={operator.id}>
-                  {operator.full_name}
-                </option>
-              ))}
-            </select>
+          <FormField label="Assignment">
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className={`rounded-lg border p-3 text-sm ${assignmentMode === "unassigned" ? "border-[var(--snacky-primary)] bg-emerald-50 text-slate-950" : "border-slate-200 bg-white text-slate-700"}`}>
+                <input
+                  type="radio"
+                  name="assignment_mode"
+                  value="unassigned"
+                  checked={assignmentMode === "unassigned"}
+                  onChange={() => {
+                    setAssignmentMode("unassigned");
+                    setOperatorId("");
+                  }}
+                  className="mr-2"
+                  disabled={saving}
+                />
+                Leave unassigned
+              </label>
+              <label className={`rounded-lg border p-3 text-sm ${assignmentMode === "assigned" ? "border-[var(--snacky-primary)] bg-emerald-50 text-slate-950" : "border-slate-200 bg-white text-slate-700"}`}>
+                <input
+                  type="radio"
+                  name="assignment_mode"
+                  value="assigned"
+                  checked={assignmentMode === "assigned"}
+                  onChange={() => setAssignmentMode("assigned")}
+                  className="mr-2"
+                  disabled={saving}
+                />
+                Assign now
+              </label>
+            </div>
           </FormField>
+          {assignmentMode === "assigned" ? (
+            <FormField label="Route performer" required>
+              <select value={operatorId} onChange={(event) => setOperatorId(event.target.value)} className="field-input" required disabled={saving}>
+                <option value="">Select performer</option>
+                {operators.map((operator) => (
+                  <option key={operator.id} value={operator.id}>
+                    {operator.full_name}{operator.role ? ` (${operator.role})` : ""}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+          ) : (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 md:col-span-2">
+              This route will be available for an owner, admin, supervisor, or operator to claim when they start it.
+            </div>
+          )}
         </div>
       </FormSection>
 

@@ -13,6 +13,7 @@ const ownerAdminRoles = new Set<AppRole>(["owner", "admin"]);
 const supervisorRoles = new Set<AppRole>(["supervisor"]);
 const adminRoles = new Set<AppRole>(["owner", "admin", "supervisor"]);
 const operatorRoles = new Set<AppRole>(["operator"]);
+const routePerformerRoles = new Set<AppRole>(["owner", "admin", "supervisor", "operator"]);
 const financeRoles = new Set<AppRole>(["owner", "admin", "supervisor", "finance"]);
 const storageLocationRoles = new Set<AppRole>(["owner", "admin", "supervisor", "warehouse"]);
 
@@ -32,6 +33,10 @@ export function isOperatorRole(role: AppRole | null | undefined) {
   return role ? operatorRoles.has(role) : false;
 }
 
+export function canExecuteRoutes(role: AppRole | null | undefined) {
+  return role ? routePerformerRoles.has(role) : false;
+}
+
 export function canManageOperations(user: AuthUserContext | null | undefined) {
   return isAdminRole(user?.role);
 }
@@ -47,6 +52,7 @@ export function canManageStorageLocations(role: AppRole | null | undefined) {
 export function canAccessOperatorRoute(user: AuthUserContext | null | undefined, routeOperatorId: string | null | undefined) {
   if (!user) return false;
   if (canManageOperations(user)) return true;
+  if (!routeOperatorId) return canExecuteRoutes(user.role);
   return isOperatorRole(user.role) && Boolean(user.teamMemberId) && user.teamMemberId === routeOperatorId;
 }
 

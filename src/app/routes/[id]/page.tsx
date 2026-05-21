@@ -1,11 +1,12 @@
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
-import { canAccessPath } from "@/lib/authz";
+import { canAccessPath, canExecuteRoutes, isAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { RouteCreatedToast } from "@/app/routes/[id]/RouteCreatedToast";
-import { cancelRoute, deleteDraftRoute } from "@/lib/route-actions";
+import { assignRoute, cancelRoute, deleteDraftRoute } from "@/lib/route-actions";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -60,10 +61,11 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   }
 
   const routeRow: any = route;
-  const [{ data: operator }, { data: stops, error: stopsError }, { data: stopItems, error: stopItemsError }, { data: routeStock, error: routeStockError }, { data: fillLines, error: fillLinesError }, { data: pickListItems, error: pickListItemsError }] = await Promise.all([
+  const [{ data: operator }, { data: performers }, { data: stops, error: stopsError }, { data: stopItems, error: stopItemsError }, { data: routeStock, error: routeStockError }, { data: fillLines, error: fillLinesError }, { data: pickListItems, error: pickListItemsError }] = await Promise.all([
     routeRow.operator_id
       ? supabase.from("team_members").select("id, full_name").eq("id", routeRow.operator_id).maybeSingle()
       : Promise.resolve({ data: null }),
+    supabase.from("team_members").select("id, full_name, role").in("role", ["owner", "admin", "supervisor", "operator"]).eq("active", true).order("full_name"),
     supabase
       .from("route_stops")
       .select("id, stop_order, status, machine_id")
@@ -156,6 +158,8 @@ export default async function RouteDetailPage({ params, searchParams }: { params
       : Promise.resolve({ data: [] }),
   ]);
   const machineById = new Map((machines ?? []).map((machine: any) => [machine.id, machine]));
+  const canManageRouteAssignment = isAdminRole(profile.role);
+  const canStartRoute = canExecuteRoutes(profile.role) && Boolean(profile.team_member_id) && ["draft", "assigned"].includes(routeRow.status);
   const productById = new Map((products ?? []).map((product: any) => [product.id, product]));
   const routeActivityQueries: PromiseLike<any>[] = [
     supabase
@@ -231,6 +235,11 @@ export default async function RouteDetailPage({ params, searchParams }: { params
           action={
             <div className="flex flex-wrap gap-2">
               <SecondaryButton href="/routes">Back to routes</SecondaryButton>
+              {canStartRoute ? (
+                <Link href={`/operator/routes/${id}/pick-list?start=1`} className="btn-primary">
+                  {routeRow.operator_id ? "Start Route" : "Claim & Start"}
+                </Link>
+              ) : null}
               {routeRow.status === "draft" ? (
                 <ConfirmDialog
                   action={deleteDraftRoute}
@@ -269,8 +278,8 @@ export default async function RouteDetailPage({ params, searchParams }: { params
           </SectionCard>
           <SectionCard>
             <div className="space-y-2 p-4">
-              <div className="text-sm text-slate-500">Operator</div>
-              <div>{operator?.full_name ?? "Unassigned"}</div>
+              <div className="text-sm text-slate-500">Performer</div>
+              <div>{operator?.full_name ?? "Unassigned / Available"}</div>
             </div>
           </SectionCard>
           <SectionCard>
@@ -487,6 +496,30 @@ export default async function RouteDetailPage({ params, searchParams }: { params
             )}
           </section>
         </div>
+
+        {canManageRouteAssignment && !["completed", "reviewed", "cancelled"].includes(routeRow.status) ? (
+          <section className="surface-card p-4">
+            <div className="mb-4">
+              <h2 className="text-lg font-semibold">Route assignment</h2>
+              <p className="mt-1 text-sm text-slate-500">Assign a route performer now, or leave this route available for an eligible user to claim when starting it.</p>
+            </div>
+            <form action={assignRoute} className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
+              <input type="hidden" name="id" value={id} />
+              <label className="block space-y-1.5">
+                <span className="text-sm font-medium text-slate-800">Performer</span>
+                <select name="operator_id" defaultValue={routeRow.operator_id ?? ""} className="field-input">
+                  <option value="">Leave unassigned / available</option>
+                  {(performers ?? []).map((performer: any) => (
+                    <option key={performer.id} value={performer.id}>
+                      {performer.full_name} ({performer.role})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button type="submit" className="btn-primary">Update assignment</button>
+            </form>
+          </section>
+        ) : null}
 
         {routeRow.status === "cancelled" ? (
           <section className="surface-card p-4">

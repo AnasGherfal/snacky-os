@@ -110,7 +110,18 @@ XY_VMS_SECRET=your-xy-secret
 XY_VMS_SIGNING_MODE=signed
 ```
 
-Do not prefix XY credentials with `NEXT_PUBLIC_`. They are read only by server-only sync code and must be configured separately for Preview/Staging and Production.
+Optional server-side XY web dashboard fallback variables:
+
+```bash
+XY_WEB_API_BASE_URL=https://xcx.xynetweb.com/sram
+XY_WEB_API_AUTHORIZATION=your-current-web-dashboard-authorization-token
+XY_WEB_MERCHANT_ID=6591
+XY_WEB_LANGUAGE=en
+XY_WEB_CHANNEL=1
+XY_WEB_ENABLED=true
+```
+
+Do not prefix XY credentials with `NEXT_PUBLIC_`. They are read only by server-only sync code and must be configured separately for Preview/Staging and Production. Do not store the web dashboard Authorization token in the database or source control; refresh it from the VMS dashboard when it expires.
 
 ## 6. Supabase Storage Buckets
 

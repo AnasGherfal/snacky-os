@@ -26,6 +26,7 @@ type NavItem = {
   icon: ComponentType<{ className?: string }>;
   exact?: boolean;
   activePrefixes?: string[];
+  activeSearch?: { key: string; value: string | null };
 };
 type NavSection = {
   titleKey?: NavLabelKey;
@@ -44,6 +45,14 @@ const operatorOperationsItem: NavItem = {
   href: "/operator/routes",
   icon: ClipboardList,
   activePrefixes: ["/operator/routes"],
+  activeSearch: { key: "view", value: null },
+};
+const operatorAvailableRoutesItem: NavItem = {
+  labelKey: "availableRoutes",
+  href: "/operator/routes?view=available",
+  icon: ClipboardList,
+  exact: true,
+  activeSearch: { key: "view", value: "available" },
 };
 const operatorIssuesItem: NavItem = {
   labelKey: "issues",
@@ -101,7 +110,7 @@ const supervisorNav: NavSection[] = [
 ];
 
 const operatorNav: NavSection[] = [
-  { items: [operatorOperationsItem, operatorIssuesItem, accountItem] },
+  { items: [operatorOperationsItem, operatorAvailableRoutesItem, operatorIssuesItem, accountItem] },
 ];
 
 const warehouseNav: NavSection[] = [
@@ -135,7 +144,11 @@ function matchesPath(pathname: string, prefix: string) {
   return pathname === prefix || pathname.startsWith(`${prefix}/`);
 }
 
-function isActiveItem(pathname: string, item: NavItem) {
+function isActiveItem(pathname: string, item: NavItem, searchParams?: URLSearchParams) {
+  if (item.activeSearch) {
+    const current = searchParams?.get(item.activeSearch.key) ?? null;
+    if (current !== item.activeSearch.value) return false;
+  }
   if (item.activePrefixes?.some((prefix) => matchesPath(pathname, prefix))) return true;
   const hrefPath = pathWithoutQuery(item.href);
   if (item.exact) return pathname === hrefPath;
@@ -203,7 +216,7 @@ function SidebarContent({ role, onNavigate }: { role: AppRole; onNavigate?: () =
                     ? item.labelKey === "finance"
                     : matchesPath(activePathname, "/purchases")
                       ? item.labelKey === "inventory"
-                      : isActiveItem(activePathname, item);
+                      : isActiveItem(activePathname, item, activeSearchParams);
 
                 return (
                   <Link

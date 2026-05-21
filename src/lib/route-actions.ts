@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
-import { isAdminRole } from "@/lib/authz";
+import { canExecuteRoutes, isAdminRole } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 function clean(value: FormDataEntryValue | null) {
@@ -141,6 +141,60 @@ export async function cancelRoute(formData: FormData) {
     afterData: after,
     metadata: { reason },
     summary: `Cancelled route for ${route.route_date}`,
+  });
+
+  revalidateRoutePaths(id);
+  redirect(path);
+}
+
+export async function assignRoute(formData: FormData) {
+  const id = clean(formData.get("id"));
+  const operatorId = clean(formData.get("operator_id")) || null;
+  if (!id) redirect("/routes");
+  const path = `/routes/${id}`;
+  const { profile, supabase } = await requireRouteAccess(path);
+
+  const { data: route, error: routeError } = await supabase.from("routes").select("*").eq("id", id).maybeSingle();
+  if (routeError || !route) fail("/routes", "Route not found.");
+  if (["completed", "reviewed", "cancelled"].includes(String(route.status))) fail(path, "Completed, reviewed, or cancelled routes cannot be reassigned.");
+
+  if (operatorId) {
+    const { data: performer, error: performerError } = await supabase
+      .from("team_members")
+      .select("id, full_name, role, active")
+      .eq("id", operatorId)
+      .maybeSingle();
+    if (performerError) {
+      console.error("[routes] Failed to verify route performer", performerError);
+      fail(path, "Could not verify selected route performer.");
+    }
+    if (!performer || performer.active === false || !canExecuteRoutes(performer.role)) {
+      fail(path, "Selected route performer must be an active owner, admin, supervisor, or operator.");
+    }
+  }
+
+  const nextStatus = operatorId ? (route.status === "draft" ? "assigned" : route.status) : route.status === "assigned" ? "draft" : route.status;
+  const { data: after, error } = await supabase
+    .from("routes")
+    .update({ operator_id: operatorId, status: nextStatus })
+    .eq("id", id)
+    .select("*")
+    .single();
+
+  if (error) {
+    console.error("[routes] Failed to assign route", error);
+    fail(path, "Could not update route assignment.");
+  }
+
+  await logActivity({
+    profile,
+    action: operatorId ? "assign_route" : "unassign_route",
+    entityType: "route",
+    entityId: id,
+    entityLabel: `Route ${route.route_date}`,
+    beforeData: route,
+    afterData: after,
+    summary: operatorId ? `Assigned route for ${route.route_date}` : `Marked route for ${route.route_date} as available`,
   });
 
   revalidateRoutePaths(id);

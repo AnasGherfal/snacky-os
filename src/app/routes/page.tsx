@@ -52,6 +52,54 @@ export default async function RoutesPage() {
     stopsByRouteId.set(stop.route_id, (stopsByRouteId.get(stop.route_id) ?? 0) + 1);
   });
 
+  const groups = [
+    { title: "Unassigned / Available", rows: routeRows.filter((route: any) => !route.operator_id && !["completed", "reviewed", "cancelled"].includes(route.status)) },
+    { title: "In progress", rows: routeRows.filter((route: any) => route.status === "in_progress") },
+    { title: "Assigned routes", rows: routeRows.filter((route: any) => route.operator_id && !["in_progress", "completed", "reviewed", "cancelled"].includes(route.status)) },
+    { title: "Completed", rows: routeRows.filter((route: any) => ["completed", "reviewed"].includes(route.status)) },
+  ].filter((group) => group.rows.length);
+
+  const renderRouteCards = (rows: any[]) => (
+    <MobileCardList>
+      {rows.map((route: any) => (
+        <MobileRecordCard key={route.id}>
+          <div className="mb-3 flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="break-words text-base font-semibold text-slate-900">{route.route_date}</h2>
+              <p className="mt-1 text-sm text-slate-500">{operatorById.get(route.operator_id)?.full_name ?? "Available"}</p>
+            </div>
+            <StatusBadge status={!route.operator_id ? "available" : route.status} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <MobileField label="Stops">{stopsByRouteId.get(route.id) ?? 0}</MobileField>
+            <MobileField label="Performer">{operatorById.get(route.operator_id)?.full_name ?? "Unassigned"}</MobileField>
+          </div>
+          <Link className="btn-secondary mt-4 w-full" href={`/routes/${route.id}`}>
+            View route
+          </Link>
+        </MobileRecordCard>
+      ))}
+    </MobileCardList>
+  );
+
+  const renderRouteTable = (rows: any[]) => (
+    <DataTable className="hidden md:block" headers={["Date", "Performer", "Status", "Stops", "Details"]}>
+      {rows.map((route: any) => (
+        <tr key={route.id}>
+          <td>{route.route_date}</td>
+          <td>{operatorById.get(route.operator_id)?.full_name ?? "Unassigned"}</td>
+          <td><StatusBadge status={!route.operator_id ? "available" : route.status} /></td>
+          <td>{stopsByRouteId.get(route.id) ?? 0}</td>
+          <td>
+            <Link className="link-secondary" href={`/routes/${route.id}`}>
+              View route
+            </Link>
+          </td>
+        </tr>
+      ))}
+    </DataTable>
+  );
+
   return (
     <>
       <PageHeader
@@ -65,43 +113,18 @@ export default async function RoutesPage() {
           body="Create your first refill route from recommendations or add machine stops manually."
         />
       ) : (
-        <>
-          <MobileCardList>
-            {routeRows.map((route: any) => (
-              <MobileRecordCard key={route.id}>
-                <div className="mb-3 flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <h2 className="break-words text-base font-semibold text-slate-900">{route.route_date}</h2>
-                    <p className="mt-1 text-sm text-slate-500">{operatorById.get(route.operator_id)?.full_name ?? "Unassigned"}</p>
-                  </div>
-                  <StatusBadge status={route.status} />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <MobileField label="Stops">{stopsByRouteId.get(route.id) ?? 0}</MobileField>
-                  <MobileField label="Operator">{operatorById.get(route.operator_id)?.full_name ?? "Unassigned"}</MobileField>
-                </div>
-                <Link className="btn-secondary mt-4 w-full" href={`/routes/${route.id}`}>
-                  View route
-                </Link>
-              </MobileRecordCard>
-            ))}
-          </MobileCardList>
-          <DataTable className="hidden md:block" headers={["Date", "Operator", "Status", "Stops", "Details"]}>
-            {routeRows.map((route: any) => (
-              <tr key={route.id}>
-                <td>{route.route_date}</td>
-                <td>{operatorById.get(route.operator_id)?.full_name ?? "Unassigned"}</td>
-                <td><StatusBadge status={route.status} /></td>
-                <td>{stopsByRouteId.get(route.id) ?? 0}</td>
-                <td>
-                  <Link className="link-secondary" href={`/routes/${route.id}`}>
-                    View route
-                  </Link>
-                </td>
-              </tr>
-            ))}
-          </DataTable>
-        </>
+        <div className="space-y-8">
+          {groups.map((group) => (
+            <section key={group.title} className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-base font-semibold text-slate-900">{group.title}</h2>
+                <span className="text-sm text-slate-500">{group.rows.length}</span>
+              </div>
+              {renderRouteCards(group.rows)}
+              {renderRouteTable(group.rows)}
+            </section>
+          ))}
+        </div>
       )}
     </>
   );

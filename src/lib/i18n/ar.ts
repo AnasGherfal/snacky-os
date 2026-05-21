@@ -55,6 +55,7 @@ export const ar = {
     install: "Install",
     operatorProgress: "متابعة المشغّلين",
     myRoutes: "جولاتي",
+    availableRoutes: "الجولات المتاحة",
     todaysRoute: "جولة اليوم",
   },
   actions: {

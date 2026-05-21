@@ -7,6 +7,7 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 type CreateRoutePayload = {
   routeDate?: string;
+  assignmentMode?: "assigned" | "unassigned";
   operatorId?: string;
   machineIds?: string[];
   recommendationKeys?: string[];
@@ -42,7 +43,8 @@ export async function POST(request: Request) {
   }
 
   const routeDate = String(payload.routeDate ?? "").trim();
-  const operatorId = String(payload.operatorId ?? "").trim();
+  const assignmentMode = payload.assignmentMode === "assigned" ? "assigned" : "unassigned";
+  const operatorId = assignmentMode === "assigned" ? String(payload.operatorId ?? "").trim() : "";
   const manualMachineIds = Array.from(new Set((payload.machineIds ?? []).map(String).filter(Boolean)));
   const recommendationKeys = Array.from(new Set((payload.recommendationKeys ?? []).map(String).filter(Boolean)));
   const legacyRecommendationSlotIds = Array.from(new Set((payload.machineSlotIds ?? []).map(String).filter(Boolean)));
@@ -56,7 +58,7 @@ export async function POST(request: Request) {
     .filter((item) => item.machineId && item.productId && item.quantity > 0);
 
   if (!routeDate) return jsonError("Route date is required.");
-  if (!operatorId) return jsonError("Operator is required when creating an assigned route.");
+  if (assignmentMode === "assigned" && !operatorId) return jsonError("Choose a route performer or leave this route unassigned.");
   if (adminOverride && !isOwnerAdminRole(profile.role)) return jsonError("Only owner or admin can override storage availability.", 403);
   if (!recommendationKeys.length && !legacyRecommendationSlotIds.length && !manualStopItems.length) return jsonError("Choose machine-level refill items for this route.");
 
@@ -139,9 +141,25 @@ export async function POST(request: Request) {
     }
   }
 
+  if (operatorId) {
+    const { data: performer, error: performerError } = await supabase
+      .from("team_members")
+      .select("id, role, active")
+      .eq("id", operatorId)
+      .maybeSingle();
+    if (performerError) {
+      console.error("[routes:create] Failed to verify selected performer", { operatorId, error: performerError });
+      return jsonError("Could not verify the selected route performer.", 500);
+    }
+    if (!performer || performer.active === false || !["owner", "admin", "supervisor", "operator"].includes(String(performer.role))) {
+      return jsonError("Selected route performer must be an active owner, admin, supervisor, or operator.");
+    }
+  }
+
+  const routeStatus = operatorId ? "assigned" : "draft";
   const routeInsert = await supabase
     .from("routes")
-    .insert({ route_date: routeDate, operator_id: operatorId, status: "assigned", created_by: profile.team_member_id })
+    .insert({ route_date: routeDate, operator_id: operatorId || null, status: routeStatus, created_by: profile.team_member_id })
     .select("id")
     .single();
 
@@ -151,7 +169,7 @@ export async function POST(request: Request) {
   }
 
   const routeId = routeInsert.data.id;
-  console.info("[routes:create] Route inserted", { routeId, routeDate, operatorId });
+  console.info("[routes:create] Route inserted", { routeId, routeDate, operatorId: operatorId || null, routeStatus });
   const cleanupRoute = async () => {
     const stopItemsCleanup = await supabase.from("route_stop_items").delete().eq("route_id", routeId);
     if (stopItemsCleanup.error && !isMissingRouteStopItems(stopItemsCleanup.error)) {
@@ -244,7 +262,7 @@ export async function POST(request: Request) {
         refillMachineIds.map((machineId) => ({
           route_id: routeId,
           machine_id: machineId,
-          status: "assigned",
+          status: routeStatus,
         })),
       )
       .select("id, machine_id");
@@ -328,7 +346,7 @@ export async function POST(request: Request) {
       id: routeId,
       route_date: routeDate,
       operator_id: operatorId,
-      status: "assigned",
+      status: routeStatus,
       machine_ids: selectedMachineIds,
       stock_lines: Array.from(stockByProduct.entries()).map(([productId, quantity]) => ({ product_id: productId, quantity })),
     },
@@ -337,8 +355,11 @@ export async function POST(request: Request) {
       actionable_recommendation_count: actionableRecommendationRows.length,
       manual_stop_item_count: manualStopItems.length,
       admin_override: adminOverride,
+      assignment_mode: assignmentMode,
     },
-    summary: `Created route for ${routeDate} with ${selectedMachineIds.length} stops`,
+    summary: operatorId
+      ? `Created assigned route for ${routeDate} with ${selectedMachineIds.length} stops`
+      : `Created available route for ${routeDate} with ${selectedMachineIds.length} stops`,
   });
 
   revalidatePath("/routes");

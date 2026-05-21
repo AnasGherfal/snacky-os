@@ -30,7 +30,7 @@ export default async function NewRoutePage() {
     { data: products, error: productsError },
     { data: recentMovements, error: movementsError },
   ] = await Promise.all([
-    supabase.from("team_members").select("id, full_name").eq("role", "operator").eq("active", true).order("full_name"),
+    supabase.from("team_members").select("id, full_name, role").in("role", ["owner", "admin", "supervisor", "operator"]).eq("active", true).order("full_name"),
     supabase.from("machines").select("id, name, machine_code").eq("status", "active").order("name"),
     supabase
       .from("refill_recommendations")
