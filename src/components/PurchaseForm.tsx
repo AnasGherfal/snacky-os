@@ -338,7 +338,7 @@ function ProductCombobox({
       />
       <input type="hidden" value={selectedProductId} readOnly aria-hidden="true" />
       {open && !disabled ? (
-        <div id={`purchase-product-results-${lineId}`} className="absolute z-30 mt-2 max-h-72 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+        <div id={`purchase-product-results-${lineId}`} className="absolute z-30 mt-2 max-h-80 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg sm:min-w-[28rem] sm:max-w-[36rem]">
           {products.length ? products.map((product) => {
             const selected = selectedProductId === product.id;
             const lastPurchaseCost = product.lastPurchaseCost ?? product.last_purchase_cost_lyd;
@@ -355,11 +355,11 @@ function ProductCombobox({
               >
                 <ProductThumbnail imageUrl={product.imageUrl} name={product.name} />
                 <span className="min-w-0 flex-1">
-                  <span className={`block truncate font-semibold ${selected ? "text-white" : "text-slate-900"}`}>{product.name}</span>
-                  <span className={`mt-0.5 block truncate text-xs ${selected ? "text-white/80" : "text-slate-500"}`}>
+                  <span className={`block whitespace-normal break-words text-sm font-semibold leading-5 ${selected ? "text-white" : "text-slate-950"}`}>{product.name}</span>
+                  <span className={`mt-1 block whitespace-normal break-words text-xs leading-4 ${selected ? "text-white/85" : "text-slate-600"}`}>
                     {product.sku ?? "No SKU"} | {product.barcode ?? "No barcode"} | {product.brand ?? product.category ?? "Uncategorized"}
                   </span>
-                  <span className={`mt-1 block text-xs ${selected ? "text-white/80" : "text-slate-500"}`}>
+                  <span className={`mt-1 block whitespace-normal text-xs leading-4 ${selected ? "text-white/85" : "text-slate-600"}`}>
                     Case {productUnitsPerBox(product)} | Storage {Number(product.currentStorageQty || 0)} | Last purchase {lastPurchaseCost === null ? "-" : money(Number(lastPurchaseCost))}
                   </span>
                 </span>
@@ -815,7 +815,7 @@ export function PurchaseForm({
                   </FormField>
                 </div>
 
-                <div className="mt-3 grid gap-3 lg:grid-cols-[1.6fr_repeat(6,minmax(108px,1fr))]">
+                <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(260px,2fr)_repeat(6,minmax(108px,1fr))]">
                   {line.matchAction === "create" ? (
                     <div className="space-y-3">
                       <FormField label="New product name" required>
@@ -878,7 +878,7 @@ export function PurchaseForm({
                 </div>
                 {lineErrors[line.id] && !isProductSelectionError(lineErrors[line.id]) ? <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-800">{lineErrors[line.id]}</div> : null}
 
-                <div className="grid gap-3 lg:grid-cols-[1.6fr_repeat(6,minmax(108px,1fr))]">
+                <div className="grid gap-3 lg:grid-cols-[minmax(260px,2fr)_repeat(6,minmax(108px,1fr))]">
                   {renderProductPicker(line)}
                   {renderLineMathFields(line)}
                 </div>
