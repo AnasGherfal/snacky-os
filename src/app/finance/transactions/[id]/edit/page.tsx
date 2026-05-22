@@ -5,7 +5,7 @@ import { FormField, FormPageLayout, FormSection, PageHeader, SecondaryButton, St
 import { getCurrentProfile } from "@/lib/auth";
 import { canEditFinancialTransactions } from "@/lib/authz";
 import { updateFinancialTransaction } from "@/lib/finance-actions";
-import { lyd } from "@/lib/format";
+import { formatFinanceMoney } from "@/lib/finance-balance";
 import { resolvePurchaseFinanceTransactionDate } from "@/lib/purchase-finance-date";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -30,7 +30,7 @@ export default async function EditFinanceTransactionPage({
   searchParams: Promise<{ error?: string }>;
 }) {
   const profile = await getCurrentProfile();
-  if (!profile || !canEditFinancialTransactions({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) redirect("/unauthorized");
+  if (!profile || !canEditFinancialTransactions({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) redirect("/unauthorized");
 
   const { id } = await params;
   const { error } = await searchParams;
@@ -74,7 +74,7 @@ export default async function EditFinanceTransactionPage({
           <div className="grid gap-4 md:grid-cols-4">
             <div><div className="text-xs font-medium uppercase text-slate-500">Source</div><div className="mt-1 font-semibold text-slate-900">{sourceLabel(row)}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Kind</div><div className="mt-1">{optionLabel(row.transaction_kind)}</div></div>
-            <div><div className="text-xs font-medium uppercase text-slate-500">Current amount</div><div className="mt-1 font-semibold text-slate-900">{lyd(Number(row.signed_amount ?? 0))}</div></div>
+            <div><div className="text-xs font-medium uppercase text-slate-500">Current amount</div><div className="mt-1 font-semibold text-slate-900">{formatFinanceMoney(Number(row.signed_amount ?? 0), row.currency ?? "LYD")}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Status</div><div className="mt-1 flex flex-wrap gap-2"><StatusBadge status={row.transaction_status ?? "active"} /><StatusBadge status={row.needs_review ? "needs_review" : row.review_status} /></div></div>
           </div>
         </section>
@@ -100,6 +100,39 @@ export default async function EditFinanceTransactionPage({
                   <option value="money_out">Money out</option>
                 </select>
               </FormField>
+              <FormField label="Effect" required>
+                <select name="transaction_effect" defaultValue={row.transaction_effect ?? (row.direction === "money_in" ? "income" : "expense")} className="field-input">
+                  <option value="income">Income</option>
+                  <option value="expense">Expense</option>
+                  <option value="transfer">Transfer</option>
+                  <option value="opening_balance">Opening balance</option>
+                </select>
+              </FormField>
+              <FormField label="Account" required>
+                <select name="account_id" defaultValue={row.account_id ?? "snacky_lyd"} className="field-input">
+                  <option value="snacky_lyd">Snacky LYD</option>
+                  <option value="snacky_usd">Snacky USD</option>
+                  <option value="owner_lyd">Owner LYD</option>
+                  <option value="owner_usd">Owner USD</option>
+                </select>
+              </FormField>
+              <FormField label="Transfer from">
+                <select name="source_account_id" defaultValue={row.source_account_id ?? "snacky_lyd"} className="field-input">
+                  <option value="snacky_lyd">Snacky LYD</option>
+                  <option value="snacky_usd">Snacky USD</option>
+                  <option value="owner_lyd">Owner LYD</option>
+                  <option value="owner_usd">Owner USD</option>
+                </select>
+              </FormField>
+              <FormField label="Transfer to">
+                <select name="destination_account_id" defaultValue={row.destination_account_id ?? "owner_lyd"} className="field-input">
+                  <option value="owner_lyd">Owner LYD</option>
+                  <option value="owner_usd">Owner USD</option>
+                  <option value="snacky_lyd">Snacky LYD</option>
+                  <option value="snacky_usd">Snacky USD</option>
+                </select>
+              </FormField>
+              <input type="hidden" name="currency" value={row.currency ?? "LYD"} />
               <FormField label="Amount" required><input name="amount" type="number" step="0.01" min="0" defaultValue={Number(row.amount ?? 0)} required className="field-input" /></FormField>
               <FormField label="Category" required><input name="category" defaultValue={row.final_bucket ?? row.transaction_type ?? ""} required className="field-input" /></FormField>
               <FormField label="Payment method">

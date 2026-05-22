@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useI18n } from "@/components/I18nProvider";
-import { AppRole } from "@/lib/authz";
+import { AppRole, hasAnyRole, hasRole, isOperatorRole, isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
 
 type NavLabelKey = keyof ReturnType<typeof useI18n>["dictionary"]["nav"];
 type NavItem = {
@@ -123,13 +123,30 @@ const financeNav: NavSection[] = [
 
 const viewerNav: NavSection[] = [{ items: [dashboardItem] }];
 
-function sectionsForRole(role: AppRole) {
-  if (role === "owner" || role === "admin") return ownerAdminNav;
-  if (role === "supervisor") return supervisorNav;
-  if (role === "operator") return operatorNav;
-  if (role === "warehouse") return warehouseNav;
-  if (role === "finance") return financeNav;
-  return viewerNav;
+function mergeSections(sections: NavSection[]) {
+  const seen = new Set<string>();
+  const items: NavItem[] = [];
+  sections.flatMap((section) => section.items).forEach((item) => {
+    const key = `${item.labelKey}:${item.href}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    items.push(item);
+  });
+  return [{ items }];
+}
+
+function sectionsForRoles(role: AppRole, roles?: AppRole[] | null) {
+  const context = { id: "sidebar", role, roles };
+  if (isOwnerAdminRole(context)) return ownerAdminNav;
+
+  const sections: NavSection[] = [];
+  if (isSupervisorRole(context)) sections.push(...supervisorNav);
+  if (isOperatorRole(context)) sections.push(...operatorNav);
+  if (hasRole(context, "warehouse")) sections.push(...warehouseNav);
+  if (hasRole(context, "purchasing")) sections.push({ items: [inventoryItem] });
+  if (hasRole(context, "finance")) sections.push(...financeNav);
+  if (!sections.length && hasAnyRole(context, ["viewer"])) sections.push(...viewerNav);
+  return sections.length ? mergeSections(sections) : viewerNav;
 }
 
 function pathWithoutQuery(href: string) {
@@ -166,17 +183,17 @@ function NavPendingIndicator() {
   );
 }
 
-function SidebarContent({ role, onNavigate }: { role: AppRole; onNavigate?: () => void }) {
+function SidebarContent({ role, roles, onNavigate }: { role: AppRole; roles?: AppRole[] | null; onNavigate?: () => void }) {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
   const currentSearch = searchParams.toString();
   const { dictionary } = useI18n();
-  const sections = sectionsForRole(role);
+  const sections = sectionsForRoles(role, roles);
   const [optimisticHref, setOptimisticHref] = useState<string | null>(null);
   const activePathname = optimisticHref ? pathWithoutQuery(optimisticHref) : pathname;
   const activeSearchParams = new URLSearchParams(optimisticHref ? searchFromHref(optimisticHref) : currentSearch);
-  const moduleParam = activeSearchParams.get("module") ?? (role === "finance" && matchesPath(activePathname, "/purchases") ? "finance" : null);
+  const moduleParam = activeSearchParams.get("module") ?? (roles?.includes("finance") && matchesPath(activePathname, "/purchases") ? "finance" : null);
 
   useEffect(() => {
     setOptimisticHref(null);
@@ -245,12 +262,12 @@ function SidebarContent({ role, onNavigate }: { role: AppRole; onNavigate?: () =
   );
 }
 
-export function Sidebar({ role, mobileOpen = false, onMobileClose }: { role: AppRole; mobileOpen?: boolean; onMobileClose?: () => void }) {
+export function Sidebar({ role, roles, mobileOpen = false, onMobileClose }: { role: AppRole; roles?: AppRole[] | null; mobileOpen?: boolean; onMobileClose?: () => void }) {
   return (
     <>
       <aside className="app-sidebar sticky top-0 hidden h-dvh w-72 shrink-0 overflow-hidden border-r border-slate-200 bg-white md:flex md:flex-col">
         <div className="flex min-h-0 flex-1 flex-col p-5">
-          <SidebarContent role={role} />
+          <SidebarContent role={role} roles={roles} />
         </div>
       </aside>
 
@@ -274,7 +291,7 @@ export function Sidebar({ role, mobileOpen = false, onMobileClose }: { role: App
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <SidebarContent role={role} onNavigate={onMobileClose} />
+            <SidebarContent role={role} roles={roles} onNavigate={onMobileClose} />
           </aside>
         </div>
       ) : null}

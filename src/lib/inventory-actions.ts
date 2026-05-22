@@ -4,13 +4,23 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
-import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
+import { canAccessPath, canAddProducts, hasAnyRole, isOwnerAdminRole } from "@/lib/authz";
 import { resolveProductSku } from "@/lib/product-sku";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 const movementTypes = ["storage_to_operator_bag", "operator_bag_to_storage", "storage_adjustment", "damaged", "expired", "manual_correction", "product_substitution"] as const;
 type MovementType = (typeof movementTypes)[number];
 type EntityType = "storage" | "operator_bag" | "waste" | "adjustment";
+type SimpleAdjustmentType = "set_exact" | "add" | "remove";
+
+const simpleAdjustmentReasons = new Map([
+  ["stock_count_correction", "Stock count correction"],
+  ["damaged_expired_item", "Damaged/expired item"],
+  ["missing_item", "Missing item"],
+  ["found_item", "Found item"],
+  ["manual_correction", "Manual correction"],
+  ["other", "Other"],
+]);
 
 function parseLocation(value: FormDataEntryValue | null): { type: EntityType; id: string | null } | null {
   const raw = String(value || "");
@@ -36,7 +46,7 @@ function requireConfirmedReason(formData: FormData, path: string) {
 
 export async function createQuickProduct(formData: FormData) {
   const profile = await getCurrentProfile();
-  if (!profile || !["owner", "admin", "supervisor"].includes(profile.role)) {
+  if (!profile || !canAddProducts(profile)) {
     throw new Error("You are not authorized to add products.");
   }
 
@@ -83,9 +93,161 @@ function movementReason(type: MovementType) {
   return type;
 }
 
+function userContext(profile: NonNullable<Awaited<ReturnType<typeof getCurrentProfile>>>) {
+  return {
+    id: profile.id,
+    role: profile.role,
+    roles: profile.roles,
+    canAddProducts: profile.can_add_products,
+    teamMemberId: profile.team_member_id,
+    activeStatus: profile.active_status,
+  };
+}
+
+async function getDefaultStorageId(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>) {
+  const { data: mainStorage, error: mainStorageError } = await supabase
+    .from("storage_locations")
+    .select("id")
+    .eq("active", true)
+    .eq("location_type", "main_storage")
+    .order("name")
+    .limit(1)
+    .maybeSingle();
+  if (mainStorageError) throw mainStorageError;
+  if (mainStorage?.id) return mainStorage.id;
+
+  const { data: storage, error } = await supabase
+    .from("storage_locations")
+    .select("id")
+    .eq("active", true)
+    .in("location_type", ["vehicle", "temporary", "other"])
+    .order("name")
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return storage?.id ?? null;
+}
+
+async function getStorageQty(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>, productId: string) {
+  const { data, error } = await supabase
+    .from("current_inventory_by_location")
+    .select("quantity_on_hand")
+    .eq("location_type", "storage")
+    .eq("product_id", productId);
+  if (error) throw error;
+  return (data ?? []).reduce((sum: number, row: any) => sum + Number(row.quantity_on_hand ?? 0), 0);
+}
+
+function simpleReason(value: FormDataEntryValue | null) {
+  const key = clean(value) || "stock_count_correction";
+  return simpleAdjustmentReasons.has(key) ? key : "stock_count_correction";
+}
+
+function movementReasonForSimple(reasonKey: string): "stock_count_adjustment" | "damaged" | "expired" | "theft_or_missing" {
+  if (reasonKey === "damaged_expired_item") return "damaged";
+  if (reasonKey === "missing_item") return "theft_or_missing";
+  return "stock_count_adjustment";
+}
+
+function createdAtFromDate(value: FormDataEntryValue | null) {
+  const date = clean(value);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return undefined;
+  return `${date}T12:00:00+02:00`;
+}
+
+export async function createStorageAdjustment(formData: FormData) {
+  const profile = await getCurrentProfile();
+  if (!profile || !hasAnyRole(profile, ["owner", "admin", "supervisor", "warehouse"])) redirect("/unauthorized");
+
+  const supabase = getSupabaseServerClient();
+  if (!supabase) redirect("/inventory/movements/new?error=Supabase%20is%20not%20configured.");
+
+  const productId = clean(formData.get("product_id"));
+  const adjustmentType = clean(formData.get("adjustment_type")) as SimpleAdjustmentType;
+  const quantity = Number(formData.get("quantity") || 0);
+  const reasonKey = simpleReason(formData.get("adjustment_reason"));
+  const note = clean(formData.get("notes"));
+  const createdAt = createdAtFromDate(formData.get("adjustment_date"));
+  const path = "/inventory/movements/new";
+
+  const fail = (message: string): never => redirect(`${path}?error=${encodeURIComponent(message)}&mode=simple`);
+
+  if (!productId) fail("Product is required.");
+  if (!["set_exact", "add", "remove"].includes(adjustmentType)) fail("Adjustment type is required.");
+  if (!Number.isFinite(quantity) || quantity < 0 || (adjustmentType !== "set_exact" && quantity <= 0)) fail("Quantity must be valid.");
+
+  const [storageId, currentQty] = await Promise.all([getDefaultStorageId(supabase), getStorageQty(supabase, productId)]);
+  if (!storageId) fail("No active storage location found.");
+
+  const difference =
+    adjustmentType === "set_exact"
+      ? Math.round(quantity) - currentQty
+      : adjustmentType === "add"
+        ? Math.round(quantity)
+        : -Math.round(quantity);
+
+  if (difference === 0) fail("Storage already matches this quantity. No movement was created.");
+
+  const movementReason = movementReasonForSimple(reasonKey);
+  const movementQuantity = Math.abs(difference);
+  const removing = difference < 0;
+  const toWaste = removing && movementReason === "damaged";
+  const payload = {
+    product_id: productId,
+    quantity: movementQuantity,
+    from_entity_type: removing ? "storage" : "adjustment",
+    from_entity_id: removing ? storageId : null,
+    to_entity_type: removing ? (toWaste ? "waste" : "adjustment") : "storage",
+    to_entity_id: removing ? null : storageId,
+    reason: movementReason,
+    created_by: profile.team_member_id,
+    notes: [
+      simpleAdjustmentReasons.get(reasonKey),
+      adjustmentType === "set_exact" ? `Set exact count from ${currentQty} to ${Math.round(quantity)} (${difference > 0 ? "+" : ""}${difference})` : `${adjustmentType === "add" ? "Added" : "Removed"} ${movementQuantity}`,
+      note,
+    ].filter(Boolean).join(" - "),
+    ...(createdAt ? { created_at: createdAt } : {}),
+  };
+
+  const { data: movement, error } = await supabase.from("inventory_movements").insert(payload).select("*").single();
+  if (error) {
+    console.error("[inventory:adjustment] Failed to create storage adjustment", error);
+    fail("Could not create storage adjustment.");
+  }
+
+  await logActivity({
+    profile,
+    action: "storage_adjustment",
+    entityType: "inventory_movement",
+    entityId: movement.id,
+    entityLabel: `Storage adjustment ${movement.id.slice(0, 8)}`,
+    beforeData: { product_id: productId, storage_quantity: currentQty },
+    afterData: {
+      product_id: productId,
+      storage_quantity: currentQty + difference,
+      difference,
+      movement_id: movement.id,
+      adjustment_type: adjustmentType,
+    },
+    metadata: {
+      product_id: productId,
+      storage_location_id: storageId,
+      reason: reasonKey,
+      note: note || null,
+    },
+    summary: `Adjusted storage by ${difference > 0 ? "+" : ""}${difference} units`,
+  });
+
+  revalidatePath("/inventory");
+  revalidatePath("/inventory/movements");
+  revalidatePath("/inventory/movements/new");
+  revalidatePath(`/products/${productId}/history`);
+  redirect(`/inventory?adjusted=${movement.id.slice(0, 8)}`);
+}
+
 export async function createStockMovement(formData: FormData) {
   const profile = await getCurrentProfile();
-  if (!profile || !canAccessPath({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/inventory/movements/new")) {
+  if (!profile || !canAccessPath(userContext(profile), "/inventory/movements/new")) {
     redirect("/unauthorized");
   }
 
@@ -114,8 +276,8 @@ export async function createStockMovement(formData: FormData) {
     params.set("error", "From and to locations are required.");
     redirect(`/inventory/movements/new?${params.toString()}`);
   }
-  if (!isOwnerAdminRole(profile.role) && adminOverride) fail("Only owner/admin can override available storage.");
-  if (movementType === "manual_correction" && !isOwnerAdminRole(profile.role)) fail("Only owner/admin can create manual correction movements.");
+  if (!isOwnerAdminRole(profile) && adminOverride) fail("Only owner/admin can override available storage.");
+  if (movementType === "manual_correction" && !isOwnerAdminRole(profile)) fail("Only owner/admin can create manual correction movements.");
 
   const fromLocation = from as { type: EntityType; id: string | null };
   const toLocation = to as { type: EntityType; id: string | null };
@@ -216,7 +378,7 @@ export async function createStockMovement(formData: FormData) {
 
 export async function createInventoryMovementCorrection(formData: FormData) {
   const profile = await getCurrentProfile();
-  if (!profile || !isOwnerAdminRole(profile.role)) redirect("/unauthorized");
+  if (!profile || !isOwnerAdminRole(profile)) redirect("/unauthorized");
 
   const supabase = getSupabaseServerClient();
   if (!supabase) fail("/inventory/movements", "Supabase is not configured.");

@@ -2,14 +2,17 @@ import { redirect } from "next/navigation";
 import { FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
 import { StockMovementForm } from "@/components/StockMovementForm";
 import { getCurrentProfile } from "@/lib/auth";
-import { canAccessPath, canViewFinancials, isOwnerAdminRole } from "@/lib/authz";
+import { canAccessPath, canAddProducts, canViewFinancials, isOwnerAdminRole } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
 export default async function NewStockMovementPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const profile = await getCurrentProfile();
-  if (!profile || !canAccessPath({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/inventory/movements/new")) {
+  const userContext = profile
+    ? { id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }
+    : null;
+  if (!profile || !canAccessPath(userContext, "/inventory/movements/new")) {
     redirect("/unauthorized");
   }
 
@@ -20,7 +23,7 @@ export default async function NewStockMovementPage({ searchParams }: { searchPar
         supabase.from("products").select("id, sku, barcode, name, category, brand, image_url, selling_price, current_selling_price_lyd").eq("active", true).order("name"),
         supabase.from("current_inventory_by_location").select("product_id, quantity_on_hand").eq("location_type", "storage"),
         supabase.from("storage_locations").select("id, name").eq("active", true).in("location_type", ["main_storage", "vehicle", "temporary", "other"]).order("name"),
-        supabase.from("team_members").select("id, full_name").eq("role", "operator").eq("active", true).order("full_name"),
+        supabase.from("team_members").select("id, full_name").or("role.eq.operator,roles.cs.{operator}").eq("active", true).order("full_name"),
         supabase.from("routes").select("id, route_date, operator_id, status").in("status", ["draft", "assigned", "in_progress"]).order("route_date", { ascending: false }),
         supabase.from("inventory_movements").select("product_id, created_at").order("created_at", { ascending: false }).limit(100),
       ])
@@ -44,7 +47,7 @@ export default async function NewStockMovementPage({ searchParams }: { searchPar
   }));
   const operatorById = Object.fromEntries((operators ?? []).map((operator: any) => [operator.id, operator.full_name]));
   const recentProductIds = Array.from(new Set((recentMovements ?? []).map((row: any) => row.product_id).filter(Boolean))).slice(0, 12);
-  const canQuickAddProduct = ["owner", "admin", "supervisor"].includes(profile.role);
+  const canQuickAddProduct = canAddProducts(profile);
 
   return (
     <>
@@ -60,8 +63,8 @@ export default async function NewStockMovementPage({ searchParams }: { searchPar
           operators={operators ?? []}
           routes={routes ?? []}
           operatorById={operatorById}
-          canSeeSellingPrice={canViewFinancials({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })}
-          canAdminOverride={isOwnerAdminRole(profile.role)}
+          canSeeSellingPrice={canViewFinancials(userContext)}
+          canAdminOverride={isOwnerAdminRole(profile)}
           canQuickAddProduct={canQuickAddProduct}
         />
       </FormPageLayout>

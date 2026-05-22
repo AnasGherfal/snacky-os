@@ -21,7 +21,7 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
   if (!route) notFound();
 
   const routeRow: any = route;
-  const canAccess = canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, routeRow.operator_id);
+  const canAccess = canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, routeRow.operator_id);
 
   const [{ data: operator }, { data: stops, error: stopsError }, { data: routeStock }] = await Promise.all([
     routeRow.operator_id

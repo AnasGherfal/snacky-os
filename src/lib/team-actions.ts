@@ -5,18 +5,22 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
-import { isOwnerAdminRole, parseAppRole } from "@/lib/authz";
+import { hasAnyRole, isOwnerAdminRole, normalizeRoles } from "@/lib/authz";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 import { tempPasswordCookie } from "@/lib/team";
 
 function teamPayload(formData: FormData) {
-  const role = parseAppRole(String(formData.get("role") || "operator")) ?? "operator";
+  const roles = normalizeRoles(formData.getAll("roles"), String(formData.get("role") || "operator"));
+  const role = roles[0] ?? "operator";
+  const canAddProducts = String(formData.get("can_add_products") || "") === "yes" || hasAnyRole(roles, ["owner", "admin"]);
 
   return {
     full_name: String(formData.get("full_name") || "").trim(),
     email: String(formData.get("email") || "").trim() || null,
     phone: String(formData.get("phone") || "").trim() || null,
     role,
+    roles,
+    can_add_products: canAddProducts,
     active: String(formData.get("active") || "true") === "true",
     active_status: String(formData.get("active") || "true") === "true" ? "active" : "inactive",
   };
@@ -75,6 +79,8 @@ async function createOrResetAuthUser(teamMemberId: string, payload: ReturnType<t
     email: payload.email,
     phone: payload.phone,
     role: payload.role,
+    roles: payload.roles,
+    can_add_products: payload.can_add_products,
     active_status: payload.active_status,
     team_member_id: teamMemberId,
     must_change_password: true,
@@ -95,6 +101,8 @@ async function syncProfile(teamMemberId: string, payload: ReturnType<typeof team
       email: payload.email,
       phone: payload.phone,
       role: payload.role,
+      roles: payload.roles,
+      can_add_products: payload.can_add_products,
       active_status: payload.active_status,
       team_member_id: teamMemberId,
       updated_at: new Date().toISOString(),
@@ -104,7 +112,7 @@ async function syncProfile(teamMemberId: string, payload: ReturnType<typeof team
 
 export async function createTeamMember(formData: FormData) {
   const profile = await getCurrentProfile();
-  if (!isOwnerAdminRole(profile?.role)) redirect("/unauthorized");
+  if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
 
   const supabase = getSupabaseServerClient();
   if (!supabase) redirect("/team/new?error=Supabase%20is%20not%20configured.");
@@ -145,7 +153,7 @@ export async function createTeamMember(formData: FormData) {
 
 export async function updateTeamMember(formData: FormData) {
   const profile = await getCurrentProfile();
-  if (!isOwnerAdminRole(profile?.role)) redirect("/unauthorized");
+  if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
 
   const supabase = getSupabaseServerClient();
   const id = String(formData.get("id") || "");
@@ -179,14 +187,16 @@ export async function updateTeamMember(formData: FormData) {
 
   await logActivity({
     profile,
-    action: existingMember?.role !== payload.role ? "change_role" : "update",
+    action: JSON.stringify(normalizeRoles(existingMember?.roles, existingMember?.role)) !== JSON.stringify(payload.roles) ? "change_roles" : "update",
     entityType: "team_member",
     entityId: id,
     entityLabel: payload.full_name,
     beforeData: existingMember,
     afterData: { ...payload, login_access_updated: String(formData.get("create_login_access") || "") === "yes" },
     metadata: deactivationReason ? { reason: deactivationReason } : undefined,
-    summary: existingMember?.role !== payload.role ? `Changed ${payload.full_name} role to ${payload.role}` : `Updated team member ${payload.full_name}`,
+    summary: JSON.stringify(normalizeRoles(existingMember?.roles, existingMember?.role)) !== JSON.stringify(payload.roles)
+      ? `Changed ${payload.full_name} roles to ${payload.roles.join(", ")}`
+      : `Updated team member ${payload.full_name}`,
   });
 
   revalidatePath("/team");
@@ -197,7 +207,7 @@ export async function updateTeamMember(formData: FormData) {
 
 export async function deactivateTeamMember(formData: FormData) {
   const profile = await getCurrentProfile();
-  if (!isOwnerAdminRole(profile?.role)) redirect("/unauthorized");
+  if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
 
   const id = clean(formData.get("id"));
   if (!id) redirect("/team");

@@ -3,7 +3,7 @@
 import { useDeferredValue, useMemo, useState, useTransition } from "react";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { FormField, FormSection, SecondaryButton, StatusBadge } from "@/components/ui";
-import { createQuickProduct, createStockMovement } from "@/lib/inventory-actions";
+import { createQuickProduct, createStockMovement, createStorageAdjustment } from "@/lib/inventory-actions";
 
 type ProductOption = {
   id: string;
@@ -55,10 +55,13 @@ export function StockMovementForm({
   canAdminOverride: boolean;
   canQuickAddProduct: boolean;
 }) {
+  const [mode, setMode] = useState<"simple" | "advanced">("simple");
   const [selectedProductId, setSelectedProductId] = useState("");
   const [query, setQuery] = useState("");
   const [barcode, setBarcode] = useState("");
   const [quantity, setQuantity] = useState(1);
+  const [simpleQuantity, setSimpleQuantity] = useState(0);
+  const [adjustmentType, setAdjustmentType] = useState<"set_exact" | "add" | "remove">("set_exact");
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [missingProduct, setMissingProduct] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -109,11 +112,20 @@ export function StockMovementForm({
   };
 
   return (
-    <form action={createStockMovement} className="space-y-6">
+    <form action={mode === "simple" ? createStorageAdjustment : createStockMovement} className="space-y-6">
       <input type="hidden" name="product_id" value={selectedProductId} />
-      <input type="hidden" name="quantity" value={quantity} />
+      <input type="hidden" name="quantity" value={mode === "simple" ? simpleQuantity : quantity} />
 
-      <FormSection title="Movement details" description="Choose the product, quantity, reason, and optional route context for this ledger movement.">
+      <div className="grid gap-2 rounded-lg border border-slate-200 bg-white p-1 sm:grid-cols-2">
+        <button type="button" onClick={() => setMode("simple")} className={mode === "simple" ? "btn-primary justify-center" : "btn-secondary justify-center"}>
+          Simple Adjustment
+        </button>
+        <button type="button" onClick={() => setMode("advanced")} className={mode === "advanced" ? "btn-primary justify-center" : "btn-secondary justify-center"}>
+          Transfer / Advanced Movement
+        </button>
+      </div>
+
+      <FormSection title={mode === "simple" ? "Simple storage adjustment" : "Movement details"} description={mode === "simple" ? "Correct storage counts without choosing from/to locations. Snacky OS creates the audit movement automatically." : "Choose the product, quantity, reason, and optional route context for this ledger movement."}>
         <div className="grid gap-4 md:grid-cols-2">
           <div className="md:col-span-2">
             <div className="mb-2 flex items-center justify-between gap-3">
@@ -157,32 +169,64 @@ export function StockMovementForm({
             </div>
           </div>
 
-          <FormField label="Quantity" required>
-            <div className="flex flex-wrap items-center gap-2">
-              {[-1, 1, 5, 10].map((delta) => (
-                <button key={delta} type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setSafeQuantity(quantity + delta)}>
-                  {delta > 0 ? `+${delta}` : delta}
-                </button>
-              ))}
-              <input type="number" min="1" value={quantity} onChange={(event) => setSafeQuantity(Number(event.target.value) || 1)} className="field-input w-28" />
-            </div>
-            {selectedProduct ? <p className="mt-1 text-xs text-slate-500">Current storage quantity: {selectedProduct.storageQty}</p> : null}
-          </FormField>
-          <FormField label="Reason" required>
-            <select name="movement_type" required className="field-input" defaultValue="storage_to_operator_bag">
-              {movementTypes.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
-            </select>
-          </FormField>
-          <FormField label="Related route optional">
-            <select name="related_route_id" className="field-input">
-              <option value="">No route</option>
-              {routes.map((route) => <option key={route.id} value={route.id}>{route.route_date} - {route.status} - {operatorById[route.operator_id ?? ""] ?? "Unassigned"}</option>)}
-            </select>
-          </FormField>
+          {mode === "simple" ? (
+            <>
+              <FormField label="Adjustment type" required>
+                <select name="adjustment_type" required className="field-input" value={adjustmentType} onChange={(event) => setAdjustmentType(event.target.value as typeof adjustmentType)}>
+                  <option value="set_exact">Set exact count</option>
+                  <option value="add">Add quantity</option>
+                  <option value="remove">Remove quantity</option>
+                </select>
+              </FormField>
+              <FormField label={adjustmentType === "set_exact" ? "Actual counted quantity" : "Quantity"} required>
+                <input type="number" min={adjustmentType === "set_exact" ? "0" : "1"} value={simpleQuantity} onChange={(event) => setSimpleQuantity(Math.max(0, Math.floor(Number(event.target.value) || 0)))} className="field-input" />
+                {selectedProduct ? <p className="mt-1 text-xs text-slate-500">System storage quantity: {selectedProduct.storageQty}</p> : null}
+                {selectedProduct && adjustmentType === "set_exact" ? <p className="mt-1 text-xs font-medium text-slate-700">Adjustment will be {simpleQuantity - selectedProduct.storageQty > 0 ? "+" : ""}{simpleQuantity - selectedProduct.storageQty}.</p> : null}
+              </FormField>
+              <FormField label="Reason" required>
+                <select name="adjustment_reason" required className="field-input" defaultValue="stock_count_correction">
+                  <option value="stock_count_correction">Stock count correction</option>
+                  <option value="damaged_expired_item">Damaged/expired item</option>
+                  <option value="missing_item">Missing item</option>
+                  <option value="found_item">Found item</option>
+                  <option value="manual_correction">Manual correction</option>
+                  <option value="other">Other</option>
+                </select>
+              </FormField>
+              <FormField label="Date">
+                <input name="adjustment_date" type="date" defaultValue={new Date().toISOString().slice(0, 10)} className="field-input" />
+              </FormField>
+            </>
+          ) : (
+            <>
+              <FormField label="Quantity" required>
+                <div className="flex flex-wrap items-center gap-2">
+                  {[-1, 1, 5, 10].map((delta) => (
+                    <button key={delta} type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setSafeQuantity(quantity + delta)}>
+                      {delta > 0 ? `+${delta}` : delta}
+                    </button>
+                  ))}
+                  <input type="number" min="1" value={quantity} onChange={(event) => setSafeQuantity(Number(event.target.value) || 1)} className="field-input w-28" />
+                </div>
+                {selectedProduct ? <p className="mt-1 text-xs text-slate-500">Current storage quantity: {selectedProduct.storageQty}</p> : null}
+              </FormField>
+              <FormField label="Reason" required>
+                <select name="movement_type" required className="field-input" defaultValue="storage_to_operator_bag">
+                  {movementTypes.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
+                </select>
+              </FormField>
+              <FormField label="Related route optional">
+                <select name="related_route_id" className="field-input">
+                  <option value="">No route</option>
+                  {routes.map((route) => <option key={route.id} value={route.id}>{route.route_date} - {route.status} - {operatorById[route.operator_id ?? ""] ?? "Unassigned"}</option>)}
+                </select>
+              </FormField>
+            </>
+          )}
         </div>
       </FormSection>
 
-      <FormSection title="From and to" description="Stock must move between explicit locations so balances remain audit-friendly.">
+      {mode === "advanced" ? <FormSection title="From and to" description="Stock must move between explicit locations so balances remain audit-friendly.">
         <div className="grid gap-4 md:grid-cols-2">
           <FormField label="From location/type" required>
             <select name="from_location" required className="field-input">
@@ -205,22 +249,22 @@ export function StockMovementForm({
         <div className="grid gap-3 md:grid-cols-2">
           {movementTypes.map((type) => <div key={type.value} className="rounded-lg border border-slate-200 bg-white p-3"><div className="mb-2"><StatusBadge status={type.value} /></div><p className="text-sm text-slate-600">{type.helper}</p></div>)}
         </div>
-      </FormSection>
+      </FormSection> : null}
 
-      <FormSection title="Notes and override" description="Use notes for count references, supervisor context, or correction reasons.">
+      <FormSection title={mode === "simple" ? "Note" : "Notes and override"} description={mode === "simple" ? "Optional count reference, shelf note, or supervisor context." : "Use notes for count references, supervisor context, or correction reasons."}>
         <FormField label="Notes">
           <textarea name="notes" rows={4} className="field-input" placeholder="Reason, count reference, route handoff notes, or supervisor approval." />
         </FormField>
-        {canAdminOverride ? (
+        {mode === "advanced" && canAdminOverride ? (
           <label className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             <input name="admin_override" type="checkbox" className="mt-1" />
             <span><span className="block font-semibold">Owner/admin override</span>Allow this movement to take more than currently available storage.</span>
           </label>
-        ) : <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">You cannot override available storage.</div>}
+        ) : mode === "advanced" ? <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">You cannot override available storage.</div> : null}
       </FormSection>
 
       <div className="flex flex-col gap-3 sm:flex-row">
-        <button className="btn-primary" disabled={!selectedProductId}>Create movement</button>
+        <button className="btn-primary" disabled={!selectedProductId}>{mode === "simple" ? "Save adjustment" : "Create movement"}</button>
         <SecondaryButton href="/inventory">Cancel</SecondaryButton>
       </div>
 

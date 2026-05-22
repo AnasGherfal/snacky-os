@@ -5,8 +5,7 @@ import { FinanceTransactionStatusActions } from "@/components/FinanceTransaction
 import { PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canEditFinancialTransactions, canViewFinancials } from "@/lib/authz";
-import { isBalanceAffectingTransaction } from "@/lib/finance-balance";
-import { lyd } from "@/lib/format";
+import { accountLabel, formatFinanceMoney, isBalanceAffectingTransaction } from "@/lib/finance-balance";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -36,7 +35,7 @@ export default async function FinanceTransactionDetailPage({
   searchParams: Promise<{ created?: string; saved?: string; status?: string; error?: string }>;
 }) {
   const profile = await getCurrentProfile();
-  if (!profile || !canViewFinancials({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) redirect("/unauthorized");
+  if (!profile || !canViewFinancials({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) redirect("/unauthorized");
 
   const { id } = await params;
   const flags = await searchParams;
@@ -47,7 +46,7 @@ export default async function FinanceTransactionDetailPage({
   if (!transaction) notFound();
   const row = transaction as any;
   const affectsBalance = isBalanceAffectingTransaction(row);
-  const canEdit = canEditFinancialTransactions({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status });
+  const canEdit = canEditFinancialTransactions({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status });
 
   const [purchase, route, machine, location] = await Promise.all([
     row.related_purchase_id ? supabase.from("purchase_orders").select("id, receipt_number, order_date, payment_method, receipt_url").eq("id", row.related_purchase_id).maybeSingle() : Promise.resolve({ data: null }),
@@ -81,7 +80,9 @@ export default async function FinanceTransactionDetailPage({
             <DetailItem label="Status"><StatusBadge status={row.transaction_status ?? "active"} /></DetailItem>
             <DetailItem label="Balance impact"><StatusBadge status={affectsBalance ? "included" : "excluded"} /></DetailItem>
             <DetailItem label="Category">{category(row)}</DetailItem>
-            <DetailItem label="Amount"><span className={Number(row.signed_amount ?? 0) < 0 ? "text-rose-700" : "text-emerald-700"}>{lyd(Number(row.signed_amount ?? 0))}</span></DetailItem>
+            <DetailItem label="Amount"><span className={Number(row.signed_amount ?? 0) < 0 ? "text-rose-700" : "text-emerald-700"}>{formatFinanceMoney(Number(row.signed_amount ?? 0), row.currency ?? "LYD")}</span></DetailItem>
+            <DetailItem label="Account">{row.transaction_effect === "transfer" ? `${accountLabel(row.source_account_id)} -> ${accountLabel(row.destination_account_id)}` : accountLabel(row.account_id)}</DetailItem>
+            <DetailItem label="Effect">{label(row.transaction_effect)}</DetailItem>
             <DetailItem label="Payment method">{label(row.payment_method)}</DetailItem>
             <DetailItem label="Kind">{label(row.transaction_kind)}</DetailItem>
             <DetailItem label="Review"><StatusBadge status={row.needs_review ? "needs_review" : row.review_status} /></DetailItem>
@@ -107,7 +108,7 @@ export default async function FinanceTransactionDetailPage({
         <div className="grid gap-5 md:grid-cols-4">
           <DetailItem label="Purchase">{purchase.data ? <Link href={`/purchases/${purchase.data.id}`} className="link-secondary">{purchase.data.receipt_number ?? purchase.data.id.slice(0, 8)}</Link> : "-"}</DetailItem>
           <DetailItem label="Route">{route.data ? <Link href={`/routes/${route.data.id}`} className="link-secondary">{route.data.route_date}</Link> : "-"}</DetailItem>
-          <DetailItem label="Machine">{machine.data ? <Link href={`/machines/${machine.data.id}/edit`} className="link-secondary">{machine.data.machine_code ?? machine.data.name}</Link> : "-"}</DetailItem>
+          <DetailItem label="Machine">{machine.data ? <Link href={`/machines/${machine.data.id}/edit`} className="link-secondary">{machine.data.name ?? machine.data.machine_code}</Link> : "-"}</DetailItem>
           <DetailItem label="Location">{location.data ? <Link href={`/locations/${location.data.id}`} className="link-secondary">{location.data.name}</Link> : row.location ?? "-"}</DetailItem>
         </div>
       </section>

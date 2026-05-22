@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 
 export default async function NewStorageLocationPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const profile = await getCurrentProfile();
-  if (!profile || !canManageStorageLocations(profile.role)) redirect("/unauthorized");
+  if (!profile || !canManageStorageLocations(profile)) redirect("/unauthorized");
 
   const params = await searchParams;
   const supabase = getSupabaseServerClient();
@@ -24,8 +24,8 @@ export default async function NewStorageLocationPage({ searchParams }: { searchP
 
   const { data: operators } = await supabase
     .from("team_members")
-    .select("id, full_name, email, role")
-    .in("role", ["operator", "warehouse", "supervisor"])
+    .select("id, full_name, email, role, roles")
+    .or("role.in.(operator,warehouse,supervisor),roles.ov.{operator,warehouse,supervisor}")
     .eq("active", true)
     .order("full_name");
 

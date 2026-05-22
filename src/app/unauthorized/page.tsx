@@ -13,7 +13,7 @@ async function logout() {
 
 export default async function UnauthorizedPage() {
   const profile = await getCurrentProfile();
-  const homeHref = getDefaultPathForRole(profile?.role);
+  const homeHref = getDefaultPathForRole(profile);
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-slate-100 px-4 py-10">
@@ -27,7 +27,7 @@ export default async function UnauthorizedPage() {
         </p>
         <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
           Signed in as <span className="font-medium text-slate-900">{profile?.full_name ?? "unknown user"}</span>
-          {profile?.role ? <> with role <span className="font-medium text-slate-900">{profile.role}</span></> : null}.
+          {profile?.roles?.length ? <> with roles <span className="font-medium text-slate-900">{profile.roles.join(", ")}</span></> : null}.
         </div>
         <form action={logout} className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-center">
           <Link href={homeHref} className="btn-secondary">Go to my home</Link>

@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
-import { AppRole, isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
+import { canAddProducts, canManagePurchases } from "@/lib/authz";
 import { createPurchaseFinancialTransaction } from "@/lib/finance-actions";
 import { resolveProductSku } from "@/lib/product-sku";
 import { resolvePurchaseReceiptUrl } from "@/lib/purchase-receipts";
@@ -87,10 +87,6 @@ function parseNewProduct(value: unknown): PurchaseLineInput["newProduct"] {
     category,
     caseQuantity,
   };
-}
-
-function canManagePurchases(role: AppRole | null | undefined) {
-  return isOwnerAdminRole(role) || isSupervisorRole(role) || role === "warehouse";
 }
 
 function parseLines(raw: FormDataEntryValue | null): PurchaseLineInput[] {
@@ -201,7 +197,7 @@ async function resolvePurchaseLines({
 
     const productName = line.newProduct?.name || line.receiptLineName || "";
     if (!productName.trim()) formError("Product name is required for receipt-created products.");
-    if (!isOwnerAdminRole(profile?.role)) formError("Only owner/admin can create new products from receipt lines.");
+    if (!canAddProducts(profile)) formError("You do not have permission to create products from receipt lines.");
 
     let sku = "";
     try {
@@ -321,7 +317,7 @@ function requireConfirmedReason(formData: FormData, path: string) {
 
 async function requirePurchaseAccess() {
   const profile = await getCurrentProfile();
-  if (!profile || !canManagePurchases(profile.role)) redirect("/unauthorized");
+  if (!profile || !canManagePurchases(profile)) redirect("/unauthorized");
   const supabase = getSupabaseServerClient();
   if (!supabase) redirect("/purchases?error=Supabase%20is%20not%20configured.");
   return { profile, supabase };
@@ -361,7 +357,7 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
     lines = await resolvePurchaseLines({ supabase, profile, lines, supplierId });
     if (!lines.length) formError("Add at least one purchased item.");
 
-    const { receiptUrl, uploadUnavailable, uploadError } = await resolvePurchaseReceiptUrl(supabase, fd);
+    const { receiptUrl, receiptFileName, receiptContentType, receiptStoragePath, uploadUnavailable, uploadError } = await resolvePurchaseReceiptUrl(supabase, fd);
     const lineRows = buildLineRows(lines);
     const totals = buildTotals(fd, lineRows.reduce((sum, line) => sum + Number(line.line_total), 0));
     const submitAction = String(fd.get("submit_action") || "draft");
@@ -376,6 +372,9 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
         payment_method: String(fd.get("payment_method") || "cash"),
         payment_status: parsePaymentStatus(fd.get("payment_status")),
         receipt_url: receiptUrl,
+        receipt_file_name: receiptFileName,
+        receipt_content_type: receiptContentType,
+        receipt_storage_path: receiptStoragePath,
         notes: String(fd.get("notes") || "").trim() || null,
         ...totals,
         created_by: profile.team_member_id,
@@ -403,7 +402,7 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
       entityType: "purchase",
       entityId: purchase.id,
       entityLabel: String(fd.get("receipt_number") || purchase.id.slice(0, 8)),
-      afterData: { ...purchase, line_count: lineRows.length, total_amount: totals.total_amount },
+      afterData: { ...purchase, receipt_url: receiptUrl, receipt_file_name: receiptFileName, line_count: lineRows.length, total_amount: totals.total_amount },
       summary: `Created purchase with ${lineRows.length} line items`,
     });
 
@@ -447,8 +446,14 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
     lines = await resolvePurchaseLines({ supabase, profile, lines, supplierId });
     if (!lines.length) formError("Add at least one purchased item.");
 
-    const { receiptUrl, uploadUnavailable, uploadError } = await resolvePurchaseReceiptUrl(supabase, fd);
+    const { receiptUrl, receiptFileName, receiptContentType, receiptStoragePath, uploadUnavailable, uploadError } = await resolvePurchaseReceiptUrl(supabase, fd);
     const existingReceiptUrl = String(fd.get("current_receipt_url") || current.receipt_url || "").trim();
+    const removeReceipt = String(fd.get("remove_receipt") || "") === "yes";
+    const nextReceiptUrl = removeReceipt ? null : (receiptUrl ?? existingReceiptUrl) || null;
+    const receiptUrlChanged = Boolean(receiptUrl && receiptUrl !== existingReceiptUrl);
+    const nextReceiptFileName = removeReceipt ? null : receiptFileName ?? (receiptUrlChanged ? null : current.receipt_file_name ?? null);
+    const nextReceiptContentType = removeReceipt ? null : receiptContentType ?? (receiptUrlChanged ? null : current.receipt_content_type ?? null);
+    const nextReceiptStoragePath = removeReceipt ? null : receiptStoragePath ?? (receiptUrlChanged ? null : current.receipt_storage_path ?? null);
     const lineRows = buildLineRows(lines);
     const totals = buildTotals(fd, lineRows.reduce((sum, line) => sum + Number(line.line_total), 0));
     const submitAction = String(fd.get("submit_action") || "draft");
@@ -461,7 +466,10 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
         receipt_number: String(fd.get("receipt_number") || "").trim() || null,
         payment_method: String(fd.get("payment_method") || "cash"),
         payment_status: parsePaymentStatus(fd.get("payment_status")),
-        receipt_url: (receiptUrl ?? existingReceiptUrl) || null,
+        receipt_url: nextReceiptUrl,
+        receipt_file_name: nextReceiptFileName,
+        receipt_content_type: nextReceiptContentType,
+        receipt_storage_path: nextReceiptStoragePath,
         notes: String(fd.get("notes") || "").trim() || null,
         ...totals,
         updated_at: new Date().toISOString(),
@@ -490,13 +498,13 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
 
     await logActivity({
       profile,
-      action: "update",
+      action: current.receipt_url !== nextReceiptUrl ? "update_receipt" : "update",
       entityType: "purchase",
       entityId: id,
       entityLabel: String(fd.get("receipt_number") || id.slice(0, 8)),
       beforeData: current,
-      afterData: { line_count: lineRows.length, ...totals },
-      summary: "Updated draft purchase",
+      afterData: { receipt_url: nextReceiptUrl, receipt_file_name: nextReceiptFileName, line_count: lineRows.length, ...totals },
+      summary: current.receipt_url !== nextReceiptUrl ? "Updated purchase receipt attachment" : "Updated draft purchase",
     });
 
     if (submitAction === "received") {

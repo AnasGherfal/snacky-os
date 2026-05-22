@@ -25,7 +25,7 @@ export default async function OperatorPage() {
     .gte("route_date", today)
     .order("route_date", { ascending: true });
 
-  if (routesQuery && isOperatorRole(profile?.role)) {
+  if (routesQuery && isOperatorRole(profile)) {
     routesQuery = routesQuery.eq("operator_id", profile?.team_member_id ?? "");
   }
 

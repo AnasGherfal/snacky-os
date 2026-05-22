@@ -24,7 +24,7 @@ function formatDate(value: string | null) {
 
 export default async function StorageLocationsPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const profile = await getCurrentProfile();
-  if (!profile || !canManageStorageLocations(profile.role)) redirect("/unauthorized");
+  if (!profile || !canManageStorageLocations(profile)) redirect("/unauthorized");
 
   const params = await searchParams;
   const supabase = getSupabaseServerClient();

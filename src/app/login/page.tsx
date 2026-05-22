@@ -11,6 +11,7 @@ async function login(formData: FormData) {
 
   const email = String(formData.get("email") || "").trim();
   const password = String(formData.get("password") || "");
+  const nextPath = String(formData.get("next") || "").trim();
   const supabase = getSupabaseServerClient();
 
   if (!supabase) redirect("/login?error=Supabase%20is%20not%20configured.");
@@ -49,16 +50,7 @@ async function login(formData: FormData) {
   });
 
   await logActivity({
-    profile: {
-      id: profile.id,
-      full_name: profile.full_name,
-      email: profile.email,
-      phone: profile.phone,
-      role,
-      active_status: profile.active_status,
-      team_member_id: profile.team_member_id,
-      must_change_password: profile.must_change_password,
-    },
+    profile,
     action: "login",
     entityType: "team_member",
     entityId: profile.team_member_id,
@@ -66,7 +58,8 @@ async function login(formData: FormData) {
     summary: `${profile.full_name} logged in`,
   });
 
-  redirect(getDefaultPathForRole(role));
+  const safeNextPath = nextPath.startsWith("/") && !nextPath.startsWith("//") && !nextPath.startsWith("/login") ? nextPath : "";
+  redirect(safeNextPath || getDefaultPathForRole(profile));
 }
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string; next?: string }> }) {

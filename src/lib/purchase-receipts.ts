@@ -9,6 +9,9 @@ type PurchaseReceiptUploadError = "invalid_file" | "storage_unavailable";
 
 type PurchaseReceiptUploadResult = {
   receiptUrl: string | null;
+  receiptFileName: string | null;
+  receiptContentType: string | null;
+  receiptStoragePath: string | null;
   uploadUnavailable: boolean;
   uploadError?: PurchaseReceiptUploadError;
 };
@@ -38,11 +41,11 @@ export async function resolvePurchaseReceiptUrl(supabase: SupabaseClient, fd: Fo
   const file = fd.get("receipt_file");
 
   if (!(file instanceof File) || file.size === 0) {
-    return { receiptUrl: manualUrl || null, uploadUnavailable: false };
+    return { receiptUrl: manualUrl || null, receiptFileName: null, receiptContentType: null, receiptStoragePath: null, uploadUnavailable: false };
   }
 
   if (!RECEIPT_MIME_TYPES.includes(file.type) || file.size > RECEIPT_MAX_SIZE) {
-    return { receiptUrl: manualUrl || null, uploadUnavailable: false, uploadError: "invalid_file" };
+    return { receiptUrl: manualUrl || null, receiptFileName: null, receiptContentType: null, receiptStoragePath: null, uploadUnavailable: false, uploadError: "invalid_file" };
   }
 
   try {
@@ -59,9 +62,15 @@ export async function resolvePurchaseReceiptUrl(supabase: SupabaseClient, fd: Fo
 
     if (error) throw error;
 
-    return { receiptUrl: `/api/storage/${RECEIPT_IMAGE_BUCKET}/${encodeURIComponent(path)}`, uploadUnavailable: false };
+    return {
+      receiptUrl: `/api/storage/${RECEIPT_IMAGE_BUCKET}/${encodeURIComponent(path)}`,
+      receiptFileName: file.name || null,
+      receiptContentType: file.type || null,
+      receiptStoragePath: path,
+      uploadUnavailable: false,
+    };
   } catch (error) {
     console.warn("[purchases] Receipt upload unavailable", error);
-    return { receiptUrl: manualUrl || null, uploadUnavailable: true, uploadError: "storage_unavailable" };
+    return { receiptUrl: manualUrl || null, receiptFileName: null, receiptContentType: null, receiptStoragePath: null, uploadUnavailable: true, uploadError: "storage_unavailable" };
   }
 }

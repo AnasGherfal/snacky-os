@@ -1,13 +1,9 @@
 import { NextResponse } from "next/server";
 import { getCurrentProfile } from "@/lib/auth";
-import { isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
+import { canScanReceipts } from "@/lib/authz";
 import { RECEIPT_MAX_SIZE, RECEIPT_MIME_TYPES, resolvePurchaseReceiptUrl } from "@/lib/purchase-receipts";
 import { buildReceiptScanDraft, extractReceipt, RECEIPT_SCAN_NOT_CONFIGURED_MESSAGE } from "@/lib/receipt-scan-server";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
-
-function canScanReceipts(role: string | null | undefined) {
-  return isOwnerAdminRole(role as any) || isSupervisorRole(role as any) || role === "warehouse";
-}
 
 function receiptFileError(file: FormDataEntryValue | null) {
   if (!(file instanceof File) || file.size === 0) return "Upload a receipt image or PDF.";
@@ -20,7 +16,7 @@ function receiptFileError(file: FormDataEntryValue | null) {
 export async function POST(request: Request) {
   try {
     const profile = await getCurrentProfile();
-    if (!profile || profile.active_status !== "active" || !canScanReceipts(profile.role)) {
+    if (!profile || profile.active_status !== "active" || !canScanReceipts(profile)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 

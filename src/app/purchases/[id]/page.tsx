@@ -4,10 +4,53 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { cancelPurchase, deleteDraftPurchase, markPurchasePaid, receivePurchase, voidReceivedPurchase } from "@/lib/purchase-actions";
 import { DataTable, EmptyState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { requireCurrentProfileForPath } from "@/lib/auth";
-import { isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
+import { canManagePurchases } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { dateOnly } from "@/lib/purchase-finance-date";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+
+function formatReceiptType(url: string | null | undefined, contentType?: string | null) {
+  const explicit = String(contentType ?? "").trim();
+  if (explicit) return explicit;
+  const lower = String(url ?? "").toLowerCase().split("?")[0];
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".webp")) return "image/webp";
+  return "file";
+}
+
+function ReceiptPreviewSection({ purchase }: { purchase: any }) {
+  const receiptUrl = String(purchase.receipt_url ?? "").trim();
+  const contentType = formatReceiptType(receiptUrl, purchase.receipt_content_type);
+  const isImage = contentType.startsWith("image/");
+  const receiptLabel = purchase.receipt_file_name ?? purchase.receipt_number ?? "Receipt";
+
+  return (
+    <section className="surface-card mt-6">
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">Receipt preview</h2>
+          <p className="text-sm text-slate-500">Supplier receipt attachment saved with this purchase.</p>
+        </div>
+        {receiptUrl ? <a href={receiptUrl} target="_blank" rel="noreferrer" className="btn-secondary">View Receipt</a> : null}
+      </div>
+      {!receiptUrl ? (
+        <EmptyState title="No receipt attached" body="Upload a receipt while creating or editing the draft purchase." />
+      ) : isImage ? (
+        <a href={receiptUrl} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-lg border border-slate-200 bg-white">
+          <img src={receiptUrl} alt={receiptLabel} className="max-h-[34rem] w-full object-contain" />
+        </a>
+      ) : (
+        <div className="flex min-h-40 flex-col items-center justify-center rounded-lg border border-slate-200 bg-slate-50 p-6 text-center">
+          <div className="text-sm font-medium text-slate-900">{receiptLabel}</div>
+          <div className="mt-1 text-xs text-slate-500">{contentType === "application/pdf" ? "PDF receipt" : "Receipt file"}</div>
+          <a href={receiptUrl} target="_blank" rel="noreferrer" className="btn-primary mt-4">View Receipt</a>
+        </div>
+      )}
+    </section>
+  );
+}
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +59,7 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
   const { error = "", receiptUpload = "", module = "", purchaseSaved = "" } = await searchParams;
   const moduleQuery = module === "finance" ? "?module=finance" : "";
   const profile = await requireCurrentProfileForPath(`/purchases/${id}`);
-  const canManagePurchase = isOwnerAdminRole(profile?.role) || isSupervisorRole(profile?.role) || profile?.role === "warehouse";
+  const canManagePurchase = canManagePurchases(profile);
   const supabase = getSupabaseServerClient();
   if (!supabase) notFound();
 
@@ -189,6 +232,8 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
           </div>
         </section>
       </div>
+
+      <ReceiptPreviewSection purchase={purchaseRow} />
 
       <section className="surface-card mt-6">
         <h2 className="mb-4 text-lg font-semibold text-slate-900">Line items</h2>

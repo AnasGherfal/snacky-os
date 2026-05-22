@@ -21,7 +21,7 @@ function formatEntity(type: string | null | undefined, name: string | null | und
 export default async function InventoryPage() {
   const profile = await getCurrentProfile();
   const userContext = profile
-    ? { id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }
+    ? { id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }
     : null;
 
   if (!profile || !canAccessPath(userContext, "/inventory")) {

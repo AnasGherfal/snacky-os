@@ -18,7 +18,7 @@ const adminLinks = [
 
 export default async function AdminPage() {
   const profile = await getCurrentProfile();
-  if (!isOwnerAdminRole(profile?.role)) redirect("/unauthorized");
+  if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
 
   return (
     <>

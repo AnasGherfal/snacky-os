@@ -5,25 +5,29 @@ import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
 import { canEditFinancialTransactions, canViewFinancials } from "@/lib/authz";
+import { accountCurrency, financeAccountId, type FinanceAccountId, type FinanceTransactionEffect } from "@/lib/finance-balance";
 import {
+  buildFinanceClarificationPrompts,
   buildFinanceImportStageRow,
+  buildFinanceReviewGroups,
   buildFinanceTransaction,
   classifyFinanceRows,
   FINANCE_SOURCE_FILE,
   FINANCE_SOURCE_SHEET,
+  forceConfirmClassifiedRow,
   readFinanceImportRows,
 } from "@/lib/finance-import";
 import { resolvePurchaseFinanceTransactionDate } from "@/lib/purchase-finance-date";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 function requireFinance(profile: Awaited<ReturnType<typeof getCurrentProfile>>) {
-  if (!profile || !canViewFinancials({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) {
+  if (!profile || !canViewFinancials({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) {
     redirect("/unauthorized");
   }
 }
 
 function requireFinanceEdit(profile: Awaited<ReturnType<typeof getCurrentProfile>>) {
-  if (!profile || !canEditFinancialTransactions({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) {
+  if (!profile || !canEditFinancialTransactions({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) {
     redirect("/unauthorized");
   }
 }
@@ -37,7 +41,17 @@ function toOptionalAmount(value: FormDataEntryValue | null) {
 
 function cleanCurrency(value: FormDataEntryValue | null) {
   const currency = String(value ?? "LYD").trim().toUpperCase();
-  return currency ? currency.slice(0, 8) : "LYD";
+  return currency === "USD" ? "USD" : "LYD";
+}
+
+function cleanFinanceEffect(value: FormDataEntryValue | null, direction?: string | null): FinanceTransactionEffect {
+  const effect = String(value ?? "").trim();
+  if (effect === "income" || effect === "expense" || effect === "transfer" || effect === "opening_balance") return effect;
+  return direction === "money_in" ? "income" : "expense";
+}
+
+function cleanFinanceAccount(value: FormDataEntryValue | null, currency: string): FinanceAccountId {
+  return financeAccountId(String(value ?? ""), currency);
 }
 
 function optionalUuid(value: FormDataEntryValue | null) {
@@ -66,27 +80,111 @@ function validDirection(value: FormDataEntryValue | null, fallback?: string | nu
   return direction === "money_in" || direction === "money_out" ? direction : "";
 }
 
-export async function importHistoricalFinanceTransactions() {
+function resolveManualLedgerFields(formData: FormData, fallback?: any) {
+  const direction = validDirection(formData.get("direction"), fallback?.direction);
+  const requestedCurrency = cleanCurrency(formData.get("currency") ?? fallback?.currency ?? "LYD");
+  const transactionEffect = cleanFinanceEffect(formData.get("transaction_effect"), direction || fallback?.direction);
+  const accountId = cleanFinanceAccount(formData.get("account_id") ?? fallback?.account_id, requestedCurrency);
+  const sourceAccountId = cleanFinanceAccount(formData.get("source_account_id") ?? fallback?.source_account_id ?? accountId, requestedCurrency);
+  const destinationAccountId = cleanFinanceAccount(formData.get("destination_account_id") ?? fallback?.destination_account_id ?? accountId, requestedCurrency);
+  const currency = transactionEffect === "transfer" ? accountCurrency(sourceAccountId) : accountCurrency(accountId);
+
+  return {
+    direction: transactionEffect === "transfer" ? "money_out" : direction,
+    currency,
+    transactionEffect,
+    accountId: transactionEffect === "transfer" ? sourceAccountId : accountId,
+    sourceAccountId: transactionEffect === "transfer" ? sourceAccountId : null,
+    destinationAccountId: transactionEffect === "transfer" ? destinationAccountId : null,
+  };
+}
+
+function validateManualLedgerFields(fields: ReturnType<typeof resolveManualLedgerFields>) {
+  if (!fields.direction) return "Direction is required.";
+  if (fields.transactionEffect === "transfer") {
+    if (!fields.sourceAccountId || !fields.destinationAccountId) return "Transfer source and destination accounts are required.";
+    if (fields.sourceAccountId === fields.destinationAccountId) return "Transfer source and destination must be different.";
+    if (accountCurrency(fields.sourceAccountId) !== accountCurrency(fields.destinationAccountId)) return "Cross-currency transfers need a separate exchange workflow with an explicit rate.";
+  }
+  return null;
+}
+
+async function loadFinanceClassificationContext(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>) {
+  const [{ data: machines }, aliasResult] = await Promise.all([
+    supabase.from("machines").select("id, name, machine_code, vms_machine_id").limit(1000),
+    supabase.from("machine_aliases").select("alias_name, machine:machines(id, name, machine_code, vms_machine_id)").limit(1000),
+  ]);
+  const aliases = aliasResult.error
+    ? []
+    : (aliasResult.data ?? []).map((row: any) => ({
+        alias_name: row.alias_name,
+        id: row.machine?.id,
+        name: row.machine?.name,
+        machine_code: row.machine?.machine_code,
+        vms_machine_id: row.machine?.vms_machine_id,
+      }));
+  return { machines: (machines ?? []) as any[], aliases };
+}
+
+async function createFinanceImportBatch(
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>,
+  profile: Awaited<ReturnType<typeof getCurrentProfile>>,
+  mode: string,
+  rowCount: number,
+) {
+  const { data, error } = await supabase
+    .from("finance_import_batches")
+    .insert({
+      source_file: FINANCE_SOURCE_FILE,
+      source_sheet: FINANCE_SOURCE_SHEET,
+      imported_by: profile?.team_member_id ?? null,
+      mode,
+      row_count: rowCount,
+      status: "processing",
+    })
+    .select("id")
+    .single();
+  if (error) throw error;
+  return data.id as string;
+}
+
+async function runHistoricalFinanceImport(mode: "import" | "apply_high_confidence" | "confirm_group", groupKey?: string) {
   const profile = await getCurrentProfile();
   requireFinance(profile);
   const supabase = getSupabaseServerClient();
   if (!supabase) redirect("/finance/import?error=Supabase%20is%20not%20configured.");
 
   const rows = await readFinanceImportRows();
-  const { data: existingRows, error: existingError } = await supabase
+  let batchId: string | null = null;
+  try {
+    batchId = await createFinanceImportBatch(supabase, profile, mode, rows.length);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not create finance import batch.";
+    redirect(`/finance/import?error=${encodeURIComponent(message)}`);
+  }
+
+  const [{ data: existingRows, error: existingError }, context] = await Promise.all([
+    supabase
     .from("financial_transactions")
-    .select("id, source_file, source_sheet, source_row, transaction_date, signed_amount, description, original_description")
-    .limit(20000);
+      .select("id, source_file, source_sheet, source_row, transaction_date, amount, signed_amount, currency, account_id, source_account_id, destination_account_id, transaction_effect, description, original_description")
+      .limit(50000),
+    loadFinanceClassificationContext(supabase),
+  ]);
   if (existingError) redirect(`/finance/import?error=${encodeURIComponent(existingError.message)}`);
 
-  const classifiedRows = classifyFinanceRows(rows, (existingRows ?? []) as any[]);
-  const transactionRows = classifiedRows.flatMap((row) => {
-    const transaction = buildFinanceTransaction(row, profile?.team_member_id);
+  const classifiedRows = classifyFinanceRows(rows, (existingRows ?? []) as any[], context);
+  const rowsForImport = groupKey
+    ? classifiedRows.filter((row) => row.reviewGroupKey === groupKey && row.importStatus === "needs_review").map(forceConfirmClassifiedRow)
+    : classifiedRows;
+  const transactionRows = rowsForImport.flatMap((row) => {
+    const transaction = buildFinanceTransaction(row, profile?.team_member_id, batchId);
     return transaction ? [transaction] : [];
   });
-  const importedRows = classifiedRows.filter((row) => row.importStatus === "imported").length;
+  const importedRows = rowsForImport.filter((row) => row.importStatus === "imported").length;
+  const autoClassifiedRows = rowsForImport.filter((row) => row.importStatus === "auto_classified").length;
+  const confirmedRows = rowsForImport.filter((row) => row.importStatus === "confirmed").length;
   const reviewRows = classifiedRows.filter((row) => row.importStatus === "needs_review").length;
-  const skippedRows = classifiedRows.filter((row) => row.importStatus === "skipped").length;
+  const ignoredRows = classifiedRows.filter((row) => row.importStatus === "ignored" || row.importStatus === "skipped").length;
   let insertedTransactions: any[] = [];
 
   if (transactionRows.length) {
@@ -104,7 +202,8 @@ export async function importHistoricalFinanceTransactions() {
   const insertedBySource = new Map(
     insertedTransactions.map((row) => [`${row.source_file}|${row.source_sheet}|${row.source_row}`, row.id]),
   );
-  const stageRows = classifiedRows.map((row) => buildFinanceImportStageRow(row, insertedBySource.get(`${row.sourceFile}|${row.sourceSheet}|${row.sourceRow}`)));
+  const stageSource = groupKey ? classifiedRows.map((row) => rowsForImport.find((confirmed) => confirmed.sourceRow === row.sourceRow) ?? row) : classifiedRows;
+  const stageRows = stageSource.map((row) => buildFinanceImportStageRow(row, insertedBySource.get(`${row.sourceFile}|${row.sourceSheet}|${row.sourceRow}`), batchId));
   if (stageRows.length) {
     const { error } = await supabase.from("finance_import_rows").upsert(stageRows, { onConflict: "source_file,source_sheet,source_row" });
     if (error) {
@@ -112,6 +211,22 @@ export async function importHistoricalFinanceTransactions() {
       redirect(`/finance/import?error=${encodeURIComponent(error.message)}`);
     }
   }
+
+  const reviewGroups = buildFinanceReviewGroups(classifiedRows);
+  await supabase
+    .from("finance_import_batches")
+    .update({
+      status: "completed",
+      imported_count: importedRows,
+      auto_classified_count: autoClassifiedRows,
+      confirmed_count: confirmedRows,
+      needs_review_count: reviewRows,
+      ignored_count: ignoredRows,
+      review_group_count: reviewGroups.length,
+      clarification_prompts: buildFinanceClarificationPrompts(reviewGroups),
+      completed_at: new Date().toISOString(),
+    })
+    .eq("id", batchId);
 
   await logActivity({
     profile,
@@ -123,16 +238,33 @@ export async function importHistoricalFinanceTransactions() {
       source_sheet: FINANCE_SOURCE_SHEET,
       total_rows: rows.length,
       imported_rows: importedRows,
+      auto_classified_rows: autoClassifiedRows,
+      confirmed_rows: confirmedRows,
       needs_review_rows: reviewRows,
-      skipped_rows: skippedRows,
+      ignored_rows: ignoredRows,
+      import_batch_id: batchId,
     },
-    summary: `Imported ${importedRows} valid finance rows, staged ${reviewRows} for review, skipped ${skippedRows}`,
+    summary: `Imported ${importedRows + autoClassifiedRows + confirmedRows} finance rows, staged ${reviewRows} for review, ignored ${ignoredRows}`,
   });
 
   revalidatePath("/finance");
   revalidatePath("/finance/import");
   revalidatePath("/finance/transactions");
-  redirect(`/finance/import?total=${rows.length}&imported=${importedRows}&needsReview=${reviewRows}&skipped=${skippedRows}`);
+  redirect(`/finance/import?total=${rows.length}&imported=${importedRows + autoClassifiedRows + confirmedRows}&autoClassified=${autoClassifiedRows}&needsReview=${reviewRows}&ignored=${ignoredRows}`);
+}
+
+export async function importHistoricalFinanceTransactions() {
+  await runHistoricalFinanceImport("import");
+}
+
+export async function applyHighConfidenceFinanceSuggestions() {
+  await runHistoricalFinanceImport("apply_high_confidence");
+}
+
+export async function confirmFinanceReviewGroup(formData: FormData) {
+  const groupKey = String(formData.get("review_group_key") || "").trim();
+  if (!groupKey) redirect("/finance/import?error=Review%20group%20is%20required.");
+  await runHistoricalFinanceImport("confirm_group", groupKey);
 }
 
 export async function updateFinanceSettings(formData: FormData) {
@@ -141,15 +273,23 @@ export async function updateFinanceSettings(formData: FormData) {
   const supabase = getSupabaseServerClient();
   if (!supabase) redirect("/finance?settingsError=Supabase%20is%20not%20configured.");
 
-  const openingBalance = toOptionalAmount(formData.get("opening_balance"));
-  if (openingBalance === null) redirect("/finance?settingsError=Opening%20balance%20is%20required.");
+  const snackyLyd = toOptionalAmount(formData.get("opening_balance_snacky_lyd")) ?? toOptionalAmount(formData.get("opening_balance")) ?? 0;
+  const snackyUsd = toOptionalAmount(formData.get("opening_balance_snacky_usd")) ?? 0;
+  const ownerLyd = toOptionalAmount(formData.get("opening_balance_owner_lyd")) ?? 0;
+  const ownerUsd = toOptionalAmount(formData.get("opening_balance_owner_usd")) ?? 0;
+  const exchangeRate = toOptionalAmount(formData.get("exchange_rate_usd_to_lyd"));
 
   const openingBalanceDate = String(formData.get("opening_balance_date") || new Date().toISOString().slice(0, 10));
   const payload = {
     id: "default",
-    opening_balance: openingBalance,
+    opening_balance: snackyLyd,
+    opening_balance_snacky_lyd: snackyLyd,
+    opening_balance_snacky_usd: snackyUsd,
+    opening_balance_owner_lyd: ownerLyd,
+    opening_balance_owner_usd: ownerUsd,
     opening_balance_date: openingBalanceDate,
     default_currency: cleanCurrency(formData.get("default_currency")),
+    exchange_rate_usd_to_lyd: exchangeRate,
     updated_by: profile?.team_member_id ?? null,
     updated_at: new Date().toISOString(),
   };
@@ -179,26 +319,32 @@ export async function createManualFinancialTransaction(formData: FormData) {
   const supabase = getSupabaseServerClient();
   if (!supabase) redirect("/finance/transactions/new?error=Supabase%20is%20not%20configured.");
 
-  const direction = validDirection(formData.get("direction"));
   const amount = parseTransactionAmount(formData.get("amount"));
   const transactionDate = String(formData.get("transaction_date") || "").trim();
   const category = transactionCategory(formData);
+  const ledgerFields = resolveManualLedgerFields(formData);
+  const ledgerError = validateManualLedgerFields(ledgerFields);
   if (!transactionDate) redirect("/finance/transactions/new?error=Transaction%20date%20is%20required.");
-  if (!direction) redirect("/finance/transactions/new?error=Direction%20is%20required.");
+  if (ledgerError) redirect(`/finance/transactions/new?error=${encodeURIComponent(ledgerError)}`);
   if (!Number.isFinite(amount) || amount < 0) redirect("/finance/transactions/new?error=Amount%20must%20be%20greater%20than%20or%20equal%20to%200.");
   if (!category) redirect("/finance/transactions/new?error=Category%20is%20required.");
 
   const payload = {
     transaction_date: transactionDate,
-    direction,
-    transaction_kind: direction === "money_in" ? "manual_money_in" : "manual_money_out",
+    direction: ledgerFields.direction,
+    transaction_kind: ledgerFields.direction === "money_in" ? "manual_money_in" : "manual_money_out",
     transaction_type: optionalText(formData.get("transaction_type")),
     location: optionalText(formData.get("location")),
     description: optionalText(formData.get("description")),
     notes: optionalText(formData.get("notes")),
     payment_method: optionalText(formData.get("payment_method")),
     amount,
-    signed_amount: direction === "money_out" ? -amount : amount,
+    signed_amount: ledgerFields.direction === "money_out" ? -amount : amount,
+    currency: ledgerFields.currency,
+    account_id: ledgerFields.accountId,
+    transaction_effect: ledgerFields.transactionEffect,
+    source_account_id: ledgerFields.sourceAccountId,
+    destination_account_id: ledgerFields.destinationAccountId,
     bucket: optionalText(formData.get("bucket")),
     final_bucket: category,
     review_status: "confirmed",
@@ -222,7 +368,7 @@ export async function createManualFinancialTransaction(formData: FormData) {
     entityId: data.id,
     entityLabel: "Financial transaction",
     afterData: payload,
-    summary: `Created manual ${direction.replace("_", " ")} transaction`,
+    summary: `Created manual ${ledgerFields.direction.replace("_", " ")} transaction`,
   });
 
   revalidatePath("/finance");
@@ -239,23 +385,29 @@ export async function reviewFinancialTransaction(formData: FormData) {
   const id = String(formData.get("id") || "");
   const { data: before } = await supabase.from("financial_transactions").select("*").eq("id", id).maybeSingle();
   const amount = parseTransactionAmount(formData.get("amount"), before?.amount);
-  const direction = validDirection(formData.get("direction"), before?.direction);
+  const ledgerFields = resolveManualLedgerFields(formData, before);
+  const ledgerError = validateManualLedgerFields(ledgerFields);
   const transactionDate = String(formData.get("transaction_date") || before?.transaction_date || "").trim();
   const category = transactionCategory(formData, before?.final_bucket);
   if (!transactionDate) throw new Error("Transaction date is required.");
-  if (!direction) throw new Error("Direction is required.");
+  if (ledgerError) throw new Error(ledgerError);
   if (!Number.isFinite(amount) || amount < 0) throw new Error("Amount must be greater than or equal to 0.");
   if (!category) throw new Error("Category is required.");
   const payload = {
     transaction_date: transactionDate,
-    direction,
+    direction: ledgerFields.direction,
     transaction_type: optionalText(formData.get("transaction_type")),
     location: optionalText(formData.get("location")),
     description: optionalText(formData.get("description")),
     notes: optionalText(formData.get("notes")),
     payment_method: optionalText(formData.get("payment_method")),
     amount,
-    signed_amount: direction === "money_out" ? -amount : amount,
+    signed_amount: ledgerFields.direction === "money_out" ? -amount : amount,
+    currency: ledgerFields.currency,
+    account_id: ledgerFields.accountId,
+    transaction_effect: ledgerFields.transactionEffect,
+    source_account_id: ledgerFields.sourceAccountId,
+    destination_account_id: ledgerFields.destinationAccountId,
     final_bucket: category,
     review_status: "reviewed",
     needs_review: false,
@@ -299,12 +451,13 @@ export async function updateFinancialTransaction(formData: FormData) {
   const { data: before } = await supabase.from("financial_transactions").select("*").eq("id", id).maybeSingle();
   if (!before) redirect("/finance/transactions?error=Transaction%20not%20found.");
 
-  const direction = validDirection(formData.get("direction"), before.direction);
   const amount = parseTransactionAmount(formData.get("amount"), before.amount);
+  const ledgerFields = resolveManualLedgerFields(formData, before);
+  const ledgerError = validateManualLedgerFields(ledgerFields);
   const transactionDate = String(formData.get("transaction_date") || "").trim();
   const category = transactionCategory(formData, before.final_bucket);
   if (!transactionDate) redirect(`/finance/transactions/${id}/edit?error=Transaction%20date%20is%20required.`);
-  if (!direction) redirect(`/finance/transactions/${id}/edit?error=Direction%20is%20required.`);
+  if (ledgerError) redirect(`/finance/transactions/${id}/edit?error=${encodeURIComponent(ledgerError)}`);
   if (!Number.isFinite(amount) || amount < 0) redirect(`/finance/transactions/${id}/edit?error=Amount%20must%20be%20greater%20than%20or%20equal%20to%200.`);
   if (!category) redirect(`/finance/transactions/${id}/edit?error=Category%20is%20required.`);
 
@@ -313,14 +466,19 @@ export async function updateFinancialTransaction(formData: FormData) {
   const reviewStatus = markReviewed ? "reviewed" : needsManualReview ? "needs_review" : "confirmed";
   const payload = {
     transaction_date: transactionDate,
-    direction,
+    direction: ledgerFields.direction,
     transaction_type: optionalText(formData.get("transaction_type")),
     location: optionalText(formData.get("location")),
     description: optionalText(formData.get("description")),
     notes: optionalText(formData.get("notes")),
     payment_method: optionalText(formData.get("payment_method")),
     amount,
-    signed_amount: direction === "money_out" ? -amount : amount,
+    signed_amount: ledgerFields.direction === "money_out" ? -amount : amount,
+    currency: ledgerFields.currency,
+    account_id: ledgerFields.accountId,
+    transaction_effect: ledgerFields.transactionEffect,
+    source_account_id: ledgerFields.sourceAccountId,
+    destination_account_id: ledgerFields.destinationAccountId,
     bucket: optionalText(formData.get("bucket")),
     bucket_override: optionalText(formData.get("bucket_override")),
     final_bucket: category,
@@ -430,6 +588,11 @@ export async function createPurchaseFinancialTransaction(supabase: NonNullable<R
     description: purchase.receipt_number ? `Purchase ${purchase.receipt_number}` : "Purchase received",
     amount,
     signed_amount: -Math.abs(amount),
+    currency: "LYD",
+    account_id: "snacky_lyd",
+    transaction_effect: "expense",
+    source_account_id: null,
+    destination_account_id: null,
     bucket: "Inventory",
     final_bucket: "Inventory",
     review_status: "confirmed",
@@ -466,6 +629,11 @@ export async function createCashCollectionFinancialTransaction(supabase: NonNull
     description: cash.cash_bag_id ? `Cash collection ${cash.cash_bag_id}` : `Confirmed cash collection ${cash.id.slice(0, 8)}`,
     amount,
     signed_amount: Math.abs(amount),
+    currency: "LYD",
+    account_id: "snacky_lyd",
+    transaction_effect: "income",
+    source_account_id: null,
+    destination_account_id: null,
     bucket: "Cash Collection",
     final_bucket: "Cash Collection",
     review_status: "confirmed",

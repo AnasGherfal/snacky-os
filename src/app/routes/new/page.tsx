@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 
 export default async function NewRoutePage() {
   const profile = await getCurrentProfile();
-  if (!profile || !canAccessPath({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/routes/new")) {
+  if (!profile || !canAccessPath({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/routes/new")) {
     redirect("/unauthorized");
   }
 
@@ -30,7 +30,7 @@ export default async function NewRoutePage() {
     { data: products, error: productsError },
     { data: recentMovements, error: movementsError },
   ] = await Promise.all([
-    supabase.from("team_members").select("id, full_name, role").in("role", ["owner", "admin", "supervisor", "operator"]).eq("active", true).order("full_name"),
+    supabase.from("team_members").select("id, full_name, role, roles").or("role.in.(owner,admin,supervisor,operator),roles.ov.{owner,admin,supervisor,operator}").eq("active", true).order("full_name"),
     supabase.from("machines").select("id, name, machine_code").eq("status", "active").order("name"),
     supabase
       .from("refill_recommendations")
@@ -105,7 +105,7 @@ export default async function NewRoutePage() {
           storageInventory={availableStorage}
           products={productCatalog}
           recentProductIds={recentProductIds}
-          allowAdminOverride={isOwnerAdminRole(profile.role)}
+          allowAdminOverride={isOwnerAdminRole(profile)}
           defaultRouteDate={today}
         />
       </FormPageLayout>

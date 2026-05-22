@@ -13,6 +13,8 @@ type TeamMemberFormProps = {
     email: string | null;
     phone: string | null;
     role: AppRole;
+    roles?: AppRole[] | null;
+    can_add_products?: boolean | null;
     active: boolean;
     auth_user_id?: string | null;
     must_change_password?: boolean;
@@ -20,6 +22,8 @@ type TeamMemberFormProps = {
 };
 
 export function TeamMemberForm({ action, submitLabel, backHref = "/team", member }: TeamMemberFormProps) {
+  const selectedRoles = new Set(member?.roles?.length ? member.roles : [member?.role ?? "operator"]);
+
   return (
     <form action={action} className="space-y-6">
       {member ? <input type="hidden" name="id" value={member.id} /> : null}
@@ -42,27 +46,27 @@ export function TeamMemberForm({ action, submitLabel, backHref = "/team", member
         </div>
       </FormSection>
 
-      <FormSection title="Role and access" description="Roles control which modules are visible. Operators stay focused on assigned route execution.">
-        <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
-          <FormField label="Role" required>
-            <select name="role" defaultValue={member?.role ?? "operator"} className="field-input">
-              {appRoles.map((role) => (
-                <option key={role} value={role}>
-                  {role}
-                </option>
-              ))}
-            </select>
-          </FormField>
-          <div className="grid gap-2 sm:grid-cols-2">
+      <FormSection title="Roles and access" description="Assign every job this person performs. Permissions combine across selected roles.">
+        <input type="hidden" name="role" value={member?.role ?? "operator"} />
+        <div className="space-y-4">
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {appRoles.map((role) => (
-              <div key={role} className="rounded-lg border border-slate-200 bg-white p-3">
-                <div className="mb-2">
-                  <StatusBadge status={role} />
-                </div>
-                <p className="text-xs leading-5 text-slate-600">{roleDescriptions[role]}</p>
-              </div>
+              <label key={role} className="flex items-start gap-3 rounded-lg border border-slate-200 bg-white p-3">
+                <input name="roles" type="checkbox" value={role} defaultChecked={selectedRoles.has(role)} className="mt-1" />
+                <span>
+                  <span className="mb-2 block"><StatusBadge status={role} /></span>
+                  <span className="block text-xs leading-5 text-slate-600">{roleDescriptions[role]}</span>
+                </span>
+              </label>
             ))}
           </div>
+          <label className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+            <input name="can_add_products" type="checkbox" value="yes" defaultChecked={Boolean(member?.can_add_products)} className="mt-1" />
+            <span>
+              <span className="block font-semibold">can_add_products</span>
+              Allow this user to create products from purchase or inventory screens. Operators do not get this by default.
+            </span>
+          </label>
         </div>
       </FormSection>
 

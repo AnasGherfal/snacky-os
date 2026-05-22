@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DataTable, EmptyState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
-import { isOwnerAdminRole } from "@/lib/authz";
+import { isOwnerAdminRole, normalizeRoles } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { deactivateTeamMember } from "@/lib/team-actions";
@@ -22,14 +22,14 @@ export default async function TeamMemberActivityPage({
   searchParams: Promise<{ action?: string; date_from?: string; date_to?: string; error?: string }>;
 }) {
   const profile = await getCurrentProfile();
-  if (!isOwnerAdminRole(profile?.role)) redirect("/unauthorized");
+  if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
 
   const { id } = await params;
   const { action = "", date_from = "", date_to = "", error = "" } = await searchParams;
   const supabase = getSupabaseServerClient();
   if (!supabase) notFound();
 
-  const { data: member } = await supabase.from("team_members").select("id, full_name, email, phone, role, active, active_status").eq("id", id).maybeSingle();
+  const { data: member } = await supabase.from("team_members").select("id, full_name, email, phone, role, roles, can_add_products, active, active_status").eq("id", id).maybeSingle();
   if (!member) notFound();
 
   let activityQuery = supabase
@@ -99,7 +99,7 @@ export default async function TeamMemberActivityPage({
       {error ? <div className="mb-5 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{error}</div> : null}
 
       <section className="grid gap-4 md:grid-cols-5">
-        <div className="surface-card"><div className="text-sm text-slate-500">Role</div><div className="mt-2"><StatusBadge status={member.role} /></div></div>
+        <div className="surface-card"><div className="text-sm text-slate-500">Roles</div><div className="mt-2 flex flex-wrap gap-1">{normalizeRoles(member.roles, member.role).map((role) => <StatusBadge key={role} status={role} />)}</div></div>
         <div className="surface-card"><div className="text-sm text-slate-500">Status</div><div className="mt-2"><StatusBadge status={member.active_status ?? (member.active === false ? "inactive" : "active")} /></div></div>
         <div className="surface-card"><div className="text-sm text-slate-500">Assigned routes</div><div className="mt-1 text-3xl font-semibold">{routeRows.length}</div></div>
         <div className="surface-card"><div className="text-sm text-slate-500">Completed routes</div><div className="mt-1 text-3xl font-semibold">{completedRoutes}</div></div>

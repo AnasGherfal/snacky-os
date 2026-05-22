@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { PurchaseForm } from "@/components/PurchaseForm";
 import { FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
-import { isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
+import { canAddProducts, canManagePurchases } from "@/lib/authz";
 import { updatePurchase } from "@/lib/purchase-actions";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -19,7 +19,7 @@ export default async function EditPurchasePage({
   const { error = "", module = "" } = await searchParams;
   const moduleQuery = module === "finance" ? "?module=finance" : "";
   const profile = await getCurrentProfile();
-  if (!isOwnerAdminRole(profile?.role) && !isSupervisorRole(profile?.role) && profile?.role !== "warehouse") redirect("/unauthorized");
+  if (!profile || !canManagePurchases(profile)) redirect("/unauthorized");
 
   const supabase = getSupabaseServerClient();
   if (!supabase) notFound();
@@ -135,7 +135,7 @@ export default async function EditPurchasePage({
           action={updatePurchase}
           suppliers={suppliers ?? []}
           products={productOptions}
-          canAddProducts={isOwnerAdminRole(profile?.role)}
+          canAddProducts={canAddProducts(profile)}
           initialPurchase={{
             id,
             supplierId: (purchase as any).supplier_id,

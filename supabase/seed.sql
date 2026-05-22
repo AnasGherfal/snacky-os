@@ -18,7 +18,7 @@ values
   ('2411000046', 'مستشفى المواصفات', 'طريق المطار', 'Places_Logos/almHospital.webp', 'TO_CONFIRM', '', '2411000046', 'SHELF_2411000046'),
   ('2509000369', 'مستشفى الاستقلال', '', 'Machines_Images/4f241ed6.Logo.223116.jpg', 'TO_CONFIRM', '', 'TO_CONFIRM', 'SHELF_2509000369'),
   ('2509000370', 'جامعة التحدي', '', '', 'TO_CONFIRM', '', 'TO_CONFIRM', 'TO_CONFIRM'),
-  ('2510001719', 'خليج ليبيا', '', '', 'TO_CONFIRM', '', 'TO_CONFIRM', 'TO_CONFIRM')
+  ('2510001719', 'جامعة طرابلس الاهليه', '', '', 'TO_CONFIRM', '', 'TO_CONFIRM', 'TO_CONFIRM')
 )
 insert into locations (id, name, location_type, address, contact_name, status, notes)
 select ('00000000-0000-0000-0000-' || lpad(row_number() over(order by coalesce(nullif(location,''),'TO_CONFIRM'))::text, 12, '0'))::uuid,
@@ -35,7 +35,7 @@ values
   ('2411000046', 'مستشفى المواصفات', 'طريق المطار', 'Places_Logos/almHospital.webp', 'TO_CONFIRM', '', '2411000046', 'SHELF_2411000046'),
   ('2509000369', 'مستشفى الاستقلال', '', 'Machines_Images/4f241ed6.Logo.223116.jpg', 'TO_CONFIRM', '', 'TO_CONFIRM', 'SHELF_2509000369'),
   ('2509000370', 'جامعة التحدي', '', '', 'TO_CONFIRM', '', 'TO_CONFIRM', 'TO_CONFIRM'),
-  ('2510001719', 'خليج ليبيا', '', '', 'TO_CONFIRM', '', 'TO_CONFIRM', 'TO_CONFIRM')
+  ('2510001719', 'جامعة طرابلس الاهليه', '', '', 'TO_CONFIRM', '', 'TO_CONFIRM', 'TO_CONFIRM')
 )
 insert into machines (machine_code, vms_machine_id, name, machine_type, location_id, status, notes)
 select 'SNK-' || machine_id,machine_id,machine_name,'lift',l.id,'active',coalesce(nullif(m.notes,''), 'Seeded from machines.csv')

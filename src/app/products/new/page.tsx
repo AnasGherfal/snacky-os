@@ -3,6 +3,7 @@ import { revalidatePath } from "next/cache";
 import { ErrorState, FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
 import { logActivity } from "@/lib/activity-log";
 import { requireCurrentProfileForPath } from "@/lib/auth";
+import { canAddProducts } from "@/lib/authz";
 import { resolveProductImageUrl } from "@/lib/product-images";
 import { isSkuDuplicateError, resolveProductSku } from "@/lib/product-sku";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -15,6 +16,7 @@ function safeReturnTo(value: FormDataEntryValue | string | null | undefined) {
 async function createProduct(fd: FormData) {
   "use server";
   const profile = await requireCurrentProfileForPath("/products/new");
+  if (!canAddProducts(profile)) redirect("/unauthorized");
   const s = getSupabaseServerClient();
   if (!s) redirect("/products/new?error=Supabase%20is%20not%20configured.");
   const returnTo = safeReturnTo(fd.get("return_to"));
@@ -76,7 +78,8 @@ async function createProduct(fd: FormData) {
 }
 
 export default async function NewProductPage({ searchParams }: { searchParams: Promise<{ error?: string; returnTo?: string }> }) {
-  await requireCurrentProfileForPath("/products/new");
+  const profile = await requireCurrentProfileForPath("/products/new");
+  if (!canAddProducts(profile)) redirect("/unauthorized");
   const params = await searchParams;
   const returnTo = safeReturnTo(params.returnTo);
   const s = getSupabaseServerClient();

@@ -3,8 +3,9 @@ import { redirect } from "next/navigation";
 import { DataTable, EmptyState, ErrorState, FormField, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canViewFinancials } from "@/lib/authz";
-import { isBalanceAffectingTransaction, signedAmount } from "@/lib/finance-balance";
+import { computeFinanceBalances, financeTotalsByCurrency, formatFinanceMoney, isBalanceAffectingTransaction, signedAmount, sumFinanceRows } from "@/lib/finance-balance";
 import { updateFinanceSettings } from "@/lib/finance-actions";
+import { buildFinanceClarificationPrompts, buildFinanceReviewGroups } from "@/lib/finance-import";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -25,6 +26,13 @@ type FinanceRow = {
   transaction_type: string | null;
   description: string | null;
   signed_amount: number | string | null;
+  amount?: number | string | null;
+  currency?: string | null;
+  account_id?: string | null;
+  transaction_effect?: string | null;
+  source_account_id?: string | null;
+  destination_account_id?: string | null;
+  import_status?: string | null;
   final_bucket: string | null;
   review_status: string | null;
   needs_review: boolean | null;
@@ -32,7 +40,7 @@ type FinanceRow = {
 };
 
 function financeAllowed(profile: Awaited<ReturnType<typeof getCurrentProfile>>) {
-  return profile && canViewFinancials({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status });
+  return profile && canViewFinancials({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status });
 }
 
 function ymd(date: Date) {
@@ -72,23 +80,6 @@ function resolvePeriod(params: FinanceSearchParams) {
 
 function amount(row: FinanceRow) {
   return signedAmount(row);
-}
-
-function sum(rows: FinanceRow[]) {
-  return rows.reduce((total, row) => total + amount(row), 0);
-}
-
-function money(value: number, currency: string) {
-  return `${Number(value ?? 0).toLocaleString("en-US", { maximumFractionDigits: 2 })} ${currency}`;
-}
-
-function transactionText(row: FinanceRow) {
-  return [row.transaction_kind, row.transaction_type, row.final_bucket, row.description].filter(Boolean).join(" ").toLowerCase();
-}
-
-function includesAny(row: FinanceRow, terms: string[]) {
-  const text = transactionText(row);
-  return terms.some((term) => text.includes(term));
 }
 
 function StatCard({
@@ -132,10 +123,10 @@ export default async function FinancePage({
     );
   }
   const [settingsResult, transactionsResult] = await Promise.all([
-    supabase.from("finance_settings").select("opening_balance, opening_balance_date, default_currency, updated_at").eq("id", "default").maybeSingle(),
+    supabase.from("finance_settings").select("opening_balance, opening_balance_snacky_lyd, opening_balance_snacky_usd, opening_balance_owner_lyd, opening_balance_owner_usd, opening_balance_date, default_currency, exchange_rate_usd_to_lyd, updated_at").eq("id", "default").maybeSingle(),
     supabase
       .from("financial_transactions")
-      .select("id, transaction_date, direction, transaction_kind, transaction_type, description, signed_amount, final_bucket, review_status, needs_review, transaction_status")
+      .select("id, transaction_date, direction, transaction_kind, transaction_type, description, amount, signed_amount, currency, account_id, transaction_effect, source_account_id, destination_account_id, import_status, final_bucket, review_status, needs_review, transaction_status")
       .eq("transaction_status", "active")
       .order("transaction_date", { ascending: false })
       .limit(10000),
@@ -154,21 +145,50 @@ export default async function FinancePage({
   const rows = ((transactionsResult.data ?? []) as FinanceRow[]).filter((row) => row.transaction_date);
   const balanceRows = rows.filter(isBalanceAffectingTransaction);
   const currency = String(settings?.default_currency ?? "LYD");
-  const openingBalanceIsSet = settings?.opening_balance !== null && settings?.opening_balance !== undefined;
-  const openingBalance = openingBalanceIsSet ? Number(settings.opening_balance ?? 0) : 0;
-  const ledgerNet = sum(balanceRows);
-  const currentBalance = openingBalance + ledgerNet;
-  const totalMoneyIn = balanceRows.filter((row) => row.direction === "money_in").reduce((total, row) => total + amount(row), 0);
-  const totalMoneyOut = Math.abs(balanceRows.filter((row) => row.direction === "money_out").reduce((total, row) => total + amount(row), 0));
+  const openingBalanceIsSet = settings !== null;
+  const openingBalances = {
+    snacky_lyd: Number(settings?.opening_balance_snacky_lyd ?? settings?.opening_balance ?? 0),
+    snacky_usd: Number(settings?.opening_balance_snacky_usd ?? 0),
+    owner_lyd: Number(settings?.opening_balance_owner_lyd ?? 0),
+    owner_usd: Number(settings?.opening_balance_owner_usd ?? 0),
+  };
+  const balances = computeFinanceBalances(balanceRows, openingBalances);
+  const totalsByCurrency = financeTotalsByCurrency(balances);
+  const exchangeRate = Number(settings?.exchange_rate_usd_to_lyd ?? 0);
+  const convertedTotalLyd = exchangeRate > 0 ? totalsByCurrency.LYD + totalsByCurrency.USD * exchangeRate : null;
   const periodRows = balanceRows.filter((row) => row.transaction_date >= periodRange.start && row.transaction_date <= periodRange.end);
-  const periodMoneyIn = periodRows.filter((row) => row.direction === "money_in").reduce((total, row) => total + amount(row), 0);
-  const periodMoneyOut = Math.abs(periodRows.filter((row) => row.direction === "money_out").reduce((total, row) => total + amount(row), 0));
-  const periodNet = periodMoneyIn - periodMoneyOut;
-  const purchases = Math.abs(periodRows.filter((row) => row.direction === "money_out" && (row.transaction_kind === "product_purchase" || includesAny(row, ["purchase", "restocking", "supplier"]))).reduce((total, row) => total + amount(row), 0));
-  const rent = Math.abs(periodRows.filter((row) => row.direction === "money_out" && includesAny(row, ["rent"])).reduce((total, row) => total + amount(row), 0));
-  const machineInvestments = Math.abs(periodRows.filter((row) => row.direction === "money_out" && includesAny(row, ["machine investment", "machine investments", "machine purchase", "equipment"])).reduce((total, row) => total + amount(row), 0));
+  const periodMoneyInLyd = sumFinanceRows(periodRows, "LYD", "money_in");
+  const periodMoneyOutLyd = Math.abs(sumFinanceRows(periodRows, "LYD", "money_out"));
+  const periodMoneyInUsd = sumFinanceRows(periodRows, "USD", "money_in");
+  const periodMoneyOutUsd = Math.abs(sumFinanceRows(periodRows, "USD", "money_out"));
+  const periodNetLyd = periodMoneyInLyd - periodMoneyOutLyd;
+  const periodNetUsd = periodMoneyInUsd - periodMoneyOutUsd;
   const reviewCount = rows.filter((row) => row.needs_review).length;
   const latestRows = rows.slice(0, 10);
+  const reviewGroups = buildFinanceReviewGroups(
+    rows
+      .filter((row) => row.needs_review)
+      .map((row: any) => ({
+        ...row,
+        importStatus: "needs_review",
+        sourceRow: Number(row.source_row ?? 0),
+        sourceFile: "",
+        sourceSheet: "",
+        record: {},
+        originalDescription: row.description ?? "",
+        reviewReason: "Needs review",
+        reviewGroupKey: row.final_bucket ?? "needs_review",
+        suggestedCategory: row.final_bucket,
+        suggestedAccount: row.account_id ?? "snacky_lyd",
+        suggestedMachine: null,
+        suggestedSourceAccount: row.source_account_id,
+        suggestedDestinationAccount: row.destination_account_id,
+        confidenceScore: 0.5,
+        clarificationQuestion: "Should this transaction affect a Snacky account, an Owner account, or be ignored?",
+        amount: Number(row.amount ?? Math.abs(Number(row.signed_amount ?? 0))),
+        currency: row.currency ?? "LYD",
+      })) as any[],
+  );
   const periodLinks = [
     { label: "This month", href: "/finance?period=this_month", key: "this_month" },
     { label: "Last month", href: "/finance?period=last_month", key: "last_month" },
@@ -211,28 +231,39 @@ export default async function FinancePage({
       </section>
 
       <section className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          label="Opening Balance"
-          value={openingBalanceIsSet ? money(openingBalance, currency) : "Not set"}
-          note={openingBalanceIsSet ? `As of ${settings?.opening_balance_date ?? "not dated"}` : "Set this in Finance Settings"}
-        />
-        <StatCard label="Total Money In" value={money(totalMoneyIn, currency)} note="Active finance ledger inflows" tone="positive" />
-        <StatCard label="Total Money Out" value={money(totalMoneyOut, currency)} note="Active finance ledger outflows" tone="negative" />
-        <StatCard
-          label="Current Balance"
-          value={money(currentBalance, currency)}
-          note="Opening balance + active money in - active money out"
-          tone={currentBalance < 0 ? "negative" : "strong"}
-        />
+        <StatCard label="Snacky LYD" value={formatFinanceMoney(balances.snacky_lyd, "LYD")} note="Business LYD only" tone={balances.snacky_lyd < 0 ? "negative" : "strong"} />
+        <StatCard label="Snacky USD" value={formatFinanceMoney(balances.snacky_usd, "USD")} note="Business USD only" tone={balances.snacky_usd < 0 ? "negative" : "strong"} />
+        <StatCard label="Owner LYD" value={formatFinanceMoney(balances.owner_lyd, "LYD")} note="Owner/personal LYD only" tone={balances.owner_lyd < 0 ? "negative" : "strong"} />
+        <StatCard label="Owner USD" value={formatFinanceMoney(balances.owner_usd, "USD")} note="Owner/personal USD only" tone={balances.owner_usd < 0 ? "negative" : "strong"} />
+      </section>
+
+      <section className="surface-card mb-6">
+        <div className="grid gap-4 md:grid-cols-3">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total LYD Only</div>
+            <div className="mt-2 text-2xl font-semibold text-slate-900">{formatFinanceMoney(totalsByCurrency.LYD, "LYD")}</div>
+            <div className="mt-1 text-xs text-slate-500">Snacky LYD + Owner LYD. USD is not included.</div>
+          </div>
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total USD Only</div>
+            <div className="mt-2 text-2xl font-semibold text-slate-900">{formatFinanceMoney(totalsByCurrency.USD, "USD")}</div>
+            <div className="mt-1 text-xs text-slate-500">Snacky USD + Owner USD. LYD is not included.</div>
+          </div>
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Converted Total</div>
+            <div className="mt-2 text-2xl font-semibold text-slate-900">{convertedTotalLyd === null ? "Not shown" : formatFinanceMoney(convertedTotalLyd, "LYD")}</div>
+            <div className="mt-1 text-xs text-slate-500">{convertedTotalLyd === null ? "Add a USD to LYD exchange rate to show this." : `Using 1 USD = ${exchangeRate} LYD.`}</div>
+          </div>
+        </div>
       </section>
 
       <section className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <StatCard label={`Revenue ${periodRange.suffix}`} value={money(periodMoneyIn, currency)} note="Actual active money in, not VMS sales reports" tone="positive" />
-        <StatCard label={`Expenses ${periodRange.suffix}`} value={money(periodMoneyOut, currency)} note="Actual active money out" tone="negative" />
-        <StatCard label={`Net Cash Flow ${periodRange.suffix}`} value={money(periodNet, currency)} note="Money in minus money out" tone={periodNet < 0 ? "negative" : "positive"} />
-        <StatCard label={`Purchases ${periodRange.suffix}`} value={money(purchases, currency)} note="Paid or received product purchases" />
-        <StatCard label={`Rent ${periodRange.suffix}`} value={money(rent, currency)} note="Rent-labelled finance transactions" />
-        <StatCard label={`Machine Investments ${periodRange.suffix}`} value={money(machineInvestments, currency)} note="Machine or equipment investment spend" />
+        <StatCard label={`LYD In ${periodRange.suffix}`} value={formatFinanceMoney(periodMoneyInLyd, "LYD")} note="Active LYD inflows only" tone="positive" />
+        <StatCard label={`LYD Out ${periodRange.suffix}`} value={formatFinanceMoney(periodMoneyOutLyd, "LYD")} note="Active LYD outflows only" tone="negative" />
+        <StatCard label={`LYD Net ${periodRange.suffix}`} value={formatFinanceMoney(periodNetLyd, "LYD")} note="LYD money in minus LYD money out" tone={periodNetLyd < 0 ? "negative" : "positive"} />
+        <StatCard label={`USD In ${periodRange.suffix}`} value={formatFinanceMoney(periodMoneyInUsd, "USD")} note="Active USD inflows only" tone="positive" />
+        <StatCard label={`USD Out ${periodRange.suffix}`} value={formatFinanceMoney(periodMoneyOutUsd, "USD")} note="Active USD outflows only" tone="negative" />
+        <StatCard label={`USD Net ${periodRange.suffix}`} value={formatFinanceMoney(periodNetUsd, "USD")} note="USD money in minus USD money out" tone={periodNetUsd < 0 ? "negative" : "positive"} />
       </section>
 
       <section className="surface-card mb-6">
@@ -240,21 +271,27 @@ export default async function FinancePage({
           <h2 className="text-base font-semibold text-slate-900">Finance Settings</h2>
           <p className="text-sm text-slate-500">Opening balance is added once before approved active ledger inflows and outflows. Needs-review, voided, and archived rows are excluded.</p>
         </div>
-        <form action={updateFinanceSettings} className="mt-4 grid gap-4 md:grid-cols-[1fr_1fr_1fr_auto] md:items-end">
-          <FormField label="Opening balance" required>
-            <input name="opening_balance" type="number" step="0.01" defaultValue={openingBalanceIsSet ? Number(settings.opening_balance ?? 0) : ""} className="field-input" />
+        <form action={updateFinanceSettings} className="mt-4 grid gap-4 md:grid-cols-3 xl:grid-cols-6 md:items-end">
+          <FormField label="Snacky LYD opening">
+            <input name="opening_balance_snacky_lyd" type="number" step="0.01" defaultValue={openingBalanceIsSet ? Number(openingBalances.snacky_lyd ?? 0) : ""} className="field-input" />
+          </FormField>
+          <FormField label="Snacky USD opening">
+            <input name="opening_balance_snacky_usd" type="number" step="0.01" defaultValue={openingBalanceIsSet ? Number(openingBalances.snacky_usd ?? 0) : ""} className="field-input" />
+          </FormField>
+          <FormField label="Owner LYD opening">
+            <input name="opening_balance_owner_lyd" type="number" step="0.01" defaultValue={openingBalanceIsSet ? Number(openingBalances.owner_lyd ?? 0) : ""} className="field-input" />
+          </FormField>
+          <FormField label="Owner USD opening">
+            <input name="opening_balance_owner_usd" type="number" step="0.01" defaultValue={openingBalanceIsSet ? Number(openingBalances.owner_usd ?? 0) : ""} className="field-input" />
           </FormField>
           <FormField label="Opening balance date">
             <input name="opening_balance_date" type="date" defaultValue={settings?.opening_balance_date ?? ymd(new Date())} className="field-input" />
           </FormField>
-          <FormField label="Default currency">
-            <select name="default_currency" defaultValue={currency} className="field-input">
-              <option value="LYD">LYD</option>
-              <option value="USD">USD</option>
-              <option value="EUR">EUR</option>
-            </select>
+          <FormField label="USD to LYD rate">
+            <input name="exchange_rate_usd_to_lyd" type="number" step="0.0001" min="0" defaultValue={exchangeRate > 0 ? exchangeRate : ""} className="field-input" />
           </FormField>
-          <button className="btn-primary">Save settings</button>
+          <input type="hidden" name="default_currency" value={currency} />
+          <button className="btn-primary xl:col-start-6">Save settings</button>
         </form>
       </section>
 
@@ -263,6 +300,25 @@ export default async function FinancePage({
         <StatCard label="Confirmed" value={String(rows.filter((row) => row.review_status === "confirmed").length)} />
         <StatCard label="Reviewed" value={String(rows.filter((row) => row.review_status === "reviewed").length)} />
       </section>
+
+      {reviewGroups.length ? (
+        <section className="surface-card mb-6">
+          <div className="flex flex-col gap-2 border-b border-slate-200 pb-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">Import Review Summary</h2>
+              <p className="mt-1 text-sm text-slate-500">Grouped questions so finance can resolve patterns, not individual rows.</p>
+            </div>
+            <SecondaryButton href="/finance/import?tab=needs_review">Open review groups</SecondaryButton>
+          </div>
+          <div className="mt-4 grid gap-3">
+            {buildFinanceClarificationPrompts(reviewGroups).slice(0, 4).map((prompt, index) => (
+              <div key={`${prompt}-${index}`} className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                {prompt}
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {!latestRows.length ? (
         <EmptyState title="No finance transactions yet" body="Import the historical finance file or add a manual money in/out transaction." />
@@ -275,7 +331,7 @@ export default async function FinancePage({
               <td>{row.transaction_kind.replaceAll("_", " ")}</td>
               <td>{row.transaction_type ?? "-"}</td>
               <td>{row.description ?? "-"}</td>
-              <td>{money(amount(row), currency)}</td>
+              <td>{formatFinanceMoney(amount(row), row.currency ?? currency)}</td>
               <td><StatusBadge status={row.needs_review ? "needs_review" : row.review_status} /></td>
             </tr>
           ))}

@@ -23,7 +23,7 @@ async function requireStorageLocationAccess(path = "/storage-locations") {
 
 async function requireStorageLocationContext(path = "/storage-locations") {
   const profile = await getCurrentProfile();
-  if (!profile || !canManageStorageLocations(profile.role)) redirect("/unauthorized");
+  if (!profile || !canManageStorageLocations(profile)) redirect("/unauthorized");
   const supabase = getSupabaseServerClient();
   if (!supabase) fail(path, "Supabase is not configured.");
   return { profile, supabase };

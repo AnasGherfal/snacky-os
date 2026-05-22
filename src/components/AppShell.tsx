@@ -19,6 +19,8 @@ async function requireShellProfile(pathname: string) {
     {
       id: profile.id,
       role: profile.role,
+      roles: profile.roles,
+      canAddProducts: profile.can_add_products,
       teamMemberId: profile.team_member_id,
       activeStatus: profile.active_status,
     },

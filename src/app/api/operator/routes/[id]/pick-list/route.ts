@@ -39,7 +39,7 @@ export async function GET(
     if (!route) {
       return NextResponse.json({ error: "Route not found" }, { status: 404 });
     }
-    if (!canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, route.operator_id)) {
+    if (!canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, route.operator_id)) {
       return NextResponse.json({ error: "This route is not assigned to you" }, { status: 403 });
     }
 

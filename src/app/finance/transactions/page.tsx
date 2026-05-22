@@ -4,8 +4,7 @@ import { Fragment } from "react";
 import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canEditFinancialTransactions, canViewFinancials } from "@/lib/authz";
-import { isBalanceAffectingTransaction, signedAmount } from "@/lib/finance-balance";
-import { lyd } from "@/lib/format";
+import { accountLabel, formatFinanceMoney, isBalanceAffectingTransaction, signedAmount } from "@/lib/finance-balance";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +23,7 @@ type TransactionParams = {
 };
 
 function canAccess(profile: Awaited<ReturnType<typeof getCurrentProfile>>) {
-  return profile && canViewFinancials({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status });
+  return profile && canViewFinancials({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status });
 }
 
 function categoryLabel(row: any) {
@@ -114,7 +113,7 @@ function relatedLabel(row: any, maps: { purchases: Map<string, any>; routes: Map
 
   if (purchase) items.push(<Link key="purchase" href={`/purchases/${purchase.id}`} className="link-secondary">Purchase {purchase.receipt_number ?? purchase.id.slice(0, 8)}</Link>);
   if (route) items.push(<Link key="route" href={`/routes/${route.id}`} className="link-secondary">Route {route.route_date}</Link>);
-  if (machine) items.push(<Link key="machine" href={`/machines/${machine.id}/edit`} className="link-secondary">{machine.machine_code ?? machine.name}</Link>);
+  if (machine) items.push(<Link key="machine" href={`/machines/${machine.id}/edit`} className="link-secondary">{machine.name ?? machine.machine_code}</Link>);
   if (location) items.push(<Link key="location" href={`/locations/${location.id}`} className="link-secondary">{location.name}</Link>);
   if (row.related_cash_collection_id) items.push(<Link key="cash" href={`/cash-collections/${row.related_cash_collection_id}`} className="link-secondary">Cash collection</Link>);
 
@@ -134,7 +133,7 @@ export default async function FinanceTransactionsPage({
 }) {
   const profile = await getCurrentProfile();
   if (!profile || !canAccess(profile)) redirect("/unauthorized");
-  const canEdit = canEditFinancialTransactions({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status });
+  const canEdit = canEditFinancialTransactions({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status });
   const params = await searchParams;
   const supabase = getSupabaseServerClient();
   if (!supabase) {
@@ -149,7 +148,7 @@ export default async function FinanceTransactionsPage({
 
   let query = supabase
     .from("financial_transactions")
-    .select("id, transaction_date, direction, transaction_kind, transaction_type, description, notes, amount, signed_amount, final_bucket, payment_method, transaction_status, review_status, needs_review, source_sheet, source_row, related_purchase_id, related_cash_collection_id, related_route_id, related_machine_id, related_location_id, receipt_url, created_at")
+    .select("id, transaction_date, direction, transaction_kind, transaction_type, description, notes, amount, signed_amount, currency, account_id, transaction_effect, source_account_id, destination_account_id, import_status, final_bucket, payment_method, transaction_status, review_status, needs_review, source_sheet, source_row, related_purchase_id, related_cash_collection_id, related_route_id, related_machine_id, related_location_id, receipt_url, created_at")
     .order("transaction_date", { ascending: false })
     .limit(1000);
 
@@ -192,9 +191,17 @@ export default async function FinanceTransactionsPage({
   });
 
   const balanceRows = rows.filter(isBalanceAffectingTransaction);
-  const moneyIn = balanceRows.filter((row) => row.direction === "money_in").reduce((sum, row) => sum + signedAmount(row), 0);
-  const moneyOut = Math.abs(balanceRows.filter((row) => row.direction === "money_out").reduce((sum, row) => sum + signedAmount(row), 0));
-  const net = balanceRows.reduce((sum, row) => sum + signedAmount(row), 0);
+  const totals = balanceRows.reduce(
+    (sum, row) => {
+      const currency = String(row.currency ?? "LYD").toUpperCase() === "USD" ? "USD" : "LYD";
+      const signed = signedAmount(row);
+      sum.net[currency] += signed;
+      if (row.direction === "money_in") sum.in[currency] += signed;
+      if (row.direction === "money_out") sum.out[currency] += Math.abs(signed);
+      return sum;
+    },
+    { net: { LYD: 0, USD: 0 }, in: { LYD: 0, USD: 0 }, out: { LYD: 0, USD: 0 } },
+  );
   const purchaseGroups = new Map<string, any[]>();
   const normalRows: any[] = [];
 
@@ -218,7 +225,7 @@ export default async function FinanceTransactionsPage({
   ].sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")) || a.key.localeCompare(b.key));
 
   const detailedCsvHref = csvDataHref(
-    ["Date", "Direction", "Category", "Amount", "Supplier", "Receipt", "Payment", "Status", "Description", "Notes", "Transaction ID"],
+    ["Date", "Direction", "Category", "Amount", "Currency", "Account", "Supplier", "Receipt", "Payment", "Status", "Description", "Notes", "Transaction ID"],
     rows.map((row) => {
       const purchase = purchaseFor(row, maps.purchases);
       return [
@@ -226,6 +233,8 @@ export default async function FinanceTransactionsPage({
         String(row.direction ?? "").replaceAll("_", " "),
         categoryLabel(row),
         Number(row.signed_amount ?? 0),
+        row.currency ?? "LYD",
+        row.transaction_effect === "transfer" ? `${accountLabel(row.source_account_id)} -> ${accountLabel(row.destination_account_id)}` : accountLabel(row.account_id),
         purchase?.supplier?.name ?? "",
         purchase?.receipt_number ?? "",
         paymentLabel(row.payment_method),
@@ -238,14 +247,14 @@ export default async function FinanceTransactionsPage({
   );
 
   const groupedCsvHref = csvDataHref(
-    ["Date", "Direction", "Category", "Amount", "Count", "Payment Summary", "Status", "Description"],
+    ["Date", "Direction", "Category", "Amount", "Currency", "Count", "Payment Summary", "Status", "Description"],
     displayItems.map((item) => {
       if (item.type === "group") {
         const total = item.rows.reduce((sum, row) => sum + Math.abs(Number(row.amount ?? row.signed_amount ?? 0)), 0);
-        return [item.date, "money out", "Product Purchases", total, item.rows.length, paymentSummary(item.rows), "active", `${item.rows.length} product purchase transactions`];
+        return [item.date, "money out", "Product Purchases", total, item.rows[0]?.currency ?? "LYD", item.rows.length, paymentSummary(item.rows), "active", `${item.rows.length} product purchase transactions`];
       }
       const row = item.row;
-      return [row.transaction_date, String(row.direction ?? "").replaceAll("_", " "), categoryLabel(row), Number(row.signed_amount ?? 0), 1, paymentLabel(row.payment_method), row.transaction_status ?? "active", row.description ?? row.notes ?? ""];
+      return [row.transaction_date, String(row.direction ?? "").replaceAll("_", " "), categoryLabel(row), Number(row.signed_amount ?? 0), row.currency ?? "LYD", 1, paymentLabel(row.payment_method), row.transaction_status ?? "active", row.description ?? row.notes ?? ""];
     }),
   );
 
@@ -256,10 +265,10 @@ export default async function FinanceTransactionsPage({
       {params.saved ? <div className="fixed right-5 top-5 z-50 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800 shadow-lg">Transaction saved.</div> : null}
 
       <section className="mb-6 grid gap-4 md:grid-cols-4">
-        <div className="surface-card"><div className="text-sm text-slate-500">Balance-impact net</div><div className={`mt-1 text-3xl font-semibold ${net < 0 ? "text-rose-700" : "text-slate-900"}`}>{lyd(net)}</div></div>
-        <div className="surface-card"><div className="text-sm text-slate-500">Money in</div><div className="mt-1 text-3xl font-semibold">{lyd(moneyIn)}</div></div>
-        <div className="surface-card"><div className="text-sm text-slate-500">Money out</div><div className="mt-1 text-3xl font-semibold">{lyd(moneyOut)}</div></div>
-        <div className="surface-card"><div className="text-sm text-slate-500">Transactions shown</div><div className="mt-1 text-3xl font-semibold">{rows.length}</div></div>
+        <div className="surface-card"><div className="text-sm text-slate-500">LYD net</div><div className={`mt-1 text-3xl font-semibold ${totals.net.LYD < 0 ? "text-rose-700" : "text-slate-900"}`}>{formatFinanceMoney(totals.net.LYD, "LYD")}</div></div>
+        <div className="surface-card"><div className="text-sm text-slate-500">USD net</div><div className={`mt-1 text-3xl font-semibold ${totals.net.USD < 0 ? "text-rose-700" : "text-slate-900"}`}>{formatFinanceMoney(totals.net.USD, "USD")}</div></div>
+        <div className="surface-card"><div className="text-sm text-slate-500">Money in</div><div className="mt-1 text-lg font-semibold">{formatFinanceMoney(totals.in.LYD, "LYD")} / {formatFinanceMoney(totals.in.USD, "USD")}</div></div>
+        <div className="surface-card"><div className="text-sm text-slate-500">Money out</div><div className="mt-1 text-lg font-semibold">{formatFinanceMoney(totals.out.LYD, "LYD")} / {formatFinanceMoney(totals.out.USD, "USD")}</div></div>
       </section>
 
       <section className="surface-card mb-6">
@@ -297,7 +306,7 @@ export default async function FinanceTransactionsPage({
                     <td>{item.date}</td>
                     <td><StatusBadge status="Money Out" /></td>
                     <td><div className="font-medium text-slate-900">Product Purchases</div><div className="text-xs text-slate-500">grouped by transaction date</div></td>
-                    <td className="font-semibold text-rose-700">{lyd(total)}</td>
+                    <td className="font-semibold text-rose-700">{formatFinanceMoney(total, item.rows[0]?.currency ?? "LYD")}</td>
                     <td className="max-w-md">{item.rows.length} purchases / transactions</td>
                     <td>{paymentSummary(item.rows)}</td>
                     <td><span className="text-slate-500">{item.rows.length} linked purchases</span></td>
@@ -327,7 +336,7 @@ export default async function FinanceTransactionsPage({
                                   <tr key={row.id} className="border-b border-slate-100 last:border-0">
                                     <td className="px-3 py-2 font-medium text-slate-900">{purchase?.supplier?.name ?? "-"}</td>
                                     <td className="px-3 py-2">{purchase?.receipt_number ?? row.description ?? "-"}</td>
-                                    <td className="px-3 py-2 font-semibold text-rose-700">{lyd(Math.abs(Number(row.amount ?? row.signed_amount ?? 0)))}</td>
+                                    <td className="px-3 py-2 font-semibold text-rose-700">{formatFinanceMoney(Math.abs(Number(row.amount ?? row.signed_amount ?? 0)), row.currency ?? "LYD")}</td>
                                     <td className="px-3 py-2">{paymentLabel(row.payment_method)}</td>
                                     <td className="px-3 py-2">{purchase ? <Link href={`/purchases/${purchase.id}`} className="link-secondary">Purchase {purchase.receipt_number ?? purchase.id.slice(0, 8)}</Link> : "-"}</td>
                                     <td className="px-3 py-2">{row.notes ?? row.description ?? "-"}</td>
@@ -349,8 +358,12 @@ export default async function FinanceTransactionsPage({
               <tr key={row.id}>
                 <td>{row.transaction_date}</td>
                 <td><StatusBadge status={String(row.direction ?? "").replace("_", " ")} /></td>
-                <td><div className="font-medium text-slate-900">{categoryLabel(row)}</div><div className="text-xs text-slate-500">{sourceLabel(row)}</div></td>
-                <td className={`font-semibold ${Number(row.signed_amount ?? 0) < 0 ? "text-rose-700" : "text-emerald-700"}`}>{lyd(Number(row.signed_amount ?? 0))}</td>
+                <td>
+                  <div className="font-medium text-slate-900">{categoryLabel(row)}</div>
+                  <div className="text-xs text-slate-500">{row.transaction_effect === "transfer" ? `${accountLabel(row.source_account_id)} -> ${accountLabel(row.destination_account_id)}` : accountLabel(row.account_id)}</div>
+                  <div className="text-xs text-slate-500">{sourceLabel(row)}</div>
+                </td>
+                <td className={`font-semibold ${Number(row.signed_amount ?? 0) < 0 ? "text-rose-700" : "text-emerald-700"}`}>{formatFinanceMoney(Number(row.signed_amount ?? 0), row.currency ?? "LYD")}</td>
                 <td className="max-w-md">{row.description ?? row.notes ?? "-"}</td>
                 <td>{paymentLabel(row.payment_method)}</td>
                 <td>{relatedLabel(row, maps)}</td>

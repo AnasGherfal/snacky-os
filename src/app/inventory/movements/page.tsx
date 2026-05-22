@@ -91,10 +91,10 @@ export default async function InventoryMovementsPage({
   }>;
 }) {
   const profile = await getCurrentProfile();
-  if (!profile || !canAccessPath({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/inventory/movements")) {
+  if (!profile || !canAccessPath({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/inventory/movements")) {
     redirect("/unauthorized");
   }
-  const canCreateCorrections = isOwnerAdminRole(profile.role);
+  const canCreateCorrections = isOwnerAdminRole(profile);
 
   const params = await searchParams;
   const supabase = getSupabaseServerClient();

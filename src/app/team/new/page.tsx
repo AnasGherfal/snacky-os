@@ -7,7 +7,7 @@ import { createTeamMember } from "@/lib/team-actions";
 
 export default async function NewTeamMemberPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const profile = await getCurrentProfile();
-  if (!isOwnerAdminRole(profile?.role)) redirect("/unauthorized");
+  if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
 
   const { error } = await searchParams;
 

@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
-import { isOwnerAdminRole } from "@/lib/authz";
+import { isOwnerAdminRole, normalizeRoles } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { formatLastLogin, tempPasswordCookie } from "@/lib/team";
 
@@ -20,7 +20,7 @@ function parseTempPasswordCookie(value: string | undefined) {
 
 export default async function TeamPage() {
   const profile = await getCurrentProfile();
-  if (!isOwnerAdminRole(profile?.role)) redirect("/unauthorized");
+  if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
   const cookieStore = await cookies();
   const tempPassword = parseTempPasswordCookie(cookieStore.get(tempPasswordCookie)?.value);
 
@@ -33,7 +33,7 @@ export default async function TeamPage() {
     );
   }
   const [{ data: team, error: teamError }, { data: profiles, error: profilesError }] = await Promise.all([
-    supabase.from("team_members").select("id, full_name, email, phone, role, active, active_status, auth_user_id, must_change_password").order("full_name"),
+    supabase.from("team_members").select("id, full_name, email, phone, role, roles, can_add_products, active, active_status, auth_user_id, must_change_password").order("full_name"),
     supabase.from("profiles").select("id, email, team_member_id, last_login_at"),
   ]);
   const loadError = teamError ?? profilesError;
@@ -73,7 +73,7 @@ export default async function TeamPage() {
           <h2 className="text-base font-semibold text-slate-900">Development operator login helper</h2>
           <p className="mt-1 text-sm text-slate-500">Use this to test the operator route flow locally. Passwords are only shown immediately after creation or reset.</p>
           <div className="mt-3 text-sm">
-            {(team ?? []).find((member: any) => member.role === "operator" && member.email)?.email ?? "No operator email available yet."}
+            {(team ?? []).find((member: any) => normalizeRoles(member.roles, member.role).includes("operator") && member.email)?.email ?? "No operator email available yet."}
           </div>
         </section>
       ) : null}
@@ -81,7 +81,7 @@ export default async function TeamPage() {
       {!team?.length ? (
         <EmptyState title="No team members" body="Add admins, supervisors, warehouse users, and operators before assigning routes." />
       ) : (
-        <DataTable headers={["Full name", "Email", "Phone", "Role", "Status", "Last login", "Actions"]}>
+        <DataTable headers={["Full name", "Email", "Phone", "Roles", "Product add", "Status", "Last login", "Actions"]}>
           {team.map((member: any) => {
             const profile = profileByTeamId.get(member.id) ?? profileByEmail.get(String(member.email ?? "").toLowerCase());
 
@@ -90,7 +90,8 @@ export default async function TeamPage() {
                 <td className="font-medium text-slate-900">{member.full_name}</td>
                 <td>{member.email ?? "-"}</td>
                 <td>{member.phone ?? "-"}</td>
-                <td><StatusBadge status={member.role} /></td>
+                <td><div className="flex flex-wrap gap-1">{normalizeRoles(member.roles, member.role).map((role) => <StatusBadge key={role} status={role} />)}</div></td>
+                <td>{member.can_add_products ? <StatusBadge status="enabled" /> : <span className="text-slate-500">-</span>}</td>
                 <td>
                   <div className="flex flex-col gap-1">
                     <StatusBadge status={member.active_status ?? (member.active ? "active" : "inactive")} />

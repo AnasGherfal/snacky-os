@@ -8,7 +8,7 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export default async function NewFinanceTransactionPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const profile = await getCurrentProfile();
-  if (!profile || !canEditFinancialTransactions({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) redirect("/unauthorized");
+  if (!profile || !canEditFinancialTransactions({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) redirect("/unauthorized");
   const { error } = await searchParams;
   const today = new Date().toISOString().slice(0, 10);
   const supabase = getSupabaseServerClient();
@@ -39,6 +39,11 @@ export default async function NewFinanceTransactionPage({ searchParams }: { sear
             <div className="grid gap-4 md:grid-cols-2">
               <FormField label="Date" required><input name="transaction_date" type="date" defaultValue={today} required className="field-input" /></FormField>
               <FormField label="Direction" required><select name="direction" className="field-input"><option value="money_out">Money out</option><option value="money_in">Money in</option></select></FormField>
+              <FormField label="Effect" required><select name="transaction_effect" className="field-input"><option value="expense">Expense</option><option value="income">Income</option><option value="transfer">Transfer</option><option value="opening_balance">Opening balance</option></select></FormField>
+              <FormField label="Currency" required><select name="currency" className="field-input"><option value="LYD">LYD</option><option value="USD">USD</option></select></FormField>
+              <FormField label="Account" required><select name="account_id" className="field-input"><option value="snacky_lyd">Snacky LYD</option><option value="snacky_usd">Snacky USD</option><option value="owner_lyd">Owner LYD</option><option value="owner_usd">Owner USD</option></select></FormField>
+              <FormField label="Transfer from"><select name="source_account_id" className="field-input"><option value="snacky_lyd">Snacky LYD</option><option value="snacky_usd">Snacky USD</option><option value="owner_lyd">Owner LYD</option><option value="owner_usd">Owner USD</option></select></FormField>
+              <FormField label="Transfer to"><select name="destination_account_id" className="field-input"><option value="owner_lyd">Owner LYD</option><option value="owner_usd">Owner USD</option><option value="snacky_lyd">Snacky LYD</option><option value="snacky_usd">Snacky USD</option></select></FormField>
               <FormField label="Amount" required><input name="amount" type="number" step="0.01" min="0" required className="field-input" /></FormField>
               <FormField label="Category" required><input name="category" placeholder="Rent, Inventory, Revenue..." required className="field-input" /></FormField>
               <FormField label="Payment method"><select name="payment_method" className="field-input"><option value="">Not set</option><option value="cash">Cash</option><option value="bank_transfer">Bank transfer</option><option value="card">Card</option><option value="cheque">Cheque</option><option value="other">Other</option></select></FormField>

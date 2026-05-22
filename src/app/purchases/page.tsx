@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileRecordCard, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { requireCurrentProfileForPath } from "@/lib/auth";
-import { isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
+import { canManagePurchases } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -11,7 +11,7 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
   const { error = "", module = "" } = await searchParams;
   const moduleQuery = module === "finance" ? "?module=finance" : "";
   const profile = await requireCurrentProfileForPath("/purchases");
-  const canCreatePurchase = isOwnerAdminRole(profile?.role) || isSupervisorRole(profile?.role) || profile?.role === "warehouse";
+  const canCreatePurchase = canManagePurchases(profile);
   const supabase = getSupabaseServerClient();
   if (!supabase) {
     return (
@@ -22,7 +22,7 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
   }
   const { data: purchases, error: purchasesError } = await supabase
     .from("purchase_orders")
-    .select("id, order_date, receipt_number, total_amount, manual_total_lyd, calculated_total_lyd, payment_method, payment_status, status, created_at, supplier:suppliers(name), created_by_member:team_members!purchase_orders_created_by_fkey(full_name)")
+    .select("id, order_date, receipt_number, receipt_url, total_amount, manual_total_lyd, calculated_total_lyd, payment_method, payment_status, status, created_at, supplier:suppliers(name), created_by_member:team_members!purchase_orders_created_by_fkey(full_name)")
     .order("order_date", { ascending: false })
     .order("created_at", { ascending: false });
   if (purchasesError) {
@@ -75,13 +75,14 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
                   </div>
                   <div className="mt-4 grid gap-2 sm:grid-cols-2">
                     <Link href={`/purchases/${purchase.id}${moduleQuery}`} className="btn-secondary w-full">View</Link>
+                    {purchase.receipt_url ? <a href={purchase.receipt_url} target="_blank" rel="noreferrer" className="btn-secondary w-full">View Receipt</a> : null}
                     {canCreatePurchase && purchase.status === "draft" ? <Link href={`/purchases/${purchase.id}/edit${moduleQuery}`} className="btn-secondary w-full">Edit</Link> : null}
                   </div>
                 </MobileRecordCard>
               );
             })}
           </MobileCardList>
-          <DataTable className="hidden md:block" headers={["Date", "Supplier", "Receipt", "Calculated", "Receipt total", "Difference", "Payment", "Payment status", "Status", "Created by", "Actions"]}>
+          <DataTable className="hidden md:block" headers={["Date", "Supplier", "Receipt", "File", "Calculated", "Receipt total", "Difference", "Payment", "Payment status", "Status", "Created by", "Actions"]}>
             {purchases.map((purchase: any) => {
               const calculatedTotal = Number(purchase.calculated_total_lyd ?? purchase.total_amount ?? 0);
               const receiptTotal = purchase.manual_total_lyd === null || purchase.manual_total_lyd === undefined ? null : Number(purchase.manual_total_lyd);
@@ -92,6 +93,7 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
                   <td>{purchase.order_date}</td>
                   <td>{purchase.supplier?.name ?? "-"}</td>
                   <td>{purchase.receipt_number ?? "-"}</td>
+                  <td>{purchase.receipt_url ? <a href={purchase.receipt_url} target="_blank" rel="noreferrer" className="link-secondary">View Receipt</a> : "-"}</td>
                   <td>{lyd(calculatedTotal)}</td>
                   <td>{lyd(displayTotal)}</td>
                   <td>{difference === null ? "-" : lyd(difference)}</td>

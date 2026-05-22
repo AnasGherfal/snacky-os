@@ -538,6 +538,7 @@ export function PurchaseForm({
     const receiptUrl = initialPurchase?.receiptUrl?.trim();
     return receiptUrl ? { url: receiptUrl, type: inferReceiptType(receiptUrl), name: "Saved receipt", source: "url" } : null;
   });
+  const [removeSavedReceipt, setRemoveSavedReceipt] = useState(false);
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
   const [pendingLocalDraft, setPendingLocalDraft] = useState<LocalPurchaseDraft | null>(null);
   const [draftStatus, setDraftStatus] = useState<"idle" | "dirty" | "saved" | "restored">("idle");
@@ -688,10 +689,11 @@ export function PurchaseForm({
 
     if (!file) {
       const receiptUrl = details.receiptUrl.trim();
-      setReceiptPreview(receiptUrl ? { url: receiptUrl, type: inferReceiptType(receiptUrl), name: "Receipt URL", source: "url" } : null);
+      setReceiptPreview(removeSavedReceipt ? null : receiptUrl ? { url: receiptUrl, type: inferReceiptType(receiptUrl), name: "Receipt URL", source: "url" } : null);
       return;
     }
 
+    setRemoveSavedReceipt(false);
     const objectUrl = URL.createObjectURL(file);
     receiptObjectUrlRef.current = objectUrl;
     setReceiptPreview({ url: objectUrl, type: file.type || inferReceiptType(file.name), name: file.name, source: "file" });
@@ -709,6 +711,7 @@ export function PurchaseForm({
 
   const handleReceiptUrlChange = (value: string) => {
     setDetails((current) => ({ ...current, receiptUrl: value }));
+    setRemoveSavedReceipt(false);
     if (receiptPreview?.source === "file") return;
     const trimmed = value.trim();
     setReceiptPreview(trimmed ? { url: trimmed, type: inferReceiptType(trimmed), name: "Receipt URL", source: "url" } : null);
@@ -920,6 +923,7 @@ export function PurchaseForm({
       {initialPurchase?.id ? <input type="hidden" name="id" value={initialPurchase.id} /> : null}
       <input type="hidden" name="receipt_scan_result_id" value={receiptScan?.scanResultId ?? ""} />
       <input type="hidden" name="current_receipt_url" value={initialPurchase?.receiptUrl ?? ""} />
+      <input type="hidden" name="remove_receipt" value={removeSavedReceipt ? "yes" : ""} />
       <input type="hidden" name="lines_json" value={linesJson} />
       {submitMessage ? (
         <div className={`rounded-lg border p-4 text-sm font-medium ${submitMessage.type === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-rose-200 bg-rose-50 text-rose-800"}`}>
@@ -993,6 +997,28 @@ export function PurchaseForm({
           </FormField>
           <FormField label="Receipt upload" hint="Stored privately in receipt-images when Supabase Storage is configured. PNG, JPG, WEBP, or PDF. Maximum 5MB.">
             <input name="receipt_file" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" className="field-input" onChange={(event) => handleReceiptFileChange(event.target.files?.[0] ?? null)} />
+            {initialPurchase?.receiptUrl ? (
+              <label className="mt-3 flex items-start gap-2 rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={removeSavedReceipt}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    setRemoveSavedReceipt(checked);
+                    if (checked) {
+                      setReceiptPreview(null);
+                      setDetails((current) => ({ ...current, receiptUrl: "" }));
+                    } else {
+                      const restored = initialPurchase.receiptUrl?.trim() ?? "";
+                      setDetails((current) => ({ ...current, receiptUrl: restored }));
+                      setReceiptPreview(restored ? { url: restored, type: inferReceiptType(restored), name: "Saved receipt", source: "url" } : null);
+                    }
+                  }}
+                />
+                <span>Remove saved receipt from this draft purchase</span>
+              </label>
+            ) : null}
           </FormField>
           <FormField label="Receipt URL fallback">
             <input name="receipt_url" type="url" className="field-input" placeholder="https://example.com/receipt.jpg" value={details.receiptUrl} onChange={(event) => handleReceiptUrlChange(event.target.value)} />

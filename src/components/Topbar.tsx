@@ -10,6 +10,7 @@ import { AppRole } from "@/lib/authz";
 type TopbarProfile = {
   full_name: string;
   role: AppRole;
+  roles?: AppRole[] | null;
 };
 
 const titleKeys: Record<string, keyof ReturnType<typeof useI18n>["dictionary"]["nav"]> = {
@@ -93,7 +94,7 @@ export function Topbar({ profile, onMenuClick }: { profile: TopbarProfile; onMen
           </Link>
           <div className="hidden text-right sm:block">
             <div className="text-xs font-medium text-slate-900">{profile.full_name}</div>
-            <div className="text-xs text-slate-500">{profile.role}</div>
+            <div className="text-xs text-slate-500">{(profile.roles?.length ? profile.roles : [profile.role]).join(", ")}</div>
           </div>
           <Link href="/account" className="btn-secondary hidden sm:inline-flex">
             Account

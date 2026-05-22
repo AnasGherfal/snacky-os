@@ -19,7 +19,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   const { id } = await params;
   const { error = "" } = await searchParams;
   const profile = await getCurrentProfile();
-  if (!profile || !canAccessPath({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/routes")) {
+  if (!profile || !canAccessPath({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/routes")) {
     redirect("/unauthorized");
   }
 
@@ -65,7 +65,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     routeRow.operator_id
       ? supabase.from("team_members").select("id, full_name").eq("id", routeRow.operator_id).maybeSingle()
       : Promise.resolve({ data: null }),
-    supabase.from("team_members").select("id, full_name, role").in("role", ["owner", "admin", "supervisor", "operator"]).eq("active", true).order("full_name"),
+    supabase.from("team_members").select("id, full_name, role, roles").or("role.in.(owner,admin,supervisor,operator),roles.ov.{owner,admin,supervisor,operator}").eq("active", true).order("full_name"),
     supabase
       .from("route_stops")
       .select("id, stop_order, status, machine_id")
@@ -158,8 +158,8 @@ export default async function RouteDetailPage({ params, searchParams }: { params
       : Promise.resolve({ data: [] }),
   ]);
   const machineById = new Map((machines ?? []).map((machine: any) => [machine.id, machine]));
-  const canManageRouteAssignment = isAdminRole(profile.role);
-  const canStartRoute = canExecuteRoutes(profile.role) && Boolean(profile.team_member_id) && ["draft", "assigned"].includes(routeRow.status);
+  const canManageRouteAssignment = isAdminRole(profile);
+  const canStartRoute = canExecuteRoutes(profile) && Boolean(profile.team_member_id) && ["draft", "assigned"].includes(routeRow.status);
   const productById = new Map((products ?? []).map((product: any) => [product.id, product]));
   const routeActivityQueries: PromiseLike<any>[] = [
     supabase

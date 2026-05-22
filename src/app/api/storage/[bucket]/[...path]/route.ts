@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentProfile } from "@/lib/auth";
-import { canAccessOperatorRoute, isOwnerAdminRole, isOperatorRole, isSupervisorRole } from "@/lib/authz";
+import { AppRole, canAccessOperatorRoute, hasAnyRole, isOperatorRole, isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 import {
   ISSUE_PHOTO_BUCKET,
@@ -10,7 +10,7 @@ import {
   REFILL_PHOTO_BUCKET,
 } from "@/lib/storage-buckets";
 
-const receiptReaderRoles = new Set(["owner", "admin", "supervisor", "warehouse", "finance"]);
+const receiptReaderRoles = new Set<AppRole>(["owner", "admin", "supervisor", "warehouse", "purchasing", "finance"]);
 const routePhotoPathPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function canReadRoutePhoto(bucket: string, objectPath: string) {
@@ -21,8 +21,8 @@ async function canReadRoutePhoto(bucket: string, objectPath: string) {
 
   const profile = await getCurrentProfile();
   if (!profile) return false;
-  if (isOwnerAdminRole(profile.role) || isSupervisorRole(profile.role)) return true;
-  if (!isOperatorRole(profile.role)) return false;
+  if (isOwnerAdminRole(profile) || isSupervisorRole(profile)) return true;
+  if (!isOperatorRole(profile)) return false;
 
   const supabase = getSupabaseServerClient();
   if (!supabase) return false;
@@ -37,6 +37,8 @@ async function canReadRoutePhoto(bucket: string, objectPath: string) {
     {
       id: profile.id,
       role: profile.role,
+      roles: profile.roles,
+      canAddProducts: profile.can_add_products,
       teamMemberId: profile.team_member_id,
       activeStatus: profile.active_status,
     },
@@ -48,7 +50,7 @@ async function canReadPrivateObject(bucket: string, objectPath: string) {
   const profile = await getCurrentProfile();
   if (!profile || profile.active_status !== "active") return false;
 
-  if (bucket === RECEIPT_IMAGE_BUCKET) return receiptReaderRoles.has(profile.role);
+  if (bucket === RECEIPT_IMAGE_BUCKET) return hasAnyRole(profile, receiptReaderRoles);
   if (bucket === MACHINE_PHOTO_BUCKET) return true;
   if (bucket === REFILL_PHOTO_BUCKET || bucket === ISSUE_PHOTO_BUCKET) return canReadRoutePhoto(bucket, objectPath);
   return false;

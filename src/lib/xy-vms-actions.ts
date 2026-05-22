@@ -16,7 +16,7 @@ import { testXyWebDashboard } from "@/lib/xy-web-sync";
 
 async function requireOwnerAdmin() {
   const profile = await getCurrentProfile();
-  if (!profile || !isOwnerAdminRole(profile.role)) redirect("/unauthorized");
+  if (!profile || !isOwnerAdminRole(profile)) redirect("/unauthorized");
   return profile;
 }
 

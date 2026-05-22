@@ -3,8 +3,7 @@ import { redirect } from "next/navigation";
 import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canViewFinancials } from "@/lib/authz";
-import { isBalanceAffectingTransaction, signedAmount } from "@/lib/finance-balance";
-import { lyd } from "@/lib/format";
+import { formatFinanceMoney, isBalanceAffectingTransaction, signedAmount } from "@/lib/finance-balance";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export type FinanceFilteredPageConfig = {
@@ -29,7 +28,7 @@ export function financeRowText(row: any) {
 
 export async function FilteredFinancePage(config: FinanceFilteredPageConfig) {
   const profile = await getCurrentProfile();
-  if (!profile || !canViewFinancials({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) {
+  if (!profile || !canViewFinancials({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) {
     redirect("/unauthorized");
   }
 
@@ -44,7 +43,7 @@ export async function FilteredFinancePage(config: FinanceFilteredPageConfig) {
 
   const { data, error } = await supabase
     .from("financial_transactions")
-    .select("id, transaction_date, direction, transaction_kind, transaction_type, description, notes, signed_amount, final_bucket, payment_method, transaction_status, review_status, needs_review")
+    .select("id, transaction_date, direction, transaction_kind, transaction_type, description, notes, signed_amount, currency, final_bucket, payment_method, transaction_status, review_status, needs_review, import_status")
     .eq("transaction_status", "active")
     .order("transaction_date", { ascending: false })
     .limit(1000);
@@ -60,7 +59,14 @@ export async function FilteredFinancePage(config: FinanceFilteredPageConfig) {
 
   const rows = ((data ?? []) as any[]).filter(config.filter);
   const balanceRows = rows.filter(isBalanceAffectingTransaction);
-  const total = balanceRows.reduce((sum, row) => sum + signedAmount(row), 0);
+  const totals = balanceRows.reduce(
+    (sum, row) => {
+      const currency = String(row.currency ?? "LYD").toUpperCase() === "USD" ? "USD" : "LYD";
+      sum[currency] += signedAmount(row);
+      return sum;
+    },
+    { LYD: 0, USD: 0 },
+  );
 
   return (
     <>
@@ -80,12 +86,12 @@ export async function FilteredFinancePage(config: FinanceFilteredPageConfig) {
           <div className="mt-1 text-3xl font-semibold text-slate-900">{rows.length}</div>
         </div>
         <div className="surface-card">
-          <div className="text-sm text-slate-500">Balance-impact total</div>
-          <div className={`mt-1 text-3xl font-semibold ${total < 0 ? "text-rose-700" : "text-emerald-700"}`}>{lyd(total)}</div>
+          <div className="text-sm text-slate-500">Balance-impact LYD</div>
+          <div className={`mt-1 text-3xl font-semibold ${totals.LYD < 0 ? "text-rose-700" : "text-emerald-700"}`}>{formatFinanceMoney(totals.LYD, "LYD")}</div>
         </div>
         <div className="surface-card">
-          <div className="text-sm text-slate-500">Source</div>
-          <div className="mt-2 text-base font-semibold text-slate-900">Active finance ledger</div>
+          <div className="text-sm text-slate-500">Balance-impact USD</div>
+          <div className={`mt-1 text-3xl font-semibold ${totals.USD < 0 ? "text-rose-700" : "text-emerald-700"}`}>{formatFinanceMoney(totals.USD, "USD")}</div>
         </div>
       </section>
 
@@ -98,7 +104,7 @@ export async function FilteredFinancePage(config: FinanceFilteredPageConfig) {
               <td>{row.transaction_date}</td>
               <td><StatusBadge status={String(row.direction ?? "").replaceAll("_", " ")} /></td>
               <td className="font-medium text-slate-900">{categoryLabel(row)}</td>
-              <td className={`font-semibold ${Number(row.signed_amount ?? 0) < 0 ? "text-rose-700" : "text-emerald-700"}`}>{lyd(Number(row.signed_amount ?? 0))}</td>
+              <td className={`font-semibold ${Number(row.signed_amount ?? 0) < 0 ? "text-rose-700" : "text-emerald-700"}`}>{formatFinanceMoney(Number(row.signed_amount ?? 0), row.currency ?? "LYD")}</td>
               <td className="max-w-md">{row.description ?? row.notes ?? "-"}</td>
               <td>{row.payment_method ? String(row.payment_method).replaceAll("_", " ") : "-"}</td>
               <td><StatusBadge status={row.needs_review ? "needs_review" : row.review_status} /></td>

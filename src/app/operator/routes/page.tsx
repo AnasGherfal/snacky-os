@@ -10,7 +10,7 @@ export default async function OperatorRoutesPage({ searchParams }: { searchParam
   const showAvailable = view === "available";
   const supabase = getSupabaseServerClient();
   const profile = await getCurrentProfile();
-  if (!profile || !canExecuteRoutes(profile.role)) redirect("/unauthorized");
+  if (!profile || !canExecuteRoutes(profile)) redirect("/unauthorized");
 
   if (!supabase) {
     return (

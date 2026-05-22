@@ -8,6 +8,7 @@ export const roleDescriptions: Record<AppRole, string> = {
   supervisor: "Oversees routes, operators, refills, inventory visibility, issues, and cash review.",
   operator: "Uses the mobile workflow for assigned routes only. No costs, profit, or admin pages.",
   warehouse: "Works with products and storage inventory without access to financial or admin controls.",
+  purchasing: "Creates supplier purchases, uploads receipts, reviews purchase history, and matches receipt lines.",
   finance: "Reviews sales, cash collections, variance, and machine financial performance.",
   viewer: "Read-only dashboard access for basic operational visibility.",
 };

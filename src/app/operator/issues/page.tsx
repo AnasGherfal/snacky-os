@@ -19,7 +19,7 @@ export default async function OperatorIssuesPage() {
     .select("id, issue_type, priority, status, description, created_at, sla_due_at, machine:machines(name, machine_code)")
     .order("created_at", { ascending: false });
 
-  if (query && isOperatorRole(profile.role)) {
+  if (query && isOperatorRole(profile)) {
     query = query.eq("reported_by", profile.team_member_id ?? "");
   }
 

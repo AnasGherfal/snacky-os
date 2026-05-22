@@ -154,7 +154,7 @@ function debugText(summary: XyEndpointSummary) {
 
 export default async function AdminVmsApiPage() {
   const profile = await getCurrentProfile();
-  if (!profile || !isOwnerAdminRole(profile.role)) redirect("/unauthorized");
+  if (!profile || !isOwnerAdminRole(profile)) redirect("/unauthorized");
 
   const config = getXyVmsConfig();
   const webConfig = getXyWebApiConfig();

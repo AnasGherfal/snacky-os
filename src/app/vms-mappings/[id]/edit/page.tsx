@@ -31,7 +31,7 @@ export default async function EditVmsProductMappingPage({
   searchParams: Promise<{ error?: string }>;
 }) {
   const profile = await getCurrentProfile();
-  if (!isOwnerAdminRole(profile?.role)) redirect("/unauthorized");
+  if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
 
   const { id } = await params;
   const { error } = await searchParams;

@@ -13,7 +13,7 @@ const allowedStatuses = new Set(["confirmed", "needs_review", "ignored"]);
 
 export async function updateVmsProductMapping(formData: FormData) {
   const profile = await getCurrentProfile();
-  if (!isOwnerAdminRole(profile?.role)) redirect("/unauthorized");
+  if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
 
   const supabase = getSupabaseServerClient();
   const id = String(formData.get("id") || "");

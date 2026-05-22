@@ -27,7 +27,7 @@ function isMissingRouteStopItems(error: any) {
 
 export async function POST(request: Request) {
   const profile = await getCurrentProfile();
-  if (!profile || !canAccessPath({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/routes/new")) {
+  if (!profile || !canAccessPath({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/routes/new")) {
     return jsonError("You are not authorized to create routes.", 403);
   }
 
@@ -59,7 +59,7 @@ export async function POST(request: Request) {
 
   if (!routeDate) return jsonError("Route date is required.");
   if (assignmentMode === "assigned" && !operatorId) return jsonError("Choose a route performer or leave this route unassigned.");
-  if (adminOverride && !isOwnerAdminRole(profile.role)) return jsonError("Only owner or admin can override storage availability.", 403);
+  if (adminOverride && !isOwnerAdminRole(profile)) return jsonError("Only owner or admin can override storage availability.", 403);
   if (!recommendationKeys.length && !legacyRecommendationSlotIds.length && !manualStopItems.length) return jsonError("Choose machine-level refill items for this route.");
 
   const recommendationsResult = recommendationKeys.length

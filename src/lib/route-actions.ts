@@ -24,7 +24,7 @@ function requireConfirmedReason(formData: FormData, path: string) {
 
 async function requireRouteAccess(path: string) {
   const profile = await getCurrentProfile();
-  if (!profile || !isAdminRole(profile.role)) redirect("/unauthorized");
+  if (!profile || !isAdminRole(profile)) redirect("/unauthorized");
   const supabase = getSupabaseServerClient();
   if (!supabase) fail(path, "Supabase is not configured.");
   return { profile, supabase };
@@ -161,14 +161,14 @@ export async function assignRoute(formData: FormData) {
   if (operatorId) {
     const { data: performer, error: performerError } = await supabase
       .from("team_members")
-      .select("id, full_name, role, active")
+      .select("id, full_name, role, roles, active")
       .eq("id", operatorId)
       .maybeSingle();
     if (performerError) {
       console.error("[routes] Failed to verify route performer", performerError);
       fail(path, "Could not verify selected route performer.");
     }
-    if (!performer || performer.active === false || !canExecuteRoutes(performer.role)) {
+    if (!performer || performer.active === false || !canExecuteRoutes({ id: performer.id, role: performer.role, roles: performer.roles })) {
       fail(path, "Selected route performer must be an active owner, admin, supervisor, or operator.");
     }
   }

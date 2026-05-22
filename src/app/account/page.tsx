@@ -29,7 +29,7 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
               </div>
               <div className="rounded-lg border border-slate-200 bg-white p-4">
                 <div className="text-xs text-slate-500">Role</div>
-                <div className="mt-2"><StatusBadge status={profile.role} /></div>
+                <div className="mt-2 flex flex-wrap gap-1">{profile.roles.map((role) => <StatusBadge key={role} status={role} />)}</div>
               </div>
               <div className="rounded-lg border border-slate-200 bg-white p-4">
                 <div className="text-xs text-slate-500">Status</div>

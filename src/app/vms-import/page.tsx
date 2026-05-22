@@ -354,7 +354,7 @@ function VmsImportDebugPanel({
 
 export default async function VmsImportPage({ searchParams }: { searchParams: Promise<VmsImportSearchParams> }) {
   const profile = await getCurrentProfile();
-  if (!isOwnerAdminRole(profile?.role)) redirect("/unauthorized");
+  if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
 
   const params = await searchParams;
   if (params.batchId) redirect(`/vms-import/${params.batchId}`);

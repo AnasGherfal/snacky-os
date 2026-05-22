@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { cache } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
-import { AppRole, canAccessPath, getDefaultPathForRole, parseAppRole } from "@/lib/authz";
+import { AppRole, canAccessPath, getDefaultPathForRole, normalizeRoles, parseAppRole } from "@/lib/authz";
 
 export const accessTokenCookie = "snacky-auth-access-token";
 export const refreshTokenCookie = "snacky-auth-refresh-token";
@@ -15,6 +15,8 @@ export type UserProfile = {
   email: string | null;
   phone: string | null;
   role: AppRole;
+  roles: AppRole[];
+  can_add_products: boolean;
   active_status: "active" | "inactive";
   team_member_id: string | null;
   must_change_password: boolean;
@@ -32,6 +34,8 @@ type ProfileRow = {
   email: string | null;
   phone: string | null;
   role: string;
+  roles?: string[] | null;
+  can_add_products?: boolean | null;
   active_status: string | null;
   team_member_id: string | null;
   must_change_password?: boolean | null;
@@ -43,6 +47,8 @@ type TeamMemberRow = {
   email: string | null;
   phone: string | null;
   role: string;
+  roles?: string[] | null;
+  can_add_products?: boolean | null;
   active?: boolean | null;
   active_status?: string | null;
   auth_user_id?: string | null;
@@ -91,7 +97,7 @@ async function getTeamMemberForAuthUser(supabase: SupabaseClient, authUserId: st
   if (teamMemberId) {
     const byId = await supabase
       .from("team_members")
-      .select("id, full_name, email, phone, role, active, active_status, auth_user_id, must_change_password")
+      .select("id, full_name, email, phone, role, roles, can_add_products, active, active_status, auth_user_id, must_change_password")
       .eq("id", teamMemberId)
       .maybeSingle<TeamMemberRow>();
 
@@ -101,7 +107,7 @@ async function getTeamMemberForAuthUser(supabase: SupabaseClient, authUserId: st
 
   const byAuth = await supabase
     .from("team_members")
-    .select("id, full_name, email, phone, role, active, active_status, auth_user_id, must_change_password")
+    .select("id, full_name, email, phone, role, roles, can_add_products, active, active_status, auth_user_id, must_change_password")
     .eq("auth_user_id", authUserId)
     .maybeSingle<TeamMemberRow>();
 
@@ -111,6 +117,8 @@ async function getTeamMemberForAuthUser(supabase: SupabaseClient, authUserId: st
 function profileFromRows(user: AuthLookupUser, profile: ProfileRow | null, teamMember: TeamMemberRow | null): UserProfile | null {
   const role = parseAppRole(profile?.role) ?? parseAppRole(teamMember?.role);
   if (!role) return null;
+  const roles = normalizeRoles(profile?.roles ?? teamMember?.roles, role);
+  const canAddProducts = Boolean(profile?.can_add_products ?? teamMember?.can_add_products ?? false);
 
   if (profile) {
     return {
@@ -119,6 +127,8 @@ function profileFromRows(user: AuthLookupUser, profile: ProfileRow | null, teamM
       email: profile.email,
       phone: profile.phone,
       role,
+      roles,
+      can_add_products: canAddProducts,
       active_status: normalizeActiveStatus(profile.active_status),
       team_member_id: profile.team_member_id ?? teamMember?.id ?? null,
       must_change_password: Boolean(profile.must_change_password ?? teamMember?.must_change_password ?? false),
@@ -133,6 +143,8 @@ function profileFromRows(user: AuthLookupUser, profile: ProfileRow | null, teamM
     email: teamMember.email ?? user.email ?? null,
     phone: teamMember.phone,
     role,
+    roles,
+    can_add_products: canAddProducts,
     active_status: teamMemberActiveStatus(teamMember) ?? "inactive",
     team_member_id: teamMember.id,
     must_change_password: Boolean(teamMember.must_change_password ?? false),
@@ -166,7 +178,7 @@ async function loadCanonicalProfile(user: AuthLookupUser, accessToken?: string |
 
   const { data: existingProfile, error: existingProfileError } = await supabase
     .from("profiles")
-    .select("id, full_name, email, phone, role, active_status, team_member_id, must_change_password")
+    .select("id, full_name, email, phone, role, roles, can_add_products, active_status, team_member_id, must_change_password")
     .eq("id", user.id)
     .maybeSingle<ProfileRow>();
 
@@ -217,6 +229,8 @@ export async function ensureProfileForAuthUser(user: AuthLookupUser, accessToken
     email: user.email ?? teamMember.email ?? null,
     phone: teamMember.phone ?? null,
     role: parseAppRole(teamMember.role) ?? "viewer",
+    roles: normalizeRoles(teamMember.roles, teamMember.role),
+    can_add_products: Boolean(teamMember.can_add_products ?? false),
     active_status: teamMemberActiveStatus(teamMember) ?? "inactive",
     team_member_id: teamMember.id,
     must_change_password: Boolean(teamMember.must_change_password ?? false),
@@ -226,7 +240,7 @@ export async function ensureProfileForAuthUser(user: AuthLookupUser, accessToken
   const { data: profile, error } = await supabase
     .from("profiles")
     .insert(payload)
-    .select("id, full_name, email, phone, role, active_status, team_member_id, must_change_password")
+    .select("id, full_name, email, phone, role, roles, can_add_products, active_status, team_member_id, must_change_password")
     .single<ProfileRow>();
 
   if (error) {
@@ -250,6 +264,8 @@ export async function requireCurrentProfileForPath(pathname: string): Promise<Us
       {
         id: profile.id,
         role: profile.role,
+        roles: profile.roles,
+        canAddProducts: profile.can_add_products,
         teamMemberId: profile.team_member_id,
         activeStatus: profile.active_status,
       },

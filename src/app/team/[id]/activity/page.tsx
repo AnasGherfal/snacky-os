@@ -36,7 +36,7 @@ export default async function TeamMemberActivityPage({
   searchParams: Promise<{ action?: string; entity_type?: string; date_from?: string; date_to?: string; q?: string }>;
 }) {
   const profile = await getCurrentProfile();
-  if (!isOwnerAdminRole(profile?.role)) redirect("/unauthorized");
+  if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
 
   const { id } = await params;
   const filters = await searchParams;

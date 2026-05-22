@@ -42,7 +42,7 @@ export default async function StorageLocationDetailPage({
   searchParams: Promise<{ error?: string }>;
 }) {
   const profile = await getCurrentProfile();
-  if (!profile || !canManageStorageLocations(profile.role)) redirect("/unauthorized");
+  if (!profile || !canManageStorageLocations(profile)) redirect("/unauthorized");
 
   const { id } = await params;
   const query = await searchParams;

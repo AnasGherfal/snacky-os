@@ -113,7 +113,7 @@ export default async function VmsImportBatchDetailPage({
   const { batchId } = await params;
   const { error = "" } = await searchParams;
   const profile = await getCurrentProfile();
-  if (!isOwnerAdminRole(profile?.role)) redirect("/unauthorized");
+  if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
 
   const supabase = getSupabaseServerClient();
   if (!supabase) notFound();

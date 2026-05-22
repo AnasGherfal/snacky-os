@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { NewPurchaseWithReceiptScan } from "@/components/NewPurchaseWithReceiptScan";
 import { ErrorState, FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
-import { isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
+import { canAddProducts, canManagePurchases } from "@/lib/authz";
 import { createPurchase } from "@/lib/purchase-actions";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -12,7 +12,7 @@ export default async function NewPurchasePage({ searchParams }: { searchParams: 
   const { error = "", module = "" } = await searchParams;
   const moduleQuery = module === "finance" ? "?module=finance" : "";
   const profile = await getCurrentProfile();
-  if (!isOwnerAdminRole(profile?.role) && !isSupervisorRole(profile?.role) && profile?.role !== "warehouse") redirect("/unauthorized");
+  if (!profile || !canManagePurchases(profile)) redirect("/unauthorized");
 
   const supabase = getSupabaseServerClient();
   if (!supabase) {
@@ -99,7 +99,7 @@ export default async function NewPurchasePage({ searchParams }: { searchParams: 
             Product or supplier lists could not fully load. You can keep the draft on screen, retry the page, or continue once the lists appear.
           </div>
         ) : null}
-        <NewPurchaseWithReceiptScan action={createPurchase} suppliers={suppliers ?? []} products={productOptions} canAddProducts={isOwnerAdminRole(profile?.role)} />
+        <NewPurchaseWithReceiptScan action={createPurchase} suppliers={suppliers ?? []} products={productOptions} canAddProducts={canAddProducts(profile)} />
       </FormPageLayout>
     </>
   );

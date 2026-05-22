@@ -7,8 +7,8 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
-function canViewActivity(role: AppRole | null | undefined) {
-  return isOwnerAdminRole(role);
+function canViewActivity(profile: Awaited<ReturnType<typeof getCurrentProfile>> | null) {
+  return isOwnerAdminRole(profile);
 }
 
 export default async function ActivityLogPage({
@@ -17,7 +17,7 @@ export default async function ActivityLogPage({
   searchParams: Promise<{ user_id?: string; role?: string; action?: string; entity_type?: string; date_from?: string; date_to?: string; q?: string }>;
 }) {
   const profile = await getCurrentProfile();
-  if (!profile || !canViewActivity(profile.role)) redirect("/unauthorized");
+  if (!profile || !canViewActivity(profile)) redirect("/unauthorized");
 
   const { user_id = "", role = "", action = "", entity_type = "", date_from = "", date_to = "", q = "" } = await searchParams;
   const supabase = getSupabaseServerClient();

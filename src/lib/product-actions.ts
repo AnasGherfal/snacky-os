@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
-import { isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
+import { hasAnyRole } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 type SupabaseServer = NonNullable<ReturnType<typeof getSupabaseServerClient>>;
@@ -23,8 +23,8 @@ export type ProductHistoryCounts = {
   vmsStockSnapshots: number;
 };
 
-function canManageProducts(role: string | null | undefined) {
-  return isOwnerAdminRole(role as any) || isSupervisorRole(role as any) || role === "warehouse";
+function canManageProducts(profile: Awaited<ReturnType<typeof getCurrentProfile>>) {
+  return hasAnyRole(profile, ["owner", "admin", "supervisor", "warehouse", "purchasing"]);
 }
 
 function clean(value: FormDataEntryValue | null) {
@@ -44,7 +44,7 @@ function requireConfirmedReason(formData: FormData, path: string) {
 
 async function requireProductAccess(path: string) {
   const profile = await getCurrentProfile();
-  if (!profile || !canManageProducts(profile.role)) redirect("/unauthorized");
+  if (!profile || !canManageProducts(profile)) redirect("/unauthorized");
   const supabase = getSupabaseServerClient();
   if (!supabase) fail(path, "Supabase is not configured.");
   return { profile, supabase };

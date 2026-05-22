@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { TeamMemberForm } from "@/components/TeamMemberForm";
 import { ErrorState, FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
-import { isOwnerAdminRole, parseAppRole } from "@/lib/authz";
+import { isOwnerAdminRole, normalizeRoles, parseAppRole } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { updateTeamMember } from "@/lib/team-actions";
 
@@ -18,7 +18,7 @@ export default async function EditTeamMemberPage({
   const { id } = await params;
   const { error } = await searchParams;
   const profile = await getCurrentProfile();
-  if (!isOwnerAdminRole(profile?.role)) redirect("/unauthorized");
+  if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
 
   const supabase = getSupabaseServerClient();
 
@@ -32,7 +32,7 @@ export default async function EditTeamMemberPage({
 
   const { data: member, error: memberError } = await supabase
     .from("team_members")
-    .select("id, full_name, email, phone, role, active, auth_user_id, must_change_password")
+    .select("id, full_name, email, phone, role, roles, can_add_products, active, auth_user_id, must_change_password")
     .eq("id", id)
     .maybeSingle();
 
@@ -40,6 +40,7 @@ export default async function EditTeamMemberPage({
   if (!member) notFound();
 
   const role = parseAppRole(member.role) ?? "viewer";
+  const roles = normalizeRoles((member as any).roles, member.role);
 
   return (
     <>
@@ -59,6 +60,8 @@ export default async function EditTeamMemberPage({
             email: member.email,
             phone: member.phone,
             role,
+            roles,
+            can_add_products: Boolean((member as any).can_add_products),
             active: member.active,
             auth_user_id: member.auth_user_id,
             must_change_password: member.must_change_password,

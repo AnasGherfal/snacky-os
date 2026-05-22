@@ -1244,7 +1244,7 @@ async function runVmsImport({
 
 export async function prepareVmsImport(formData: FormData) {
   const profile = await getCurrentProfile();
-  if (!profile || !isOwnerAdminRole(profile.role)) redirect("/unauthorized");
+  if (!profile || !isOwnerAdminRole(profile)) redirect("/unauthorized");
   const supabase = getSupabaseServerClient();
   if (!supabase) redirect("/vms-import?error=Supabase%20is%20not%20configured.");
 
@@ -1287,7 +1287,7 @@ export async function importVmsCsv(formData: FormData) {
 
 export async function completeVmsImport(formData: FormData) {
   const profile = await getCurrentProfile();
-  if (!profile || !isOwnerAdminRole(profile.role)) redirect("/unauthorized");
+  if (!profile || !isOwnerAdminRole(profile)) redirect("/unauthorized");
   const supabase = getSupabaseServerClient();
   if (!supabase) redirect("/vms-import?error=Supabase%20is%20not%20configured.");
 
@@ -1340,7 +1340,7 @@ function jsonRecord(value: unknown): Record<string, string> {
 
 export async function reprocessVmsImportBatch(formData: FormData) {
   const profile = await getCurrentProfile();
-  if (!profile || !isOwnerAdminRole(profile.role)) redirect("/unauthorized");
+  if (!profile || !isOwnerAdminRole(profile)) redirect("/unauthorized");
   const supabase = getSupabaseServerClient();
   if (!supabase) redirect("/vms-import?error=Supabase%20is%20not%20configured.");
 

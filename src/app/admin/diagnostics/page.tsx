@@ -45,7 +45,7 @@ async function countRows(supabase: NonNullable<ReturnType<typeof getSupabaseServ
 
 export default async function AdminDiagnosticsPage() {
   const profile = await getCurrentProfile();
-  if (!profile || !isOwnerAdminRole(profile.role)) redirect("/unauthorized");
+  if (!profile || !isOwnerAdminRole(profile)) redirect("/unauthorized");
 
   const supabase = getSupabaseServerClient();
   if (!supabase) {

@@ -17,7 +17,7 @@ export default async function EditStorageLocationPage({
   searchParams: Promise<{ error?: string }>;
 }) {
   const profile = await getCurrentProfile();
-  if (!profile || !canManageStorageLocations(profile.role)) redirect("/unauthorized");
+  if (!profile || !canManageStorageLocations(profile)) redirect("/unauthorized");
 
   const { id } = await params;
   const query = await searchParams;
@@ -34,8 +34,8 @@ export default async function EditStorageLocationPage({
     supabase.from("storage_locations").select("id, name, address, active, location_type, related_operator_id, created_at, updated_at").eq("id", id).maybeSingle(),
     supabase
       .from("team_members")
-      .select("id, full_name, email, role")
-      .in("role", ["operator", "warehouse", "supervisor"])
+      .select("id, full_name, email, role, roles")
+      .or("role.in.(operator,warehouse,supervisor),roles.ov.{operator,warehouse,supervisor}")
       .eq("active", true)
       .order("full_name"),
   ]);

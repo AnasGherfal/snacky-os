@@ -30,7 +30,7 @@ export default async function VmsProductMappingPage({
   searchParams: Promise<{ status?: string; q?: string; error?: string }>;
 }) {
   const profile = await getCurrentProfile();
-  if (!isOwnerAdminRole(profile?.role)) redirect("/unauthorized");
+  if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
 
   const { status = "all", q = "", error } = await searchParams;
   const activeStatus = filters.some((filter) => filter.value === status) ? status : "all";
