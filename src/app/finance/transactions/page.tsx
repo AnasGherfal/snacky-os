@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { Fragment } from "react";
 import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
-import { canViewFinancials } from "@/lib/authz";
+import { canEditFinancialTransactions, canViewFinancials } from "@/lib/authz";
 import { isBalanceAffectingTransaction, signedAmount } from "@/lib/finance-balance";
 import { lyd } from "@/lib/format";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -133,7 +133,8 @@ export default async function FinanceTransactionsPage({
   searchParams: Promise<TransactionParams>;
 }) {
   const profile = await getCurrentProfile();
-  if (!canAccess(profile)) redirect("/unauthorized");
+  if (!profile || !canAccess(profile)) redirect("/unauthorized");
+  const canEdit = canEditFinancialTransactions({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status });
   const params = await searchParams;
   const supabase = getSupabaseServerClient();
   if (!supabase) {
@@ -250,7 +251,7 @@ export default async function FinanceTransactionsPage({
 
   return (
     <>
-      <PageHeader title="Financial Transactions" subtitle="Editable money in/out ledger. Only approved active rows affect balance." action={<PrimaryButton href="/finance/transactions/new">Add transaction</PrimaryButton>} />
+      <PageHeader title="Financial Transactions" subtitle="Editable money in/out ledger. Only approved active rows affect balance." action={canEdit ? <PrimaryButton href="/finance/transactions/new">Add transaction</PrimaryButton> : undefined} />
       {params.error ? <div className="fixed right-5 top-5 z-50 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-800 shadow-lg">{params.error}</div> : null}
       {params.saved ? <div className="fixed right-5 top-5 z-50 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800 shadow-lg">Transaction saved.</div> : null}
 
@@ -354,7 +355,7 @@ export default async function FinanceTransactionsPage({
                 <td>{paymentLabel(row.payment_method)}</td>
                 <td>{relatedLabel(row, maps)}</td>
                 <td><div className="flex flex-col gap-1"><StatusBadge status={row.transaction_status ?? "active"} />{row.needs_review ? <StatusBadge status="needs_review" /> : null}</div></td>
-                <td><div className="flex flex-wrap gap-2"><Link href={`/finance/transactions/${row.id}`} className="btn-secondary">View</Link><Link href={`/finance/transactions/${row.id}/edit`} className="btn-secondary">{row.needs_review ? "Review" : "Edit"}</Link></div></td>
+                <td><div className="flex flex-wrap gap-2"><Link href={`/finance/transactions/${row.id}`} className="btn-secondary">View</Link>{canEdit ? <Link href={`/finance/transactions/${row.id}/edit`} className="btn-secondary">{row.needs_review ? "Review" : "Edit"}</Link> : null}</div></td>
               </tr>
             );
           })}

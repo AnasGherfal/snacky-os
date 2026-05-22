@@ -1,10 +1,12 @@
 import { notFound, redirect } from "next/navigation";
 import { FinanceTransactionStatusActions } from "@/components/FinanceTransactionStatusActions";
-import { FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
+import { FormSubmitButton } from "@/components/FormSubmitButton";
+import { FormField, FormPageLayout, FormSection, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
-import { canViewFinancials } from "@/lib/authz";
+import { canEditFinancialTransactions } from "@/lib/authz";
 import { updateFinancialTransaction } from "@/lib/finance-actions";
 import { lyd } from "@/lib/format";
+import { resolvePurchaseFinanceTransactionDate } from "@/lib/purchase-finance-date";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -28,7 +30,7 @@ export default async function EditFinanceTransactionPage({
   searchParams: Promise<{ error?: string }>;
 }) {
   const profile = await getCurrentProfile();
-  if (!profile || !canViewFinancials({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) redirect("/unauthorized");
+  if (!profile || !canEditFinancialTransactions({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) redirect("/unauthorized");
 
   const { id } = await params;
   const { error } = await searchParams;
@@ -37,7 +39,7 @@ export default async function EditFinanceTransactionPage({
 
   const [{ data: transaction }, { data: purchases }, { data: machines }, { data: locations }, { data: routes }] = await Promise.all([
     supabase.from("financial_transactions").select("*").eq("id", id).maybeSingle(),
-    supabase.from("purchase_orders").select("id, receipt_number, order_date, status").order("order_date", { ascending: false }).limit(200),
+    supabase.from("purchase_orders").select("*").order("order_date", { ascending: false }).limit(200),
     supabase.from("machines").select("id, name, machine_code").order("name").limit(200),
     supabase.from("locations").select("id, name").order("name").limit(200),
     supabase.from("routes").select("id, route_date, status").order("route_date", { ascending: false }).limit(200),
@@ -45,6 +47,12 @@ export default async function EditFinanceTransactionPage({
   if (!transaction) notFound();
 
   const row = transaction as any;
+  const linkedPurchase = row.related_purchase_id ? (purchases ?? []).find((purchase: any) => purchase.id === row.related_purchase_id) : null;
+  const linkedSource = row.related_purchase_id ? "purchase" : row.related_cash_collection_id ? "cash collection" : "";
+  const transactionDateDefault =
+    linkedPurchase && row.transaction_kind === "product_purchase"
+      ? resolvePurchaseFinanceTransactionDate(linkedPurchase, row.transaction_date)
+      : row.transaction_date;
 
   return (
     <>
@@ -70,19 +78,29 @@ export default async function EditFinanceTransactionPage({
             <div><div className="text-xs font-medium uppercase text-slate-500">Status</div><div className="mt-1 flex flex-wrap gap-2"><StatusBadge status={row.transaction_status ?? "active"} /><StatusBadge status={row.needs_review ? "needs_review" : row.review_status} /></div></div>
           </div>
         </section>
+        {linkedSource ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900">
+            This transaction is linked to a purchase/cash collection. Source: {linkedSource}. Owner/admin/finance users may edit date and amount when a correction is needed.
+          </div>
+        ) : null}
+        {row.transaction_status === "voided" ? (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm font-medium text-slate-700">
+            This transaction is voided and does not affect finance balances.
+          </div>
+        ) : null}
 
         <form action={updateFinancialTransaction} className="space-y-5">
           <input type="hidden" name="id" value={id} />
           <FormSection title="Transaction details">
             <div className="grid gap-4 md:grid-cols-2">
-              <FormField label="Transaction date" required><input name="transaction_date" type="date" defaultValue={row.transaction_date} required className="field-input" /></FormField>
+              <FormField label="Transaction date" required><input name="transaction_date" type="date" defaultValue={transactionDateDefault} required className="field-input" /></FormField>
               <FormField label="Direction" required>
                 <select name="direction" defaultValue={row.direction} className="field-input">
                   <option value="money_in">Money in</option>
                   <option value="money_out">Money out</option>
                 </select>
               </FormField>
-              <FormField label="Amount" required><input name="amount" type="number" step="0.01" min="0.01" defaultValue={Number(row.amount ?? 0)} required className="field-input" /></FormField>
+              <FormField label="Amount" required><input name="amount" type="number" step="0.01" min="0" defaultValue={Number(row.amount ?? 0)} required className="field-input" /></FormField>
               <FormField label="Category" required><input name="category" defaultValue={row.final_bucket ?? row.transaction_type ?? ""} required className="field-input" /></FormField>
               <FormField label="Payment method">
                 <select name="payment_method" defaultValue={row.payment_method ?? ""} className="field-input">
@@ -146,7 +164,7 @@ export default async function EditFinanceTransactionPage({
             </div>
           </FormSection>
 
-          <div className="flex flex-wrap gap-3"><PrimaryButton>Save transaction</PrimaryButton><SecondaryButton href={`/finance/transactions/${id}`}>Cancel</SecondaryButton></div>
+          <div className="flex flex-wrap gap-3"><FormSubmitButton pendingLabel="Saving transaction...">Save transaction</FormSubmitButton><SecondaryButton href={`/finance/transactions/${id}`}>Cancel</SecondaryButton></div>
         </form>
 
         <FormSection title="Void or archive">

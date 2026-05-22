@@ -8,6 +8,7 @@ import { logActivity } from "@/lib/activity-log";
 import { requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
 import { resolveProductImageUrl } from "@/lib/product-images";
+import { isSkuDuplicateError } from "@/lib/product-sku";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 function formatMoney(value: number | string | null | undefined, decimals = 2) {
@@ -60,7 +61,11 @@ async function updateProduct(fd: FormData) {
     });
   }
 
-  const { data: afterProduct } = await s.from("products").update(product).eq("id", id).select("id, sku, name, category, brand, active, current_cost_price_lyd, current_selling_price_lyd, cost_price_source, selling_price_source").maybeSingle();
+  const { data: afterProduct, error: updateError } = await s.from("products").update(product).eq("id", id).select("id, sku, name, category, brand, active, current_cost_price_lyd, current_selling_price_lyd, cost_price_source, selling_price_source").maybeSingle();
+  if (updateError) {
+    const message = isSkuDuplicateError(updateError) ? "Product code already exists. Use another code." : "Could not update product.";
+    redirect(`/products/${id}/edit?error=${encodeURIComponent(message)}`);
+  }
   await logActivity({
     profile,
     action: "update",
@@ -77,8 +82,9 @@ async function updateProduct(fd: FormData) {
   redirect(imageUpload ? `/products?imageUpload=${imageUpload}` : "/products");
 }
 
-export default async function EditProductPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function EditProductPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string }> }) {
   const { id } = await params;
+  const { error = "" } = await searchParams;
   await requireCurrentProfileForPath(`/products/${id}/edit`);
   const s = getSupabaseServerClient();
   if (!s) notFound();
@@ -115,6 +121,7 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
     <>
       <div className="space-y-6">
         <PageHeader title={product.name} subtitle="Product profile, pricing, inventory, movement history, sales, and purchases." action={<SecondaryButton href={`/products/${id}/history`}>Movement History</SecondaryButton>} />
+        {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{error}</div> : null}
 
         <nav className="flex flex-wrap gap-2">
           {["Overview", "Pricing", "Inventory", "Movement History", "Sales", "Purchases"].map((label) => (
@@ -162,8 +169,8 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
           <input type="hidden" name="current_image_url" value={product.image_url || ""} />
           <FormSection title="Product details">
             <div className="grid gap-4 md:grid-cols-2">
-              <FormField label="SKU" required><input required name="sku" defaultValue={product.sku} className="field-input" /></FormField>
-              <FormField label="Barcode"><input name="barcode" defaultValue={product.barcode || ""} className="field-input" /></FormField>
+              <FormField label="SKU" required hint="SKU is the internal/VMS product code used for matching and reports. Owner/admin can override it when needed."><input required name="sku" defaultValue={product.sku} className="field-input" /></FormField>
+              <FormField label="Barcode" hint="Barcode is the scannable product barcode, if available."><input name="barcode" defaultValue={product.barcode || ""} className="field-input" /></FormField>
               <FormField label="Product Name" required><input required name="name" defaultValue={product.name} className="field-input" /></FormField>
               <FormField label="Category" required><select name="category" defaultValue={product.category} className="field-input"><option>drink</option><option>snack</option><option>chocolate</option><option>biscuit</option><option>coffee</option><option>other</option></select></FormField>
               <FormField label="Brand"><input name="brand" defaultValue={product.brand || ""} className="field-input" /></FormField>

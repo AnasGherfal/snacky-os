@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { FinanceTransactionStatusActions } from "@/components/FinanceTransactionStatusActions";
 import { PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
-import { canViewFinancials } from "@/lib/authz";
+import { canEditFinancialTransactions, canViewFinancials } from "@/lib/authz";
 import { isBalanceAffectingTransaction } from "@/lib/finance-balance";
 import { lyd } from "@/lib/format";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -47,6 +47,7 @@ export default async function FinanceTransactionDetailPage({
   if (!transaction) notFound();
   const row = transaction as any;
   const affectsBalance = isBalanceAffectingTransaction(row);
+  const canEdit = canEditFinancialTransactions({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status });
 
   const [purchase, route, machine, location] = await Promise.all([
     row.related_purchase_id ? supabase.from("purchase_orders").select("id, receipt_number, order_date, payment_method, receipt_url").eq("id", row.related_purchase_id).maybeSingle() : Promise.resolve({ data: null }),
@@ -95,8 +96,8 @@ export default async function FinanceTransactionDetailPage({
         <section className="surface-card">
           <h2 className="text-base font-semibold text-slate-900">Actions</h2>
           <div className="mt-4 space-y-3">
-            <Link href={`/finance/transactions/${id}/edit`} className="btn-primary w-full">Edit transaction</Link>
-            <FinanceTransactionStatusActions id={id} status={row.transaction_status ?? "active"} />
+            {canEdit ? <Link href={`/finance/transactions/${id}/edit`} className="btn-primary w-full">Edit transaction</Link> : null}
+            {canEdit ? <FinanceTransactionStatusActions id={id} status={row.transaction_status ?? "active"} /> : <p className="text-sm text-slate-500">Only owner/admin/finance users can edit finance transactions.</p>}
           </div>
         </section>
       </div>

@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
+import { resolveProductSku } from "@/lib/product-sku";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 const movementTypes = ["storage_to_operator_bag", "operator_bag_to_storage", "storage_adjustment", "damaged", "expired", "manual_correction", "product_substitution"] as const;
@@ -42,9 +43,9 @@ export async function createQuickProduct(formData: FormData) {
   const supabase = getSupabaseServerClient();
   if (!supabase) throw new Error("Supabase is not configured.");
 
-  const sku = String(formData.get("sku") || "").trim();
   const name = String(formData.get("name") || "").trim();
-  if (!sku || !name) throw new Error("SKU and product name are required.");
+  if (!name) throw new Error("Product name is required.");
+  const sku = await resolveProductSku({ supabase, manualSku: formData.get("sku") });
 
   const { data, error } = await supabase.from("products").insert({
     sku,

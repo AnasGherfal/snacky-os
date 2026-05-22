@@ -1,13 +1,14 @@
 import { redirect } from "next/navigation";
-import { FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
+import { FormSubmitButton } from "@/components/FormSubmitButton";
+import { FormField, FormPageLayout, FormSection, PageHeader, SecondaryButton } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
-import { canViewFinancials } from "@/lib/authz";
+import { canEditFinancialTransactions } from "@/lib/authz";
 import { createManualFinancialTransaction } from "@/lib/finance-actions";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export default async function NewFinanceTransactionPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const profile = await getCurrentProfile();
-  if (!profile || !canViewFinancials({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) redirect("/unauthorized");
+  if (!profile || !canEditFinancialTransactions({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) redirect("/unauthorized");
   const { error } = await searchParams;
   const today = new Date().toISOString().slice(0, 10);
   const supabase = getSupabaseServerClient();
@@ -38,8 +39,8 @@ export default async function NewFinanceTransactionPage({ searchParams }: { sear
             <div className="grid gap-4 md:grid-cols-2">
               <FormField label="Date" required><input name="transaction_date" type="date" defaultValue={today} required className="field-input" /></FormField>
               <FormField label="Direction" required><select name="direction" className="field-input"><option value="money_out">Money out</option><option value="money_in">Money in</option></select></FormField>
-              <FormField label="Amount" required><input name="amount" type="number" step="0.01" min="0.01" required className="field-input" /></FormField>
-              <FormField label="Category"><input name="category" placeholder="Rent, Inventory, Revenue..." className="field-input" /></FormField>
+              <FormField label="Amount" required><input name="amount" type="number" step="0.01" min="0" required className="field-input" /></FormField>
+              <FormField label="Category" required><input name="category" placeholder="Rent, Inventory, Revenue..." required className="field-input" /></FormField>
               <FormField label="Payment method"><select name="payment_method" className="field-input"><option value="">Not set</option><option value="cash">Cash</option><option value="bank_transfer">Bank transfer</option><option value="card">Card</option><option value="cheque">Cheque</option><option value="other">Other</option></select></FormField>
               <FormField label="Transaction type"><input name="transaction_type" placeholder="Rent, salary, maintenance, owner transfer..." className="field-input" /></FormField>
               <FormField label="Location"><input name="location" className="field-input" /></FormField>
@@ -54,7 +55,7 @@ export default async function NewFinanceTransactionPage({ searchParams }: { sear
               <FormField label="Notes"><textarea name="notes" rows={4} className="field-input" /></FormField>
             </div>
           </FormSection>
-          <div className="flex gap-3"><PrimaryButton>Save transaction</PrimaryButton><SecondaryButton href="/finance/transactions">Cancel</SecondaryButton></div>
+          <div className="flex gap-3"><FormSubmitButton pendingLabel="Saving transaction...">Save transaction</FormSubmitButton><SecondaryButton href="/finance/transactions">Cancel</SecondaryButton></div>
         </form>
       </FormPageLayout>
     </>

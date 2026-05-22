@@ -233,7 +233,7 @@ export function StockMovementForm({
             </div>
             <div className="space-y-4">
               <form action={quickAddAction} className="space-y-4">
-                <FormField label="SKU" required><input name="sku" required className="field-input" /></FormField>
+                <FormField label="SKU" hint="Product code will be generated automatically if left blank. SKU is the internal/VMS product code used for matching and reports."><input name="sku" className="field-input" placeholder="Auto if blank" /></FormField>
                 <FormField label="Product name" required><input name="name" required className="field-input" /></FormField>
                 <FormField label="Barcode"><input name="barcode" className="field-input" /></FormField>
                 <FormField label="Category"><select name="category" className="field-input"><option>drink</option><option>snack</option><option>chocolate</option><option>biscuit</option><option>coffee</option><option>other</option></select></FormField>

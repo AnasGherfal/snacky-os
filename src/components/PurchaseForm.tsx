@@ -74,6 +74,26 @@ type PurchaseDetailsState = {
   notes: string;
 };
 
+type ReceiptPreviewState = {
+  url: string;
+  type: string;
+  name: string;
+  source: "file" | "url" | "restored";
+  dataUrl?: string;
+  reselectRequired?: boolean;
+};
+
+type LocalPurchaseDraft = {
+  details: PurchaseDetailsState;
+  manualTotal: string;
+  lines: PurchaseLine[];
+  searchByLine: Record<string, string>;
+  receiptPreview: ReceiptPreviewState | null;
+  updatedAt: string;
+};
+
+const PURCHASE_DRAFT_KEY = "snacky.purchase.new.draft.v1";
+
 function newLine(line?: Partial<PurchaseLine>): PurchaseLine {
   const receiptLineName = line?.receiptLineName ?? null;
   const id = globalThis.crypto?.randomUUID?.() ?? `line-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -121,6 +141,30 @@ function detailsFromInitial(initialPurchase?: InitialPurchase): PurchaseDetailsS
     receiptUrl: initialPurchase?.receiptUrl ?? "",
     notes: initialPurchase?.notes ?? "",
   };
+}
+
+function inferReceiptType(url: string) {
+  const lower = url.toLowerCase().split("?")[0];
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".webp")) return "image/webp";
+  return "text/uri-list";
+}
+
+function hasPurchaseDraftContent(draft: Pick<LocalPurchaseDraft, "details" | "manualTotal" | "lines" | "searchByLine">) {
+  const details = draft.details;
+  return Boolean(
+    details.supplierId ||
+      details.receiptNumber.trim() ||
+      details.receiptUrl.trim() ||
+      details.notes.trim() ||
+      details.paymentMethod !== "cash" ||
+      details.paymentStatus !== "paid" ||
+      draft.manualTotal.trim() ||
+      Object.values(draft.searchByLine ?? {}).some((value) => value.trim()) ||
+      draft.lines.some((line) => lineHasManualInput(line)),
+  );
 }
 
 function confidenceTone(label: ReceiptConfidenceLabel | null) {
@@ -372,7 +416,7 @@ function ProductCombobox({
                   <div className="font-medium text-slate-900">No products found</div>
                   <div className="mt-1 text-slate-500">Typed text is only a search. Select a product before saving.</div>
                   {canAddProducts ? (
-                    <Link href="/products/new" className="mt-3 inline-flex btn-secondary">
+                    <Link href="/products/new?returnTo=/purchases/new" className="mt-3 inline-flex btn-secondary">
                       Quick add product
                     </Link>
                   ) : (
@@ -388,6 +432,71 @@ function ProductCombobox({
       ) : null}
       {error ? <p className="mt-2 text-xs font-medium text-rose-700">{error}</p> : null}
     </div>
+  );
+}
+
+function ReceiptPreviewBody({ preview, onOpen }: { preview: ReceiptPreviewState | null; onOpen: () => void }) {
+  if (!preview) {
+    return (
+      <div className="flex h-56 items-center justify-center rounded-lg border border-dashed border-slate-300 bg-white p-4 text-center text-sm text-slate-500">
+        Upload a receipt image/PDF or paste a receipt URL to preview it here.
+      </div>
+    );
+  }
+
+  const isImage = preview.type.startsWith("image/");
+  const isPdf = preview.type === "application/pdf";
+
+  return (
+    <div className="space-y-3">
+      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+        {isImage ? (
+          <button type="button" onClick={onOpen} className="block w-full bg-white">
+            <img src={preview.url} alt={preview.name || "Receipt preview"} className="max-h-[70vh] w-full object-contain" />
+          </button>
+        ) : isPdf ? (
+          <object data={preview.url} type="application/pdf" className="h-80 w-full bg-white">
+            <a href={preview.url} target="_blank" rel="noreferrer" className="link-secondary">Open PDF receipt</a>
+          </object>
+        ) : (
+          <div className="flex h-44 items-center justify-center p-4 text-center text-sm text-slate-600">
+            <a href={preview.url} target="_blank" rel="noreferrer" className="link-secondary">Open receipt link</a>
+          </div>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+        <span className="min-w-0 truncate">{preview.name || "Receipt"}</span>
+        <a href={preview.url} target="_blank" rel="noreferrer" className="link-secondary">Open</a>
+      </div>
+      {preview.reselectRequired ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs font-medium text-amber-900">
+          Preview restored locally. Re-select the receipt file before saving if you need to upload it.
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ReceiptPreviewPanel({ preview, onOpen, desktop = false }: { preview: ReceiptPreviewState | null; onOpen: () => void; desktop?: boolean }) {
+  const content = (
+    <>
+      <div>
+        <h2 className="text-base font-semibold text-slate-900">Receipt preview</h2>
+        <p className="mt-1 text-sm text-slate-500">Use the receipt preview to enter product quantities and prices.</p>
+      </div>
+      <ReceiptPreviewBody preview={preview} onOpen={onOpen} />
+    </>
+  );
+
+  if (desktop) {
+    return <aside className="hidden xl:sticky xl:top-4 xl:block xl:self-start"><div className="surface-card space-y-4">{content}</div></aside>;
+  }
+
+  return (
+    <details className="rounded-lg border border-slate-200 bg-slate-50 p-4 xl:hidden">
+      <summary className="cursor-pointer text-sm font-semibold text-slate-900">Receipt preview</summary>
+      <div className="mt-4 space-y-4">{content}</div>
+    </details>
   );
 }
 
@@ -416,6 +525,7 @@ export function PurchaseForm({
   const formRef = useRef<HTMLFormElement>(null);
   const submittingRef = useRef(false);
   const lastAppliedScanKey = useRef(0);
+  const receiptObjectUrlRef = useRef<string | null>(null);
   const [details, setDetails] = useState<PurchaseDetailsState>(() => detailsFromInitial(initialPurchase));
   const [lines, setLines] = useState<PurchaseLine[]>(() => initialLines?.length ? initialLines.map((line) => newLine(line)) : [newLine()]);
   const [manualTotal, setManualTotal] = useState<string>(() => initialPurchase?.manualTotalLyd === null || initialPurchase?.manualTotalLyd === undefined ? "" : String(initialPurchase.manualTotalLyd));
@@ -424,7 +534,25 @@ export function PurchaseForm({
   const [submitMessage, setSubmitMessage] = useState<{ type: "success" | "error"; text: string; debug?: string } | null>(null);
   const [detailsErrors, setDetailsErrors] = useState<{ purchaseDate?: string }>({});
   const [lineErrors, setLineErrors] = useState<Record<string, string>>({});
+  const [receiptPreview, setReceiptPreview] = useState<ReceiptPreviewState | null>(() => {
+    const receiptUrl = initialPurchase?.receiptUrl?.trim();
+    return receiptUrl ? { url: receiptUrl, type: inferReceiptType(receiptUrl), name: "Saved receipt", source: "url" } : null;
+  });
+  const [receiptModalOpen, setReceiptModalOpen] = useState(false);
+  const [pendingLocalDraft, setPendingLocalDraft] = useState<LocalPurchaseDraft | null>(null);
+  const [draftStatus, setDraftStatus] = useState<"idle" | "dirty" | "saved" | "restored">("idle");
   const productById = useMemo(() => new Map(products.map((product) => [product.id, product])), [products]);
+  const isLocalDraftEnabled = !initialPurchase?.id;
+
+  const applyLocalDraft = (draft: LocalPurchaseDraft) => {
+    setDetails(draft.details);
+    setManualTotal(draft.manualTotal);
+    setLines(draft.lines.length ? draft.lines.map((line) => newLine(line)) : [newLine()]);
+    setSearchByLine(draft.searchByLine ?? {});
+    setReceiptPreview(draft.receiptPreview?.dataUrl ? { ...draft.receiptPreview, url: draft.receiptPreview.dataUrl, source: "restored", reselectRequired: true } : draft.receiptPreview);
+    setPendingLocalDraft(null);
+    setDraftStatus("restored");
+  };
 
   useEffect(() => {
     if (!receiptScan || appliedScanKey <= 0 || appliedScanKey === lastAppliedScanKey.current) return;
@@ -449,6 +577,53 @@ export function PurchaseForm({
     }
     setSubmitMessage({ type: "success", text: "Extracted receipt fields were applied. Existing manual entries were kept; review every line before saving." });
   }, [appliedScanKey, receiptScan]);
+
+  useEffect(() => {
+    if (!isLocalDraftEnabled) return;
+    try {
+      const raw = window.localStorage.getItem(PURCHASE_DRAFT_KEY);
+      if (!raw) return;
+      const draft = JSON.parse(raw) as LocalPurchaseDraft;
+      if (draft?.details && draft?.lines?.length) setPendingLocalDraft(draft);
+    } catch (error) {
+      console.warn("[purchases] Could not load local purchase draft", error);
+    }
+  }, [isLocalDraftEnabled]);
+
+  useEffect(() => {
+    return () => {
+      if (receiptObjectUrlRef.current) URL.revokeObjectURL(receiptObjectUrlRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isLocalDraftEnabled) return;
+    if (pendingLocalDraft) return;
+    const draft: LocalPurchaseDraft = {
+      details,
+      manualTotal,
+      lines,
+      searchByLine,
+      receiptPreview: receiptPreview?.dataUrl ? { ...receiptPreview, url: receiptPreview.dataUrl, source: "restored", reselectRequired: true } : receiptPreview?.source === "url" ? receiptPreview : null,
+      updatedAt: new Date().toISOString(),
+    };
+    if (!hasPurchaseDraftContent(draft)) {
+      window.localStorage.removeItem(PURCHASE_DRAFT_KEY);
+      setDraftStatus("idle");
+      return;
+    }
+
+    setDraftStatus((current) => (current === "restored" ? current : "dirty"));
+    const timer = window.setTimeout(() => {
+      try {
+        window.localStorage.setItem(PURCHASE_DRAFT_KEY, JSON.stringify(draft));
+        setDraftStatus("saved");
+      } catch (error) {
+        console.warn("[purchases] Could not save local purchase draft", error);
+      }
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [details, isLocalDraftEnabled, lines, manualTotal, pendingLocalDraft, receiptPreview, searchByLine]);
 
   const enrichedLines = useMemo(
     () =>
@@ -503,6 +678,40 @@ export function PurchaseForm({
       matchAction: line.receiptLineName && line.matchAction !== "accept" ? "change" : line.matchAction,
     });
     setSearchByLine((current) => ({ ...current, [line.id]: product.name }));
+  };
+
+  const handleReceiptFileChange = (file: File | null) => {
+    if (receiptObjectUrlRef.current) {
+      URL.revokeObjectURL(receiptObjectUrlRef.current);
+      receiptObjectUrlRef.current = null;
+    }
+
+    if (!file) {
+      const receiptUrl = details.receiptUrl.trim();
+      setReceiptPreview(receiptUrl ? { url: receiptUrl, type: inferReceiptType(receiptUrl), name: "Receipt URL", source: "url" } : null);
+      return;
+    }
+
+    const objectUrl = URL.createObjectURL(file);
+    receiptObjectUrlRef.current = objectUrl;
+    setReceiptPreview({ url: objectUrl, type: file.type || inferReceiptType(file.name), name: file.name, source: "file" });
+
+    if (file.type.startsWith("image/") && file.size <= 1_500_000) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = typeof reader.result === "string" ? reader.result : "";
+        if (!dataUrl) return;
+        setReceiptPreview((current) => current?.url === objectUrl ? { ...current, dataUrl } : current);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleReceiptUrlChange = (value: string) => {
+    setDetails((current) => ({ ...current, receiptUrl: value }));
+    if (receiptPreview?.source === "file") return;
+    const trimmed = value.trim();
+    setReceiptPreview(trimmed ? { url: trimmed, type: inferReceiptType(trimmed), name: "Receipt URL", source: "url" } : null);
   };
 
   const setLineAction = (line: PurchaseLine, action: ReceiptLineAction) => {
@@ -689,6 +898,10 @@ export function PurchaseForm({
         return;
       }
       setSubmitMessage({ type: "success", text: result.message });
+      if (isLocalDraftEnabled) {
+        window.localStorage.removeItem(PURCHASE_DRAFT_KEY);
+        setDraftStatus("idle");
+      }
       if (result.redirectTo) {
         router.push(result.redirectTo);
         router.refresh();
@@ -719,7 +932,34 @@ export function PurchaseForm({
           ) : null}
         </div>
       ) : null}
+      {pendingLocalDraft ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <div className="font-semibold">Continue unsaved purchase draft?</div>
+          <div className="mt-1">A local draft from this browser was found. It stays on this device only.</div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button type="button" className="btn-primary" onClick={() => applyLocalDraft(pendingLocalDraft)}>Continue draft</button>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => {
+                window.localStorage.removeItem(PURCHASE_DRAFT_KEY);
+                setPendingLocalDraft(null);
+                setDraftStatus("idle");
+              }}
+            >
+              Discard draft
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {isLocalDraftEnabled && !pendingLocalDraft ? (
+        <div className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${draftStatus === "dirty" ? "border-amber-200 bg-amber-50 text-amber-800" : draftStatus === "saved" || draftStatus === "restored" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-slate-200 bg-slate-50 text-slate-500"}`}>
+          {draftStatus === "dirty" ? "Unsaved changes" : draftStatus === "saved" || draftStatus === "restored" ? "Draft saved locally" : "Local draft ready"}
+        </div>
+      ) : null}
 
+      <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="min-w-0 space-y-5">
       <FormSection title="Purchase details" description="Record the supplier, receipt, payment state, and supporting receipt reference before receiving stock.">
         <div className="grid gap-4 md:grid-cols-2">
           <FormField label="Supplier">
@@ -752,10 +992,10 @@ export function PurchaseForm({
             </select>
           </FormField>
           <FormField label="Receipt upload" hint="Stored privately in receipt-images when Supabase Storage is configured. PNG, JPG, WEBP, or PDF. Maximum 5MB.">
-            <input name="receipt_file" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" className="field-input" />
+            <input name="receipt_file" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" className="field-input" onChange={(event) => handleReceiptFileChange(event.target.files?.[0] ?? null)} />
           </FormField>
           <FormField label="Receipt URL fallback">
-            <input name="receipt_url" type="url" className="field-input" placeholder="https://example.com/receipt.jpg" value={details.receiptUrl} onChange={(event) => setDetails((current) => ({ ...current, receiptUrl: event.target.value }))} />
+            <input name="receipt_url" type="url" className="field-input" placeholder="https://example.com/receipt.jpg" value={details.receiptUrl} onChange={(event) => handleReceiptUrlChange(event.target.value)} />
           </FormField>
           <div className="md:col-span-2">
             <FormField label="Notes">
@@ -764,6 +1004,8 @@ export function PurchaseForm({
           </div>
         </div>
       </FormSection>
+
+      <ReceiptPreviewPanel preview={receiptPreview} onOpen={() => setReceiptModalOpen(true)} />
 
       {receiptScan?.lines.length ? (
         <FormSection title="Receipt line review" description="AI extraction may be wrong. Review before receiving purchase. Low confidence matches are ignored until you approve them.">
@@ -815,15 +1057,16 @@ export function PurchaseForm({
                   </FormField>
                 </div>
 
-                <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(260px,2fr)_repeat(6,minmax(108px,1fr))]">
+                <div className="mt-3 grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-[minmax(260px,2fr)_repeat(6,minmax(0,1fr))]">
                   {line.matchAction === "create" ? (
-                    <div className="space-y-3">
+                    <div className="min-w-0 space-y-3 md:col-span-2 xl:col-span-4 2xl:col-span-1">
                       <FormField label="New product name" required>
                         <input value={line.newProductName} onChange={(event) => updateLine(line.id, { newProductName: event.target.value })} className="field-input" />
                       </FormField>
                       <div className="grid gap-3 sm:grid-cols-2">
                         <FormField label="SKU">
                           <input value={line.newProductSku} onChange={(event) => updateLine(line.id, { newProductSku: event.target.value })} className="field-input" placeholder="Auto if blank" />
+                          <p className="mt-1 text-xs text-slate-500">Product code will be generated automatically.</p>
                         </FormField>
                         <FormField label="Barcode">
                           <input value={line.newProductBarcode} onChange={(event) => updateLine(line.id, { newProductBarcode: event.target.value })} className="field-input" />
@@ -844,9 +1087,9 @@ export function PurchaseForm({
                       </div>
                     </div>
                   ) : line.matchAction === "ignore" ? (
-                    <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-500">This receipt line will not be added to the purchase.</div>
+                    <div className="min-w-0 rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-500 md:col-span-2 xl:col-span-4 2xl:col-span-1">This receipt line will not be added to the purchase.</div>
                   ) : (
-                    renderProductPicker(line)
+                    <div className="min-w-0 md:col-span-2 xl:col-span-4 2xl:col-span-1">{renderProductPicker(line)}</div>
                   )}
 
                   {renderLineMathFields(line)}
@@ -856,7 +1099,7 @@ export function PurchaseForm({
           </div>
           <div className="flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
             <button type="button" className="btn-secondary" onClick={() => setLines((current) => [...current, newLine({ matchAction: "change" })])}>Add manual line</button>
-            <div className="text-right">
+            <div className="rounded-lg bg-slate-50 p-3 text-right">
               <div className="text-sm text-slate-500">Included line total: {money(purchaseTotal)}</div>
               <div className="text-lg font-semibold text-slate-900">Display total: {money(displayTotal)}</div>
             </div>
@@ -878,8 +1121,8 @@ export function PurchaseForm({
                 </div>
                 {lineErrors[line.id] && !isProductSelectionError(lineErrors[line.id]) ? <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-800">{lineErrors[line.id]}</div> : null}
 
-                <div className="grid gap-3 lg:grid-cols-[minmax(260px,2fr)_repeat(6,minmax(108px,1fr))]">
-                  {renderProductPicker(line)}
+                <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-[minmax(260px,2fr)_repeat(6,minmax(0,1fr))]">
+                  <div className="min-w-0 md:col-span-2 xl:col-span-4 2xl:col-span-1">{renderProductPicker(line)}</div>
                   {renderLineMathFields(line)}
                 </div>
               </div>
@@ -887,7 +1130,7 @@ export function PurchaseForm({
           </div>
           <div className="flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
             <button type="button" className="btn-secondary" onClick={() => setLines((current) => [...current, newLine()])}>Add item</button>
-            <div className="text-right">
+            <div className="rounded-lg bg-slate-50 p-3 text-right">
               <div className="text-sm text-slate-500">Calculated line total: {money(purchaseTotal)}</div>
               <div className="text-lg font-semibold text-slate-900">Display total: {money(displayTotal)}</div>
             </div>
@@ -918,6 +1161,9 @@ export function PurchaseForm({
           </div>
         </div>
       </FormSection>
+        </div>
+        <ReceiptPreviewPanel preview={receiptPreview} onOpen={() => setReceiptModalOpen(true)} desktop />
+      </div>
 
       <div className="sticky bottom-3 z-10 -mx-3 flex flex-col gap-3 border-t border-slate-200 bg-slate-100/95 px-3 py-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:border-0 sm:bg-transparent sm:p-0">
         <button className="btn-secondary" name="submit_action" value="draft" disabled={Boolean(submitIntent)}>
@@ -927,6 +1173,19 @@ export function PurchaseForm({
           {submitIntent === "received" ? "Receiving..." : "Save and receive"}
         </button>
       </div>
+      {receiptModalOpen && receiptPreview?.type.startsWith("image/") ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4" role="dialog" aria-modal="true">
+          <div className="max-h-full w-full max-w-5xl overflow-hidden rounded-lg bg-white shadow-2xl">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
+              <div className="min-w-0 truncate text-sm font-semibold text-slate-900">{receiptPreview.name || "Receipt preview"}</div>
+              <button type="button" className="btn-secondary px-3 py-1 text-sm" onClick={() => setReceiptModalOpen(false)}>Close</button>
+            </div>
+            <div className="max-h-[82vh] overflow-auto bg-slate-100 p-3">
+              <img src={receiptPreview.url} alt={receiptPreview.name || "Receipt preview"} className="mx-auto max-w-full rounded-lg bg-white object-contain" />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </form>
   );
 }

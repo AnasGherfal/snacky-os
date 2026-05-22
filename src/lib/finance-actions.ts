@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
-import { canViewFinancials } from "@/lib/authz";
+import { canEditFinancialTransactions, canViewFinancials } from "@/lib/authz";
 import {
   buildFinanceImportStageRow,
   buildFinanceTransaction,
@@ -18,6 +18,12 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 function requireFinance(profile: Awaited<ReturnType<typeof getCurrentProfile>>) {
   if (!profile || !canViewFinancials({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) {
+    redirect("/unauthorized");
+  }
+}
+
+function requireFinanceEdit(profile: Awaited<ReturnType<typeof getCurrentProfile>>) {
+  if (!profile || !canEditFinancialTransactions({ id: profile.id, role: profile.role, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) {
     redirect("/unauthorized");
   }
 }
@@ -46,6 +52,18 @@ function optionalText(value: FormDataEntryValue | null) {
 
 function transactionCategory(formData: FormData, fallback?: string | null) {
   return optionalText(formData.get("category")) ?? optionalText(formData.get("final_bucket")) ?? fallback ?? null;
+}
+
+function parseTransactionAmount(value: FormDataEntryValue | null, fallback: unknown = 0) {
+  const raw = String(value ?? fallback ?? "").replace(/,/g, "").trim();
+  if (!raw) return 0;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? Math.abs(parsed) : NaN;
+}
+
+function validDirection(value: FormDataEntryValue | null, fallback?: string | null) {
+  const direction = String(value || fallback || "").trim();
+  return direction === "money_in" || direction === "money_out" ? direction : "";
 }
 
 export async function importHistoricalFinanceTransactions() {
@@ -157,14 +175,18 @@ export async function updateFinanceSettings(formData: FormData) {
 
 export async function createManualFinancialTransaction(formData: FormData) {
   const profile = await getCurrentProfile();
-  requireFinance(profile);
+  requireFinanceEdit(profile);
   const supabase = getSupabaseServerClient();
   if (!supabase) redirect("/finance/transactions/new?error=Supabase%20is%20not%20configured.");
 
-  const direction = String(formData.get("direction") || "money_out");
-  const amount = Math.abs(Number(formData.get("amount") || 0));
-  const transactionDate = String(formData.get("transaction_date") || new Date().toISOString().slice(0, 10));
-  if (!amount || amount <= 0) redirect("/finance/transactions/new?error=Amount%20must%20be%20greater%20than%200.");
+  const direction = validDirection(formData.get("direction"));
+  const amount = parseTransactionAmount(formData.get("amount"));
+  const transactionDate = String(formData.get("transaction_date") || "").trim();
+  const category = transactionCategory(formData);
+  if (!transactionDate) redirect("/finance/transactions/new?error=Transaction%20date%20is%20required.");
+  if (!direction) redirect("/finance/transactions/new?error=Direction%20is%20required.");
+  if (!Number.isFinite(amount) || amount < 0) redirect("/finance/transactions/new?error=Amount%20must%20be%20greater%20than%20or%20equal%20to%200.");
+  if (!category) redirect("/finance/transactions/new?error=Category%20is%20required.");
 
   const payload = {
     transaction_date: transactionDate,
@@ -178,7 +200,7 @@ export async function createManualFinancialTransaction(formData: FormData) {
     amount,
     signed_amount: direction === "money_out" ? -amount : amount,
     bucket: optionalText(formData.get("bucket")),
-    final_bucket: transactionCategory(formData),
+    final_bucket: category,
     review_status: "confirmed",
     needs_review: false,
     transaction_status: "active",
@@ -210,16 +232,22 @@ export async function createManualFinancialTransaction(formData: FormData) {
 
 export async function reviewFinancialTransaction(formData: FormData) {
   const profile = await getCurrentProfile();
-  requireFinance(profile);
+  requireFinanceEdit(profile);
   const supabase = getSupabaseServerClient();
   if (!supabase) throw new Error("Supabase is not configured.");
 
   const id = String(formData.get("id") || "");
   const { data: before } = await supabase.from("financial_transactions").select("*").eq("id", id).maybeSingle();
-  const amount = Math.abs(Number(formData.get("amount") || before?.amount || 0));
-  const direction = String(formData.get("direction") || before?.direction || "money_out");
+  const amount = parseTransactionAmount(formData.get("amount"), before?.amount);
+  const direction = validDirection(formData.get("direction"), before?.direction);
+  const transactionDate = String(formData.get("transaction_date") || before?.transaction_date || "").trim();
+  const category = transactionCategory(formData, before?.final_bucket);
+  if (!transactionDate) throw new Error("Transaction date is required.");
+  if (!direction) throw new Error("Direction is required.");
+  if (!Number.isFinite(amount) || amount < 0) throw new Error("Amount must be greater than or equal to 0.");
+  if (!category) throw new Error("Category is required.");
   const payload = {
-    transaction_date: String(formData.get("transaction_date") || before?.transaction_date),
+    transaction_date: transactionDate,
     direction,
     transaction_type: optionalText(formData.get("transaction_type")),
     location: optionalText(formData.get("location")),
@@ -228,7 +256,7 @@ export async function reviewFinancialTransaction(formData: FormData) {
     payment_method: optionalText(formData.get("payment_method")),
     amount,
     signed_amount: direction === "money_out" ? -amount : amount,
-    final_bucket: transactionCategory(formData, before?.final_bucket),
+    final_bucket: category,
     review_status: "reviewed",
     needs_review: false,
     reviewed_by: profile?.team_member_id ?? null,
@@ -263,7 +291,7 @@ export async function reviewFinancialTransaction(formData: FormData) {
 
 export async function updateFinancialTransaction(formData: FormData) {
   const profile = await getCurrentProfile();
-  requireFinance(profile);
+  requireFinanceEdit(profile);
   const supabase = getSupabaseServerClient();
   if (!supabase) redirect("/finance/transactions?error=Supabase%20is%20not%20configured.");
 
@@ -271,15 +299,20 @@ export async function updateFinancialTransaction(formData: FormData) {
   const { data: before } = await supabase.from("financial_transactions").select("*").eq("id", id).maybeSingle();
   if (!before) redirect("/finance/transactions?error=Transaction%20not%20found.");
 
-  const direction = String(formData.get("direction") || before.direction || "money_out");
-  const amount = Math.abs(Number(formData.get("amount") || before.amount || 0));
-  if (!amount || amount <= 0) redirect(`/finance/transactions/${id}/edit?error=Amount%20must%20be%20greater%20than%200.`);
+  const direction = validDirection(formData.get("direction"), before.direction);
+  const amount = parseTransactionAmount(formData.get("amount"), before.amount);
+  const transactionDate = String(formData.get("transaction_date") || "").trim();
+  const category = transactionCategory(formData, before.final_bucket);
+  if (!transactionDate) redirect(`/finance/transactions/${id}/edit?error=Transaction%20date%20is%20required.`);
+  if (!direction) redirect(`/finance/transactions/${id}/edit?error=Direction%20is%20required.`);
+  if (!Number.isFinite(amount) || amount < 0) redirect(`/finance/transactions/${id}/edit?error=Amount%20must%20be%20greater%20than%20or%20equal%20to%200.`);
+  if (!category) redirect(`/finance/transactions/${id}/edit?error=Category%20is%20required.`);
 
   const markReviewed = String(formData.get("mark_reviewed") || "") === "on";
   const needsManualReview = String(formData.get("needs_review") || "") === "on" && !markReviewed;
   const reviewStatus = markReviewed ? "reviewed" : needsManualReview ? "needs_review" : "confirmed";
   const payload = {
-    transaction_date: String(formData.get("transaction_date") || before.transaction_date),
+    transaction_date: transactionDate,
     direction,
     transaction_type: optionalText(formData.get("transaction_type")),
     location: optionalText(formData.get("location")),
@@ -290,7 +323,7 @@ export async function updateFinancialTransaction(formData: FormData) {
     signed_amount: direction === "money_out" ? -amount : amount,
     bucket: optionalText(formData.get("bucket")),
     bucket_override: optionalText(formData.get("bucket_override")),
-    final_bucket: transactionCategory(formData, before.final_bucket),
+    final_bucket: category,
     review_status: reviewStatus,
     needs_review: needsManualReview,
     reviewed_by: markReviewed ? profile?.team_member_id ?? null : before.reviewed_by,
@@ -331,7 +364,7 @@ export async function deleteFinancialTransaction(formData: FormData) {
 
 export async function updateFinancialTransactionStatus(formData: FormData) {
   const profile = await getCurrentProfile();
-  requireFinance(profile);
+  requireFinanceEdit(profile);
   const supabase = getSupabaseServerClient();
   if (!supabase) redirect("/finance/transactions?error=Supabase%20is%20not%20configured.");
 

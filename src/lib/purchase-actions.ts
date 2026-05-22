@@ -6,6 +6,7 @@ import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
 import { AppRole, isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
 import { createPurchaseFinancialTransaction } from "@/lib/finance-actions";
+import { resolveProductSku } from "@/lib/product-sku";
 import { resolvePurchaseReceiptUrl } from "@/lib/purchase-receipts";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -204,10 +205,10 @@ async function resolvePurchaseLines({
 
     let sku = "";
     try {
-      sku = await uniqueSku(supabase, line.newProduct?.sku ?? "", productName, index);
+      sku = await resolveProductSku({ supabase, manualSku: line.newProduct?.sku });
     } catch (error) {
       console.error("[purchases] Failed to generate product SKU for receipt line", error);
-      formError("Could not create product from receipt line.");
+      formError(error instanceof Error ? error.message : "Could not create product from receipt line.");
     }
 
     const unitCost = roundUnitCost(line.unitCost || (line.lineTotal > 0 && line.looseUnitsQty > 0 ? line.lineTotal / line.looseUnitsQty : 0));

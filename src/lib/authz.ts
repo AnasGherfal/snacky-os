@@ -45,6 +45,10 @@ export function canViewFinancials(user: AuthUserContext | null | undefined) {
   return user?.role ? financeRoles.has(user.role) : false;
 }
 
+export function canEditFinancialTransactions(user: AuthUserContext | null | undefined) {
+  return user?.role ? ownerAdminRoles.has(user.role) || user.role === "finance" : false;
+}
+
 export function canManageStorageLocations(role: AppRole | null | undefined) {
   return role ? storageLocationRoles.has(role) : false;
 }
