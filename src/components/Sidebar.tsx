@@ -123,7 +123,7 @@ const financeNav: NavSection[] = [
 
 const viewerNav: NavSection[] = [{ items: [dashboardItem] }];
 
-function mergeSections(sections: NavSection[]) {
+function mergeSections(sections: NavSection[]): NavSection[] {
   const seen = new Set<string>();
   const items: NavItem[] = [];
   sections.flatMap((section) => section.items).forEach((item) => {
