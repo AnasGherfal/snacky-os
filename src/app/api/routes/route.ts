@@ -141,16 +141,13 @@ export async function POST(request: Request) {
   const operatorId = assignmentMode === "assigned" ? String(payload.operatorId ?? "").trim() : "";
   const manualMachineIds = Array.from(new Set((payload.machineIds ?? []).map(String).filter(Boolean)));
   const recommendationKeys = Array.from(new Set((payload.recommendationKeys ?? []).map(String).filter(Boolean)));
-  const requestedFinalTakeByGroup = new Map(
-    (payload.recommendationFinalTakeQty ?? [])
-      .map((item) => {
-        const machineId = String(item.machineId ?? "").trim();
-        const productId = String(item.productId ?? "").trim();
-        const finalTakeQty = Math.max(0, Math.floor(Number(item.finalTakeQty ?? 0)));
-        return machineId && productId ? [`${machineId}:${productId}`, finalTakeQty] as const : null;
-      })
-      .filter((item): item is readonly [string, number] => Boolean(item)),
-  );
+  const requestedFinalTakeByGroup = new Map<string, number>();
+  (payload.recommendationFinalTakeQty ?? []).forEach((item) => {
+    const machineId = String(item.machineId ?? "").trim();
+    const productId = String(item.productId ?? "").trim();
+    const finalTakeQty = Math.max(0, Math.floor(Number(item.finalTakeQty ?? 0)));
+    if (machineId && productId) requestedFinalTakeByGroup.set(`${machineId}:${productId}`, finalTakeQty);
+  });
   const legacyRecommendationSlotIds = Array.from(new Set((payload.machineSlotIds ?? []).map(String).filter(Boolean)));
   const adminOverride = Boolean(payload.adminOverride);
   const manualStopItems = (payload.manualStopItems ?? [])
