@@ -1,15 +1,17 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Fragment } from "react";
+import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canEditFinancialTransactions, canViewFinancials } from "@/lib/authz";
 import { accountLabel, formatFinanceMoney, isBalanceAffectingTransaction, signedAmount } from "@/lib/finance-balance";
+import { cleanSearchParams, getPagination, SearchParamsRecord, supabaseLikePattern } from "@/lib/pagination";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
-type TransactionParams = {
+type TransactionParams = SearchParamsRecord & {
   q?: string;
   review?: string;
   direction?: string;
@@ -75,25 +77,6 @@ function purchaseFor(row: any, purchases: Map<string, any>) {
   return row.related_purchase_id ? purchases.get(row.related_purchase_id) : null;
 }
 
-function rowSearchText(row: any, maps: { purchases: Map<string, any> }) {
-  const purchase = purchaseFor(row, maps.purchases);
-  return [
-    row.transaction_kind,
-    row.transaction_type,
-    row.description,
-    row.notes,
-    row.final_bucket,
-    row.payment_method,
-    row.source_sheet,
-    purchase?.receipt_number,
-    purchase?.order_date,
-    purchase?.supplier?.name,
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-}
-
 function csvCell(value: unknown) {
   const text = String(value ?? "");
   return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
@@ -134,7 +117,8 @@ export default async function FinanceTransactionsPage({
   const profile = await getCurrentProfile();
   if (!profile || !canAccess(profile)) redirect("/unauthorized");
   const canEdit = canEditFinancialTransactions({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status });
-  const params = await searchParams;
+  const params = cleanSearchParams(await searchParams);
+  const { page, pageSize, from, to } = getPagination(params);
   const supabase = getSupabaseServerClient();
   if (!supabase) {
     return (
@@ -145,12 +129,19 @@ export default async function FinanceTransactionsPage({
   }
   const statusFilter = params.status ?? "active";
   const groupProductPurchases = params.group_product_purchases !== "off";
+  const search = String(params.q ?? "").trim();
+  const matchingPurchaseIds = search
+    ? ((await supabase
+        .from("purchase_orders")
+        .select("id")
+        .or(["receipt_number", "order_date"].map((column) => `${column}.ilike.${supabaseLikePattern(search.replaceAll(",", " "))}`).join(","))
+        .limit(100)).data ?? []).map((purchase: any) => purchase.id)
+    : [];
 
   let query = supabase
     .from("financial_transactions")
-    .select("id, transaction_date, direction, transaction_kind, transaction_type, description, notes, amount, signed_amount, currency, account_id, transaction_effect, source_account_id, destination_account_id, import_status, final_bucket, payment_method, transaction_status, review_status, needs_review, source_sheet, source_row, related_purchase_id, related_cash_collection_id, related_route_id, related_machine_id, related_location_id, receipt_url, created_at")
-    .order("transaction_date", { ascending: false })
-    .limit(1000);
+    .select("id, transaction_date, direction, transaction_kind, transaction_type, description, notes, amount, signed_amount, currency, account_id, transaction_effect, source_account_id, destination_account_id, import_status, final_bucket, payment_method, transaction_status, review_status, needs_review, source_sheet, source_row, related_purchase_id, related_cash_collection_id, related_route_id, related_machine_id, related_location_id, receipt_url, created_at", { count: "exact" })
+    .order("transaction_date", { ascending: false });
 
   if (statusFilter !== "all") query = query.eq("transaction_status", statusFilter);
   if (params.review === "needs_review") query = query.eq("needs_review", true);
@@ -160,8 +151,14 @@ export default async function FinanceTransactionsPage({
   if (params.kind) query = query.eq("transaction_kind", params.kind);
   if (params.date_from) query = query.gte("transaction_date", params.date_from);
   if (params.date_to) query = query.lte("transaction_date", params.date_to);
+  if (search) {
+    const pattern = supabaseLikePattern(search.replaceAll(",", " "));
+    const clauses = ["transaction_kind", "transaction_type", "description", "notes", "final_bucket", "payment_method", "source_sheet"].map((column) => `${column}.ilike.${pattern}`);
+    if (matchingPurchaseIds.length) clauses.push(`related_purchase_id.in.(${matchingPurchaseIds.join(",")})`);
+    query = query.or(clauses.join(","));
+  }
 
-  const { data, error: transactionsError } = await query;
+  const { data, count, error: transactionsError } = await query.range(from, to);
   if (transactionsError) {
     console.error("[finance] Failed to load transactions", transactionsError);
     return (
@@ -184,11 +181,7 @@ export default async function FinanceTransactionsPage({
   machines.forEach((row: any) => maps.machines.set(row.id, row));
   locations.forEach((row: any) => maps.locations.set(row.id, row));
 
-  const search = String(params.q ?? "").trim().toLowerCase();
-  const rows = baseRows.filter((row) => {
-    if (!search) return true;
-    return rowSearchText(row, maps).includes(search);
-  });
+  const rows = baseRows;
 
   const balanceRows = rows.filter(isBalanceAffectingTransaction);
   const totals = balanceRows.reduce(
@@ -273,7 +266,8 @@ export default async function FinanceTransactionsPage({
 
       <section className="surface-card mb-6">
         <form className="grid gap-3 md:grid-cols-3 xl:grid-cols-9">
-          <input name="q" defaultValue={params.q ?? ""} placeholder="Search supplier, receipt, description, method..." className="field-input xl:col-span-2" />
+          <input type="hidden" name="pageSize" value={pageSize} />
+          <input name="q" defaultValue={params.q ?? ""} placeholder="Search receipt, description, method..." className="field-input xl:col-span-2" />
           <select name="status" defaultValue={statusFilter} className="field-input"><option value="active">Active</option><option value="voided">Voided</option><option value="archived">Archived</option><option value="all">All statuses</option></select>
           <select name="review" defaultValue={params.review ?? ""} className="field-input"><option value="">All review states</option><option value="needs_review">Needs review</option><option value="confirmed">Confirmed</option><option value="reviewed">Reviewed</option></select>
           <select name="direction" defaultValue={params.direction ?? ""} className="field-input"><option value="">All directions</option><option value="money_in">Money in</option><option value="money_out">Money out</option></select>
@@ -295,8 +289,9 @@ export default async function FinanceTransactionsPage({
       {!rows.length ? (
         <EmptyState title="No finance transactions found" body="Import historical transactions or add manual transactions to populate this ledger." />
       ) : (
-        <DataTable headers={["Date", "Direction", "Category", "Amount", "Description", "Payment", "Related", "Status", "Actions"]}>
-          {displayItems.map((item) => {
+        <>
+          <DataTable headers={["Date", "Direction", "Category", "Amount", "Description", "Payment", "Related", "Status", "Actions"]}>
+            {displayItems.map((item) => {
             if (item.type === "group") {
               const total = item.rows.reduce((sum, row) => sum + Math.abs(Number(row.amount ?? row.signed_amount ?? 0)), 0);
               const anchor = groupAnchor(item.key);
@@ -371,8 +366,10 @@ export default async function FinanceTransactionsPage({
                 <td><div className="flex flex-wrap gap-2"><Link href={`/finance/transactions/${row.id}`} className="btn-secondary">View</Link>{canEdit ? <Link href={`/finance/transactions/${row.id}/edit`} className="btn-secondary">{row.needs_review ? "Review" : "Edit"}</Link> : null}</div></td>
               </tr>
             );
-          })}
-        </DataTable>
+            })}
+          </DataTable>
+          <PaginationControls basePath="/finance/transactions" searchParams={params} page={page} pageSize={pageSize} totalCount={count ?? 0} itemLabel="transactions" />
+        </>
       )}
     </>
   );

@@ -1,9 +1,11 @@
 import { redirect } from "next/navigation";
 import type { ComponentType } from "react";
 import { Activity, AlertTriangle, Boxes, CheckCircle2, DatabaseZap, Globe2, PackageSearch, RadioTower, RefreshCw, TestTube2 } from "lucide-react";
+import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, PageHeader, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
+import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { getXyVmsConfig } from "@/lib/xy-vms-api";
 import { getXyWebApiConfig } from "@/lib/xy-web-api";
@@ -152,9 +154,11 @@ function debugText(summary: XyEndpointSummary) {
   );
 }
 
-export default async function AdminVmsApiPage() {
+export default async function AdminVmsApiPage({ searchParams }: { searchParams: Promise<SearchParamsRecord> }) {
   const profile = await getCurrentProfile();
   if (!profile || !isOwnerAdminRole(profile)) redirect("/unauthorized");
+  const params = cleanSearchParams(await searchParams);
+  const { page, pageSize, from, to } = getPagination(params);
 
   const config = getXyVmsConfig();
   const webConfig = getXyWebApiConfig();
@@ -171,6 +175,7 @@ export default async function AdminVmsApiPage() {
 
   const [
     runsResult,
+    pagedRunsResult,
     productCatalogCount,
     stockSnapshotCount,
     statusSnapshotCount,
@@ -182,6 +187,12 @@ export default async function AdminVmsApiPage() {
       .in("provider", ["xy", "xy_web"])
       .order("created_at", { ascending: false })
       .limit(25),
+    supabase
+      .from("vms_sync_runs")
+      .select("id, provider, sync_type, status, row_count, rows_imported, rows_updated, rows_skipped, error_count, message, errors, response_summary, started_at, completed_at, created_at", { count: "exact" })
+      .in("provider", ["xy", "xy_web"])
+      .order("created_at", { ascending: false })
+      .range(from, to),
     supabase.from("vms_product_catalog_snapshots").select("id", { count: "exact", head: true }),
     supabase.from("vms_stock_snapshots").select("id", { count: "exact", head: true }).eq("source_provider", "xy"),
     supabase.from("vms_machine_status_snapshots").select("id", { count: "exact", head: true }),
@@ -190,6 +201,7 @@ export default async function AdminVmsApiPage() {
 
   const loadError =
     runsResult.error ??
+    pagedRunsResult.error ??
     productCatalogCount.error ??
     stockSnapshotCount.error ??
     statusSnapshotCount.error ??
@@ -205,6 +217,7 @@ export default async function AdminVmsApiPage() {
   }
 
   const runs = (runsResult.data ?? []) as XySyncRunRow[];
+  const pagedRuns = (pagedRunsResult.data ?? []) as XySyncRunRow[];
   const lastCompleted = runs.find((run) => run.provider === "xy" && !String(run.sync_type ?? "").startsWith("test_") && run.completed_at);
   const latestOfficialTest = runs.find((run) => run.provider === "xy" && run.sync_type === "test_official");
   const latestOfficialEndpointSummaries = endpointSummaries(latestOfficialTest?.response_summary);
@@ -396,25 +409,28 @@ export default async function AdminVmsApiPage() {
         </section>
       ) : null}
 
-      {!runs.length ? (
+      {!pagedRuns.length ? (
         <EmptyState title="No XY sync runs yet" body="Run a manual sync to create the first server-side log." />
       ) : (
-        <DataTable headers={["Started", "Provider", "Type", "Status", "Rows", "Imported", "Updated", "Skipped", "Errors", "Message"]}>
-          {runs.map((run) => (
-            <tr key={run.id}>
-              <td>{formatDate(run.started_at ?? run.created_at)}</td>
-              <td className="font-medium">{run.provider === "xy_web" ? "XY Web" : "XY API"}</td>
-              <td className="font-medium">{String(run.sync_type ?? "").replaceAll("_", " ")}</td>
-              <td><StatusBadge status={run.status} /></td>
-              <td>{run.row_count ?? 0}</td>
-              <td>{run.rows_imported ?? 0}</td>
-              <td>{run.rows_updated ?? 0}</td>
-              <td>{run.rows_skipped ?? 0}</td>
-              <td>{run.error_count ? compactErrors(run.errors) : "-"}</td>
-              <td>{run.message ?? "-"}</td>
-            </tr>
-          ))}
-        </DataTable>
+        <>
+          <DataTable headers={["Started", "Provider", "Type", "Status", "Rows", "Imported", "Updated", "Skipped", "Errors", "Message"]}>
+            {pagedRuns.map((run) => (
+              <tr key={run.id}>
+                <td>{formatDate(run.started_at ?? run.created_at)}</td>
+                <td className="font-medium">{run.provider === "xy_web" ? "XY Web" : "XY API"}</td>
+                <td className="font-medium">{String(run.sync_type ?? "").replaceAll("_", " ")}</td>
+                <td><StatusBadge status={run.status} /></td>
+                <td>{run.row_count ?? 0}</td>
+                <td>{run.rows_imported ?? 0}</td>
+                <td>{run.rows_updated ?? 0}</td>
+                <td>{run.rows_skipped ?? 0}</td>
+                <td>{run.error_count ? compactErrors(run.errors) : "-"}</td>
+                <td>{run.message ?? "-"}</td>
+              </tr>
+            ))}
+          </DataTable>
+          <PaginationControls basePath="/admin/vms-api" searchParams={params} page={page} pageSize={pageSize} totalCount={pagedRunsResult.count ?? 0} itemLabel="sync runs" />
+        </>
       )}
     </>
   );

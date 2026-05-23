@@ -1,8 +1,12 @@
 import Link from "next/link";
+import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
+import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
-export default async function LocationsPage() {
+export default async function LocationsPage({ searchParams }: { searchParams: Promise<SearchParamsRecord> }) {
+  const params = cleanSearchParams(await searchParams);
+  const { page, pageSize, from, to } = getPagination(params);
   const supabase = getSupabaseServerClient();
   if (!supabase) {
     return (
@@ -12,7 +16,11 @@ export default async function LocationsPage() {
     );
   }
 
-  const { data, error } = await supabase.from("locations").select("id,name,location_type,rent_amount,status").order("name");
+  const { data, count, error } = await supabase
+    .from("locations")
+    .select("id,name,location_type,rent_amount,status", { count: "exact" })
+    .order("name")
+    .range(from, to);
   if (error) {
     console.error("[locations] Failed to load locations", error);
     return (
@@ -33,17 +41,20 @@ export default async function LocationsPage() {
       {!data?.length ? (
         <EmptyState title="No locations yet" body="Create site locations before linking machines, rent, and operating context." action={<PrimaryButton href="/locations/new">Add location</PrimaryButton>} />
       ) : (
-        <DataTable headers={["Name", "Type", "Rent", "Status", "Actions"]}>
-          {data.map((location: any) => (
-            <tr key={location.id}>
-              <td className="font-medium text-slate-900">{location.name}</td>
-              <td>{location.location_type}</td>
-              <td>{Number(location.rent_amount || 0).toFixed(2)}</td>
-              <td><StatusBadge status={location.status} /></td>
-              <td><Link className="btn-secondary" href={`/locations/${location.id}`}>Edit</Link></td>
-            </tr>
-          ))}
-        </DataTable>
+        <>
+          <DataTable headers={["Name", "Type", "Rent", "Status", "Actions"]}>
+            {data.map((location: any) => (
+              <tr key={location.id}>
+                <td className="font-medium text-slate-900">{location.name}</td>
+                <td>{location.location_type}</td>
+                <td>{Number(location.rent_amount || 0).toFixed(2)}</td>
+                <td><StatusBadge status={location.status} /></td>
+                <td><Link className="btn-secondary" href={`/locations/${location.id}`}>Edit</Link></td>
+              </tr>
+            ))}
+          </DataTable>
+          <PaginationControls basePath="/locations" searchParams={params} page={page} pageSize={pageSize} totalCount={count ?? 0} itemLabel="locations" />
+        </>
       )}
     </>
   );

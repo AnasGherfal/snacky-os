@@ -1,5 +1,7 @@
+import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, MobileCardList, MobileField, MobileRecordCard, PageHeader, StatusBadge } from "@/components/ui";
 import { requireCurrentProfileForPath } from "@/lib/auth";
+import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -22,15 +24,18 @@ type RefillRecommendationRow = {
   imported_at: string | null;
 };
 
-export default async function RefillsPage() {
+export default async function RefillsPage({ searchParams }: { searchParams: Promise<SearchParamsRecord> }) {
+  const params = cleanSearchParams(await searchParams);
+  const { page, pageSize, from, to } = getPagination(params);
   await requireCurrentProfileForPath("/refills");
   const supabase = getSupabaseServerClient();
   const [recommendationsResult, stockCountResult, historyResult, historyCountResult, historyIssueCountResult] = supabase
     ? await Promise.all([
         supabase
           .from("refill_recommendations")
-          .select("machine_name, slot_code, product_name, current_qty, capacity, par_qty, suggested_qty, final_qty_to_take, available_storage_qty, priority, latest_vms_at, imported_at")
-          .order("suggested_qty", { ascending: false }),
+          .select("machine_name, slot_code, product_name, current_qty, capacity, par_qty, suggested_qty, final_qty_to_take, available_storage_qty, priority, latest_vms_at, imported_at", { count: "exact" })
+          .order("suggested_qty", { ascending: false })
+          .range(from, to),
         supabase
           .from("vms_stock_snapshots")
           .select("id", { count: "exact", head: true })
@@ -39,7 +44,7 @@ export default async function RefillsPage() {
           .from("machine_refill_history")
           .select("id, legacy_refill_id, refill_at, machine_name, operator_email, fill_status, issues_found, issue_notes, machine_photo_url, machine_photo_path, linked_issue_id, machine:machines(name, machine_code), operator:team_members(full_name, email)")
           .order("refill_at", { ascending: false })
-          .limit(100),
+          .range(from, to),
         supabase
           .from("machine_refill_history")
           .select("id", { count: "exact", head: true }),
@@ -49,7 +54,7 @@ export default async function RefillsPage() {
           .eq("issues_found", true),
       ])
     : [{ data: null, error: null }, { count: 0, error: null }, { data: null, error: null }, { count: 0, error: null }, { count: 0, error: null }];
-  const { data: recommendations, error } = recommendationsResult;
+  const { data: recommendations, count: recommendationCount, error } = recommendationsResult;
   const recommendationRows = (recommendations ?? []) as RefillRecommendationRow[];
   const hasVmsStock = Boolean((stockCountResult.count ?? 0) > 0);
   const historyUnavailable = historyResult.error?.code === "PGRST205";
@@ -75,22 +80,25 @@ export default async function RefillsPage() {
             ) : !recommendationRows.length ? (
               <EmptyState title="No refill recommendations yet" body="All synced VMS stock is either full, inactive, or waiting on product mapping review." />
             ) : (
-              <DataTable headers={["Machine", "VMS slot", "Product", "Current", "Capacity", "Need", "Take", "Storage", "Priority", "Latest import"]}>
-                {recommendationRows.map((row, index) => (
-                  <tr key={`${row.machine_name}-${row.slot_code}-${row.product_name}-${index}`}>
-                    <td className="font-medium">{row.machine_name}</td>
-                    <td>{row.slot_code ?? "VMS item"}</td>
-                    <td>{row.product_name}</td>
-                    <td>{row.current_qty}</td>
-                    <td>{formatRecommendationQty(row.capacity ?? row.par_qty)}</td>
-                    <td>{formatRecommendationQty(row.suggested_qty)}</td>
-                    <td className="font-semibold text-slate-900">{formatRecommendationQty(row.final_qty_to_take ?? row.suggested_qty)}</td>
-                    <td>{row.available_storage_qty}</td>
-                    <td><StatusBadge status={row.priority} /></td>
-                    <td>{row.imported_at ? new Date(row.imported_at).toLocaleString("en-US") : "-"}</td>
-                  </tr>
-                ))}
-              </DataTable>
+              <>
+                <DataTable headers={["Machine", "VMS slot", "Product", "Current", "Capacity", "Need", "Take", "Storage", "Priority", "Latest import"]}>
+                  {recommendationRows.map((row, index) => (
+                    <tr key={`${row.machine_name}-${row.slot_code}-${row.product_name}-${index}`}>
+                      <td className="font-medium">{row.machine_name}</td>
+                      <td>{row.slot_code ?? "VMS item"}</td>
+                      <td>{row.product_name}</td>
+                      <td>{row.current_qty}</td>
+                      <td>{formatRecommendationQty(row.capacity ?? row.par_qty)}</td>
+                      <td>{formatRecommendationQty(row.suggested_qty)}</td>
+                      <td className="font-semibold text-slate-900">{formatRecommendationQty(row.final_qty_to_take ?? row.suggested_qty)}</td>
+                      <td>{row.available_storage_qty}</td>
+                      <td><StatusBadge status={row.priority} /></td>
+                      <td>{row.imported_at ? new Date(row.imported_at).toLocaleString("en-US") : "-"}</td>
+                    </tr>
+                  ))}
+                </DataTable>
+                <PaginationControls basePath="/refills" searchParams={params} page={page} pageSize={pageSize} totalCount={recommendationCount ?? 0} itemLabel="recommendations" />
+              </>
             )}
           </section>
 
@@ -146,6 +154,7 @@ export default async function RefillsPage() {
                     </tr>
                   ))}
                 </DataTable>
+                <PaginationControls basePath="/refills" searchParams={params} page={page} pageSize={pageSize} totalCount={historyCountResult.count ?? 0} itemLabel="refill proofs" />
               </div>
             )}
           </section>

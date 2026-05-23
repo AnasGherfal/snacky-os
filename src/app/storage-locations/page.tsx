@@ -2,17 +2,20 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Eye, Pencil, Plus, RotateCcw } from "lucide-react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canManageStorageLocations } from "@/lib/authz";
+import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { activateStorageLocation, archiveStorageLocation, deleteStorageLocation } from "@/lib/storage-location-actions";
 import {
   StorageLocationRow,
+  inventoryRowBelongsToLocation,
+  normalizeStorageLocationType,
   storageLocationStatusLabel,
   storageLocationTypeHelpers,
   storageLocationTypeLabel,
-  summarizeStorageLocation,
 } from "@/lib/storage-locations";
 
 export const dynamic = "force-dynamic";
@@ -26,7 +29,8 @@ export default async function StorageLocationsPage({ searchParams }: { searchPar
   const profile = await getCurrentProfile();
   if (!profile || !canManageStorageLocations(profile)) redirect("/unauthorized");
 
-  const params = await searchParams;
+  const params = cleanSearchParams((await searchParams) as SearchParamsRecord);
+  const { page, pageSize, from, to } = getPagination(params);
   const supabase = getSupabaseServerClient();
   if (!supabase) {
     return (
@@ -36,15 +40,18 @@ export default async function StorageLocationsPage({ searchParams }: { searchPar
     );
   }
 
-  const [{ data: locations, error: locationsError }, { data: inventoryRows, error: inventoryError }, { data: movements, error: movementsError }, { data: operators }] =
+  const [{ data: locations, count, error: locationsError }, { count: activeLocationCount }, { data: operators }] =
     await Promise.all([
-      supabase.from("storage_locations").select("id, name, address, active, location_type, related_operator_id, created_at, updated_at").order("name"),
-      supabase.from("current_inventory_by_location").select("product_id, product_name, location_type, location_id, location_name, quantity_on_hand"),
-      supabase.from("inventory_movements").select("id, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, created_at").order("created_at", { ascending: false }),
+      supabase
+        .from("storage_locations")
+        .select("id, name, address, active, location_type, related_operator_id, created_at, updated_at", { count: "exact" })
+        .order("name")
+        .range(from, to),
+      supabase.from("storage_locations").select("id", { count: "exact", head: true }).eq("active", true),
       supabase.from("team_members").select("id, full_name, email").order("full_name"),
     ]);
 
-  const setupError = locationsError ?? inventoryError ?? movementsError;
+  const setupError = locationsError;
   if (setupError) {
     console.error("[storage-locations] Failed to load page data", setupError);
     return (
@@ -54,17 +61,57 @@ export default async function StorageLocationsPage({ searchParams }: { searchPar
     );
   }
 
+  const visibleLocations = (locations ?? []) as StorageLocationRow[];
+  const storageIds = visibleLocations
+    .filter((location) => !["operator_bag", "damaged", "expired"].includes(normalizeStorageLocationType(location.location_type)))
+    .map((location) => location.id);
+  const operatorBagIds = visibleLocations
+    .filter((location) => normalizeStorageLocationType(location.location_type) === "operator_bag" && location.related_operator_id)
+    .map((location) => location.related_operator_id as string);
+  const [{ data: storageInventoryRows }, { data: operatorInventoryRows }] = await Promise.all([
+    storageIds.length
+      ? supabase.from("current_inventory_by_location").select("product_id, product_name, location_type, location_id, location_name, quantity_on_hand").eq("location_type", "storage").in("location_id", storageIds)
+      : Promise.resolve({ data: [] }),
+    operatorBagIds.length
+      ? supabase.from("current_inventory_by_location").select("product_id, product_name, location_type, location_id, location_name, quantity_on_hand").eq("location_type", "operator_bag").in("location_id", operatorBagIds)
+      : Promise.resolve({ data: [] }),
+  ]);
+  const inventoryRows = [...(storageInventoryRows ?? []), ...(operatorInventoryRows ?? [])];
+  const movementSummaries = await Promise.all(
+    visibleLocations.map(async (location) => {
+      const type = normalizeStorageLocationType(location.location_type);
+      const movementFilter = (query: any) => {
+        if (type === "operator_bag") {
+          if (!location.related_operator_id) return null;
+          return query.or(`and(from_entity_type.eq.operator_bag,from_entity_id.eq.${location.related_operator_id}),and(to_entity_type.eq.operator_bag,to_entity_id.eq.${location.related_operator_id})`);
+        }
+        if (type === "damaged" || type === "expired") return query.eq("reason", type);
+        return query.or(`and(from_entity_type.eq.storage,from_entity_id.eq.${location.id}),and(to_entity_type.eq.storage,to_entity_id.eq.${location.id})`);
+      };
+      const countQuery = movementFilter(supabase.from("inventory_movements").select("id", { count: "exact", head: true }));
+      const latestQuery = movementFilter(supabase.from("inventory_movements").select("created_at").order("created_at", { ascending: false }).limit(1));
+      if (!countQuery || !latestQuery) return [location.id, { movementCount: 0, lastMovementAt: null }] as const;
+      const [{ count: movementCount }, { data: latestRows }] = await Promise.all([countQuery, latestQuery]);
+      return [location.id, { movementCount: movementCount ?? 0, lastMovementAt: latestRows?.[0]?.created_at ?? null }] as const;
+    }),
+  );
+  const movementSummaryByLocationId = new Map(movementSummaries);
   const operatorById = new Map((operators ?? []).map((operator: any) => [operator.id, operator]));
-  const rows = ((locations ?? []) as StorageLocationRow[])
+  const rows = visibleLocations
     .map((location) => ({
       location,
       operator: location.related_operator_id ? operatorById.get(location.related_operator_id) : null,
-      summary: summarizeStorageLocation(location, inventoryRows ?? [], movements ?? []),
+      summary: {
+        productCount: inventoryRows.filter((row: any) => inventoryRowBelongsToLocation(row, location) && Number(row.quantity_on_hand ?? 0) !== 0).length,
+        totalUnits: inventoryRows.filter((row: any) => inventoryRowBelongsToLocation(row, location)).reduce((sum: number, row: any) => sum + Number(row.quantity_on_hand ?? 0), 0),
+        movementCount: movementSummaryByLocationId.get(location.id)?.movementCount ?? 0,
+        lastMovementAt: movementSummaryByLocationId.get(location.id)?.lastMovementAt ?? null,
+      },
     }))
     .sort((a, b) => Number(b.location.active) - Number(a.location.active) || storageLocationTypeLabel(a.location.location_type).localeCompare(storageLocationTypeLabel(b.location.location_type)) || a.location.name.localeCompare(b.location.name));
 
-  const activeCount = rows.filter((row) => row.location.active).length;
-  const archivedCount = rows.length - activeCount;
+  const activeCount = activeLocationCount ?? 0;
+  const archivedCount = Math.max(0, (count ?? 0) - activeCount);
   const totalUnits = rows.reduce((sum, row) => sum + row.summary.totalUnits, 0);
 
   return (
@@ -84,9 +131,9 @@ export default async function StorageLocationsPage({ searchParams }: { searchPar
           <p className="mt-1 text-sm text-slate-500">{archivedCount} archived</p>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Current Units</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Shown Current Units</div>
           <div className="mt-2 text-2xl font-semibold text-slate-900">{totalUnits}</div>
-          <p className="mt-1 text-sm text-slate-500">Calculated from inventory_movements</p>
+          <p className="mt-1 text-sm text-slate-500">Calculated for the visible page</p>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4">
           <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Location Types</div>
@@ -107,60 +154,63 @@ export default async function StorageLocationsPage({ searchParams }: { searchPar
       {!rows.length ? (
         <EmptyState title="No storage locations yet" body="Add MAIN storage, operator bags, or temporary stock locations before creating inventory movements." />
       ) : (
-        <DataTable headers={["Location Name", "Type", "Status", "Current Products Count", "Current Total Units", "Last Movement Date", "Actions"]}>
-          {rows.map(({ location, operator, summary }) => {
-            const canHardDelete = summary.movementCount === 0 && summary.totalUnits === 0;
-            return (
-              <tr key={location.id}>
-                <td>
-                  <Link href={`/storage-locations/${location.id}`} className="link-secondary font-semibold">
-                    {location.name}
-                  </Link>
-                  {operator ? <div className="mt-1 text-xs text-slate-500">{operator.full_name}</div> : null}
-                </td>
-                <td>{storageLocationTypeLabel(location.location_type)}</td>
-                <td><StatusBadge status={storageLocationStatusLabel(location.active)} /></td>
-                <td>{summary.productCount}</td>
-                <td className="font-semibold text-slate-900">{summary.totalUnits}</td>
-                <td>{formatDate(summary.lastMovementAt)}</td>
-                <td>
-                  <div className="flex flex-wrap gap-2">
-                    <Link href={`/storage-locations/${location.id}`} className="btn-secondary px-3 py-2"><Eye className="mr-2 h-4 w-4" />View</Link>
-                    <Link href={`/storage-locations/${location.id}/edit`} className="btn-secondary px-3 py-2"><Pencil className="mr-2 h-4 w-4" />Edit</Link>
-                    {location.active ? (
-                      <ConfirmDialog
-                        action={archiveStorageLocation}
-                        triggerLabel="Archive"
-                        title="Archive storage location?"
-                        description="Archived locations stay in movement history but cannot be used for new stock movements."
-                        confirmLabel="Archive location"
-                        buttonClassName="btn-secondary px-3 py-2"
-                        hiddenFields={[{ name: "id", value: location.id }]}
-                      />
-                    ) : (
-                      <form action={activateStorageLocation}>
-                        <input type="hidden" name="id" value={location.id} />
-                        <button className="btn-secondary px-3 py-2"><RotateCcw className="mr-2 h-4 w-4" />Activate</button>
-                      </form>
-                    )}
-                    {canHardDelete ? (
-                      <ConfirmDialog
-                        action={deleteStorageLocation}
-                        triggerLabel="Delete"
-                        title="Delete storage location permanently?"
-                        description="This is only allowed because the location has no current inventory and no movement history."
-                        confirmLabel="Delete permanently"
-                        buttonClassName="btn-danger px-3 py-2"
-                        confirmButtonClassName="btn-danger"
-                        hiddenFields={[{ name: "id", value: location.id }]}
-                      />
-                    ) : null}
-                  </div>
-                </td>
-              </tr>
-            );
-          })}
-        </DataTable>
+        <>
+          <DataTable headers={["Location Name", "Type", "Status", "Current Products Count", "Current Total Units", "Last Movement Date", "Actions"]}>
+            {rows.map(({ location, operator, summary }) => {
+              const canHardDelete = summary.movementCount === 0 && summary.totalUnits === 0;
+              return (
+                <tr key={location.id}>
+                  <td>
+                    <Link href={`/storage-locations/${location.id}`} className="link-secondary font-semibold">
+                      {location.name}
+                    </Link>
+                    {operator ? <div className="mt-1 text-xs text-slate-500">{operator.full_name}</div> : null}
+                  </td>
+                  <td>{storageLocationTypeLabel(location.location_type)}</td>
+                  <td><StatusBadge status={storageLocationStatusLabel(location.active)} /></td>
+                  <td>{summary.productCount}</td>
+                  <td className="font-semibold text-slate-900">{summary.totalUnits}</td>
+                  <td>{formatDate(summary.lastMovementAt)}</td>
+                  <td>
+                    <div className="flex flex-wrap gap-2">
+                      <Link href={`/storage-locations/${location.id}`} className="btn-secondary px-3 py-2"><Eye className="mr-2 h-4 w-4" />View</Link>
+                      <Link href={`/storage-locations/${location.id}/edit`} className="btn-secondary px-3 py-2"><Pencil className="mr-2 h-4 w-4" />Edit</Link>
+                      {location.active ? (
+                        <ConfirmDialog
+                          action={archiveStorageLocation}
+                          triggerLabel="Archive"
+                          title="Archive storage location?"
+                          description="Archived locations stay in movement history but cannot be used for new stock movements."
+                          confirmLabel="Archive location"
+                          buttonClassName="btn-secondary px-3 py-2"
+                          hiddenFields={[{ name: "id", value: location.id }]}
+                        />
+                      ) : (
+                        <form action={activateStorageLocation}>
+                          <input type="hidden" name="id" value={location.id} />
+                          <button className="btn-secondary px-3 py-2"><RotateCcw className="mr-2 h-4 w-4" />Activate</button>
+                        </form>
+                      )}
+                      {canHardDelete ? (
+                        <ConfirmDialog
+                          action={deleteStorageLocation}
+                          triggerLabel="Delete"
+                          title="Delete storage location permanently?"
+                          description="This is only allowed because the location has no current inventory and no movement history."
+                          confirmLabel="Delete permanently"
+                          buttonClassName="btn-danger px-3 py-2"
+                          confirmButtonClassName="btn-danger"
+                          hiddenFields={[{ name: "id", value: location.id }]}
+                        />
+                      ) : null}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </DataTable>
+          <PaginationControls basePath="/storage-locations" searchParams={params} page={page} pageSize={pageSize} totalCount={count ?? 0} itemLabel="locations" />
+        </>
       )}
     </>
   );

@@ -1,13 +1,15 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileRecordCard, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canAccessPath } from "@/lib/authz";
+import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
-export default async function RoutesPage() {
+export default async function RoutesPage({ searchParams }: { searchParams: Promise<SearchParamsRecord> }) {
   const profile = await getCurrentProfile();
   if (!profile || !canAccessPath({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/routes")) {
     redirect("/unauthorized");
@@ -21,7 +23,13 @@ export default async function RoutesPage() {
       </>
     );
   }
-  const { data: routes, error: routesError } = await supabase.from("routes").select("id, route_date, status, operator_id").order("route_date", { ascending: false });
+  const params = cleanSearchParams(await searchParams);
+  const { page, pageSize, from, to } = getPagination(params);
+  const { data: routes, count, error: routesError } = await supabase
+    .from("routes")
+    .select("id, route_date, status, operator_id", { count: "exact" })
+    .order("route_date", { ascending: false })
+    .range(from, to);
   if (routesError) {
     console.error("[routes] Failed to load routes", routesError);
     return (
@@ -124,6 +132,7 @@ export default async function RoutesPage() {
               {renderRouteTable(group.rows)}
             </section>
           ))}
+          <PaginationControls basePath="/routes" searchParams={params} page={page} pageSize={pageSize} totalCount={count ?? 0} itemLabel="routes" />
         </div>
       )}
     </>

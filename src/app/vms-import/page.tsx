@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, FormField, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
+import { cleanSearchParams, getPagination } from "@/lib/pagination";
 import { completeVmsImport, prepareVmsImport } from "@/lib/vms-import-actions";
 import { validateVmsRows, type VmsValidationResult } from "@/lib/vms-import-validation";
 import {
@@ -357,6 +359,8 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
   if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
 
   const params = await searchParams;
+  const paginationParams = cleanSearchParams(params);
+  const { page, pageSize, from, to } = getPagination(paginationParams);
   if (params.batchId) redirect(`/vms-import/${params.batchId}`);
 
   const supabase = getSupabaseServerClient();
@@ -367,12 +371,12 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
       </>
     );
   }
-  const [{ data: batches, error: batchesError }, { data: preview, error: previewError }] = await Promise.all([
+  const [{ data: batches, count: batchCount, error: batchesError }, { data: preview, error: previewError }] = await Promise.all([
     supabase
       .from("vms_import_batches")
-      .select("id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, status, row_count, rows_imported, rows_skipped, error_count, notes, last_reprocessed_at, reprocess_count")
+      .select("id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, status, row_count, rows_imported, rows_skipped, error_count, notes, last_reprocessed_at, reprocess_count", { count: "exact" })
       .order("imported_at", { ascending: false })
-      .limit(20),
+      .range(from, to),
     params.previewId
       ? supabase
           .from("vms_import_previews")
@@ -777,20 +781,23 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
         {!batches?.length ? (
           <EmptyState title="No VMS imports yet" body="Upload a VMS Excel/CSV report to create the first import batch." />
         ) : (
-          <DataTable headers={["Status", "File name", "Report type", "Rows imported", "Needs mapping", "Rows failed", "Imported by", "Date"]}>
-            {batches.map((batch: any) => (
-              <tr key={batch.id}>
-                <td><Link href={`/vms-import/${batch.id}`}><StatusBadge status={batch.status} /></Link></td>
-                <td className="font-medium text-slate-900"><Link className="link-secondary" href={`/vms-import/${batch.id}`}>{batch.file_name ?? "-"}</Link></td>
-                <td>{reportLabel(batch.report_type ?? batch.source_type)}</td>
-                <td>{batch.rows_imported ?? batchMetric(batch, "importedRows", 0)}</td>
-                <td>{batchMetric(batch, "needsProductMappingRows", 0)}</td>
-                <td>{batchMetric(batch, "invalidRows", batch.error_count ?? 0)}</td>
-                <td>{batch.imported_by ? importerById.get(String(batch.imported_by)) ?? "Unknown" : "-"}</td>
-                <td>{formatDateTime(batch.imported_at)}</td>
-              </tr>
-            ))}
-          </DataTable>
+          <>
+            <DataTable headers={["Status", "File name", "Report type", "Rows imported", "Needs mapping", "Rows failed", "Imported by", "Date"]}>
+              {batches.map((batch: any) => (
+                <tr key={batch.id}>
+                  <td><Link href={`/vms-import/${batch.id}`}><StatusBadge status={batch.status} /></Link></td>
+                  <td className="font-medium text-slate-900"><Link className="link-secondary" href={`/vms-import/${batch.id}`}>{batch.file_name ?? "-"}</Link></td>
+                  <td>{reportLabel(batch.report_type ?? batch.source_type)}</td>
+                  <td>{batch.rows_imported ?? batchMetric(batch, "importedRows", 0)}</td>
+                  <td>{batchMetric(batch, "needsProductMappingRows", 0)}</td>
+                  <td>{batchMetric(batch, "invalidRows", batch.error_count ?? 0)}</td>
+                  <td>{batch.imported_by ? importerById.get(String(batch.imported_by)) ?? "Unknown" : "-"}</td>
+                  <td>{formatDateTime(batch.imported_at)}</td>
+                </tr>
+              ))}
+            </DataTable>
+            <PaginationControls basePath="/vms-import" searchParams={paginationParams} page={page} pageSize={pageSize} totalCount={batchCount ?? 0} itemLabel="imports" />
+          </>
         )}
       </section>
     </>

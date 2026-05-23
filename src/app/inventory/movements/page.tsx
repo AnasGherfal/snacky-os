@@ -1,10 +1,12 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
 import { createInventoryMovementCorrection } from "@/lib/inventory-actions";
+import { cleanSearchParams, getPagination, SearchParamsRecord, supabaseLikePattern } from "@/lib/pagination";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -90,7 +92,7 @@ export default async function InventoryMovementsPage({
     date_to?: string;
     error?: string;
     corrected?: string;
-  }>;
+  } & SearchParamsRecord>;
 }) {
   const profile = await getCurrentProfile();
   if (!profile || !canAccessPath({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/inventory/movements")) {
@@ -98,7 +100,8 @@ export default async function InventoryMovementsPage({
   }
   const canCreateCorrections = isOwnerAdminRole(profile);
 
-  const params = await searchParams;
+  const params = cleanSearchParams(await searchParams);
+  const { page, pageSize, from, to } = getPagination(params);
   const supabase = getSupabaseServerClient();
 
   if (!supabase) {
@@ -121,12 +124,12 @@ export default async function InventoryMovementsPage({
     { data: machines, error: machinesError },
     { data: storages, error: storagesError },
   ] = await Promise.all([
-    supabase.from("products").select("id, sku, name").order("name"),
-    supabase.from("team_members").select("id, full_name").order("full_name"),
+    supabase.from("products").select("id, sku, name").order("name").limit(500),
+    supabase.from("team_members").select("id, full_name").order("full_name").limit(500),
     supabase.from("routes").select("id, route_date").order("route_date", { ascending: false }).limit(200),
     supabase.from("purchase_orders").select("id, receipt_number, order_date").order("order_date", { ascending: false }).limit(200),
-    supabase.from("machines").select("id, name, machine_code").order("name"),
-    supabase.from("storage_locations").select("id, name").order("name"),
+    supabase.from("machines").select("id, name, machine_code").order("name").limit(500),
+    supabase.from("storage_locations").select("id, name").order("name").limit(500),
   ]);
 
   const setupError = productsError ?? usersError ?? routesError ?? purchasesError ?? machinesError ?? storagesError;
@@ -143,11 +146,19 @@ export default async function InventoryMovementsPage({
     );
   }
 
+  const search = String(params.q ?? "").trim();
+  const matchingProductIds = search
+    ? ((await supabase
+        .from("products")
+        .select("id")
+        .or(["sku", "name"].map((column) => `${column}.ilike.${supabaseLikePattern(search.replaceAll(",", " "))}`).join(","))
+        .limit(100)).data ?? []).map((product: any) => product.id)
+    : [];
+
   let movementQuery = supabase
     ?.from("inventory_movements")
-    .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, related_route_id, related_route_stop_id, related_purchase_id, related_purchase_line_id, related_machine_id, reversed_movement_id, correction_reason, notes, created_by, created_at, product:products(id, sku, name), created_by_member:team_members(id, full_name)")
-    .order("created_at", { ascending: false })
-    .limit(500);
+    .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, related_route_id, related_route_stop_id, related_purchase_id, related_purchase_line_id, related_machine_id, reversed_movement_id, correction_reason, notes, created_by, created_at, product:products(id, sku, name), created_by_member:team_members(id, full_name)", { count: "exact" })
+    .order("created_at", { ascending: false });
 
   if (movementQuery && params.product_id) movementQuery = movementQuery.eq("product_id", params.product_id);
   if (movementQuery && params.reason && movementReasons.includes(params.reason as any)) movementQuery = movementQuery.eq("reason", params.reason);
@@ -157,8 +168,14 @@ export default async function InventoryMovementsPage({
   if (movementQuery && params.machine_id) movementQuery = movementQuery.or(`related_machine_id.eq.${params.machine_id},to_entity_id.eq.${params.machine_id},from_entity_id.eq.${params.machine_id}`);
   if (movementQuery && params.date_from) movementQuery = movementQuery.gte("created_at", `${params.date_from}T00:00:00`);
   if (movementQuery && params.date_to) movementQuery = movementQuery.lte("created_at", `${params.date_to}T23:59:59`);
+  if (movementQuery && search) {
+    const pattern = supabaseLikePattern(search.replaceAll(",", " "));
+    const clauses = [`notes.ilike.${pattern}`, `correction_reason.ilike.${pattern}`];
+    if (matchingProductIds.length) clauses.push(`product_id.in.(${matchingProductIds.join(",")})`);
+    movementQuery = movementQuery.or(clauses.join(","));
+  }
 
-  const { data: movementData, error: movementError } = movementQuery ? await movementQuery : { data: [], error: null };
+  const { data: movements, count, error: movementError } = movementQuery ? await movementQuery.range(from, to) : { data: [], count: 0, error: null };
   if (movementError) {
     console.error("[inventory:movements] Failed to load inventory_movements", movementError);
     return (
@@ -178,17 +195,7 @@ export default async function InventoryMovementsPage({
   const storageById = new Map((storages ?? []).map((storage: any) => [storage.id, storage]));
   const userById = new Map((users ?? []).map((user: any) => [user.id, user]));
   const labelMaps = { machineById, storageById, userById };
-  const search = String(params.q ?? "").trim().toLowerCase();
-  const movements = (movementData ?? []).filter((movement: any) => {
-    if (!search) return true;
-    const haystack = [
-      movement.product?.name,
-      movement.product?.sku,
-      movement.notes,
-    ].join(" ").toLowerCase();
-    return haystack.includes(search);
-  });
-
+  const movementRows = movements ?? [];
   return (
     <>
       <PageHeader
@@ -202,6 +209,7 @@ export default async function InventoryMovementsPage({
 
       <section className="surface-card mb-6 space-y-4">
         <form className="grid gap-3 md:grid-cols-3 xl:grid-cols-4">
+          <input type="hidden" name="pageSize" value={pageSize} />
           <input name="q" defaultValue={params.q ?? ""} placeholder="Search product name, SKU, notes..." className="field-input md:col-span-2" />
           <select name="product_id" defaultValue={params.product_id ?? ""} className="field-input">
             <option value="">All products</option>
@@ -236,12 +244,12 @@ export default async function InventoryMovementsPage({
         </form>
       </section>
 
-      {!movements.length ? (
+      {!movementRows.length ? (
         <EmptyState title="No movements match these filters" body="Inventory movements will appear here when purchases are received, routes are executed, or correction movements are created." />
       ) : (
         <>
           <div className="space-y-3 xl:hidden">
-            {movements.map((movement: any) => (
+            {movementRows.map((movement: any) => (
               <article key={movement.id} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -307,7 +315,7 @@ export default async function InventoryMovementsPage({
           </div>
           <div className="hidden xl:block">
             <DataTable headers={["Date / Time", "Product", "SKU", "Qty", "From type", "From label", "To type", "To label", "Reason", "Route", "Purchase", "Machine", "User", "Notes", "Actions"]}>
-              {movements.map((movement: any) => (
+              {movementRows.map((movement: any) => (
                 <tr key={movement.id}>
                   <td>{formatDate(movement.created_at)}</td>
                   <td>
@@ -351,6 +359,7 @@ export default async function InventoryMovementsPage({
               ))}
             </DataTable>
           </div>
+          <PaginationControls basePath="/inventory/movements" searchParams={params} page={page} pageSize={pageSize} totalCount={count ?? 0} itemLabel="movements" />
         </>
       )}
     </>

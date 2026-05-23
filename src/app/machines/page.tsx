@@ -1,9 +1,13 @@
 import Link from "next/link";
+import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SearchInput, SecondaryButton, StatusBadge } from "@/components/ui";
+import { cleanSearchParams, getPagination, SearchParamsRecord, supabaseLikePattern } from "@/lib/pagination";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
-export default async function MachinesPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
-  const { q = "" } = await searchParams;
+export default async function MachinesPage({ searchParams }: { searchParams: Promise<SearchParamsRecord & { q?: string }> }) {
+  const params = cleanSearchParams(await searchParams);
+  const { page, pageSize, from, to } = getPagination(params);
+  const q = String(params.q ?? "");
   const s = getSupabaseServerClient();
   if (!s) {
     return (
@@ -12,8 +16,12 @@ export default async function MachinesPage({ searchParams }: { searchParams: Pro
       </>
     );
   }
-  const query = s?.from("machines").select("id,machine_code,vms_machine_id,name,status,machine_type,locations(name)").order("name");
-  const { data, error } = query ? (q ? await query.ilike("name", `%${q}%`) : await query) : { data: [], error: null };
+  let query = s.from("machines").select("id,machine_code,vms_machine_id,name,status,machine_type,locations(name)", { count: "exact" }).order("name");
+  if (q.trim()) {
+    const pattern = supabaseLikePattern(q.replaceAll(",", " "));
+    query = query.or(["name", "machine_code", "vms_machine_id", "machine_type"].map((column) => `${column}.ilike.${pattern}`).join(","));
+  }
+  const { data, count, error } = await query.range(from, to);
   if (error) {
     console.error("[machines] Failed to load machines", error);
     return (
@@ -24,8 +32,15 @@ export default async function MachinesPage({ searchParams }: { searchParams: Pro
   }
 
   return <><PageHeader title="Machines" subtitle="Machine master records, targets, and installation context." action={<PrimaryButton href="/machines/new">Add machine</PrimaryButton>} />
-    <form className="mb-4"><SearchInput placeholder="Search by machine name..." /></form>
+    <form className="mb-4 flex flex-wrap gap-2">
+      <input type="hidden" name="pageSize" value={pageSize} />
+      <SearchInput defaultValue={q} placeholder="Search by machine name or code..." />
+      <button className="btn-secondary" type="submit">Search</button>
+    </form>
     {!data?.length ? <EmptyState title="No machines yet" body="Create your first machine to start refill and route planning." /> :
-      <DataTable headers={["Code","Name","Type","Location","Status","Actions"]}>{data.map((m:any)=><tr key={m.id}><td>{m.machine_code}</td><td className="font-medium">{m.name}</td><td>{m.machine_type}</td><td>{m.locations?.name ?? "-"}</td><td><StatusBadge status={m.status} /></td><td><Link href={`/machines/${m.id}/edit`} className="btn-secondary">Edit</Link></td></tr>)}</DataTable>}
+      <>
+        <DataTable headers={["Code","Name","Type","Location","Status","Actions"]}>{data.map((m:any)=><tr key={m.id}><td>{m.machine_code}</td><td className="font-medium">{m.name}</td><td>{m.machine_type}</td><td>{m.locations?.name ?? "-"}</td><td><StatusBadge status={m.status} /></td><td><Link href={`/machines/${m.id}/edit`} className="btn-secondary">Edit</Link></td></tr>)}</DataTable>
+        <PaginationControls basePath="/machines" searchParams={params} page={page} pageSize={pageSize} totalCount={count ?? 0} itemLabel="machines" />
+      </>}
   </>;
 }

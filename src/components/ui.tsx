@@ -123,4 +123,4 @@ export function LoadingState({ variant = "page", rows = 6, cards = 3, fields = 6
     </div>
   );
 }
-export const SearchInput = ({ name="q", placeholder="Search..." }: { name?: string; placeholder?: string }) => <input name={name} placeholder={placeholder} className="field-input md:w-72" />;
+export const SearchInput = ({ name="q", placeholder="Search...", defaultValue = "" }: { name?: string; placeholder?: string; defaultValue?: string }) => <input name={name} placeholder={placeholder} defaultValue={defaultValue} className="field-input md:w-72" />;

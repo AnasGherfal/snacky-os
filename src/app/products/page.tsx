@@ -1,9 +1,11 @@
 import Link from "next/link";
+import { PaginationControls } from "@/components/PaginationControls";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { ProductSourceBadge } from "@/components/ProductSourceBadge";
 import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SearchInput, SecondaryButton, StatusBadge } from "@/components/ui";
 import { requireCurrentProfileForPath } from "@/lib/auth";
 import { canAddProducts, canViewFinancials, hasPermission } from "@/lib/authz";
+import { cleanSearchParams, getPagination, SearchParamsRecord, supabaseLikePattern } from "@/lib/pagination";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 function formatMoney(value: number | string | null | undefined, decimals = 2) {
@@ -11,13 +13,16 @@ function formatMoney(value: number | string | null | undefined, decimals = 2) {
   return Number(value).toFixed(decimals);
 }
 
-export default async function ProductsPage({ searchParams }: { searchParams: Promise<{ q?: string; imageUpload?: string }> }) {
+export default async function ProductsPage({ searchParams }: { searchParams: Promise<SearchParamsRecord & { q?: string; imageUpload?: string }> }) {
   const profile = await requireCurrentProfileForPath("/products");
   const userContext = { id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status };
   const canCreateProduct = canAddProducts(profile);
   const canEditProducts = hasPermission(profile, "products.edit");
   const canSeeCost = canViewFinancials(userContext);
-  const { q = "", imageUpload = "" } = await searchParams;
+  const params = cleanSearchParams(await searchParams);
+  const { page, pageSize, from, to } = getPagination(params);
+  const q = String(params.q ?? "");
+  const imageUpload = String(params.imageUpload ?? "");
   const s = getSupabaseServerClient();
   if (!s) {
     return (
@@ -45,8 +50,13 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
     "suppliers(name)",
     ...(canSeeCost ? ["current_cost_price_lyd", "last_purchase_cost_lyd", "average_cost_lyd", "cost_price_source"] : []),
   ].join(",");
-  const query = s?.from("products").select(productSelect).order("name");
-  const { data: productRows, error: productsError } = query ? await query : { data: [], error: null };
+  let query = s.from("products").select(productSelect, { count: "exact" }).order("name");
+  const search = q.trim();
+  if (search) {
+    const pattern = supabaseLikePattern(search.replaceAll(",", " "));
+    query = query.or(["sku", "barcode", "name", "category", "brand"].map((column) => `${column}.ilike.${pattern}`).join(","));
+  }
+  const { data, count, error: productsError } = await query.range(from, to);
   if (productsError) {
     console.error("[products] Failed to load products", productsError);
     return (
@@ -55,13 +65,6 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
       </>
     );
   }
-  const search = q.trim().toLowerCase();
-  const data = search
-    ? (productRows ?? []).filter((product: any) =>
-        [product.sku, product.barcode, product.name, product.category, product.brand]
-          .some((value) => String(value ?? "").toLowerCase().includes(search)),
-      )
-    : productRows;
   const imageUploadMessage =
     imageUpload === "storage-unavailable"
       ? "Storage is not configured in this environment. Use image URL for now."
@@ -77,11 +80,15 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
           {imageUploadMessage}
         </div>
       ) : null}
-      <form className="mb-4"><SearchInput placeholder="Search by SKU, VMS code, barcode, or product name..." /></form>
+      <form className="mb-4 flex flex-wrap gap-2">
+        <input type="hidden" name="pageSize" value={pageSize} />
+        <SearchInput defaultValue={q} placeholder="Search by SKU, VMS code, barcode, or product name..." />
+        <button className="btn-secondary" type="submit">Search</button>
+      </form>
       {!data?.length ? <EmptyState title="No products yet" body="Create products to map VMS items and build machine slot plans." /> :
         <>
           <div className="mb-3 text-sm text-slate-500">
-            Showing {data.length} product{data.length === 1 ? "" : "s"}{search ? ` matching "${q}"` : ""}.
+            Showing products{search ? ` matching "${q}"` : ""}.
           </div>
           <DataTable headers={["Image", "SKU", "Product", "Category", "Case Qty", "Supplier", "Product Source", "Current Selling", "VMS Selling", ...(canSeeCost ? ["Last Purchase Cost", "Average Cost"] : []), "Selling Source", ...(canSeeCost ? ["Cost Source"] : []), "Status", "Actions"]}>
             {data.map((product: any) => (
@@ -104,6 +111,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
               </tr>
             ))}
           </DataTable>
+          <PaginationControls basePath="/products" searchParams={params} page={page} pageSize={pageSize} totalCount={count ?? 0} itemLabel="products" />
         </>}
     </>
   );

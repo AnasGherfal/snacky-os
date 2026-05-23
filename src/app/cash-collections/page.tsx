@@ -1,10 +1,12 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileRecordCard, PageHeader, PrimaryButton, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canViewFinancials } from "@/lib/authz";
 import { getCashCollectionStatus, isCriticalCashVariance, isLargeCashVariance } from "@/lib/cash-collections";
 import { lyd } from "@/lib/format";
+import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 const statusOptions = ["pending_collection", "collected_pending_count", "counted_confirmed", "variance_review", "voided"];
@@ -16,6 +18,10 @@ function formatDate(value: string | null) {
 
 function money(value: number | string | null | undefined) {
   return value === null || value === undefined ? "-" : lyd(Number(value));
+}
+
+function singleParam(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
 }
 
 function varianceClassName(variance: number | null | undefined) {
@@ -36,9 +42,10 @@ export default async function CashCollectionsPage({
     date_from?: string;
     date_to?: string;
     variance_review?: string;
-  }>;
+  } & SearchParamsRecord>;
 }) {
-  const params = await searchParams;
+  const params = cleanSearchParams(await searchParams);
+  const { page, pageSize, from, to } = getPagination(params);
   const profile = await getCurrentProfile();
   if (!profile || !canAccessPath({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/cash-collections")) {
     redirect("/unauthorized");
@@ -72,18 +79,18 @@ export default async function CashCollectionsPage({
     .from("cash_collections")
     .select(
       "id, route_id, machine_id, operator_id, collected_at, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, counted_at, notes, machine:machines(id, name, machine_code), operator:team_members!cash_collections_operator_id_fkey(id, full_name), route:routes(id, route_date)",
+      { count: "exact" },
     )
-    .order("collected_at", { ascending: false })
-    .limit(500);
+    .order("collected_at", { ascending: false });
 
-  const statusFilter = params.variance_review === "1" ? "variance_review" : params.status;
+  const statusFilter = singleParam(params.variance_review) === "1" ? "variance_review" : singleParam(params.status);
   if (statusFilter && statusOptions.includes(statusFilter)) query = query.eq("review_status", statusFilter);
   if (params.machine_id) query = query.eq("machine_id", params.machine_id);
   if (params.operator_id) query = query.eq("operator_id", params.operator_id);
   if (params.date_from) query = query.gte("collected_at", `${params.date_from}T00:00:00`);
   if (params.date_to) query = query.lte("collected_at", `${params.date_to}T23:59:59`);
 
-  const { data: collections, error: collectionsError } = await query;
+  const { data: collections, count, error: collectionsError } = await query.range(from, to);
   if (collectionsError) {
     console.error("[cash] Failed to load cash collections", collectionsError);
     return (
@@ -128,6 +135,7 @@ export default async function CashCollectionsPage({
 
       <section className="surface-card mb-6">
         <form className="grid gap-3 md:grid-cols-3 xl:grid-cols-7">
+          <input type="hidden" name="pageSize" value={pageSize} />
           <select name="status" defaultValue={params.status ?? ""} className="field-input">
             <option value="">All statuses</option>
             {statusOptions.map((status) => <option key={status} value={status}>{status.replaceAll("_", " ")}</option>)}
@@ -234,6 +242,7 @@ export default async function CashCollectionsPage({
               );
             })}
           </DataTable>
+          <PaginationControls basePath="/cash-collections" searchParams={params} page={page} pageSize={pageSize} totalCount={count ?? 0} itemLabel="cash collections" />
         </div>
       )}
     </>

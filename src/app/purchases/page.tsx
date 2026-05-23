@@ -1,14 +1,19 @@
 import Link from "next/link";
+import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileRecordCard, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { requireCurrentProfileForPath } from "@/lib/auth";
 import { canManagePurchases } from "@/lib/authz";
 import { lyd } from "@/lib/format";
+import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
-export default async function PurchasesPage({ searchParams }: { searchParams: Promise<{ error?: string; module?: string }> }) {
-  const { error = "", module = "" } = await searchParams;
+export default async function PurchasesPage({ searchParams }: { searchParams: Promise<SearchParamsRecord & { error?: string; module?: string }> }) {
+  const params = cleanSearchParams(await searchParams);
+  const { page, pageSize, from, to } = getPagination(params);
+  const error = String(params.error ?? "");
+  const module = String(params.module ?? "");
   const moduleQuery = module === "finance" ? "?module=finance" : "";
   const profile = await requireCurrentProfileForPath("/purchases");
   const canCreatePurchase = canManagePurchases(profile);
@@ -20,11 +25,12 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
       </>
     );
   }
-  const { data: purchases, error: purchasesError } = await supabase
+  const { data: purchases, count, error: purchasesError } = await supabase
     .from("purchase_orders")
-    .select("id, order_date, receipt_number, receipt_url, total_amount, manual_total_lyd, calculated_total_lyd, payment_method, payment_status, status, created_at, supplier:suppliers(name), created_by_member:team_members!purchase_orders_created_by_fkey(full_name)")
+    .select("id, order_date, receipt_number, receipt_url, total_amount, manual_total_lyd, calculated_total_lyd, payment_method, payment_status, status, created_at, supplier:suppliers(name), created_by_member:team_members!purchase_orders_created_by_fkey(full_name)", { count: "exact" })
     .order("order_date", { ascending: false })
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .range(from, to);
   if (purchasesError) {
     console.error("[purchases] Failed to load purchases", purchasesError);
     return (
@@ -106,6 +112,7 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
               );
             })}
           </DataTable>
+          <PaginationControls basePath="/purchases" searchParams={params} page={page} pageSize={pageSize} totalCount={count ?? 0} itemLabel="purchases" />
         </>
       )}
     </>

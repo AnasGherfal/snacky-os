@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canViewFinancials } from "@/lib/authz";
 import { formatFinanceMoney, isBalanceAffectingTransaction, signedAmount } from "@/lib/finance-balance";
+import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export type FinanceFilteredPageConfig = {
@@ -12,6 +14,9 @@ export type FinanceFilteredPageConfig = {
   breadcrumbLabel: string;
   emptyTitle: string;
   emptyBody: string;
+  basePath: string;
+  searchParams?: SearchParamsRecord;
+  applyQuery?: (query: any) => any;
   filter: (row: any) => boolean;
 };
 
@@ -41,12 +46,15 @@ export async function FilteredFinancePage(config: FinanceFilteredPageConfig) {
     );
   }
 
-  const { data, error } = await supabase
+  const params = cleanSearchParams(config.searchParams ?? {});
+  const { page, pageSize, from, to } = getPagination(params);
+  let query = supabase
     .from("financial_transactions")
-    .select("id, transaction_date, direction, transaction_kind, transaction_type, description, notes, signed_amount, currency, final_bucket, payment_method, transaction_status, review_status, needs_review, import_status")
+    .select("id, transaction_date, direction, transaction_kind, transaction_type, description, notes, signed_amount, currency, final_bucket, payment_method, transaction_status, review_status, needs_review, import_status", { count: "exact" })
     .eq("transaction_status", "active")
-    .order("transaction_date", { ascending: false })
-    .limit(1000);
+    .order("transaction_date", { ascending: false });
+  if (config.applyQuery) query = config.applyQuery(query);
+  const { data, count, error } = await query.range(from, to);
 
   if (error) {
     console.error("[finance] Failed to load filtered finance page", error);
@@ -98,20 +106,23 @@ export async function FilteredFinancePage(config: FinanceFilteredPageConfig) {
       {!rows.length ? (
         <EmptyState title={config.emptyTitle} body={config.emptyBody} />
       ) : (
-        <DataTable headers={["Date", "Direction", "Category", "Amount", "Description", "Payment", "Review", "Actions"]}>
-          {rows.map((row) => (
-            <tr key={row.id}>
-              <td>{row.transaction_date}</td>
-              <td><StatusBadge status={String(row.direction ?? "").replaceAll("_", " ")} /></td>
-              <td className="font-medium text-slate-900">{categoryLabel(row)}</td>
-              <td className={`font-semibold ${Number(row.signed_amount ?? 0) < 0 ? "text-rose-700" : "text-emerald-700"}`}>{formatFinanceMoney(Number(row.signed_amount ?? 0), row.currency ?? "LYD")}</td>
-              <td className="max-w-md">{row.description ?? row.notes ?? "-"}</td>
-              <td>{row.payment_method ? String(row.payment_method).replaceAll("_", " ") : "-"}</td>
-              <td><StatusBadge status={row.needs_review ? "needs_review" : row.review_status} /></td>
-              <td><Link href={`/finance/transactions/${row.id}`} className="btn-secondary">View</Link></td>
-            </tr>
-          ))}
-        </DataTable>
+        <>
+          <DataTable headers={["Date", "Direction", "Category", "Amount", "Description", "Payment", "Review", "Actions"]}>
+            {rows.map((row) => (
+              <tr key={row.id}>
+                <td>{row.transaction_date}</td>
+                <td><StatusBadge status={String(row.direction ?? "").replaceAll("_", " ")} /></td>
+                <td className="font-medium text-slate-900">{categoryLabel(row)}</td>
+                <td className={`font-semibold ${Number(row.signed_amount ?? 0) < 0 ? "text-rose-700" : "text-emerald-700"}`}>{formatFinanceMoney(Number(row.signed_amount ?? 0), row.currency ?? "LYD")}</td>
+                <td className="max-w-md">{row.description ?? row.notes ?? "-"}</td>
+                <td>{row.payment_method ? String(row.payment_method).replaceAll("_", " ") : "-"}</td>
+                <td><StatusBadge status={row.needs_review ? "needs_review" : row.review_status} /></td>
+                <td><Link href={`/finance/transactions/${row.id}`} className="btn-secondary">View</Link></td>
+              </tr>
+            ))}
+          </DataTable>
+          <PaginationControls basePath={config.basePath} searchParams={params} page={page} pageSize={pageSize} totalCount={count ?? 0} itemLabel="transactions" />
+        </>
       )}
     </>
   );

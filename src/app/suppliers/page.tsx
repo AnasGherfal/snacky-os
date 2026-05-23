@@ -1,8 +1,12 @@
 import Link from "next/link";
+import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
+import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
-export default async function SuppliersPage() {
+export default async function SuppliersPage({ searchParams }: { searchParams: Promise<SearchParamsRecord> }) {
+  const params = cleanSearchParams(await searchParams);
+  const { page, pageSize, from, to } = getPagination(params);
   const supabase = getSupabaseServerClient();
   if (!supabase) {
     return (
@@ -12,7 +16,11 @@ export default async function SuppliersPage() {
     );
   }
 
-  const { data, error } = await supabase.from("suppliers").select("id,name,contact_name,phone").order("name");
+  const { data, count, error } = await supabase
+    .from("suppliers")
+    .select("id,name,contact_name,phone", { count: "exact" })
+    .order("name")
+    .range(from, to);
   if (error) {
     console.error("[suppliers] Failed to load suppliers", error);
     return (
@@ -33,16 +41,19 @@ export default async function SuppliersPage() {
       {!data?.length ? (
         <EmptyState title="No suppliers yet" body="Add suppliers before recording purchases and receipt history." action={<PrimaryButton href="/suppliers/new">Add supplier</PrimaryButton>} />
       ) : (
-        <DataTable headers={["Name", "Contact", "Phone", "Actions"]}>
-          {data.map((supplier: any) => (
-            <tr key={supplier.id}>
-              <td className="font-medium text-slate-900">{supplier.name}</td>
-              <td>{supplier.contact_name || "-"}</td>
-              <td>{supplier.phone || "-"}</td>
-              <td><Link href={`/suppliers/${supplier.id}`} className="btn-secondary">Edit</Link></td>
-            </tr>
-          ))}
-        </DataTable>
+        <>
+          <DataTable headers={["Name", "Contact", "Phone", "Actions"]}>
+            {data.map((supplier: any) => (
+              <tr key={supplier.id}>
+                <td className="font-medium text-slate-900">{supplier.name}</td>
+                <td>{supplier.contact_name || "-"}</td>
+                <td>{supplier.phone || "-"}</td>
+                <td><Link href={`/suppliers/${supplier.id}`} className="btn-secondary">Edit</Link></td>
+              </tr>
+            ))}
+          </DataTable>
+          <PaginationControls basePath="/suppliers" searchParams={params} page={page} pageSize={pageSize} totalCount={count ?? 0} itemLabel="suppliers" />
+        </>
       )}
     </>
   );

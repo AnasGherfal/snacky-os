@@ -1,8 +1,10 @@
 import { redirect } from "next/navigation";
+import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileRecordCard, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canViewFinancials } from "@/lib/authz";
 import { lyd } from "@/lib/format";
+import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +20,9 @@ function formatEntity(type: string | null | undefined, name: string | null | und
   return name ? `${type}: ${name}` : type ?? "-";
 }
 
-export default async function InventoryPage() {
+export default async function InventoryPage({ searchParams }: { searchParams: Promise<SearchParamsRecord> }) {
+  const params = cleanSearchParams(await searchParams);
+  const { page, pageSize, from, to } = getPagination(params);
   const profile = await getCurrentProfile();
   const userContext = profile
     ? { id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }
@@ -37,29 +41,47 @@ export default async function InventoryPage() {
     );
   }
   const canSeeCost = canViewFinancials(userContext);
+  const { data: products, count: productCount, error: productsError } = await supabase
+    .from("products")
+    .select("id, sku, name, category, cost_price, current_cost_price_lyd", { count: "exact" })
+    .order("name")
+    .range(from, to);
+  const productIds = (products ?? []).map((product: any) => product.id);
   const [
     { data: inventoryLocationRows, error: inventoryError },
-    { data: products, error: productsError },
     { data: reservedRows, error: reservedError },
+    { data: operatorBagRowsData, error: operatorBagError },
     { data: movements, error: movementsError },
   ] = await Promise.all([
+    productIds.length
+      ? supabase
+          .from("current_inventory_by_location")
+          .select("product_id, product_name, location_type, location_id, location_name, quantity_on_hand")
+          .eq("location_type", "storage")
+          .in("product_id", productIds)
+          .order("product_name")
+      : Promise.resolve({ data: [], error: null }),
+    productIds.length
+      ? supabase
+      .from("route_stock_lines")
+      .select("product_id, planned_qty, picked_qty, routes!inner(status)")
+          .in("routes.status", ["draft", "assigned"])
+          .in("product_id", productIds)
+      : Promise.resolve({ data: [], error: null }),
     supabase
       .from("current_inventory_by_location")
       .select("product_id, product_name, location_type, location_id, location_name, quantity_on_hand")
-      .in("location_type", ["storage", "operator_bag"])
-      .order("product_name"),
-    supabase.from("products").select("id, sku, name, category, cost_price, current_cost_price_lyd").order("name"),
-    supabase
-      .from("route_stock_lines")
-      .select("product_id, planned_qty, picked_qty, routes!inner(status)")
-      .in("routes.status", ["draft", "assigned"]),
+      .eq("location_type", "operator_bag")
+      .order("location_name")
+      .order("product_name")
+      .range(from, to),
     supabase
       .from("inventory_movements")
       .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, related_route_id, created_at, product:products(name)")
       .order("created_at", { ascending: false })
-      .limit(50),
+      .limit(pageSize),
   ]);
-  const loadError = inventoryError ?? productsError ?? reservedError ?? movementsError;
+  const loadError = inventoryError ?? productsError ?? reservedError ?? operatorBagError ?? movementsError;
   if (loadError) {
     console.error("[inventory] Failed to load inventory page", loadError);
     return (
@@ -71,7 +93,7 @@ export default async function InventoryPage() {
 
   const productById = new Map((products ?? []).map((product: any) => [product.id, product]));
   const storageRows = (inventoryLocationRows ?? []).filter((row: any) => row.location_type === "storage");
-  const operatorBagRows = (inventoryLocationRows ?? [])
+  const operatorBagRows = (operatorBagRowsData ?? [])
     .filter((row: any) => row.location_type === "operator_bag" && Number(row.quantity_on_hand ?? 0) > 0)
     .sort((a: any, b: any) => String(a.location_name ?? "").localeCompare(String(b.location_name ?? "")) || String(a.product_name ?? "").localeCompare(String(b.product_name ?? "")));
   const storageByProduct = new Map<string, number>();
@@ -103,7 +125,6 @@ export default async function InventoryPage() {
         status: inventoryStatus(currentQty, reservedQty, availableQty),
       };
     })
-    .filter((row) => row.currentQty !== 0 || row.reservedQty !== 0)
     .sort((a, b) => a.productName.localeCompare(b.productName));
 
   const inventoryHeaders = ["Product", "SKU", "Category", "Current Storage Qty", "Reserved for Routes", "Available Qty", ...(canSeeCost ? ["Cost"] : []), "Status"];
@@ -118,12 +139,12 @@ export default async function InventoryPage() {
 
       <div className="mb-6 grid gap-3 md:grid-cols-3">
         <div className="surface-card">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Storage units</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Shown storage units</div>
           <div className="mt-2 text-2xl font-semibold text-slate-900">{inventoryRows.reduce((sum, row) => sum + row.currentQty, 0)}</div>
           <p className="mt-1 text-sm text-slate-500">Sellable stock in storage locations</p>
         </div>
         <div className="surface-card">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Reserved units</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Shown reserved units</div>
           <div className="mt-2 text-2xl font-semibold text-slate-900">{inventoryRows.reduce((sum, row) => sum + row.reservedQty, 0)}</div>
           <p className="mt-1 text-sm text-slate-500">Assigned to draft or assigned routes</p>
         </div>
@@ -171,6 +192,7 @@ export default async function InventoryPage() {
               </tr>
             ))}
           </DataTable>
+          <PaginationControls basePath="/inventory" searchParams={params} page={page} pageSize={pageSize} totalCount={productCount ?? 0} itemLabel="products" />
         </>
       )}
 

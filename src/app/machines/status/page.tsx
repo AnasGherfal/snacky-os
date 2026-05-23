@@ -1,10 +1,16 @@
 import Link from "next/link";
+import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
+import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
-export default async function MachineStatusPage() {
+const machineStatuses = ["planned", "incoming", "standby", "active", "inactive", "maintenance", "relocated", "retired"];
+
+export default async function MachineStatusPage({ searchParams }: { searchParams: Promise<SearchParamsRecord> }) {
+  const params = cleanSearchParams(await searchParams);
+  const { page, pageSize, from, to } = getPagination(params);
   const supabase = getSupabaseServerClient();
   if (!supabase) {
     return (
@@ -14,11 +20,15 @@ export default async function MachineStatusPage() {
     );
   }
 
-  const { data, error } = await supabase
+  const [{ data, count, error }, statusCountsResults] = await Promise.all([
+    supabase
     .from("machines")
-    .select("id, machine_code, name, status, machine_type, locations(name)")
+      .select("id, machine_code, name, status, machine_type, locations(name)", { count: "exact" })
     .order("status")
-    .order("name");
+      .order("name")
+      .range(from, to),
+    Promise.all(machineStatuses.map((status) => supabase.from("machines").select("id", { count: "exact", head: true }).eq("status", status))),
+  ]);
 
   if (error) {
     console.error("[machines] Failed to load machine status", error);
@@ -30,11 +40,7 @@ export default async function MachineStatusPage() {
   }
 
   const rows = data ?? [];
-  const statusCounts = rows.reduce((counts: Record<string, number>, row: any) => {
-    const status = String(row.status ?? "unknown");
-    counts[status] = (counts[status] ?? 0) + 1;
-    return counts;
-  }, {});
+  const statusCounts = Object.fromEntries(machineStatuses.map((status, index) => [status, statusCountsResults[index]?.count ?? 0]));
 
   return (
     <>
@@ -59,18 +65,21 @@ export default async function MachineStatusPage() {
       {!rows.length ? (
         <EmptyState title="No machines yet" body="Create machines before tracking machine status." />
       ) : (
-        <DataTable headers={["Code", "Name", "Type", "Location", "Status", "Actions"]}>
-          {rows.map((machine: any) => (
-            <tr key={machine.id}>
-              <td>{machine.machine_code}</td>
-              <td className="font-medium text-slate-900">{machine.name}</td>
-              <td>{machine.machine_type}</td>
-              <td>{machine.locations?.name ?? "-"}</td>
-              <td><StatusBadge status={machine.status} /></td>
-              <td><Link href={`/machines/${machine.id}/edit`} className="btn-secondary">Edit</Link></td>
-            </tr>
-          ))}
-        </DataTable>
+        <>
+          <DataTable headers={["Code", "Name", "Type", "Location", "Status", "Actions"]}>
+            {rows.map((machine: any) => (
+              <tr key={machine.id}>
+                <td>{machine.machine_code}</td>
+                <td className="font-medium text-slate-900">{machine.name}</td>
+                <td>{machine.machine_type}</td>
+                <td>{machine.locations?.name ?? "-"}</td>
+                <td><StatusBadge status={machine.status} /></td>
+                <td><Link href={`/machines/${machine.id}/edit`} className="btn-secondary">Edit</Link></td>
+              </tr>
+            ))}
+          </DataTable>
+          <PaginationControls basePath="/machines/status" searchParams={params} page={page} pageSize={pageSize} totalCount={count ?? 0} itemLabel="machines" />
+        </>
       )}
     </>
   );
