@@ -54,7 +54,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const headerStore = await headers();
   const pathname = headerStore.get("x-pathname");
   const content =
-    !pathname || isPublicShellPath(pathname) ? children : <RootAppShell pathname={pathname}>{children}</RootAppShell>;
+    !pathname || pathname === "/" || isPublicShellPath(pathname) ? children : <RootAppShell pathname={pathname}>{children}</RootAppShell>;
 
   return (
     <html lang={locale} dir={getTextDirection(locale)}>

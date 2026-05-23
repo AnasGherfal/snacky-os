@@ -3,7 +3,7 @@ import Image from "next/image";
 import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { accessTokenCookie, ensureProfileForAuthUser, refreshTokenCookie } from "@/lib/auth";
-import { getDefaultPathForRole, parseAppRole } from "@/lib/authz";
+import { canAccessPath, getDefaultPathForRole, parseAppRole } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 async function login(formData: FormData) {
@@ -59,7 +59,22 @@ async function login(formData: FormData) {
   });
 
   const safeNextPath = nextPath.startsWith("/") && !nextPath.startsWith("//") && !nextPath.startsWith("/login") ? nextPath : "";
-  redirect(safeNextPath || getDefaultPathForRole(profile));
+  const canUseNextPath =
+    safeNextPath !== "" &&
+    safeNextPath !== "/" &&
+    canAccessPath(
+      {
+        id: profile.id,
+        role: profile.role,
+        roles: profile.roles,
+        canAddProducts: profile.can_add_products,
+        teamMemberId: profile.team_member_id,
+        activeStatus: profile.active_status,
+      },
+      safeNextPath,
+    );
+
+  redirect(canUseNextPath ? safeNextPath : getDefaultPathForRole(profile));
 }
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string; next?: string }> }) {
