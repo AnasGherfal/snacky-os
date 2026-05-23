@@ -129,6 +129,7 @@ export function RouteCreateForm({
   const [operatorId, setOperatorId] = useState("");
   const [machineIds, setMachineIds] = useState<string[]>([]);
   const [recommendationKeys, setRecommendationKeys] = useState<string[]>([]);
+  const [finalTakeByRecommendationGroup, setFinalTakeByRecommendationGroup] = useState<Record<string, number>>({});
   const [manualStopItems, setManualStopItems] = useState<ManualStopItem[]>([]);
   const [manualMachineId, setManualMachineId] = useState("");
   const [search, setSearch] = useState("");
@@ -230,16 +231,27 @@ export function RouteCreateForm({
     if (recommendationPage > totalRecommendationPages) setRecommendationPage(totalRecommendationPages);
   }, [recommendationPage, totalRecommendationPages]);
 
+  const clampRecommendationFinalTake = (group: RecommendationGroup, value: number) => {
+    const safeValue = Math.max(0, Math.floor(Number.isFinite(value) ? value : 0));
+    return adminOverride ? safeValue : Math.min(safeValue, Math.max(0, Number(group.storageAvailable ?? 0)));
+  };
+
+  const finalTakeForGroup = (group: RecommendationGroup) => clampRecommendationFinalTake(group, finalTakeByRecommendationGroup[group.groupKey] ?? group.takeTotal);
+
+  const selectedRecommendationGroups = useMemo(
+    () => recommendationGroups.filter((group) => group.recommendationKeys.every((key) => recommendationKeys.includes(key))),
+    [recommendationGroups, recommendationKeys],
+  );
+
   const recommendationQtyByProduct = useMemo(() => {
     const quantities = new Map<string, number>();
-    recommendations
-      .filter((row) => recommendationKeys.includes(row.recommendation_key))
-      .forEach((row) => {
-        const quantity = recommendationQuantity(row);
-        quantities.set(row.product_id, (quantities.get(row.product_id) ?? 0) + Math.max(0, quantity));
+    selectedRecommendationGroups
+      .forEach((group) => {
+        const quantity = finalTakeForGroup(group);
+        quantities.set(group.productId, (quantities.get(group.productId) ?? 0) + Math.max(0, quantity));
       });
     return quantities;
-  }, [recommendationKeys, recommendations]);
+  }, [selectedRecommendationGroups, finalTakeByRecommendationGroup, adminOverride]);
 
   const plannedRouteStock = useMemo(() => {
     const manualQtyByProduct = new Map<string, number>();
@@ -272,12 +284,22 @@ export function RouteCreateForm({
     [plannedRouteStock, productsById],
   );
 
+  const selectedRecommendationSummary = useMemo(() => {
+    return selectedRecommendationGroups.reduce(
+      (summary, group) => {
+        summary.selectedProductsCount += 1;
+        summary.totalRecommendedQty += group.takeTotal;
+        summary.totalFinalTakeQty += finalTakeForGroup(group);
+        return summary;
+      },
+      { selectedProductsCount: 0, totalRecommendedQty: 0, totalFinalTakeQty: 0 },
+    );
+  }, [selectedRecommendationGroups, finalTakeByRecommendationGroup, adminOverride]);
+
   const selectedStopCount = useMemo(() => {
-    const recommendedMachines = recommendations
-      .filter((row) => recommendationKeys.includes(row.recommendation_key))
-      .map((row) => row.machine_id);
+    const recommendedMachines = selectedRecommendationGroups.map((group) => group.machineId);
     return new Set([...machineIds, ...recommendedMachines]).size;
-  }, [machineIds, recommendationKeys, recommendations]);
+  }, [machineIds, selectedRecommendationGroups]);
 
   const recentProducts = useMemo(() => {
     const recent = recentProductIds.map((id) => productsById.get(id)).filter(Boolean) as ProductPickOption[];
@@ -295,17 +317,41 @@ export function RouteCreateForm({
   const toggleValue = (values: string[], value: string) => (values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
   const isRecommendationGroupSelected = (group: RecommendationGroup) => group.recommendationKeys.every((key) => recommendationKeys.includes(key));
   const recommendationGroupSelectable = (group: RecommendationGroup) => group.takeTotal > 0;
+  const setRecommendationFinalTake = (group: RecommendationGroup, value: number) => {
+    setFinalTakeByRecommendationGroup((current) => ({
+      ...current,
+      [group.groupKey]: clampRecommendationFinalTake(group, value),
+    }));
+  };
   const toggleRecommendationGroup = (group: RecommendationGroup) => {
     if (!recommendationGroupSelectable(group)) return;
-    setRecommendationKeys((current) => {
-      const selected = group.recommendationKeys.every((key) => current.includes(key));
-      if (selected) return current.filter((key) => !group.recommendationKeys.includes(key));
-      return Array.from(new Set([...current, ...group.recommendationKeys]));
-    });
+    const selected = isRecommendationGroupSelected(group);
+    if (selected) {
+      setFinalTakeByRecommendationGroup(({ [group.groupKey]: _removed, ...rest }) => rest);
+      setRecommendationKeys((current) => current.filter((key) => !group.recommendationKeys.includes(key)));
+    } else {
+      setFinalTakeByRecommendationGroup((finalTake) => ({
+        ...finalTake,
+        [group.groupKey]: group.takeTotal,
+      }));
+      setRecommendationKeys((current) => Array.from(new Set([...current, ...group.recommendationKeys])));
+    }
   };
   const selectRecommendationGroups = (groups: RecommendationGroup[]) => {
-    const keys = groups.filter(recommendationGroupSelectable).flatMap((group) => group.recommendationKeys);
+    const selectableGroups = groups.filter(recommendationGroupSelectable);
+    const keys = selectableGroups.flatMap((group) => group.recommendationKeys);
+    setFinalTakeByRecommendationGroup((current) => {
+      const next = { ...current };
+      selectableGroups.forEach((group) => {
+        if (next[group.groupKey] === undefined) next[group.groupKey] = group.takeTotal;
+      });
+      return next;
+    });
     setRecommendationKeys((current) => Array.from(new Set([...current, ...keys])));
+  };
+  const clearSelectedRecommendations = () => {
+    setRecommendationKeys([]);
+    setFinalTakeByRecommendationGroup({});
   };
 
   const selectedManualMachineId = manualMachineId || machineIds[0] || "";
@@ -384,10 +430,15 @@ export function RouteCreateForm({
     setError("");
 
     try {
+      const recommendationFinalTakeQty = selectedRecommendationGroups.map((group) => ({
+        machineId: group.machineId,
+        productId: group.productId,
+        finalTakeQty: finalTakeForGroup(group),
+      }));
       const response = await fetch("/api/routes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ routeDate, assignmentMode, operatorId: assignmentMode === "assigned" ? operatorId : "", machineIds, recommendationKeys, manualStopItems, adminOverride }),
+        body: JSON.stringify({ routeDate, assignmentMode, operatorId: assignmentMode === "assigned" ? operatorId : "", machineIds, recommendationKeys, recommendationFinalTakeQty, manualStopItems, adminOverride }),
       });
       const result = await response.json().catch(() => ({ error: "Could not read the route creation response." }));
 
@@ -692,13 +743,19 @@ export function RouteCreateForm({
               <button type="button" className="btn-secondary text-xs" onClick={() => selectRecommendationGroups(filteredRecommendationGroups)} disabled={saving}>
                 Select all visible
               </button>
-              <button type="button" className="btn-secondary text-xs" onClick={() => setRecommendationKeys([])} disabled={saving || !recommendationKeys.length}>
+              <button type="button" className="btn-secondary text-xs" onClick={clearSelectedRecommendations} disabled={saving || !recommendationKeys.length}>
                 Clear selected
               </button>
               <label className="ml-auto flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700">
                 <input type="checkbox" checked={showNoRefillNeeded} onChange={(event) => setShowNoRefillNeeded(event.target.checked)} disabled={saving} />
                 <span>Show rows with no refill needed</span>
               </label>
+            </div>
+
+            <div className="grid gap-3 rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 md:grid-cols-3">
+              <div>Selected products: <span className="font-semibold text-slate-900">{selectedRecommendationSummary.selectedProductsCount}</span></div>
+              <div>Total recommended: <span className="font-semibold text-slate-900">{selectedRecommendationSummary.totalRecommendedQty}</span></div>
+              <div>Total final take: <span className="font-semibold text-slate-900">{selectedRecommendationSummary.totalFinalTakeQty}</span></div>
             </div>
 
             <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
@@ -712,6 +769,7 @@ export function RouteCreateForm({
                     <th className="px-3 py-2">Current total</th>
                     <th className="px-3 py-2">Target total</th>
                     <th className="px-3 py-2">Recommended take</th>
+                    <th className="px-3 py-2">Final Take</th>
                     <th className="px-3 py-2">Storage</th>
                     <th className="px-3 py-2">Priority</th>
                     <th className="px-3 py-2">Details</th>
@@ -720,7 +778,7 @@ export function RouteCreateForm({
                 <tbody>
                   {!filteredRecommendationGroups.length ? (
                     <tr>
-                      <td colSpan={10} className="px-3 py-8 text-center text-slate-500">
+                      <td colSpan={11} className="px-3 py-8 text-center text-slate-500">
                         No grouped recommendation rows match the current filters.
                       </td>
                     </tr>
@@ -729,7 +787,11 @@ export function RouteCreateForm({
                       const selected = isRecommendationGroupSelected(group);
                       const expanded = expandedRecommendationGroups.includes(group.groupKey);
                       const selectable = recommendationGroupSelectable(group);
-                      const exceedsStorage = group.takeTotal > group.storageAvailable;
+                      const finalTake = finalTakeForGroup(group);
+                      const finalExceedsStorage = finalTake > group.storageAvailable;
+                      const finalIsZero = selected && finalTake === 0;
+                      const finalHigherThanRecommended = selected && finalTake > group.takeTotal;
+                      const finalLowerThanRecommended = selected && finalTake > 0 && finalTake < group.takeTotal;
 
                       return (
                         <Fragment key={group.groupKey}>
@@ -753,7 +815,28 @@ export function RouteCreateForm({
                             <td className="px-3 py-2">{group.currentTotal}</td>
                             <td className="px-3 py-2">{group.targetTotal}</td>
                             <td className="px-3 py-2 font-semibold text-slate-900">{group.takeTotal}</td>
-                            <td className={`px-3 py-2 ${exceedsStorage && !adminOverride ? "font-semibold text-rose-700" : ""}`}>{group.storageAvailable}</td>
+                            <td className="min-w-[260px] px-3 py-2">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={adminOverride ? undefined : group.storageAvailable}
+                                  value={finalTake}
+                                  onChange={(event) => setRecommendationFinalTake(group, Number(event.target.value) || 0)}
+                                  className={`field-input w-24 ${finalExceedsStorage && !adminOverride ? "border-rose-300" : ""}`}
+                                  disabled={saving || !selected}
+                                  aria-label={`Final take for ${group.productName} at ${group.machineName}`}
+                                />
+                                <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, group.takeTotal)} disabled={saving || !selected}>Use recommended</button>
+                                <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, Math.ceil(group.takeTotal / 2))} disabled={saving || !selected}>Take half</button>
+                                <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, group.storageAvailable)} disabled={saving || !selected}>Take max available</button>
+                                <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, 0)} disabled={saving || !selected}>Clear</button>
+                              </div>
+                              {finalIsZero ? <div className="mt-1 text-xs font-medium text-amber-700">Final take is 0.</div> : null}
+                              {finalHigherThanRecommended ? <div className="mt-1 text-xs font-medium text-amber-700">Final take is higher than recommended.</div> : null}
+                              {finalLowerThanRecommended ? <div className="mt-1 text-xs text-slate-500">Taking less than recommended.</div> : null}
+                            </td>
+                            <td className={`px-3 py-2 ${finalExceedsStorage && !adminOverride ? "font-semibold text-rose-700" : ""}`}>{group.storageAvailable}</td>
                             <td className="px-3 py-2">{group.priority}</td>
                             <td className="px-3 py-2">
                               <button
@@ -767,7 +850,7 @@ export function RouteCreateForm({
                           </tr>
                           {expanded ? (
                             <tr className="border-t border-slate-200 bg-slate-50">
-                              <td colSpan={10} className="px-3 py-3">
+                              <td colSpan={11} className="px-3 py-3">
                                 <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
                                   <table className="min-w-full text-left text-xs">
                                     <thead className="bg-slate-50 text-slate-500">
@@ -775,7 +858,7 @@ export function RouteCreateForm({
                                         <th className="px-3 py-2">Slot</th>
                                         <th className="px-3 py-2">Current</th>
                                         <th className="px-3 py-2">Target</th>
-                                        <th className="px-3 py-2">Take</th>
+                                        <th className="px-3 py-2">Recommended take</th>
                                         <th className="px-3 py-2">Priority</th>
                                       </tr>
                                     </thead>

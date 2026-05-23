@@ -12,6 +12,7 @@ type CreateRoutePayload = {
   machineIds?: string[];
   recommendationKeys?: string[];
   machineSlotIds?: string[];
+  recommendationFinalTakeQty?: { machineId?: string; productId?: string; finalTakeQty?: number }[];
   routeStock?: { productId?: string; quantity?: number; available?: number }[];
   manualStopItems?: { machineId?: string; productId?: string; quantity?: number }[];
   adminOverride?: boolean;
@@ -23,10 +24,14 @@ type RecommendationSlotAllocation = {
   slot_code: string | null;
   current_qty: number;
   target_qty: number;
-  suggested_qty: number;
-  final_qty_to_take: number;
+  recommended_take_qty: number;
+  final_take_qty: number;
   priority: string | null;
+  allocation_kind?: "slot" | "extra";
+  over_recommended?: boolean;
 };
+
+const priorityOrder = ["critical", "high", "medium", "low"];
 
 function jsonError(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
@@ -56,6 +61,64 @@ function recommendationTarget(row: any) {
   return Math.max(0, Number(row.capacity ?? row.par_qty ?? 0));
 }
 
+function priorityScore(priority: string | null | undefined) {
+  const index = priorityOrder.indexOf(String(priority ?? "low").toLowerCase());
+  return index === -1 ? 0 : priorityOrder.length - index;
+}
+
+function allocationSort(a: any, b: any) {
+  const priorityDifference = priorityScore(b.priority) - priorityScore(a.priority);
+  if (priorityDifference) return priorityDifference;
+  const quantityDifference = Math.max(0, Number(a.current_qty ?? 0)) - Math.max(0, Number(b.current_qty ?? 0));
+  if (quantityDifference) return quantityDifference;
+  return String(a.slot_code ?? "").localeCompare(String(b.slot_code ?? ""));
+}
+
+function allocateFinalTake(rows: any[], finalTakeQty: number, adminOverride: boolean): RecommendationSlotAllocation[] {
+  let remaining = Math.max(0, Math.floor(finalTakeQty));
+  const allocations = [...rows].sort(allocationSort).map((row) => {
+    const recommendedTakeQty = recommendationQuantity(row);
+    const allocation: RecommendationSlotAllocation = {
+      recommendation_key: row.recommendation_key ?? null,
+      machine_slot_id: row.machine_slot_id ?? null,
+      slot_code: row.slot_code ?? null,
+      current_qty: Math.max(0, Number(row.current_qty ?? 0)),
+      target_qty: recommendationTarget(row),
+      recommended_take_qty: recommendedTakeQty,
+      final_take_qty: 0,
+      priority: row.priority ?? null,
+      allocation_kind: "slot",
+    };
+    const allocated = Math.min(remaining, recommendedTakeQty);
+    allocation.final_take_qty = allocated;
+    remaining -= allocated;
+    return allocation;
+  });
+
+  if (remaining > 0 && adminOverride && allocations.length) {
+    allocations[0].final_take_qty += remaining;
+    allocations[0].over_recommended = true;
+    remaining = 0;
+  }
+
+  if (remaining > 0) {
+    allocations.push({
+      recommendation_key: null,
+      machine_slot_id: null,
+      slot_code: null,
+      current_qty: 0,
+      target_qty: 0,
+      recommended_take_qty: 0,
+      final_take_qty: remaining,
+      priority: null,
+      allocation_kind: "extra",
+      over_recommended: true,
+    });
+  }
+
+  return allocations.filter((allocation) => allocation.final_take_qty > 0 || allocation.recommended_take_qty > 0);
+}
+
 export async function POST(request: Request) {
   const profile = await getCurrentProfile();
   if (!profile || !canAccessPath({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/routes/new")) {
@@ -78,6 +141,16 @@ export async function POST(request: Request) {
   const operatorId = assignmentMode === "assigned" ? String(payload.operatorId ?? "").trim() : "";
   const manualMachineIds = Array.from(new Set((payload.machineIds ?? []).map(String).filter(Boolean)));
   const recommendationKeys = Array.from(new Set((payload.recommendationKeys ?? []).map(String).filter(Boolean)));
+  const requestedFinalTakeByGroup = new Map(
+    (payload.recommendationFinalTakeQty ?? [])
+      .map((item) => {
+        const machineId = String(item.machineId ?? "").trim();
+        const productId = String(item.productId ?? "").trim();
+        const finalTakeQty = Math.max(0, Math.floor(Number(item.finalTakeQty ?? 0)));
+        return machineId && productId ? [`${machineId}:${productId}`, finalTakeQty] as const : null;
+      })
+      .filter((item): item is readonly [string, number] => Boolean(item)),
+  );
   const legacyRecommendationSlotIds = Array.from(new Set((payload.machineSlotIds ?? []).map(String).filter(Boolean)));
   const adminOverride = Boolean(payload.adminOverride);
   const manualStopItems = (payload.manualStopItems ?? [])
@@ -116,55 +189,55 @@ export async function POST(request: Request) {
     actionableRecommendationRows.reduce((groups: Map<string, any>, row: any) => {
       const groupKey = `${row.machine_id}:${row.product_id}`;
       const quantity = recommendationQuantity(row);
-      const targetQty = recommendationTarget(row);
-      const allocation: RecommendationSlotAllocation = {
-        recommendation_key: row.recommendation_key ?? null,
-        machine_slot_id: row.machine_slot_id ?? null,
-        slot_code: row.slot_code ?? null,
-        current_qty: Math.max(0, Number(row.current_qty ?? 0)),
-        target_qty: targetQty,
-        suggested_qty: Math.max(0, Number(row.suggested_qty ?? quantity)),
-        final_qty_to_take: quantity,
-        priority: row.priority ?? null,
-      };
       const current = groups.get(groupKey) ?? {
+        group_key: groupKey,
         machine_id: row.machine_id,
         product_id: row.product_id,
         current_qty: 0,
         par_qty: 0,
         suggested_qty: 0,
+        recommended_take_qty: 0,
         available_storage_qty: Number(row.available_storage_qty ?? 0),
         final_qty_to_take: 0,
+        final_take_qty: 0,
         machine_slot_id: null,
         slot_code: null,
+        rows: [],
         slot_allocations: [],
       };
 
-      current.current_qty += allocation.current_qty;
-      current.par_qty += allocation.target_qty;
-      current.suggested_qty += allocation.suggested_qty;
+      current.rows.push(row);
+      current.current_qty += Math.max(0, Number(row.current_qty ?? 0));
+      current.par_qty += recommendationTarget(row);
+      current.suggested_qty += quantity;
+      current.recommended_take_qty += quantity;
       current.available_storage_qty = Math.max(current.available_storage_qty, Number(row.available_storage_qty ?? 0));
-      current.final_qty_to_take += quantity;
-      current.slot_allocations.push(allocation);
       groups.set(groupKey, current);
       return groups;
     }, new Map<string, any>()).values(),
   ).map((group: any) => {
-    if (group.slot_allocations.length === 1) {
-      group.machine_slot_id = group.slot_allocations[0].machine_slot_id;
-      group.slot_code = group.slot_allocations[0].slot_code;
+    const requestedFinalTake = requestedFinalTakeByGroup.get(group.group_key);
+    const finalTakeQty = requestedFinalTake === undefined ? group.recommended_take_qty : Math.max(0, Math.floor(Number(requestedFinalTake ?? 0)));
+    group.final_take_qty = finalTakeQty;
+    group.final_qty_to_take = finalTakeQty;
+    group.slot_allocations = allocateFinalTake(group.rows, finalTakeQty, adminOverride);
+
+    if (group.rows.length === 1) {
+      group.machine_slot_id = group.rows[0].machine_slot_id;
+      group.slot_code = group.rows[0].slot_code;
     } else {
-      const slotCodes = Array.from(new Set(group.slot_allocations.map((allocation: RecommendationSlotAllocation) => allocation.slot_code).filter(Boolean)));
+      const slotCodes = Array.from(new Set(group.rows.map((row: any) => row.slot_code).filter(Boolean)));
       group.slot_code = slotCodes.length ? slotCodes.join(", ") : null;
     }
     return group;
   });
-  const recommendationMachineIds = groupedRecommendationRows.map((row: any) => row.machine_id).filter(Boolean);
+  const plannedRecommendationRows = groupedRecommendationRows.filter((row: any) => Math.max(0, Number(row.final_take_qty ?? 0)) > 0);
+  const recommendationMachineIds = plannedRecommendationRows.map((row: any) => row.machine_id).filter(Boolean);
   const selectedMachineIds = Array.from(new Set([...manualMachineIds, ...recommendationMachineIds, ...manualStopItems.map((item) => item.machineId)]));
   const stockByProduct = new Map<string, number>();
-  groupedRecommendationRows.forEach((row: any) => {
+  plannedRecommendationRows.forEach((row: any) => {
     const productId = String(row.product_id);
-    const quantity = recommendationQuantity(row);
+    const quantity = Math.max(0, Number(row.final_take_qty ?? row.final_qty_to_take ?? 0));
     if (productId && quantity > 0) stockByProduct.set(productId, (stockByProduct.get(productId) ?? 0) + quantity);
   });
   manualStopItems.forEach((item) => {
@@ -292,14 +365,16 @@ export async function POST(request: Request) {
   }
 
   const routeStopItems = [
-    ...groupedRecommendationRows.map((row: any) => ({
+    ...plannedRecommendationRows.map((row: any) => ({
       route_id: routeId,
       route_stop_id: stopByMachine.get(row.machine_id),
       machine_id: row.machine_id,
       product_id: row.product_id,
       machine_slot_id: row.machine_slot_id,
       slot_code: row.slot_code ?? null,
-      planned_quantity: recommendationQuantity(row),
+      planned_quantity: row.final_take_qty,
+      recommended_take_qty: row.recommended_take_qty,
+      final_take_qty: row.final_take_qty,
       picked_quantity: null,
       filled_quantity: null,
       returned_quantity: null,
@@ -314,6 +389,8 @@ export async function POST(request: Request) {
       machine_slot_id: null,
       slot_code: null,
       planned_quantity: item.quantity,
+      recommended_take_qty: item.quantity,
+      final_take_qty: item.quantity,
       picked_quantity: null,
       filled_quantity: null,
       returned_quantity: null,
@@ -322,9 +399,13 @@ export async function POST(request: Request) {
   ].filter((item: any) => item.route_stop_id && item.product_id && item.planned_quantity > 0);
 
   if (routeStopItems.length) {
-    let stopItemsInsert = await supabase.from("route_stop_items").insert(routeStopItems);
-    if (isMissingColumn(stopItemsInsert.error, "slot_allocations")) {
-      stopItemsInsert = await supabase.from("route_stop_items").insert(stripColumn(routeStopItems, "slot_allocations"));
+    let stopItemsToInsert = routeStopItems;
+    let stopItemsInsert = await supabase.from("route_stop_items").insert(stopItemsToInsert);
+    for (const optionalColumn of ["slot_allocations", "recommended_take_qty", "final_take_qty"]) {
+      if (isMissingColumn(stopItemsInsert.error, optionalColumn)) {
+        stopItemsToInsert = stripColumn(stopItemsToInsert, optionalColumn);
+        stopItemsInsert = await supabase.from("route_stop_items").insert(stopItemsToInsert);
+      }
     }
     if (stopItemsInsert.error) {
       console.error("[routes:create] Failed to insert route stop items", { routeId, error: stopItemsInsert.error });
@@ -336,7 +417,7 @@ export async function POST(request: Request) {
     }
   }
 
-  if (actionableRecommendationRows.length || manualStopItems.length) {
+  if (plannedRecommendationRows.length || manualStopItems.length) {
     const refillMachineIds = Array.from(new Set([...recommendationMachineIds, ...manualStopItems.map((item) => item.machineId)]));
     const refillOrderInsert = await supabase
       .from("refill_orders")
@@ -360,7 +441,7 @@ export async function POST(request: Request) {
       orderByMachine.set(order.machine_id, order.id);
     });
 
-    const recommendationLines = groupedRecommendationRows
+    const recommendationLines = plannedRecommendationRows
       .map((row: any) => ({
         refill_order_id: orderByMachine.get(row.machine_id),
         machine_slot_id: row.machine_slot_id,
@@ -368,9 +449,11 @@ export async function POST(request: Request) {
         product_id: row.product_id,
         current_qty_vms: row.current_qty,
         par_qty: row.par_qty,
-        suggested_qty: row.suggested_qty,
+        suggested_qty: row.recommended_take_qty,
         available_storage_qty: row.available_storage_qty,
-        final_qty_to_take: row.final_qty_to_take,
+        final_qty_to_take: row.final_take_qty,
+        recommended_take_qty: row.recommended_take_qty,
+        final_take_qty: row.final_take_qty,
         source: "refill_recommendation",
         slot_allocations: row.slot_allocations,
       }))
@@ -386,6 +469,8 @@ export async function POST(request: Request) {
         suggested_qty: item.quantity,
         available_storage_qty: stockByProduct.get(item.productId) ?? 0,
         final_qty_to_take: item.quantity,
+        recommended_take_qty: item.quantity,
+        final_take_qty: item.quantity,
         source: "manual_admin_assignment",
       }))
       .filter((line: any) => Boolean(line.refill_order_id));
@@ -399,13 +484,11 @@ export async function POST(request: Request) {
 
     let refillLinesToInsert = refillLines;
     let linesInsert = await supabase.from("refill_order_lines").insert(refillLinesToInsert);
-    if (isMissingColumn(linesInsert.error, "slot_allocations")) {
-      refillLinesToInsert = stripColumn(refillLinesToInsert, "slot_allocations");
-      linesInsert = await supabase.from("refill_order_lines").insert(refillLinesToInsert);
-    }
-    if (isMissingColumn(linesInsert.error, "source")) {
-      refillLinesToInsert = stripColumn(refillLinesToInsert, "source");
-      linesInsert = await supabase.from("refill_order_lines").insert(refillLinesToInsert);
+    for (const optionalColumn of ["slot_allocations", "recommended_take_qty", "final_take_qty", "source"]) {
+      if (isMissingColumn(linesInsert.error, optionalColumn)) {
+        refillLinesToInsert = stripColumn(refillLinesToInsert, optionalColumn);
+        linesInsert = await supabase.from("refill_order_lines").insert(refillLinesToInsert);
+      }
     }
 
     if (linesInsert.error) {
