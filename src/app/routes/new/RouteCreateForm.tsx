@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, KeyboardEvent, useDeferredValue, useMemo, useState } from "react";
+import { Fragment, FormEvent, KeyboardEvent, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -56,14 +56,49 @@ type PlannedStock = {
   manualQty: number;
 };
 
+type RecommendationGroup = {
+  groupKey: string;
+  machineId: string;
+  machineName: string;
+  machineCode: string;
+  productId: string;
+  productName: string;
+  recommendationKeys: string[];
+  rows: Recommendation[];
+  slotsCount: number;
+  currentTotal: number;
+  targetTotal: number;
+  takeTotal: number;
+  storageAvailable: number;
+  priority: string;
+};
+
 type ManualStopItem = {
   machineId: string;
   productId: string;
   quantity: number;
 };
 
+const RECOMMENDATION_PAGE_SIZE = 50;
+const priorityOrder = ["critical", "high", "medium", "low"] as const;
+const priorityRank = new Map(priorityOrder.map((priority, index) => [priority, priorityOrder.length - index]));
+
+function priorityScore(priority: string | null | undefined) {
+  return priorityRank.get(String(priority ?? "low").toLowerCase() as (typeof priorityOrder)[number]) ?? 0;
+}
+
+function highestPriority(current: string | null | undefined, next: string | null | undefined) {
+  const normalizedCurrent = String(current ?? "low").toLowerCase();
+  const normalizedNext = String(next ?? "low").toLowerCase();
+  return priorityScore(normalizedNext) > priorityScore(normalizedCurrent) ? normalizedNext : normalizedCurrent;
+}
+
 function recommendationQuantity(row: Recommendation) {
   return Math.max(0, Number(row.final_qty_to_take ?? row.suggested_qty ?? 0));
+}
+
+function recommendationTarget(row: Recommendation) {
+  return Math.max(0, Number(row.capacity ?? row.par_qty ?? 0));
 }
 
 function formatRecommendationQty(value: number | null | undefined) {
@@ -98,13 +133,102 @@ export function RouteCreateForm({
   const [manualMachineId, setManualMachineId] = useState("");
   const [search, setSearch] = useState("");
   const [barcode, setBarcode] = useState("");
+  const [recommendationMachineFilter, setRecommendationMachineFilter] = useState("");
+  const [recommendationPriorityFilter, setRecommendationPriorityFilter] = useState("");
+  const [recommendationSearch, setRecommendationSearch] = useState("");
+  const [showNoRefillNeeded, setShowNoRefillNeeded] = useState(false);
+  const [expandedRecommendationGroups, setExpandedRecommendationGroups] = useState<string[]>([]);
+  const [recommendationPage, setRecommendationPage] = useState(1);
   const [adminOverride, setAdminOverride] = useState(false);
   const [notFoundQuery, setNotFoundQuery] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const deferredSearch = useDeferredValue(search);
+  const deferredRecommendationSearch = useDeferredValue(recommendationSearch);
 
   const productsById = useMemo(() => new Map(products.map((product) => [product.id, product])), [products]);
+
+  const recommendationGroups = useMemo(() => {
+    const groups = new Map<string, RecommendationGroup>();
+
+    recommendations.forEach((row) => {
+      const groupKey = `${row.machine_id}:${row.product_id}`;
+      const product = productsById.get(row.product_id);
+      const current = groups.get(groupKey) ?? {
+        groupKey,
+        machineId: row.machine_id,
+        machineName: row.machine_name,
+        machineCode: row.machine_code,
+        productId: row.product_id,
+        productName: row.product_name,
+        recommendationKeys: [],
+        rows: [],
+        slotsCount: 0,
+        currentTotal: 0,
+        targetTotal: 0,
+        takeTotal: 0,
+        storageAvailable: Number(product?.availableQty ?? row.available_storage_qty ?? 0),
+        priority: "low",
+      };
+
+      current.recommendationKeys.push(row.recommendation_key);
+      current.rows.push(row);
+      current.currentTotal += Math.max(0, Number(row.current_qty ?? 0));
+      current.targetTotal += recommendationTarget(row);
+      current.takeTotal += recommendationQuantity(row);
+      current.storageAvailable = Number(product?.availableQty ?? Math.max(current.storageAvailable, Number(row.available_storage_qty ?? 0)));
+      current.priority = highestPriority(current.priority, row.priority);
+      groups.set(groupKey, current);
+    });
+
+    return Array.from(groups.values())
+      .map((group) => ({
+        ...group,
+        slotsCount: new Set(group.rows.map((row) => row.machine_slot_id ?? row.slot_code ?? row.recommendation_key)).size,
+        rows: [...group.rows].sort((a, b) => String(a.slot_code ?? "").localeCompare(String(b.slot_code ?? ""))),
+      }))
+      .sort((a, b) => {
+        const priorityDifference = priorityScore(b.priority) - priorityScore(a.priority);
+        if (priorityDifference) return priorityDifference;
+        const machineDifference = a.machineName.localeCompare(b.machineName);
+        if (machineDifference) return machineDifference;
+        return a.productName.localeCompare(b.productName);
+      });
+  }, [productsById, recommendations]);
+
+  const machineFilterOptions = useMemo(() => {
+    const seen = new Set<string>();
+    return recommendationGroups
+      .filter((group) => {
+        if (seen.has(group.machineId)) return false;
+        seen.add(group.machineId);
+        return true;
+      })
+      .map((group) => ({ id: group.machineId, label: `${group.machineName} (${group.machineCode})` }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [recommendationGroups]);
+
+  const filteredRecommendationGroups = useMemo(() => {
+    const productSearch = deferredRecommendationSearch.trim().toLowerCase();
+    return recommendationGroups.filter((group) => {
+      if (!showNoRefillNeeded && group.takeTotal <= 0) return false;
+      if (recommendationMachineFilter && group.machineId !== recommendationMachineFilter) return false;
+      if (recommendationPriorityFilter && group.priority !== recommendationPriorityFilter) return false;
+      if (productSearch && ![group.productName, group.machineName, group.machineCode].some((value) => value.toLowerCase().includes(productSearch))) return false;
+      return true;
+    });
+  }, [deferredRecommendationSearch, recommendationGroups, recommendationMachineFilter, recommendationPriorityFilter, showNoRefillNeeded]);
+
+  const totalRecommendationPages = Math.max(1, Math.ceil(filteredRecommendationGroups.length / RECOMMENDATION_PAGE_SIZE));
+  const pagedRecommendationGroups = filteredRecommendationGroups.slice((recommendationPage - 1) * RECOMMENDATION_PAGE_SIZE, recommendationPage * RECOMMENDATION_PAGE_SIZE);
+
+  useEffect(() => {
+    setRecommendationPage(1);
+  }, [recommendationMachineFilter, recommendationPriorityFilter, recommendationSearch, showNoRefillNeeded]);
+
+  useEffect(() => {
+    if (recommendationPage > totalRecommendationPages) setRecommendationPage(totalRecommendationPages);
+  }, [recommendationPage, totalRecommendationPages]);
 
   const recommendationQtyByProduct = useMemo(() => {
     const quantities = new Map<string, number>();
@@ -169,6 +293,20 @@ export function RouteCreateForm({
   }, [products, recentProducts, deferredSearch]);
 
   const toggleValue = (values: string[], value: string) => (values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
+  const isRecommendationGroupSelected = (group: RecommendationGroup) => group.recommendationKeys.every((key) => recommendationKeys.includes(key));
+  const recommendationGroupSelectable = (group: RecommendationGroup) => group.takeTotal > 0;
+  const toggleRecommendationGroup = (group: RecommendationGroup) => {
+    if (!recommendationGroupSelectable(group)) return;
+    setRecommendationKeys((current) => {
+      const selected = group.recommendationKeys.every((key) => current.includes(key));
+      if (selected) return current.filter((key) => !group.recommendationKeys.includes(key));
+      return Array.from(new Set([...current, ...group.recommendationKeys]));
+    });
+  };
+  const selectRecommendationGroups = (groups: RecommendationGroup[]) => {
+    const keys = groups.filter(recommendationGroupSelectable).flatMap((group) => group.recommendationKeys);
+    setRecommendationKeys((current) => Array.from(new Set([...current, ...keys])));
+  };
 
   const selectedManualMachineId = manualMachineId || machineIds[0] || "";
 
@@ -509,73 +647,177 @@ export function RouteCreateForm({
       </FormSection>
 
       <FormSection title="Refill recommendation rows">
-        <p className="text-sm text-slate-500">Import available refill lines from the latest mapped VMS machine goods stock. Rows with missing capacity need a manual planned quantity.</p>
-        {!recommendations.length ? (
+        <p className="text-sm text-slate-500">Grouped by machine and product from the latest mapped VMS machine goods stock. Expand a row only when you need to review the underlying slots.</p>
+        {!recommendationGroups.length ? (
           <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
             No active refill recommendations found. You can still build the route manually above.
           </div>
         ) : (
-          <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-slate-50 text-slate-600">
-                <tr>
-                  <th className="px-3 py-2" />
-                  <th className="px-3 py-2">Machine</th>
-                  <th className="px-3 py-2">Slot</th>
-                  <th className="px-3 py-2">Product</th>
-                  <th className="px-3 py-2">Current</th>
-                  <th className="px-3 py-2">Target</th>
-                  <th className="px-3 py-2">Take</th>
-                  <th className="px-3 py-2">Storage</th>
-                  <th className="px-3 py-2">Priority</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recommendations.map((row) => {
-                  const quantity = recommendationQuantity(row);
-                  const needsManualQuantity = row.suggested_qty === null || row.suggested_qty === undefined;
-                  const hasRouteQuantity = quantity > 0;
-                  const manualQuantity = manualStopItems.find((item) => item.machineId === row.machine_id && item.productId === row.product_id)?.quantity ?? "";
-                  const checkboxDisabled = saving || needsManualQuantity || !hasRouteQuantity;
+          <div className="space-y-4">
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px_180px]">
+              <FormField label="Search product">
+                <input
+                  value={recommendationSearch}
+                  onChange={(event) => setRecommendationSearch(event.target.value)}
+                  placeholder="Search product or machine"
+                  className="field-input"
+                  disabled={saving}
+                />
+              </FormField>
+              <FormField label="Machine">
+                <select value={recommendationMachineFilter} onChange={(event) => setRecommendationMachineFilter(event.target.value)} className="field-input" disabled={saving}>
+                  <option value="">All machines</option>
+                  {machineFilterOptions.map((machine) => (
+                    <option key={machine.id} value={machine.id}>{machine.label}</option>
+                  ))}
+                </select>
+              </FormField>
+              <FormField label="Priority">
+                <select value={recommendationPriorityFilter} onChange={(event) => setRecommendationPriorityFilter(event.target.value)} className="field-input" disabled={saving}>
+                  <option value="">All priorities</option>
+                  {priorityOrder.map((priority) => (
+                    <option key={priority} value={priority}>{priority}</option>
+                  ))}
+                </select>
+              </FormField>
+            </div>
 
-                  return (
-                  <tr key={row.recommendation_key} className="border-t border-slate-200">
-                    <td className="px-3 py-2">
-                      <input
-                        type="checkbox"
-                        checked={recommendationKeys.includes(row.recommendation_key)}
-                        onChange={() => setRecommendationKeys((current) => toggleValue(current, row.recommendation_key))}
-                        className="h-4 w-4"
-                        disabled={checkboxDisabled}
-                        title={needsManualQuantity ? "Enter a manual quantity for this row." : !hasRouteQuantity ? "No storage is currently available for this recommendation." : undefined}
-                      />
-                    </td>
-                    <td className="px-3 py-2 font-medium">{row.machine_name}</td>
-                    <td className="px-3 py-2">{row.slot_code || "VMS item"}</td>
-                    <td className="px-3 py-2">{row.product_name}</td>
-                    <td className="px-3 py-2">{row.current_qty}</td>
-                    <td className="px-3 py-2">{formatRecommendationQty(row.capacity ?? row.par_qty)}</td>
-                    <td className="px-3 py-2 font-semibold">
-                      {needsManualQuantity ? (
-                        <input
-                          type="number"
-                          min={0}
-                          value={manualQuantity}
-                          onChange={(event) => setManualStopQty(row.machine_id, row.product_id, Number(event.target.value) || 0)}
-                          className="field-input w-28"
-                          placeholder="Qty"
-                          disabled={saving}
-                          aria-label={`Manual planned quantity for ${row.product_name} at ${row.machine_name}`}
-                        />
-                      ) : quantity}
-                    </td>
-                    <td className="px-3 py-2">{row.available_storage_qty}</td>
-                    <td className="px-3 py-2">{row.priority ?? "-"}</td>
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" className="btn-secondary text-xs" onClick={() => selectRecommendationGroups(recommendationGroups.filter((group) => group.priority === "critical"))} disabled={saving}>
+                Select all critical
+              </button>
+              <button type="button" className="btn-secondary text-xs" onClick={() => selectRecommendationGroups(recommendationGroups.filter((group) => group.priority === "critical" || group.priority === "high"))} disabled={saving}>
+                Select all high + critical
+              </button>
+              <button type="button" className="btn-secondary text-xs" onClick={() => selectRecommendationGroups(filteredRecommendationGroups)} disabled={saving}>
+                Select all visible
+              </button>
+              <button type="button" className="btn-secondary text-xs" onClick={() => setRecommendationKeys([])} disabled={saving || !recommendationKeys.length}>
+                Clear selected
+              </button>
+              <label className="ml-auto flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700">
+                <input type="checkbox" checked={showNoRefillNeeded} onChange={(event) => setShowNoRefillNeeded(event.target.checked)} disabled={saving} />
+                <span>Show rows with no refill needed</span>
+              </label>
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
+              <table className="min-w-full text-left text-sm">
+                <thead className="bg-slate-50 text-slate-600">
+                  <tr>
+                    <th className="px-3 py-2" />
+                    <th className="px-3 py-2">Machine</th>
+                    <th className="px-3 py-2">Product</th>
+                    <th className="px-3 py-2">Slots count</th>
+                    <th className="px-3 py-2">Current total</th>
+                    <th className="px-3 py-2">Target total</th>
+                    <th className="px-3 py-2">Recommended take</th>
+                    <th className="px-3 py-2">Storage</th>
+                    <th className="px-3 py-2">Priority</th>
+                    <th className="px-3 py-2">Details</th>
                   </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {!filteredRecommendationGroups.length ? (
+                    <tr>
+                      <td colSpan={10} className="px-3 py-8 text-center text-slate-500">
+                        No grouped recommendation rows match the current filters.
+                      </td>
+                    </tr>
+                  ) : (
+                    pagedRecommendationGroups.map((group) => {
+                      const selected = isRecommendationGroupSelected(group);
+                      const expanded = expandedRecommendationGroups.includes(group.groupKey);
+                      const selectable = recommendationGroupSelectable(group);
+                      const exceedsStorage = group.takeTotal > group.storageAvailable;
+
+                      return (
+                        <Fragment key={group.groupKey}>
+                          <tr className="border-t border-slate-200">
+                            <td className="px-3 py-2">
+                              <input
+                                type="checkbox"
+                                checked={selected}
+                                onChange={() => toggleRecommendationGroup(group)}
+                                className="h-4 w-4"
+                                disabled={saving || !selectable}
+                                title={!selectable ? "No refill quantity is needed for this grouped recommendation." : undefined}
+                              />
+                            </td>
+                            <td className="px-3 py-2 font-medium">
+                              <div>{group.machineName}</div>
+                              <div className="text-xs font-normal text-slate-500">{group.machineCode}</div>
+                            </td>
+                            <td className="px-3 py-2">{group.productName}</td>
+                            <td className="px-3 py-2">{group.slotsCount}</td>
+                            <td className="px-3 py-2">{group.currentTotal}</td>
+                            <td className="px-3 py-2">{group.targetTotal}</td>
+                            <td className="px-3 py-2 font-semibold text-slate-900">{group.takeTotal}</td>
+                            <td className={`px-3 py-2 ${exceedsStorage && !adminOverride ? "font-semibold text-rose-700" : ""}`}>{group.storageAvailable}</td>
+                            <td className="px-3 py-2">{group.priority}</td>
+                            <td className="px-3 py-2">
+                              <button
+                                type="button"
+                                className="link-secondary"
+                                onClick={() => setExpandedRecommendationGroups((current) => toggleValue(current, group.groupKey))}
+                              >
+                                {expanded ? "Hide" : "Expand"}
+                              </button>
+                            </td>
+                          </tr>
+                          {expanded ? (
+                            <tr className="border-t border-slate-200 bg-slate-50">
+                              <td colSpan={10} className="px-3 py-3">
+                                <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                                  <table className="min-w-full text-left text-xs">
+                                    <thead className="bg-slate-50 text-slate-500">
+                                      <tr>
+                                        <th className="px-3 py-2">Slot</th>
+                                        <th className="px-3 py-2">Current</th>
+                                        <th className="px-3 py-2">Target</th>
+                                        <th className="px-3 py-2">Take</th>
+                                        <th className="px-3 py-2">Priority</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {group.rows.map((row) => (
+                                        <tr key={row.recommendation_key} className="border-t border-slate-100">
+                                          <td className="px-3 py-2">{row.slot_code || "VMS item"}</td>
+                                          <td className="px-3 py-2">{row.current_qty}</td>
+                                          <td className="px-3 py-2">{formatRecommendationQty(row.capacity ?? row.par_qty)}</td>
+                                          <td className="px-3 py-2 font-semibold">{recommendationQuantity(row)}</td>
+                                          <td className="px-3 py-2">{row.priority ?? "-"}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </td>
+                            </tr>
+                          ) : null}
+                        </Fragment>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {filteredRecommendationGroups.length > RECOMMENDATION_PAGE_SIZE ? (
+              <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-slate-600">
+                <div>
+                  Showing {(recommendationPage - 1) * RECOMMENDATION_PAGE_SIZE + 1}-{Math.min(recommendationPage * RECOMMENDATION_PAGE_SIZE, filteredRecommendationGroups.length)} of {filteredRecommendationGroups.length}
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" className="btn-secondary" onClick={() => setRecommendationPage((page) => Math.max(1, page - 1))} disabled={saving || recommendationPage <= 1}>
+                    Previous
+                  </button>
+                  <button type="button" className="btn-secondary" onClick={() => setRecommendationPage((page) => Math.min(totalRecommendationPages, page + 1))} disabled={saving || recommendationPage >= totalRecommendationPages}>
+                    Next
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </div>
         )}
       </FormSection>

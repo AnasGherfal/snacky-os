@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
-import { RECEIPT_IMAGE_BUCKET } from "@/lib/storage-buckets";
+import { privateStorageObjectUrl, RECEIPT_IMAGE_BUCKET } from "@/lib/storage-buckets";
 
 export const RECEIPT_MIME_TYPES = ["image/png", "image/jpeg", "image/webp", "application/pdf"];
 export const RECEIPT_MAX_SIZE = 5 * 1024 * 1024;
@@ -63,7 +63,7 @@ export async function resolvePurchaseReceiptUrl(supabase: SupabaseClient, fd: Fo
     if (error) throw error;
 
     return {
-      receiptUrl: `/api/storage/${RECEIPT_IMAGE_BUCKET}/${encodeURIComponent(path)}`,
+      receiptUrl: privateStorageObjectUrl(RECEIPT_IMAGE_BUCKET, path),
       receiptFileName: file.name || null,
       receiptContentType: file.type || null,
       receiptStoragePath: path,

@@ -5,6 +5,7 @@ import { requireCurrentProfileForPath } from "@/lib/auth";
 import { canManagePurchases } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
+import { privateStorageObjectUrl, RECEIPT_IMAGE_BUCKET } from "@/lib/storage-buckets";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -27,7 +28,7 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
   }
   const { data: purchases, count, error: purchasesError } = await supabase
     .from("purchase_orders")
-    .select("id, order_date, receipt_number, receipt_url, total_amount, manual_total_lyd, calculated_total_lyd, payment_method, payment_status, status, created_at, supplier:suppliers(name), created_by_member:team_members!purchase_orders_created_by_fkey(full_name)", { count: "exact" })
+    .select("id, order_date, receipt_number, receipt_url, receipt_storage_path, total_amount, manual_total_lyd, calculated_total_lyd, payment_method, payment_status, status, created_at, supplier:suppliers(name), created_by_member:team_members!purchase_orders_created_by_fkey(full_name)", { count: "exact" })
     .order("order_date", { ascending: false })
     .order("created_at", { ascending: false })
     .range(from, to);
@@ -62,6 +63,7 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
               const receiptTotal = purchase.manual_total_lyd === null || purchase.manual_total_lyd === undefined ? null : Number(purchase.manual_total_lyd);
               const displayTotal = receiptTotal ?? Number(purchase.total_amount ?? calculatedTotal);
               const difference = receiptTotal === null ? null : receiptTotal - calculatedTotal;
+              const receiptUrl = String(purchase.receipt_url ?? "").trim() || privateStorageObjectUrl(RECEIPT_IMAGE_BUCKET, purchase.receipt_storage_path);
               return (
                 <MobileRecordCard key={purchase.id}>
                   <div className="mb-3 flex items-start justify-between gap-3">
@@ -81,7 +83,7 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
                   </div>
                   <div className="mt-4 grid gap-2 sm:grid-cols-2">
                     <Link href={`/purchases/${purchase.id}${moduleQuery}`} className="btn-secondary w-full">View</Link>
-                    {purchase.receipt_url ? <a href={purchase.receipt_url} target="_blank" rel="noreferrer" className="btn-secondary w-full">View Receipt</a> : null}
+                    {receiptUrl ? <a href={receiptUrl} target="_blank" rel="noreferrer" className="btn-secondary w-full">View Receipt</a> : null}
                     {canCreatePurchase && purchase.status === "draft" ? <Link href={`/purchases/${purchase.id}/edit${moduleQuery}`} className="btn-secondary w-full">Edit</Link> : null}
                   </div>
                 </MobileRecordCard>
@@ -94,12 +96,13 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
               const receiptTotal = purchase.manual_total_lyd === null || purchase.manual_total_lyd === undefined ? null : Number(purchase.manual_total_lyd);
               const displayTotal = receiptTotal ?? Number(purchase.total_amount ?? calculatedTotal);
               const difference = receiptTotal === null ? null : receiptTotal - calculatedTotal;
+              const receiptUrl = String(purchase.receipt_url ?? "").trim() || privateStorageObjectUrl(RECEIPT_IMAGE_BUCKET, purchase.receipt_storage_path);
               return (
                 <tr key={purchase.id}>
                   <td>{purchase.order_date}</td>
                   <td>{purchase.supplier?.name ?? "-"}</td>
                   <td>{purchase.receipt_number ?? "-"}</td>
-                  <td>{purchase.receipt_url ? <a href={purchase.receipt_url} target="_blank" rel="noreferrer" className="link-secondary">View Receipt</a> : "-"}</td>
+                  <td>{receiptUrl ? <a href={receiptUrl} target="_blank" rel="noreferrer" className="link-secondary">View Receipt</a> : "-"}</td>
                   <td>{lyd(calculatedTotal)}</td>
                   <td>{lyd(displayTotal)}</td>
                   <td>{difference === null ? "-" : lyd(difference)}</td>

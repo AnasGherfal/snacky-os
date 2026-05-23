@@ -4,6 +4,7 @@ import { FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canAddProducts, canManagePurchases } from "@/lib/authz";
 import { updatePurchase } from "@/lib/purchase-actions";
+import { privateStorageObjectUrl, RECEIPT_IMAGE_BUCKET } from "@/lib/storage-buckets";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -34,7 +35,7 @@ export default async function EditPurchasePage({
   ] = await Promise.all([
     supabase
       .from("purchase_orders")
-      .select("id, supplier_id, status, order_date, receipt_number, payment_method, payment_status, receipt_url, notes, manual_total_lyd")
+      .select("id, supplier_id, status, order_date, receipt_number, payment_method, payment_status, receipt_url, receipt_storage_path, notes, manual_total_lyd")
       .eq("id", id)
       .single(),
     supabase
@@ -110,6 +111,7 @@ export default async function EditPurchasePage({
     lineTotal: Number(line.line_total_lyd ?? line.line_total ?? 0),
     pricingMode: "total" as const,
   }));
+  const initialReceiptUrl = String((purchase as any).receipt_url ?? "").trim() || privateStorageObjectUrl(RECEIPT_IMAGE_BUCKET, (purchase as any).receipt_storage_path) || "";
 
   return (
     <>
@@ -143,7 +145,7 @@ export default async function EditPurchasePage({
             receiptNumber: (purchase as any).receipt_number,
             paymentMethod: (purchase as any).payment_method,
             paymentStatus: (purchase as any).payment_status,
-            receiptUrl: (purchase as any).receipt_url,
+            receiptUrl: initialReceiptUrl,
             notes: (purchase as any).notes,
             manualTotalLyd: (purchase as any).manual_total_lyd === null ? null : Number((purchase as any).manual_total_lyd),
           }}

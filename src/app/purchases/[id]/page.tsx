@@ -7,6 +7,7 @@ import { requireCurrentProfileForPath } from "@/lib/auth";
 import { canManagePurchases } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { dateOnly } from "@/lib/purchase-finance-date";
+import { privateStorageObjectUrl, RECEIPT_IMAGE_BUCKET } from "@/lib/storage-buckets";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 function formatReceiptType(url: string | null | undefined, contentType?: string | null) {
@@ -21,7 +22,7 @@ function formatReceiptType(url: string | null | undefined, contentType?: string 
 }
 
 function ReceiptPreviewSection({ purchase }: { purchase: any }) {
-  const receiptUrl = String(purchase.receipt_url ?? "").trim();
+  const receiptUrl = String(purchase.receipt_url ?? "").trim() || privateStorageObjectUrl(RECEIPT_IMAGE_BUCKET, purchase.receipt_storage_path) || "";
   const contentType = formatReceiptType(receiptUrl, purchase.receipt_content_type);
   const isImage = contentType.startsWith("image/");
   const receiptLabel = purchase.receipt_file_name ?? purchase.receipt_number ?? "Receipt";
@@ -31,7 +32,7 @@ function ReceiptPreviewSection({ purchase }: { purchase: any }) {
       <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold text-slate-900">Receipt preview</h2>
-          <p className="text-sm text-slate-500">Supplier receipt attachment saved with this purchase.</p>
+          <p className="text-sm text-slate-500">{receiptUrl ? "Supplier receipt attachment saved with this purchase." : "No supplier receipt attachment is saved yet."}</p>
         </div>
         {receiptUrl ? <a href={receiptUrl} target="_blank" rel="noreferrer" className="btn-secondary">View Receipt</a> : null}
       </div>
@@ -109,6 +110,7 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
       : receiptUpload === "invalid-file"
         ? "Receipt upload must be a PNG, JPG, WEBP, or PDF file that is 5MB or smaller. Use receipt URL for now."
         : "";
+  const receiptUrl = String(purchaseRow.receipt_url ?? "").trim() || privateStorageObjectUrl(RECEIPT_IMAGE_BUCKET, purchaseRow.receipt_storage_path) || "";
 
   return (
     <>
@@ -140,7 +142,7 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
             <div><div className="text-xs font-medium uppercase text-slate-500">Created by</div><div>{purchaseRow.created_by_member?.full_name ?? "-"}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Received by</div><div>{purchaseRow.received_by_member?.full_name ?? "-"}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Voided at</div><div>{purchaseRow.voided_at ? new Date(purchaseRow.voided_at).toLocaleString("en-US") : "-"}</div></div>
-            <div><div className="text-xs font-medium uppercase text-slate-500">Receipt</div>{purchaseRow.receipt_url ? <a className="link-secondary" href={purchaseRow.receipt_url} target="_blank" rel="noreferrer">Open receipt</a> : <span>-</span>}</div>
+            <div><div className="text-xs font-medium uppercase text-slate-500">Receipt</div>{receiptUrl ? <a className="link-secondary" href={receiptUrl} target="_blank" rel="noreferrer">Open receipt</a> : <span>-</span>}</div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Inventory movement</div><div>{hasReceiptMovements ? "Created" : "Not created"}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Finance transaction</div><div>{hasActiveFinance ? <Link href={`/finance/transactions/${activeFinanceTransaction.id}`} className="link-secondary">Created</Link> : "Not created"}</div></div>
           </div>

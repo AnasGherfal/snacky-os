@@ -17,12 +17,43 @@ type CreateRoutePayload = {
   adminOverride?: boolean;
 };
 
+type RecommendationSlotAllocation = {
+  recommendation_key: string | null;
+  machine_slot_id: string | null;
+  slot_code: string | null;
+  current_qty: number;
+  target_qty: number;
+  suggested_qty: number;
+  final_qty_to_take: number;
+  priority: string | null;
+};
+
 function jsonError(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
 }
 
 function isMissingRouteStopItems(error: any) {
   return error?.code === "PGRST205" && String(error?.message ?? "").includes("route_stop_items");
+}
+
+function isMissingColumn(error: any, column: string) {
+  const message = String(error?.message ?? "");
+  return ["42703", "PGRST204"].includes(String(error?.code ?? "")) && message.includes(column);
+}
+
+function stripColumn(rows: any[], column: string) {
+  return rows.map((row) => {
+    const { [column]: _omitted, ...rest } = row;
+    return rest;
+  });
+}
+
+function recommendationQuantity(row: any) {
+  return Math.max(0, Number(row.final_qty_to_take ?? row.suggested_qty ?? 0));
+}
+
+function recommendationTarget(row: any) {
+  return Math.max(0, Number(row.capacity ?? row.par_qty ?? 0));
 }
 
 export async function POST(request: Request) {
@@ -65,12 +96,12 @@ export async function POST(request: Request) {
   const recommendationsResult = recommendationKeys.length
     ? await supabase
         .from("refill_recommendations")
-        .select("recommendation_key, machine_id, machine_slot_id, slot_code, product_id, current_qty, par_qty, suggested_qty, available_storage_qty, final_qty_to_take")
+        .select("recommendation_key, machine_id, machine_slot_id, slot_code, product_id, current_qty, capacity, par_qty, suggested_qty, available_storage_qty, final_qty_to_take, priority")
         .in("recommendation_key", recommendationKeys)
     : legacyRecommendationSlotIds.length
       ? await supabase
           .from("refill_recommendations")
-          .select("recommendation_key, machine_id, machine_slot_id, slot_code, product_id, current_qty, par_qty, suggested_qty, available_storage_qty, final_qty_to_take")
+          .select("recommendation_key, machine_id, machine_slot_id, slot_code, product_id, current_qty, capacity, par_qty, suggested_qty, available_storage_qty, final_qty_to_take, priority")
           .in("machine_slot_id", legacyRecommendationSlotIds)
     : { data: [], error: null };
 
@@ -80,13 +111,60 @@ export async function POST(request: Request) {
   }
 
   const recommendationRows = recommendationsResult.data ?? [];
-  const actionableRecommendationRows = recommendationRows.filter((row: any) => Math.max(0, Number(row.final_qty_to_take ?? row.suggested_qty ?? 0)) > 0);
-  const recommendationMachineIds = actionableRecommendationRows.map((row: any) => row.machine_id).filter(Boolean);
+  const actionableRecommendationRows = recommendationRows.filter((row: any) => recommendationQuantity(row) > 0);
+  const groupedRecommendationRows = Array.from(
+    actionableRecommendationRows.reduce((groups: Map<string, any>, row: any) => {
+      const groupKey = `${row.machine_id}:${row.product_id}`;
+      const quantity = recommendationQuantity(row);
+      const targetQty = recommendationTarget(row);
+      const allocation: RecommendationSlotAllocation = {
+        recommendation_key: row.recommendation_key ?? null,
+        machine_slot_id: row.machine_slot_id ?? null,
+        slot_code: row.slot_code ?? null,
+        current_qty: Math.max(0, Number(row.current_qty ?? 0)),
+        target_qty: targetQty,
+        suggested_qty: Math.max(0, Number(row.suggested_qty ?? quantity)),
+        final_qty_to_take: quantity,
+        priority: row.priority ?? null,
+      };
+      const current = groups.get(groupKey) ?? {
+        machine_id: row.machine_id,
+        product_id: row.product_id,
+        current_qty: 0,
+        par_qty: 0,
+        suggested_qty: 0,
+        available_storage_qty: Number(row.available_storage_qty ?? 0),
+        final_qty_to_take: 0,
+        machine_slot_id: null,
+        slot_code: null,
+        slot_allocations: [],
+      };
+
+      current.current_qty += allocation.current_qty;
+      current.par_qty += allocation.target_qty;
+      current.suggested_qty += allocation.suggested_qty;
+      current.available_storage_qty = Math.max(current.available_storage_qty, Number(row.available_storage_qty ?? 0));
+      current.final_qty_to_take += quantity;
+      current.slot_allocations.push(allocation);
+      groups.set(groupKey, current);
+      return groups;
+    }, new Map<string, any>()).values(),
+  ).map((group: any) => {
+    if (group.slot_allocations.length === 1) {
+      group.machine_slot_id = group.slot_allocations[0].machine_slot_id;
+      group.slot_code = group.slot_allocations[0].slot_code;
+    } else {
+      const slotCodes = Array.from(new Set(group.slot_allocations.map((allocation: RecommendationSlotAllocation) => allocation.slot_code).filter(Boolean)));
+      group.slot_code = slotCodes.length ? slotCodes.join(", ") : null;
+    }
+    return group;
+  });
+  const recommendationMachineIds = groupedRecommendationRows.map((row: any) => row.machine_id).filter(Boolean);
   const selectedMachineIds = Array.from(new Set([...manualMachineIds, ...recommendationMachineIds, ...manualStopItems.map((item) => item.machineId)]));
   const stockByProduct = new Map<string, number>();
-  actionableRecommendationRows.forEach((row: any) => {
+  groupedRecommendationRows.forEach((row: any) => {
     const productId = String(row.product_id);
-    const quantity = Math.max(0, Number(row.final_qty_to_take ?? row.suggested_qty ?? 0));
+    const quantity = recommendationQuantity(row);
     if (productId && quantity > 0) stockByProduct.set(productId, (stockByProduct.get(productId) ?? 0) + quantity);
   });
   manualStopItems.forEach((item) => {
@@ -214,18 +292,19 @@ export async function POST(request: Request) {
   }
 
   const routeStopItems = [
-    ...actionableRecommendationRows.map((row: any) => ({
+    ...groupedRecommendationRows.map((row: any) => ({
       route_id: routeId,
       route_stop_id: stopByMachine.get(row.machine_id),
       machine_id: row.machine_id,
       product_id: row.product_id,
       machine_slot_id: row.machine_slot_id,
       slot_code: row.slot_code ?? null,
-      planned_quantity: Math.max(0, Number(row.final_qty_to_take ?? row.suggested_qty ?? 0)),
+      planned_quantity: recommendationQuantity(row),
       picked_quantity: null,
       filled_quantity: null,
       returned_quantity: null,
       source: "refill_recommendation",
+      slot_allocations: row.slot_allocations,
     })),
     ...manualStopItems.map((item) => ({
       route_id: routeId,
@@ -243,7 +322,10 @@ export async function POST(request: Request) {
   ].filter((item: any) => item.route_stop_id && item.product_id && item.planned_quantity > 0);
 
   if (routeStopItems.length) {
-    const stopItemsInsert = await supabase.from("route_stop_items").insert(routeStopItems);
+    let stopItemsInsert = await supabase.from("route_stop_items").insert(routeStopItems);
+    if (isMissingColumn(stopItemsInsert.error, "slot_allocations")) {
+      stopItemsInsert = await supabase.from("route_stop_items").insert(stripColumn(routeStopItems, "slot_allocations"));
+    }
     if (stopItemsInsert.error) {
       console.error("[routes:create] Failed to insert route stop items", { routeId, error: stopItemsInsert.error });
       if (!isMissingRouteStopItems(stopItemsInsert.error)) {
@@ -278,7 +360,7 @@ export async function POST(request: Request) {
       orderByMachine.set(order.machine_id, order.id);
     });
 
-    const recommendationLines = actionableRecommendationRows
+    const recommendationLines = groupedRecommendationRows
       .map((row: any) => ({
         refill_order_id: orderByMachine.get(row.machine_id),
         machine_slot_id: row.machine_slot_id,
@@ -290,6 +372,7 @@ export async function POST(request: Request) {
         available_storage_qty: row.available_storage_qty,
         final_qty_to_take: row.final_qty_to_take,
         source: "refill_recommendation",
+        slot_allocations: row.slot_allocations,
       }))
       .filter((line: any) => Boolean(line.refill_order_id));
     const manualLines = manualStopItems
@@ -314,9 +397,15 @@ export async function POST(request: Request) {
       return jsonError("Could not match refill lines to created refill orders.", 500);
     }
 
-    let linesInsert = await supabase.from("refill_order_lines").insert(refillLines);
-    if (linesInsert.error?.code === "42703" && linesInsert.error.message?.includes("source")) {
-      linesInsert = await supabase.from("refill_order_lines").insert(refillLines.map(({ source, ...line }: any) => line));
+    let refillLinesToInsert = refillLines;
+    let linesInsert = await supabase.from("refill_order_lines").insert(refillLinesToInsert);
+    if (isMissingColumn(linesInsert.error, "slot_allocations")) {
+      refillLinesToInsert = stripColumn(refillLinesToInsert, "slot_allocations");
+      linesInsert = await supabase.from("refill_order_lines").insert(refillLinesToInsert);
+    }
+    if (isMissingColumn(linesInsert.error, "source")) {
+      refillLinesToInsert = stripColumn(refillLinesToInsert, "source");
+      linesInsert = await supabase.from("refill_order_lines").insert(refillLinesToInsert);
     }
 
     if (linesInsert.error) {
@@ -353,6 +442,7 @@ export async function POST(request: Request) {
     metadata: {
       recommendation_count: recommendationKeys.length || legacyRecommendationSlotIds.length,
       actionable_recommendation_count: actionableRecommendationRows.length,
+      grouped_recommendation_count: groupedRecommendationRows.length,
       manual_stop_item_count: manualStopItems.length,
       admin_override: adminOverride,
       assignment_mode: assignmentMode,

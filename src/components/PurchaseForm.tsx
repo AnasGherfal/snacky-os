@@ -1021,7 +1021,7 @@ export function PurchaseForm({
             ) : null}
           </FormField>
           <FormField label="Receipt URL fallback">
-            <input name="receipt_url" type="url" className="field-input" placeholder="https://example.com/receipt.jpg" value={details.receiptUrl} onChange={(event) => handleReceiptUrlChange(event.target.value)} />
+            <input name="receipt_url" type="text" inputMode="url" className="field-input" placeholder="https://example.com/receipt.jpg" value={details.receiptUrl} onChange={(event) => handleReceiptUrlChange(event.target.value)} />
           </FormField>
           <div className="md:col-span-2">
             <FormField label="Notes">

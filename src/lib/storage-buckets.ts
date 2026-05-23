@@ -10,3 +10,16 @@ export const PRIVATE_STORAGE_BUCKETS = new Set([
   REFILL_PHOTO_BUCKET,
   ISSUE_PHOTO_BUCKET,
 ]);
+
+export function privateStorageObjectUrl(bucket: string, objectPath: string | null | undefined) {
+  const cleanPath = String(objectPath ?? "").trim().replace(/^\/+/, "");
+  if (!bucket || !cleanPath) return null;
+
+  const encodedPath = cleanPath
+    .split("/")
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+
+  return encodedPath ? `/api/storage/${encodeURIComponent(bucket)}/${encodedPath}` : null;
+}
