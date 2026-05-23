@@ -2,6 +2,49 @@ export const appRoles = ["owner", "admin", "supervisor", "operator", "warehouse"
 
 export type AppRole = (typeof appRoles)[number];
 
+export const appPermissions = [
+  "dashboard.view",
+  "operations.manage",
+  "routes.view",
+  "routes.create",
+  "assigned_routes.view",
+  "assigned_machines.view",
+  "refills.view",
+  "refills.create",
+  "issues.view",
+  "issues.create",
+  "products.view",
+  "products.view_limited",
+  "products.create",
+  "products.edit",
+  "products.delete",
+  "inventory.view",
+  "inventory.full_edit",
+  "storage.view",
+  "storage.adjust",
+  "storage.location.manage",
+  "storage.movement.view",
+  "storage.movement.create",
+  "purchase_items.view",
+  "purchases.view",
+  "purchases.create",
+  "purchases.receive",
+  "suppliers.view",
+  "suppliers.manage",
+  "machines.view",
+  "machines.manage",
+  "finance.view",
+  "finance.edit",
+  "reports.view",
+  "team.manage",
+  "activity.view",
+  "vms.import",
+  "vms.mapping.manage",
+  "system.settings",
+] as const;
+
+export type AppPermission = (typeof appPermissions)[number];
+
 export type AuthUserContext = {
   id: string;
   role: AppRole;
@@ -16,14 +59,82 @@ const supervisorRoles = new Set<AppRole>(["supervisor"]);
 const adminRoles = new Set<AppRole>(["owner", "admin", "supervisor"]);
 const operatorRoles = new Set<AppRole>(["operator"]);
 const routePerformerRoles = new Set<AppRole>(["owner", "admin", "supervisor", "operator"]);
-const financeRoles = new Set<AppRole>(["owner", "admin", "supervisor", "finance"]);
-const storageLocationRoles = new Set<AppRole>(["owner", "admin", "supervisor", "warehouse"]);
-const purchasingRoles = new Set<AppRole>(["owner", "admin", "supervisor", "purchasing"]);
-const productCreatorRoles = new Set<AppRole>(["owner", "admin"]);
 
 type RoleInput = AppRole | AppRole[] | AuthUserContext | null | undefined;
 
 const rolePriority: AppRole[] = ["owner", "admin", "supervisor", "finance", "warehouse", "purchasing", "operator", "viewer"];
+
+const rolePermissions = {
+  owner: appPermissions,
+  admin: appPermissions,
+  supervisor: [
+    "dashboard.view",
+    "operations.manage",
+    "routes.view",
+    "routes.create",
+    "assigned_routes.view",
+    "assigned_machines.view",
+    "refills.view",
+    "refills.create",
+    "issues.view",
+    "issues.create",
+    "products.view",
+    "inventory.view",
+    "inventory.full_edit",
+    "storage.view",
+    "storage.adjust",
+    "storage.location.manage",
+    "storage.movement.view",
+    "storage.movement.create",
+    "purchase_items.view",
+    "purchases.view",
+    "purchases.create",
+    "purchases.receive",
+    "machines.view",
+    "machines.manage",
+    "finance.view",
+    "finance.edit",
+  ],
+  operator: [
+    "assigned_routes.view",
+    "assigned_machines.view",
+    "refills.view",
+    "refills.create",
+    "issues.create",
+    "products.view_limited",
+  ],
+  warehouse: [
+    "products.view",
+    "inventory.view",
+    "storage.view",
+    "storage.adjust",
+    "storage.location.manage",
+    "storage.movement.view",
+    "storage.movement.create",
+    "purchase_items.view",
+    "purchases.view",
+    "purchases.create",
+    "purchases.receive",
+  ],
+  purchasing: [
+    "products.view",
+    "products.create",
+    "products.edit",
+    "purchase_items.view",
+    "purchases.view",
+    "purchases.create",
+    "purchases.receive",
+    "suppliers.view",
+    "suppliers.manage",
+  ],
+  finance: [
+    "finance.view",
+    "finance.edit",
+    "purchase_items.view",
+    "purchases.view",
+  ],
+  viewer: ["dashboard.view"],
+} satisfies Record<AppRole, readonly AppPermission[]>;
 
 function normalizeRole(role: string | null | undefined): AppRole | null {
   const normalized = role === "procurement" ? "purchasing" : role;
@@ -49,6 +160,10 @@ function rolesFrom(input: RoleInput): AppRole[] {
   return normalizeRoles(input.roles, input.role);
 }
 
+function canCreateProductsByFlag(input: RoleInput) {
+  return Boolean(input && typeof input === "object" && !Array.isArray(input) && input.canAddProducts);
+}
+
 export function hasRole(input: RoleInput, role: AppRole) {
   return rolesFrom(input).includes(role);
 }
@@ -56,6 +171,19 @@ export function hasRole(input: RoleInput, role: AppRole) {
 export function hasAnyRole(input: RoleInput, roles: Iterable<AppRole>) {
   const allowed = new Set(roles);
   return rolesFrom(input).some((role) => allowed.has(role));
+}
+
+export function getEffectivePermissions(input: RoleInput): AppPermission[] {
+  const permissions = new Set<AppPermission>();
+  rolesFrom(input).forEach((role) => {
+    rolePermissions[role].forEach((permission) => permissions.add(permission));
+  });
+  if (canCreateProductsByFlag(input)) permissions.add("products.create");
+  return appPermissions.filter((permission) => permissions.has(permission));
+}
+
+export function hasPermission(input: RoleInput, permission: AppPermission) {
+  return getEffectivePermissions(input).includes(permission);
 }
 
 export function isAdminRole(input: RoleInput) {
@@ -79,23 +207,23 @@ export function canExecuteRoutes(input: RoleInput) {
 }
 
 export function canManageOperations(user: AuthUserContext | null | undefined) {
-  return isAdminRole(user);
+  return hasPermission(user, "operations.manage");
 }
 
 export function canViewFinancials(user: AuthUserContext | null | undefined) {
-  return hasAnyRole(user, financeRoles);
+  return hasPermission(user, "finance.view");
 }
 
 export function canEditFinancialTransactions(user: AuthUserContext | null | undefined) {
-  return isOwnerAdminRole(user) || hasRole(user, "finance");
+  return hasPermission(user, "finance.edit");
 }
 
 export function canManageStorageLocations(input: RoleInput) {
-  return hasAnyRole(input, storageLocationRoles);
+  return hasPermission(input, "storage.location.manage");
 }
 
 export function canManagePurchases(input: RoleInput) {
-  return hasAnyRole(input, new Set<AppRole>([...purchasingRoles, "warehouse"]));
+  return hasPermission(input, "purchases.create") || hasPermission(input, "purchases.receive");
 }
 
 export function canScanReceipts(input: RoleInput) {
@@ -103,10 +231,7 @@ export function canScanReceipts(input: RoleInput) {
 }
 
 export function canAddProducts(input: RoleInput) {
-  if (!input) return false;
-  if (isOwnerAdminRole(input)) return true;
-  if (typeof input === "object" && !Array.isArray(input) && input.canAddProducts) return true;
-  return hasAnyRole(input, productCreatorRoles);
+  return hasPermission(input, "products.create");
 }
 
 export function canAccessOperatorRoute(user: AuthUserContext | null | undefined, routeOperatorId: string | null | undefined) {
@@ -118,9 +243,9 @@ export function canAccessOperatorRoute(user: AuthUserContext | null | undefined,
 
 export function getDefaultPathForRole(input: RoleInput) {
   if (isOwnerAdminRole(input) || isSupervisorRole(input)) return "/dashboard";
-  if (hasRole(input, "finance")) return "/finance";
-  if (hasRole(input, "warehouse")) return "/inventory";
-  if (hasRole(input, "purchasing")) return "/purchases";
+  if (hasPermission(input, "finance.view")) return "/finance";
+  if (hasPermission(input, "inventory.view") || hasPermission(input, "storage.view")) return "/inventory";
+  if (hasPermission(input, "purchases.view")) return "/purchases";
   if (isOperatorRole(input)) return "/operator/routes";
   return "/dashboard";
 }
@@ -128,25 +253,6 @@ export function getDefaultPathForRole(input: RoleInput) {
 export function parseAppRole(role: string | null | undefined): AppRole | null {
   return normalizeRole(role);
 }
-
-const supervisorAllowedPrefixes = [
-  "/dashboard",
-  "/refills",
-  "/routes",
-  "/operator",
-  "/cash-collections",
-  "/issues",
-  "/machines",
-  "/machine-slots",
-  "/inventory",
-  "/storage-locations",
-  "/purchases",
-];
-const operatorAllowedPrefixes = ["/operator"];
-const warehouseAllowedPrefixes = ["/warehouse", "/operator", "/inventory", "/storage-locations", "/purchases"];
-const purchasingAllowedPrefixes = ["/purchases", "/products", "/suppliers"];
-const financeAllowedPrefixes = ["/finance", "/cash-collections", "/purchases"];
-const viewerAllowedPrefixes = ["/dashboard"];
 
 function matchesPrefix(pathname: string, prefixes: string[]) {
   return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
@@ -156,12 +262,54 @@ export function canAccessPath(user: AuthUserContext | null | undefined, pathname
   if (!user || user.activeStatus === "inactive") return false;
   if (pathname === "/account" || pathname.startsWith("/account/")) return true;
   if (pathname === "/install" || pathname.startsWith("/install/")) return true;
-  if (user.canAddProducts && (pathname === "/products/new" || pathname.startsWith("/products/new/"))) return true;
-  if (isOwnerAdminRole(user)) return true;
-  if (isSupervisorRole(user) && matchesPrefix(pathname, supervisorAllowedPrefixes)) return true;
-  if (isOperatorRole(user) && matchesPrefix(pathname, operatorAllowedPrefixes)) return true;
-  if (hasRole(user, "warehouse") && matchesPrefix(pathname, warehouseAllowedPrefixes)) return true;
-  if (hasRole(user, "purchasing") && matchesPrefix(pathname, purchasingAllowedPrefixes)) return true;
-  if (hasRole(user, "finance") && matchesPrefix(pathname, financeAllowedPrefixes)) return true;
-  return hasRole(user, "viewer") && matchesPrefix(pathname, viewerAllowedPrefixes);
+
+  if (pathname === "/dashboard") return hasPermission(user, "dashboard.view");
+  if (matchesPrefix(pathname, ["/reports", "/sales", "/products-dashboard", "/machines-dashboard", "/inventory-dashboard"])) return hasPermission(user, "reports.view");
+
+  if (pathname === "/products/new" || pathname.startsWith("/products/new/")) return hasPermission(user, "products.create");
+  if (/^\/products\/[^/]+\/edit(?:\/|$)/.test(pathname)) return hasPermission(user, "products.edit");
+  if (matchesPrefix(pathname, ["/products"])) return hasPermission(user, "products.view");
+
+  if (pathname === "/inventory/movements/new" || pathname.startsWith("/inventory/movements/new/")) {
+    return hasPermission(user, "storage.movement.create") || hasPermission(user, "storage.adjust");
+  }
+  if (matchesPrefix(pathname, ["/inventory/movements"])) return hasPermission(user, "storage.movement.view");
+  if (matchesPrefix(pathname, ["/inventory", "/warehouse"])) return hasPermission(user, "inventory.view") || hasPermission(user, "storage.view");
+
+  if (pathname === "/storage-locations/new" || pathname.startsWith("/storage-locations/new/") || /^\/storage-locations\/[^/]+\/edit(?:\/|$)/.test(pathname)) {
+    return hasPermission(user, "storage.location.manage");
+  }
+  if (matchesPrefix(pathname, ["/storage-locations"])) return hasPermission(user, "storage.view");
+
+  if (pathname === "/purchases/new" || pathname.startsWith("/purchases/new/") || /^\/purchases\/[^/]+\/edit(?:\/|$)/.test(pathname)) {
+    return hasPermission(user, "purchases.create") || hasPermission(user, "purchases.receive");
+  }
+  if (matchesPrefix(pathname, ["/purchases"])) return hasPermission(user, "purchases.view") || hasPermission(user, "purchase_items.view");
+
+  if (pathname === "/suppliers/new" || pathname.startsWith("/suppliers/new/") || /^\/suppliers\/[^/]+(?:\/|$)/.test(pathname)) return hasPermission(user, "suppliers.manage");
+  if (matchesPrefix(pathname, ["/suppliers"])) return hasPermission(user, "suppliers.view");
+
+  if (pathname === "/routes/new" || pathname.startsWith("/routes/new/")) return hasPermission(user, "routes.create");
+  if (matchesPrefix(pathname, ["/routes", "/refills"])) return hasPermission(user, "routes.view") || hasPermission(user, "refills.view");
+  if (matchesPrefix(pathname, ["/operator"])) return hasPermission(user, "assigned_routes.view") || hasPermission(user, "refills.view");
+
+  if (matchesPrefix(pathname, ["/machines", "/machine-slots", "/locations"])) return hasPermission(user, "machines.view");
+  if (matchesPrefix(pathname, ["/issues"])) return hasPermission(user, "issues.view");
+
+  if (pathname === "/finance/transactions/new" || pathname.startsWith("/finance/transactions/new/") || /^\/finance\/transactions\/[^/]+\/edit(?:\/|$)/.test(pathname)) {
+    return hasPermission(user, "finance.edit");
+  }
+  if (pathname === "/cash-collections/new" || pathname.startsWith("/cash-collections/new/") || /^\/cash-collections\/[^/]+\/edit(?:\/|$)/.test(pathname)) {
+    return hasPermission(user, "finance.edit");
+  }
+  if (matchesPrefix(pathname, ["/finance", "/cash-collections"])) return hasPermission(user, "finance.view");
+
+  if (matchesPrefix(pathname, ["/team"])) return hasPermission(user, "team.manage");
+  if (matchesPrefix(pathname, ["/activity"])) return hasPermission(user, "activity.view");
+  if (matchesPrefix(pathname, ["/vms-import"])) return hasPermission(user, "vms.import");
+  if (matchesPrefix(pathname, ["/vms-mappings"])) return hasPermission(user, "vms.mapping.manage");
+  if (matchesPrefix(pathname, ["/settings"])) return hasPermission(user, "system.settings");
+  if (matchesPrefix(pathname, ["/admin"])) return hasPermission(user, "system.settings");
+
+  return false;
 }

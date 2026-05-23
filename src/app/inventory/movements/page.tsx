@@ -20,6 +20,7 @@ const movementReasons = [
   "stock_count_adjustment",
   "manual_correction",
   "product_substitution",
+  "historical_route_deduction",
 ] as const;
 
 function formatDate(value: string) {
@@ -39,6 +40,7 @@ function entityLabel(
   id: string | null | undefined,
   labelMaps: { machineById: Map<string, any>; storageById: Map<string, any>; userById: Map<string, any> },
 ) {
+  if (type === "historical_route") return "Historical route correction";
   if (!type || !id) return "-";
   if (type === "machine") {
     const machine = labelMaps.machineById.get(id);

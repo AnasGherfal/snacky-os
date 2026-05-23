@@ -123,12 +123,12 @@ type Inference = {
   holdForReview?: boolean;
 };
 
-const MACHINE_ALIAS_OVERRIDES: FinanceMachineReference[] = [
+const MACHINE_ALIAS_OVERRIDES = [
   { alias_name: "KhalijUniversity", name: KHALIJ_UNIVERSITY_ARABIC_NAME, vms_machine_id: "2510001719" },
   { alias_name: "Khalij University", name: KHALIJ_UNIVERSITY_ARABIC_NAME, vms_machine_id: "2510001719" },
   { alias_name: "2510001719", name: KHALIJ_UNIVERSITY_ARABIC_NAME, vms_machine_id: "2510001719" },
   { alias_name: "خليج ليبيا", name: KHALIJ_UNIVERSITY_ARABIC_NAME, vms_machine_id: "2510001719" },
-];
+] satisfies FinanceMachineReference[];
 
 const explicitReviewValues = new Set(["", "TO_CONFIRM", "Review", "review", "to confirm"]);
 

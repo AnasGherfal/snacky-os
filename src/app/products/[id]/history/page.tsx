@@ -4,6 +4,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ProductSourceBadge } from "@/components/ProductSourceBadge";
 import { DataTable, EmptyState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { requireCurrentProfileForPath } from "@/lib/auth";
+import { canViewFinancials, hasPermission } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { activateProduct, archiveProduct, deleteProduct, getProductHistoryCounts, productHasBusinessHistory } from "@/lib/product-actions";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -62,7 +63,11 @@ export default async function ProductHistoryPage({
   searchParams: Promise<{ reason?: string; user_id?: string; date_from?: string; date_to?: string; q?: string; error?: string }>;
 }) {
   const { id } = await params;
-  await requireCurrentProfileForPath(`/products/${id}/history`);
+  const profile = await requireCurrentProfileForPath(`/products/${id}/history`);
+  const userContext = { id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status };
+  const canSeeCost = canViewFinancials(userContext);
+  const canEditProduct = hasPermission(profile, "products.edit");
+  const canDeleteProduct = hasPermission(profile, "products.delete");
   const filters = await searchParams;
   const supabase = getSupabaseServerClient();
   if (!supabase) notFound();
@@ -138,7 +143,7 @@ export default async function ProductHistoryPage({
       beforeCost: priceValue(log.before_data, "current_cost_price_lyd") ?? priceValue(log.before_data, "cost_price"),
       afterCost: priceValue(log.after_data, "current_cost_price_lyd") ?? priceValue(log.after_data, "cost_price"),
     }))
-    .filter((log) => log.beforeSelling !== log.afterSelling || log.beforeCost !== log.afterCost);
+    .filter((log) => log.beforeSelling !== log.afterSelling || (canSeeCost && log.beforeCost !== log.afterCost));
 
   return (
     <>
@@ -153,8 +158,8 @@ export default async function ProductHistoryPage({
         action={
           <div className="flex flex-wrap gap-2">
             <SecondaryButton href="/products">Back to products</SecondaryButton>
-            <SecondaryButton href={`/products/${id}/edit`}>Edit product</SecondaryButton>
-            {product.active && hasBusinessHistory ? (
+            {canEditProduct ? <SecondaryButton href={`/products/${id}/edit`}>Edit product</SecondaryButton> : null}
+            {canEditProduct && product.active && hasBusinessHistory ? (
               <ConfirmDialog
                 action={archiveProduct}
                 triggerLabel="Archive Product"
@@ -165,13 +170,13 @@ export default async function ProductHistoryPage({
                 hiddenFields={[{ name: "id", value: id }]}
               />
             ) : null}
-            {!product.active ? (
+            {canEditProduct && !product.active ? (
               <form action={activateProduct}>
                 <input type="hidden" name="id" value={id} />
                 <button className="btn-secondary">Activate Product</button>
               </form>
             ) : null}
-            {!hasBusinessHistory ? (
+            {canDeleteProduct && !hasBusinessHistory ? (
               <ConfirmDialog
                 action={deleteProduct}
                 triggerLabel="Delete Product"
@@ -199,7 +204,7 @@ export default async function ProductHistoryPage({
       <section className="mb-6 grid gap-4 md:grid-cols-5">
         <div className="surface-card"><div className="text-sm text-slate-500">Current storage quantity</div><div className="mt-1 text-3xl font-semibold">{storageQty}</div></div>
         <div className="surface-card"><div className="text-sm text-slate-500">Units per box</div><div className="mt-1 text-3xl font-semibold">{product.case_quantity ?? 1}</div></div>
-        <div className="surface-card"><div className="text-sm text-slate-500">Last purchase cost</div><div className="mt-1 text-2xl font-semibold">{product.last_purchase_cost_lyd === null ? "-" : formatMoney(product.last_purchase_cost_lyd, 4)}</div><div className="mt-2"><ProductSourceBadge source={product.cost_price_source} /></div></div>
+        {canSeeCost ? <div className="surface-card"><div className="text-sm text-slate-500">Last purchase cost</div><div className="mt-1 text-2xl font-semibold">{product.last_purchase_cost_lyd === null ? "-" : formatMoney(product.last_purchase_cost_lyd, 4)}</div><div className="mt-2"><ProductSourceBadge source={product.cost_price_source} /></div></div> : null}
         <div className="surface-card"><div className="text-sm text-slate-500">Current selling price</div><div className="mt-1 text-2xl font-semibold">{formatMoney(product.current_selling_price_lyd ?? product.selling_price)}</div><div className="mt-2"><ProductSourceBadge source={product.selling_price_source} /></div></div>
         <div className="surface-card"><div className="text-sm text-slate-500">Status</div><div className="mt-2"><StatusBadge status={product.active ? "active" : "inactive"} /></div></div>
       </section>
@@ -216,7 +221,7 @@ export default async function ProductHistoryPage({
         <div className="grid gap-3 md:grid-cols-4">
           <div><div className="mb-1 text-xs font-medium uppercase text-slate-500">Product names/codes</div><ProductSourceBadge source={product.import_source} /></div>
           <div><div className="mb-1 text-xs font-medium uppercase text-slate-500">Machine selling price</div><ProductSourceBadge source={product.selling_price_source} /></div>
-          <div><div className="mb-1 text-xs font-medium uppercase text-slate-500">Snacky cost</div><ProductSourceBadge source={product.cost_price_source} /></div>
+          {canSeeCost ? <div><div className="mb-1 text-xs font-medium uppercase text-slate-500">Snacky cost</div><ProductSourceBadge source={product.cost_price_source} /></div> : null}
           <div><div className="mb-1 text-xs font-medium uppercase text-slate-500">Last VMS seen</div><div className="text-sm font-medium">{product.last_vms_seen_at ? formatDate(product.last_vms_seen_at) : "-"}</div></div>
         </div>
       </section>
@@ -266,7 +271,7 @@ export default async function ProductHistoryPage({
         {!purchases.length ? (
           <EmptyState title="No purchase lines" body="Purchase lines appear here when this product exists on real purchase orders." />
         ) : (
-          <DataTable headers={["Date", "Receipt", "Supplier", "Status", "Units", "Received", "Unit cost", "Line total"]}>
+          <DataTable headers={["Date", "Receipt", "Supplier", "Status", "Units", "Received", ...(canSeeCost ? ["Unit cost", "Line total"] : [])]}>
             {purchases.map((line: any) => (
               <tr key={line.id}>
                 <td>{line.purchase?.order_date ?? new Date(line.created_at).toLocaleDateString("en-US")}</td>
@@ -275,8 +280,8 @@ export default async function ProductHistoryPage({
                 <td><StatusBadge status={line.purchase?.status ?? "-"} /></td>
                 <td>{line.total_units}</td>
                 <td>{line.received_qty}</td>
-                <td>{formatMoney(line.unit_cost_lyd, 4)}</td>
-                <td>{formatMoney(line.line_total_lyd)}</td>
+                {canSeeCost ? <td>{formatMoney(line.unit_cost_lyd, 4)}</td> : null}
+                {canSeeCost ? <td>{formatMoney(line.line_total_lyd)}</td> : null}
               </tr>
             ))}
           </DataTable>
@@ -316,10 +321,10 @@ export default async function ProductHistoryPage({
             <div className="text-xs font-medium uppercase text-slate-500">Selling source</div>
             <div className="mt-1"><ProductSourceBadge source={product.selling_price_source} /></div>
           </div>
-          <div className="rounded-lg border border-slate-200 bg-white p-3">
+          {canSeeCost ? <div className="rounded-lg border border-slate-200 bg-white p-3">
             <div className="text-xs font-medium uppercase text-slate-500">Cost source</div>
             <div className="mt-1"><ProductSourceBadge source={product.cost_price_source} /></div>
-          </div>
+          </div> : null}
           <div className="rounded-lg border border-slate-200 bg-white p-3">
             <div className="text-xs font-medium uppercase text-slate-500">Last price update</div>
             <div className="mt-1 text-sm font-medium">{product.price_updated_at ? formatDate(product.price_updated_at) : "-"}</div>
@@ -328,7 +333,7 @@ export default async function ProductHistoryPage({
         {!priceHistory.length ? (
           <EmptyState title="No price change history" body="Price changes will appear here when product activity logs include before and after pricing data." />
         ) : (
-          <DataTable headers={["Date / Time", "User", "Action", "Selling before", "Selling after", "Cost before", "Cost after"]}>
+          <DataTable headers={["Date / Time", "User", "Action", "Selling before", "Selling after", ...(canSeeCost ? ["Cost before", "Cost after"] : [])]}>
             {priceHistory.map((log: any) => (
               <tr key={log.id}>
                 <td>{formatDate(log.created_at)}</td>
@@ -336,8 +341,8 @@ export default async function ProductHistoryPage({
                 <td><StatusBadge status={String(log.action).replaceAll("_", " ")} /></td>
                 <td>{log.beforeSelling === null ? "-" : formatMoney(log.beforeSelling)}</td>
                 <td>{log.afterSelling === null ? "-" : formatMoney(log.afterSelling)}</td>
-                <td>{log.beforeCost === null ? "-" : formatMoney(log.beforeCost, 4)}</td>
-                <td>{log.afterCost === null ? "-" : formatMoney(log.afterCost, 4)}</td>
+                {canSeeCost ? <td>{log.beforeCost === null ? "-" : formatMoney(log.beforeCost, 4)}</td> : null}
+                {canSeeCost ? <td>{log.afterCost === null ? "-" : formatMoney(log.afterCost, 4)}</td> : null}
               </tr>
             ))}
           </DataTable>

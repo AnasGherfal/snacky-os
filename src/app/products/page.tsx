@@ -3,6 +3,7 @@ import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { ProductSourceBadge } from "@/components/ProductSourceBadge";
 import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SearchInput, SecondaryButton, StatusBadge } from "@/components/ui";
 import { requireCurrentProfileForPath } from "@/lib/auth";
+import { canAddProducts, canViewFinancials, hasPermission } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 function formatMoney(value: number | string | null | undefined, decimals = 2) {
@@ -11,7 +12,11 @@ function formatMoney(value: number | string | null | undefined, decimals = 2) {
 }
 
 export default async function ProductsPage({ searchParams }: { searchParams: Promise<{ q?: string; imageUpload?: string }> }) {
-  await requireCurrentProfileForPath("/products");
+  const profile = await requireCurrentProfileForPath("/products");
+  const userContext = { id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status };
+  const canCreateProduct = canAddProducts(profile);
+  const canEditProducts = hasPermission(profile, "products.edit");
+  const canSeeCost = canViewFinancials(userContext);
   const { q = "", imageUpload = "" } = await searchParams;
   const s = getSupabaseServerClient();
   if (!s) {
@@ -21,7 +26,26 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
       </>
     );
   }
-  const query = s?.from("products").select("id,sku,barcode,name,category,brand,case_quantity,import_source,last_vms_seen_at,selling_price,current_selling_price_lyd,vms_selling_price_lyd,selling_price_source,current_cost_price_lyd,last_purchase_cost_lyd,average_cost_lyd,cost_price_source,active,image_url,suppliers(name)").order("name");
+  const productSelect = [
+    "id",
+    "sku",
+    "barcode",
+    "name",
+    "category",
+    "brand",
+    "case_quantity",
+    "import_source",
+    "last_vms_seen_at",
+    "selling_price",
+    "current_selling_price_lyd",
+    "vms_selling_price_lyd",
+    "selling_price_source",
+    "active",
+    "image_url",
+    "suppliers(name)",
+    ...(canSeeCost ? ["current_cost_price_lyd", "last_purchase_cost_lyd", "average_cost_lyd", "cost_price_source"] : []),
+  ].join(",");
+  const query = s?.from("products").select(productSelect).order("name");
   const { data: productRows, error: productsError } = query ? await query : { data: [], error: null };
   if (productsError) {
     console.error("[products] Failed to load products", productsError);
@@ -47,7 +71,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
 
   return (
     <>
-      <PageHeader title="Products" subtitle="Product catalog used in VMS mapping, slot planning, and inventory ledger." action={<PrimaryButton href="/products/new">Add product</PrimaryButton>} />
+      <PageHeader title="Products" subtitle="Product catalog used in VMS mapping, slot planning, and inventory ledger." action={canCreateProduct ? <PrimaryButton href="/products/new">Add product</PrimaryButton> : null} />
       {imageUploadMessage ? (
         <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
           {imageUploadMessage}
@@ -59,7 +83,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
           <div className="mb-3 text-sm text-slate-500">
             Showing {data.length} product{data.length === 1 ? "" : "s"}{search ? ` matching "${q}"` : ""}.
           </div>
-          <DataTable headers={["Image", "SKU", "Product", "Category", "Case Qty", "Supplier", "Product Source", "Current Selling", "VMS Selling", "Last Purchase Cost", "Average Cost", "Selling Source", "Cost Source", "Status", "Actions"]}>
+          <DataTable headers={["Image", "SKU", "Product", "Category", "Case Qty", "Supplier", "Product Source", "Current Selling", "VMS Selling", ...(canSeeCost ? ["Last Purchase Cost", "Average Cost"] : []), "Selling Source", ...(canSeeCost ? ["Cost Source"] : []), "Status", "Actions"]}>
             {data.map((product: any) => (
               <tr key={product.id}>
                 <td><ProductThumbnail imageUrl={product.image_url} name={product.name} /></td>
@@ -71,12 +95,12 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
                 <td><ProductSourceBadge source={product.import_source} /></td>
                 <td>{formatMoney(product.current_selling_price_lyd ?? product.selling_price)}</td>
                 <td>{formatMoney(product.vms_selling_price_lyd)}</td>
-                <td>{formatMoney(product.last_purchase_cost_lyd, 4)}</td>
-                <td>{formatMoney(product.average_cost_lyd, 4)}</td>
+                {canSeeCost ? <td>{formatMoney(product.last_purchase_cost_lyd, 4)}</td> : null}
+                {canSeeCost ? <td>{formatMoney(product.average_cost_lyd, 4)}</td> : null}
                 <td><ProductSourceBadge source={product.selling_price_source} /></td>
-                <td><ProductSourceBadge source={product.cost_price_source} /></td>
+                {canSeeCost ? <td><ProductSourceBadge source={product.cost_price_source} /></td> : null}
                 <td><StatusBadge status={product.active ? "active" : "inactive"} /></td>
-                <td><div className="flex flex-wrap gap-2"><Link href={`/products/${product.id}/edit`} className="btn-secondary">Edit</Link><Link href={`/products/${product.id}/history`} className="btn-secondary">History</Link></div></td>
+                <td><div className="flex flex-wrap gap-2">{canEditProducts ? <Link href={`/products/${product.id}/edit`} className="btn-secondary">Edit</Link> : null}<Link href={`/products/${product.id}/history`} className="btn-secondary">History</Link></div></td>
               </tr>
             ))}
           </DataTable>

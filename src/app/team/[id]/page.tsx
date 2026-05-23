@@ -3,7 +3,8 @@ import { notFound, redirect } from "next/navigation";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DataTable, EmptyState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
-import { isOwnerAdminRole, normalizeRoles } from "@/lib/authz";
+import type { AppPermission } from "@/lib/authz";
+import { getEffectivePermissions, isOwnerAdminRole, normalizeRoles } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { deactivateTeamMember } from "@/lib/team-actions";
@@ -13,6 +14,17 @@ export const dynamic = "force-dynamic";
 function formatDate(value: string | null | undefined) {
   return value ? new Date(value).toLocaleString("en-US") : "-";
 }
+
+const permissionDebugItems: { permission: AppPermission; label: string }[] = [
+  { permission: "products.view", label: "products.view" },
+  { permission: "inventory.view", label: "inventory.view" },
+  { permission: "storage.adjust", label: "storage.adjust" },
+  { permission: "storage.movement.create", label: "storage.movement.create" },
+  { permission: "refills.create", label: "refills.create" },
+  { permission: "finance.view", label: "finance.view" },
+  { permission: "products.delete", label: "products.delete" },
+  { permission: "system.settings", label: "system.settings" },
+];
 
 export default async function TeamMemberActivityPage({
   params,
@@ -31,6 +43,8 @@ export default async function TeamMemberActivityPage({
 
   const { data: member } = await supabase.from("team_members").select("id, full_name, email, phone, role, roles, can_add_products, active, active_status").eq("id", id).maybeSingle();
   if (!member) notFound();
+  const roles = normalizeRoles(member.roles, member.role);
+  const effectivePermissions = new Set(getEffectivePermissions({ id: member.id, role: roles[0], roles, canAddProducts: member.can_add_products, activeStatus: member.active_status ?? (member.active === false ? "inactive" : "active") }));
 
   let activityQuery = supabase
     .from("system_activity_logs")
@@ -99,11 +113,25 @@ export default async function TeamMemberActivityPage({
       {error ? <div className="mb-5 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{error}</div> : null}
 
       <section className="grid gap-4 md:grid-cols-5">
-        <div className="surface-card"><div className="text-sm text-slate-500">Roles</div><div className="mt-2 flex flex-wrap gap-1">{normalizeRoles(member.roles, member.role).map((role) => <StatusBadge key={role} status={role} />)}</div></div>
+        <div className="surface-card"><div className="text-sm text-slate-500">Roles</div><div className="mt-2 flex flex-wrap gap-1">{roles.map((role) => <StatusBadge key={role} status={role} />)}</div></div>
         <div className="surface-card"><div className="text-sm text-slate-500">Status</div><div className="mt-2"><StatusBadge status={member.active_status ?? (member.active === false ? "inactive" : "active")} /></div></div>
         <div className="surface-card"><div className="text-sm text-slate-500">Assigned routes</div><div className="mt-1 text-3xl font-semibold">{routeRows.length}</div></div>
         <div className="surface-card"><div className="text-sm text-slate-500">Completed routes</div><div className="mt-1 text-3xl font-semibold">{completedRoutes}</div></div>
         <div className="surface-card"><div className="text-sm text-slate-500">Cash records</div><div className="mt-1 text-3xl font-semibold">{cash?.length ?? 0}</div></div>
+      </section>
+
+      <section className="surface-card mt-6">
+        <h2 className="mb-4 text-lg font-semibold text-slate-900">Effective permissions</h2>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {permissionDebugItems.map((item) => (
+            <div key={item.permission} className="rounded-lg border border-slate-200 bg-white p-3">
+              <div className="font-mono text-xs text-slate-500">{item.label}</div>
+              <div className={effectivePermissions.has(item.permission) ? "mt-2 text-sm font-semibold text-emerald-700" : "mt-2 text-sm font-semibold text-slate-400"}>
+                {effectivePermissions.has(item.permission) ? "allowed" : "blocked"}
+              </div>
+            </div>
+          ))}
+        </div>
       </section>
 
       <section className="surface-card mt-6">

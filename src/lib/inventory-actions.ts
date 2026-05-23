@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
-import { canAccessPath, canAddProducts, hasAnyRole, isOwnerAdminRole } from "@/lib/authz";
+import { canAccessPath, canAddProducts, hasPermission, isOwnerAdminRole } from "@/lib/authz";
 import { resolveProductSku } from "@/lib/product-sku";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -157,7 +157,7 @@ function createdAtFromDate(value: FormDataEntryValue | null) {
 
 export async function createStorageAdjustment(formData: FormData) {
   const profile = await getCurrentProfile();
-  if (!profile || !hasAnyRole(profile, ["owner", "admin", "supervisor", "warehouse"])) redirect("/unauthorized");
+  if (!profile || !hasPermission(profile, "storage.adjust")) redirect("/unauthorized");
 
   const supabase = getSupabaseServerClient();
   if (!supabase) redirect("/inventory/movements/new?error=Supabase%20is%20not%20configured.");

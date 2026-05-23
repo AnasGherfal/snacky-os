@@ -2,7 +2,7 @@ import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
-import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
+import { canAccessPath, canExecuteRoutes, isOwnerAdminRole } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 type CreateRoutePayload = {
@@ -144,14 +144,14 @@ export async function POST(request: Request) {
   if (operatorId) {
     const { data: performer, error: performerError } = await supabase
       .from("team_members")
-      .select("id, role, active")
+      .select("id, role, roles, active")
       .eq("id", operatorId)
       .maybeSingle();
     if (performerError) {
       console.error("[routes:create] Failed to verify selected performer", { operatorId, error: performerError });
       return jsonError("Could not verify the selected route performer.", 500);
     }
-    if (!performer || performer.active === false || !["owner", "admin", "supervisor", "operator"].includes(String(performer.role))) {
+    if (!performer || performer.active === false || !canExecuteRoutes({ id: performer.id, role: performer.role, roles: performer.roles })) {
       return jsonError("Selected route performer must be an active owner, admin, supervisor, or operator.");
     }
   }

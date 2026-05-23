@@ -9,6 +9,7 @@
     "lint": "eslint",
     "test:purchase-finance-date": "node --experimental-strip-types --test scripts/test-purchase-finance-date.mjs",
     "test:finance-import": "node --experimental-strip-types --test scripts/test-finance-import.mjs",
+    "test:historical-route-deduction": "node --experimental-strip-types --test scripts/test-historical-route-deduction.mjs",
     "bootstrap:production": "node scripts/bootstrap-production-data.mjs",
     "create:first-owner": "node scripts/create-first-owner.mjs",
     "import:machine-refills": "node scripts/import-machine-refills.mjs"

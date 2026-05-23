@@ -3,7 +3,8 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
-import { isOwnerAdminRole, normalizeRoles } from "@/lib/authz";
+import type { AppPermission } from "@/lib/authz";
+import { getEffectivePermissions, isOwnerAdminRole, normalizeRoles } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { formatLastLogin, tempPasswordCookie } from "@/lib/team";
 
@@ -17,6 +18,13 @@ function parseTempPasswordCookie(value: string | undefined) {
     return null;
   }
 }
+
+const permissionDebugItems: { permission: AppPermission; label: string }[] = [
+  { permission: "products.view", label: "products.view" },
+  { permission: "inventory.view", label: "inventory.view" },
+  { permission: "storage.adjust", label: "storage.adjust" },
+  { permission: "finance.view", label: "finance.view" },
+];
 
 export default async function TeamPage() {
   const profile = await getCurrentProfile();
@@ -81,16 +89,30 @@ export default async function TeamPage() {
       {!team?.length ? (
         <EmptyState title="No team members" body="Add admins, supervisors, warehouse users, and operators before assigning routes." />
       ) : (
-        <DataTable headers={["Full name", "Email", "Phone", "Roles", "Product add", "Status", "Last login", "Actions"]}>
+        <DataTable headers={["Full name", "Email", "Phone", "Roles", "Effective permissions", "Product add", "Status", "Last login", "Actions"]}>
           {team.map((member: any) => {
             const profile = profileByTeamId.get(member.id) ?? profileByEmail.get(String(member.email ?? "").toLowerCase());
+            const roles = normalizeRoles(member.roles, member.role);
+            const effectivePermissions = new Set(getEffectivePermissions({ id: member.id, role: roles[0], roles, canAddProducts: member.can_add_products, activeStatus: member.active_status ?? (member.active ? "active" : "inactive") }));
 
             return (
               <tr key={member.id}>
                 <td className="font-medium text-slate-900">{member.full_name}</td>
                 <td>{member.email ?? "-"}</td>
                 <td>{member.phone ?? "-"}</td>
-                <td><div className="flex flex-wrap gap-1">{normalizeRoles(member.roles, member.role).map((role) => <StatusBadge key={role} status={role} />)}</div></td>
+                <td><div className="flex flex-wrap gap-1">{roles.map((role) => <StatusBadge key={role} status={role} />)}</div></td>
+                <td>
+                  <div className="grid gap-1 text-xs">
+                    {permissionDebugItems.map((item) => (
+                      <div key={item.permission} className="flex items-center justify-between gap-3">
+                        <span className="font-mono text-slate-600">{item.label}</span>
+                        <span className={effectivePermissions.has(item.permission) ? "font-semibold text-emerald-700" : "font-semibold text-slate-400"}>
+                          {effectivePermissions.has(item.permission) ? "yes" : "no"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </td>
                 <td>{member.can_add_products ? <StatusBadge status="enabled" /> : <span className="text-slate-500">-</span>}</td>
                 <td>
                   <div className="flex flex-col gap-1">

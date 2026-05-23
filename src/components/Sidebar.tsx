@@ -10,6 +10,7 @@ import {
   Boxes,
   ClipboardList,
   LayoutDashboard,
+  Package,
   ShieldCheck,
   UserCircle,
   Warehouse,
@@ -17,7 +18,7 @@ import {
 } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useI18n } from "@/components/I18nProvider";
-import { AppRole, hasAnyRole, hasRole, isOperatorRole, isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
+import { AppRole, hasAnyRole, hasPermission, hasRole, isOperatorRole, isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
 
 type NavLabelKey = keyof ReturnType<typeof useI18n>["dictionary"]["nav"];
 type NavItem = {
@@ -68,13 +69,19 @@ const warehouseOperationsItem: NavItem = {
   labelKey: "operations",
   href: "/warehouse/pick-lists",
   icon: ClipboardList,
-  activePrefixes: ["/warehouse", "/operator"],
+  activePrefixes: ["/warehouse"],
 };
 const inventoryItem: NavItem = {
   labelKey: "inventory",
   href: "/inventory",
   icon: Warehouse,
-  activePrefixes: ["/inventory", "/products", "/purchases", "/storage-locations", "/suppliers"],
+  activePrefixes: ["/inventory", "/purchases", "/storage-locations", "/suppliers"],
+};
+const productsItem: NavItem = {
+  labelKey: "products",
+  href: "/products",
+  icon: Package,
+  activePrefixes: ["/products"],
 };
 const machinesItem: NavItem = {
   labelKey: "machinesGroup",
@@ -102,19 +109,15 @@ const adminItem: NavItem = {
 };
 
 const ownerAdminNav: NavSection[] = [
-  { items: [dashboardItem, operationsItem, inventoryItem, machinesItem, financeItem, reportsItem, adminItem] },
+  { items: [dashboardItem, operationsItem, inventoryItem, productsItem, machinesItem, financeItem, reportsItem, adminItem] },
 ];
 
 const supervisorNav: NavSection[] = [
-  { items: [dashboardItem, operationsItem, inventoryItem, machinesItem] },
+  { items: [dashboardItem, operationsItem, inventoryItem, productsItem, machinesItem] },
 ];
 
 const operatorNav: NavSection[] = [
   { items: [operatorOperationsItem, operatorAvailableRoutesItem, operatorIssuesItem, accountItem] },
-];
-
-const warehouseNav: NavSection[] = [
-  { items: [inventoryItem, warehouseOperationsItem] },
 ];
 
 const financeNav: NavSection[] = [
@@ -141,10 +144,12 @@ function sectionsForRoles(role: AppRole, roles?: AppRole[] | null) {
 
   const sections: NavSection[] = [];
   if (isSupervisorRole(context)) sections.push(...supervisorNav);
-  if (isOperatorRole(context)) sections.push(...operatorNav);
-  if (hasRole(context, "warehouse")) sections.push(...warehouseNav);
-  if (hasRole(context, "purchasing")) sections.push({ items: [inventoryItem] });
-  if (hasRole(context, "finance")) sections.push(...financeNav);
+  if (isOperatorRole(context) || hasPermission(context, "assigned_routes.view")) sections.push(...operatorNav);
+  if (hasPermission(context, "inventory.view") || hasPermission(context, "storage.view")) sections.push({ items: [inventoryItem] });
+  if (hasPermission(context, "products.view")) sections.push({ items: [productsItem] });
+  if (hasRole(context, "warehouse") || hasPermission(context, "storage.movement.view")) sections.push({ items: [warehouseOperationsItem] });
+  if (hasRole(context, "purchasing")) sections.push({ items: [inventoryItem, productsItem] });
+  if (hasRole(context, "finance") || hasPermission(context, "finance.view")) sections.push(...financeNav);
   if (!sections.length && hasAnyRole(context, ["viewer"])) sections.push(...viewerNav);
   return sections.length ? mergeSections(sections) : viewerNav;
 }

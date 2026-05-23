@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
-import { hasAnyRole } from "@/lib/authz";
+import type { AppPermission } from "@/lib/authz";
+import { hasPermission } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 type SupabaseServer = NonNullable<ReturnType<typeof getSupabaseServerClient>>;
@@ -24,7 +25,7 @@ export type ProductHistoryCounts = {
 };
 
 function canManageProducts(profile: Awaited<ReturnType<typeof getCurrentProfile>>) {
-  return hasAnyRole(profile, ["owner", "admin", "supervisor", "warehouse", "purchasing"]);
+  return hasPermission(profile, "products.edit") || hasPermission(profile, "products.delete");
 }
 
 function clean(value: FormDataEntryValue | null) {
@@ -42,9 +43,9 @@ function requireConfirmedReason(formData: FormData, path: string) {
   return reason;
 }
 
-async function requireProductAccess(path: string) {
+async function requireProductAccess(path: string, permission: AppPermission = "products.edit") {
   const profile = await getCurrentProfile();
-  if (!profile || !canManageProducts(profile)) redirect("/unauthorized");
+  if (!profile || !canManageProducts(profile) || !hasPermission(profile, permission)) redirect("/unauthorized");
   const supabase = getSupabaseServerClient();
   if (!supabase) fail(path, "Supabase is not configured.");
   return { profile, supabase };
@@ -132,7 +133,7 @@ export async function archiveProduct(formData: FormData) {
   if (!id) redirect("/products");
   const path = `/products/${id}/history`;
   const reason = requireConfirmedReason(formData, path);
-  const { profile, supabase } = await requireProductAccess(path);
+  const { profile, supabase } = await requireProductAccess(path, "products.edit");
 
   const { data: before, error: beforeError } = await supabase.from("products").select("*").eq("id", id).maybeSingle();
   if (beforeError || !before) fail("/products", "Product not found.");
@@ -168,7 +169,7 @@ export async function activateProduct(formData: FormData) {
   const id = clean(formData.get("id"));
   if (!id) redirect("/products");
   const path = `/products/${id}/history`;
-  const { profile, supabase } = await requireProductAccess(path);
+  const { profile, supabase } = await requireProductAccess(path, "products.edit");
 
   const { data: before } = await supabase.from("products").select("*").eq("id", id).maybeSingle();
   const { data: after, error } = await supabase
@@ -202,7 +203,7 @@ export async function deleteProduct(formData: FormData) {
   if (!id) redirect("/products");
   const path = `/products/${id}/history`;
   const reason = requireConfirmedReason(formData, path);
-  const { profile, supabase } = await requireProductAccess(path);
+  const { profile, supabase } = await requireProductAccess(path, "products.delete");
 
   const { data: product, error: productError } = await supabase.from("products").select("*").eq("id", id).maybeSingle();
   if (productError || !product) fail("/products", "Product not found.");
