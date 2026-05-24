@@ -100,13 +100,22 @@ function recordValue(value: unknown, key: string) {
   return typeof value === "object" && value !== null ? (value as DbRecord)[key] : undefined;
 }
 
-function isMissingRouteStopItems(error: unknown) {
-  return recordValue(error, "code") === "PGRST205" && String(recordValue(error, "message") ?? "").includes("route_stop_items");
+function errorText(error: unknown) {
+  return ["message", "details", "hint", "code"]
+    .map((key) => String(recordValue(error, key) ?? ""))
+    .filter(Boolean)
+    .join(" ");
 }
 
-function isMissingColumn(error: unknown, column: string) {
-  const message = String(recordValue(error, "message") ?? "");
-  return ["42703", "PGRST204"].includes(String(recordValue(error, "code") ?? "")) && message.includes(column);
+function isMissingRouteStopItems(error: unknown) {
+  return recordValue(error, "code") === "PGRST205" && errorText(error).includes("route_stop_items");
+}
+
+function missingOptionalColumn(error: unknown, optionalColumns: string[]) {
+  const text = errorText(error).toLowerCase();
+  const code = String(recordValue(error, "code") ?? "");
+  if (!["42703", "PGRST204"].includes(code) && !text.includes("schema cache") && !text.includes("column")) return null;
+  return optionalColumns.find((column) => text.includes(column.toLowerCase())) ?? null;
 }
 
 function stripColumn<T extends DbRecord>(rows: T[], column: string) {
@@ -115,6 +124,64 @@ function stripColumn<T extends DbRecord>(rows: T[], column: string) {
     delete next[column];
     return next;
   });
+}
+
+async function loadPublicTableColumns(
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>,
+  tableName: string,
+) {
+  const result = await supabase
+    .schema("information_schema")
+    .from("columns")
+    .select("column_name")
+    .eq("table_schema", "public")
+    .eq("table_name", tableName);
+
+  if (result.error) {
+    console.warn("[routes:create] Could not inspect live table columns; using insert fallback", { tableName, error: result.error });
+    return null;
+  }
+
+  const columns = new Set(((result.data ?? []) as { column_name?: string | null }[]).map((row) => String(row.column_name ?? "")).filter(Boolean));
+  console.info("[routes:create] Live table columns inspected", { tableName, columns: Array.from(columns).sort() });
+  return columns;
+}
+
+function stripColumnsNotInSchema<T extends DbRecord>(rows: T[], columns: Set<string> | null) {
+  if (!columns) return rows;
+  return rows.map((row) => {
+    const next: DbRecord = {};
+    Object.entries(row).forEach(([key, value]) => {
+      if (columns.has(key)) next[key] = value;
+    });
+    return next;
+  });
+}
+
+async function insertRowsWithOptionalColumnFallback(
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>,
+  tableName: "route_stop_items" | "refill_order_lines",
+  rows: DbRecord[],
+  optionalColumns: string[],
+) {
+  let rowsToInsert = rows;
+  const removedColumns: string[] = [];
+
+  for (;;) {
+    const result = await supabase.from(tableName).insert(rowsToInsert);
+    if (!result.error) return { error: null, removedColumns };
+
+    const missingColumn = missingOptionalColumn(result.error, optionalColumns.filter((column) => !removedColumns.includes(column)));
+    if (!missingColumn) return { error: result.error, removedColumns };
+
+    removedColumns.push(missingColumn);
+    rowsToInsert = stripColumn(rowsToInsert, missingColumn);
+    console.warn("[routes:create] Retrying insert without optional column rejected by PostgREST schema cache", {
+      tableName,
+      missingColumn,
+      removedColumns,
+    });
+  }
 }
 
 function recommendationQuantity(row: RecommendationRow) {
@@ -365,8 +432,9 @@ export async function POST(request: Request) {
   const actionableRecommendationRows = recommendationRows.filter((row) => recommendationQuantity(row) > 0);
   const groupedRecommendationRows = Array.from(
     actionableRecommendationRows.reduce((groups: Map<string, GroupedRecommendationRow>, row) => {
-      const machineId = String(row.machine_id ?? "");
-      const productId = String(row.product_id ?? "");
+      const machineId = String(row.machine_id ?? "").trim();
+      const productId = String(row.product_id ?? "").trim();
+      if (!machineId || !productId) return groups;
       const groupKey = `${machineId}:${productId}`;
       const quantity = recommendationQuantity(row);
       const current = groups.get(groupKey) ?? {
@@ -531,14 +599,28 @@ export async function POST(request: Request) {
   ].filter((item) => Boolean(item.route_stop_id && item.product_id && planQuantity(item.planned_quantity) > 0));
 
   if (routeStopItems.length) {
-    let stopItemsToInsert = routeStopItems;
-    let stopItemsInsert = await supabase.from("route_stop_items").insert(stopItemsToInsert);
-    for (const optionalColumn of ["slot_allocations", "recommended_take_qty", "final_take_qty"]) {
-      if (isMissingColumn(stopItemsInsert.error, optionalColumn)) {
-        stopItemsToInsert = stripColumn(stopItemsToInsert, optionalColumn);
-        stopItemsInsert = await supabase.from("route_stop_items").insert(stopItemsToInsert);
-      }
+    console.info("[routes:create] Machine-level planned item rows", {
+      routeId,
+      count: routeStopItems.length,
+      rows: routeStopItems.map((item) => ({
+        route_stop_id: item.route_stop_id ?? null,
+        machine_id: item.machine_id ?? null,
+        product_id: item.product_id ?? null,
+        planned_quantity: planQuantity(item.planned_quantity),
+        recommended_take_qty: planQuantity(item.recommended_take_qty),
+        final_take_qty: planQuantity(item.final_take_qty),
+        source: item.source ?? null,
+      })),
+    });
+
+    const routeStopItemColumns = await loadPublicTableColumns(supabase, "route_stop_items");
+    const stopItemsToInsert = stripColumnsNotInSchema(routeStopItems, routeStopItemColumns);
+    const stopItemsInsert = await insertRowsWithOptionalColumnFallback(supabase, "route_stop_items", stopItemsToInsert, ["slot_allocations", "recommended_take_qty", "final_take_qty"]);
+
+    if (stopItemsInsert.removedColumns.length) {
+      console.warn("[routes:create] Saved route stop items without optional columns", { routeId, removedColumns: stopItemsInsert.removedColumns });
     }
+
     if (stopItemsInsert.error) {
       console.error("[routes:create] Failed to insert route stop items", { routeId, error: stopItemsInsert.error });
       if (!isMissingRouteStopItems(stopItemsInsert.error)) {
@@ -551,7 +633,7 @@ export async function POST(request: Request) {
           }
         }
         await cleanupRoute();
-        const databaseMessage = String(stopItemsInsert.error.message ?? stopItemsInsert.error.details ?? "").trim();
+        const databaseMessage = errorText(stopItemsInsert.error).trim();
         return jsonError(databaseMessage ? `Could not save machine-level planned items. The route was not created. ${databaseMessage}` : "Could not save machine-level planned items. The route was not created.", 500);
       }
       console.warn("[routes:create] route_stop_items table is missing; continuing with refill_order_lines fallback", { routeId });
@@ -623,13 +705,12 @@ export async function POST(request: Request) {
       return jsonError("Could not match refill lines to created refill orders.", 500);
     }
 
-    let refillLinesToInsert = refillLines;
-    let linesInsert = await supabase.from("refill_order_lines").insert(refillLinesToInsert);
-    for (const optionalColumn of ["slot_allocations", "recommended_take_qty", "final_take_qty", "source"]) {
-      if (isMissingColumn(linesInsert.error, optionalColumn)) {
-        refillLinesToInsert = stripColumn(refillLinesToInsert, optionalColumn);
-        linesInsert = await supabase.from("refill_order_lines").insert(refillLinesToInsert);
-      }
+    const refillLineColumns = await loadPublicTableColumns(supabase, "refill_order_lines");
+    const refillLinesToInsert = stripColumnsNotInSchema(refillLines, refillLineColumns);
+    const linesInsert = await insertRowsWithOptionalColumnFallback(supabase, "refill_order_lines", refillLinesToInsert, ["slot_allocations", "recommended_take_qty", "final_take_qty", "source"]);
+
+    if (linesInsert.removedColumns.length) {
+      console.warn("[routes:create] Saved refill order lines without optional columns", { routeId, removedColumns: linesInsert.removedColumns });
     }
 
     if (linesInsert.error) {
