@@ -3,7 +3,12 @@ import { NextResponse } from "next/server";
 import { logActivity } from "@/lib/activity-log";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canExecuteRoutes, isOwnerAdminRole } from "@/lib/authz";
-import { availableRouteStatuses, activeRouteStatuses } from "@/lib/route-workflow";
+import {
+  fallbackRouteStatusForEnumMismatch,
+  isRouteReservationStatus,
+  isRouteStatusEnumMismatch,
+  routeStatusForNewRoute,
+} from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 type CreateRoutePayload = {
@@ -224,8 +229,7 @@ async function validateRouteStock(
   let reservedQuery = supabase
     .from("route_stock_lines")
     .select("route_id, product_id, planned_qty, picked_qty, routes!inner(status)")
-    .in("product_id", productIds)
-    .in("routes.status", [...availableRouteStatuses, ...activeRouteStatuses]);
+    .in("product_id", productIds);
   if (excludeRouteId) reservedQuery = reservedQuery.neq("route_id", excludeRouteId);
 
   const [storageResult, reservedResult, productsResult] = await Promise.all([
@@ -262,7 +266,9 @@ async function validateRouteStock(
   });
 
   const reservedByProduct = new Map<string, number>();
-  ((reservedResult.data ?? []) as { product_id?: string | null; planned_qty?: unknown; picked_qty?: unknown }[]).forEach((row) => {
+  ((reservedResult.data ?? []) as { product_id?: string | null; planned_qty?: unknown; picked_qty?: unknown; routes?: { status?: string | null } | null }[])
+    .filter((row) => isRouteReservationStatus(row.routes?.status))
+    .forEach((row) => {
     const productId = String(row.product_id ?? "");
     if (!productId) return;
     const reserved = Math.max(0, planQuantity(row.planned_qty) - planQuantity(row.picked_qty));
@@ -522,12 +528,30 @@ export async function POST(request: Request) {
     }
   }
 
-  const routeStatus = operatorId ? "assigned" : "available";
-  const routeInsert = await supabase
+  let routeStatus = routeStatusForNewRoute(operatorId || null);
+  let routeInsert = await supabase
     .from("routes")
     .insert({ route_date: routeDate, operator_id: operatorId || null, status: routeStatus, created_by: profile.team_member_id })
     .select("id")
     .single();
+
+  if (routeInsert.error && isRouteStatusEnumMismatch(routeInsert.error, routeStatus)) {
+    const fallbackStatus = fallbackRouteStatusForEnumMismatch(routeStatus);
+    if (fallbackStatus) {
+      console.warn("[routes:create] Retrying route insert with deployed enum fallback", {
+        routeDate,
+        operatorId: operatorId || null,
+        rejectedStatus: routeStatus,
+        fallbackStatus,
+      });
+      routeStatus = fallbackStatus;
+      routeInsert = await supabase
+        .from("routes")
+        .insert({ route_date: routeDate, operator_id: operatorId || null, status: routeStatus, created_by: profile.team_member_id })
+        .select("id")
+        .single();
+    }
+  }
 
   if (routeInsert.error || !routeInsert.data?.id) {
     console.error("[routes:create] Failed to insert route", { routeDate, operatorId, error: routeInsert.error });
@@ -649,7 +673,7 @@ export async function POST(request: Request) {
         refillMachineIds.map((machineId) => ({
           route_id: routeId,
           machine_id: machineId,
-          status: routeStatus,
+          status: operatorId ? "assigned" : "draft",
         })),
       )
       .select("id, machine_id");

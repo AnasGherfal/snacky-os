@@ -6,7 +6,7 @@ import { logActivity } from "@/lib/activity-log";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canAddProducts, hasPermission, isOwnerAdminRole } from "@/lib/authz";
 import { resolveProductSku } from "@/lib/product-sku";
-import { activeRouteStatuses, availableRouteStatuses } from "@/lib/route-workflow";
+import { isRouteReservationStatus } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 const movementTypes = ["storage_to_operator_bag", "operator_bag_to_storage", "storage_adjustment", "damaged", "expired", "manual_correction", "product_substitution"] as const;
@@ -313,12 +313,13 @@ export async function createStockMovement(formData: FormData) {
     const { data: reservedRows, error: reservedError } = await supabase
       .from("route_stock_lines")
       .select("planned_qty, picked_qty, routes!inner(status)")
-      .eq("product_id", productId)
-      .in("routes.status", [...availableRouteStatuses, ...activeRouteStatuses]);
+      .eq("product_id", productId);
 
     if (reservedError) fail("Could not verify route reservations.");
 
-    const reservedQty = (reservedRows ?? []).reduce((sum: number, row: any) => sum + Math.max(0, Number(row.planned_qty ?? 0) - Number(row.picked_qty ?? 0)), 0);
+    const reservedQty = (reservedRows ?? [])
+      .filter((row: any) => isRouteReservationStatus(row.routes?.status))
+      .reduce((sum: number, row: any) => sum + Math.max(0, Number(row.planned_qty ?? 0) - Number(row.picked_qty ?? 0)), 0);
     const availableQty = Math.max(0, currentStorageQty - reservedQty);
 
     if (quantity > availableQty) {

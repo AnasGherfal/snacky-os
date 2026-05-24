@@ -5,7 +5,7 @@ import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canViewFinancials } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
-import { activeRouteStatuses, availableRouteStatuses } from "@/lib/route-workflow";
+import { ROUTE_RESERVATION_STATUSES, isRouteReservationStatus } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -136,7 +136,6 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
       ? supabase
       .from("route_stock_lines")
       .select("product_id, planned_qty, picked_qty, routes!inner(status)")
-          .in("routes.status", [...availableRouteStatuses, ...activeRouteStatuses])
           .in("product_id", productIds)
       : Promise.resolve({ data: [], error: null }),
     supabase
@@ -170,7 +169,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
           table: "route_stock_lines",
           error: reservedError,
           profile,
-          params: { route_statuses: [...availableRouteStatuses, ...activeRouteStatuses], product_ids: productIds },
+          params: { route_statuses: [...ROUTE_RESERVATION_STATUSES], product_ids: productIds },
         })
       : null,
     operatorBagError
@@ -206,7 +205,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
   });
 
   const reservedByProduct = new Map<string, number>();
-  (reservedError ? [] : reservedRows ?? []).forEach((row: any) => {
+  (reservedError ? [] : reservedRows ?? []).filter((row: any) => isRouteReservationStatus(row.routes?.status)).forEach((row: any) => {
     const qty = Math.max(0, Number(row.planned_qty ?? 0) - Number(row.picked_qty ?? 0));
     reservedByProduct.set(row.product_id, (reservedByProduct.get(row.product_id) ?? 0) + qty);
   });

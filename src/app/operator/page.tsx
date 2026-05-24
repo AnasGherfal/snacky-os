@@ -2,7 +2,7 @@ import Link from "next/link";
 import { EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canExecuteRoutes } from "@/lib/authz";
-import { availableRouteStatuses, isTerminalRouteStatus } from "@/lib/route-workflow";
+import { isOperatorVisibleRouteStatus, isTerminalRouteStatus, routeDisplayStatus } from "@/lib/route-workflow";
 
 export const dynamic = "force-dynamic";
 
@@ -29,21 +29,21 @@ export default async function OperatorPage() {
   const [assignedResult, availableResult] = await Promise.all([
     profile.team_member_id
       ? supabase
-          .from("routes")
-          .select(routeSelect)
-          .eq("operator_id", profile.team_member_id)
-          .not("status", "in", "(completed,reviewed,cancelled,canceled)")
+        .from("routes")
+        .select(routeSelect)
+        .eq("operator_id", profile.team_member_id)
           .order("route_date", { ascending: true })
       : Promise.resolve({ data: [], error: null }),
     supabase
       .from("routes")
       .select(routeSelect)
       .is("operator_id", null)
-      .in("status", [...availableRouteStatuses])
       .order("route_date", { ascending: true }),
   ]);
   const routesError = assignedResult.error ?? availableResult.error;
-  const routes = [...(assignedResult.data ?? []), ...(availableResult.data ?? [])]
+  const assignedRoutes = (assignedResult.data ?? []).filter((route: any) => !isTerminalRouteStatus(route.status));
+  const availableRoutes = (availableResult.data ?? []).filter((route: any) => isOperatorVisibleRouteStatus(route.status));
+  const routes = [...assignedRoutes, ...availableRoutes]
     .filter((route: any, index, rows) => rows.findIndex((candidate: any) => candidate.id === route.id) === index)
     .filter((route: any) => !isTerminalRouteStatus(route.status));
   if (routesError) {
@@ -79,7 +79,7 @@ export default async function OperatorPage() {
                       <div className="mt-1 text-sm text-slate-500">{completedStops}/{totalStops} stops completed</div>
                     </div>
                     <div className="shrink-0">
-                      <StatusBadge status={route.status} />
+                      <StatusBadge status={routeDisplayStatus(route.status, route.operator_id)} />
                     </div>
                   </div>
                   <div className="h-2 rounded-full bg-slate-200">

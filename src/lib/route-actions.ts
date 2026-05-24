@@ -5,7 +5,15 @@ import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canExecuteRoutes, isAdminRole } from "@/lib/authz";
-import { activeRouteStatuses, availableRouteStatuses, isAvailableRouteStatus, isTerminalRouteStatus } from "@/lib/route-workflow";
+import {
+  ROUTE_ASSIGNED_STATUS,
+  ROUTE_AVAILABLE_STATUS,
+  ROUTE_CANCELED_STATUS,
+  fallbackRouteStatusForEnumMismatch,
+  isAvailableRouteStatus,
+  isRouteStatusEnumMismatch,
+  isTerminalRouteStatus,
+} from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 function clean(value: FormDataEntryValue | null) {
@@ -154,7 +162,7 @@ export async function deleteDraftRoute(formData: FormData) {
 
   const { data: route, error: routeError } = await supabase.from("routes").select("*").eq("id", id).maybeSingle();
   if (routeError || !route) fail("/routes", "Route not found.");
-  if (![...availableRouteStatuses].includes(route.status)) fail(path, "Only routes that have not started can be hard-deleted.");
+  if (!isAvailableRouteStatus(route.status)) fail(path, "Only routes that have not started can be hard-deleted.");
 
   let movementCount = 0;
   let cashCount = 0;
@@ -182,7 +190,7 @@ export async function deleteDraftRoute(formData: FormData) {
     supabase.from("refill_orders").select("*, refill_order_lines(*)").eq("route_id", id),
   ]);
 
-  const { error } = await supabase.from("routes").delete().eq("id", id).in("status", [...availableRouteStatuses]);
+  const { error } = await supabase.from("routes").delete().eq("id", id).eq("status", route.status);
   if (error) {
     console.error("[routes] Failed to delete draft route", error);
     fail(path, "Could not delete draft route.");
@@ -226,13 +234,13 @@ export async function cancelRoute(formData: FormData) {
   const { data: after, error } = await supabase
     .from("routes")
     .update({
-      status: "cancelled",
+      status: ROUTE_CANCELED_STATUS,
       cancelled_at: now,
       cancelled_by: profile.team_member_id,
       cancellation_reason: reason,
     })
     .eq("id", id)
-    .in("status", [...availableRouteStatuses, ...activeRouteStatuses])
+    .eq("status", route.status)
     .select("*")
     .single();
   if (error) {
@@ -284,18 +292,34 @@ export async function assignRoute(formData: FormData) {
     }
   }
 
-  const nextStatus = operatorId
-    ? (isAvailableRouteStatus(route.status) ? "assigned" : route.status)
-    : route.status === "assigned" ? "available" : route.status;
-  const { data: after, error } = await supabase
+  let nextStatus = operatorId
+    ? (isAvailableRouteStatus(route.status) ? ROUTE_ASSIGNED_STATUS : route.status)
+    : route.status === ROUTE_ASSIGNED_STATUS ? ROUTE_AVAILABLE_STATUS : route.status;
+  let updateResult = await supabase
     .from("routes")
     .update({ operator_id: operatorId, status: nextStatus })
     .eq("id", id)
+    .eq("status", route.status)
     .select("*")
     .single();
 
-  if (error) {
-    console.error("[routes] Failed to assign route", error);
+  if (updateResult.error && isRouteStatusEnumMismatch(updateResult.error, nextStatus)) {
+    const fallbackStatus = fallbackRouteStatusForEnumMismatch(nextStatus);
+    if (fallbackStatus) {
+      console.warn("[routes] Retrying assignment with deployed enum fallback", { id, rejectedStatus: nextStatus, fallbackStatus });
+      nextStatus = fallbackStatus;
+      updateResult = await supabase
+        .from("routes")
+        .update({ operator_id: operatorId, status: nextStatus })
+        .eq("id", id)
+        .eq("status", route.status)
+        .select("*")
+        .single();
+    }
+  }
+
+  if (updateResult.error) {
+    console.error("[routes] Failed to assign route", updateResult.error);
     fail(path, "Could not update route assignment.");
   }
 
@@ -306,7 +330,7 @@ export async function assignRoute(formData: FormData) {
     entityId: id,
     entityLabel: `Route ${route.route_date}`,
     beforeData: route,
-    afterData: after,
+    afterData: updateResult.data,
     summary: operatorId ? `Assigned route for ${route.route_date}` : `Marked route for ${route.route_date} as available`,
   });
 

@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { EmptyState, ErrorState, PageHeader, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canExecuteRoutes } from "@/lib/authz";
-import { availableRouteStatuses, isTerminalRouteStatus } from "@/lib/route-workflow";
+import { isOperatorVisibleRouteStatus, isTerminalRouteStatus, routeDisplayStatus } from "@/lib/route-workflow";
 
 export default async function OperatorRoutesPage({ searchParams }: { searchParams: Promise<{ view?: string }> }) {
   const { view = "my" } = await searchParams;
@@ -23,24 +23,24 @@ export default async function OperatorRoutesPage({ searchParams }: { searchParam
   const routeSelect = "id, route_date, status, operator_id, route_stops(id, status, stop_order)";
   const assignedQuery = profile.team_member_id
     ? supabase
-        .from("routes")
-        .select(routeSelect)
-        .eq("operator_id", profile.team_member_id)
-        .not("status", "in", "(completed,reviewed,cancelled,canceled)")
-        .order("route_date", { ascending: true })
+      .from("routes")
+      .select(routeSelect)
+      .eq("operator_id", profile.team_member_id)
+      .order("route_date", { ascending: true })
     : Promise.resolve({ data: [], error: null });
   const availableQuery = supabase
     .from("routes")
     .select(routeSelect)
     .is("operator_id", null)
-    .in("status", [...availableRouteStatuses])
     .order("route_date", { ascending: true });
 
   const [assignedResult, availableResult] = await Promise.all([assignedQuery, availableQuery]);
   const error = assignedResult.error ?? availableResult.error;
+  const assignedRoutes = (assignedResult.data ?? []).filter((route: any) => !isTerminalRouteStatus(route.status));
+  const availableRoutes = (availableResult.data ?? []).filter((route: any) => isOperatorVisibleRouteStatus(route.status));
   const routes = showAvailable
-    ? (availableResult.data ?? [])
-    : [...(assignedResult.data ?? []), ...(availableResult.data ?? [])]
+    ? availableRoutes
+    : [...assignedRoutes, ...availableRoutes]
         .filter((route: any, index, rows) => rows.findIndex((candidate: any) => candidate.id === route.id) === index)
         .filter((route: any) => !isTerminalRouteStatus(route.status));
 
@@ -76,7 +76,7 @@ export default async function OperatorRoutesPage({ searchParams }: { searchParam
               const completedStops = route.route_stops?.filter((s: any) => s.status === "completed").length ?? 0;
               const totalStops = route.route_stops?.length ?? 0;
               const progress = totalStops > 0 ? Math.round((completedStops / totalStops) * 100) : 0;
-              const isAvailable = !route.operator_id && availableRouteStatuses.includes(String(route.status) as any);
+              const isAvailable = !route.operator_id && isOperatorVisibleRouteStatus(route.status);
 
               return (
                 <Link
@@ -90,7 +90,7 @@ export default async function OperatorRoutesPage({ searchParams }: { searchParam
                       <p className="text-sm text-slate-500">{totalStops} machine stops{isAvailable ? " - available to claim" : ""}</p>
                     </div>
                     <div className="shrink-0">
-                      <StatusBadge status={route.status} />
+                      <StatusBadge status={routeDisplayStatus(route.status, route.operator_id)} />
                     </div>
                   </div>
                   

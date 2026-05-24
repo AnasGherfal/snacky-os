@@ -6,7 +6,18 @@ import { actionFailure, actionSuccess, type ActionResult } from "@/lib/action-re
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute, canExecuteRoutes } from "@/lib/authz";
-import { activeRouteStatuses, availableRouteStatuses, isTerminalRouteStatus } from "@/lib/route-workflow";
+import {
+  ROUTE_FILLING_STATUS,
+  ROUTE_COMPLETED_STATUS,
+  ROUTE_IN_PROGRESS_STATUS,
+  ROUTE_PICKUP_CONFIRMED_STATUS,
+  fallbackRouteStatusForEnumMismatch,
+  isActiveRouteStatus,
+  isAvailableRouteStatus,
+  isRouteStatusEnumMismatch,
+  isTerminalRouteStatus,
+  type RouteStatus,
+} from "@/lib/route-workflow";
 import { REFILL_PHOTO_BUCKET } from "@/lib/storage-buckets";
 
 const REFILL_PHOTO_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"];
@@ -199,10 +210,10 @@ export async function startRoute(routeId: string) {
   if (!canAccessOperatorRoute(profileContext(profile), route.operator_id)) {
     throw new Error("You are not authorized to start this route");
   }
-  if (![...availableRouteStatuses, ...activeRouteStatuses].includes(String(route.status) as any)) {
+  if (!isAvailableRouteStatus(route.status) && !isActiveRouteStatus(route.status)) {
     throw new Error("Only available or assigned routes can be started.");
   }
-  if (activeRouteStatuses.includes(String(route.status) as any)) {
+  if (isActiveRouteStatus(route.status)) {
     return { success: true };
   }
 
@@ -210,18 +221,18 @@ export async function startRoute(routeId: string) {
   const startUpdate = route.operator_id
     ? await supabase
         .from("routes")
-        .update({ status: "started", started_at: route.started_at ?? now })
+        .update({ status: ROUTE_IN_PROGRESS_STATUS, started_at: route.started_at ?? now })
         .eq("id", routeId)
         .eq("operator_id", route.operator_id)
-        .in("status", [...availableRouteStatuses])
+        .eq("status", route.status)
         .select("id, route_date, operator_id, status, started_at")
         .maybeSingle()
     : await supabase
         .from("routes")
-        .update({ operator_id: profile.team_member_id, status: "started", started_at: now })
+        .update({ operator_id: profile.team_member_id, status: ROUTE_IN_PROGRESS_STATUS, started_at: now })
         .eq("id", routeId)
         .is("operator_id", null)
-        .in("status", [...availableRouteStatuses])
+        .eq("status", route.status)
         .select("id, route_date, operator_id, status, started_at")
         .maybeSingle();
 
@@ -665,13 +676,26 @@ export async function confirmPickList(
     }
 
     // Pickup confirmed: the operator bag now reflects the saved pick list.
-    const { error: statusError } = await supabase
+    let nextPickupStatus: RouteStatus = ROUTE_PICKUP_CONFIRMED_STATUS;
+    let routeStatusResult = await supabase
       .from("routes")
-      .update({ status: "pickup_confirmed", started_at: new Date().toISOString() })
+      .update({ status: nextPickupStatus, started_at: new Date().toISOString() })
       .eq("id", routeId)
-      .in("status", [...availableRouteStatuses, ...activeRouteStatuses]);
+      .eq("status", route.status);
 
-    if (statusError) throwActionError(statusError, "Could not start this route after picking stock.");
+    if (routeStatusResult.error && isRouteStatusEnumMismatch(routeStatusResult.error, nextPickupStatus)) {
+      const fallbackStatus = fallbackRouteStatusForEnumMismatch(nextPickupStatus);
+      if (fallbackStatus) {
+        nextPickupStatus = fallbackStatus;
+        routeStatusResult = await supabase
+          .from("routes")
+          .update({ status: nextPickupStatus, started_at: new Date().toISOString() })
+          .eq("id", routeId)
+          .eq("status", route.status);
+      }
+    }
+
+    if (routeStatusResult.error) throwActionError(routeStatusResult.error, "Could not start this route after picking stock.");
 
     // Update all refill orders for this route to picked
     const { error: refillError } = await supabase
@@ -911,7 +935,7 @@ export async function completeStop({
     if (isTerminalRouteStatus(route.status)) {
       throw new Error("Completed or cancelled routes cannot be edited.");
     }
-    if (!activeRouteStatuses.includes(String(route.status) as any)) {
+    if (!isActiveRouteStatus(route.status)) {
       throw new Error("This route is not in progress.");
     }
 
@@ -1326,12 +1350,24 @@ export async function completeStop({
 
     if (stopUpdateError) throwActionError(stopUpdateError, "Could not complete this stop.");
 
-    const { error: routeStatusError } = await supabase
+    let nextFillingStatus: RouteStatus = ROUTE_FILLING_STATUS;
+    let routeStatusUpdate = await supabase
       .from("routes")
-      .update({ status: "machine_filling" })
+      .update({ status: nextFillingStatus })
       .eq("id", routeId)
-      .in("status", [...availableRouteStatuses, ...activeRouteStatuses]);
-    if (routeStatusError) throwActionError(routeStatusError, "Could not update route progress.");
+      .eq("status", route.status);
+    if (routeStatusUpdate.error && isRouteStatusEnumMismatch(routeStatusUpdate.error, nextFillingStatus)) {
+      const fallbackStatus = fallbackRouteStatusForEnumMismatch(nextFillingStatus);
+      if (fallbackStatus) {
+        nextFillingStatus = fallbackStatus;
+        routeStatusUpdate = await supabase
+          .from("routes")
+          .update({ status: nextFillingStatus })
+          .eq("id", routeId)
+          .eq("status", route.status);
+      }
+    }
+    if (routeStatusUpdate.error) throwActionError(routeStatusUpdate.error, "Could not update route progress.");
 
     await logActivity({
       profile,
@@ -1629,7 +1665,7 @@ export async function completeRoute(routeId: string) {
 
     const { error } = await supabase
       .from("routes")
-      .update({ status: "completed", completed_at: new Date().toISOString() })
+      .update({ status: ROUTE_COMPLETED_STATUS, completed_at: new Date().toISOString() })
       .eq("id", routeId);
 
     if (error) throwActionError(error, "Could not complete this route.");
@@ -1640,7 +1676,7 @@ export async function completeRoute(routeId: string) {
       entityId: routeId,
       entityLabel: `Route ${routeId.slice(0, 8)}`,
       beforeData: route,
-      afterData: { status: "completed" },
+      afterData: { status: ROUTE_COMPLETED_STATUS },
       summary: "Completed route",
     });
     revalidateRouteWorkflow(routeId);

@@ -2,6 +2,7 @@ import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-
 import { NextResponse } from "next/server";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute } from "@/lib/authz";
+import { isTerminalRouteStatus } from "@/lib/route-workflow";
 
 function isMissingTable(error: any, tableName: string) {
   return error?.code === "PGRST205" && String(error?.message ?? "").includes(tableName);
@@ -226,7 +227,7 @@ export async function GET(
       productOptions,
       extraItems,
       confirmed,
-      locked: ["completed", "reviewed", "cancelled", "canceled"].includes(String(route.status)),
+      locked: isTerminalRouteStatus(route.status),
       routeStatus: route.status,
       debug: process.env.NODE_ENV === "development"
         ? { routeId, routeStopItemsCount: stopItems?.length ?? 0, aggregatedPickListCount: items.length, routePickListItemsCount: pickListItems?.length ?? 0, productOptionsCount: productOptions.length, operatorTeamMemberId: profile?.team_member_id ?? null }

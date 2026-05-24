@@ -3,7 +3,7 @@ import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, Section
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canExecuteRoutes, isAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
-import { activeRouteStatuses, availableRouteStatuses, isTerminalRouteStatus, nextOperatorRouteHref } from "@/lib/route-workflow";
+import { isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isPickupConfirmedStatus, isTerminalRouteStatus, nextOperatorRouteHref, routeDisplayStatus } from "@/lib/route-workflow";
 import { RouteCreatedToast } from "@/app/routes/[id]/RouteCreatedToast";
 import { assignRoute, cancelRoute, deleteDraftRoute } from "@/lib/route-actions";
 import Link from "next/link";
@@ -161,7 +161,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   const canManageRouteAssignment = isAdminRole(profile);
   const hasPickMovements = Boolean(movements?.some((movement: any) => movement.reason === "storage_to_operator_bag"));
   const hasReturnMovements = Boolean(movements?.some((movement: any) => movement.reason === "operator_bag_to_storage"));
-  const canStartRoute = canExecuteRoutes(profile) && Boolean(profile.team_member_id) && availableRouteStatuses.includes(String(routeRow.status) as any);
+  const canStartRoute = canExecuteRoutes(profile) && Boolean(profile.team_member_id) && isAvailableRouteStatus(routeRow.status);
   const continueHref = canExecuteRoutes(profile)
     ? nextOperatorRouteHref({ routeId: id, status: routeRow.status, hasPickup: hasPickMovements, stops: routeStops, start: true })
     : null;
@@ -219,12 +219,12 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   const completedStopCount = routeStops.filter((stop: any) => stop.status === "completed").length;
   const timeline = [
     { label: "Draft", done: true, detail: `Created ${new Date(routeRow.created_at).toLocaleString("en-US")}` },
-    { label: "Available", done: [...availableRouteStatuses, ...activeRouteStatuses, "completed", "reviewed"].includes(String(routeRow.status) as any), detail: operator?.full_name ?? "Unassigned / available" },
-    { label: "Picked", done: hasPickMovements || ["pickup_confirmed", "machine_filling", "completed", "reviewed"].includes(routeRow.status), detail: hasPickMovements ? "Storage moved to operator bag" : "Awaiting pick confirmation" },
+    { label: "Available", done: isAvailableRouteStatus(routeRow.status) || isActiveRouteStatus(routeRow.status) || isCompletedRouteStatus(routeRow.status), detail: operator?.full_name ?? "Unassigned / available" },
+    { label: "Picked", done: hasPickMovements || isPickupConfirmedStatus(routeRow.status), detail: hasPickMovements ? "Storage moved to operator bag" : "Awaiting pick confirmation" },
     { label: "Stops completed", done: routeStops.length > 0 && completedStopCount === routeStops.length, detail: `${completedStopCount}/${routeStops.length} stops` },
     { label: "Cash recorded", done: Boolean(cashCollections?.length), detail: `${cashCollections?.length ?? 0} cash records` },
-    { label: "Leftovers returned", done: hasReturnMovements || ["completed", "reviewed"].includes(routeRow.status), detail: hasReturnMovements ? "Operator bag returned to storage" : "Awaiting leftover return" },
-    { label: "Completed", done: ["completed", "reviewed"].includes(routeRow.status), detail: routeRow.completed_at ? new Date(routeRow.completed_at).toLocaleString("en-US") : "Not completed" },
+    { label: "Leftovers returned", done: hasReturnMovements || isCompletedRouteStatus(routeRow.status), detail: hasReturnMovements ? "Operator bag returned to storage" : "Awaiting leftover return" },
+    { label: "Completed", done: isCompletedRouteStatus(routeRow.status), detail: routeRow.completed_at ? new Date(routeRow.completed_at).toLocaleString("en-US") : "Not completed" },
     { label: "Reviewed", done: routeRow.status === "reviewed", detail: routeRow.status === "reviewed" ? "Admin review complete" : "Pending admin review" },
   ];
   return (
@@ -248,7 +248,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
                   {routeRow.operator_id ? "Start Route" : "Claim & Start"}
                 </Link>
               ) : null}
-              {availableRouteStatuses.includes(String(routeRow.status) as any) ? (
+              {isAvailableRouteStatus(routeRow.status) ? (
                 <ConfirmDialog
                   action={deleteDraftRoute}
                   triggerLabel="Delete route"
@@ -260,7 +260,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
                   hiddenFields={[{ name: "id", value: id }]}
                 />
               ) : null}
-              {![...["completed", "reviewed", "cancelled", "canceled"]].includes(String(routeRow.status)) ? (
+              {!isTerminalRouteStatus(routeRow.status) ? (
                 <ConfirmDialog
                   action={cancelRoute}
                   triggerLabel="Cancel route"
@@ -281,7 +281,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
           <SectionCard>
             <div className="space-y-2 p-4">
               <div className="text-sm text-slate-500">Status</div>
-              <StatusBadge status={routeRow.status} />
+              <StatusBadge status={routeDisplayStatus(routeRow.status, routeRow.operator_id)} />
             </div>
           </SectionCard>
           <SectionCard>
@@ -529,7 +529,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
           </section>
         ) : null}
 
-        {routeRow.status === "cancelled" ? (
+        {["cancelled", "canceled"].includes(String(routeRow.status)) ? (
           <section className="surface-card p-4">
             <h2 className="text-lg font-semibold">Cancellation</h2>
             <div className="mt-3 grid gap-3 md:grid-cols-2">

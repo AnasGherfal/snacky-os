@@ -1,7 +1,7 @@
 import { ErrorState, FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
-import { activeRouteStatuses, availableRouteStatuses } from "@/lib/route-workflow";
+import { ROUTE_RESERVATION_STATUSES, isRouteReservationStatus } from "@/lib/route-workflow";
 import { RouteCreateForm } from "@/app/routes/new/RouteCreateForm";
 import { redirect } from "next/navigation";
 
@@ -57,6 +57,7 @@ type ReservedStockRow = {
   product_id: string;
   planned_qty: unknown;
   picked_qty: unknown;
+  routes?: { status?: string | null } | null;
 };
 
 type RecentMovementRow = {
@@ -148,8 +149,7 @@ export default async function NewRoutePage() {
       .order("product_name"),
     supabase
       .from("route_stock_lines")
-      .select("product_id, planned_qty, picked_qty, routes!inner(status)")
-      .in("routes.status", [...availableRouteStatuses, ...activeRouteStatuses]),
+      .select("product_id, planned_qty, picked_qty, routes!inner(status)"),
     supabase.from("products").select("id, sku, barcode, name, category, brand, image_url, active").eq("active", true).order("name"),
     supabase.from("inventory_movements").select("product_id, created_at").order("created_at", { ascending: false }).limit(80),
   ]);
@@ -201,7 +201,7 @@ export default async function NewRoutePage() {
           table: "route_stock_lines",
           error: reservedError,
           profile,
-          params: { route_statuses: [...availableRouteStatuses, ...activeRouteStatuses] },
+          params: { route_statuses: [...ROUTE_RESERVATION_STATUSES] },
         })
       : null,
     productsError
@@ -252,7 +252,7 @@ export default async function NewRoutePage() {
     });
   });
   const reservedByProduct = new Map<string, number>();
-  ((reservedStock ?? []) as ReservedStockRow[]).forEach((row) => {
+  ((reservedStock ?? []) as ReservedStockRow[]).filter((row) => isRouteReservationStatus(row.routes?.status)).forEach((row) => {
     const reserved = Math.max(0, unitQuantity(row.planned_qty) - unitQuantity(row.picked_qty));
     reservedByProduct.set(row.product_id, (reservedByProduct.get(row.product_id) ?? 0) + reserved);
   });

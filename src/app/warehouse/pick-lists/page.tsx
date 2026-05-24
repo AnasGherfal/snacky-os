@@ -1,7 +1,7 @@
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
-import { activeRouteStatuses, availableRouteStatuses } from "@/lib/route-workflow";
+import { isRouteReservationStatus } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -14,12 +14,11 @@ export default async function WarehousePickListsPage({ searchParams }: { searchP
     ? await supabase
         .from("routes")
         .select("id, route_date, status, operator_id, route_stock_lines(id, planned_qty, picked_qty, product:products(name))", { count: "exact" })
-        .in("status", [...availableRouteStatuses, ...activeRouteStatuses])
         .order("route_date", { ascending: true })
         .range(from, to)
     : { data: [], count: 0 };
 
-  const routeRows = (routes ?? []) as any[];
+  const routeRows = ((routes ?? []) as any[]).filter((route) => isRouteReservationStatus(route.status));
   const operatorIds = Array.from(new Set(routeRows.map((route) => route.operator_id).filter(Boolean)));
   const { data: operators } = supabase && operatorIds.length
     ? await supabase.from("team_members").select("id, full_name").in("id", operatorIds)
@@ -55,7 +54,7 @@ export default async function WarehousePickListsPage({ searchParams }: { searchP
               );
             })}
           </DataTable>
-          <PaginationControls basePath="/warehouse/pick-lists" searchParams={params} page={page} pageSize={pageSize} totalCount={count ?? 0} itemLabel="pick lists" />
+          <PaginationControls basePath="/warehouse/pick-lists" searchParams={params} page={page} pageSize={pageSize} totalCount={count ?? routeRows.length} itemLabel="pick lists" />
         </>
       )}
     </>

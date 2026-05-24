@@ -3,7 +3,7 @@ import Link from "next/link";
 import { EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge, SectionCard } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute } from "@/lib/authz";
-import { activeRouteStatuses, availableRouteStatuses, nextOperatorRouteHref } from "@/lib/route-workflow";
+import { isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, nextOperatorRouteHref, routeDisplayStatus } from "@/lib/route-workflow";
 
 export default async function OperatorRouteDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: routeId } = await params;
@@ -66,7 +66,7 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
   const primaryAction = continueHref
     ? {
         href: continueHref,
-        label: availableRouteStatuses.includes(String(routeRow.status) as any)
+        label: isAvailableRouteStatus(routeRow.status)
           ? (routeRow.operator_id ? "Start Route" : "Claim & Start")
           : "Continue Route",
       }
@@ -86,7 +86,7 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
           <SectionCard>
             <div className="p-4">
               <div className="text-sm text-slate-500 mb-1">Status</div>
-              <StatusBadge status={routeRow.status} />
+              <StatusBadge status={routeDisplayStatus(routeRow.status, routeRow.operator_id)} />
             </div>
           </SectionCard>
           <SectionCard>
@@ -114,7 +114,7 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
         {/* Pick List Section */}
         <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
           <h2 className="text-lg font-semibold mb-4">Pick list</h2>
-          {availableRouteStatuses.includes(String(routeRow.status) as any) ? (
+          {isAvailableRouteStatus(routeRow.status) ? (
             <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
               <strong>Ready to start?</strong> Click "{routeRow.operator_id ? "Start Route" : "Claim & Start"}" above to view your pick list and begin picking stock from storage.
             </div>
@@ -170,7 +170,7 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
                     </div>
                   </div>
 
-                  {[...activeRouteStatuses, "completed", "reviewed"].includes(String(routeRow.status) as any) ? (
+                  {isActiveRouteStatus(routeRow.status) || isCompletedRouteStatus(routeRow.status) ? (
                     <Link
                       href={`/operator/routes/${routeId}/stops/${stop.id}`}
                       className="btn-primary mt-1 w-full text-base sm:w-auto"
