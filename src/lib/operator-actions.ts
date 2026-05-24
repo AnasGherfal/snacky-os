@@ -119,6 +119,26 @@ async function insertPickListRowsWithOptionalColumnFallback(
   }
 }
 
+async function insertInventoryMovementsWithOptionalColumnFallback(
+  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>,
+  rows: Record<string, unknown>[],
+) {
+  let rowsToInsert = rows;
+  const removedColumns: string[] = [];
+
+  for (;;) {
+    const result = await supabase.from("inventory_movements").insert(rowsToInsert);
+    if (!result.error) return result.error;
+
+    const missingColumn = optionalColumnError(result.error, ["related_pickup_batch_id"].filter((column) => !removedColumns.includes(column)));
+    if (!missingColumn) return result.error;
+
+    removedColumns.push(missingColumn);
+    rowsToInsert = stripColumnFromRows(rowsToInsert, missingColumn);
+    console.warn("[operator:pick-list] Retrying inventory movement insert without optional pickup batch column", { missingColumn, removedColumns });
+  }
+}
+
 function machineFillDelta(movement: any) {
   const qty = unitQuantity(movement?.quantity);
   if (movement?.reason === "manual_correction" && movement?.from_entity_type === "machine" && movement?.to_entity_type === "operator_bag") {
@@ -828,9 +848,7 @@ export async function confirmPickList(
     ];
 
     if (movements.length) {
-      const { error: movementError } = await supabase
-        .from("inventory_movements")
-        .insert(movements);
+      const movementError = await insertInventoryMovementsWithOptionalColumnFallback(supabase, movements);
 
       if (movementError) throwActionError(movementError, "Could not create pickup adjustment inventory movements.");
     }
