@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, FormEvent, KeyboardEvent, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { Fragment, FormEvent, KeyboardEvent, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -56,6 +56,14 @@ type PlannedStock = {
   manualQty: number;
 };
 
+type StockValidationIssue = {
+  product_id: string;
+  product_name: string;
+  selected_qty: number;
+  available_qty: number;
+  shortage_qty: number;
+};
+
 type RecommendationGroup = {
   groupKey: string;
   machineId: string;
@@ -94,15 +102,28 @@ function highestPriority(current: string | null | undefined, next: string | null
 }
 
 function recommendationQuantity(row: Recommendation) {
-  return Math.max(0, Number(row.final_qty_to_take ?? row.suggested_qty ?? 0));
+  return unitQuantity(row.final_qty_to_take ?? row.suggested_qty);
 }
 
 function recommendationTarget(row: Recommendation) {
-  return Math.max(0, Number(row.capacity ?? row.par_qty ?? 0));
+  return unitQuantity(row.capacity ?? row.par_qty);
 }
 
 function formatRecommendationQty(value: number | null | undefined) {
   return value === null || value === undefined ? "Capacity missing" : value;
+}
+
+function unitQuantity(value: unknown) {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.floor(parsed));
+}
+
+function stockErrorMessage(issues: StockValidationIssue[]) {
+  return [
+    "These products exceed available storage stock:",
+    ...issues.map((issue) => `- ${issue.product_name}: selected ${issue.selected_qty}, available ${issue.available_qty}, shortage ${issue.shortage_qty}`),
+  ].join("\n");
 }
 
 export function RouteCreateForm({
@@ -124,6 +145,7 @@ export function RouteCreateForm({
   defaultRouteDate: string;
 }) {
   const router = useRouter();
+  const saveErrorRef = useRef<HTMLDivElement | null>(null);
   const [routeDate, setRouteDate] = useState(defaultRouteDate);
   const [assignmentMode, setAssignmentMode] = useState<"unassigned" | "assigned">("unassigned");
   const [operatorId, setOperatorId] = useState("");
@@ -143,6 +165,8 @@ export function RouteCreateForm({
   const [adminOverride, setAdminOverride] = useState(false);
   const [notFoundQuery, setNotFoundQuery] = useState("");
   const [error, setError] = useState("");
+  const [stockErrors, setStockErrors] = useState<StockValidationIssue[]>([]);
+  const [scrollErrorIntoView, setScrollErrorIntoView] = useState(false);
   const [saving, setSaving] = useState(false);
   const deferredSearch = useDeferredValue(search);
   const deferredRecommendationSearch = useDeferredValue(recommendationSearch);
@@ -168,16 +192,16 @@ export function RouteCreateForm({
         currentTotal: 0,
         targetTotal: 0,
         takeTotal: 0,
-        storageAvailable: Number(product?.availableQty ?? row.available_storage_qty ?? 0),
+        storageAvailable: unitQuantity(product?.availableQty ?? row.available_storage_qty),
         priority: "low",
       };
 
       current.recommendationKeys.push(row.recommendation_key);
       current.rows.push(row);
-      current.currentTotal += Math.max(0, Number(row.current_qty ?? 0));
+      current.currentTotal += unitQuantity(row.current_qty);
       current.targetTotal += recommendationTarget(row);
       current.takeTotal += recommendationQuantity(row);
-      current.storageAvailable = Number(product?.availableQty ?? Math.max(current.storageAvailable, Number(row.available_storage_qty ?? 0)));
+      current.storageAvailable = unitQuantity(product?.availableQty ?? Math.max(current.storageAvailable, unitQuantity(row.available_storage_qty)));
       current.priority = highestPriority(current.priority, row.priority);
       groups.set(groupKey, current);
     });
@@ -221,22 +245,28 @@ export function RouteCreateForm({
   }, [deferredRecommendationSearch, recommendationGroups, recommendationMachineFilter, recommendationPriorityFilter, showNoRefillNeeded]);
 
   const totalRecommendationPages = Math.max(1, Math.ceil(filteredRecommendationGroups.length / RECOMMENDATION_PAGE_SIZE));
-  const pagedRecommendationGroups = filteredRecommendationGroups.slice((recommendationPage - 1) * RECOMMENDATION_PAGE_SIZE, recommendationPage * RECOMMENDATION_PAGE_SIZE);
+  const visibleRecommendationPage = Math.min(recommendationPage, totalRecommendationPages);
+  const pagedRecommendationGroups = filteredRecommendationGroups.slice((visibleRecommendationPage - 1) * RECOMMENDATION_PAGE_SIZE, visibleRecommendationPage * RECOMMENDATION_PAGE_SIZE);
 
   useEffect(() => {
-    setRecommendationPage(1);
-  }, [recommendationMachineFilter, recommendationPriorityFilter, recommendationSearch, showNoRefillNeeded]);
+    if (!error || !scrollErrorIntoView) return;
+    const errorElement = saveErrorRef.current;
+    if (!errorElement) return;
+    const rect = errorElement.getBoundingClientRect();
+    const isVisible = rect.top >= 0 && rect.bottom <= window.innerHeight;
+    if (!isVisible) errorElement.scrollIntoView({ behavior: "smooth", block: "center" });
+    setScrollErrorIntoView(false);
+  }, [error, scrollErrorIntoView]);
 
-  useEffect(() => {
-    if (recommendationPage > totalRecommendationPages) setRecommendationPage(totalRecommendationPages);
-  }, [recommendationPage, totalRecommendationPages]);
+  const clampRecommendationFinalTake = useCallback((group: RecommendationGroup, value: number) => {
+    const safeValue = unitQuantity(value);
+    return adminOverride ? safeValue : Math.min(safeValue, unitQuantity(group.storageAvailable));
+  }, [adminOverride]);
 
-  const clampRecommendationFinalTake = (group: RecommendationGroup, value: number) => {
-    const safeValue = Math.max(0, Math.floor(Number.isFinite(value) ? value : 0));
-    return adminOverride ? safeValue : Math.min(safeValue, Math.max(0, Number(group.storageAvailable ?? 0)));
-  };
-
-  const finalTakeForGroup = (group: RecommendationGroup) => clampRecommendationFinalTake(group, finalTakeByRecommendationGroup[group.groupKey] ?? group.takeTotal);
+  const finalTakeForGroup = useCallback(
+    (group: RecommendationGroup) => clampRecommendationFinalTake(group, finalTakeByRecommendationGroup[group.groupKey] ?? group.takeTotal),
+    [clampRecommendationFinalTake, finalTakeByRecommendationGroup],
+  );
 
   const selectedRecommendationGroups = useMemo(
     () => recommendationGroups.filter((group) => group.recommendationKeys.every((key) => recommendationKeys.includes(key))),
@@ -248,26 +278,27 @@ export function RouteCreateForm({
     selectedRecommendationGroups
       .forEach((group) => {
         const quantity = finalTakeForGroup(group);
-        quantities.set(group.productId, (quantities.get(group.productId) ?? 0) + Math.max(0, quantity));
+        quantities.set(group.productId, (quantities.get(group.productId) ?? 0) + unitQuantity(quantity));
       });
     return quantities;
-  }, [selectedRecommendationGroups, finalTakeByRecommendationGroup, adminOverride]);
+  }, [selectedRecommendationGroups, finalTakeForGroup]);
 
   const plannedRouteStock = useMemo(() => {
     const manualQtyByProduct = new Map<string, number>();
     manualStopItems.forEach((item) => {
-      manualQtyByProduct.set(item.productId, (manualQtyByProduct.get(item.productId) ?? 0) + Math.max(0, Number(item.quantity ?? 0)));
+      const quantity = unitQuantity(item.quantity);
+      if (quantity > 0) manualQtyByProduct.set(item.productId, (manualQtyByProduct.get(item.productId) ?? 0) + quantity);
     });
     const productIds = new Set([...Array.from(recommendationQtyByProduct.keys()), ...Array.from(manualQtyByProduct.keys())]);
     return Array.from(productIds)
       .map((productId): PlannedStock => {
         const product = productsById.get(productId);
-        const recommendationQty = recommendationQtyByProduct.get(productId) ?? 0;
-        const manualQty = manualQtyByProduct.get(productId) ?? 0;
+        const recommendationQty = unitQuantity(recommendationQtyByProduct.get(productId));
+        const manualQty = unitQuantity(manualQtyByProduct.get(productId));
         return {
           productId,
           quantity: recommendationQty + manualQty,
-          available: Number(product?.availableQty ?? 0),
+          available: unitQuantity(product?.availableQty),
           recommendationQty,
           manualQty,
         };
@@ -284,6 +315,8 @@ export function RouteCreateForm({
     [plannedRouteStock, productsById],
   );
 
+  const stockErrorByProduct = useMemo(() => new Map(stockErrors.map((issue) => [issue.product_id, issue])), [stockErrors]);
+
   const selectedRecommendationSummary = useMemo(() => {
     return selectedRecommendationGroups.reduce(
       (summary, group) => {
@@ -294,7 +327,7 @@ export function RouteCreateForm({
       },
       { selectedProductsCount: 0, totalRecommendedQty: 0, totalFinalTakeQty: 0 },
     );
-  }, [selectedRecommendationGroups, finalTakeByRecommendationGroup, adminOverride]);
+  }, [selectedRecommendationGroups, finalTakeForGroup]);
 
   const selectedStopCount = useMemo(() => {
     const recommendedMachines = selectedRecommendationGroups.map((group) => group.machineId);
@@ -327,7 +360,11 @@ export function RouteCreateForm({
     if (!recommendationGroupSelectable(group)) return;
     const selected = isRecommendationGroupSelected(group);
     if (selected) {
-      setFinalTakeByRecommendationGroup(({ [group.groupKey]: _removed, ...rest }) => rest);
+      setFinalTakeByRecommendationGroup((current) => {
+        const next = { ...current };
+        delete next[group.groupKey];
+        return next;
+      });
       setRecommendationKeys((current) => current.filter((key) => !group.recommendationKeys.includes(key)));
     } else {
       setFinalTakeByRecommendationGroup((finalTake) => ({
@@ -364,15 +401,16 @@ export function RouteCreateForm({
 
     setManualStopItems((current) => {
       const next = current.filter((item) => !(item.machineId === machineId && item.productId === productId));
-      if (quantity > 0) next.push({ machineId, productId, quantity: Math.floor(quantity) });
+      const safeQuantity = unitQuantity(quantity);
+      if (safeQuantity > 0) next.push({ machineId, productId, quantity: safeQuantity });
       return next;
     });
   };
 
   const setDesiredManualQty = (machineId: string, productId: string, desiredManual: number) => {
     const product = productsById.get(productId);
-    const maxTotal = adminOverride ? Number.MAX_SAFE_INTEGER : Number(product?.availableQty ?? 0);
-    const safeTotal = Math.max(0, Math.min(Math.floor(desiredManual), maxTotal));
+    const maxTotal = adminOverride ? Number.MAX_SAFE_INTEGER : unitQuantity(product?.availableQty);
+    const safeTotal = Math.min(unitQuantity(desiredManual), maxTotal);
     setManualStopQty(machineId, productId, safeTotal);
   };
 
@@ -408,20 +446,62 @@ export function RouteCreateForm({
     }
   };
 
+  const validateStock = () => {
+    if (adminOverride) return [];
+    const issues: StockValidationIssue[] = [];
+
+    plannedRouteStock.forEach((item) => {
+      const product = productsById.get(item.productId);
+      const selectedQty = unitQuantity(item.quantity);
+      const availableQty = unitQuantity(item.available);
+      const shortageQty = Math.max(0, selectedQty - availableQty);
+
+      if (selectedQty <= 0) return;
+
+      console.info("[routes:new] Stock validation", {
+        product_id: item.productId,
+        product_name: product?.name ?? item.productId,
+        selected_qty: selectedQty,
+        available_storage_stock: availableQty,
+        calculated_shortage: shortageQty,
+        unit: "units",
+      });
+
+      if (shortageQty > 0) {
+        issues.push({
+          product_id: item.productId,
+          product_name: product?.name ?? item.productId,
+          selected_qty: selectedQty,
+          available_qty: availableQty,
+          shortage_qty: shortageQty,
+        });
+      }
+    });
+
+    return issues;
+  };
+
   const validate = () => {
     if (!routeDate) return "Route date is required.";
     if (assignmentMode === "assigned" && !operatorId) return "Choose a route performer or leave this route unassigned.";
     if (!plannedRouteStock.length) return "Choose products to take from storage for this route.";
-    const overPicked = plannedRouteStock.find((item) => item.quantity > item.available);
-    if (overPicked && !adminOverride) return "One or more selected products exceeds available storage stock.";
+    const stockIssues = validateStock();
+    if (stockIssues.length) return stockErrorMessage(stockIssues);
     return "";
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
+    setStockErrors([]);
     const validationError = validate();
     if (validationError) {
+      const localStockIssues = validateStock();
+      if (localStockIssues.length) {
+        console.warn("[routes:new] Stock validation failed", localStockIssues);
+        setStockErrors(localStockIssues);
+      }
+      setScrollErrorIntoView(true);
       setError(validationError);
       return;
     }
@@ -443,12 +523,18 @@ export function RouteCreateForm({
       const result = await response.json().catch(() => ({ error: "Could not read the route creation response." }));
 
       if (!response.ok || !result.routeId) {
+        const serverStockIssues = Array.isArray(result.stockErrors) ? result.stockErrors as StockValidationIssue[] : [];
+        if (serverStockIssues.length) {
+          console.warn("[routes:new] Server stock validation failed", serverStockIssues);
+          setStockErrors(serverStockIssues);
+        }
         throw new Error(result.error || "Could not create the route.");
       }
 
       window.sessionStorage.setItem("snacky-route-created", "Route created successfully.");
       router.replace(`/routes/${result.routeId}`);
     } catch (err) {
+      setScrollErrorIntoView(true);
       setError(err instanceof Error ? err.message : "Could not create the route.");
       setSaving(false);
     }
@@ -459,8 +545,19 @@ export function RouteCreateForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       {error ? (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800" role="alert">
+        <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm font-medium whitespace-pre-line text-rose-800" role="alert" aria-live="assertive">
           {error}
+        </div>
+      ) : null}
+      {error ? (
+        <div className="fixed inset-x-3 bottom-3 z-50 max-h-[60vh] overflow-y-auto rounded-xl border border-rose-200 bg-white p-4 text-sm shadow-2xl md:left-auto md:right-4 md:w-[440px]" role="alert" aria-live="assertive">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="font-semibold text-rose-800">Save failed</div>
+              <div className="mt-1 whitespace-pre-line text-rose-700">{error}</div>
+            </div>
+            <button type="button" className="link-secondary shrink-0" onClick={() => setError("")}>Dismiss</button>
+          </div>
         </div>
       ) : null}
 
@@ -648,10 +745,11 @@ export function RouteCreateForm({
                     manualStopItems.map((item) => {
                       const product = productsById.get(item.productId);
                       const machine = machines.find((row) => row.id === item.machineId);
-                      const available = Number(product?.availableQty ?? 0);
-                      const exceeds = item.quantity > available;
+                      const stockIssue = stockErrorByProduct.get(item.productId);
+                      const available = stockIssue?.available_qty ?? unitQuantity(product?.availableQty);
+                      const exceeds = Boolean(stockIssue) || unitQuantity(item.quantity) > available;
                       return (
-                        <tr key={`${item.machineId}-${item.productId}`} className="border-t border-slate-200">
+                        <tr key={`${item.machineId}-${item.productId}`} className={`border-t border-slate-200 ${stockIssue ? "bg-rose-50" : ""}`}>
                           <td className="px-3 py-2">{machine?.name ?? "Unknown machine"}</td>
                           <td className="px-3 py-2">
                             <div className="flex items-center gap-3">
@@ -659,6 +757,7 @@ export function RouteCreateForm({
                               <div>
                                 <div className="font-medium text-slate-900">{product?.name ?? "Unknown product"}</div>
                                 <div className="text-xs text-slate-500">{product?.sku ?? "No SKU"}</div>
+                                {stockIssue ? <div className="mt-1 text-xs font-medium text-rose-700">Short {stockIssue.shortage_qty} units across selected route plan.</div> : null}
                               </div>
                             </div>
                           </td>
@@ -674,9 +773,10 @@ export function RouteCreateForm({
                                 type="number"
                                 min={0}
                                 max={adminOverride ? undefined : available}
+                                step={1}
                                 value={item.quantity}
                                 onChange={(event) => setDesiredManualQty(item.machineId, item.productId, Number(event.target.value) || 0)}
-                                className={`field-input w-24 ${exceeds && !adminOverride ? "border-rose-300" : ""}`}
+                                className={`field-input w-24 ${exceeds && !adminOverride ? "border-rose-300 bg-rose-50" : ""}`}
                                 disabled={saving}
                               />
                             </div>
@@ -709,14 +809,25 @@ export function RouteCreateForm({
               <FormField label="Search product">
                 <input
                   value={recommendationSearch}
-                  onChange={(event) => setRecommendationSearch(event.target.value)}
+                  onChange={(event) => {
+                    setRecommendationSearch(event.target.value);
+                    setRecommendationPage(1);
+                  }}
                   placeholder="Search product or machine"
                   className="field-input"
                   disabled={saving}
                 />
               </FormField>
               <FormField label="Machine">
-                <select value={recommendationMachineFilter} onChange={(event) => setRecommendationMachineFilter(event.target.value)} className="field-input" disabled={saving}>
+                <select
+                  value={recommendationMachineFilter}
+                  onChange={(event) => {
+                    setRecommendationMachineFilter(event.target.value);
+                    setRecommendationPage(1);
+                  }}
+                  className="field-input"
+                  disabled={saving}
+                >
                   <option value="">All machines</option>
                   {machineFilterOptions.map((machine) => (
                     <option key={machine.id} value={machine.id}>{machine.label}</option>
@@ -724,7 +835,15 @@ export function RouteCreateForm({
                 </select>
               </FormField>
               <FormField label="Priority">
-                <select value={recommendationPriorityFilter} onChange={(event) => setRecommendationPriorityFilter(event.target.value)} className="field-input" disabled={saving}>
+                <select
+                  value={recommendationPriorityFilter}
+                  onChange={(event) => {
+                    setRecommendationPriorityFilter(event.target.value);
+                    setRecommendationPage(1);
+                  }}
+                  className="field-input"
+                  disabled={saving}
+                >
                   <option value="">All priorities</option>
                   {priorityOrder.map((priority) => (
                     <option key={priority} value={priority}>{priority}</option>
@@ -747,7 +866,15 @@ export function RouteCreateForm({
                 Clear selected
               </button>
               <label className="ml-auto flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700">
-                <input type="checkbox" checked={showNoRefillNeeded} onChange={(event) => setShowNoRefillNeeded(event.target.checked)} disabled={saving} />
+                <input
+                  type="checkbox"
+                  checked={showNoRefillNeeded}
+                  onChange={(event) => {
+                    setShowNoRefillNeeded(event.target.checked);
+                    setRecommendationPage(1);
+                  }}
+                  disabled={saving}
+                />
                 <span>Show rows with no refill needed</span>
               </label>
             </div>
@@ -792,10 +919,13 @@ export function RouteCreateForm({
                       const finalIsZero = selected && finalTake === 0;
                       const finalHigherThanRecommended = selected && finalTake > group.takeTotal;
                       const finalLowerThanRecommended = selected && finalTake > 0 && finalTake < group.takeTotal;
+                      const stockIssue = selected ? stockErrorByProduct.get(group.productId) : undefined;
+                      const storageAvailable = stockIssue?.available_qty ?? unitQuantity(group.storageAvailable);
+                      const showStockIssue = Boolean(stockIssue);
 
                       return (
                         <Fragment key={group.groupKey}>
-                          <tr className="border-t border-slate-200">
+                          <tr className={`border-t border-slate-200 ${stockIssue ? "bg-rose-50" : ""}`}>
                             <td className="px-3 py-2">
                               <input
                                 type="checkbox"
@@ -820,23 +950,25 @@ export function RouteCreateForm({
                                 <input
                                   type="number"
                                   min={0}
-                                  max={adminOverride ? undefined : group.storageAvailable}
+                                  max={adminOverride ? undefined : storageAvailable}
+                                  step={1}
                                   value={finalTake}
                                   onChange={(event) => setRecommendationFinalTake(group, Number(event.target.value) || 0)}
-                                  className={`field-input w-24 ${finalExceedsStorage && !adminOverride ? "border-rose-300" : ""}`}
+                                  className={`field-input w-24 ${(finalExceedsStorage || showStockIssue) && !adminOverride ? "border-rose-300 bg-rose-50" : ""}`}
                                   disabled={saving || !selected}
                                   aria-label={`Final take for ${group.productName} at ${group.machineName}`}
                                 />
                                 <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, group.takeTotal)} disabled={saving || !selected}>Use recommended</button>
                                 <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, Math.ceil(group.takeTotal / 2))} disabled={saving || !selected}>Take half</button>
-                                <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, group.storageAvailable)} disabled={saving || !selected}>Take max available</button>
+                                <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, storageAvailable)} disabled={saving || !selected}>Take max available</button>
                                 <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, 0)} disabled={saving || !selected}>Clear</button>
                               </div>
                               {finalIsZero ? <div className="mt-1 text-xs font-medium text-amber-700">Final take is 0.</div> : null}
                               {finalHigherThanRecommended ? <div className="mt-1 text-xs font-medium text-amber-700">Final take is higher than recommended.</div> : null}
                               {finalLowerThanRecommended ? <div className="mt-1 text-xs text-slate-500">Taking less than recommended.</div> : null}
+                              {stockIssue ? <div className="mt-1 text-xs font-medium text-rose-700">Selected {stockIssue.selected_qty}, available {stockIssue.available_qty}, shortage {stockIssue.shortage_qty}.</div> : null}
                             </td>
-                            <td className={`px-3 py-2 ${finalExceedsStorage && !adminOverride ? "font-semibold text-rose-700" : ""}`}>{group.storageAvailable}</td>
+                            <td className={`px-3 py-2 ${(finalExceedsStorage || showStockIssue) && !adminOverride ? "font-semibold text-rose-700" : ""}`}>{storageAvailable}</td>
                             <td className="px-3 py-2">{group.priority}</td>
                             <td className="px-3 py-2">
                               <button
@@ -889,13 +1021,13 @@ export function RouteCreateForm({
             {filteredRecommendationGroups.length > RECOMMENDATION_PAGE_SIZE ? (
               <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-slate-600">
                 <div>
-                  Showing {(recommendationPage - 1) * RECOMMENDATION_PAGE_SIZE + 1}-{Math.min(recommendationPage * RECOMMENDATION_PAGE_SIZE, filteredRecommendationGroups.length)} of {filteredRecommendationGroups.length}
+                  Showing {(visibleRecommendationPage - 1) * RECOMMENDATION_PAGE_SIZE + 1}-{Math.min(visibleRecommendationPage * RECOMMENDATION_PAGE_SIZE, filteredRecommendationGroups.length)} of {filteredRecommendationGroups.length}
                 </div>
                 <div className="flex gap-2">
-                  <button type="button" className="btn-secondary" onClick={() => setRecommendationPage((page) => Math.max(1, page - 1))} disabled={saving || recommendationPage <= 1}>
+                  <button type="button" className="btn-secondary" onClick={() => setRecommendationPage((page) => Math.max(1, page - 1))} disabled={saving || visibleRecommendationPage <= 1}>
                     Previous
                   </button>
-                  <button type="button" className="btn-secondary" onClick={() => setRecommendationPage((page) => Math.min(totalRecommendationPages, page + 1))} disabled={saving || recommendationPage >= totalRecommendationPages}>
+                  <button type="button" className="btn-secondary" onClick={() => setRecommendationPage((page) => Math.min(totalRecommendationPages, page + 1))} disabled={saving || visibleRecommendationPage >= totalRecommendationPages}>
                     Next
                   </button>
                 </div>
@@ -936,6 +1068,12 @@ export function RouteCreateForm({
         <span className="mx-2 text-slate-300">/</span>
         Route pick-list products: <span className="font-semibold text-slate-900">{selectedProducts.length}</span>
       </div>
+
+      {error ? (
+        <div ref={saveErrorRef} className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm font-medium whitespace-pre-line text-rose-800" role="alert" aria-live="assertive">
+          {error}
+        </div>
+      ) : null}
 
       <div className="flex flex-col gap-3 sm:flex-row">
         <button type="submit" className="btn-primary disabled:cursor-not-allowed disabled:opacity-60" disabled={saving}>

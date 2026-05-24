@@ -31,34 +31,215 @@ type RecommendationSlotAllocation = {
   over_recommended?: boolean;
 };
 
+type StockValidationIssue = {
+  product_id: string;
+  product_name: string;
+  selected_qty: number;
+  available_qty: number;
+  shortage_qty: number;
+};
+
+type StockValidationResult = {
+  issues: StockValidationIssue[];
+  availableByProduct: Map<string, number>;
+  error?: string;
+  status?: number;
+};
+
+type DbRecord = Record<string, unknown>;
+
+type RecommendationRow = {
+  recommendation_key?: string | null;
+  machine_id?: string | null;
+  machine_slot_id?: string | null;
+  slot_code?: string | null;
+  product_id?: string | null;
+  current_qty?: unknown;
+  capacity?: unknown;
+  par_qty?: unknown;
+  suggested_qty?: unknown;
+  available_storage_qty?: unknown;
+  final_qty_to_take?: unknown;
+  priority?: string | null;
+};
+
+type GroupedRecommendationRow = {
+  group_key: string;
+  machine_id: string;
+  product_id: string;
+  current_qty: number;
+  par_qty: number;
+  suggested_qty: number;
+  recommended_take_qty: number;
+  available_storage_qty: number;
+  final_qty_to_take: number;
+  final_take_qty: number;
+  machine_slot_id: string | null;
+  slot_code: string | null;
+  rows: RecommendationRow[];
+  slot_allocations: RecommendationSlotAllocation[];
+};
+
+type RouteStopItemInsert = DbRecord & {
+  route_stop_id?: string;
+  product_id?: string | null;
+  planned_quantity?: number;
+};
+
+type RefillLineInsert = DbRecord & {
+  refill_order_id?: string;
+};
+
 const priorityOrder = ["critical", "high", "medium", "low"];
 
-function jsonError(message: string, status = 400) {
-  return NextResponse.json({ error: message }, { status });
+function jsonError(message: string, status = 400, extra?: Record<string, unknown>) {
+  return NextResponse.json({ error: message, ...(extra ?? {}) }, { status });
 }
 
-function isMissingRouteStopItems(error: any) {
-  return error?.code === "PGRST205" && String(error?.message ?? "").includes("route_stop_items");
+function recordValue(value: unknown, key: string) {
+  return typeof value === "object" && value !== null ? (value as DbRecord)[key] : undefined;
 }
 
-function isMissingColumn(error: any, column: string) {
-  const message = String(error?.message ?? "");
-  return ["42703", "PGRST204"].includes(String(error?.code ?? "")) && message.includes(column);
+function isMissingRouteStopItems(error: unknown) {
+  return recordValue(error, "code") === "PGRST205" && String(recordValue(error, "message") ?? "").includes("route_stop_items");
 }
 
-function stripColumn(rows: any[], column: string) {
+function isMissingColumn(error: unknown, column: string) {
+  const message = String(recordValue(error, "message") ?? "");
+  return ["42703", "PGRST204"].includes(String(recordValue(error, "code") ?? "")) && message.includes(column);
+}
+
+function stripColumn<T extends DbRecord>(rows: T[], column: string) {
   return rows.map((row) => {
-    const { [column]: _omitted, ...rest } = row;
-    return rest;
+    const next = { ...row };
+    delete next[column];
+    return next;
   });
 }
 
-function recommendationQuantity(row: any) {
-  return Math.max(0, Number(row.final_qty_to_take ?? row.suggested_qty ?? 0));
+function recommendationQuantity(row: RecommendationRow) {
+  return planQuantity(row.final_qty_to_take ?? row.suggested_qty);
 }
 
-function recommendationTarget(row: any) {
-  return Math.max(0, Number(row.capacity ?? row.par_qty ?? 0));
+function recommendationTarget(row: RecommendationRow) {
+  return planQuantity(row.capacity ?? row.par_qty);
+}
+
+function planQuantity(value: unknown) {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.floor(parsed));
+}
+
+function signedQuantity(value: unknown) {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed)) return 0;
+  return parsed;
+}
+
+function stockValidationMessage(issues: StockValidationIssue[]) {
+  return [
+    "These products exceed available storage stock:",
+    ...issues.map((issue) => `- ${issue.product_name}: selected ${issue.selected_qty}, available ${issue.available_qty}, shortage ${issue.shortage_qty}`),
+  ].join("\n");
+}
+
+async function validateRouteStock(
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>,
+  stockByProduct: Map<string, number>,
+  excludeRouteId?: string,
+): Promise<StockValidationResult> {
+  const productIds = Array.from(stockByProduct.keys()).filter((productId) => planQuantity(stockByProduct.get(productId)) > 0);
+  const availableByProduct = new Map<string, number>();
+  if (!productIds.length) return { issues: [], availableByProduct };
+
+  let reservedQuery = supabase
+    .from("route_stock_lines")
+    .select("route_id, product_id, planned_qty, picked_qty, routes!inner(status)")
+    .in("product_id", productIds)
+    .in("routes.status", ["draft", "assigned"]);
+  if (excludeRouteId) reservedQuery = reservedQuery.neq("route_id", excludeRouteId);
+
+  const [storageResult, reservedResult, productsResult] = await Promise.all([
+    supabase
+      .from("current_inventory_by_location")
+      .select("product_id, quantity_on_hand")
+      .eq("location_type", "storage")
+      .in("product_id", productIds),
+    reservedQuery,
+    supabase
+      .from("products")
+      .select("id, name")
+      .in("id", productIds),
+  ]);
+
+  if (storageResult.error) {
+    console.error("[routes:create] Failed to verify storage inventory", { error: storageResult.error });
+    return { issues: [], availableByProduct, error: "Could not verify storage inventory.", status: 500 };
+  }
+  if (reservedResult.error) {
+    console.error("[routes:create] Failed to verify reserved route stock", { error: reservedResult.error });
+    return { issues: [], availableByProduct, error: "Could not verify existing route reservations.", status: 500 };
+  }
+  if (productsResult.error) {
+    console.error("[routes:create] Failed to load product names for stock validation", { error: productsResult.error });
+    return { issues: [], availableByProduct, error: "Could not verify selected products.", status: 500 };
+  }
+
+  const storageByProduct = new Map<string, number>();
+  ((storageResult.data ?? []) as { product_id?: string | null; quantity_on_hand?: unknown }[]).forEach((row) => {
+    const productId = String(row.product_id ?? "");
+    if (!productId) return;
+    storageByProduct.set(productId, (storageByProduct.get(productId) ?? 0) + signedQuantity(row.quantity_on_hand));
+  });
+
+  const reservedByProduct = new Map<string, number>();
+  ((reservedResult.data ?? []) as { product_id?: string | null; planned_qty?: unknown; picked_qty?: unknown }[]).forEach((row) => {
+    const productId = String(row.product_id ?? "");
+    if (!productId) return;
+    const reserved = Math.max(0, planQuantity(row.planned_qty) - planQuantity(row.picked_qty));
+    reservedByProduct.set(productId, (reservedByProduct.get(productId) ?? 0) + reserved);
+  });
+
+  const productNameById = new Map(((productsResult.data ?? []) as { id?: string | null; name?: string | null }[]).map((product) => [String(product.id), String(product.name ?? "Unknown product")]));
+  const issues: StockValidationIssue[] = [];
+
+  for (const productId of productIds) {
+    const selectedQty = planQuantity(stockByProduct.get(productId));
+    if (selectedQty <= 0) continue;
+
+    const productName = productNameById.get(productId) ?? productId;
+    const storageQty = planQuantity(storageByProduct.get(productId));
+    const reservedQty = planQuantity(reservedByProduct.get(productId));
+    const availableQty = Math.max(0, storageQty - reservedQty);
+    const shortageQty = Math.max(0, selectedQty - availableQty);
+    availableByProduct.set(productId, availableQty);
+
+    console.info("[routes:create] Stock validation", {
+      product_id: productId,
+      product_name: productName,
+      selected_qty: selectedQty,
+      available_storage_stock: availableQty,
+      calculated_shortage: shortageQty,
+      storage_stock_units: storageQty,
+      reserved_route_units: reservedQty,
+      unit: "units",
+      exclude_route_id: excludeRouteId ?? null,
+    });
+
+    if (shortageQty > 0) {
+      issues.push({
+        product_id: productId,
+        product_name: productName,
+        selected_qty: selectedQty,
+        available_qty: availableQty,
+        shortage_qty: shortageQty,
+      });
+    }
+  }
+
+  if (issues.length) console.warn("[routes:create] Stock validation failed", { issues });
+  return { issues, availableByProduct };
 }
 
 function priorityScore(priority: string | null | undefined) {
@@ -66,7 +247,7 @@ function priorityScore(priority: string | null | undefined) {
   return index === -1 ? 0 : priorityOrder.length - index;
 }
 
-function allocationSort(a: any, b: any) {
+function allocationSort(a: RecommendationRow, b: RecommendationRow) {
   const priorityDifference = priorityScore(b.priority) - priorityScore(a.priority);
   if (priorityDifference) return priorityDifference;
   const quantityDifference = Math.max(0, Number(a.current_qty ?? 0)) - Math.max(0, Number(b.current_qty ?? 0));
@@ -74,15 +255,15 @@ function allocationSort(a: any, b: any) {
   return String(a.slot_code ?? "").localeCompare(String(b.slot_code ?? ""));
 }
 
-function allocateFinalTake(rows: any[], finalTakeQty: number, adminOverride: boolean): RecommendationSlotAllocation[] {
-  let remaining = Math.max(0, Math.floor(finalTakeQty));
+function allocateFinalTake(rows: RecommendationRow[], finalTakeQty: number, adminOverride: boolean): RecommendationSlotAllocation[] {
+  let remaining = planQuantity(finalTakeQty);
   const allocations = [...rows].sort(allocationSort).map((row) => {
     const recommendedTakeQty = recommendationQuantity(row);
     const allocation: RecommendationSlotAllocation = {
       recommendation_key: row.recommendation_key ?? null,
       machine_slot_id: row.machine_slot_id ?? null,
       slot_code: row.slot_code ?? null,
-      current_qty: Math.max(0, Number(row.current_qty ?? 0)),
+      current_qty: planQuantity(row.current_qty),
       target_qty: recommendationTarget(row),
       recommended_take_qty: recommendedTakeQty,
       final_take_qty: 0,
@@ -145,7 +326,7 @@ export async function POST(request: Request) {
   (payload.recommendationFinalTakeQty ?? []).forEach((item) => {
     const machineId = String(item.machineId ?? "").trim();
     const productId = String(item.productId ?? "").trim();
-    const finalTakeQty = Math.max(0, Math.floor(Number(item.finalTakeQty ?? 0)));
+    const finalTakeQty = planQuantity(item.finalTakeQty);
     if (machineId && productId) requestedFinalTakeByGroup.set(`${machineId}:${productId}`, finalTakeQty);
   });
   const legacyRecommendationSlotIds = Array.from(new Set((payload.machineSlotIds ?? []).map(String).filter(Boolean)));
@@ -154,7 +335,7 @@ export async function POST(request: Request) {
     .map((item) => ({
       machineId: String(item.machineId ?? "").trim(),
       productId: String(item.productId ?? "").trim(),
-      quantity: Math.max(0, Number(item.quantity ?? 0)),
+      quantity: planQuantity(item.quantity),
     }))
     .filter((item) => item.machineId && item.productId && item.quantity > 0);
 
@@ -180,21 +361,23 @@ export async function POST(request: Request) {
     return jsonError("Could not load selected refill recommendations.", 500);
   }
 
-  const recommendationRows = recommendationsResult.data ?? [];
-  const actionableRecommendationRows = recommendationRows.filter((row: any) => recommendationQuantity(row) > 0);
+  const recommendationRows = (recommendationsResult.data ?? []) as RecommendationRow[];
+  const actionableRecommendationRows = recommendationRows.filter((row) => recommendationQuantity(row) > 0);
   const groupedRecommendationRows = Array.from(
-    actionableRecommendationRows.reduce((groups: Map<string, any>, row: any) => {
-      const groupKey = `${row.machine_id}:${row.product_id}`;
+    actionableRecommendationRows.reduce((groups: Map<string, GroupedRecommendationRow>, row) => {
+      const machineId = String(row.machine_id ?? "");
+      const productId = String(row.product_id ?? "");
+      const groupKey = `${machineId}:${productId}`;
       const quantity = recommendationQuantity(row);
       const current = groups.get(groupKey) ?? {
         group_key: groupKey,
-        machine_id: row.machine_id,
-        product_id: row.product_id,
+        machine_id: machineId,
+        product_id: productId,
         current_qty: 0,
         par_qty: 0,
         suggested_qty: 0,
         recommended_take_qty: 0,
-        available_storage_qty: Number(row.available_storage_qty ?? 0),
+        available_storage_qty: planQuantity(row.available_storage_qty),
         final_qty_to_take: 0,
         final_take_qty: 0,
         machine_slot_id: null,
@@ -204,88 +387,54 @@ export async function POST(request: Request) {
       };
 
       current.rows.push(row);
-      current.current_qty += Math.max(0, Number(row.current_qty ?? 0));
+      current.current_qty += planQuantity(row.current_qty);
       current.par_qty += recommendationTarget(row);
       current.suggested_qty += quantity;
       current.recommended_take_qty += quantity;
-      current.available_storage_qty = Math.max(current.available_storage_qty, Number(row.available_storage_qty ?? 0));
+      current.available_storage_qty = Math.max(current.available_storage_qty, planQuantity(row.available_storage_qty));
       groups.set(groupKey, current);
       return groups;
-    }, new Map<string, any>()).values(),
-  ).map((group: any) => {
+    }, new Map<string, GroupedRecommendationRow>()).values(),
+  ).map((group) => {
     const requestedFinalTake = requestedFinalTakeByGroup.get(group.group_key);
-    const finalTakeQty = requestedFinalTake === undefined ? group.recommended_take_qty : Math.max(0, Math.floor(Number(requestedFinalTake ?? 0)));
+    const finalTakeQty = requestedFinalTake === undefined ? group.recommended_take_qty : planQuantity(requestedFinalTake);
     group.final_take_qty = finalTakeQty;
     group.final_qty_to_take = finalTakeQty;
     group.slot_allocations = allocateFinalTake(group.rows, finalTakeQty, adminOverride);
 
     if (group.rows.length === 1) {
-      group.machine_slot_id = group.rows[0].machine_slot_id;
-      group.slot_code = group.rows[0].slot_code;
+      group.machine_slot_id = group.rows[0].machine_slot_id ?? null;
+      group.slot_code = group.rows[0].slot_code ?? null;
     } else {
-      const slotCodes = Array.from(new Set(group.rows.map((row: any) => row.slot_code).filter(Boolean)));
+      const slotCodes = Array.from(new Set(group.rows.map((row) => row.slot_code).filter(Boolean)));
       group.slot_code = slotCodes.length ? slotCodes.join(", ") : null;
     }
     return group;
   });
-  const plannedRecommendationRows = groupedRecommendationRows.filter((row: any) => Math.max(0, Number(row.final_take_qty ?? 0)) > 0);
-  const recommendationMachineIds = plannedRecommendationRows.map((row: any) => row.machine_id).filter(Boolean);
+  const plannedRecommendationRows = groupedRecommendationRows.filter((row) => planQuantity(row.final_take_qty) > 0);
+  const recommendationMachineIds = plannedRecommendationRows.map((row) => row.machine_id).filter(Boolean);
   const selectedMachineIds = Array.from(new Set([...manualMachineIds, ...recommendationMachineIds, ...manualStopItems.map((item) => item.machineId)]));
   const stockByProduct = new Map<string, number>();
-  plannedRecommendationRows.forEach((row: any) => {
+  plannedRecommendationRows.forEach((row) => {
     const productId = String(row.product_id);
-    const quantity = Math.max(0, Number(row.final_take_qty ?? row.final_qty_to_take ?? 0));
+    const quantity = planQuantity(row.final_take_qty ?? row.final_qty_to_take);
     if (productId && quantity > 0) stockByProduct.set(productId, (stockByProduct.get(productId) ?? 0) + quantity);
   });
   manualStopItems.forEach((item) => {
-    stockByProduct.set(item.productId, (stockByProduct.get(item.productId) ?? 0) + item.quantity);
+    if (item.quantity > 0) stockByProduct.set(item.productId, (stockByProduct.get(item.productId) ?? 0) + item.quantity);
   });
   if (recommendationRows.length && !actionableRecommendationRows.length && !manualStopItems.length) {
     return jsonError("Enter planned quantities for capacity-missing VMS rows before creating a route.");
   }
   if (!stockByProduct.size) return jsonError("Planned machine refill quantities must be greater than zero.");
 
+  let availableUnitsByProduct = new Map<string, number>();
   if (!adminOverride) {
-    const storageResult = await supabase
-      .from("current_inventory_by_location")
-      .select("product_id, quantity_on_hand")
-      .eq("location_type", "storage")
-      .in("product_id", Array.from(stockByProduct.keys()));
-
-    if (storageResult.error) {
-      console.error("[routes:create] Failed to verify storage inventory", { error: storageResult.error });
-      return jsonError("Could not verify storage inventory.", 500);
-    }
-
-    const storageByProduct = new Map<string, number>();
-    (storageResult.data ?? []).forEach((row: any) => {
-      const productId = String(row.product_id);
-      storageByProduct.set(productId, (storageByProduct.get(productId) ?? 0) + Number(row.quantity_on_hand ?? 0));
-    });
-
-    const reservedResult = await supabase
-      .from("route_stock_lines")
-      .select("product_id, planned_qty, picked_qty, routes!inner(status)")
-      .in("product_id", Array.from(stockByProduct.keys()))
-      .in("routes.status", ["draft", "assigned"]);
-
-    if (reservedResult.error) {
-      console.error("[routes:create] Failed to verify reserved route stock", { error: reservedResult.error });
-      return jsonError("Could not verify existing route reservations.", 500);
-    }
-
-    const reservedByProduct = new Map<string, number>();
-    (reservedResult.data ?? []).forEach((row: any) => {
-      const productId = String(row.product_id);
-      const reserved = Math.max(0, Number(row.planned_qty ?? 0) - Number(row.picked_qty ?? 0));
-      reservedByProduct.set(productId, (reservedByProduct.get(productId) ?? 0) + reserved);
-    });
-
-    for (const [productId, quantity] of stockByProduct) {
-      const available = Math.max(0, (storageByProduct.get(productId) ?? 0) - (reservedByProduct.get(productId) ?? 0));
-      if (quantity > available) {
-        return jsonError("One or more selected products exceeds available storage stock.");
-      }
+    const stockValidation = await validateRouteStock(supabase, stockByProduct);
+    availableUnitsByProduct = stockValidation.availableByProduct;
+    if (stockValidation.error) return jsonError(stockValidation.error, stockValidation.status ?? 500);
+    if (stockValidation.issues.length) {
+      return jsonError(stockValidationMessage(stockValidation.issues), 400, { code: "stock_exceeded", stockErrors: stockValidation.issues });
     }
   }
 
@@ -316,7 +465,7 @@ export async function POST(request: Request) {
     return jsonError("Could not create the route. Check database permissions and try again.", 500);
   }
 
-  const routeId = routeInsert.data.id;
+  const routeId = String(routeInsert.data.id);
   console.info("[routes:create] Route inserted", { routeId, routeDate, operatorId: operatorId || null, routeStatus });
   const cleanupRoute = async () => {
     const stopItemsCleanup = await supabase.from("route_stop_items").delete().eq("route_id", routeId);
@@ -344,25 +493,11 @@ export async function POST(request: Request) {
       await cleanupRoute();
       return jsonError("Could not save route stops. The route was not created.", 500);
     }
-    stopsInsert.data.forEach((stop: any) => stopByMachine.set(stop.machine_id, stop.id));
+    (stopsInsert.data as { id: string; machine_id: string }[]).forEach((stop) => stopByMachine.set(stop.machine_id, stop.id));
   }
 
-  const routeStockInsert = await supabase.from("route_stock_lines").insert(
-    Array.from(stockByProduct.entries()).map(([productId, quantity]) => ({
-      route_id: routeId,
-      product_id: productId,
-      planned_qty: quantity,
-    })),
-  );
-
-  if (routeStockInsert.error) {
-    console.error("[routes:create] Failed to insert route stock lines", { routeId, error: routeStockInsert.error });
-    await cleanupRoute();
-    return jsonError("Could not save route stock. The route was not created.", 500);
-  }
-
-  const routeStopItems = [
-    ...plannedRecommendationRows.map((row: any) => ({
+  const routeStopItems: RouteStopItemInsert[] = [
+    ...plannedRecommendationRows.map((row) => ({
       route_id: routeId,
       route_stop_id: stopByMachine.get(row.machine_id),
       machine_id: row.machine_id,
@@ -393,7 +528,7 @@ export async function POST(request: Request) {
       returned_quantity: null,
       source: "manual_admin_assignment",
     })),
-  ].filter((item: any) => item.route_stop_id && item.product_id && item.planned_quantity > 0);
+  ].filter((item) => Boolean(item.route_stop_id && item.product_id && planQuantity(item.planned_quantity) > 0));
 
   if (routeStopItems.length) {
     let stopItemsToInsert = routeStopItems;
@@ -407,8 +542,17 @@ export async function POST(request: Request) {
     if (stopItemsInsert.error) {
       console.error("[routes:create] Failed to insert route stop items", { routeId, error: stopItemsInsert.error });
       if (!isMissingRouteStopItems(stopItemsInsert.error)) {
+        if (!adminOverride) {
+          const stockValidation = await validateRouteStock(supabase, stockByProduct, routeId);
+          if (stockValidation.error) console.error("[routes:create] Stock recheck after planned item insert failure failed", { routeId, error: stockValidation.error });
+          if (stockValidation.issues.length) {
+            await cleanupRoute();
+            return jsonError(stockValidationMessage(stockValidation.issues), 400, { code: "stock_exceeded", stockErrors: stockValidation.issues });
+          }
+        }
         await cleanupRoute();
-        return jsonError("Could not save machine-level planned items. The route was not created.", 500);
+        const databaseMessage = String(stopItemsInsert.error.message ?? stopItemsInsert.error.details ?? "").trim();
+        return jsonError(databaseMessage ? `Could not save machine-level planned items. The route was not created. ${databaseMessage}` : "Could not save machine-level planned items. The route was not created.", 500);
       }
       console.warn("[routes:create] route_stop_items table is missing; continuing with refill_order_lines fallback", { routeId });
     }
@@ -434,12 +578,12 @@ export async function POST(request: Request) {
     }
 
     const orderByMachine = new Map<string, string>();
-    refillOrderInsert.data.forEach((order: any) => {
+    (refillOrderInsert.data as { id: string; machine_id: string }[]).forEach((order) => {
       orderByMachine.set(order.machine_id, order.id);
     });
 
     const recommendationLines = plannedRecommendationRows
-      .map((row: any) => ({
+      .map((row): RefillLineInsert => ({
         refill_order_id: orderByMachine.get(row.machine_id),
         machine_slot_id: row.machine_slot_id,
         slot_code: row.slot_code ?? null,
@@ -447,16 +591,16 @@ export async function POST(request: Request) {
         current_qty_vms: row.current_qty,
         par_qty: row.par_qty,
         suggested_qty: row.recommended_take_qty,
-        available_storage_qty: row.available_storage_qty,
+        available_storage_qty: availableUnitsByProduct.get(String(row.product_id)) ?? planQuantity(row.available_storage_qty),
         final_qty_to_take: row.final_take_qty,
         recommended_take_qty: row.recommended_take_qty,
         final_take_qty: row.final_take_qty,
         source: "refill_recommendation",
         slot_allocations: row.slot_allocations,
       }))
-      .filter((line: any) => Boolean(line.refill_order_id));
+      .filter((line): line is RefillLineInsert => Boolean(line.refill_order_id));
     const manualLines = manualStopItems
-      .map((item) => ({
+      .map((item): RefillLineInsert => ({
         refill_order_id: orderByMachine.get(item.machineId),
         machine_slot_id: null,
         slot_code: null,
@@ -464,13 +608,13 @@ export async function POST(request: Request) {
         current_qty_vms: 0,
         par_qty: item.quantity,
         suggested_qty: item.quantity,
-        available_storage_qty: stockByProduct.get(item.productId) ?? 0,
+        available_storage_qty: availableUnitsByProduct.get(item.productId) ?? 0,
         final_qty_to_take: item.quantity,
         recommended_take_qty: item.quantity,
         final_take_qty: item.quantity,
         source: "manual_admin_assignment",
       }))
-      .filter((line: any) => Boolean(line.refill_order_id));
+      .filter((line): line is RefillLineInsert => Boolean(line.refill_order_id));
     const refillLines = [...recommendationLines, ...manualLines];
 
     if (!refillLines.length) {
@@ -493,6 +637,28 @@ export async function POST(request: Request) {
       await cleanupRoute();
       return jsonError("Could not save refill order lines. The route was not created.", 500);
     }
+  }
+
+  const routeStockInsert = await supabase.from("route_stock_lines").insert(
+    Array.from(stockByProduct.entries()).map(([productId, quantity]) => ({
+      route_id: routeId,
+      product_id: productId,
+      planned_qty: planQuantity(quantity),
+    })),
+  );
+
+  if (routeStockInsert.error) {
+    console.error("[routes:create] Failed to insert route stock lines", { routeId, error: routeStockInsert.error });
+    if (!adminOverride) {
+      const stockValidation = await validateRouteStock(supabase, stockByProduct, routeId);
+      if (stockValidation.error) console.error("[routes:create] Stock recheck after route stock insert failure failed", { routeId, error: stockValidation.error });
+      if (stockValidation.issues.length) {
+        await cleanupRoute();
+        return jsonError(stockValidationMessage(stockValidation.issues), 400, { code: "stock_exceeded", stockErrors: stockValidation.issues });
+      }
+    }
+    await cleanupRoute();
+    return jsonError("Could not save route stock. The route was not created.", 500);
   }
 
   const verifyRoute = await supabase.from("routes").select("id").eq("id", routeId).single();

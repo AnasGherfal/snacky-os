@@ -7,6 +7,62 @@ import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
+function signedQuantity(value: unknown) {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed)) return 0;
+  return parsed;
+}
+
+function unitQuantity(value: unknown) {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.floor(parsed));
+}
+
+type ProductRow = {
+  id: string;
+  sku: string | null;
+  barcode: string | null;
+  name: string;
+  category: string | null;
+  brand: string | null;
+  image_url: string | null;
+};
+
+type RecommendationRow = {
+  recommendation_key: string;
+  machine_slot_id: string | null;
+  machine_id: string;
+  machine_name: string;
+  machine_code: string;
+  slot_code: string | null;
+  product_id: string;
+  product_name: string;
+  current_qty: number;
+  capacity: number | null;
+  par_qty: number | null;
+  suggested_qty: number | null;
+  available_storage_qty: number;
+  final_qty_to_take: number | null;
+  priority?: string | null;
+};
+
+type StorageInventoryRow = {
+  product_id: string;
+  product_name: string;
+  quantity_on_hand: unknown;
+};
+
+type ReservedStockRow = {
+  product_id: string;
+  planned_qty: unknown;
+  picked_qty: unknown;
+};
+
+type RecentMovementRow = {
+  product_id: string | null;
+};
+
 export default async function NewRoutePage() {
   const profile = await getCurrentProfile();
   if (!profile || !canAccessPath({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/routes/new")) {
@@ -40,7 +96,6 @@ export default async function NewRoutePage() {
       .from("current_inventory_by_location")
       .select("product_id, product_name, quantity_on_hand")
       .eq("location_type", "storage")
-      .gt("quantity_on_hand", 0)
       .order("product_name"),
     supabase
       .from("route_stock_lines")
@@ -60,28 +115,29 @@ export default async function NewRoutePage() {
   }
 
   const today = new Date().toISOString().slice(0, 10);
-  const activeProductIds = new Set((products ?? []).map((product: any) => product.id));
-  const activeRecommendations = (recommendations ?? []).filter((recommendation: any) => activeProductIds.has(recommendation.product_id));
+  const productRows = (products ?? []) as ProductRow[];
+  const activeProductIds = new Set(productRows.map((product) => product.id));
+  const activeRecommendations = ((recommendations ?? []) as RecommendationRow[]).filter((recommendation) => activeProductIds.has(recommendation.product_id));
   const storageByProduct = new Map<string, { product_id: string; product_name: string; quantity_on_hand: number }>();
-  (storageInventory ?? []).forEach((row: any) => {
+  ((storageInventory ?? []) as StorageInventoryRow[]).forEach((row) => {
     const current = storageByProduct.get(row.product_id);
     storageByProduct.set(row.product_id, {
       product_id: row.product_id,
       product_name: row.product_name,
-      quantity_on_hand: (current?.quantity_on_hand ?? 0) + Number(row.quantity_on_hand ?? 0),
+      quantity_on_hand: (current?.quantity_on_hand ?? 0) + signedQuantity(row.quantity_on_hand),
     });
   });
   const reservedByProduct = new Map<string, number>();
-  (reservedStock ?? []).forEach((row: any) => {
-    const reserved = Math.max(0, Number(row.planned_qty ?? 0) - Number(row.picked_qty ?? 0));
+  ((reservedStock ?? []) as ReservedStockRow[]).forEach((row) => {
+    const reserved = Math.max(0, unitQuantity(row.planned_qty) - unitQuantity(row.picked_qty));
     reservedByProduct.set(row.product_id, (reservedByProduct.get(row.product_id) ?? 0) + reserved);
   });
   const availableStorage = Array.from(storageByProduct.values())
-    .map((row) => ({ ...row, quantity_on_hand: Math.max(0, row.quantity_on_hand - (reservedByProduct.get(row.product_id) ?? 0)) }))
+    .map((row) => ({ ...row, quantity_on_hand: Math.max(0, unitQuantity(row.quantity_on_hand) - unitQuantity(reservedByProduct.get(row.product_id))) }))
     .filter((row) => row.quantity_on_hand > 0);
   const availableByProduct = new Map(availableStorage.map((row) => [row.product_id, row.quantity_on_hand]));
-  const productCatalog = (products ?? [])
-    .map((product: any) => ({
+  const productCatalog = productRows
+    .map((product) => ({
       id: product.id,
       name: product.name,
       sku: product.sku,
@@ -89,10 +145,10 @@ export default async function NewRoutePage() {
       category: product.category,
       brand: product.brand,
       imageUrl: product.image_url,
-      availableQty: availableByProduct.get(product.id) ?? 0,
-      storageQty: storageByProduct.get(product.id)?.quantity_on_hand ?? 0,
+      availableQty: unitQuantity(availableByProduct.get(product.id)),
+      storageQty: unitQuantity(storageByProduct.get(product.id)?.quantity_on_hand),
     }));
-  const recentProductIds = Array.from(new Set((recentMovements ?? []).map((row: any) => row.product_id).filter(Boolean))).slice(0, 12);
+  const recentProductIds = Array.from(new Set(((recentMovements ?? []) as RecentMovementRow[]).map((row) => row.product_id).filter((productId): productId is string => Boolean(productId)))).slice(0, 12);
 
   return (
     <>
