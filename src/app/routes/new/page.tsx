@@ -104,6 +104,7 @@ function logRouteBuilderQueryError({
     user_roles: profile?.roles ?? [],
     organization_id: null,
     query_parameters: params,
+    stack_trace: error instanceof Error ? error.stack : null,
   });
   return {
     key,

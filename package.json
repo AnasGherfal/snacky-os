@@ -12,6 +12,7 @@
     "test:historical-route-deduction": "node --experimental-strip-types --test scripts/test-historical-route-deduction.mjs",
     "test:authz-permissions": "node --experimental-strip-types --test scripts/test-authz-permissions.mjs",
     "test:route-workflow": "node --experimental-strip-types --test scripts/test-route-workflow.mjs",
+    "test:route-inventory-regression": "node --test scripts/test-route-inventory-regression.mjs",
     "test:critical-workflows": "node --test scripts/test-critical-workflows.mjs",
     "smoke:auth-pages": "node --test scripts/smoke-authenticated-pages.mjs",
     "bootstrap:production": "node scripts/bootstrap-production-data.mjs",

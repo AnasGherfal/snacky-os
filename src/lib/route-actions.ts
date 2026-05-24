@@ -7,8 +7,8 @@ import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/a
 import { canExecuteRoutes, isAdminRole } from "@/lib/authz";
 import {
   ROUTE_ASSIGNED_STATUS,
-  ROUTE_AVAILABLE_STATUS,
   ROUTE_CANCELED_STATUS,
+  ROUTE_DRAFT_STATUS,
   fallbackRouteStatusForEnumMismatch,
   isAvailableRouteStatus,
   isRouteStatusEnumMismatch,
@@ -294,7 +294,7 @@ export async function assignRoute(formData: FormData) {
 
   let nextStatus = operatorId
     ? (isAvailableRouteStatus(route.status) ? ROUTE_ASSIGNED_STATUS : route.status)
-    : route.status === ROUTE_ASSIGNED_STATUS ? ROUTE_AVAILABLE_STATUS : route.status;
+    : route.status === ROUTE_ASSIGNED_STATUS ? ROUTE_DRAFT_STATUS : route.status;
   let updateResult = await supabase
     .from("routes")
     .update({ operator_id: operatorId, status: nextStatus })

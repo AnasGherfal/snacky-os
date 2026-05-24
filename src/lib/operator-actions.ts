@@ -7,10 +7,8 @@ import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute, canExecuteRoutes } from "@/lib/authz";
 import {
-  ROUTE_FILLING_STATUS,
   ROUTE_COMPLETED_STATUS,
   ROUTE_IN_PROGRESS_STATUS,
-  ROUTE_PICKUP_CONFIRMED_STATUS,
   fallbackRouteStatusForEnumMismatch,
   isActiveRouteStatus,
   isAvailableRouteStatus,
@@ -76,6 +74,43 @@ function unitQuantity(value: unknown) {
   const parsed = Number(value ?? 0);
   if (!Number.isFinite(parsed)) return 0;
   return Math.max(0, Math.floor(parsed));
+}
+
+function optionalColumnError(error: unknown, optionalColumns: string[]) {
+  if (!error || typeof error !== "object") return null;
+  const row = error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown };
+  const code = String(row.code ?? "");
+  const text = [row.code, row.message, row.details, row.hint].map((value) => String(value ?? "")).join(" ").toLowerCase();
+  if (!["42703", "PGRST204"].includes(code) && !text.includes("schema cache") && !text.includes("column")) return null;
+  return optionalColumns.find((column) => text.includes(column.toLowerCase())) ?? null;
+}
+
+function stripColumnFromRows<T extends Record<string, unknown>>(rows: T[], column: string) {
+  return rows.map((row) => {
+    const next = { ...row };
+    delete next[column];
+    return next;
+  });
+}
+
+async function insertPickListRowsWithOptionalColumnFallback(
+  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>,
+  rows: Record<string, unknown>[],
+) {
+  let rowsToInsert = rows;
+  const removedColumns: string[] = [];
+
+  for (;;) {
+    const result = await supabase.from("route_pick_list_items").insert(rowsToInsert);
+    if (!result.error) return result.error;
+
+    const missingColumn = optionalColumnError(result.error, ["route_stop_id", "route_stop_item_id", "machine_id"].filter((column) => !removedColumns.includes(column)));
+    if (!missingColumn) return result.error;
+
+    removedColumns.push(missingColumn);
+    rowsToInsert = stripColumnFromRows(rowsToInsert, missingColumn);
+    console.warn("[operator:pick-list] Retrying pick list insert without optional stop column", { missingColumn, removedColumns });
+  }
 }
 
 function machineFillDelta(movement: any) {
@@ -262,8 +297,8 @@ export async function startRoute(routeId: string) {
  */
 export async function confirmPickList(
   routeId: string,
-  pickedItems: { productId: string; quantity: number; plannedQty?: number; reason?: string; notes?: string }[],
-  extras: { productId: string; quantity: number; reason: string; notes?: string }[] = [],
+  pickedItems: { routeStopItemId?: string | null; routeStopId?: string | null; machineId?: string | null; productId: string; quantity: number; plannedQty?: number; reason?: string; notes?: string }[],
+  extras: { routeStopId?: string | null; machineId?: string | null; productId: string; quantity: number; reason: string; notes?: string }[] = [],
 ) {
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) throw new Error("No Supabase client");
@@ -290,74 +325,168 @@ export async function confirmPickList(
       throw new Error("Completed or cancelled routes cannot be edited.");
     }
 
+    const cleanId = (value: unknown) => {
+      const cleaned = String(value ?? "").trim();
+      return cleaned || null;
+    };
+
+    const { data: routeStops, error: routeStopsError } = await supabase
+      .from("route_stops")
+      .select("id, machine_id")
+      .eq("route_id", routeId);
+    if (routeStopsError) throwActionError(routeStopsError, "Could not load route stops.");
+    const stopById = new Map((routeStops ?? []).map((stop: any) => [String(stop.id), stop]));
+    const stopByMachine = new Map((routeStops ?? []).map((stop: any) => [String(stop.machine_id), stop]));
+
     let { data: routeStopItems, error: stopItemsError }: { data: any[] | null; error: any } = await supabase
       .from("route_stop_items")
-      .select("product_id, planned_quantity")
+      .select("id, route_stop_id, machine_id, product_id, planned_quantity")
       .eq("route_id", routeId);
 
     if (stopItemsError) {
       if (!isMissingTable(stopItemsError, "route_stop_items")) throwActionError(stopItemsError, "Could not load the route plan.");
       const fallback = await supabase
         .from("refill_orders")
-        .select("id, refill_order_lines(product_id, final_qty_to_take, suggested_qty)")
+        .select("id, machine_id, refill_order_lines(id, product_id, final_qty_to_take, suggested_qty)")
         .eq("route_id", routeId);
       if (fallback.error) throwActionError(fallback.error, "Could not load the route plan.");
       routeStopItems = (fallback.data ?? []).flatMap((order: any) =>
         (order.refill_order_lines ?? []).map((line: any) => ({
+          id: line.id,
+          route_stop_id: stopByMachine.get(String(order.machine_id ?? ""))?.id ?? null,
+          machine_id: order.machine_id,
           product_id: line.product_id,
           planned_quantity: Number(line.final_qty_to_take ?? line.suggested_qty ?? 0),
         })),
       );
     }
 
-    const plannedByProduct = new Map<string, number>();
+    type PlannedStopItem = {
+      id: string;
+      routeStopId: string | null;
+      machineId: string | null;
+      productId: string;
+      plannedQty: number;
+    };
+    type PickedStopItem = PlannedStopItem & {
+      quantity: number;
+      reason?: string;
+      notes?: string;
+      actionType?: "planned_pick" | "extra_product";
+    };
+
+    const plannedStopItems: PlannedStopItem[] = [];
+    const routeStopItemById = new Map<string, PlannedStopItem>();
+    const routeStopProductToItem = new Map<string, PlannedStopItem>();
+    const routeStopProductKey = (routeStopId: string | null | undefined, productId: string | null | undefined) => `${routeStopId ?? ""}:${productId ?? ""}`;
+
     (routeStopItems ?? []).forEach((line: any) => {
       const productId = String(line.product_id ?? "").trim();
       if (!productId) return;
-      plannedByProduct.set(productId, (plannedByProduct.get(productId) ?? 0) + unitQuantity(line.planned_quantity));
+      const planned: PlannedStopItem = {
+        id: String(line.id ?? ""),
+        routeStopId: cleanId(line.route_stop_id),
+        machineId: cleanId(line.machine_id),
+        productId,
+        plannedQty: unitQuantity(line.planned_quantity),
+      };
+      plannedStopItems.push(planned);
+      if (planned.id) routeStopItemById.set(planned.id, planned);
+      if (planned.routeStopId) routeStopProductToItem.set(routeStopProductKey(planned.routeStopId, productId), planned);
     });
 
-    const normalizedPickedItems = new Map<string, { productId: string; quantity: number; plannedQty: number; reason?: string; notes?: string }>();
+    const pickedStopItems = new Map<string, PickedStopItem>();
+    const legacyPickedByProduct = new Map<string, { productId: string; quantity: number; plannedQty?: number; reason?: string; notes?: string }>();
+    const addPickedStopItem = (item: Omit<PickedStopItem, "quantity"> & { quantity: number }) => {
+      const key = item.id || routeStopProductKey(item.routeStopId, item.productId);
+      const current = pickedStopItems.get(key);
+      pickedStopItems.set(key, {
+        id: item.id,
+        routeStopId: item.routeStopId,
+        machineId: item.machineId,
+        productId: item.productId,
+        plannedQty: item.plannedQty,
+        quantity: (current?.quantity ?? 0) + item.quantity,
+        reason: item.reason || current?.reason,
+        notes: mergeNotes(current?.notes, item.notes),
+        actionType: current?.actionType === "extra_product" ? "extra_product" : item.actionType,
+      });
+    };
+
     pickedItems.forEach((item) => {
       const productId = String(item.productId ?? "").trim();
       if (!productId) return;
-      const current = normalizedPickedItems.get(productId);
       const quantity = Math.max(0, Number(item.quantity ?? 0));
-      const plannedQty = Math.max(0, Number(item.plannedQty ?? plannedByProduct.get(productId) ?? 0));
-      normalizedPickedItems.set(productId, {
+      const routeStopItemId = cleanId(item.routeStopItemId);
+      const planned = routeStopItemId ? routeStopItemById.get(routeStopItemId) : undefined;
+      const routeStopId = cleanId(item.routeStopId) ?? planned?.routeStopId ?? null;
+      const machineId = cleanId(item.machineId) ?? planned?.machineId ?? (routeStopId ? cleanId(stopById.get(routeStopId)?.machine_id) : null);
+      const plannedQty = Math.max(0, Number(item.plannedQty ?? planned?.plannedQty ?? 0));
+
+      if (routeStopItemId || routeStopId) {
+        addPickedStopItem({
+          id: routeStopItemId ?? "",
+          routeStopId,
+          machineId,
+          productId,
+          plannedQty,
+          quantity,
+          reason: item.reason,
+          notes: item.notes,
+          actionType: "planned_pick",
+        });
+        return;
+      }
+
+      const current = legacyPickedByProduct.get(productId);
+      legacyPickedByProduct.set(productId, {
         productId,
         quantity: (current?.quantity ?? 0) + quantity,
-        plannedQty: current ? current.plannedQty : plannedQty,
+        plannedQty: current?.plannedQty ?? plannedQty,
         reason: item.reason || current?.reason,
         notes: mergeNotes(current?.notes, item.notes),
       });
     });
 
-    const normalizedExtras = new Map<string, { productId: string; quantity: number; reason: string; notes?: string }>();
+    const unassignedExtras = new Map<string, { productId: string; quantity: number; reason: string; notes?: string }>();
+    const newAssignedExtras = new Map<string, { routeStopId: string; machineId: string; productId: string; quantity: number; reason: string; notes?: string }>();
     extras.forEach((item) => {
       const productId = String(item.productId ?? "").trim();
       const quantity = Math.max(0, Number(item.quantity ?? 0));
       if (!productId || quantity <= 0) return;
 
-      if (plannedByProduct.has(productId)) {
-        const current = normalizedPickedItems.get(productId) ?? {
+      const routeStopId = cleanId(item.routeStopId);
+      const stop = routeStopId ? stopById.get(routeStopId) : null;
+      const machineId = cleanId(item.machineId) ?? cleanId(stop?.machine_id);
+
+      if (routeStopId) {
+        const planned = routeStopProductToItem.get(routeStopProductKey(routeStopId, productId));
+        if (planned) {
+          addPickedStopItem({
+            ...planned,
+            quantity,
+            reason: item.reason,
+            notes: item.notes,
+            actionType: "planned_pick",
+          });
+          return;
+        }
+        if (!machineId) throw new Error("Added products must be assigned to a valid route stop.");
+        const key = routeStopProductKey(routeStopId, productId);
+        const current = newAssignedExtras.get(key);
+        newAssignedExtras.set(key, {
+          routeStopId,
+          machineId,
           productId,
-          quantity: 0,
-          plannedQty: plannedByProduct.get(productId) ?? 0,
-          reason: item.reason,
-          notes: undefined,
-        };
-        normalizedPickedItems.set(productId, {
-          ...current,
-          quantity: current.quantity + quantity,
-          reason: item.reason || current.reason,
-          notes: mergeNotes(current.notes, item.notes),
+          quantity: (current?.quantity ?? 0) + quantity,
+          reason: item.reason || current?.reason || "Other",
+          notes: mergeNotes(current?.notes, item.notes),
         });
         return;
       }
 
-      const current = normalizedExtras.get(productId);
-      normalizedExtras.set(productId, {
+      const current = unassignedExtras.get(productId);
+      unassignedExtras.set(productId, {
         productId,
         quantity: (current?.quantity ?? 0) + quantity,
         reason: item.reason || current?.reason || "Other",
@@ -365,8 +494,63 @@ export async function confirmPickList(
       });
     });
 
-    const pickedItemRows = Array.from(normalizedPickedItems.values());
-    const extraRows = Array.from(normalizedExtras.values());
+    if (newAssignedExtras.size) {
+      const insertRows = Array.from(newAssignedExtras.values()).map((item) => ({
+        route_id: routeId,
+        route_stop_id: item.routeStopId,
+        machine_id: item.machineId,
+        product_id: item.productId,
+        machine_slot_id: null,
+        slot_code: null,
+        planned_quantity: item.quantity,
+        picked_quantity: item.quantity,
+        source: "manual_admin_assignment",
+        notes: "Added during storage pickup",
+      }));
+      const { data: createdStopItems, error: createStopItemError } = await supabase
+        .from("route_stop_items")
+        .insert(insertRows)
+        .select("id, route_stop_id, machine_id, product_id, planned_quantity");
+      if (createStopItemError && !isMissingTable(createStopItemError, "route_stop_items")) throwActionError(createStopItemError, "Could not save machine-assigned added products.");
+
+      (createdStopItems ?? []).forEach((line: any) => {
+        const productId = String(line.product_id ?? "");
+        const routeStopId = cleanId(line.route_stop_id);
+        const extra = newAssignedExtras.get(routeStopProductKey(routeStopId, productId));
+        if (!extra || !productId || !routeStopId) return;
+        const planned: PlannedStopItem = {
+          id: String(line.id ?? ""),
+          routeStopId,
+          machineId: cleanId(line.machine_id),
+          productId,
+          plannedQty: unitQuantity(line.planned_quantity),
+        };
+        plannedStopItems.push(planned);
+        routeStopItemById.set(planned.id, planned);
+        routeStopProductToItem.set(routeStopProductKey(routeStopId, productId), planned);
+        addPickedStopItem({
+          ...planned,
+          quantity: extra.quantity,
+          reason: extra.reason,
+          notes: extra.notes,
+          actionType: "extra_product",
+        });
+      });
+    }
+
+    const plannedByProduct = new Map<string, number>();
+    plannedStopItems.forEach((line) => {
+      if (!line.productId) return;
+      plannedByProduct.set(line.productId, (plannedByProduct.get(line.productId) ?? 0) + unitQuantity(line.plannedQty));
+    });
+
+    const legacyPickedRows = Array.from(legacyPickedByProduct.values()).map((item) => ({
+      ...item,
+      plannedQty: Math.max(0, Number(item.plannedQty ?? plannedByProduct.get(item.productId) ?? 0)),
+    }));
+    const pickedStopItemRows = Array.from(pickedStopItems.values());
+    const pickedItemRows = [...pickedStopItemRows, ...legacyPickedRows];
+    const extraRows = Array.from(unassignedExtras.values());
     const actualPickLines = [
       ...pickedItemRows.map((item) => ({ productId: item.productId, quantity: item.quantity })),
       ...extraRows.map((item) => ({ productId: item.productId, quantity: item.quantity })),
@@ -389,7 +573,7 @@ export async function confirmPickList(
     if (productError) throwActionError(productError, "Could not verify selected products.");
 
     const productById = new Map((productRows ?? []).map((product: any) => [String(product.id), product]));
-    const manualProductIds = new Set(extraRows.map((item) => item.productId));
+    const manualProductIds = new Set(extras.map((item) => String(item.productId ?? "").trim()).filter(Boolean));
     for (const productId of productIds) {
       const product = productById.get(productId);
       if (!product) throw new Error("Product not found. Remove it from the pickup list and add it again.");
@@ -592,11 +776,33 @@ export async function confirmPickList(
     }
 
     const pickListRows = [
-      ...pickedItemRows.map((item) => {
+      ...pickedStopItemRows.map((item) => {
+        const plannedQty = Number(item.plannedQty ?? 0);
+        const pickedQty = Math.max(0, Number(item.quantity ?? 0));
+        const actionType = item.actionType ?? "planned_pick";
+        return {
+          route_id: routeId,
+          route_stop_id: item.routeStopId,
+          route_stop_item_id: item.id || null,
+          machine_id: item.machineId,
+          product_id: item.productId,
+          planned_qty: actionType === "extra_product" ? 0 : plannedQty,
+          picked_qty: pickedQty,
+          action_type: actionType,
+          reason: actionType === "extra_product" || pickedQty !== plannedQty ? item.reason || "Other" : null,
+          notes: item.notes || null,
+          needs_review: actionType === "extra_product" || pickedQty !== plannedQty,
+          created_by: route.operator_id,
+        };
+      }),
+      ...legacyPickedRows.map((item) => {
         const plannedQty = plannedByProduct.get(String(item.productId)) ?? Number(item.plannedQty ?? 0);
         const pickedQty = Math.max(0, Number(item.quantity ?? 0));
         return {
           route_id: routeId,
+          route_stop_id: null,
+          route_stop_item_id: null,
+          machine_id: null,
           product_id: item.productId,
           planned_qty: plannedQty,
           picked_qty: pickedQty,
@@ -609,6 +815,9 @@ export async function confirmPickList(
       }),
       ...extraRows.map((item) => ({
         route_id: routeId,
+        route_stop_id: null,
+        route_stop_item_id: null,
+        machine_id: null,
         product_id: item.productId,
         planned_qty: 0,
         picked_qty: Math.max(0, Number(item.quantity ?? 0)),
@@ -624,20 +833,23 @@ export async function confirmPickList(
     if (pickListDeleteError && !isMissingTable(pickListDeleteError, "route_pick_list_items")) throwActionError(pickListDeleteError, "Could not update the confirmed pick list.");
 
     if (pickListRows.length) {
-      const { error: pickListError } = await supabase.from("route_pick_list_items").insert(pickListRows);
+      const pickListError = await insertPickListRowsWithOptionalColumnFallback(supabase, pickListRows);
       if (pickListError && !isMissingTable(pickListError, "route_pick_list_items")) throwActionError(pickListError, "Could not save the confirmed pick list.");
     }
 
     const { data: routeOrders, error: routeOrdersError } = await supabase
       .from("refill_orders")
-      .select("id, refill_order_lines(id, product_id, final_qty_to_take, suggested_qty)")
+      .select("id, machine_id, refill_order_lines(id, product_id, final_qty_to_take, suggested_qty)")
       .eq("route_id", routeId);
     if (routeOrdersError) throwActionError(routeOrdersError, "Could not load refill order lines.");
+    const linesByMachineProduct = new Map<string, any[]>();
     const linesByProduct = new Map<string, any[]>();
     routeOrders?.forEach((order: any) => {
       order.refill_order_lines?.forEach((line: any) => {
-        const key = String(line.product_id);
-        linesByProduct.set(key, [...(linesByProduct.get(key) ?? []), line]);
+        const productKey = String(line.product_id);
+        const machineKey = `${String(order.machine_id ?? "")}:${productKey}`;
+        linesByProduct.set(productKey, [...(linesByProduct.get(productKey) ?? []), line]);
+        linesByMachineProduct.set(machineKey, [...(linesByMachineProduct.get(machineKey) ?? []), line]);
       });
     });
 
@@ -657,7 +869,35 @@ export async function confirmPickList(
       if (stockLineError) throwActionError(stockLineError, "Could not update route stock totals.");
     }
 
-    for (const item of pickedItemRows.filter((entry) => Number(entry.quantity) >= 0)) {
+    for (const item of pickedStopItemRows.filter((entry) => Number(entry.quantity) >= 0)) {
+      if (item.id) {
+        const { error: stopItemPickError } = await supabase
+          .from("route_stop_items")
+          .update({ picked_quantity: Math.max(0, Number(item.quantity ?? 0)), updated_at: new Date().toISOString() })
+          .eq("id", item.id);
+        if (stopItemPickError && !isMissingTable(stopItemPickError, "route_stop_items")) throwActionError(stopItemPickError, "Could not update machine-level pickup quantities.");
+      }
+    }
+
+    for (const item of pickedStopItemRows.filter((entry) => Number(entry.quantity) >= 0)) {
+      let remaining = Number(item.quantity);
+      const lines = item.machineId ? (linesByMachineProduct.get(`${item.machineId}:${String(item.productId)}`) ?? []) : [];
+
+      for (const line of lines) {
+        const plannedQty = Number(line.final_qty_to_take ?? line.suggested_qty ?? 0);
+        const pickedQty = Math.max(0, Math.min(remaining, plannedQty));
+        remaining -= pickedQty;
+
+        const { error: lineError } = await supabase
+          .from("refill_order_lines")
+          .update({ picked_qty: pickedQty })
+          .eq("id", line.id);
+
+        if (lineError) throwActionError(lineError, "Could not update refill line picked quantities.");
+      }
+    }
+
+    for (const item of legacyPickedRows.filter((entry) => Number(entry.quantity) >= 0)) {
       let remaining = Number(item.quantity);
       const lines = linesByProduct.get(String(item.productId)) ?? [];
 
@@ -675,8 +915,9 @@ export async function confirmPickList(
       }
     }
 
-    // Pickup confirmed: the operator bag now reflects the saved pick list.
-    let nextPickupStatus: RouteStatus = ROUTE_PICKUP_CONFIRMED_STATUS;
+    // Keep the persisted route status on the stable in_progress enum value; the
+    // route_stock_lines and pick-list rows carry the pickup detail.
+    let nextPickupStatus: RouteStatus = ROUTE_IN_PROGRESS_STATUS;
     let routeStatusResult = await supabase
       .from("routes")
       .update({ status: nextPickupStatus, started_at: new Date().toISOString() })
@@ -1350,7 +1591,7 @@ export async function completeStop({
 
     if (stopUpdateError) throwActionError(stopUpdateError, "Could not complete this stop.");
 
-    let nextFillingStatus: RouteStatus = ROUTE_FILLING_STATUS;
+    let nextFillingStatus: RouteStatus = ROUTE_IN_PROGRESS_STATUS;
     let routeStatusUpdate = await supabase
       .from("routes")
       .update({ status: nextFillingStatus })

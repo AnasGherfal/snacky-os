@@ -16,6 +16,17 @@ export const ROUTE_STATUSES = [
 
 export type RouteStatus = (typeof ROUTE_STATUSES)[number];
 
+export const ROUTE_DATABASE_WRITE_STATUSES = [
+  "draft",
+  "assigned",
+  "in_progress",
+  "completed",
+  "reviewed",
+  "cancelled",
+] as const;
+
+export type RouteDatabaseWriteStatus = (typeof ROUTE_DATABASE_WRITE_STATUSES)[number];
+
 export const ROUTE_DRAFT_STATUS = "draft" satisfies RouteStatus;
 export const ROUTE_AVAILABLE_STATUS = "available" satisfies RouteStatus;
 export const ROUTE_ASSIGNED_STATUS = "assigned" satisfies RouteStatus;
@@ -94,8 +105,8 @@ export function isRouteStatus(status: string | null | undefined): status is Rout
   return includesStatus(ROUTE_STATUSES, status);
 }
 
-export function routeStatusForNewRoute(operatorId: string | null | undefined): RouteStatus {
-  return operatorId ? ROUTE_ASSIGNED_STATUS : ROUTE_AVAILABLE_STATUS;
+export function routeStatusForNewRoute(operatorId: string | null | undefined): RouteDatabaseWriteStatus {
+  return operatorId ? ROUTE_ASSIGNED_STATUS : ROUTE_DRAFT_STATUS;
 }
 
 export function fallbackRouteStatusForEnumMismatch(status: RouteStatus): RouteStatus | null {

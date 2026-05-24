@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   ACTIVE_ROUTE_STATUSES,
   OPERATOR_VISIBLE_ROUTE_STATUSES,
   ROUTE_ASSIGNED_STATUS,
   ROUTE_AVAILABLE_STATUS,
+  ROUTE_DATABASE_WRITE_STATUSES,
   ROUTE_DATABASE_SAFE_TERMINAL_STATUSES,
   ROUTE_DRAFT_STATUS,
   ROUTE_FILLING_STATUS,
@@ -21,6 +23,13 @@ import {
   routeDisplayStatus,
   routeStatusForNewRoute,
 } from "../src/lib/route-workflow.ts";
+
+function sourceWindow(path, marker, length = 900) {
+  const source = readFileSync(path, "utf8");
+  const index = source.indexOf(marker);
+  assert.notEqual(index, -1, `${path} should contain ${marker}`);
+  return source.slice(index, index + length);
+}
 
 test("route status groups describe one consistent workflow", () => {
   assert.deepEqual([...OPERATOR_VISIBLE_ROUTE_STATUSES], ["available", "ready", "draft"]);
@@ -46,7 +55,7 @@ test("route status groups describe one consistent workflow", () => {
 });
 
 test("route creation and display statuses handle current and migrated databases", () => {
-  assert.equal(routeStatusForNewRoute(null), ROUTE_AVAILABLE_STATUS);
+  assert.equal(routeStatusForNewRoute(null), ROUTE_DRAFT_STATUS);
   assert.equal(routeStatusForNewRoute("operator-1"), ROUTE_ASSIGNED_STATUS);
 
   assert.equal(fallbackRouteStatusForEnumMismatch(ROUTE_AVAILABLE_STATUS), ROUTE_DRAFT_STATUS);
@@ -55,14 +64,16 @@ test("route creation and display statuses handle current and migrated databases"
   assert.equal(fallbackRouteStatusForEnumMismatch("canceled"), "cancelled");
 
   assert.equal(routeDisplayStatus("draft", null), ROUTE_AVAILABLE_STATUS);
+  assert.equal(routeDisplayStatus(routeStatusForNewRoute(null), null), ROUTE_AVAILABLE_STATUS);
   assert.equal(routeDisplayStatus("ready", null), ROUTE_AVAILABLE_STATUS);
   assert.equal(routeDisplayStatus("assigned", "operator-1"), ROUTE_ASSIGNED_STATUS);
 });
 
-test("database-safe status filters avoid production enum mismatch values", () => {
+test("database write statuses avoid production enum mismatch values", () => {
+  assert.deepEqual([...ROUTE_DATABASE_WRITE_STATUSES], ["draft", "assigned", "in_progress", "completed", "reviewed", "cancelled"]);
   assert.deepEqual([...ROUTE_DATABASE_SAFE_TERMINAL_STATUSES], ["completed", "reviewed", "cancelled"]);
 
-  for (const status of ROUTE_DATABASE_SAFE_TERMINAL_STATUSES) {
+  for (const status of ROUTE_DATABASE_WRITE_STATUSES) {
     assert.equal(["draft", "assigned", "in_progress", "completed", "reviewed", "cancelled"].includes(status), true, status);
   }
 
@@ -78,4 +89,22 @@ test("route status enum mismatch detection matches Supabase errors", () => {
   assert.equal(isRouteStatusEnumMismatch(error, "available"), true);
   assert.equal(isRouteStatusEnumMismatch(error, "assigned"), false);
   assert.equal(isRouteStatusEnumMismatch({ message: "permission denied" }, "available"), false);
+});
+
+test("route reservation queries do not send UI-only statuses into route_status enum filters", () => {
+  const createPageReservationQuery = sourceWindow(
+    "src/app/routes/new/page.tsx",
+    '.from("route_stock_lines")',
+  );
+  const createApiReservationQuery = sourceWindow(
+    "src/app/api/routes/route.ts",
+    '.select("route_id, product_id, planned_qty, picked_qty, routes!inner(status)")',
+  );
+
+  for (const querySource of [createPageReservationQuery, createApiReservationQuery]) {
+    assert.equal(querySource.includes('.in("status"'), false);
+    assert.equal(querySource.includes(".in('status'"), false);
+    assert.equal(querySource.includes('.eq("status", ROUTE_AVAILABLE_STATUS'), false);
+    assert.equal(querySource.includes('"available"'), false);
+  }
 });

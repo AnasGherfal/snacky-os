@@ -8,6 +8,7 @@ import {
   isRouteReservationStatus,
   isRouteStatusEnumMismatch,
   routeStatusForNewRoute,
+  type RouteStatus,
 } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -269,11 +270,11 @@ async function validateRouteStock(
   ((reservedResult.data ?? []) as { product_id?: string | null; planned_qty?: unknown; picked_qty?: unknown; routes?: { status?: string | null } | null }[])
     .filter((row) => isRouteReservationStatus(row.routes?.status))
     .forEach((row) => {
-    const productId = String(row.product_id ?? "");
-    if (!productId) return;
-    const reserved = Math.max(0, planQuantity(row.planned_qty) - planQuantity(row.picked_qty));
-    reservedByProduct.set(productId, (reservedByProduct.get(productId) ?? 0) + reserved);
-  });
+      const productId = String(row.product_id ?? "");
+      if (!productId) return;
+      const reserved = Math.max(0, planQuantity(row.planned_qty) - planQuantity(row.picked_qty));
+      reservedByProduct.set(productId, (reservedByProduct.get(productId) ?? 0) + reserved);
+    });
 
   const productNameById = new Map(((productsResult.data ?? []) as { id?: string | null; name?: string | null }[]).map((product) => [String(product.id), String(product.name ?? "Unknown product")]));
   const issues: StockValidationIssue[] = [];
@@ -528,7 +529,7 @@ export async function POST(request: Request) {
     }
   }
 
-  let routeStatus = routeStatusForNewRoute(operatorId || null);
+  let routeStatus: RouteStatus = routeStatusForNewRoute(operatorId || null);
   let routeInsert = await supabase
     .from("routes")
     .insert({ route_date: routeDate, operator_id: operatorId || null, status: routeStatus, created_by: profile.team_member_id })
