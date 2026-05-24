@@ -1,6 +1,6 @@
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { NextResponse } from "next/server";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute } from "@/lib/authz";
 
 function buildDebugDetails({
@@ -59,7 +59,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string; stopId: string }> }
 ) {
   const { id: routeId, stopId } = await params;
-  const supabase = getSupabaseServerClient();
+  const accessToken = await getAuthAccessToken();
+  const supabase = getSupabaseServerClient(accessToken);
   const profile = await getCurrentProfile();
 
   if (!supabase) {
@@ -346,10 +347,23 @@ export async function GET(
       debug: buildDebugDetails({ profile, routeId, stopId, route, stop }),
     });
   } catch (error) {
-    console.error("Error fetching stop data:", error);
+    console.error("[operator:stop-data] Error fetching stop data", {
+      route_id: routeId,
+      stop_id: stopId,
+      user_id: profile?.id ?? null,
+      user_roles: profile?.roles ?? [],
+      route_status: route?.status ?? null,
+      route_operator_id: route?.operator_id ?? null,
+      stop_status: stop?.status ?? null,
+      stop_route_id: stop?.route_id ?? null,
+      machine_id: stop?.machine_id ?? null,
+      error_message: errorMessage(error),
+      error_stack: error instanceof Error ? error.stack : null,
+      error,
+    });
     return NextResponse.json(
       {
-        error: "Failed to fetch stop data",
+        error: "Could not load this stop. Please refresh or return to route.",
         details: process.env.NODE_ENV === "development" ? errorMessage(error) : undefined,
         debug: buildDebugDetails({ profile, routeId, stopId, route, stop }),
       },

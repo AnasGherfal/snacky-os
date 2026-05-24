@@ -1,11 +1,12 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { LocalDraftForm } from "@/components/LocalDraft";
 import { EmptyState, FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getAuthenticatedSupabaseServerClient } from "@/lib/auth";
 
 async function saveSupplier(formData: FormData) {
   "use server";
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) return;
   const id = String(formData.get("id") || "");
   await supabase
@@ -24,7 +25,7 @@ async function saveSupplier(formData: FormData) {
 
 export default async function EditSupplierPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   const { data: supplier } = supabase ? await supabase.from("suppliers").select("*").eq("id", id).maybeSingle() : { data: null };
 
   if (!supplier) {
@@ -44,7 +45,7 @@ export default async function EditSupplierPage({ params }: { params: Promise<{ i
           breadcrumbs={[{ label: "Inventory", href: "/inventory" }, { label: "Suppliers", href: "/suppliers" }, { label: supplier.name }]}
           action={<SecondaryButton href="/suppliers">Back to suppliers</SecondaryButton>}
         />
-        <form action={saveSupplier} className="space-y-5">
+        <LocalDraftForm action={saveSupplier} formType="supplier" draftKeyParts={[supplier.id]} className="space-y-5">
           <input type="hidden" name="id" value={supplier.id} />
           <FormSection title="Supplier details" description="Keep supplier data accurate so purchase follow-up and finance review have the right context.">
             <div className="grid gap-4 md:grid-cols-2">
@@ -71,7 +72,7 @@ export default async function EditSupplierPage({ params }: { params: Promise<{ i
             <PrimaryButton>Save changes</PrimaryButton>
             <SecondaryButton href="/suppliers">Cancel</SecondaryButton>
           </div>
-        </form>
+        </LocalDraftForm>
       </FormPageLayout>
     </>
   );

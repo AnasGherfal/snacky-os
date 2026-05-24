@@ -1,11 +1,12 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { LocalDraftForm } from "@/components/LocalDraft";
 import { EmptyState, FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getAuthenticatedSupabaseServerClient } from "@/lib/auth";
 
 async function saveLocation(formData: FormData) {
   "use server";
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) return;
   const id = String(formData.get("id") || "");
   await supabase
@@ -23,7 +24,7 @@ async function saveLocation(formData: FormData) {
 
 export default async function EditLocationPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   const { data: location } = supabase ? await supabase.from("locations").select("*").eq("id", id).maybeSingle() : { data: null };
 
   if (!location) {
@@ -43,7 +44,7 @@ export default async function EditLocationPage({ params }: { params: Promise<{ i
           breadcrumbs={[{ label: "Machines", href: "/machines" }, { label: "Locations", href: "/locations" }, { label: location.name }]}
           action={<SecondaryButton href="/locations">Back to locations</SecondaryButton>}
         />
-        <form action={saveLocation} className="space-y-5">
+        <LocalDraftForm action={saveLocation} formType="location" draftKeyParts={[location.id]} className="space-y-5">
           <input type="hidden" name="id" value={location.id} />
           <FormSection title="Location details" description="Keep this site record readable for machine setup, rent reports, and operations review.">
             <div className="grid gap-4 md:grid-cols-2">
@@ -68,7 +69,7 @@ export default async function EditLocationPage({ params }: { params: Promise<{ i
             <PrimaryButton>Save changes</PrimaryButton>
             <SecondaryButton href="/locations">Cancel</SecondaryButton>
           </div>
-        </form>
+        </LocalDraftForm>
       </FormPageLayout>
     </>
   );

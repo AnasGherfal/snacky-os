@@ -2,8 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { logActivity } from "@/lib/activity-log";
-import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
-import { getCurrentProfile } from "@/lib/auth";
+import { actionFailure, actionSuccess, type ActionResult } from "@/lib/action-result";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute, canExecuteRoutes } from "@/lib/authz";
 import { activeRouteStatuses, availableRouteStatuses, isTerminalRouteStatus } from "@/lib/route-workflow";
 import { REFILL_PHOTO_BUCKET } from "@/lib/storage-buckets";
@@ -112,7 +113,7 @@ export async function uploadRefillProofPhoto(formData: FormData) {
     throw new Error("Final photo must be PNG, JPG, or WEBP and under 10MB.");
   }
 
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) throw new Error("No Supabase client");
 
   const profile = await getCurrentProfile();
@@ -180,7 +181,7 @@ export async function uploadRefillProofPhoto(formData: FormData) {
 }
 
 export async function startRoute(routeId: string) {
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) throw new Error("No Supabase client");
   if (!routeId) throw new Error("Route id is required");
 
@@ -253,7 +254,7 @@ export async function confirmPickList(
   pickedItems: { productId: string; quantity: number; plannedQty?: number; reason?: string; notes?: string }[],
   extras: { productId: string; quantity: number; reason: string; notes?: string }[] = [],
 ) {
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) throw new Error("No Supabase client");
   const readClient = getSupabaseAdminClient() ?? supabase;
   let logProfile: Awaited<ReturnType<typeof getCurrentProfile>> | null = null;
@@ -718,7 +719,7 @@ export async function confirmPickList(
  * Called when operator arrives at a machine
  */
 export async function arrivedAtStop(stopId: string) {
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) throw new Error("No Supabase client");
 
   try {
@@ -733,6 +734,93 @@ export async function arrivedAtStop(stopId: string) {
     console.error("Error marking arrival:", error);
     throw new Error(getErrorMessage(error, "Could not mark arrival at this stop."));
   }
+}
+
+type CompleteStopResult = ActionResult<{ expectedCash: number | null; routeId: string; stopId: string }>;
+
+type CompleteStopInputItem = {
+  refillOrderLineId?: string | null;
+  productId: string;
+  quantity: number;
+  assignedQty?: number;
+  reason?: string;
+  notes?: string;
+  unavailable?: boolean;
+};
+
+type CompleteStopExtraItem = { productId: string; quantity: number; reason: string; notes?: string };
+type CompleteStopMissingProduct = { productName: string; reason: string; notes?: string };
+
+function mapEntriesForLog(map: Map<string, number>) {
+  return Array.from(map.entries())
+    .map(([productId, quantity]) => ({ product_id: productId, quantity }))
+    .sort((a, b) => a.product_id.localeCompare(b.product_id));
+}
+
+function normalizeSubmittedQuantity(value: unknown, label: string) {
+  const quantity = Number(value);
+  if (!Number.isFinite(quantity)) throw new Error(`${label} must be a valid number.`);
+  if (quantity < 0) throw new Error(`${label} cannot be negative.`);
+  return Math.floor(quantity);
+}
+
+function normalizeCompleteStopItems(
+  filledItems: CompleteStopInputItem[],
+  extraItems: CompleteStopExtraItem[],
+  missingProducts: CompleteStopMissingProduct[],
+) {
+  const normalizedFilledItems = filledItems.map((item, index) => {
+    const productId = String(item.productId ?? "").trim();
+    if (!productId) throw new Error(`Assigned fill line ${index + 1} is missing a product.`);
+    return {
+      ...item,
+      productId,
+      refillOrderLineId: item.refillOrderLineId || null,
+      quantity: normalizeSubmittedQuantity(item.quantity, `Filled quantity for assigned line ${index + 1}`),
+      assignedQty: normalizeSubmittedQuantity(item.assignedQty ?? 0, `Assigned quantity for assigned line ${index + 1}`),
+      reason: item.reason?.trim() || undefined,
+      notes: item.notes?.trim() || undefined,
+      unavailable: Boolean(item.unavailable),
+    };
+  });
+
+  const normalizedExtraItems = extraItems
+    .map((item, index) => {
+      const productId = String(item.productId ?? "").trim();
+      const quantity = normalizeSubmittedQuantity(item.quantity, `Extra product quantity ${index + 1}`);
+      return {
+        ...item,
+        productId,
+        quantity,
+        reason: item.reason?.trim() || "Other",
+        notes: item.notes?.trim() || undefined,
+      };
+    })
+    .filter((item) => item.productId && item.quantity > 0);
+
+  const normalizedMissingProducts = missingProducts
+    .map((item) => ({
+      productName: item.productName?.trim() || "",
+      reason: item.reason?.trim() || "Other",
+      notes: item.notes?.trim() || undefined,
+    }))
+    .filter((item) => item.productName);
+
+  return { normalizedFilledItems, normalizedExtraItems, normalizedMissingProducts };
+}
+
+function completeStopPublicError(error: unknown) {
+  const message = getErrorMessage(error, "Could not complete this stop.");
+  if (message.includes("not authorized")) return "Could not complete stop because you do not have permission.";
+  if (message.includes("Completed or cancelled routes") || message.includes("Completed or canceled routes")) {
+    return "Could not complete stop because this route is already completed/canceled.";
+  }
+  if (message.includes("not in progress")) return "Could not complete stop because this route is not in progress.";
+  if (message.includes("does not belong")) return "Could not complete stop because stop data is incomplete.";
+  if (message.includes("stock is missing")) return "Could not complete stop because product stock is missing.";
+  if (message.includes("cannot exceed")) return "Could not complete stop because filled quantity exceeds carried quantity.";
+  if (message.includes("missing a product") || message.includes("not found")) return "Could not complete stop because stop data is incomplete.";
+  return message;
 }
 
 /**
@@ -774,18 +862,38 @@ export async function completeStop({
     priority: "critical" | "high" | "normal" | "low";
     description: string;
   };
-}) {
-  const supabase = getSupabaseServerClient();
-  if (!supabase) throw new Error("No Supabase client");
+}): Promise<CompleteStopResult> {
+  const supabase = await getAuthenticatedSupabaseServerClient();
+  if (!supabase) return actionFailure("Database is not available.", { expectedCash: null, routeId, stopId });
+
+  let logProfile: Awaited<ReturnType<typeof getCurrentProfile>> | null = null;
+  let logRoute: any = null;
+  let logStop: any = null;
+  let logMachine: any = null;
+  let logStopItemCount: number | null = null;
+  let logSubmittedFilledItems: unknown = filledItems;
+  let logCarriedBefore = new Map<string, number>();
+  let logCarriedAfter = new Map<string, number>();
+  let logMissingProductRelations: string[] = [];
 
   try {
     const profile = await getCurrentProfile();
+    logProfile = profile;
     const completedAt = new Date().toISOString();
     const hasNewCompletionPhoto = Boolean(
       completionPhotoUrl?.trim() ||
       completionPhotoPath?.trim() ||
       completionPhotoOriginalName?.trim(),
     );
+    if (!routeId || !stopId || !machineId) throw new Error("Route, stop, and machine are required to complete a stop.");
+    const { normalizedFilledItems, normalizedExtraItems, normalizedMissingProducts } = normalizeCompleteStopItems(filledItems, extraItems, missingProducts);
+    logSubmittedFilledItems = normalizedFilledItems.map((item) => ({
+      product_id: item.productId,
+      quantity: item.quantity,
+      assigned_qty: item.assignedQty ?? 0,
+      refill_order_line_id: item.refillOrderLineId ?? null,
+      unavailable: item.unavailable,
+    }));
 
     // Get route to find operator
     const { data: route, error: routeError } = await supabase
@@ -796,11 +904,15 @@ export async function completeStop({
 
     if (routeError) throwActionError(routeError, "Could not load this route.");
     if (!route) throw new Error("Route not found");
+    logRoute = route;
     if (!canAccessOperatorRoute(profile ? profileContext(profile) : null, route.operator_id)) {
       throw new Error("You are not authorized to complete this stop");
     }
     if (isTerminalRouteStatus(route.status)) {
       throw new Error("Completed or cancelled routes cannot be edited.");
+    }
+    if (!activeRouteStatuses.includes(String(route.status) as any)) {
+      throw new Error("This route is not in progress.");
     }
 
     const { data: stop, error: stopError } = await supabase.from("route_stops").select("id, route_id, machine_id, status").eq("id", stopId).maybeSingle();
@@ -808,6 +920,7 @@ export async function completeStop({
     if (!stop || stop.route_id !== routeId || stop.machine_id !== machineId) {
       throw new Error("This stop does not belong to the selected route.");
     }
+    logStop = stop;
     const { data: existingProof, error: existingProofError } = await supabase
       .from("machine_refill_history")
       .select("machine_photo_url, machine_photo_path")
@@ -835,6 +948,20 @@ export async function completeStop({
 
     if (machineError) throwActionError(machineError, "Could not load this machine.");
     if (operatorError) throwActionError(operatorError, "Could not load the route operator.");
+    logMachine = machine;
+
+    const { data: stopItemsForLog, error: stopItemsForLogError } = await supabase
+      .from("route_stop_items")
+      .select("id, product_id, product:products(id)")
+      .eq("route_stop_id", stopId);
+    if (stopItemsForLogError && !isMissingTable(stopItemsForLogError, "route_stop_items")) {
+      console.warn("[operator:complete-stop] Could not load planned stop items for diagnostics", { route_id: routeId, stop_id: stopId, error: stopItemsForLogError });
+    } else {
+      logStopItemCount = stopItemsForLog?.length ?? 0;
+      logMissingProductRelations = (stopItemsForLog ?? [])
+        .filter((item: any) => item.product_id && !(Array.isArray(item.product) ? item.product[0] : item.product))
+        .map((item: any) => String(item.product_id));
+    }
 
     const { data: routeStockLines, error: stockError } = await supabase
       .from("route_stock_lines")
@@ -859,8 +986,8 @@ export async function completeStop({
     });
 
     const actualFillLines = [
-      ...filledItems.map((item) => ({ productId: item.productId, quantity: item.quantity })),
-      ...extraItems.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+      ...normalizedFilledItems.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+      ...normalizedExtraItems.map((item) => ({ productId: item.productId, quantity: item.quantity })),
     ];
 
     const requestedFills = new Map<string, number>();
@@ -871,24 +998,51 @@ export async function completeStop({
     });
 
     const stockByProduct = new Map((routeStockLines ?? []).map((line: any) => [String(line.product_id), unitQuantity(line.picked_qty) - unitQuantity(line.returned_qty)]));
+    const submittedProductIds = Array.from(new Set([...normalizedFilledItems.map((item) => item.productId), ...normalizedExtraItems.map((item) => item.productId)]));
+    const { data: submittedProducts, error: submittedProductsError } = submittedProductIds.length
+      ? await supabase.from("products").select("id, name").in("id", submittedProductIds)
+      : { data: [], error: null };
+    if (submittedProductsError) throwActionError(submittedProductsError, "Could not verify submitted products.");
+    const submittedProductById = new Map((submittedProducts ?? []).map((product: any) => [String(product.id), product]));
+    const missingSubmittedProductIds = submittedProductIds.filter((productId) => !submittedProductById.has(productId));
+    if (missingSubmittedProductIds.length) {
+      logMissingProductRelations = Array.from(new Set([...logMissingProductRelations, ...missingSubmittedProductIds]));
+      throw new Error("Submitted product not found. Remove it from the stop and add it again.");
+    }
+
+    const routeProductIds = new Set([...Array.from(stockByProduct.keys()), ...Array.from(filledSoFar.keys()), ...submittedProductIds]);
+    routeProductIds.forEach((productId) => {
+      const stockQty = stockByProduct.get(productId) ?? 0;
+      const beforeQty = stockQty - (filledSoFar.get(productId) ?? 0);
+      const filledByOtherStops = (filledSoFar.get(productId) ?? 0) - (currentStopFilled.get(productId) ?? 0);
+      const afterQty = stockQty - filledByOtherStops - (requestedFills.get(productId) ?? 0);
+      logCarriedBefore.set(productId, beforeQty);
+      logCarriedAfter.set(productId, afterQty);
+    });
+
     for (const [productId, quantity] of requestedFills) {
       const filledByOtherStops = (filledSoFar.get(productId) ?? 0) - (currentStopFilled.get(productId) ?? 0);
       const available = (stockByProduct.get(productId) ?? 0) - filledByOtherStops;
+      if (!stockByProduct.has(productId)) {
+        const product = submittedProductById.get(productId);
+        throw new Error(`Route stock is missing for ${product?.name ?? "selected product"}.`);
+      }
       if (quantity > available) {
-        throw new Error("Filled quantity cannot exceed the stock picked for this route.");
+        const product = submittedProductById.get(productId);
+        throw new Error(`Filled quantity cannot exceed carried quantity for ${product?.name ?? "selected product"}.`);
       }
     }
 
-    const assignedProductIds = new Set(filledItems.map((item) => String(item.productId)));
-    const hasShortage = filledItems.some((item) => {
+    const assignedProductIds = new Set(normalizedFilledItems.map((item) => String(item.productId)));
+    const hasShortage = normalizedFilledItems.some((item) => {
       const assignedQty = Math.max(0, Number(item.assignedQty ?? 0));
       const actualQty = Math.max(0, Number(item.quantity ?? 0));
       return Boolean(item.unavailable) || actualQty < assignedQty;
     });
-    const fillStatus = hasShortage || missingProducts.some((item) => item.productName.trim()) ? "partial" : "full";
+    const fillStatus = hasShortage || normalizedMissingProducts.some((item) => item.productName.trim()) ? "partial" : "full";
     const hasIssueReport = Boolean(issue?.issueType && issue.description);
     const fillAuditRows = [
-      ...filledItems.map((item) => {
+      ...normalizedFilledItems.map((item) => {
         const assignedQty = Math.max(0, Number(item.assignedQty ?? 0));
         const actualQty = Math.max(0, Number(item.quantity ?? 0));
         return {
@@ -908,7 +1062,7 @@ export async function completeStop({
           created_by: route.operator_id,
         };
       }),
-      ...extraItems.map((item) => ({
+      ...normalizedExtraItems.map((item) => ({
         route_id: routeId,
         route_stop_id: stopId,
         machine_id: machineId,
@@ -924,7 +1078,7 @@ export async function completeStop({
         needs_review: true,
         created_by: route.operator_id,
       })),
-      ...missingProducts.map((item) => ({
+      ...normalizedMissingProducts.map((item) => ({
         route_id: routeId,
         route_stop_id: stopId,
         machine_id: machineId,
@@ -943,7 +1097,7 @@ export async function completeStop({
       })),
     ].filter((row) => row.action_type === "missing_product_report" || Number(row.actual_qty ?? 0) >= 0);
 
-    const invalidExtra = extraItems.find((item) => assignedProductIds.has(String(item.productId)));
+    const invalidExtra = normalizedExtraItems.find((item) => assignedProductIds.has(String(item.productId)));
     if (invalidExtra) {
       throw new Error("Use the assigned product row instead of adding the same product as extra.");
     }
@@ -1015,7 +1169,7 @@ export async function completeStop({
     const refillOrderIds = refillOrders?.map((order: any) => order.id) ?? [];
 
     if (refillOrderIds.length) {
-      for (const item of filledItems.filter((entry) => Number(entry.quantity) >= 0)) {
+      for (const item of normalizedFilledItems.filter((entry) => Number(entry.quantity) >= 0)) {
         const { error: lineError } = await supabase
           .from("refill_order_lines")
           .update({ filled_qty: item.quantity })
@@ -1146,9 +1300,9 @@ export async function completeStop({
           cash_bag_id: cashBagId?.trim() || null,
           notes: notes?.trim() || null,
           fill_status: fillStatus,
-          filled_items: filledItems,
-          extra_items: extraItems,
-          missing_products: missingProducts,
+          filled_items: normalizedFilledItems,
+          extra_items: normalizedExtraItems,
+          missing_products: normalizedMissingProducts,
           completion_photo_original_name: completionPhotoOriginalName?.trim() || null,
           completion_photo_upload_unavailable: Boolean(completionPhotoUploadUnavailable),
           movement_count: movements.length,
@@ -1190,9 +1344,9 @@ export async function completeStop({
         status: "completed",
         route_id: routeId,
         machine_id: machineId,
-        filled_items: filledItems,
-        extra_items: extraItems,
-        missing_products: missingProducts,
+        filled_items: normalizedFilledItems,
+        extra_items: normalizedExtraItems,
+        missing_products: normalizedMissingProducts,
         fill_status: fillStatus,
         refill_history_id: refillHistory?.id ?? null,
         movement_count: movements.length,
@@ -1228,10 +1382,30 @@ export async function completeStop({
     }
 
     revalidateRouteWorkflow(routeId);
-    return { success: true, expectedCash };
+    return actionSuccess({ expectedCash, routeId, stopId });
   } catch (error) {
-    console.error("Error completing stop:", error);
-    throw new Error(getErrorMessage(error, "Could not complete this stop."));
+    console.error("[operator:complete-stop] Error completing stop", {
+      route_id: routeId,
+      stop_id: stopId,
+      machine_id: machineId,
+      user_id: logProfile?.id ?? null,
+      user_roles: logProfile?.roles ?? [],
+      route_status: logRoute?.status ?? null,
+      stop_status: logStop?.status ?? null,
+      stop_item_count: logStopItemCount,
+      submitted_filled_quantities: logSubmittedFilledItems,
+      operator_carried_inventory_before_completion: mapEntriesForLog(logCarriedBefore),
+      operator_carried_inventory_after_completion: mapEntriesForLog(logCarriedAfter),
+      product_ids_with_null_product_relation: logMissingProductRelations,
+      route_operator_id: logRoute?.operator_id ?? null,
+      stop_route_id: logStop?.route_id ?? null,
+      stop_machine_id: logStop?.machine_id ?? null,
+      machine_found: Boolean(logMachine),
+      error_message: getErrorMessage(error, "Could not complete this stop."),
+      error_stack: error instanceof Error ? error.stack : null,
+      error,
+    });
+    return actionFailure(completeStopPublicError(error), { expectedCash: null, routeId, stopId });
   }
 }
 
@@ -1246,7 +1420,7 @@ export async function recordLeftovers({
   routeId: string;
   leftoverItems: { productId: string; quantity: number }[];
 }) {
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) throw new Error("No Supabase client");
 
   try {
@@ -1406,7 +1580,7 @@ export async function recordLeftovers({
  * Updates route status to completed
  */
 export async function completeRoute(routeId: string) {
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) throw new Error("No Supabase client");
 
   try {
@@ -1493,7 +1667,7 @@ export async function reportIssue({
   description: string;
   reportedBy: string;
 }) {
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) throw new Error("No Supabase client");
 
   try {

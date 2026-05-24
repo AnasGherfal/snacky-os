@@ -1,3 +1,4 @@
+import { LocalDraftForm } from "@/components/LocalDraft";
 import { FormField, FormSection, SecondaryButton, StatusBadge } from "@/components/ui";
 import { TemporaryPasswordInput } from "@/components/TemporaryPasswordInput";
 import { appRoles, AppRole } from "@/lib/authz";
@@ -25,7 +26,7 @@ export function TeamMemberForm({ action, submitLabel, backHref = "/team", member
   const selectedRoles = new Set(member?.roles?.length ? member.roles : [member?.role ?? "operator"]);
 
   return (
-    <form action={action} className="space-y-6">
+    <LocalDraftForm action={action} formType="team-member" draftKeyParts={[member?.id ?? "new"]} className="space-y-6">
       {member ? <input type="hidden" name="id" value={member.id} /> : null}
 
       <FormSection title="Team member" description="Keep identity and contact details clean so assignments, logs, and route work can be traced to the right person.">
@@ -86,6 +87,6 @@ export function TeamMemberForm({ action, submitLabel, backHref = "/team", member
         <button className="btn-primary">{submitLabel}</button>
         <SecondaryButton href={backHref}>Cancel</SecondaryButton>
       </div>
-    </form>
+    </LocalDraftForm>
   );
 }

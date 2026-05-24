@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { LocalDraftForm } from "@/components/LocalDraft";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, FormField, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
@@ -227,7 +228,7 @@ function productCell(row: { productIdentifier: string | null; productName: strin
 function UploadCard() {
   return (
     <SectionCard>
-      <form action={prepareVmsImport} className="space-y-4 p-4">
+      <LocalDraftForm action={prepareVmsImport} formType="vms-import" draftKeyParts={["upload"]} className="space-y-4 p-4">
         <div>
           <h2 className="text-lg font-semibold text-slate-900">Upload new file</h2>
           <p className="mt-1 text-sm text-slate-500">Upload the VMS export exactly as downloaded. Excel and CSV files are accepted.</p>
@@ -236,7 +237,7 @@ function UploadCard() {
           <input name="file" type="file" accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required className="field-input" />
         </FormField>
         <button className="btn-primary w-full">Upload and preview</button>
-      </form>
+      </LocalDraftForm>
     </SectionCard>
   );
 }

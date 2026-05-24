@@ -3,12 +3,11 @@ import { notFound } from "next/navigation";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { cancelPurchase, deleteDraftPurchase, markPurchasePaid, receivePurchase, voidReceivedPurchase } from "@/lib/purchase-actions";
 import { DataTable, EmptyState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
-import { requireCurrentProfileForPath } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
 import { canManagePurchases } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { dateOnly } from "@/lib/purchase-finance-date";
 import { privateStorageObjectUrl, RECEIPT_IMAGE_BUCKET } from "@/lib/storage-buckets";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 function formatReceiptType(url: string | null | undefined, contentType?: string | null) {
   const explicit = String(contentType ?? "").trim();
@@ -61,7 +60,7 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
   const moduleQuery = module === "finance" ? "?module=finance" : "";
   const profile = await requireCurrentProfileForPath(`/purchases/${id}`);
   const canManagePurchase = canManagePurchases(profile);
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) notFound();
 
   const [{ data: purchase }, { data: lines }, { data: movements, count: movementCount }, { data: financeRows }] = await Promise.all([

@@ -3,9 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canManageStorageLocations } from "@/lib/authz";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { normalizeStorageLocationType, StorageLocationRow } from "@/lib/storage-locations";
 
 function clean(value: FormDataEntryValue | null) {
@@ -24,7 +23,7 @@ async function requireStorageLocationAccess(path = "/storage-locations") {
 async function requireStorageLocationContext(path = "/storage-locations") {
   const profile = await getCurrentProfile();
   if (!profile || !canManageStorageLocations(profile)) redirect("/unauthorized");
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) fail(path, "Supabase is not configured.");
   return { profile, supabase };
 }

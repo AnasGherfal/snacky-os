@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { PurchaseForm } from "@/components/PurchaseForm";
 import { FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { canAddProducts, canManagePurchases } from "@/lib/authz";
 import { updatePurchase } from "@/lib/purchase-actions";
 import { privateStorageObjectUrl, RECEIPT_IMAGE_BUCKET } from "@/lib/storage-buckets";
@@ -22,7 +22,8 @@ export default async function EditPurchasePage({
   const profile = await getCurrentProfile();
   if (!profile || !canManagePurchases(profile)) redirect("/unauthorized");
 
-  const supabase = getSupabaseServerClient();
+  const accessToken = await getAuthAccessToken();
+  const supabase = getSupabaseServerClient(accessToken);
   if (!supabase) notFound();
 
   const [
@@ -54,12 +55,14 @@ export default async function EditPurchasePage({
     supabase.from("vms_product_mappings").select("product_id, vms_product_name").not("product_id", "is", null),
   ]);
 
-  if (purchaseError) console.error("[purchases] Failed to load purchase for edit", purchaseError);
-  if (linesError) console.error("[purchases] Failed to load purchase lines for edit", linesError);
+  if (purchaseError) console.error("[purchases:edit] Failed to load purchase for edit", { table_or_view: "purchase_orders", purchase_id: id, current_user_id: profile.id, user_roles: profile.roles, supabase_error: purchaseError });
+  if (linesError) console.error("[purchases:edit] Failed to load purchase lines for edit", { table_or_view: "purchase_order_lines", purchase_id: id, current_user_id: profile.id, user_roles: profile.roles, supabase_error: linesError });
   const listLoadError = suppliersError ?? productsError;
-  if (listLoadError) console.error("[purchases] Failed to load purchase edit lists", listLoadError);
+  if (suppliersError) console.error("[purchases:edit] Failed to load suppliers", { table_or_view: "suppliers", current_user_id: profile.id, user_roles: profile.roles, supabase_error: suppliersError });
+  if (productsError) console.error("[purchases:edit] Failed to load products", { table_or_view: "products", current_user_id: profile.id, user_roles: profile.roles, supabase_error: productsError });
   const enrichmentError = storageError ?? vmsError;
-  if (enrichmentError) console.warn("[purchases] Purchase product enrichment could not fully load", enrichmentError);
+  if (storageError) console.warn("[purchases:edit] Purchase storage enrichment could not load", { table_or_view: "current_inventory_by_location", current_user_id: profile.id, user_roles: profile.roles, supabase_error: storageError });
+  if (vmsError) console.warn("[purchases:edit] Purchase VMS enrichment could not load", { table_or_view: "vms_product_mappings", current_user_id: profile.id, user_roles: profile.roles, supabase_error: vmsError });
 
   if (!purchase) notFound();
   if ((purchase as any).status !== "draft") redirect(`/purchases/${id}${moduleQuery ? `${moduleQuery}&` : "?"}error=Only%20draft%20purchases%20can%20be%20edited.`);

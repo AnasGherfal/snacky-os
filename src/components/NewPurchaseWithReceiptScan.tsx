@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { LocalDraftForm } from "@/components/LocalDraft";
 import { PurchaseForm } from "@/components/PurchaseForm";
 import { FormField, FormSection } from "@/components/ui";
 import type { PurchaseSubmitResult } from "@/lib/purchase-actions";
@@ -102,7 +103,7 @@ export function NewPurchaseWithReceiptScan({
       />
 
       <FormSection title="Scan receipt with AI" description="Optional helper. It previews extracted fields first, then you choose whether to apply them to the manual form.">
-        <form action={handleScan} className="grid gap-4 lg:grid-cols-[1fr_280px]">
+        <LocalDraftForm action={handleScan} formType="purchase-receipt-scan" draftKeyParts={["new"]} className="grid gap-4 lg:grid-cols-[1fr_280px]">
           <div className="space-y-4">
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">
               AI extraction may be wrong. Review before receiving purchase.
@@ -151,7 +152,7 @@ export function NewPurchaseWithReceiptScan({
               </div>
             )}
           </div>
-        </form>
+        </LocalDraftForm>
 
         {pendingScan ? (
           <div className="space-y-4 border-t border-slate-200 pt-4">

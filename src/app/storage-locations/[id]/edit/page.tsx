@@ -1,9 +1,8 @@
 import { redirect } from "next/navigation";
 import { StorageLocationForm } from "@/components/StorageLocationForm";
 import { EmptyState, ErrorState, FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canManageStorageLocations } from "@/lib/authz";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { updateStorageLocation } from "@/lib/storage-location-actions";
 import { StorageLocationRow } from "@/lib/storage-locations";
 
@@ -21,7 +20,7 @@ export default async function EditStorageLocationPage({
 
   const { id } = await params;
   const query = await searchParams;
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) {
     return (
       <>

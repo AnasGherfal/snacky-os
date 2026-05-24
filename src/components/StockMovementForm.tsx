@@ -1,6 +1,7 @@
 "use client";
 
-import { useDeferredValue, useMemo, useState, useTransition } from "react";
+import { useCallback, useDeferredValue, useMemo, useState, useTransition } from "react";
+import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from "@/components/LocalDraft";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { FormField, FormSection, SecondaryButton, StatusBadge } from "@/components/ui";
 import { createQuickProduct, createStockMovement, createStorageAdjustment } from "@/lib/inventory-actions";
@@ -19,6 +20,25 @@ type ProductOption = {
 
 type NamedOption = { id: string; name: string };
 type RouteOption = { id: string; route_date: string; operator_id: string | null; status: string };
+type StockMovementDraft = {
+  mode: "simple" | "advanced";
+  selectedProductId: string;
+  query: string;
+  barcode: string;
+  quantity: number;
+  simpleQuantity: number;
+  adjustmentType: "set_exact" | "add" | "remove";
+  adjustmentReason: string;
+  adjustmentDate: string;
+  movementType: string;
+  relatedRouteId: string;
+  fromLocation: string;
+  toLocation: string;
+  notes: string;
+  adminOverride: boolean;
+  showQuickAdd: boolean;
+  missingProduct: string;
+};
 
 const movementTypes = [
   { value: "storage_to_operator_bag", label: "Storage to operator bag", helper: "Take stock out of storage for a route or operator." },
@@ -32,6 +52,16 @@ const movementTypes = [
 
 function optionValue(type: string, id?: string | null) {
   return `${type}:${id ?? ""}`;
+}
+
+function todayDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function redirectTarget(error: unknown) {
+  const digest = String((error as { digest?: unknown } | null)?.digest ?? "");
+  if (!digest.startsWith("NEXT_REDIRECT")) return "";
+  return digest.split(";")[2] ?? "";
 }
 
 export function StockMovementForm({
@@ -62,10 +92,99 @@ export function StockMovementForm({
   const [quantity, setQuantity] = useState(1);
   const [simpleQuantity, setSimpleQuantity] = useState(0);
   const [adjustmentType, setAdjustmentType] = useState<"set_exact" | "add" | "remove">("set_exact");
+  const [adjustmentReason, setAdjustmentReason] = useState("stock_count_correction");
+  const [adjustmentDate, setAdjustmentDate] = useState(todayDate);
+  const [movementType, setMovementType] = useState("storage_to_operator_bag");
+  const [relatedRouteId, setRelatedRouteId] = useState("");
+  const [fromLocation, setFromLocation] = useState("");
+  const [toLocation, setToLocation] = useState("");
+  const [notes, setNotes] = useState("");
+  const [adminOverride, setAdminOverride] = useState(false);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [missingProduct, setMissingProduct] = useState("");
   const [isPending, startTransition] = useTransition();
   const deferredQuery = useDeferredValue(query);
+  const draftKey = useDraftKey("inventory-movement", ["new"]);
+  const movementDraft = useMemo<StockMovementDraft>(() => ({
+    mode,
+    selectedProductId,
+    query,
+    barcode,
+    quantity,
+    simpleQuantity,
+    adjustmentType,
+    adjustmentReason,
+    adjustmentDate,
+    movementType,
+    relatedRouteId,
+    fromLocation,
+    toLocation,
+    notes,
+    adminOverride,
+    showQuickAdd,
+    missingProduct,
+  }), [
+    adjustmentDate,
+    adjustmentReason,
+    adjustmentType,
+    adminOverride,
+    barcode,
+    fromLocation,
+    missingProduct,
+    mode,
+    movementType,
+    notes,
+    quantity,
+    query,
+    relatedRouteId,
+    selectedProductId,
+    showQuickAdd,
+    simpleQuantity,
+    toLocation,
+  ]);
+  const shouldSaveMovementDraft = useCallback((draft: StockMovementDraft) => (
+    draft.mode !== "simple" ||
+    Boolean(draft.selectedProductId) ||
+    Boolean(draft.query.trim()) ||
+    Boolean(draft.barcode.trim()) ||
+    draft.quantity !== 1 ||
+    draft.simpleQuantity !== 0 ||
+    draft.adjustmentType !== "set_exact" ||
+    draft.adjustmentReason !== "stock_count_correction" ||
+    draft.adjustmentDate !== todayDate() ||
+    draft.movementType !== "storage_to_operator_bag" ||
+    Boolean(draft.relatedRouteId) ||
+    Boolean(draft.fromLocation) ||
+    Boolean(draft.toLocation) ||
+    Boolean(draft.notes.trim()) ||
+    draft.adminOverride ||
+    draft.showQuickAdd ||
+    Boolean(draft.missingProduct.trim())
+  ), []);
+  const localDraft = useLocalDraft<StockMovementDraft>({
+    key: draftKey,
+    value: movementDraft,
+    shouldSave: shouldSaveMovementDraft,
+    onRestore: (draft) => {
+      setMode(draft.mode === "advanced" ? "advanced" : "simple");
+      setSelectedProductId(draft.selectedProductId ?? "");
+      setQuery(draft.query ?? "");
+      setBarcode(draft.barcode ?? "");
+      setQuantity(Math.max(1, Number(draft.quantity ?? 1)));
+      setSimpleQuantity(Math.max(0, Number(draft.simpleQuantity ?? 0)));
+      setAdjustmentType(["set_exact", "add", "remove"].includes(draft.adjustmentType) ? draft.adjustmentType : "set_exact");
+      setAdjustmentReason(draft.adjustmentReason ?? "stock_count_correction");
+      setAdjustmentDate(draft.adjustmentDate ?? todayDate());
+      setMovementType(draft.movementType ?? "storage_to_operator_bag");
+      setRelatedRouteId(draft.relatedRouteId ?? "");
+      setFromLocation(draft.fromLocation ?? "");
+      setToLocation(draft.toLocation ?? "");
+      setNotes(draft.notes ?? "");
+      setAdminOverride(Boolean(draft.adminOverride));
+      setShowQuickAdd(Boolean(draft.showQuickAdd));
+      setMissingProduct(draft.missingProduct ?? "");
+    },
+  });
 
   const productById = useMemo(() => new Map(products.map((product) => [product.id, product])), [products]);
   const selectedProduct = selectedProductId ? productById.get(selectedProductId) : null;
@@ -111,10 +230,30 @@ export function StockMovementForm({
     });
   };
 
+  const submitMovementAction = async (formData: FormData) => {
+    const nextDraft = movementDraft;
+    localDraft.saveNow(nextDraft);
+    try {
+      if (mode === "simple") {
+        await createStorageAdjustment(formData);
+      } else {
+        await createStockMovement(formData);
+      }
+      localDraft.clearDraft();
+    } catch (error) {
+      localDraft.saveNow(nextDraft);
+      const target = redirectTarget(error);
+      if (target && !target.includes("error=")) localDraft.clearDraft();
+      throw error;
+    }
+  };
+
   return (
-    <form action={mode === "simple" ? createStorageAdjustment : createStockMovement} className="space-y-6">
+    <form action={submitMovementAction} onSubmitCapture={() => localDraft.saveNow(movementDraft)} className="space-y-6">
       <input type="hidden" name="product_id" value={selectedProductId} />
       <input type="hidden" name="quantity" value={mode === "simple" ? simpleQuantity : quantity} />
+      <DraftRestoreBanner pendingDraft={localDraft.pendingDraft} onRestore={localDraft.restoreDraft} onDiscard={localDraft.discardDraft} />
+      {!localDraft.pendingDraft ? <DraftSaveStatus status={localDraft.status} /> : null}
 
       <div className="grid gap-2 rounded-lg border border-slate-200 bg-white p-1 sm:grid-cols-2">
         <button type="button" onClick={() => setMode("simple")} className={mode === "simple" ? "btn-primary justify-center" : "btn-secondary justify-center"}>
@@ -184,7 +323,7 @@ export function StockMovementForm({
                 {selectedProduct && adjustmentType === "set_exact" ? <p className="mt-1 text-xs font-medium text-slate-700">Adjustment will be {simpleQuantity - selectedProduct.storageQty > 0 ? "+" : ""}{simpleQuantity - selectedProduct.storageQty}.</p> : null}
               </FormField>
               <FormField label="Reason" required>
-                <select name="adjustment_reason" required className="field-input" defaultValue="stock_count_correction">
+                <select name="adjustment_reason" required className="field-input" value={adjustmentReason} onChange={(event) => setAdjustmentReason(event.target.value)}>
                   <option value="stock_count_correction">Stock count correction</option>
                   <option value="damaged_expired_item">Damaged/expired item</option>
                   <option value="missing_item">Missing item</option>
@@ -194,7 +333,7 @@ export function StockMovementForm({
                 </select>
               </FormField>
               <FormField label="Date">
-                <input name="adjustment_date" type="date" defaultValue={new Date().toISOString().slice(0, 10)} className="field-input" />
+                <input name="adjustment_date" type="date" value={adjustmentDate} onChange={(event) => setAdjustmentDate(event.target.value)} className="field-input" />
               </FormField>
             </>
           ) : (
@@ -211,12 +350,12 @@ export function StockMovementForm({
                 {selectedProduct ? <p className="mt-1 text-xs text-slate-500">Current storage quantity: {selectedProduct.storageQty}</p> : null}
               </FormField>
               <FormField label="Reason" required>
-                <select name="movement_type" required className="field-input" defaultValue="storage_to_operator_bag">
+                <select name="movement_type" required className="field-input" value={movementType} onChange={(event) => setMovementType(event.target.value)}>
                   {movementTypes.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
                 </select>
               </FormField>
               <FormField label="Related route optional">
-                <select name="related_route_id" className="field-input">
+                <select name="related_route_id" className="field-input" value={relatedRouteId} onChange={(event) => setRelatedRouteId(event.target.value)}>
                   <option value="">No route</option>
                   {routes.map((route) => <option key={route.id} value={route.id}>{route.route_date} - {route.status} - {operatorById[route.operator_id ?? ""] ?? "Unassigned"}</option>)}
                 </select>
@@ -229,7 +368,7 @@ export function StockMovementForm({
       {mode === "advanced" ? <FormSection title="From and to" description="Stock must move between explicit locations so balances remain audit-friendly.">
         <div className="grid gap-4 md:grid-cols-2">
           <FormField label="From location/type" required>
-            <select name="from_location" required className="field-input">
+            <select name="from_location" required className="field-input" value={fromLocation} onChange={(event) => setFromLocation(event.target.value)}>
               <option value="">Select source</option>
               <optgroup label="Storage">{storages.map((storage) => <option key={storage.id} value={optionValue("storage", storage.id)}>Storage - {storage.name}</option>)}</optgroup>
               <optgroup label="Operator bags">{operators.map((operator) => <option key={operator.id} value={optionValue("operator_bag", operator.id)}>Operator bag - {operator.full_name}</option>)}</optgroup>
@@ -237,7 +376,7 @@ export function StockMovementForm({
             </select>
           </FormField>
           <FormField label="To location/type" required>
-            <select name="to_location" required className="field-input">
+            <select name="to_location" required className="field-input" value={toLocation} onChange={(event) => setToLocation(event.target.value)}>
               <option value="">Select destination</option>
               <optgroup label="Storage">{storages.map((storage) => <option key={storage.id} value={optionValue("storage", storage.id)}>Storage - {storage.name}</option>)}</optgroup>
               <optgroup label="Operator bags">{operators.map((operator) => <option key={operator.id} value={optionValue("operator_bag", operator.id)}>Operator bag - {operator.full_name}</option>)}</optgroup>
@@ -253,11 +392,11 @@ export function StockMovementForm({
 
       <FormSection title={mode === "simple" ? "Note" : "Notes and override"} description={mode === "simple" ? "Optional count reference, shelf note, or supervisor context." : "Use notes for count references, supervisor context, or correction reasons."}>
         <FormField label="Notes">
-          <textarea name="notes" rows={4} className="field-input" placeholder="Reason, count reference, route handoff notes, or supervisor approval." />
+          <textarea name="notes" rows={4} className="field-input" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Reason, count reference, route handoff notes, or supervisor approval." />
         </FormField>
         {mode === "advanced" && canAdminOverride ? (
           <label className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-            <input name="admin_override" type="checkbox" className="mt-1" />
+            <input name="admin_override" type="checkbox" className="mt-1" checked={adminOverride} onChange={(event) => setAdminOverride(event.target.checked)} />
             <span><span className="block font-semibold">Owner/admin override</span>Allow this movement to take more than currently available storage.</span>
           </label>
         ) : mode === "advanced" ? <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">You cannot override available storage.</div> : null}

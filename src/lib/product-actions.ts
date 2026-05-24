@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import type { AppPermission } from "@/lib/authz";
 import { hasPermission } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -46,7 +46,7 @@ function requireConfirmedReason(formData: FormData, path: string) {
 async function requireProductAccess(path: string, permission: AppPermission = "products.edit") {
   const profile = await getCurrentProfile();
   if (!profile || !canManageProducts(profile) || !hasPermission(profile, permission)) redirect("/unauthorized");
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) fail(path, "Supabase is not configured.");
   return { profile, supabase };
 }

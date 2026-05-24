@@ -1,12 +1,11 @@
 import Link from "next/link";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileRecordCard, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
-import { requireCurrentProfileForPath } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
 import { canManagePurchases } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { privateStorageObjectUrl, RECEIPT_IMAGE_BUCKET } from "@/lib/storage-buckets";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
@@ -14,11 +13,11 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
   const params = cleanSearchParams(await searchParams);
   const { page, pageSize, from, to } = getPagination(params);
   const error = String(params.error ?? "");
-  const module = String(params.module ?? "");
-  const moduleQuery = module === "finance" ? "?module=finance" : "";
+  const sourceModule = String(params.module ?? "");
+  const moduleQuery = sourceModule === "finance" ? "?module=finance" : "";
   const profile = await requireCurrentProfileForPath("/purchases");
   const canCreatePurchase = canManagePurchases(profile);
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) {
     return (
       <>
@@ -47,7 +46,7 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
         title="Purchases"
         subtitle="Receive supplier stock into storage through the inventory ledger."
         breadcrumbs={[
-          { label: module === "finance" ? "Finance" : "Inventory", href: module === "finance" ? "/finance" : "/inventory" },
+          { label: sourceModule === "finance" ? "Finance" : "Inventory", href: sourceModule === "finance" ? "/finance" : "/inventory" },
           { label: "Purchases" },
         ]}
         action={canCreatePurchase ? <PrimaryButton href={`/purchases/new${moduleQuery}`}>New purchase</PrimaryButton> : null}

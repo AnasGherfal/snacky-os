@@ -1,3 +1,4 @@
+import { LocalDraftForm } from "@/components/LocalDraft";
 import { PrimaryButton, SecondaryButton, FormField, FormSection } from "@/components/ui";
 import { StorageLocationRow, storageLocationTypeHelpers, storageLocationTypeLabel, storageLocationTypes } from "@/lib/storage-locations";
 
@@ -20,7 +21,7 @@ export function StorageLocationForm({
   submitLabel: string;
 }) {
   return (
-    <form action={action} className="space-y-5">
+    <LocalDraftForm action={action} formType="storage-location" draftKeyParts={[location?.id ?? "new"]} className="space-y-5">
       {location?.id ? <input type="hidden" name="id" value={location.id} /> : null}
 
       <FormSection title="Location Details" description="Name the physical or operational stock location and link an operator only when this is an operator bag.">
@@ -76,6 +77,6 @@ export function StorageLocationForm({
         <PrimaryButton>{submitLabel}</PrimaryButton>
         <SecondaryButton href={location?.id ? `/storage-locations/${location.id}` : "/storage-locations"}>Cancel</SecondaryButton>
       </div>
-    </form>
+    </LocalDraftForm>
   );
 }

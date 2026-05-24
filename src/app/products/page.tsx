@@ -3,10 +3,9 @@ import { PaginationControls } from "@/components/PaginationControls";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { ProductSourceBadge } from "@/components/ProductSourceBadge";
 import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SearchInput, SecondaryButton, StatusBadge } from "@/components/ui";
-import { requireCurrentProfileForPath } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
 import { canAddProducts, canViewFinancials, hasPermission } from "@/lib/authz";
 import { cleanSearchParams, getPagination, SearchParamsRecord, supabaseLikePattern } from "@/lib/pagination";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 function formatMoney(value: number | string | null | undefined, decimals = 2) {
   if (value === null || value === undefined || value === "") return "-";
@@ -23,7 +22,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
   const { page, pageSize, from, to } = getPagination(params);
   const q = String(params.q ?? "");
   const imageUpload = String(params.imageUpload ?? "");
-  const s = getSupabaseServerClient();
+  const s = await getAuthenticatedSupabaseServerClient();
   if (!s) {
     return (
       <>

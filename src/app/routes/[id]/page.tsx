@@ -1,10 +1,9 @@
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canExecuteRoutes, isAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { activeRouteStatuses, availableRouteStatuses, isTerminalRouteStatus, nextOperatorRouteHref } from "@/lib/route-workflow";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { RouteCreatedToast } from "@/app/routes/[id]/RouteCreatedToast";
 import { assignRoute, cancelRoute, deleteDraftRoute } from "@/lib/route-actions";
 import Link from "next/link";
@@ -24,7 +23,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     redirect("/unauthorized");
   }
 
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) {
     return (
       <>

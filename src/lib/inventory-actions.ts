@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canAddProducts, hasPermission, isOwnerAdminRole } from "@/lib/authz";
 import { resolveProductSku } from "@/lib/product-sku";
 import { activeRouteStatuses, availableRouteStatuses } from "@/lib/route-workflow";
@@ -51,7 +51,7 @@ export async function createQuickProduct(formData: FormData) {
     throw new Error("You are not authorized to add products.");
   }
 
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) throw new Error("Supabase is not configured.");
 
   const name = String(formData.get("name") || "").trim();
@@ -160,7 +160,7 @@ export async function createStorageAdjustment(formData: FormData) {
   const profile = await getCurrentProfile();
   if (!profile || !hasPermission(profile, "storage.adjust")) redirect("/unauthorized");
 
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) redirect("/inventory/movements/new?error=Supabase%20is%20not%20configured.");
 
   const productId = clean(formData.get("product_id"));
@@ -252,7 +252,7 @@ export async function createStockMovement(formData: FormData) {
     redirect("/unauthorized");
   }
 
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) redirect("/inventory/movements/new?error=Supabase%20is%20not%20configured.");
 
   const productId = String(formData.get("product_id") || "");
@@ -381,7 +381,7 @@ export async function createInventoryMovementCorrection(formData: FormData) {
   const profile = await getCurrentProfile();
   if (!profile || !isOwnerAdminRole(profile)) redirect("/unauthorized");
 
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) fail("/inventory/movements", "Supabase is not configured.");
 
   const id = clean(formData.get("id"));

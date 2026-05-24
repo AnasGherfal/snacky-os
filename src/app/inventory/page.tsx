@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileRecordCard, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canViewFinancials } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
@@ -21,6 +21,55 @@ function formatEntity(type: string | null | undefined, name: string | null | und
   return name ? `${type}: ${name}` : type ?? "-";
 }
 
+type InventoryQueryIssue = {
+  key: string;
+  label: string;
+  table: string;
+  message: string;
+};
+
+function supabaseErrorPayload(error: any) {
+  return {
+    code: error?.code ?? null,
+    message: error?.message ?? String(error ?? "Unknown Supabase error"),
+    details: error?.details ?? null,
+    hint: error?.hint ?? null,
+  };
+}
+
+function logInventoryQueryError({
+  key,
+  label,
+  table,
+  error,
+  profile,
+  params,
+}: {
+  key: string;
+  label: string;
+  table: string;
+  error: any;
+  profile: Awaited<ReturnType<typeof getCurrentProfile>>;
+  params: Record<string, unknown>;
+}) {
+  const errorPayload = supabaseErrorPayload(error);
+  console.error(`[inventory] ${label}`, {
+    data_source: key,
+    table_or_view: table,
+    supabase_error: errorPayload,
+    current_user_id: profile?.id ?? null,
+    user_roles: profile?.roles ?? [],
+    organization_id: null,
+    query_parameters: params,
+  });
+  return {
+    key,
+    label,
+    table,
+    message: `${label}: ${errorPayload.message}`,
+  };
+}
+
 export default async function InventoryPage({ searchParams }: { searchParams: Promise<SearchParamsRecord> }) {
   const params = cleanSearchParams(await searchParams);
   const { page, pageSize, from, to } = getPagination(params);
@@ -33,7 +82,8 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     redirect("/unauthorized");
   }
 
-  const supabase = getSupabaseServerClient();
+  const accessToken = await getAuthAccessToken();
+  const supabase = getSupabaseServerClient(accessToken);
   if (!supabase) {
     return (
       <>
@@ -42,11 +92,31 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     );
   }
   const canSeeCost = canViewFinancials(userContext);
+  const productSelect = canSeeCost
+    ? "id, sku, name, category, cost_price, current_cost_price_lyd"
+    : "id, sku, name, category";
   const { data: products, count: productCount, error: productsError } = await supabase
     .from("products")
-    .select("id, sku, name, category, cost_price, current_cost_price_lyd", { count: "exact" })
+    .select(productSelect, { count: "exact" })
     .order("name")
     .range(from, to);
+
+  if (productsError) {
+    const issue = logInventoryQueryError({
+      key: "products",
+      label: "Could not load products",
+      table: "products",
+      error: productsError,
+      profile,
+      params: { select: productSelect, order: "name", range: { from, to } },
+    });
+    return (
+      <>
+        <ErrorState title="Could not load products" body={issue.message} action={<SecondaryButton href="/inventory">Retry</SecondaryButton>} />
+      </>
+    );
+  }
+
   const productIds = (products ?? []).map((product: any) => product.id);
   const [
     { data: inventoryLocationRows, error: inventoryError },
@@ -82,18 +152,51 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
       .order("created_at", { ascending: false })
       .limit(pageSize),
   ]);
-  const loadError = inventoryError ?? productsError ?? reservedError ?? operatorBagError ?? movementsError;
-  if (loadError) {
-    console.error("[inventory] Failed to load inventory page", loadError);
-    return (
-      <>
-        <ErrorState title="Could not load inventory" body="Snacky OS could not load ledger inventory, product, reservation, or movement data." action={<SecondaryButton href="/inventory">Retry</SecondaryButton>} />
-      </>
-    );
-  }
+  const queryIssues = [
+    inventoryError
+      ? logInventoryQueryError({
+          key: "storage_stock",
+          label: "Could not load storage stock",
+          table: "current_inventory_by_location",
+          error: inventoryError,
+          profile,
+          params: { location_type: "storage", product_ids: productIds, order: "product_name" },
+        })
+      : null,
+    reservedError
+      ? logInventoryQueryError({
+          key: "reservations",
+          label: "Could not load reservations",
+          table: "route_stock_lines",
+          error: reservedError,
+          profile,
+          params: { route_statuses: [...availableRouteStatuses, ...activeRouteStatuses], product_ids: productIds },
+        })
+      : null,
+    operatorBagError
+      ? logInventoryQueryError({
+          key: "ledger_inventory",
+          label: "Could not load ledger inventory",
+          table: "current_inventory_by_location",
+          error: operatorBagError,
+          profile,
+          params: { location_type: "operator_bag", order: ["location_name", "product_name"], range: { from, to } },
+        })
+      : null,
+    movementsError
+      ? logInventoryQueryError({
+          key: "inventory_movements",
+          label: "Could not load inventory movements",
+          table: "inventory_movements",
+          error: movementsError,
+          profile,
+          params: { order: "created_at desc", limit: pageSize },
+        })
+      : null,
+  ].filter((issue): issue is InventoryQueryIssue => Boolean(issue));
 
   const productById = new Map((products ?? []).map((product: any) => [product.id, product]));
-  const storageRows = (inventoryLocationRows ?? []).filter((row: any) => row.location_type === "storage");
+  const storageRows = inventoryError ? [] : (inventoryLocationRows ?? []).filter((row: any) => row.location_type === "storage");
   const operatorBagRows = (operatorBagRowsData ?? [])
     .filter((row: any) => row.location_type === "operator_bag" && Number(row.quantity_on_hand ?? 0) > 0)
     .sort((a: any, b: any) => String(a.location_name ?? "").localeCompare(String(b.location_name ?? "")) || String(a.product_name ?? "").localeCompare(String(b.product_name ?? "")));
@@ -103,7 +206,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
   });
 
   const reservedByProduct = new Map<string, number>();
-  (reservedRows ?? []).forEach((row: any) => {
+  (reservedError ? [] : reservedRows ?? []).forEach((row: any) => {
     const qty = Math.max(0, Number(row.planned_qty ?? 0) - Number(row.picked_qty ?? 0));
     reservedByProduct.set(row.product_id, (reservedByProduct.get(row.product_id) ?? 0) + qty);
   });
@@ -137,6 +240,18 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         subtitle="Ledger-calculated storage stock, route reservations, available quantity, and movement history."
         action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/inventory/movements">Movement Log</SecondaryButton><PrimaryButton href="/inventory/movements/new">New Stock Movement</PrimaryButton></div>}
       />
+
+      {queryIssues.length ? (
+        <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+          <div className="font-semibold">Inventory partially loaded</div>
+          <div className="mt-1">Some sections could not load. The working sections remain visible below.</div>
+          <ul className="mt-3 list-disc space-y-1 pl-5">
+            {queryIssues.map((issue) => (
+              <li key={issue.key}>{issue.message}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       <div className="mb-6 grid gap-3 md:grid-cols-3">
         <div className="surface-card">

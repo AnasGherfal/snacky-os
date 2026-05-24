@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from "@/components/LocalDraft";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { FormField, FormSection } from "@/components/ui";
 import type { PurchaseSubmitResult } from "@/lib/purchase-actions";
@@ -92,8 +93,6 @@ type LocalPurchaseDraft = {
   updatedAt: string;
 };
 
-const PURCHASE_DRAFT_KEY = "snacky.purchase.new.draft.v1";
-
 function newLine(line?: Partial<PurchaseLine>): PurchaseLine {
   const receiptLineName = line?.receiptLineName ?? null;
   const id = globalThis.crypto?.randomUUID?.() ?? `line-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -165,6 +164,25 @@ function hasPurchaseDraftContent(draft: Pick<LocalPurchaseDraft, "details" | "ma
       Object.values(draft.searchByLine ?? {}).some((value) => value.trim()) ||
       draft.lines.some((line) => lineHasManualInput(line)),
   );
+}
+
+function comparablePurchaseDraft(draft: LocalPurchaseDraft) {
+  return JSON.stringify({
+    details: draft.details,
+    manualTotal: draft.manualTotal,
+    searchByLine: draft.searchByLine,
+    lines: draft.lines.map(({ id: _id, ...line }) => line),
+    receiptPreview: draft.receiptPreview
+      ? {
+          type: draft.receiptPreview.type,
+          name: draft.receiptPreview.name,
+          source: draft.receiptPreview.source,
+          url: draft.receiptPreview.source === "url" ? draft.receiptPreview.url : "",
+          hasDataUrl: Boolean(draft.receiptPreview.dataUrl),
+          reselectRequired: Boolean(draft.receiptPreview.reselectRequired),
+        }
+      : null,
+  });
 }
 
 function confidenceTone(label: ReceiptConfidenceLabel | null) {
@@ -524,6 +542,7 @@ export function PurchaseForm({
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const submittingRef = useRef(false);
+  const submitMessageRef = useRef<HTMLDivElement | null>(null);
   const lastAppliedScanKey = useRef(0);
   const receiptObjectUrlRef = useRef<string | null>(null);
   const [details, setDetails] = useState<PurchaseDetailsState>(() => detailsFromInitial(initialPurchase));
@@ -540,10 +559,20 @@ export function PurchaseForm({
   });
   const [removeSavedReceipt, setRemoveSavedReceipt] = useState(false);
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
-  const [pendingLocalDraft, setPendingLocalDraft] = useState<LocalPurchaseDraft | null>(null);
-  const [draftStatus, setDraftStatus] = useState<"idle" | "dirty" | "saved" | "restored">("idle");
   const productById = useMemo(() => new Map(products.map((product) => [product.id, product])), [products]);
-  const isLocalDraftEnabled = !initialPurchase?.id;
+  const draftKey = useDraftKey("purchase", [initialPurchase?.id ?? "new"]);
+  const initialComparableDraft = useMemo(() => {
+    if (!initialPurchase?.id) return null;
+    const initialReceiptUrl = initialPurchase.receiptUrl?.trim() ?? "";
+    return comparablePurchaseDraft({
+      details: detailsFromInitial(initialPurchase),
+      manualTotal: initialPurchase.manualTotalLyd === null || initialPurchase.manualTotalLyd === undefined ? "" : String(initialPurchase.manualTotalLyd),
+      lines: initialLines?.length ? initialLines.map((line) => newLine(line)) : [newLine()],
+      searchByLine: {},
+      receiptPreview: initialReceiptUrl ? { url: initialReceiptUrl, type: inferReceiptType(initialReceiptUrl), name: "Saved receipt", source: "url" } : null,
+      updatedAt: "",
+    });
+  }, [initialLines, initialPurchase]);
 
   const applyLocalDraft = (draft: LocalPurchaseDraft) => {
     setDetails(draft.details);
@@ -551,80 +580,75 @@ export function PurchaseForm({
     setLines(draft.lines.length ? draft.lines.map((line) => newLine(line)) : [newLine()]);
     setSearchByLine(draft.searchByLine ?? {});
     setReceiptPreview(draft.receiptPreview?.dataUrl ? { ...draft.receiptPreview, url: draft.receiptPreview.dataUrl, source: "restored", reselectRequired: true } : draft.receiptPreview);
-    setPendingLocalDraft(null);
-    setDraftStatus("restored");
   };
+
+  const localPurchaseDraft = useMemo<LocalPurchaseDraft>(() => ({
+    details,
+    manualTotal,
+    lines,
+    searchByLine,
+    receiptPreview: receiptPreview?.dataUrl ? { ...receiptPreview, url: receiptPreview.dataUrl, source: "restored", reselectRequired: true } : receiptPreview?.source === "url" ? receiptPreview : receiptPreview ? {
+      url: "",
+      type: receiptPreview.type,
+      name: receiptPreview.name,
+      source: "restored",
+      reselectRequired: true,
+    } : null,
+    updatedAt: new Date().toISOString(),
+  }), [details, lines, manualTotal, receiptPreview, searchByLine]);
+
+  const shouldSaveLocalPurchaseDraft = useCallback((draft: LocalPurchaseDraft) => {
+    if (!hasPurchaseDraftContent(draft)) return false;
+    if (!initialPurchase?.id) return true;
+    return comparablePurchaseDraft(draft) !== initialComparableDraft;
+  }, [initialComparableDraft, initialPurchase?.id]);
+
+  const localDraft = useLocalDraft<LocalPurchaseDraft>({
+    key: draftKey,
+    value: localPurchaseDraft,
+    debounceMs: 700,
+    shouldSave: shouldSaveLocalPurchaseDraft,
+    onRestore: applyLocalDraft,
+  });
 
   useEffect(() => {
     if (!receiptScan || appliedScanKey <= 0 || appliedScanKey === lastAppliedScanKey.current) return;
     lastAppliedScanKey.current = appliedScanKey;
-    setDetails((current) => ({
-      supplierId: current.supplierId || receiptScan.supplierId || "",
-      purchaseDate: current.purchaseDate || receiptScan.receiptDate || todayDate(),
-      receiptNumber: current.receiptNumber || receiptScan.receiptNumber || "",
-      paymentMethod: current.paymentMethod,
-      paymentStatus: current.paymentStatus,
-      receiptUrl: current.receiptUrl || receiptScan.fileUrl || "",
-      notes: current.notes,
-    }));
-    setManualTotal((current) => (current.trim() || receiptScan.totalAmount === null || receiptScan.totalAmount === undefined ? current : String(receiptScan.totalAmount)));
-    if (receiptScan.lines.length) {
-      const extractedLines = receiptScan.lines.map((line) => newLine(lineFromScan(line)));
-      setLines((current) => {
-        if (current.length === 1 && isPristineLine(current[0])) return extractedLines;
-        return [...current, ...extractedLines];
-      });
-      setSearchByLine({});
-    }
-    setSubmitMessage({ type: "success", text: "Extracted receipt fields were applied. Existing manual entries were kept; review every line before saving." });
+    const timer = window.setTimeout(() => {
+      setDetails((current) => ({
+        supplierId: current.supplierId || receiptScan.supplierId || "",
+        purchaseDate: current.purchaseDate || receiptScan.receiptDate || todayDate(),
+        receiptNumber: current.receiptNumber || receiptScan.receiptNumber || "",
+        paymentMethod: current.paymentMethod,
+        paymentStatus: current.paymentStatus,
+        receiptUrl: current.receiptUrl || receiptScan.fileUrl || "",
+        notes: current.notes,
+      }));
+      setManualTotal((current) => (current.trim() || receiptScan.totalAmount === null || receiptScan.totalAmount === undefined ? current : String(receiptScan.totalAmount)));
+      if (receiptScan.lines.length) {
+        const extractedLines = receiptScan.lines.map((line) => newLine(lineFromScan(line)));
+        setLines((current) => {
+          if (current.length === 1 && isPristineLine(current[0])) return extractedLines;
+          return [...current, ...extractedLines];
+        });
+        setSearchByLine({});
+      }
+      setSubmitMessage({ type: "success", text: "Extracted receipt fields were applied. Existing manual entries were kept; review every line before saving." });
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [appliedScanKey, receiptScan]);
 
   useEffect(() => {
-    if (!isLocalDraftEnabled) return;
-    try {
-      const raw = window.localStorage.getItem(PURCHASE_DRAFT_KEY);
-      if (!raw) return;
-      const draft = JSON.parse(raw) as LocalPurchaseDraft;
-      if (draft?.details && draft?.lines?.length) setPendingLocalDraft(draft);
-    } catch (error) {
-      console.warn("[purchases] Could not load local purchase draft", error);
+    if (submitMessage?.type === "error") {
+      submitMessageRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
-  }, [isLocalDraftEnabled]);
+  }, [submitMessage]);
 
   useEffect(() => {
     return () => {
       if (receiptObjectUrlRef.current) URL.revokeObjectURL(receiptObjectUrlRef.current);
     };
   }, []);
-
-  useEffect(() => {
-    if (!isLocalDraftEnabled) return;
-    if (pendingLocalDraft) return;
-    const draft: LocalPurchaseDraft = {
-      details,
-      manualTotal,
-      lines,
-      searchByLine,
-      receiptPreview: receiptPreview?.dataUrl ? { ...receiptPreview, url: receiptPreview.dataUrl, source: "restored", reselectRequired: true } : receiptPreview?.source === "url" ? receiptPreview : null,
-      updatedAt: new Date().toISOString(),
-    };
-    if (!hasPurchaseDraftContent(draft)) {
-      window.localStorage.removeItem(PURCHASE_DRAFT_KEY);
-      setDraftStatus("idle");
-      return;
-    }
-
-    setDraftStatus((current) => (current === "restored" ? current : "dirty"));
-    const timer = window.setTimeout(() => {
-      try {
-        window.localStorage.setItem(PURCHASE_DRAFT_KEY, JSON.stringify(draft));
-        setDraftStatus("saved");
-      } catch (error) {
-        console.warn("[purchases] Could not save local purchase draft", error);
-      }
-    }, 500);
-    return () => window.clearTimeout(timer);
-  }, [details, isLocalDraftEnabled, lines, manualTotal, pendingLocalDraft, receiptPreview, searchByLine]);
 
   const enrichedLines = useMemo(
     () =>
@@ -728,7 +752,7 @@ export function PurchaseForm({
 
     if (action === "create") {
       if (!canAddProducts) {
-        setSubmitMessage({ type: "error", text: "Only owner/admin can create products from purchase lines." });
+        setSubmitMessage({ type: "error", text: "You do not have permission to create products from purchase lines." });
         return;
       }
       updateLine(line.id, {
@@ -890,6 +914,16 @@ export function PurchaseForm({
     if (!form) return;
     const formData = new FormData(form);
     formData.set("submit_action", intent);
+    formData.set("supplier_id", details.supplierId);
+    formData.set("purchase_date", details.purchaseDate || todayDate());
+    formData.set("receipt_number", details.receiptNumber);
+    formData.set("payment_method", details.paymentMethod);
+    formData.set("payment_status", details.paymentStatus);
+    formData.set("receipt_url", details.receiptUrl);
+    formData.set("notes", details.notes);
+    formData.set("manual_total_lyd", manualTotal);
+    formData.set("lines_json", linesJson);
+    localDraft.saveNow(localPurchaseDraft);
 
     setSubmitIntent(intent);
     submittingRef.current = true;
@@ -901,10 +935,7 @@ export function PurchaseForm({
         return;
       }
       setSubmitMessage({ type: "success", text: result.message });
-      if (isLocalDraftEnabled) {
-        window.localStorage.removeItem(PURCHASE_DRAFT_KEY);
-        setDraftStatus("idle");
-      }
+      localDraft.clearDraft();
       if (result.redirectTo) {
         router.push(result.redirectTo);
         router.refresh();
@@ -926,7 +957,7 @@ export function PurchaseForm({
       <input type="hidden" name="remove_receipt" value={removeSavedReceipt ? "yes" : ""} />
       <input type="hidden" name="lines_json" value={linesJson} />
       {submitMessage ? (
-        <div className={`rounded-lg border p-4 text-sm font-medium ${submitMessage.type === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-rose-200 bg-rose-50 text-rose-800"}`}>
+        <div ref={submitMessageRef} className={`rounded-lg border p-4 text-sm font-medium ${submitMessage.type === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-rose-200 bg-rose-50 text-rose-800"}`}>
           <div>{submitMessage.text}</div>
           {process.env.NODE_ENV !== "production" && submitMessage.debug ? (
             <details className="mt-3 rounded-lg bg-white/70 p-3 text-xs font-normal">
@@ -936,31 +967,8 @@ export function PurchaseForm({
           ) : null}
         </div>
       ) : null}
-      {pendingLocalDraft ? (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-          <div className="font-semibold">Continue unsaved purchase draft?</div>
-          <div className="mt-1">A local draft from this browser was found. It stays on this device only.</div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button type="button" className="btn-primary" onClick={() => applyLocalDraft(pendingLocalDraft)}>Continue draft</button>
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={() => {
-                window.localStorage.removeItem(PURCHASE_DRAFT_KEY);
-                setPendingLocalDraft(null);
-                setDraftStatus("idle");
-              }}
-            >
-              Discard draft
-            </button>
-          </div>
-        </div>
-      ) : null}
-      {isLocalDraftEnabled && !pendingLocalDraft ? (
-        <div className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${draftStatus === "dirty" ? "border-amber-200 bg-amber-50 text-amber-800" : draftStatus === "saved" || draftStatus === "restored" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-slate-200 bg-slate-50 text-slate-500"}`}>
-          {draftStatus === "dirty" ? "Unsaved changes" : draftStatus === "saved" || draftStatus === "restored" ? "Draft saved locally" : "Local draft ready"}
-        </div>
-      ) : null}
+      <DraftRestoreBanner pendingDraft={localDraft.pendingDraft} onRestore={localDraft.restoreDraft} onDiscard={localDraft.discardDraft} />
+      {!localDraft.pendingDraft ? <DraftSaveStatus status={localDraft.status} /> : null}
 
       <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="min-w-0 space-y-5">

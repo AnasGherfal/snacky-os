@@ -1,14 +1,14 @@
 import Link from "next/link";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SearchInput, SecondaryButton, StatusBadge } from "@/components/ui";
+import { getAuthenticatedSupabaseServerClient } from "@/lib/auth";
 import { cleanSearchParams, getPagination, SearchParamsRecord, supabaseLikePattern } from "@/lib/pagination";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export default async function MachinesPage({ searchParams }: { searchParams: Promise<SearchParamsRecord & { q?: string }> }) {
   const params = cleanSearchParams(await searchParams);
   const { page, pageSize, from, to } = getPagination(params);
   const q = String(params.q ?? "");
-  const s = getSupabaseServerClient();
+  const s = await getAuthenticatedSupabaseServerClient();
   if (!s) {
     return (
       <>

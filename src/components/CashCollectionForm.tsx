@@ -1,3 +1,4 @@
+import { LocalDraftForm } from "@/components/LocalDraft";
 import { FormField, FormSection, PrimaryButton, SecondaryButton } from "@/components/ui";
 
 type Option = {
@@ -45,7 +46,7 @@ export function CashCollectionForm({
   countedRequired?: boolean;
 }) {
   return (
-    <form action={action} className="space-y-5">
+    <LocalDraftForm action={action} formType="cash-collection" draftKeyParts={[initial?.id ?? "new"]} className="space-y-5">
       {initial?.id ? <input type="hidden" name="id" value={initial.id} /> : null}
 
       <FormSection title="Collection Details" description="Record the counted envelope once finance/admin has the cash in hand. Variance is calculated automatically when expected cash is entered.">
@@ -111,6 +112,6 @@ export function CashCollectionForm({
         <PrimaryButton>{submitLabel}</PrimaryButton>
         <SecondaryButton href={initial?.id ? `/cash-collections/${initial.id}` : "/cash-collections"}>Cancel</SecondaryButton>
       </div>
-    </form>
+    </LocalDraftForm>
   );
 }

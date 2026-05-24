@@ -1,6 +1,6 @@
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { NextResponse } from "next/server";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute } from "@/lib/authz";
 
 function errorMessage(error: unknown) {
@@ -30,7 +30,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: routeId } = await params;
-  const supabase = getSupabaseServerClient();
+  const accessToken = await getAuthAccessToken();
+  const supabase = getSupabaseServerClient(accessToken);
   const profile = await getCurrentProfile();
 
   if (!supabase) {

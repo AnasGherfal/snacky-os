@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from "@/components/LocalDraft";
 import { QuantityStepper } from "@/components/QuantityStepper";
 import { ErrorState, LoadingState, PageHeader, SecondaryButton, SectionCard } from "@/components/ui";
 import { recordLeftovers, completeRoute } from "@/lib/operator-actions";
@@ -11,6 +12,10 @@ interface LeftoverItem {
   productName: string;
   quantity: number;
 }
+
+type LeftoversDraft = {
+  leftoverQtys: Record<string, number>;
+};
 
 export default function LeftoversPage() {
   const router = useRouter();
@@ -24,6 +29,19 @@ export default function LeftoversPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [leftoverQtys, setLeftoverQtys] = useState<Record<string, number>>({});
+  const initialLeftoversDraftRef = useRef("");
+  const draftKey = useDraftKey("route-end", [routeId || "missing-route"]);
+  const leftoversDraft = useMemo<LeftoversDraft>(() => ({ leftoverQtys }), [leftoverQtys]);
+  const shouldSaveLeftoversDraft = useCallback((draft: LeftoversDraft) => {
+    if (!routeId || submitting || !initialLeftoversDraftRef.current) return false;
+    return JSON.stringify(draft.leftoverQtys ?? {}) !== initialLeftoversDraftRef.current;
+  }, [routeId, submitting]);
+  const localDraft = useLocalDraft<LeftoversDraft>({
+    key: draftKey,
+    value: leftoversDraft,
+    shouldSave: shouldSaveLeftoversDraft,
+    onRestore: (draft) => setLeftoverQtys(draft.leftoverQtys ?? {}),
+  });
 
   useEffect(() => {
     const fetchPickedItems = async () => {
@@ -44,6 +62,7 @@ export default function LeftoversPage() {
           initialQtys[item.productId] = item.quantity;
         });
         setLeftoverQtys(initialQtys);
+        initialLeftoversDraftRef.current = JSON.stringify(initialQtys);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load picked items");
       } finally {
@@ -54,6 +73,7 @@ export default function LeftoversPage() {
   }, [routeId]);
 
   const handleCompleteRoute = async () => {
+    localDraft.saveNow();
     setSubmitting(true);
     setError("");
     try {
@@ -70,10 +90,12 @@ export default function LeftoversPage() {
       // Complete the route
       await completeRoute(routeId);
 
+      localDraft.clearDraft();
       router.push("/operator/routes");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to complete route");
       setSubmitting(false);
+      window.setTimeout(() => localDraft.saveNow(), 0);
     }
   };
 
@@ -104,6 +126,8 @@ export default function LeftoversPage() {
           action={<SecondaryButton href={routeHref}>Back</SecondaryButton>}
         />
 
+        <DraftRestoreBanner pendingDraft={localDraft.pendingDraft} onRestore={localDraft.restoreDraft} onDiscard={localDraft.discardDraft} />
+        {!localDraft.pendingDraft ? <DraftSaveStatus status={localDraft.status} /> : null}
         {error && (
           <div className="rounded-lg bg-red-50 border border-red-200 p-4 text-sm text-red-700">
             {error}

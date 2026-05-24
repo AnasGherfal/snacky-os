@@ -1,5 +1,6 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { LocalDraftForm } from "@/components/LocalDraft";
 import { FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
@@ -54,7 +55,7 @@ export default async function NewMachineSlotPage({ searchParams }: { searchParam
       <FormPageLayout>
         <PageHeader title="Add Slot" subtitle="Add a physical vending machine slot to a machine planogram." action={<SecondaryButton href={machine_id ? `/machine-slots?machine_id=${machine_id}` : "/machine-slots"}>Back to planogram</SecondaryButton>} />
         {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{error}</div> : null}
-        <form action={createSlot} className="space-y-5">
+        <LocalDraftForm action={createSlot} formType="machine-slot" draftKeyParts={["new", machine_id || "no-machine"]} className="space-y-5">
           <FormSection title="Slot details">
             <div className="grid gap-4 md:grid-cols-2">
               <FormField label="Machine" required hint="Choose the machine this slot belongs to.">
@@ -97,7 +98,7 @@ export default async function NewMachineSlotPage({ searchParams }: { searchParam
             <PrimaryButton>Add Slot</PrimaryButton>
             <SecondaryButton href={machine_id ? `/machine-slots?machine_id=${machine_id}` : "/machine-slots"}>Cancel</SecondaryButton>
           </div>
-        </form>
+        </LocalDraftForm>
       </FormPageLayout>
     </>
   );

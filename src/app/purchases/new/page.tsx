@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { NewPurchaseWithReceiptScan } from "@/components/NewPurchaseWithReceiptScan";
 import { ErrorState, FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { canAddProducts, canManagePurchases } from "@/lib/authz";
 import { createPurchase } from "@/lib/purchase-actions";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -14,7 +14,8 @@ export default async function NewPurchasePage({ searchParams }: { searchParams: 
   const profile = await getCurrentProfile();
   if (!profile || !canManagePurchases(profile)) redirect("/unauthorized");
 
-  const supabase = getSupabaseServerClient();
+  const accessToken = await getAuthAccessToken();
+  const supabase = getSupabaseServerClient(accessToken);
   if (!supabase) {
     return (
       <>
@@ -38,9 +39,47 @@ export default async function NewPurchasePage({ searchParams }: { searchParams: 
     supabase.from("vms_product_mappings").select("product_id, vms_product_name").not("product_id", "is", null),
   ]);
   const loadError = suppliersError ?? productsError;
-  if (loadError) console.error("[purchases] Failed to load new purchase form lists", loadError);
+  if (suppliersError) {
+    console.error("[purchases:new] Could not load suppliers", {
+      table_or_view: "suppliers",
+      supabase_error: suppliersError,
+      current_user_id: profile.id,
+      user_roles: profile.roles,
+      organization_id: null,
+      query_parameters: { select: "id, name", order: "name" },
+    });
+  }
+  if (productsError) {
+    console.error("[purchases:new] Could not load products", {
+      table_or_view: "products",
+      supabase_error: productsError,
+      current_user_id: profile.id,
+      user_roles: profile.roles,
+      organization_id: null,
+      query_parameters: { active: true, order: "name" },
+    });
+  }
   const enrichmentError = storageError ?? vmsError;
-  if (enrichmentError) console.warn("[purchases] Purchase product enrichment could not fully load", enrichmentError);
+  if (storageError) {
+    console.warn("[purchases:new] Purchase storage enrichment could not load", {
+      table_or_view: "current_inventory_by_location",
+      supabase_error: storageError,
+      current_user_id: profile.id,
+      user_roles: profile.roles,
+      organization_id: null,
+      query_parameters: { location_type: "storage" },
+    });
+  }
+  if (vmsError) {
+    console.warn("[purchases:new] Purchase VMS enrichment could not load", {
+      table_or_view: "vms_product_mappings",
+      supabase_error: vmsError,
+      current_user_id: profile.id,
+      user_roles: profile.roles,
+      organization_id: null,
+      query_parameters: { product_id: "not null" },
+    });
+  }
 
   const storageQtyByProduct = new Map<string, number>();
   for (const row of storageRows ?? []) {

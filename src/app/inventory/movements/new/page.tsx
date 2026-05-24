@@ -1,10 +1,9 @@
 import { redirect } from "next/navigation";
 import { FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
 import { StockMovementForm } from "@/components/StockMovementForm";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canAddProducts, canViewFinancials, isOwnerAdminRole } from "@/lib/authz";
 import { activeRouteStatuses, availableRouteStatuses } from "@/lib/route-workflow";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +17,7 @@ export default async function NewStockMovementPage({ searchParams }: { searchPar
   }
 
   const { error } = await searchParams;
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   const [{ data: products }, { data: storageRows }, { data: storages }, { data: operators }, { data: routes }, { data: recentMovements }] = supabase
     ? await Promise.all([
         supabase.from("products").select("id, sku, barcode, name, category, brand, image_url, selling_price, current_selling_price_lyd").eq("active", true).order("name"),

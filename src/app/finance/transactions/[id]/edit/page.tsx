@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { FinanceTransactionStatusActions } from "@/components/FinanceTransactionStatusActions";
 import { FormSubmitButton } from "@/components/FormSubmitButton";
+import { LocalDraftForm } from "@/components/LocalDraft";
 import { FormField, FormPageLayout, FormSection, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canEditFinancialTransactions } from "@/lib/authz";
@@ -89,7 +90,7 @@ export default async function EditFinanceTransactionPage({
           </div>
         ) : null}
 
-        <form action={updateFinancialTransaction} className="space-y-5">
+        <LocalDraftForm action={updateFinancialTransaction} formType="finance-transaction" draftKeyParts={[id]} className="space-y-5">
           <input type="hidden" name="id" value={id} />
           <FormSection title="Transaction details">
             <div className="grid gap-4 md:grid-cols-2">
@@ -198,7 +199,7 @@ export default async function EditFinanceTransactionPage({
           </FormSection>
 
           <div className="flex flex-wrap gap-3"><FormSubmitButton pendingLabel="Saving transaction...">Save transaction</FormSubmitButton><SecondaryButton href={`/finance/transactions/${id}`}>Cancel</SecondaryButton></div>
-        </form>
+        </LocalDraftForm>
 
         <FormSection title="Void or archive">
           <p className="text-sm text-slate-500">Voiding or archiving keeps the transaction record for audit and removes it from balance calculations.</p>

@@ -1,12 +1,12 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { LocalDraftForm } from "@/components/LocalDraft";
 import { ErrorState, FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
 import { logActivity } from "@/lib/activity-log";
-import { requireCurrentProfileForPath } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
 import { canAddProducts } from "@/lib/authz";
 import { resolveProductImageUrl } from "@/lib/product-images";
 import { isSkuDuplicateError, resolveProductSku } from "@/lib/product-sku";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 function safeReturnTo(value: FormDataEntryValue | string | null | undefined) {
   const path = String(value ?? "").trim();
@@ -17,7 +17,7 @@ async function createProduct(fd: FormData) {
   "use server";
   const profile = await requireCurrentProfileForPath("/products/new");
   if (!canAddProducts(profile)) redirect("/unauthorized");
-  const s = getSupabaseServerClient();
+  const s = await getAuthenticatedSupabaseServerClient();
   if (!s) redirect("/products/new?error=Supabase%20is%20not%20configured.");
   const returnTo = safeReturnTo(fd.get("return_to"));
 
@@ -82,7 +82,7 @@ export default async function NewProductPage({ searchParams }: { searchParams: P
   if (!canAddProducts(profile)) redirect("/unauthorized");
   const params = await searchParams;
   const returnTo = safeReturnTo(params.returnTo);
-  const s = getSupabaseServerClient();
+  const s = await getAuthenticatedSupabaseServerClient();
   if (!s) {
     return (
       <>
@@ -105,7 +105,7 @@ export default async function NewProductPage({ searchParams }: { searchParams: P
       <FormPageLayout>
         <PageHeader title="Create product" subtitle="Add a product used in machines and storage operations." />
         {params.error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{params.error}</div> : null}
-        <form action={createProduct} className="space-y-5">
+        <LocalDraftForm action={createProduct} formType="product" draftKeyParts={["new"]} className="space-y-5">
           <input type="hidden" name="return_to" value={returnTo} />
           <FormSection title="Product details">
             <div className="grid gap-4 md:grid-cols-2">
@@ -147,7 +147,7 @@ export default async function NewProductPage({ searchParams }: { searchParams: P
           </FormSection>
 
           <div className="flex gap-3"><PrimaryButton>Save product</PrimaryButton><SecondaryButton href={returnTo || "/products"}>Cancel</SecondaryButton></div>
-        </form>
+        </LocalDraftForm>
       </FormPageLayout>
     </>
   );

@@ -1,15 +1,14 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { EmptyState, ErrorState, PageHeader, StatusBadge } from "@/components/ui";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canExecuteRoutes } from "@/lib/authz";
 import { availableRouteStatuses, isTerminalRouteStatus } from "@/lib/route-workflow";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export default async function OperatorRoutesPage({ searchParams }: { searchParams: Promise<{ view?: string }> }) {
   const { view = "my" } = await searchParams;
   const showAvailable = view === "available";
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   const profile = await getCurrentProfile();
   if (!profile || !canExecuteRoutes(profile)) redirect("/unauthorized");
 

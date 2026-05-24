@@ -1,11 +1,12 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { LocalDraftForm } from "@/components/LocalDraft";
 import { FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getAuthenticatedSupabaseServerClient } from "@/lib/auth";
 
 async function createLocation(formData: FormData) {
   "use server";
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) return;
   const payload = {
     name: String(formData.get("name") || "").trim(),
@@ -29,7 +30,7 @@ export default function NewLocationPage() {
           breadcrumbs={[{ label: "Machines", href: "/machines" }, { label: "Locations", href: "/locations" }, { label: "New location" }]}
           action={<SecondaryButton href="/locations">Back to locations</SecondaryButton>}
         />
-        <form action={createLocation} className="space-y-5">
+        <LocalDraftForm action={createLocation} formType="location" draftKeyParts={["new"]} className="space-y-5">
           <FormSection title="Location details" description="Use a clear customer/site name and classify the venue so machines and rent reports stay readable.">
             <div className="grid gap-4 md:grid-cols-2">
               <FormField label="Location name" required>
@@ -53,7 +54,7 @@ export default function NewLocationPage() {
             <PrimaryButton>Add location</PrimaryButton>
             <SecondaryButton href="/locations">Cancel</SecondaryButton>
           </div>
-        </form>
+        </LocalDraftForm>
       </FormPageLayout>
     </>
   );

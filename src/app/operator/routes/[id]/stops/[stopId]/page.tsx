@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from "@/components/LocalDraft";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { QuantityStepper } from "@/components/QuantityStepper";
 import { EmptyState, ErrorState, LoadingState, PageHeader, SecondaryButton } from "@/components/ui";
@@ -88,8 +89,34 @@ interface MissingProductReport {
   notes: string;
 }
 
+type StopDraft = {
+  filledQtys: Record<string, number>;
+  lineNotes: Record<string, string>;
+  unavailableProducts: Record<string, boolean>;
+  extraProducts: ExtraProductLine[];
+  missingReports: MissingProductReport[];
+  cashCollected: boolean;
+  cashBagId: string;
+  notes: string;
+  issueType: string;
+  issuePriority: "critical" | "high" | "normal" | "low";
+  issueDescription: string;
+  showCleaningChecklist: boolean;
+  cleaningDone: boolean;
+  finalPhotoName: string;
+  hasFinalPhotoMetadata: boolean;
+};
+
 function newClientId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function comparableStopDraft(draft: StopDraft) {
+  return JSON.stringify({
+    ...draft,
+    extraProducts: draft.extraProducts.map(({ id: _id, ...item }) => item),
+    missingReports: draft.missingReports.map(({ id: _id, ...item }) => item),
+  });
 }
 
 export default function MachineStopPage() {
@@ -121,6 +148,66 @@ export default function MachineStopPage() {
   const [cleaningDone, setCleaningDone] = useState(false);
   const [finalPhotoName, setFinalPhotoName] = useState("");
   const [finalPhotoFile, setFinalPhotoFile] = useState<File | null>(null);
+  const initialStopDraftRef = useRef<string>("");
+  const draftKey = useDraftKey("route-stop", [routeId || "missing-route", stopId || "missing-stop"]);
+  const stopDraft = useMemo<StopDraft>(() => ({
+    filledQtys,
+    lineNotes,
+    unavailableProducts,
+    extraProducts,
+    missingReports,
+    cashCollected,
+    cashBagId,
+    notes,
+    issueType,
+    issuePriority,
+    issueDescription,
+    showCleaningChecklist,
+    cleaningDone,
+    finalPhotoName,
+    hasFinalPhotoMetadata: Boolean(finalPhotoName),
+  }), [
+    cashBagId,
+    cashCollected,
+    cleaningDone,
+    extraProducts,
+    filledQtys,
+    finalPhotoName,
+    issueDescription,
+    issuePriority,
+    issueType,
+    lineNotes,
+    missingReports,
+    notes,
+    showCleaningChecklist,
+    unavailableProducts,
+  ]);
+  const shouldSaveStopDraft = useCallback((draft: StopDraft) => {
+    if (!routeId || !stopId || !initialStopDraftRef.current || submitting) return false;
+    return comparableStopDraft(draft) !== initialStopDraftRef.current;
+  }, [routeId, stopId, submitting]);
+  const localDraft = useLocalDraft<StopDraft>({
+    key: draftKey,
+    value: stopDraft,
+    shouldSave: shouldSaveStopDraft,
+    onRestore: (draft) => {
+      setFilledQtys(draft.filledQtys ?? {});
+      setLineNotes(draft.lineNotes ?? {});
+      setUnavailableProducts(draft.unavailableProducts ?? {});
+      setExtraProducts((draft.extraProducts ?? []).map((line) => ({ ...line, id: line.id || newClientId() })));
+      setMissingReports((draft.missingReports ?? []).map((line) => ({ ...line, id: line.id || newClientId() })));
+      setCashCollected(Boolean(draft.cashCollected));
+      setCashBagId(draft.cashBagId ?? "");
+      setNotes(draft.notes ?? "");
+      setIssueType(draft.issueType ?? "");
+      setIssuePriority(draft.issuePriority ?? "normal");
+      setIssueDescription(draft.issueDescription ?? "");
+      setShowCleaningChecklist(Boolean(draft.showCleaningChecklist));
+      setCleaningDone(Boolean(draft.cleaningDone));
+      setFinalPhotoFile(null);
+      setFinalPhotoName(draft.finalPhotoName ? `${draft.finalPhotoName} (re-select before saving)` : "");
+    },
+  });
 
   const productById = useMemo(() => new Map((stopData?.productOptions ?? []).map((product) => [product.id, product])), [stopData]);
   const assignedByProduct = useMemo(() => new Map((stopData?.refillItems ?? []).map((item) => [item.productId, item])), [stopData]);
@@ -191,8 +278,27 @@ export default function MachineStopPage() {
         setFilledQtys(initialQtys);
         setLineNotes(initialNotes);
         setUnavailableProducts(initialUnavailable);
-        setExtraProducts((data.extraItems ?? []).map((item: ExtraProductLine) => ({ ...item, id: newClientId() })));
-        if (data.hasCompletionPhoto) setFinalPhotoName("Existing proof photo saved");
+        const initialExtraProducts = (data.extraItems ?? []).map((item: ExtraProductLine) => ({ ...item, id: newClientId() }));
+        setExtraProducts(initialExtraProducts);
+        const initialFinalPhotoName = data.hasCompletionPhoto ? "Existing proof photo saved" : "";
+        setFinalPhotoName(initialFinalPhotoName);
+        initialStopDraftRef.current = comparableStopDraft({
+          filledQtys: initialQtys,
+          lineNotes: initialNotes,
+          unavailableProducts: initialUnavailable,
+          extraProducts: initialExtraProducts,
+          missingReports: [],
+          cashCollected: true,
+          cashBagId: "",
+          notes: "",
+          issueType: "",
+          issuePriority: "normal",
+          issueDescription: "",
+          showCleaningChecklist: false,
+          cleaningDone: false,
+          finalPhotoName: initialFinalPhotoName,
+          hasFinalPhotoMetadata: Boolean(initialFinalPhotoName),
+        });
       } catch (err) {
         setLoadError({
           title: "Stop could not be loaded",
@@ -246,6 +352,7 @@ export default function MachineStopPage() {
       return;
     }
 
+    localDraft.saveNow();
     setSubmitting(true);
     setError("");
     try {
@@ -259,7 +366,7 @@ export default function MachineStopPage() {
         uploadedProof = await uploadRefillProofPhoto(photoFormData);
       }
 
-      await completeStop({
+      const result = await completeStop({
         stopId,
         routeId,
         machineId: stopData.machineId,
@@ -287,11 +394,16 @@ export default function MachineStopPage() {
         completionPhotoUploadUnavailable: uploadedProof?.uploadUnavailable,
         issue: issueType && issueDescription ? { issueType, priority: issuePriority, description: issueDescription } : undefined,
       });
+      if (!result.success) {
+        throw new Error(result.error || "Failed to complete stop");
+      }
 
+      localDraft.clearDraft();
       router.push(routeHref);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to complete stop");
       setSubmitting(false);
+      window.setTimeout(() => localDraft.saveNow(), 0);
     }
   };
 
@@ -326,6 +438,8 @@ export default function MachineStopPage() {
           action={<SecondaryButton href={routeHref}>Back</SecondaryButton>}
         />
 
+        <DraftRestoreBanner pendingDraft={localDraft.pendingDraft} onRestore={localDraft.restoreDraft} onDiscard={localDraft.discardDraft} />
+        {!localDraft.pendingDraft ? <DraftSaveStatus status={localDraft.status} /> : null}
         {error && (
           <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
             {error}

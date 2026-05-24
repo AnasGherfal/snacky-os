@@ -2,13 +2,13 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import type { ReactNode } from "react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { LocalDraftForm } from "@/components/LocalDraft";
 import { FormField, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canViewFinancials } from "@/lib/authz";
 import { getCashCollectionStatus, isCriticalCashVariance, isLargeCashVariance } from "@/lib/cash-collections";
 import { confirmCashCollectionCount, voidCashCollection } from "@/lib/cash-actions";
 import { lyd } from "@/lib/format";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 function formatDate(value: string | null) {
   if (!value) return "-";
@@ -50,7 +50,7 @@ export default async function CashCollectionDetailPage({
   }
   const canReviewMoney = canViewFinancials({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status });
 
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) notFound();
 
   const [{ data: collection }, { data: finance }] = await Promise.all([
@@ -150,7 +150,7 @@ export default async function CashCollectionDetailPage({
             <h2 className="text-lg font-semibold">Count and confirm</h2>
             <p className="mt-1 text-sm text-slate-500">Finance posts money-in only after the envelope is counted.</p>
             {canReviewMoney && status !== "voided" ? (
-              <form action={confirmCashCollectionCount} className="mt-5 space-y-4">
+              <LocalDraftForm action={confirmCashCollectionCount} formType="cash-collection-count" draftKeyParts={[collectionRow.id]} className="mt-5 space-y-4">
                 <input type="hidden" name="id" value={collectionRow.id} />
                 <FormField label="Counted amount LYD" required>
                   <input name="counted_amount_lyd" type="number" min="0" step="0.01" required defaultValue={collectionRow.actual_cash_collected ?? ""} className="field-input" />
@@ -165,7 +165,7 @@ export default async function CashCollectionDetailPage({
                   <textarea name="notes" rows={4} defaultValue={collectionRow.notes ?? ""} className="field-input" />
                 </FormField>
                 <button type="submit" className="btn-primary w-full">Confirm count and post finance</button>
-              </form>
+              </LocalDraftForm>
             ) : (
               <p className="mt-4 text-sm text-slate-500">No count action is available for this collection.</p>
             )}

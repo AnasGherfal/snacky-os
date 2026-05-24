@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from "@/components/LocalDraft";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { QuantityStepper } from "@/components/QuantityStepper";
 import { EmptyState, ErrorState, LoadingState, PageHeader, SecondaryButton, SectionCard } from "@/components/ui";
@@ -35,12 +36,26 @@ interface ExtraPickItem {
   reason: string;
   notes: string;
 }
+type PickListDraft = {
+  pickItems: { productId: string; confirmedQty: number; reason: string; notes: string }[];
+  extras: ExtraPickItem[];
+};
 function safeRouteHref(routeId: string) {
   return routeId ? `/operator/routes/${routeId}` : "/operator";
 }
 
 function newExtraRow(): ExtraPickItem {
   return { id: crypto.randomUUID(), productId: "", quantity: 0, reason: "Customer demand", notes: "" };
+}
+
+function comparablePickDraft(draft: PickListDraft) {
+  return JSON.stringify({
+    pickItems: [...draft.pickItems].sort((a, b) => a.productId.localeCompare(b.productId)),
+    extras: draft.extras
+      .map(({ id: _id, ...item }) => item)
+      .filter((item) => item.productId || item.quantity > 0 || item.notes.trim())
+      .sort((a, b) => `${a.productId}:${a.reason}:${a.notes}`.localeCompare(`${b.productId}:${b.reason}:${b.notes}`)),
+  });
 }
 
 export default function PickListPage() {
@@ -62,6 +77,34 @@ export default function PickListPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const errorRef = useRef<HTMLDivElement | null>(null);
+  const initialPickDraftRef = useRef<string>("");
+  const draftKey = useDraftKey("route-pickup", [routeId || "missing-route"]);
+  const pickDraft = useMemo<PickListDraft>(() => ({
+    pickItems: pickItems.map((item) => ({
+      productId: item.productId,
+      confirmedQty: item.confirmedQty,
+      reason: item.reason,
+      notes: item.notes,
+    })),
+    extras,
+  }), [extras, pickItems]);
+  const shouldSavePickDraft = useCallback((draft: PickListDraft) => {
+    if (!routeId || locked || !initialPickDraftRef.current) return false;
+    return comparablePickDraft(draft) !== initialPickDraftRef.current;
+  }, [locked, routeId]);
+  const localDraft = useLocalDraft<PickListDraft>({
+    key: draftKey,
+    value: pickDraft,
+    shouldSave: shouldSavePickDraft,
+    onRestore: (draft) => {
+      const draftByProduct = new Map((draft.pickItems ?? []).map((item) => [item.productId, item]));
+      setPickItems((current) => current.map((item) => {
+        const saved = draftByProduct.get(item.productId);
+        return saved ? { ...item, confirmedQty: saved.confirmedQty, reason: saved.reason, notes: saved.notes } : item;
+      }));
+      setExtras((draft.extras ?? []).map((item) => ({ ...item, id: item.id || crypto.randomUUID() })));
+    },
+  });
 
   useEffect(() => {
     const fetchPickList = async () => {
@@ -91,8 +134,7 @@ export default function PickListPage() {
         const responseItems = Array.isArray(data.items) ? data.items : [];
         const responseProductOptions = Array.isArray(data.productOptions) ? data.productOptions : [];
         const responseExtraItems = Array.isArray(data.extraItems) ? data.extraItems : [];
-        setPickItems(
-          responseItems.map((item: any) => {
+        const nextPickItems = responseItems.map((item: any) => {
             const requestedQty = Number(item.planned_qty ?? 0);
             const availableStorageQty = Number(item.available_storage_qty ?? 0);
             const hasSavedPickQty = item.picked_qty !== null && item.picked_qty !== undefined;
@@ -112,8 +154,15 @@ export default function PickListPage() {
                 source: machine.source ?? "refill_recommendation",
               })),
             };
-          }).filter((item: PickItem) => item.productId),
-        );
+          }).filter((item: PickItem) => item.productId);
+        const nextExtras = responseExtraItems.map((item: any) => ({
+          id: crypto.randomUUID(),
+          productId: String(item.productId ?? ""),
+          quantity: Number(item.quantity ?? 0),
+          reason: item.reason ?? "Customer demand",
+          notes: item.notes ?? "",
+        })).filter((item: ExtraPickItem) => item.productId || item.quantity > 0);
+        setPickItems(nextPickItems);
         setProductOptions(responseProductOptions.map((product: any) => ({
           id: String(product.id ?? ""),
           sku: product.sku ?? null,
@@ -124,13 +173,16 @@ export default function PickListPage() {
           imageUrl: product.imageUrl ?? null,
           availableStorageQty: Number(product.availableStorageQty ?? 0),
         })).filter((product: ProductOption) => product.id));
-        setExtras(responseExtraItems.map((item: any) => ({
-          id: crypto.randomUUID(),
-          productId: String(item.productId ?? ""),
-          quantity: Number(item.quantity ?? 0),
-          reason: item.reason ?? "Customer demand",
-          notes: item.notes ?? "",
-        })).filter((item: ExtraPickItem) => item.productId || item.quantity > 0));
+        setExtras(nextExtras);
+        initialPickDraftRef.current = comparablePickDraft({
+          pickItems: nextPickItems.map((item: PickItem) => ({
+            productId: item.productId,
+            confirmedQty: item.confirmedQty,
+            reason: item.reason,
+            notes: item.notes,
+          })),
+          extras: nextExtras,
+        });
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load pick list");
       } finally {
@@ -168,6 +220,7 @@ export default function PickListPage() {
       if (result && "success" in result && result.success === false) {
         throw new Error(result.error || "Could not save added product");
       }
+      localDraft.clearDraft();
       router.push(routeHref);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to confirm pick list");
@@ -204,6 +257,8 @@ export default function PickListPage() {
       <div className="max-w-3xl space-y-6">
         <PageHeader title="Pick List" subtitle="Confirm what you actually take from storage before leaving." action={<SecondaryButton href={routeHref}>Cancel</SecondaryButton>} />
 
+        <DraftRestoreBanner pendingDraft={localDraft.pendingDraft} onRestore={localDraft.restoreDraft} onDiscard={localDraft.discardDraft} />
+        {!localDraft.pendingDraft ? <DraftSaveStatus status={localDraft.status} /> : null}
         {notice ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">{notice}</div> : null}
         {error ? <div ref={errorRef} className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div> : null}
 

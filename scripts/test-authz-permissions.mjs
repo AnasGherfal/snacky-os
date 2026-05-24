@@ -30,6 +30,8 @@ test("warehouse only can view products and storage without finance or product de
   const warehouse = user("warehouse", ["warehouse"]);
 
   assert.equal(hasPermission(warehouse, "products.view"), true);
+  assert.equal(hasPermission(warehouse, "products.create"), true);
+  assert.equal(hasPermission(warehouse, "products.edit"), true);
   assert.equal(hasPermission(warehouse, "inventory.view"), true);
   assert.equal(hasPermission(warehouse, "storage.adjust"), true);
   assert.equal(hasPermission(warehouse, "storage.movement.create"), true);
@@ -45,6 +47,8 @@ test("operator and warehouse roles combine", () => {
   const operatorWarehouse = user("warehouse", ["operator", "warehouse"]);
 
   assert.equal(hasPermission(operatorWarehouse, "products.view"), true);
+  assert.equal(hasPermission(operatorWarehouse, "products.create"), true);
+  assert.equal(hasPermission(operatorWarehouse, "products.edit"), true);
   assert.equal(hasPermission(operatorWarehouse, "inventory.view"), true);
   assert.equal(hasPermission(operatorWarehouse, "storage.adjust"), true);
   assert.equal(hasPermission(operatorWarehouse, "refills.create"), true);

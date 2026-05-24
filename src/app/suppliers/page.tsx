@@ -1,13 +1,13 @@
 import Link from "next/link";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
+import { getAuthenticatedSupabaseServerClient } from "@/lib/auth";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export default async function SuppliersPage({ searchParams }: { searchParams: Promise<SearchParamsRecord> }) {
   const params = cleanSearchParams(await searchParams);
   const { page, pageSize, from, to } = getPagination(params);
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) {
     return (
       <>

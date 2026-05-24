@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { FormSubmitButton } from "@/components/FormSubmitButton";
+import { LocalDraftForm } from "@/components/LocalDraft";
 import { FormField, FormPageLayout, FormSection, PageHeader, SecondaryButton } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canEditFinancialTransactions } from "@/lib/authz";
@@ -34,7 +35,7 @@ export default async function NewFinanceTransactionPage({ searchParams }: { sear
           ]}
         />
         {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{error}</div> : null}
-        <form action={createManualFinancialTransaction} className="space-y-5">
+        <LocalDraftForm action={createManualFinancialTransaction} formType="finance-transaction" draftKeyParts={["new"]} className="space-y-5">
           <FormSection title="Transaction">
             <div className="grid gap-4 md:grid-cols-2">
               <FormField label="Date" required><input name="transaction_date" type="date" defaultValue={today} required className="field-input" /></FormField>
@@ -61,7 +62,7 @@ export default async function NewFinanceTransactionPage({ searchParams }: { sear
             </div>
           </FormSection>
           <div className="flex gap-3"><FormSubmitButton pendingLabel="Saving transaction...">Save transaction</FormSubmitButton><SecondaryButton href="/finance/transactions">Cancel</SecondaryButton></div>
-        </form>
+        </LocalDraftForm>
       </FormPageLayout>
     </>
   );

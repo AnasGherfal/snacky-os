@@ -4,10 +4,9 @@ import { Eye, Pencil, Plus, RotateCcw } from "lucide-react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canManageStorageLocations } from "@/lib/authz";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { activateStorageLocation, archiveStorageLocation, deleteStorageLocation } from "@/lib/storage-location-actions";
 import {
   StorageLocationRow,
@@ -31,7 +30,7 @@ export default async function StorageLocationsPage({ searchParams }: { searchPar
 
   const params = cleanSearchParams((await searchParams) as SearchParamsRecord);
   const { page, pageSize, from, to } = getPagination(params);
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) {
     return (
       <>

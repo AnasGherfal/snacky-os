@@ -60,6 +60,11 @@ export async function getAuthAccessToken() {
   return cookieStore.get(accessTokenCookie)?.value ?? null;
 }
 
+export async function getAuthenticatedSupabaseServerClient() {
+  const accessToken = await getAuthAccessToken();
+  return getSupabaseServerClient(accessToken);
+}
+
 export const getCurrentProfile = cache(async function getCurrentProfile(): Promise<UserProfile | null> {
   const accessToken = await getAuthAccessToken();
   if (!accessToken) return null;

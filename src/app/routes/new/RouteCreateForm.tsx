@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, FormEvent, KeyboardEvent, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from "@/components/LocalDraft";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -87,6 +88,27 @@ type ManualStopItem = {
   quantity: number;
 };
 
+type RouteCreateDraft = {
+  routeDate: string;
+  assignmentMode: "unassigned" | "assigned";
+  operatorId: string;
+  machineIds: string[];
+  recommendationKeys: string[];
+  finalTakeByRecommendationGroup: Record<string, number>;
+  manualStopItems: ManualStopItem[];
+  manualMachineId: string;
+  search: string;
+  barcode: string;
+  recommendationMachineFilter: string;
+  recommendationPriorityFilter: string;
+  recommendationSearch: string;
+  showNoRefillNeeded: boolean;
+  expandedRecommendationGroups: string[];
+  recommendationPage: number;
+  adminOverride: boolean;
+  notFoundQuery: string;
+};
+
 const RECOMMENDATION_PAGE_SIZE = 50;
 const priorityOrder = ["critical", "high", "medium", "low"] as const;
 const priorityRank = new Map(priorityOrder.map((priority, index) => [priority, priorityOrder.length - index]));
@@ -170,6 +192,96 @@ export function RouteCreateForm({
   const [saving, setSaving] = useState(false);
   const deferredSearch = useDeferredValue(search);
   const deferredRecommendationSearch = useDeferredValue(recommendationSearch);
+  const draftKey = useDraftKey("route", ["new"]);
+
+  const routeDraft = useMemo<RouteCreateDraft>(() => ({
+    routeDate,
+    assignmentMode,
+    operatorId,
+    machineIds,
+    recommendationKeys,
+    finalTakeByRecommendationGroup,
+    manualStopItems,
+    manualMachineId,
+    search,
+    barcode,
+    recommendationMachineFilter,
+    recommendationPriorityFilter,
+    recommendationSearch,
+    showNoRefillNeeded,
+    expandedRecommendationGroups,
+    recommendationPage,
+    adminOverride,
+    notFoundQuery,
+  }), [
+    adminOverride,
+    assignmentMode,
+    barcode,
+    expandedRecommendationGroups,
+    finalTakeByRecommendationGroup,
+    machineIds,
+    manualMachineId,
+    manualStopItems,
+    notFoundQuery,
+    operatorId,
+    recommendationKeys,
+    recommendationMachineFilter,
+    recommendationPage,
+    recommendationPriorityFilter,
+    recommendationSearch,
+    routeDate,
+    search,
+    showNoRefillNeeded,
+  ]);
+
+  const shouldSaveRouteDraft = useCallback((draft: RouteCreateDraft) => {
+    return Boolean(
+      draft.routeDate !== defaultRouteDate ||
+        draft.assignmentMode !== "unassigned" ||
+        draft.operatorId ||
+        draft.machineIds.length ||
+        draft.recommendationKeys.length ||
+        Object.keys(draft.finalTakeByRecommendationGroup).length ||
+        draft.manualStopItems.length ||
+        draft.manualMachineId ||
+        draft.search ||
+        draft.barcode ||
+        draft.recommendationMachineFilter ||
+        draft.recommendationPriorityFilter ||
+        draft.recommendationSearch ||
+        draft.showNoRefillNeeded ||
+        draft.expandedRecommendationGroups.length ||
+        draft.recommendationPage !== 1 ||
+        draft.adminOverride ||
+        draft.notFoundQuery
+    );
+  }, [defaultRouteDate]);
+
+  const localDraft = useLocalDraft<RouteCreateDraft>({
+    key: draftKey,
+    value: routeDraft,
+    shouldSave: shouldSaveRouteDraft,
+    onRestore: (draft) => {
+      setRouteDate(draft.routeDate || defaultRouteDate);
+      setAssignmentMode(draft.assignmentMode === "assigned" ? "assigned" : "unassigned");
+      setOperatorId(draft.operatorId ?? "");
+      setMachineIds(Array.isArray(draft.machineIds) ? draft.machineIds : []);
+      setRecommendationKeys(Array.isArray(draft.recommendationKeys) ? draft.recommendationKeys : []);
+      setFinalTakeByRecommendationGroup(draft.finalTakeByRecommendationGroup ?? {});
+      setManualStopItems(Array.isArray(draft.manualStopItems) ? draft.manualStopItems : []);
+      setManualMachineId(draft.manualMachineId ?? "");
+      setSearch(draft.search ?? "");
+      setBarcode(draft.barcode ?? "");
+      setRecommendationMachineFilter(draft.recommendationMachineFilter ?? "");
+      setRecommendationPriorityFilter(draft.recommendationPriorityFilter ?? "");
+      setRecommendationSearch(draft.recommendationSearch ?? "");
+      setShowNoRefillNeeded(Boolean(draft.showNoRefillNeeded));
+      setExpandedRecommendationGroups(Array.isArray(draft.expandedRecommendationGroups) ? draft.expandedRecommendationGroups : []);
+      setRecommendationPage(Math.max(1, Number(draft.recommendationPage ?? 1)));
+      setAdminOverride(Boolean(draft.adminOverride));
+      setNotFoundQuery(draft.notFoundQuery ?? "");
+    },
+  });
 
   const productsById = useMemo(() => new Map(products.map((product) => [product.id, product])), [products]);
 
@@ -532,6 +644,7 @@ export function RouteCreateForm({
       }
 
       window.sessionStorage.setItem("snacky-route-created", "Route created successfully.");
+      localDraft.clearDraft();
       router.replace(`/routes/${result.routeId}`);
     } catch (err) {
       setScrollErrorIntoView(true);
@@ -544,6 +657,8 @@ export function RouteCreateForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      <DraftRestoreBanner pendingDraft={localDraft.pendingDraft} onRestore={localDraft.restoreDraft} onDiscard={localDraft.discardDraft} />
+      {!localDraft.pendingDraft ? <DraftSaveStatus status={localDraft.status} /> : null}
       {error ? (
         <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm font-medium whitespace-pre-line text-rose-800" role="alert" aria-live="assertive">
           {error}

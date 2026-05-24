@@ -1,15 +1,15 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { LocalDraftForm } from "@/components/LocalDraft";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { ProductSourceBadge } from "@/components/ProductSourceBadge";
 import { DataTable, EmptyState, FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { logActivity } from "@/lib/activity-log";
-import { requireCurrentProfileForPath } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
 import { resolveProductImageUrl } from "@/lib/product-images";
 import { isSkuDuplicateError } from "@/lib/product-sku";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 function formatMoney(value: number | string | null | undefined, decimals = 2) {
   if (value === null || value === undefined || value === "") return "-";
@@ -20,7 +20,7 @@ async function updateProduct(fd: FormData) {
   "use server";
   const id = String(fd.get("id"));
   const profile = await requireCurrentProfileForPath(`/products/${id}/edit`);
-  const s = getSupabaseServerClient();
+  const s = await getAuthenticatedSupabaseServerClient();
   if (!s) return;
 
   const { data: beforeProduct } = await s.from("products").select("*").eq("id", id).maybeSingle();
@@ -86,7 +86,7 @@ export default async function EditProductPage({ params, searchParams }: { params
   const { id } = await params;
   const { error = "" } = await searchParams;
   await requireCurrentProfileForPath(`/products/${id}/edit`);
-  const s = getSupabaseServerClient();
+  const s = await getAuthenticatedSupabaseServerClient();
   if (!s) notFound();
 
   const [{ data: product }, { data: suppliers }, { data: inventory }, { data: movements }, { data: purchaseLines }, { data: sales }] = await Promise.all([
@@ -164,7 +164,7 @@ export default async function EditProductPage({ params, searchParams }: { params
         </section>
 
         <FormPageLayout>
-        <form action={updateProduct} className="space-y-5">
+        <LocalDraftForm action={updateProduct} formType="product" draftKeyParts={[id]} className="space-y-5">
           <input type="hidden" name="id" value={id} />
           <input type="hidden" name="current_image_url" value={product.image_url || ""} />
           <FormSection title="Product details">
@@ -204,7 +204,7 @@ export default async function EditProductPage({ params, searchParams }: { params
           </FormSection>
 
           <div className="flex gap-3"><PrimaryButton>Save changes</PrimaryButton><SecondaryButton href="/products">Cancel</SecondaryButton></div>
-        </form>
+        </LocalDraftForm>
         </FormPageLayout>
 
         <section id="inventory" className="surface-card">

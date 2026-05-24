@@ -3,11 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canViewFinancials } from "@/lib/authz";
 import { calculateCashVariance, statusForConfirmedCash } from "@/lib/cash-collections";
 import { clearCashCollectionFinancialTransaction, createCashCollectionFinancialTransaction } from "@/lib/finance-actions";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 function clean(value: FormDataEntryValue | null) {
   return String(value ?? "").trim();
@@ -58,7 +57,7 @@ async function requireCashReviewAccess(path: string) {
   if (!profile || !canViewFinancials({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) {
     redirect("/unauthorized");
   }
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) fail(path, "Supabase is not configured.");
   return { profile, supabase };
 }

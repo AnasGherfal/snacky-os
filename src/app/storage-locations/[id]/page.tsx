@@ -3,9 +3,8 @@ import { redirect } from "next/navigation";
 import { Pencil, RotateCcw } from "lucide-react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canManageStorageLocations } from "@/lib/authz";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { activateStorageLocation, archiveStorageLocation, deleteStorageLocation } from "@/lib/storage-location-actions";
 import {
   InventoryLocationRow,
@@ -46,7 +45,7 @@ export default async function StorageLocationDetailPage({
 
   const { id } = await params;
   const query = await searchParams;
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) {
     return (
       <>

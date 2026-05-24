@@ -1,4 +1,5 @@
 import { notFound, redirect } from "next/navigation";
+import { LocalDraftForm } from "@/components/LocalDraft";
 import { ErrorState, FormField, FormPageLayout, FormSection, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
@@ -72,7 +73,7 @@ export default async function EditVmsProductMappingPage({
           </div>
         ) : null}
 
-        <form action={updateVmsProductMapping} className="space-y-6">
+        <LocalDraftForm action={updateVmsProductMapping} formType="vms-mapping" draftKeyParts={[mapping.id]} className="space-y-6">
           <input type="hidden" name="id" value={mapping.id} />
 
           <FormSection title="VMS product">
@@ -135,7 +136,7 @@ export default async function EditVmsProductMappingPage({
             <button className="btn-primary">Save mapping</button>
             <SecondaryButton href="/vms-mappings">Cancel</SecondaryButton>
           </div>
-        </form>
+        </LocalDraftForm>
       </FormPageLayout>
     </>
   );

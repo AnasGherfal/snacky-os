@@ -1,11 +1,12 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { LocalDraftForm } from "@/components/LocalDraft";
 import { FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getAuthenticatedSupabaseServerClient } from "@/lib/auth";
 
 async function createSupplier(formData: FormData) {
   "use server";
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) return;
   await supabase.from("suppliers").insert({
     name: String(formData.get("name") || "").trim(),
@@ -27,7 +28,7 @@ export default function NewSupplierPage() {
           breadcrumbs={[{ label: "Inventory", href: "/inventory" }, { label: "Suppliers", href: "/suppliers" }, { label: "New supplier" }]}
           action={<SecondaryButton href="/suppliers">Back to suppliers</SecondaryButton>}
         />
-        <form action={createSupplier} className="space-y-5">
+        <LocalDraftForm action={createSupplier} formType="supplier" draftKeyParts={["new"]} className="space-y-5">
           <FormSection title="Supplier details" description="Use a clear company name and optional contact/payment notes for purchase follow-up.">
             <div className="grid gap-4 md:grid-cols-2">
               <FormField label="Supplier name" required>
@@ -48,7 +49,7 @@ export default function NewSupplierPage() {
             <PrimaryButton>Add supplier</PrimaryButton>
             <SecondaryButton href="/suppliers">Cancel</SecondaryButton>
           </div>
-        </form>
+        </LocalDraftForm>
       </FormPageLayout>
     </>
   );

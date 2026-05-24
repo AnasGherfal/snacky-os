@@ -105,6 +105,8 @@ const rolePermissions = {
   ],
   warehouse: [
     "products.view",
+    "products.create",
+    "products.edit",
     "inventory.view",
     "storage.view",
     "storage.adjust",

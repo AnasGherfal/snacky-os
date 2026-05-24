@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { LocalDraftForm } from "@/components/LocalDraft";
 import { DataTable, ErrorState, FormField, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
@@ -174,7 +175,7 @@ export default async function HistoricalRouteDeductionPage({ searchParams }: { s
       {params.cancelled ? <div className="mb-5 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm font-medium text-slate-700">Batch cancelled.</div> : null}
 
       <section className="mb-6 grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
-        <form action={previewHistoricalRouteDeduction} className="surface-card space-y-4">
+        <LocalDraftForm action={previewHistoricalRouteDeduction} formType="historical-route-deduction" draftKeyParts={["preview"]} className="surface-card space-y-4">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Paste Old Route Text</h2>
             <p className="mt-1 text-sm leading-6 text-slate-500">
@@ -191,7 +192,7 @@ export default async function HistoricalRouteDeductionPage({ searchParams }: { s
             This feature creates inventory movements only. It does not create purchases, sales, cash entries, or finance transactions.
           </div>
           <button className="btn-primary">Preview deduction</button>
-        </form>
+        </LocalDraftForm>
 
         <section className="surface-card">
           <h2 className="mb-4 text-lg font-semibold text-slate-900">Recent Batches</h2>

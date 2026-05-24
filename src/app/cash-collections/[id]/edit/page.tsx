@@ -2,9 +2,8 @@ import { notFound, redirect } from "next/navigation";
 import { CashCollectionForm } from "@/components/CashCollectionForm";
 import { EmptyState, FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
 import { updateCashCollection } from "@/lib/cash-actions";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canViewFinancials } from "@/lib/authz";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +21,7 @@ export default async function EditCashCollectionPage({
 
   const { id } = await params;
   const { error = "" } = await searchParams;
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) notFound();
 
   const [{ data: collection }, { data: machines }, { data: routes }, { data: operators }] = await Promise.all([
