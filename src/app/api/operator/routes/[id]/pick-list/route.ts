@@ -1,4 +1,4 @@
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 import { NextResponse } from "next/server";
 import { getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute } from "@/lib/authz";
@@ -15,6 +15,12 @@ function errorMessage(error: unknown) {
     return String(row.message ?? row.details ?? row.hint ?? "Unknown database error");
   }
   return "Unknown database error";
+}
+
+function unitQuantity(value: unknown) {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.floor(parsed));
 }
 
 export async function GET(
@@ -42,6 +48,7 @@ export async function GET(
     if (!canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, route.operator_id)) {
       return NextResponse.json({ error: "This route is not assigned to you" }, { status: 403 });
     }
+    const readClient = getSupabaseAdminClient() ?? supabase;
 
     let { data: stopItems, error: stopItemsError }: { data: any[] | null; error: any } = await supabase
       .from("route_stop_items")
@@ -93,8 +100,8 @@ export async function GET(
 
     const plannedByProduct = new Map<string, any>();
     (stopItems ?? []).forEach((line: any) => {
-      const productId = String(line.product_id);
-      const plannedQty = Math.max(0, Number(line.planned_quantity ?? 0));
+      const productId = String(line.product_id ?? "").trim();
+      const plannedQty = unitQuantity(line.planned_quantity);
       if (!productId || plannedQty <= 0) return;
       const machine = Array.isArray(line.machine) ? line.machine[0] : line.machine;
       const product = Array.isArray(line.product) ? line.product[0] : line.product;
@@ -117,27 +124,6 @@ export async function GET(
       plannedByProduct.set(productId, current);
     });
 
-    const productIds = Array.from(plannedByProduct.keys());
-    const [storageResult, productOptionsResult] = await Promise.all([
-      productIds.length
-      ? supabase
-          .from("current_inventory_by_location")
-          .select("product_id, quantity_on_hand")
-          .eq("location_type", "storage")
-          .in("product_id", productIds)
-      : Promise.resolve({ data: [], error: null }),
-      supabase.from("products").select("id, sku, barcode, name, category, brand, image_url").eq("active", true).order("name"),
-    ]);
-
-    if (storageResult.error) throw storageResult.error;
-    if (productOptionsResult.error) throw productOptionsResult.error;
-
-    const storageByProduct = new Map<string, number>();
-    (storageResult.data ?? []).forEach((row: any) => {
-      const productId = String(row.product_id);
-      storageByProduct.set(productId, (storageByProduct.get(productId) ?? 0) + Number(row.quantity_on_hand ?? 0));
-    });
-
     const { data: pickListItems, error: pickListError } = await supabase
       .from("route_pick_list_items")
       .select("product_id, picked_qty, planned_qty, action_type, reason, notes")
@@ -145,17 +131,64 @@ export async function GET(
     if (pickListError && !isMissingTable(pickListError, "route_pick_list_items")) throw pickListError;
     const pickedByProduct = new Map<string, number>();
     (pickListItems ?? []).forEach((line: any) => {
-      const productId = String(line.product_id);
-      pickedByProduct.set(productId, (pickedByProduct.get(productId) ?? 0) + Number(line.picked_qty ?? 0));
+      const productId = String(line.product_id ?? "").trim();
+      if (!productId) return;
+      pickedByProduct.set(productId, (pickedByProduct.get(productId) ?? 0) + unitQuantity(line.picked_qty));
     });
     const extraItems = (pickListItems ?? [])
-      .filter((line: any) => line.action_type === "extra_product")
+      .filter((line: any) => line.action_type === "extra_product" && line.product_id)
       .map((line: any) => ({
         productId: line.product_id,
-        quantity: Number(line.picked_qty ?? 0),
+        quantity: unitQuantity(line.picked_qty),
         reason: line.reason ?? "Customer demand",
         notes: line.notes ?? "",
       }));
+
+    const { data: productOptionsData, error: productOptionsError } = await readClient
+      .from("products")
+      .select("id, sku, barcode, name, category, brand, image_url, active")
+      .eq("active", true)
+      .order("name");
+    if (productOptionsError) throw productOptionsError;
+
+    const productIds = Array.from(new Set([
+      ...Array.from(plannedByProduct.keys()),
+      ...Array.from(pickedByProduct.keys()),
+      ...(productOptionsData ?? []).map((product: any) => product.id),
+    ].filter(Boolean)));
+
+    const [storageResult, productNamesResult] = await Promise.all([
+      productIds.length
+        ? readClient
+            .from("current_inventory_by_location")
+            .select("product_id, quantity_on_hand")
+            .eq("location_type", "storage")
+            .in("product_id", productIds)
+        : Promise.resolve({ data: [], error: null }),
+      productIds.length
+        ? readClient
+            .from("products")
+            .select("id, name, sku")
+            .in("id", productIds)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+
+    if (storageResult.error) throw storageResult.error;
+    if (productNamesResult.error) throw productNamesResult.error;
+
+    const productById = new Map((productNamesResult.data ?? []).map((product: any) => [String(product.id), product]));
+    plannedByProduct.forEach((line: any, productId) => {
+      const product = productById.get(productId);
+      if (product?.name) line.product_name = product.name;
+      if (product?.sku !== undefined) line.sku = product.sku;
+    });
+
+    const storageByProduct = new Map<string, number>();
+    (storageResult.data ?? []).forEach((row: any) => {
+      const productId = String(row.product_id ?? "").trim();
+      if (!productId) return;
+      storageByProduct.set(productId, (storageByProduct.get(productId) ?? 0) + unitQuantity(row.quantity_on_hand));
+    });
 
     const { data: pickMovements, error: pickMovementError } = await supabase
       .from("inventory_movements")
@@ -168,25 +201,15 @@ export async function GET(
 
     const items = Array.from(plannedByProduct.values()).map((line: any) => ({
       product_id: line.product_id,
-      product_name: line.product_name,
+      product_name: line.product_name || "Unknown product",
       sku: line.sku ?? null,
-      planned_qty: Number(line.planned_qty ?? 0),
+      planned_qty: unitQuantity(line.planned_qty),
       picked_qty: pickedByProduct.has(String(line.product_id)) ? pickedByProduct.get(String(line.product_id)) : null,
       available_storage_qty: (storageByProduct.get(String(line.product_id)) ?? 0) + (pickedByProduct.get(String(line.product_id)) ?? 0),
-      machine_items: line.machine_items,
+      machine_items: Array.isArray(line.machine_items) ? line.machine_items : [],
     }));
 
-    const allProductIds = (productOptionsResult.data ?? []).map((product: any) => product.id);
-    const optionStorageResult = allProductIds.length
-      ? await supabase.from("current_inventory_by_location").select("product_id, quantity_on_hand").eq("location_type", "storage").in("product_id", allProductIds)
-      : { data: [], error: null };
-    if (optionStorageResult.error) throw optionStorageResult.error;
-    const optionStorageByProduct = new Map<string, number>();
-    (optionStorageResult.data ?? []).forEach((row: any) => {
-      const productId = String(row.product_id);
-      optionStorageByProduct.set(productId, (optionStorageByProduct.get(productId) ?? 0) + Number(row.quantity_on_hand ?? 0));
-    });
-    const productOptions = (productOptionsResult.data ?? []).map((product: any) => ({
+    const productOptions = (productOptionsData ?? []).map((product: any) => ({
       id: product.id,
       sku: product.sku,
       barcode: product.barcode,
@@ -194,7 +217,7 @@ export async function GET(
       category: product.category,
       brand: product.brand,
       imageUrl: product.image_url,
-      availableStorageQty: (optionStorageByProduct.get(String(product.id)) ?? 0) + (pickedByProduct.get(String(product.id)) ?? 0),
+      availableStorageQty: (storageByProduct.get(String(product.id)) ?? 0) + (pickedByProduct.get(String(product.id)) ?? 0),
     }));
 
     return NextResponse.json({
@@ -205,11 +228,16 @@ export async function GET(
       locked: ["completed", "reviewed", "cancelled", "canceled"].includes(String(route.status)),
       routeStatus: route.status,
       debug: process.env.NODE_ENV === "development"
-        ? { routeId, routeStopItemsCount: stopItems?.length ?? 0, aggregatedPickListCount: items.length, routePickListItemsCount: pickListItems?.length ?? 0, operatorTeamMemberId: profile?.team_member_id ?? null }
+        ? { routeId, routeStopItemsCount: stopItems?.length ?? 0, aggregatedPickListCount: items.length, routePickListItemsCount: pickListItems?.length ?? 0, productOptionsCount: productOptions.length, operatorTeamMemberId: profile?.team_member_id ?? null }
         : undefined,
     });
   } catch (error) {
-    console.error("Error fetching pick list:", error);
+    console.error("[operator:pick-list] Error fetching pick list", {
+      route_id: routeId,
+      user_id: profile?.id ?? null,
+      user_roles: profile?.roles ?? [],
+      error,
+    });
     return NextResponse.json(
       { error: "Failed to fetch pick list", details: errorMessage(error) },
       { status: 500 }

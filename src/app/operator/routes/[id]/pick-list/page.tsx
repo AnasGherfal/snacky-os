@@ -61,6 +61,7 @@ export default function PickListPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const errorRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const fetchPickList = async () => {
@@ -87,37 +88,49 @@ export default function PickListPage() {
         const confirmed = Boolean(data.confirmed);
         setAlreadyConfirmed(confirmed);
         setLocked(Boolean(data.locked));
+        const responseItems = Array.isArray(data.items) ? data.items : [];
+        const responseProductOptions = Array.isArray(data.productOptions) ? data.productOptions : [];
+        const responseExtraItems = Array.isArray(data.extraItems) ? data.extraItems : [];
         setPickItems(
-          data.items.map((item: any) => {
+          responseItems.map((item: any) => {
             const requestedQty = Number(item.planned_qty ?? 0);
             const availableStorageQty = Number(item.available_storage_qty ?? 0);
             const hasSavedPickQty = item.picked_qty !== null && item.picked_qty !== undefined;
             return {
-              productId: item.product_id,
-              productName: item.product_name,
+              productId: String(item.product_id ?? ""),
+              productName: item.product_name || "Unknown product",
               sku: item.sku ?? null,
               requestedQty,
               availableStorageQty,
               confirmedQty: hasSavedPickQty ? Number(item.picked_qty ?? 0) : Math.min(requestedQty, availableStorageQty),
               reason: "Product not available in storage",
               notes: "",
-              machineItems: (item.machine_items ?? []).map((machine: any) => ({
-                machineName: machine.machine_name,
-                machineCode: machine.machine_code,
+              machineItems: (Array.isArray(item.machine_items) ? item.machine_items : []).map((machine: any) => ({
+                machineName: machine.machine_name || "Unknown machine",
+                machineCode: machine.machine_code || "-",
                 plannedQty: Number(machine.planned_qty ?? 0),
                 source: machine.source ?? "refill_recommendation",
               })),
             };
-          }),
+          }).filter((item: PickItem) => item.productId),
         );
-        setProductOptions(data.productOptions ?? []);
-        setExtras((data.extraItems ?? []).map((item: any) => ({
+        setProductOptions(responseProductOptions.map((product: any) => ({
+          id: String(product.id ?? ""),
+          sku: product.sku ?? null,
+          barcode: product.barcode ?? null,
+          name: product.name || "Unnamed product",
+          category: product.category ?? null,
+          brand: product.brand ?? null,
+          imageUrl: product.imageUrl ?? null,
+          availableStorageQty: Number(product.availableStorageQty ?? 0),
+        })).filter((product: ProductOption) => product.id));
+        setExtras(responseExtraItems.map((item: any) => ({
           id: crypto.randomUUID(),
-          productId: item.productId,
+          productId: String(item.productId ?? ""),
           quantity: Number(item.quantity ?? 0),
           reason: item.reason ?? "Customer demand",
           notes: item.notes ?? "",
-        })));
+        })).filter((item: ExtraPickItem) => item.productId || item.quantity > 0));
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load pick list");
       } finally {
@@ -126,6 +139,10 @@ export default function PickListPage() {
     };
     fetchPickList();
   }, [routeId, shouldStartRoute]);
+
+  useEffect(() => {
+    if (error) errorRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [error]);
 
   const handleConfirmPick = async () => {
     if (locked) {
@@ -143,11 +160,14 @@ export default function PickListPage() {
         reason: item.reason,
         notes: item.notes,
       }));
-      await confirmPickList(
+      const result = await confirmPickList(
         routeId,
         items,
         extras.filter((item) => item.productId && item.quantity > 0).map((item) => ({ productId: item.productId, quantity: item.quantity, reason: item.reason, notes: item.notes })),
       );
+      if (result && "success" in result && result.success === false) {
+        throw new Error(result.error || "Could not save added product");
+      }
       router.push(routeHref);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to confirm pick list");
@@ -185,118 +205,117 @@ export default function PickListPage() {
         <PageHeader title="Pick List" subtitle="Confirm what you actually take from storage before leaving." action={<SecondaryButton href={routeHref}>Cancel</SecondaryButton>} />
 
         {notice ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">{notice}</div> : null}
-        {error ? <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div> : null}
+        {error ? <div ref={errorRef} className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div> : null}
+
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <strong>Instructions:</strong> Confirm planned products and add any extra active product you need before leaving storage.
+        </div>
 
         {pickItems.length === 0 ? (
-          <EmptyState title="No pick-list items were added to this route." body="Ask an admin to add machine-level refill items before picking stock." />
+          <EmptyState title="No planned pick-list items" body="You can still add an active product from storage below." />
         ) : (
-          <>
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-              <strong>Instructions:</strong> This route pick list is calculated from each machine stop plan. Confirm actual picked quantities before leaving storage.
-            </div>
-
-            <div className="space-y-3">
-              {pickItems.map((item) => (
-                <div key={item.productId} className="rounded-lg border border-slate-200 bg-white p-4">
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0 flex-1">
-                      <p className="break-words font-semibold text-slate-900">{item.productName}</p>
-                      <p className="mt-1 break-words text-xs text-slate-500">
-                        SKU: {item.sku ?? "No SKU"} - Planned total: {item.requestedQty} units - Storage: {item.availableStorageQty}
-                      </p>
-                      <div className="mt-3 space-y-1 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                        {item.machineItems.map((machine, index) => (
-                          <div key={`${machine.machineCode}-${index}`} className="flex flex-col gap-1 text-xs text-slate-600 sm:flex-row sm:justify-between">
-                            <span className="min-w-0 break-words">{machine.machineName} ({machine.machineCode})</span>
-                            <span className="shrink-0">{machine.plannedQty} - {machine.source === "manual_admin_assignment" ? "manual" : "recommendation"}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="w-full shrink-0 sm:w-44">
-                      <div className="mb-1 text-xs font-medium text-slate-500">Picked units</div>
-                      <QuantityStepper
-                        value={item.confirmedQty}
-                        max={item.availableStorageQty}
-                        onChange={(quantity) => updatePickItem(item.productId, { confirmedQty: quantity })}
-                        disabled={locked}
-                        inputLabel={`${item.productName} picked quantity`}
-                      />
+          <div className="space-y-3">
+            {pickItems.map((item) => (
+              <div key={item.productId} className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <p className="break-words font-semibold text-slate-900">{item.productName}</p>
+                    <p className="mt-1 break-words text-xs text-slate-500">
+                      SKU: {item.sku ?? "No SKU"} - Planned total: {item.requestedQty} units - Storage: {item.availableStorageQty}
+                    </p>
+                    <div className="mt-3 space-y-1 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      {item.machineItems.map((machine, index) => (
+                        <div key={`${machine.machineCode}-${index}`} className="flex flex-col gap-1 text-xs text-slate-600 sm:flex-row sm:justify-between">
+                          <span className="min-w-0 break-words">{machine.machineName} ({machine.machineCode})</span>
+                          <span className="shrink-0">{machine.plannedQty} - {machine.source === "manual_admin_assignment" ? "manual" : "recommendation"}</span>
+                        </div>
+                      ))}
                     </div>
                   </div>
+                  <div className="w-full shrink-0 sm:w-44">
+                    <div className="mb-1 text-xs font-medium text-slate-500">Picked units</div>
+                    <QuantityStepper
+                      value={item.confirmedQty}
+                      max={item.availableStorageQty}
+                      onChange={(quantity) => updatePickItem(item.productId, { confirmedQty: quantity })}
+                      disabled={locked}
+                      inputLabel={`${item.productName} picked quantity`}
+                    />
+                  </div>
+                </div>
 
-                  {item.confirmedQty !== item.requestedQty ? (
-                    <div className="mt-4 grid gap-3 md:grid-cols-2">
-                      <label className="block">
-                        <span className="mb-1 block text-sm font-medium text-slate-800">Reason</span>
-                        <select value={item.reason} onChange={(event) => updatePickItem(item.productId, { reason: event.target.value })} className="field-input">
-                          <option>Product not available in storage</option>
-                          <option>Product not in operator bag</option>
-                          <option>Product expired/damaged</option>
-                          <option>Customer demand</option>
-                          <option>Other</option>
-                        </select>
-                      </label>
-                      <label className="block">
-                        <span className="mb-1 block text-sm font-medium text-slate-800">Notes</span>
-                        <input value={item.notes} onChange={(event) => updatePickItem(item.productId, { notes: event.target.value })} className="field-input" placeholder="Explain the pick-list change" />
-                      </label>
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-
-            <SectionCard>
-              <div className="grid grid-cols-2 gap-4 p-4">
-                <div className="min-w-0">
-                  <p className="mb-1 text-xs text-slate-500">Products</p>
-                  <p className="text-2xl font-bold text-slate-900">{pickItems.length}</p>
-                </div>
-                <div className="min-w-0">
-                  <p className="mb-1 text-xs text-slate-500">Picked units</p>
-                  <p className="text-2xl font-bold text-slate-900">{pickItems.reduce((sum, item) => sum + item.confirmedQty, 0)}</p>
-                </div>
+                {item.confirmedQty !== item.requestedQty ? (
+                  <div className="mt-4 grid gap-3 md:grid-cols-2">
+                    <label className="block">
+                      <span className="mb-1 block text-sm font-medium text-slate-800">Reason</span>
+                      <select value={item.reason} onChange={(event) => updatePickItem(item.productId, { reason: event.target.value })} className="field-input">
+                        <option>Product not available in storage</option>
+                        <option>Product not in operator bag</option>
+                        <option>Product expired/damaged</option>
+                        <option>Customer demand</option>
+                        <option>Other</option>
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-sm font-medium text-slate-800">Notes</span>
+                      <input value={item.notes} onChange={(event) => updatePickItem(item.productId, { notes: event.target.value })} className="field-input" placeholder="Explain the pick-list change" />
+                    </label>
+                  </div>
+                ) : null}
               </div>
-            </SectionCard>
-
-            <section className="rounded-lg border border-slate-200 bg-white p-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h2 className="font-semibold text-slate-900">Operator adjustments before leaving storage</h2>
-                  <p className="text-sm text-slate-500">Added products are included in the route pickup and carried inventory.</p>
-                </div>
-                <div className="grid gap-2 sm:flex">
-                  <button type="button" className="btn-secondary w-full" onClick={addExtraProduct} disabled={locked}>Add Product</button>
-                </div>
-              </div>
-              <div className="mt-4 space-y-3">
-                {extras.map((item) => (
-                  <AdjustmentRow
-                    key={item.id}
-                    products={productOptions}
-                    label="Extra product"
-                    productId={item.productId}
-                    quantity={item.quantity}
-                    reason={item.reason}
-                    notes={item.notes}
-                    disabled={locked}
-                    onChange={(patch) => setExtras((prev) => prev.map((row) => row.id === item.id ? { ...row, ...patch } : row))}
-                    onRemove={() => setExtras((prev) => prev.filter((row) => row.id !== item.id))}
-                  />
-                ))}
-                {!extras.length ? <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">No added products.</p> : null}
-              </div>
-            </section>
-
-            <div className="sticky bottom-3 z-10 -mx-3 flex flex-col gap-2 border-t border-slate-200 bg-slate-100/95 px-3 py-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:border-0 sm:bg-transparent sm:p-0">
-              <button type="button" onClick={handleConfirmPick} disabled={submitting} className="btn-primary w-full flex-1 disabled:cursor-not-allowed disabled:opacity-50">
-                {locked ? "Back to Route" : submitting ? "Saving..." : alreadyConfirmed ? "Save Pickup Changes" : "Confirm Pick List"}
-              </button>
-              <SecondaryButton href={routeHref} type="button">Cancel</SecondaryButton>
-            </div>
-          </>
+            ))}
+          </div>
         )}
+
+        <SectionCard>
+          <div className="grid grid-cols-2 gap-4 p-4">
+            <div className="min-w-0">
+              <p className="mb-1 text-xs text-slate-500">Products</p>
+              <p className="text-2xl font-bold text-slate-900">{pickItems.length + extras.filter((item) => item.productId && item.quantity > 0).length}</p>
+            </div>
+            <div className="min-w-0">
+              <p className="mb-1 text-xs text-slate-500">Picked units</p>
+              <p className="text-2xl font-bold text-slate-900">{pickItems.reduce((sum, item) => sum + item.confirmedQty, 0) + extras.reduce((sum, item) => sum + item.quantity, 0)}</p>
+            </div>
+          </div>
+        </SectionCard>
+
+        <section className="rounded-lg border border-slate-200 bg-white p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="font-semibold text-slate-900">Operator adjustments before leaving storage</h2>
+              <p className="text-sm text-slate-500">Added products are included in the route pickup and carried inventory.</p>
+            </div>
+            <div className="grid gap-2 sm:flex">
+              <button type="button" className="btn-secondary w-full" onClick={addExtraProduct} disabled={locked}>Add Product</button>
+            </div>
+          </div>
+          <div className="mt-4 space-y-3">
+            {extras.map((item) => (
+              <AdjustmentRow
+                key={item.id}
+                products={productOptions}
+                label="Extra product"
+                productId={item.productId}
+                quantity={item.quantity}
+                reason={item.reason}
+                notes={item.notes}
+                disabled={locked}
+                onChange={(patch) => setExtras((prev) => prev.map((row) => row.id === item.id ? { ...row, ...patch } : row))}
+                onRemove={() => setExtras((prev) => prev.filter((row) => row.id !== item.id))}
+              />
+            ))}
+            {!extras.length ? <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">No added products.</p> : null}
+          </div>
+        </section>
+
+        <div className="sticky bottom-3 z-10 -mx-3 flex flex-col gap-2 border-t border-slate-200 bg-slate-100/95 px-3 py-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:border-0 sm:bg-transparent sm:p-0">
+          {error ? <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 sm:hidden">{error}</div> : null}
+          <button type="button" onClick={handleConfirmPick} disabled={submitting} className="btn-primary w-full flex-1 disabled:cursor-not-allowed disabled:opacity-50">
+            {locked ? "Back to Route" : submitting ? "Saving..." : alreadyConfirmed ? "Save Pickup Changes" : "Confirm Pick List"}
+          </button>
+          <SecondaryButton href={routeHref} type="button">Cancel</SecondaryButton>
+        </div>
       </div>
     </>
   );
@@ -390,26 +409,30 @@ function ProductCombobox({
               Selected: {selected.name} - Storage {selected.availableStorageQty}
             </div>
           ) : null}
-          {filtered.map((product) => (
-            <button
-              key={product.id}
-              type="button"
-              onClick={() => {
-                onChange(product.id);
-                setQuery("");
-              }}
-              disabled={disabled}
-              className={`min-h-14 w-full rounded-md px-3 py-2 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-60 ${product.id === productId ? "brand-selected" : "hover:bg-slate-100"}`}
-            >
-              <span className="flex items-center gap-3">
-                <ProductThumbnail imageUrl={product.imageUrl} name={product.name} />
-                <span className="min-w-0">
-                  <span className="block truncate font-medium">{product.name}</span>
-                  <span className={`block truncate ${product.id === productId ? "text-white/80" : "text-slate-500"}`}>{product.sku ?? "No SKU"} - Storage {product.availableStorageQty}</span>
+          {filtered.map((product) => {
+            const outOfStock = product.availableStorageQty <= 0 && product.id !== productId;
+            return (
+              <button
+                key={product.id}
+                type="button"
+                onClick={() => {
+                  if (outOfStock) return;
+                  onChange(product.id);
+                  setQuery("");
+                }}
+                disabled={disabled || outOfStock}
+                className={`min-h-14 w-full rounded-md px-3 py-2 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-60 ${product.id === productId ? "brand-selected" : "hover:bg-slate-100"}`}
+              >
+                <span className="flex items-center gap-3">
+                  <ProductThumbnail imageUrl={product.imageUrl} name={product.name} />
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium">{product.name}</span>
+                    <span className={`block truncate ${product.id === productId ? "text-white/80" : "text-slate-500"}`}>{product.sku ?? "No SKU"} - Storage {product.availableStorageQty}{outOfStock ? " available" : ""}</span>
+                  </span>
                 </span>
-              </span>
-            </button>
-          ))}
+              </button>
+            );
+          })}
           {!filtered.length ? <p className="px-3 py-2 text-sm text-slate-500">No products found.</p> : null}
         </div>
       </div>

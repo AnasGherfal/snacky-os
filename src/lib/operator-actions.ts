@@ -252,13 +252,16 @@ export async function confirmPickList(
   routeId: string,
   pickedItems: { productId: string; quantity: number; plannedQty?: number; reason?: string; notes?: string }[],
   extras: { productId: string; quantity: number; reason: string; notes?: string }[] = [],
-  substitutions: { plannedProductId: string; substituteProductId: string; quantity: number; reason: string; notes?: string }[] = [],
 ) {
   const supabase = getSupabaseServerClient();
   if (!supabase) throw new Error("No Supabase client");
+  const readClient = getSupabaseAdminClient() ?? supabase;
+  let logProfile: Awaited<ReturnType<typeof getCurrentProfile>> | null = null;
+  let logRouteOperatorId: string | null = null;
 
   try {
     const profile = await getCurrentProfile();
+    logProfile = profile;
     const { data: route, error: routeError } = await supabase
       .from("routes")
       .select("id, operator_id, status")
@@ -267,6 +270,7 @@ export async function confirmPickList(
 
     if (routeError) throwActionError(routeError, "Could not load this route.");
     if (!route) throw new Error("Route not found");
+    logRouteOperatorId = route.operator_id ?? null;
     if (!canAccessOperatorRoute(profile ? profileContext(profile) : null, route.operator_id)) {
       throw new Error("You are not authorized to pick stock for this route");
     }
@@ -293,12 +297,12 @@ export async function confirmPickList(
         })),
       );
     }
-    if (!routeStopItems?.length) throw new Error("No products were planned for this route.");
 
     const plannedByProduct = new Map<string, number>();
     (routeStopItems ?? []).forEach((line: any) => {
-      const productId = String(line.product_id);
-      plannedByProduct.set(productId, (plannedByProduct.get(productId) ?? 0) + Number(line.planned_quantity ?? 0));
+      const productId = String(line.product_id ?? "").trim();
+      if (!productId) return;
+      plannedByProduct.set(productId, (plannedByProduct.get(productId) ?? 0) + unitQuantity(line.planned_quantity));
     });
 
     const normalizedPickedItems = new Map<string, { productId: string; quantity: number; plannedQty: number; reason?: string; notes?: string }>();
@@ -349,48 +353,11 @@ export async function confirmPickList(
       });
     });
 
-    const normalizedSubstitutions = new Map<string, { plannedProductId: string; substituteProductId: string; quantity: number; reason: string; notes?: string }>();
-    substitutions.forEach((item) => {
-      const plannedProductId = String(item.plannedProductId ?? "").trim();
-      const substituteProductId = String(item.substituteProductId ?? "").trim();
-      const quantity = Math.max(0, Number(item.quantity ?? 0));
-      if (!plannedProductId || !substituteProductId || quantity <= 0) return;
-
-      if (plannedProductId === substituteProductId) {
-        const current = normalizedPickedItems.get(plannedProductId) ?? {
-          productId: plannedProductId,
-          quantity: 0,
-          plannedQty: plannedByProduct.get(plannedProductId) ?? 0,
-          reason: item.reason,
-          notes: undefined,
-        };
-        normalizedPickedItems.set(plannedProductId, {
-          ...current,
-          quantity: current.quantity + quantity,
-          reason: item.reason || current.reason,
-          notes: mergeNotes(current.notes, item.notes),
-        });
-        return;
-      }
-
-      const key = `${plannedProductId}:${substituteProductId}`;
-      const current = normalizedSubstitutions.get(key);
-      normalizedSubstitutions.set(key, {
-        plannedProductId,
-        substituteProductId,
-        quantity: (current?.quantity ?? 0) + quantity,
-        reason: item.reason || current?.reason || "Other",
-        notes: mergeNotes(current?.notes, item.notes),
-      });
-    });
-
     const pickedItemRows = Array.from(normalizedPickedItems.values());
     const extraRows = Array.from(normalizedExtras.values());
-    const substitutionRows = Array.from(normalizedSubstitutions.values());
     const actualPickLines = [
       ...pickedItemRows.map((item) => ({ productId: item.productId, quantity: item.quantity })),
       ...extraRows.map((item) => ({ productId: item.productId, quantity: item.quantity })),
-      ...substitutionRows.map((item) => ({ productId: item.substituteProductId, quantity: item.quantity })),
     ];
     const pickedByProduct = new Map<string, number>();
     actualPickLines.forEach((item) => {
@@ -399,6 +366,25 @@ export async function confirmPickList(
       if (productId && quantity > 0) pickedByProduct.set(productId, (pickedByProduct.get(productId) ?? 0) + quantity);
     });
     if (!pickedByProduct.size) throw new Error("No stock quantities were picked.");
+
+    const productIds = Array.from(pickedByProduct.keys());
+    const { data: productRows, error: productError } = productIds.length
+      ? await readClient
+          .from("products")
+          .select("id, name, active")
+          .in("id", productIds)
+      : { data: [], error: null };
+    if (productError) throwActionError(productError, "Could not verify selected products.");
+
+    const productById = new Map((productRows ?? []).map((product: any) => [String(product.id), product]));
+    const manualProductIds = new Set(extraRows.map((item) => item.productId));
+    for (const productId of productIds) {
+      const product = productById.get(productId);
+      if (!product) throw new Error("Product not found. Remove it from the pickup list and add it again.");
+      if (manualProductIds.has(productId) && product.active === false) {
+        throw new Error(`${product.name ?? "Selected product"} is inactive and cannot be added to this route.`);
+      }
+    }
 
     const [{ data: existingPickMovements, error: existingPickError }, { data: existingFillMovements, error: existingFillError }, { data: existingRouteStockLines, error: existingRouteStockError }] = await Promise.all([
       supabase
@@ -469,18 +455,19 @@ export async function confirmPickList(
 
     const storageByProduct = new Map<string, { locationId: string; quantity: number }[]>();
     if (increaseByProduct.size) {
-      const { data: storages } = await supabase
+      const { data: storages, error: storagesError } = await readClient
         .from("storage_locations")
         .select("id")
         .eq("active", true)
         .in("location_type", ["main_storage", "vehicle", "temporary", "other"])
         .order("location_type")
         .order("name");
+      if (storagesError) throwActionError(storagesError, "Could not load active storage locations.");
 
       const activeStorageIds = (storages ?? []).map((storage: any) => storage.id).filter(Boolean);
       if (!activeStorageIds.length) throw new Error("No active storage location found");
 
-      const { data: storageRows, error: storageError } = await supabase
+      const { data: storageRows, error: storageError } = await readClient
         .from("current_inventory_by_location")
         .select("product_id, location_id, quantity_on_hand")
         .eq("location_type", "storage")
@@ -495,6 +482,34 @@ export async function confirmPickList(
         if (!productId || !locationId || quantity <= 0) return;
         storageByProduct.set(productId, [...(storageByProduct.get(productId) ?? []), { locationId, quantity }]);
       });
+    }
+
+    const shortageMessages: string[] = [];
+    increaseByProduct.forEach((quantity, productId) => {
+      const available = (storageByProduct.get(productId) ?? []).reduce((sum, row) => sum + row.quantity, 0);
+      const shortage = Math.max(0, quantity - available);
+      const product = productById.get(productId);
+      const isManual = manualProductIds.has(productId);
+      console.info("[operator:pick-list] Pickup validation", {
+        route_id: routeId,
+        product_id: productId,
+        product_name: product?.name ?? "Unknown product",
+        user_id: profile?.id ?? null,
+        user_roles: profile?.roles ?? [],
+        route_operator_id: route.operator_id ?? null,
+        original_route_product: plannedByProduct.has(productId),
+        manually_added: isManual,
+        available_warehouse_stock: available,
+        entered_quantity: pickedByProduct.get(productId) ?? 0,
+        additional_quantity_needed: quantity,
+        calculated_shortage: shortage,
+      });
+      if (shortage > 0) {
+        shortageMessages.push(`${product?.name ?? "Selected product"}: entered ${pickedByProduct.get(productId) ?? quantity}, available ${available}, shortage ${shortage}`);
+      }
+    });
+    if (shortageMessages.length) {
+      throw new Error(`Not enough warehouse stock for:\n- ${shortageMessages.join("\n- ")}`);
     }
 
     const stockAllocations: { productId: string; locationId: string; quantity: number }[] = [];
@@ -512,7 +527,8 @@ export async function confirmPickList(
       }
 
       if (remaining > 0) {
-        throw new Error("Picked quantity cannot exceed available storage stock.");
+        const product = productById.get(productId);
+        throw new Error(`Not enough warehouse stock for ${product?.name ?? "selected product"}. Shortage ${remaining}.`);
       }
     }
 
@@ -585,18 +601,6 @@ export async function confirmPickList(
         planned_qty: 0,
         picked_qty: Math.max(0, Number(item.quantity ?? 0)),
         action_type: "extra_product",
-        reason: item.reason || "Other",
-        notes: item.notes || null,
-        needs_review: true,
-        created_by: route.operator_id,
-      })),
-      ...substitutionRows.map((item) => ({
-        route_id: routeId,
-        product_id: item.substituteProductId,
-        planned_qty: 0,
-        picked_qty: Math.max(0, Number(item.quantity ?? 0)),
-        action_type: "substitution",
-        substituted_for_product_id: item.plannedProductId,
         reason: item.reason || "Other",
         notes: item.notes || null,
         needs_review: true,
@@ -686,7 +690,6 @@ export async function confirmPickList(
       afterData: {
         picked_items: pickedItems,
         extras,
-        substitutions,
         movement_count: movements.length,
         pick_list_count: pickListRows.length,
       },
@@ -697,8 +700,16 @@ export async function confirmPickList(
     revalidateRouteWorkflow(routeId);
     return { success: true };
   } catch (error) {
-    console.error("Error confirming pick list:", error);
-    throw new Error(getErrorMessage(error, "Could not confirm the pick list."));
+    console.error("[operator:pick-list] Error confirming pick list", {
+      route_id: routeId,
+      user_id: logProfile?.id ?? null,
+      user_roles: logProfile?.roles ?? [],
+      route_operator_id: logRouteOperatorId,
+      picked_items: pickedItems,
+      extras,
+      error,
+    });
+    return { success: false, error: getErrorMessage(error, "Could not confirm the pick list.") };
   }
 }
 
@@ -735,7 +746,6 @@ export async function completeStop({
   machineId,
   filledItems,
   extraItems = [],
-  substitutions = [],
   missingProducts = [],
   cashCollected,
   cashBagId,
@@ -751,7 +761,6 @@ export async function completeStop({
   machineId: string;
   filledItems: { refillOrderLineId?: string | null; productId: string; quantity: number; assignedQty?: number; reason?: string; notes?: string; unavailable?: boolean }[];
   extraItems?: { productId: string; quantity: number; reason: string; notes?: string }[];
-  substitutions?: { assignedProductId: string; substituteProductId: string; quantity: number; reason: string; notes?: string }[];
   missingProducts?: { productName: string; reason: string; notes?: string }[];
   cashCollected: boolean;
   cashBagId?: string;
@@ -852,7 +861,6 @@ export async function completeStop({
     const actualFillLines = [
       ...filledItems.map((item) => ({ productId: item.productId, quantity: item.quantity })),
       ...extraItems.map((item) => ({ productId: item.productId, quantity: item.quantity })),
-      ...substitutions.map((item) => ({ productId: item.substituteProductId, quantity: item.quantity })),
     ];
 
     const requestedFills = new Map<string, number>();
@@ -908,23 +916,6 @@ export async function completeStop({
         assigned_product_id: null,
         product_id: item.productId,
         action_type: "extra_product",
-        assigned_qty: 0,
-        actual_qty: Math.max(0, Number(item.quantity ?? 0)),
-        difference_qty: Math.max(0, Number(item.quantity ?? 0)),
-        reason: item.reason || "Other",
-        notes: item.notes || null,
-        needs_review: true,
-        created_by: route.operator_id,
-      })),
-      ...substitutions.map((item) => ({
-        route_id: routeId,
-        route_stop_id: stopId,
-        machine_id: machineId,
-        refill_order_line_id: null,
-        assigned_product_id: item.assignedProductId,
-        product_id: item.substituteProductId,
-        substitute_product_id: item.substituteProductId,
-        action_type: "substitution",
         assigned_qty: 0,
         actual_qty: Math.max(0, Number(item.quantity ?? 0)),
         difference_qty: Math.max(0, Number(item.quantity ?? 0)),
@@ -1157,7 +1148,6 @@ export async function completeStop({
           fill_status: fillStatus,
           filled_items: filledItems,
           extra_items: extraItems,
-          substitutions,
           missing_products: missingProducts,
           completion_photo_original_name: completionPhotoOriginalName?.trim() || null,
           completion_photo_upload_unavailable: Boolean(completionPhotoUploadUnavailable),
@@ -1202,7 +1192,6 @@ export async function completeStop({
         machine_id: machineId,
         filled_items: filledItems,
         extra_items: extraItems,
-        substitutions,
         missing_products: missingProducts,
         fill_status: fillStatus,
         refill_history_id: refillHistory?.id ?? null,
