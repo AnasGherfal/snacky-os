@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
-import { isOperatorRole } from "@/lib/authz";
+import { canExecuteRoutes } from "@/lib/authz";
+import { availableRouteStatuses, isTerminalRouteStatus } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -9,8 +10,6 @@ export const dynamic = "force-dynamic";
 export default async function OperatorPage() {
   const supabase = getSupabaseServerClient();
   const profile = await getCurrentProfile();
-  const today = new Date().toISOString().split("T")[0];
-
   if (!supabase) {
     return (
       <>
@@ -19,17 +18,35 @@ export default async function OperatorPage() {
     );
   }
 
-  let routesQuery = supabase
-    .from("routes")
-    .select("id, route_date, status, operator_id, route_stops(id, status)")
-    .gte("route_date", today)
-    .order("route_date", { ascending: true });
-
-  if (routesQuery && isOperatorRole(profile)) {
-    routesQuery = routesQuery.eq("operator_id", profile?.team_member_id ?? "");
+  if (!profile || !canExecuteRoutes(profile)) {
+    return (
+      <>
+        <ErrorState title="Operator routes unavailable" body="Your account cannot execute routes." />
+      </>
+    );
   }
 
-  const { data: routes, error: routesError } = await routesQuery;
+  const routeSelect = "id, route_date, status, operator_id, route_stops(id, status)";
+  const [assignedResult, availableResult] = await Promise.all([
+    profile.team_member_id
+      ? supabase
+          .from("routes")
+          .select(routeSelect)
+          .eq("operator_id", profile.team_member_id)
+          .not("status", "in", "(completed,reviewed,cancelled,canceled)")
+          .order("route_date", { ascending: true })
+      : Promise.resolve({ data: [], error: null }),
+    supabase
+      .from("routes")
+      .select(routeSelect)
+      .is("operator_id", null)
+      .in("status", [...availableRouteStatuses])
+      .order("route_date", { ascending: true }),
+  ]);
+  const routesError = assignedResult.error ?? availableResult.error;
+  const routes = [...(assignedResult.data ?? []), ...(availableResult.data ?? [])]
+    .filter((route: any, index, rows) => rows.findIndex((candidate: any) => candidate.id === route.id) === index)
+    .filter((route: any) => !isTerminalRouteStatus(route.status));
   if (routesError) {
     console.error("[operator] Failed to load assigned routes", routesError);
     return (

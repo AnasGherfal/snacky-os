@@ -1,6 +1,7 @@
 import { ErrorState, FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
+import { activeRouteStatuses, availableRouteStatuses } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { RouteCreateForm } from "@/app/routes/new/RouteCreateForm";
 import { redirect } from "next/navigation";
@@ -100,7 +101,7 @@ export default async function NewRoutePage() {
     supabase
       .from("route_stock_lines")
       .select("product_id, planned_qty, picked_qty, routes!inner(status)")
-      .in("routes.status", ["draft", "assigned"]),
+      .in("routes.status", [...availableRouteStatuses, ...activeRouteStatuses]),
     supabase.from("products").select("id, sku, barcode, name, category, brand, image_url, active").eq("active", true).order("name"),
     supabase.from("inventory_movements").select("product_id, created_at").order("created_at", { ascending: false }).limit(80),
   ]);

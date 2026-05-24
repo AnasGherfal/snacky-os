@@ -35,17 +35,12 @@ interface ExtraPickItem {
   reason: string;
   notes: string;
 }
-interface SubPickItem {
-  id: string;
-  plannedProductId: string;
-  substituteProductId: string;
-  quantity: number;
-  reason: string;
-  notes: string;
-}
-
 function safeRouteHref(routeId: string) {
   return routeId ? `/operator/routes/${routeId}` : "/operator";
+}
+
+function newExtraRow(): ExtraPickItem {
+  return { id: crypto.randomUUID(), productId: "", quantity: 0, reason: "Customer demand", notes: "" };
 }
 
 export default function PickListPage() {
@@ -60,9 +55,8 @@ export default function PickListPage() {
   const [pickItems, setPickItems] = useState<PickItem[]>([]);
   const [productOptions, setProductOptions] = useState<ProductOption[]>([]);
   const [extras, setExtras] = useState<ExtraPickItem[]>([]);
-  const [substitutions, setSubstitutions] = useState<SubPickItem[]>([]);
-  const [draftExtra, setDraftExtra] = useState<ExtraPickItem>({ id: "draft-extra", productId: "", quantity: 0, reason: "Customer demand", notes: "" });
   const [alreadyConfirmed, setAlreadyConfirmed] = useState(false);
+  const [locked, setLocked] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -92,6 +86,7 @@ export default function PickListPage() {
 
         const confirmed = Boolean(data.confirmed);
         setAlreadyConfirmed(confirmed);
+        setLocked(Boolean(data.locked));
         setPickItems(
           data.items.map((item: any) => {
             const requestedQty = Number(item.planned_qty ?? 0);
@@ -116,6 +111,13 @@ export default function PickListPage() {
           }),
         );
         setProductOptions(data.productOptions ?? []);
+        setExtras((data.extraItems ?? []).map((item: any) => ({
+          id: crypto.randomUUID(),
+          productId: item.productId,
+          quantity: Number(item.quantity ?? 0),
+          reason: item.reason ?? "Customer demand",
+          notes: item.notes ?? "",
+        })));
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load pick list");
       } finally {
@@ -126,7 +128,7 @@ export default function PickListPage() {
   }, [routeId, shouldStartRoute]);
 
   const handleConfirmPick = async () => {
-    if (alreadyConfirmed) {
+    if (locked) {
       router.push(routeHref);
       return;
     }
@@ -145,9 +147,6 @@ export default function PickListPage() {
         routeId,
         items,
         extras.filter((item) => item.productId && item.quantity > 0).map((item) => ({ productId: item.productId, quantity: item.quantity, reason: item.reason, notes: item.notes })),
-        substitutions
-          .filter((item) => item.plannedProductId && item.substituteProductId && item.quantity > 0)
-          .map((item) => ({ plannedProductId: item.plannedProductId, substituteProductId: item.substituteProductId, quantity: item.quantity, reason: item.reason, notes: item.notes })),
       );
       router.push(routeHref);
     } catch (err) {
@@ -159,35 +158,8 @@ export default function PickListPage() {
   const updatePickItem = (productId: string, patch: Partial<PickItem>) => {
     setPickItems((prev) => prev.map((item) => (item.productId === productId ? { ...item, ...patch } : item)));
   };
-  const addSubstitution = () => setSubstitutions((prev) => [...prev, { id: crypto.randomUUID(), plannedProductId: "", substituteProductId: "", quantity: 0, reason: "Product not available in storage", notes: "" }]);
-  const confirmExtraProduct = () => {
-    const productId = draftExtra.productId;
-    const quantity = Math.max(0, Number(draftExtra.quantity ?? 0));
-    if (!productId || quantity <= 0) {
-      setError("Choose an extra product and quantity before adding it.");
-      return;
-    }
-
-    const planned = pickItems.find((item) => item.productId === productId);
-    if (planned) {
-      const nextQty = Math.min(planned.availableStorageQty, planned.confirmedQty + quantity);
-      updatePickItem(productId, {
-        confirmedQty: nextQty,
-        reason: draftExtra.reason,
-        notes: [planned.notes, draftExtra.notes].filter(Boolean).join(" | "),
-      });
-      setNotice(`${planned.productName} was already planned, so its picked quantity was increased.`);
-    } else {
-      const existingExtra = extras.find((item) => item.productId === productId);
-      if (existingExtra) {
-        setExtras((prev) => prev.map((item) => item.productId === productId ? { ...item, quantity: item.quantity + quantity, reason: draftExtra.reason, notes: [item.notes, draftExtra.notes].filter(Boolean).join(" | ") } : item));
-        setNotice("Existing extra product quantity was increased.");
-      } else {
-        setExtras((prev) => [...prev, { ...draftExtra, id: crypto.randomUUID(), quantity }]);
-      }
-    }
-
-    setDraftExtra({ id: "draft-extra", productId: "", quantity: 0, reason: "Customer demand", notes: "" });
+  const addExtraProduct = () => {
+    setExtras((prev) => [...prev, newExtraRow()]);
     setError("");
   };
 
@@ -245,9 +217,9 @@ export default function PickListPage() {
                       <div className="mb-1 text-xs font-medium text-slate-500">Picked units</div>
                       <QuantityStepper
                         value={item.confirmedQty}
-                        max={alreadyConfirmed ? undefined : item.availableStorageQty}
+                        max={item.availableStorageQty}
                         onChange={(quantity) => updatePickItem(item.productId, { confirmedQty: quantity })}
-                        disabled={alreadyConfirmed}
+                        disabled={locked}
                         inputLabel={`${item.productName} picked quantity`}
                       />
                     </div>
@@ -292,53 +264,13 @@ export default function PickListPage() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h2 className="font-semibold text-slate-900">Operator adjustments before leaving storage</h2>
-                  <p className="text-sm text-slate-500">Extras and substitutions are flagged for supervisor review.</p>
+                  <p className="text-sm text-slate-500">Added products are included in the route pickup and carried inventory.</p>
                 </div>
                 <div className="grid gap-2 sm:flex">
-                  <button type="button" className="btn-secondary w-full" onClick={addSubstitution} disabled={alreadyConfirmed}>Substitute</button>
+                  <button type="button" className="btn-secondary w-full" onClick={addExtraProduct} disabled={locked}>Add Product</button>
                 </div>
               </div>
               <div className="mt-4 space-y-3">
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <div className="grid gap-3 md:grid-cols-[1fr_140px_1fr]">
-                    <ProductCombobox
-                      products={productOptions}
-                      label="Extra product"
-                      productId={draftExtra.productId}
-                      disabled={alreadyConfirmed}
-                      onChange={(productId) => setDraftExtra((current) => ({ ...current, productId, quantity: 0 }))}
-                    />
-                    <label className="block">
-                      <span className="mb-1 block text-sm font-medium text-slate-800">Qty</span>
-                      <QuantityStepper
-                        value={draftExtra.quantity}
-                        max={productOptions.find((product) => product.id === draftExtra.productId)?.availableStorageQty ?? 0}
-                        onChange={(quantity) => setDraftExtra((current) => ({ ...current, quantity }))}
-                        disabled={alreadyConfirmed || !draftExtra.productId}
-                        inputLabel="Extra product quantity"
-                      />
-                    </label>
-                    <label className="block">
-                      <span className="mb-1 block text-sm font-medium text-slate-800">Reason</span>
-                      <select value={draftExtra.reason} onChange={(event) => setDraftExtra((current) => ({ ...current, reason: event.target.value }))} className="field-input" disabled={alreadyConfirmed}>
-                        <option>Product not available in storage</option>
-                        <option>Product expired/damaged</option>
-                        <option>Customer demand</option>
-                        <option>Other</option>
-                      </select>
-                    </label>
-                  </div>
-                  <input
-                    value={draftExtra.notes}
-                    onChange={(event) => setDraftExtra((current) => ({ ...current, notes: event.target.value }))}
-                    className="field-input mt-3"
-                    placeholder="Notes"
-                    disabled={alreadyConfirmed}
-                  />
-                  <button type="button" onClick={confirmExtraProduct} className="btn-secondary mt-3 w-full sm:w-auto" disabled={alreadyConfirmed}>
-                    Add extra product
-                  </button>
-                </div>
                 {extras.map((item) => (
                   <AdjustmentRow
                     key={item.id}
@@ -348,41 +280,18 @@ export default function PickListPage() {
                     quantity={item.quantity}
                     reason={item.reason}
                     notes={item.notes}
-                    disabled={alreadyConfirmed}
+                    disabled={locked}
                     onChange={(patch) => setExtras((prev) => prev.map((row) => row.id === item.id ? { ...row, ...patch } : row))}
                     onRemove={() => setExtras((prev) => prev.filter((row) => row.id !== item.id))}
                   />
                 ))}
-                {substitutions.map((item) => (
-                  <div key={item.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <label className="block">
-                        <span className="mb-1 block text-sm font-medium text-slate-800">Original planned product</span>
-                        <select value={item.plannedProductId} onChange={(event) => setSubstitutions((prev) => prev.map((row) => row.id === item.id ? { ...row, plannedProductId: event.target.value } : row))} className="field-input" disabled={alreadyConfirmed}>
-                          <option value="">Select planned product</option>
-                          {pickItems.map((planned) => <option key={planned.productId} value={planned.productId}>{planned.productName}</option>)}
-                        </select>
-                      </label>
-                      <AdjustmentRow
-                        products={productOptions}
-                        label="Substitute product"
-                        productId={item.substituteProductId}
-                        quantity={item.quantity}
-                        reason={item.reason}
-                        notes={item.notes}
-                        disabled={alreadyConfirmed}
-                        onChange={(patch) => setSubstitutions((prev) => prev.map((row) => row.id === item.id ? { ...row, substituteProductId: patch.productId ?? row.substituteProductId, quantity: patch.quantity ?? row.quantity, reason: patch.reason ?? row.reason, notes: patch.notes ?? row.notes } : row))}
-                        onRemove={() => setSubstitutions((prev) => prev.filter((row) => row.id !== item.id))}
-                      />
-                    </div>
-                  </div>
-                ))}
+                {!extras.length ? <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">No added products.</p> : null}
               </div>
             </section>
 
             <div className="sticky bottom-3 z-10 -mx-3 flex flex-col gap-2 border-t border-slate-200 bg-slate-100/95 px-3 py-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:border-0 sm:bg-transparent sm:p-0">
               <button type="button" onClick={handleConfirmPick} disabled={submitting} className="btn-primary w-full flex-1 disabled:cursor-not-allowed disabled:opacity-50">
-                {alreadyConfirmed ? "Back to Route" : submitting ? "Confirming..." : "Confirm Pick List"}
+                {locked ? "Back to Route" : submitting ? "Saving..." : alreadyConfirmed ? "Save Pickup Changes" : "Confirm Pick List"}
               </button>
               <SecondaryButton href={routeHref} type="button">Cancel</SecondaryButton>
             </div>

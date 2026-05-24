@@ -117,8 +117,16 @@ async function getTeamMemberForAuthUser(supabase: SupabaseClient, authUserId: st
 function profileFromRows(user: AuthLookupUser, profile: ProfileRow | null, teamMember: TeamMemberRow | null): UserProfile | null {
   const role = parseAppRole(profile?.role) ?? parseAppRole(teamMember?.role);
   if (!role) return null;
-  const roles = normalizeRoles(profile?.roles ?? teamMember?.roles, role);
-  const canAddProducts = Boolean(profile?.can_add_products ?? teamMember?.can_add_products ?? false);
+  const roles = normalizeRoles(
+    [
+      ...(Array.isArray(profile?.roles) ? profile.roles : []),
+      ...(Array.isArray(teamMember?.roles) ? teamMember.roles : []),
+      profile?.role,
+      teamMember?.role,
+    ].filter(Boolean),
+    role,
+  );
+  const canAddProducts = Boolean(profile?.can_add_products || teamMember?.can_add_products || false);
 
   if (profile) {
     return {

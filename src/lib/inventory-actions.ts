@@ -6,6 +6,7 @@ import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canAddProducts, hasPermission, isOwnerAdminRole } from "@/lib/authz";
 import { resolveProductSku } from "@/lib/product-sku";
+import { activeRouteStatuses, availableRouteStatuses } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 const movementTypes = ["storage_to_operator_bag", "operator_bag_to_storage", "storage_adjustment", "damaged", "expired", "manual_correction", "product_substitution"] as const;
@@ -313,7 +314,7 @@ export async function createStockMovement(formData: FormData) {
       .from("route_stock_lines")
       .select("planned_qty, picked_qty, routes!inner(status)")
       .eq("product_id", productId)
-      .in("routes.status", ["draft", "assigned"]);
+      .in("routes.status", [...availableRouteStatuses, ...activeRouteStatuses]);
 
     if (reservedError) fail("Could not verify route reservations.");
 

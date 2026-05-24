@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canExecuteRoutes, isOwnerAdminRole } from "@/lib/authz";
+import { availableRouteStatuses, activeRouteStatuses } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 type CreateRoutePayload = {
@@ -224,7 +225,7 @@ async function validateRouteStock(
     .from("route_stock_lines")
     .select("route_id, product_id, planned_qty, picked_qty, routes!inner(status)")
     .in("product_id", productIds)
-    .in("routes.status", ["draft", "assigned"]);
+    .in("routes.status", [...availableRouteStatuses, ...activeRouteStatuses]);
   if (excludeRouteId) reservedQuery = reservedQuery.neq("route_id", excludeRouteId);
 
   const [storageResult, reservedResult, productsResult] = await Promise.all([
@@ -521,7 +522,7 @@ export async function POST(request: Request) {
     }
   }
 
-  const routeStatus = operatorId ? "assigned" : "draft";
+  const routeStatus = operatorId ? "assigned" : "available";
   const routeInsert = await supabase
     .from("routes")
     .insert({ route_date: routeDate, operator_id: operatorId || null, status: routeStatus, created_by: profile.team_member_id })

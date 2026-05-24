@@ -26,7 +26,9 @@ interface StopRefillItem {
   assignedQty?: number;
   parQty: number;
   availableQty?: number;
-  filledQty: number;
+  filledQty: number | null;
+  reason?: string | null;
+  notes?: string | null;
 }
 
 interface ProductOption {
@@ -47,8 +49,12 @@ interface StopData {
   machineName: string;
   machineCode: string;
   location: string;
+  stopStatus: string;
+  routeStatus: string;
   refillItems: StopRefillItem[];
+  extraItems?: ExtraProductLine[];
   productOptions: ProductOption[];
+  hasCompletionPhoto?: boolean;
   debug?: StopDebugDetails;
 }
 
@@ -70,15 +76,6 @@ interface StopLoadError {
 interface ExtraProductLine {
   id: string;
   productId: string;
-  quantity: number;
-  reason: string;
-  notes: string;
-}
-
-interface SubstitutionLine {
-  id: string;
-  assignedProductId: string;
-  substituteProductId: string;
   quantity: number;
   reason: string;
   notes: string;
@@ -119,7 +116,6 @@ export default function MachineStopPage() {
   const [lineNotes, setLineNotes] = useState<Record<string, string>>({});
   const [unavailableProducts, setUnavailableProducts] = useState<Record<string, boolean>>({});
   const [extraProducts, setExtraProducts] = useState<ExtraProductLine[]>([]);
-  const [substitutions, setSubstitutions] = useState<SubstitutionLine[]>([]);
   const [missingReports, setMissingReports] = useState<MissingProductReport[]>([]);
   const [showCleaningChecklist, setShowCleaningChecklist] = useState(false);
   const [cleaningDone, setCleaningDone] = useState(false);
@@ -132,9 +128,8 @@ export default function MachineStopPage() {
     const reserved = new Map<string, number>();
     Object.entries(filledQtys).forEach(([productId, quantity]) => reserved.set(productId, (reserved.get(productId) ?? 0) + Number(quantity ?? 0)));
     extraProducts.forEach((line) => reserved.set(line.productId, (reserved.get(line.productId) ?? 0) + Number(line.quantity ?? 0)));
-    substitutions.forEach((line) => reserved.set(line.substituteProductId, (reserved.get(line.substituteProductId) ?? 0) + Number(line.quantity ?? 0)));
     return reserved;
-  }, [filledQtys, extraProducts, substitutions]);
+  }, [filledQtys, extraProducts]);
   const fillStatusPreview = useMemo(() => {
     if (!stopData) return "full";
     const hasShortage = stopData.refillItems.some((item) => {
@@ -184,11 +179,20 @@ export default function MachineStopPage() {
 
         setStopData(data);
         const initialQtys: Record<string, number> = {};
+        const initialNotes: Record<string, string> = {};
+        const initialUnavailable: Record<string, boolean> = {};
         data.refillItems?.forEach((item: StopRefillItem) => {
           const assignedQty = Number(item.assignedQty ?? item.parQty ?? 0);
-          initialQtys[item.productId] = Math.min(assignedQty, item.availableQty ?? assignedQty);
+          const hasSavedQty = item.filledQty !== null && item.filledQty !== undefined;
+          initialQtys[item.productId] = hasSavedQty ? Number(item.filledQty ?? 0) : Math.min(assignedQty, item.availableQty ?? assignedQty);
+          if (item.notes) initialNotes[item.productId] = item.notes;
+          if (hasSavedQty && Number(item.filledQty ?? 0) === 0 && assignedQty > 0) initialUnavailable[item.productId] = true;
         });
         setFilledQtys(initialQtys);
+        setLineNotes(initialNotes);
+        setUnavailableProducts(initialUnavailable);
+        setExtraProducts((data.extraItems ?? []).map((item: ExtraProductLine) => ({ ...item, id: newClientId() })));
+        if (data.hasCompletionPhoto) setFinalPhotoName("Existing proof photo saved");
       } catch (err) {
         setLoadError({
           title: "Stop could not be loaded",
@@ -218,10 +222,6 @@ export default function MachineStopPage() {
     setExtraProducts((prev) => [...prev, { id: newClientId(), productId: "", quantity: 0, reason: "Customer demand", notes: "" }]);
   };
 
-  const addSubstitution = () => {
-    setSubstitutions((prev) => [...prev, { id: newClientId(), assignedProductId: "", substituteProductId: "", quantity: 0, reason: "Product not in operator bag", notes: "" }]);
-  };
-
   const addMissingReport = () => {
     setMissingReports((prev) => [...prev, { id: newClientId(), productName: "", reason: "Other", notes: "" }]);
   };
@@ -230,21 +230,18 @@ export default function MachineStopPage() {
     setExtraProducts((prev) => prev.map((line) => line.id === id ? { ...line, ...patch } : line));
   };
 
-  const updateSubstitution = (id: string, patch: Partial<SubstitutionLine>) => {
-    setSubstitutions((prev) => prev.map((line) => line.id === id ? { ...line, ...patch } : line));
-  };
-
   const updateMissingReport = (id: string, patch: Partial<MissingProductReport>) => {
     setMissingReports((prev) => prev.map((line) => line.id === id ? { ...line, ...patch } : line));
   };
 
   const handleCompleteStop = async () => {
     if (!stopData) return;
-    if (!cleaningDone) {
+    const canReuseCompletedProof = stopData.stopStatus === "completed" && stopData.hasCompletionPhoto;
+    if (!cleaningDone && stopData.stopStatus !== "completed") {
       setError("Please complete the cleaning checklist before finishing.");
       return;
     }
-    if (!finalPhotoFile) {
+    if (!finalPhotoFile && !canReuseCompletedProof) {
       setError("Please take or upload the final machine photo before completing the stop.");
       return;
     }
@@ -252,12 +249,15 @@ export default function MachineStopPage() {
     setSubmitting(true);
     setError("");
     try {
-      const photoFormData = new FormData();
-      photoFormData.append("routeId", routeId);
-      photoFormData.append("stopId", stopId);
-      photoFormData.append("machineId", stopData.machineId);
-      photoFormData.append("photo", finalPhotoFile);
-      const proofPhoto = await uploadRefillProofPhoto(photoFormData);
+      let uploadedProof: Awaited<ReturnType<typeof uploadRefillProofPhoto>> | null = null;
+      if (finalPhotoFile) {
+        const photoFormData = new FormData();
+        photoFormData.append("routeId", routeId);
+        photoFormData.append("stopId", stopId);
+        photoFormData.append("machineId", stopData.machineId);
+        photoFormData.append("photo", finalPhotoFile);
+        uploadedProof = await uploadRefillProofPhoto(photoFormData);
+      }
 
       await completeStop({
         stopId,
@@ -275,19 +275,16 @@ export default function MachineStopPage() {
         extraItems: extraProducts
           .filter((item) => item.productId && item.quantity > 0)
           .map((item) => ({ productId: item.productId, quantity: item.quantity, reason: item.reason, notes: item.notes || undefined })),
-        substitutions: substitutions
-          .filter((item) => item.assignedProductId && item.substituteProductId && item.quantity > 0)
-          .map((item) => ({ assignedProductId: item.assignedProductId, substituteProductId: item.substituteProductId, quantity: item.quantity, reason: item.reason, notes: item.notes || undefined })),
         missingProducts: missingReports
           .filter((item) => item.productName.trim())
           .map((item) => ({ productName: item.productName.trim(), reason: item.reason, notes: item.notes || undefined })),
         cashCollected,
         cashBagId,
         notes,
-        completionPhotoUrl: proofPhoto.photoUrl,
-        completionPhotoPath: proofPhoto.photoPath,
-        completionPhotoOriginalName: proofPhoto.originalName,
-        completionPhotoUploadUnavailable: proofPhoto.uploadUnavailable,
+        completionPhotoUrl: uploadedProof?.photoUrl,
+        completionPhotoPath: uploadedProof?.photoPath,
+        completionPhotoOriginalName: uploadedProof?.originalName,
+        completionPhotoUploadUnavailable: uploadedProof?.uploadUnavailable,
         issue: issueType && issueDescription ? { issueType, priority: issuePriority, description: issueDescription } : undefined,
       });
 
@@ -316,6 +313,9 @@ export default function MachineStopPage() {
       </>
     );
   }
+
+  const isEditingCompletedStop = stopData.stopStatus === "completed";
+  const canSubmitStop = !submitting && (cleaningDone || isEditingCompletedStop);
 
   return (
     <>
@@ -405,11 +405,10 @@ export default function MachineStopPage() {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h2 className="text-lg font-semibold">Products added at machine</h2>
-              <p className="mt-1 text-sm text-slate-500">Add unplanned products or substitutions from the operator bag. These lines are saved when you complete the stop.</p>
+              <p className="mt-1 text-sm text-slate-500">Add unplanned products from the operator bag. These lines are saved when you complete the stop.</p>
             </div>
             <div className="grid gap-2 sm:flex sm:flex-wrap">
               <button type="button" onClick={addExtraProduct} className="btn-secondary w-full sm:w-auto">Add product</button>
-              <button type="button" onClick={addSubstitution} className="btn-secondary w-full sm:w-auto">Substitute</button>
               <button type="button" onClick={addMissingReport} className="btn-secondary w-full sm:w-auto">Report missing</button>
             </div>
           </div>
@@ -431,30 +430,6 @@ export default function MachineStopPage() {
               );
             })}
 
-            {substitutions.map((line) => {
-              const maxQty = line.substituteProductId ? remainingBagQty(line.substituteProductId, line.quantity) : 0;
-              return (
-                <div key={line.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <label className="block">
-                      <span className="mb-1 block text-sm font-medium text-slate-800">Original assigned product</span>
-                      <select value={line.assignedProductId} onChange={(event) => updateSubstitution(line.id, { assignedProductId: event.target.value })} className="field-input">
-                        <option value="">Select assigned product</option>
-                        {stopData.refillItems.map((item) => <option key={item.productId} value={item.productId}>{item.productName}</option>)}
-                      </select>
-                    </label>
-                    <ProductPicker products={stopData.productOptions} value={line.substituteProductId} onChange={(productId) => updateSubstitution(line.id, { substituteProductId: productId, quantity: 0 })} label="Replacement product" />
-                  </div>
-                  <div className="mt-3 grid gap-3 md:grid-cols-[160px_1fr]">
-                    <QuantityInput value={line.quantity} max={maxQty} onChange={(quantity) => updateSubstitution(line.id, { quantity })} />
-                    <ReasonSelect value={line.reason} onChange={(reason) => updateSubstitution(line.id, { reason })} />
-                  </div>
-                  <input value={line.notes} onChange={(event) => updateSubstitution(line.id, { notes: event.target.value })} className="field-input mt-3" placeholder="Notes" />
-                  <button type="button" onClick={() => setSubstitutions((prev) => prev.filter((item) => item.id !== line.id))} className="mt-2 text-sm font-medium text-rose-700">Remove</button>
-                </div>
-              );
-            })}
-
             {missingReports.map((line) => (
               <div key={line.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                 <div className="grid gap-3 md:grid-cols-2">
@@ -469,8 +444,8 @@ export default function MachineStopPage() {
               </div>
             ))}
 
-            {!extraProducts.length && !substitutions.length && !missingReports.length ? (
-              <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">No extra products, swaps, or missing product reports added.</p>
+            {!extraProducts.length && !missingReports.length ? (
+              <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">No extra products or missing product reports added.</p>
             ) : null}
           </div>
         </section>
@@ -542,8 +517,8 @@ export default function MachineStopPage() {
         </section>
 
         <div className="sticky bottom-3 z-10 -mx-3 flex flex-col gap-2 border-t border-slate-200 bg-slate-100/95 px-3 py-3 backdrop-blur sm:mx-0 sm:flex-row sm:border-0 sm:bg-transparent sm:p-0">
-          <button onClick={handleCompleteStop} disabled={submitting || !cleaningDone} className="btn-primary w-full flex-1 disabled:cursor-not-allowed disabled:opacity-50">
-            {submitting ? "Completing..." : "Complete Stop"}
+          <button onClick={handleCompleteStop} disabled={!canSubmitStop} className="btn-primary w-full flex-1 disabled:cursor-not-allowed disabled:opacity-50">
+            {submitting ? "Saving..." : isEditingCompletedStop ? "Save Stop Changes" : "Complete Stop"}
           </button>
           <SecondaryButton href={routeHref} type="button">Cancel</SecondaryButton>
         </div>

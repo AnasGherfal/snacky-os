@@ -1,6 +1,7 @@
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
+import { activeRouteStatuses, availableRouteStatuses } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +14,7 @@ export default async function WarehousePickListsPage({ searchParams }: { searchP
     ? await supabase
         .from("routes")
         .select("id, route_date, status, operator_id, route_stock_lines(id, planned_qty, picked_qty, product:products(name))", { count: "exact" })
-        .in("status", ["draft", "assigned", "in_progress"])
+        .in("status", [...availableRouteStatuses, ...activeRouteStatuses])
         .order("route_date", { ascending: true })
         .range(from, to)
     : { data: [], count: 0 };

@@ -5,6 +5,7 @@ import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileR
 import { getCurrentProfile } from "@/lib/auth";
 import { canAccessPath } from "@/lib/authz";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
+import { activeRouteStatuses, isTerminalRouteStatus } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -61,9 +62,9 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
   });
 
   const groups = [
-    { title: "Unassigned / Available", rows: routeRows.filter((route: any) => !route.operator_id && !["completed", "reviewed", "cancelled"].includes(route.status)) },
-    { title: "In progress", rows: routeRows.filter((route: any) => route.status === "in_progress") },
-    { title: "Assigned routes", rows: routeRows.filter((route: any) => route.operator_id && !["in_progress", "completed", "reviewed", "cancelled"].includes(route.status)) },
+    { title: "Unassigned / Available", rows: routeRows.filter((route: any) => !route.operator_id && !isTerminalRouteStatus(route.status)) },
+    { title: "In progress", rows: routeRows.filter((route: any) => activeRouteStatuses.includes(String(route.status) as any)) },
+    { title: "Assigned routes", rows: routeRows.filter((route: any) => route.operator_id && !activeRouteStatuses.includes(String(route.status) as any) && !isTerminalRouteStatus(route.status)) },
     { title: "Completed", rows: routeRows.filter((route: any) => ["completed", "reviewed"].includes(route.status)) },
   ].filter((group) => group.rows.length);
 
@@ -76,7 +77,7 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
               <h2 className="break-words text-base font-semibold text-slate-900">{route.route_date}</h2>
               <p className="mt-1 text-sm text-slate-500">{operatorById.get(route.operator_id)?.full_name ?? "Available"}</p>
             </div>
-            <StatusBadge status={!route.operator_id ? "available" : route.status} />
+            <StatusBadge status={!route.operator_id && !isTerminalRouteStatus(route.status) ? "available" : route.status} />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <MobileField label="Stops">{stopsByRouteId.get(route.id) ?? 0}</MobileField>
@@ -96,7 +97,7 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
         <tr key={route.id}>
           <td>{route.route_date}</td>
           <td>{operatorById.get(route.operator_id)?.full_name ?? "Unassigned"}</td>
-          <td><StatusBadge status={!route.operator_id ? "available" : route.status} /></td>
+          <td><StatusBadge status={!route.operator_id && !isTerminalRouteStatus(route.status) ? "available" : route.status} /></td>
           <td>{stopsByRouteId.get(route.id) ?? 0}</td>
           <td>
             <Link className="link-secondary" href={`/routes/${route.id}`}>

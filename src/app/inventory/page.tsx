@@ -5,6 +5,7 @@ import { getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canViewFinancials } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
+import { activeRouteStatuses, availableRouteStatuses } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -65,7 +66,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
       ? supabase
       .from("route_stock_lines")
       .select("product_id, planned_qty, picked_qty, routes!inner(status)")
-          .in("routes.status", ["draft", "assigned"])
+          .in("routes.status", [...availableRouteStatuses, ...activeRouteStatuses])
           .in("product_id", productIds)
       : Promise.resolve({ data: [], error: null }),
     supabase

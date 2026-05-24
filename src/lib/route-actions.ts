@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
 import { canExecuteRoutes, isAdminRole } from "@/lib/authz";
+import { activeRouteStatuses, availableRouteStatuses, isAvailableRouteStatus, isTerminalRouteStatus } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 function clean(value: FormDataEntryValue | null) {
@@ -40,6 +41,108 @@ function revalidateRoutePaths(id: string) {
   revalidatePath("/routes");
   revalidatePath(`/routes/${id}`);
   revalidatePath("/operator/routes");
+  revalidatePath(`/operator/routes/${id}`);
+  revalidatePath(`/operator/routes/${id}/pick-list`);
+  revalidatePath(`/operator/routes/${id}/leftovers`);
+  revalidatePath("/inventory");
+  revalidatePath("/inventory/movements");
+}
+
+function quantity(value: unknown) {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.floor(parsed));
+}
+
+function machineFillDelta(movement: any) {
+  const qty = quantity(movement?.quantity);
+  if (movement?.reason === "manual_correction" && movement?.from_entity_type === "machine" && movement?.to_entity_type === "operator_bag") return -qty;
+  return qty;
+}
+
+async function reverseOutstandingPickedStock(
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>,
+  routeId: string,
+  actorTeamMemberId: string | null,
+) {
+  const [{ data: routeStockLines, error: stockError }, { data: fillMovements, error: fillError }, { data: pickMovements, error: pickError }] = await Promise.all([
+    supabase.from("route_stock_lines").select("id, product_id, picked_qty, returned_qty").eq("route_id", routeId),
+    supabase.from("inventory_movements").select("product_id, quantity, reason, from_entity_type, to_entity_type").eq("related_route_id", routeId).in("reason", ["operator_bag_to_machine", "manual_correction"]),
+    supabase.from("inventory_movements").select("product_id, quantity, from_entity_id, to_entity_id").eq("related_route_id", routeId).eq("reason", "storage_to_operator_bag").order("created_at", { ascending: true }),
+  ]);
+
+  if (stockError) throw stockError;
+  if (fillError) throw fillError;
+  if (pickError) throw pickError;
+
+  const filledByProduct = new Map<string, number>();
+  (fillMovements ?? []).forEach((movement: any) => {
+    const productId = String(movement.product_id ?? "");
+    if (!productId) return;
+    filledByProduct.set(productId, (filledByProduct.get(productId) ?? 0) + machineFillDelta(movement));
+  });
+
+  const pickedStorageByProduct = new Map<string, { storageId: string; operatorId: string | null; quantity: number }[]>();
+  (pickMovements ?? []).forEach((movement: any) => {
+    const productId = String(movement.product_id ?? "");
+    const storageId = String(movement.from_entity_id ?? "");
+    if (!productId || !storageId) return;
+    pickedStorageByProduct.set(productId, [
+      ...(pickedStorageByProduct.get(productId) ?? []),
+      {
+        storageId,
+        operatorId: movement.to_entity_id ? String(movement.to_entity_id) : null,
+        quantity: quantity(movement.quantity),
+      },
+    ]);
+  });
+
+  const reversalMovements: any[] = [];
+  const returnedUpdates: { id: string; returnedQty: number }[] = [];
+
+  for (const line of routeStockLines ?? []) {
+    const productId = String((line as any).product_id ?? "");
+    if (!productId) continue;
+
+    let remainingReturn = Math.max(0, quantity((line as any).picked_qty) - quantity((line as any).returned_qty) - (filledByProduct.get(productId) ?? 0));
+    if (remainingReturn <= 0) continue;
+
+    const pickedLocations = pickedStorageByProduct.get(productId) ?? [];
+    let returnedQty = 0;
+    for (const pickedLocation of pickedLocations) {
+      if (remainingReturn <= 0) break;
+      const movementQty = Math.min(remainingReturn, pickedLocation.quantity);
+      if (movementQty <= 0) continue;
+      reversalMovements.push({
+        product_id: productId,
+        quantity: movementQty,
+        from_entity_type: "operator_bag",
+        from_entity_id: pickedLocation.operatorId,
+        to_entity_type: "storage",
+        to_entity_id: pickedLocation.storageId,
+        reason: "operator_bag_to_storage",
+        related_route_id: routeId,
+        created_by: actorTeamMemberId,
+        notes: `Route cancellation return for ${routeId}`,
+      });
+      returnedQty += movementQty;
+      remainingReturn -= movementQty;
+    }
+
+    if (returnedQty > 0) returnedUpdates.push({ id: String((line as any).id), returnedQty: quantity((line as any).returned_qty) + returnedQty });
+  }
+
+  if (reversalMovements.length) {
+    const { error } = await supabase.from("inventory_movements").insert(reversalMovements);
+    if (error) throw error;
+  }
+
+  for (const update of returnedUpdates) {
+    const { error } = await supabase.from("route_stock_lines").update({ returned_qty: update.returnedQty, updated_at: new Date().toISOString() }).eq("id", update.id);
+    if (error) throw error;
+  }
+
+  return reversalMovements;
 }
 
 export async function deleteDraftRoute(formData: FormData) {
@@ -51,7 +154,7 @@ export async function deleteDraftRoute(formData: FormData) {
 
   const { data: route, error: routeError } = await supabase.from("routes").select("*").eq("id", id).maybeSingle();
   if (routeError || !route) fail("/routes", "Route not found.");
-  if (route.status !== "draft") fail(path, "Only draft routes can be hard-deleted.");
+  if (![...availableRouteStatuses].includes(route.status)) fail(path, "Only routes that have not started can be hard-deleted.");
 
   let movementCount = 0;
   let cashCount = 0;
@@ -79,7 +182,7 @@ export async function deleteDraftRoute(formData: FormData) {
     supabase.from("refill_orders").select("*, refill_order_lines(*)").eq("route_id", id),
   ]);
 
-  const { error } = await supabase.from("routes").delete().eq("id", id).eq("status", "draft");
+  const { error } = await supabase.from("routes").delete().eq("id", id).in("status", [...availableRouteStatuses]);
   if (error) {
     console.error("[routes] Failed to delete draft route", error);
     fail(path, "Could not delete draft route.");
@@ -93,7 +196,7 @@ export async function deleteDraftRoute(formData: FormData) {
     entityLabel: `Route ${route.route_date}`,
     beforeData: { route, stops, stockLines, stopItems, pickItems, refillOrders },
     metadata: { reason },
-    summary: `Hard-deleted draft route for ${route.route_date}`,
+    summary: `Hard-deleted unstarted route for ${route.route_date}`,
   });
 
   revalidateRoutePaths(id);
@@ -109,9 +212,15 @@ export async function cancelRoute(formData: FormData) {
 
   const { data: route, error: routeError } = await supabase.from("routes").select("*").eq("id", id).maybeSingle();
   if (routeError || !route) fail("/routes", "Route not found.");
-  if (["completed", "reviewed"].includes(route.status)) fail(path, "Completed routes cannot be cancelled or hard-deleted.");
-  if (route.status === "cancelled") fail(path, "This route is already cancelled.");
-  if (route.status === "draft") fail(path, "Draft routes can be deleted instead of cancelled.");
+  if (isTerminalRouteStatus(route.status)) fail(path, "Completed or cancelled routes cannot be cancelled again.");
+
+  let reversalMovements: any[] = [];
+  try {
+    reversalMovements = await reverseOutstandingPickedStock(supabase, id, profile.team_member_id);
+  } catch (error) {
+    console.error("[routes] Failed to reverse route stock before cancellation", error);
+    fail(path, "Could not reverse outstanding picked stock for this route.");
+  }
 
   const now = new Date().toISOString();
   const { data: after, error } = await supabase
@@ -123,7 +232,7 @@ export async function cancelRoute(formData: FormData) {
       cancellation_reason: reason,
     })
     .eq("id", id)
-    .in("status", ["assigned", "in_progress"])
+    .in("status", [...availableRouteStatuses, ...activeRouteStatuses])
     .select("*")
     .single();
   if (error) {
@@ -139,8 +248,10 @@ export async function cancelRoute(formData: FormData) {
     entityLabel: `Route ${route.route_date}`,
     beforeData: route,
     afterData: after,
-    metadata: { reason },
-    summary: `Cancelled route for ${route.route_date}`,
+    metadata: { reason, reversal_movement_count: reversalMovements.length },
+    summary: reversalMovements.length
+      ? `Cancelled route for ${route.route_date} and returned outstanding picked stock`
+      : `Cancelled route for ${route.route_date}`,
   });
 
   revalidateRoutePaths(id);
@@ -156,7 +267,7 @@ export async function assignRoute(formData: FormData) {
 
   const { data: route, error: routeError } = await supabase.from("routes").select("*").eq("id", id).maybeSingle();
   if (routeError || !route) fail("/routes", "Route not found.");
-  if (["completed", "reviewed", "cancelled"].includes(String(route.status))) fail(path, "Completed, reviewed, or cancelled routes cannot be reassigned.");
+  if (isTerminalRouteStatus(route.status)) fail(path, "Completed, reviewed, or cancelled routes cannot be reassigned.");
 
   if (operatorId) {
     const { data: performer, error: performerError } = await supabase
@@ -173,7 +284,9 @@ export async function assignRoute(formData: FormData) {
     }
   }
 
-  const nextStatus = operatorId ? (route.status === "draft" ? "assigned" : route.status) : route.status === "assigned" ? "draft" : route.status;
+  const nextStatus = operatorId
+    ? (isAvailableRouteStatus(route.status) ? "assigned" : route.status)
+    : route.status === "assigned" ? "available" : route.status;
   const { data: after, error } = await supabase
     .from("routes")
     .update({ operator_id: operatorId, status: nextStatus })

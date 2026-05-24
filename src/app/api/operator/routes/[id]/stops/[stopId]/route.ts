@@ -42,6 +42,18 @@ function errorMessage(error: unknown) {
   return "Unknown database error";
 }
 
+function movementQuantity(value: unknown) {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.floor(parsed));
+}
+
+function machineFillDelta(movement: any) {
+  const qty = movementQuantity(movement?.quantity);
+  if (movement?.reason === "manual_correction" && movement?.from_entity_type === "machine" && movement?.to_entity_type === "operator_bag") return -qty;
+  return qty;
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string; stopId: string }> }
@@ -54,13 +66,13 @@ export async function GET(
     return NextResponse.json({ error: "Database not available" }, { status: 500 });
   }
 
-  let route: { id: string; operator_id: string | null } | null = null;
+  let route: { id: string; operator_id: string | null; status?: string | null } | null = null;
   let stop: { id: string; route_id: string; machine_id: string; stop_order: number; status: string } | null = null;
 
   try {
     const { data: routeRow, error: routeError } = await supabase
       .from("routes")
-      .select("id, operator_id")
+      .select("id, operator_id, status")
       .eq("id", routeId)
       .maybeSingle();
     if (routeError) throw routeError;
@@ -208,7 +220,36 @@ export async function GET(
       plannedByProduct.set(productId, current);
     });
 
-    const lineItems = Array.from(plannedByProduct.values()).map((line: any) => ({
+    const { data: existingFillLines, error: existingFillLinesError } = await supabase
+      .from("route_stop_fill_lines")
+      .select("product_id, action_type, actual_qty, reason, notes, assigned_product_id")
+      .eq("route_stop_id", stopId);
+    if (existingFillLinesError && !isMissingTable(existingFillLinesError, "route_stop_fill_lines")) throw existingFillLinesError;
+
+    const existingAssignedFillByProduct = new Map<string, { quantity: number; reason?: string | null; notes?: string | null }>();
+    const existingExtraItems = (existingFillLines ?? [])
+      .filter((line: any) => line.action_type === "extra_product" && line.product_id)
+      .map((line: any) => ({
+        productId: line.product_id,
+        quantity: Number(line.actual_qty ?? 0),
+        reason: line.reason ?? "Customer demand",
+        notes: line.notes ?? "",
+      }));
+    (existingFillLines ?? []).forEach((line: any) => {
+      if (line.action_type !== "assigned_fill") return;
+      const productId = String(line.product_id ?? line.assigned_product_id ?? "");
+      if (!productId) return;
+      const current = existingAssignedFillByProduct.get(productId);
+      existingAssignedFillByProduct.set(productId, {
+        quantity: (current?.quantity ?? 0) + Number(line.actual_qty ?? 0),
+        reason: line.reason ?? current?.reason ?? null,
+        notes: line.notes ?? current?.notes ?? null,
+      });
+    });
+
+    const lineItems = Array.from(plannedByProduct.values()).map((line: any) => {
+      const existingFill = existingAssignedFillByProduct.get(String(line.productId));
+      return ({
       refillOrderLineId: line.refillOrderLineId,
       routeStopItemId: line.routeStopItemId,
       machineSlotId: line.machineSlotId,
@@ -218,44 +259,59 @@ export async function GET(
       currentQty: line.currentQty,
       assignedQty: line.assignedQty,
       parQty: line.parQty,
-      filledQty: line.filledQty,
-    }));
+      filledQty: existingFill ? existingFill.quantity : null,
+      reason: existingFill?.reason ?? null,
+      notes: existingFill?.notes ?? null,
+    });
+    });
 
-    const [{ data: pickListItems, error: pickListError }, { data: fillMovements, error: fillMovementsError }, { data: products, error: productsError }] = await Promise.all([
+    const [{ data: routeStockLines, error: stockError }, { data: fillMovements, error: fillMovementsError }, { data: products, error: productsError }, { data: refillHistory, error: refillHistoryError }] = await Promise.all([
       supabase
-        .from("route_pick_list_items")
-        .select("product_id, picked_qty, product:products!route_pick_list_items_product_id_fkey(id, name), substituted_product:products!route_pick_list_items_substituted_for_product_id_fkey(id, name)")
+        .from("route_stock_lines")
+        .select("product_id, picked_qty, returned_qty, product:products(id, name)")
         .eq("route_id", routeId),
       supabase
         .from("inventory_movements")
-        .select("product_id, quantity")
+        .select("product_id, quantity, related_route_stop_id, reason, from_entity_type, to_entity_type")
         .eq("related_route_id", routeId)
-        .eq("reason", "operator_bag_to_machine"),
+        .in("reason", ["operator_bag_to_machine", "manual_correction"]),
       supabase
         .from("products")
         .select("id, sku, barcode, name, category, brand, image_url")
         .eq("active", true)
         .order("name"),
+      supabase
+        .from("machine_refill_history")
+        .select("machine_photo_url, machine_photo_path")
+        .eq("legacy_refill_id", `route_stop:${stopId}`)
+        .maybeSingle(),
     ]);
-    if (pickListError && !isMissingTable(pickListError, "route_pick_list_items")) throw pickListError;
+    if (stockError) throw stockError;
     if (fillMovementsError) throw fillMovementsError;
     if (productsError) throw productsError;
+    if (refillHistoryError) throw refillHistoryError;
 
     const filledByProduct = new Map<string, number>();
+    const currentStopFilledByProduct = new Map<string, number>();
     (fillMovements ?? []).forEach((movement: any) => {
       const productId = String(movement.product_id);
-      filledByProduct.set(productId, (filledByProduct.get(productId) ?? 0) + Number(movement.quantity ?? 0));
+      const qty = machineFillDelta(movement);
+      filledByProduct.set(productId, (filledByProduct.get(productId) ?? 0) + qty);
+      if (movement.related_route_stop_id === stopId) currentStopFilledByProduct.set(productId, (currentStopFilledByProduct.get(productId) ?? 0) + qty);
     });
 
     const pickedByProduct = new Map<string, number>();
-    (pickListItems ?? []).forEach((line: any) => {
+    const returnedByProduct = new Map<string, number>();
+    (routeStockLines ?? []).forEach((line: any) => {
       const productId = String(line.product_id);
       pickedByProduct.set(productId, (pickedByProduct.get(productId) ?? 0) + Number(line.picked_qty ?? 0));
+      returnedByProduct.set(productId, (returnedByProduct.get(productId) ?? 0) + Number(line.returned_qty ?? 0));
     });
 
     const availableByProduct = new Map<string, number>();
     pickedByProduct.forEach((pickedQty, productId) => {
-      availableByProduct.set(productId, Math.max(0, pickedQty - (filledByProduct.get(productId) ?? 0)));
+      const filledByOtherStops = (filledByProduct.get(productId) ?? 0) - (currentStopFilledByProduct.get(productId) ?? 0);
+      availableByProduct.set(productId, Math.max(0, pickedQty - (returnedByProduct.get(productId) ?? 0) - filledByOtherStops));
     });
 
     lineItems.forEach((item: any) => {
@@ -281,8 +337,12 @@ export async function GET(
       machineName: machine?.name ?? "Unknown machine",
       machineCode: machine?.machine_code ?? "-",
       location: locationName,
+      stopStatus: stop.status,
+      routeStatus: route.status,
       refillItems,
+      extraItems: existingExtraItems,
       productOptions,
+      hasCompletionPhoto: Boolean(refillHistory?.machine_photo_url || refillHistory?.machine_photo_path),
       debug: buildDebugDetails({ profile, routeId, stopId, route, stop }),
     });
   } catch (error) {

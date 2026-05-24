@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { EmptyState, ErrorState, PageHeader, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canExecuteRoutes } from "@/lib/authz";
+import { availableRouteStatuses, isTerminalRouteStatus } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export default async function OperatorRoutesPage({ searchParams }: { searchParams: Promise<{ view?: string }> }) {
@@ -20,19 +21,30 @@ export default async function OperatorRoutesPage({ searchParams }: { searchParam
     );
   }
   
-  let routesQuery = supabase
+  const routeSelect = "id, route_date, status, operator_id, route_stops(id, status, stop_order)";
+  const assignedQuery = profile.team_member_id
+    ? supabase
+        .from("routes")
+        .select(routeSelect)
+        .eq("operator_id", profile.team_member_id)
+        .not("status", "in", "(completed,reviewed,cancelled,canceled)")
+        .order("route_date", { ascending: true })
+    : Promise.resolve({ data: [], error: null });
+  const availableQuery = supabase
     .from("routes")
-    .select("id, route_date, status, operator_id, route_stops(id, status)")
-    .gte("route_date", new Date().toISOString().split("T")[0])
+    .select(routeSelect)
+    .is("operator_id", null)
+    .in("status", [...availableRouteStatuses])
     .order("route_date", { ascending: true });
 
-  if (showAvailable) {
-    routesQuery = routesQuery.is("operator_id", null).in("status", ["draft", "assigned"]);
-  } else {
-    routesQuery = routesQuery.eq("operator_id", profile.team_member_id ?? "");
-  }
+  const [assignedResult, availableResult] = await Promise.all([assignedQuery, availableQuery]);
+  const error = assignedResult.error ?? availableResult.error;
+  const routes = showAvailable
+    ? (availableResult.data ?? [])
+    : [...(assignedResult.data ?? []), ...(availableResult.data ?? [])]
+        .filter((route: any, index, rows) => rows.findIndex((candidate: any) => candidate.id === route.id) === index)
+        .filter((route: any) => !isTerminalRouteStatus(route.status));
 
-  const { data: routes, error } = await routesQuery;
   if (error) {
     console.error("[operator:routes] Failed to load assigned routes", { error, authUserId: profile?.id, teamMemberId: profile?.team_member_id });
     return (
@@ -65,6 +77,7 @@ export default async function OperatorRoutesPage({ searchParams }: { searchParam
               const completedStops = route.route_stops?.filter((s: any) => s.status === "completed").length ?? 0;
               const totalStops = route.route_stops?.length ?? 0;
               const progress = totalStops > 0 ? Math.round((completedStops / totalStops) * 100) : 0;
+              const isAvailable = !route.operator_id && availableRouteStatuses.includes(String(route.status) as any);
 
               return (
                 <Link
@@ -75,7 +88,7 @@ export default async function OperatorRoutesPage({ searchParams }: { searchParam
                   <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
                       <h3 className="font-semibold text-slate-900">{route.route_date}</h3>
-                      <p className="text-sm text-slate-500">{totalStops} machine stops{showAvailable ? " - available to claim" : ""}</p>
+                      <p className="text-sm text-slate-500">{totalStops} machine stops{isAvailable ? " - available to claim" : ""}</p>
                     </div>
                     <div className="shrink-0">
                       <StatusBadge status={route.status} />

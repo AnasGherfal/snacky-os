@@ -3,6 +3,7 @@ import Link from "next/link";
 import { EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge, SectionCard } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute } from "@/lib/authz";
+import { activeRouteStatuses, availableRouteStatuses, nextOperatorRouteHref } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export default async function OperatorRouteDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -61,12 +62,16 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
   const completedStops = routeStops.filter((s: any) => s.status === "completed").length;
   const totalStops = routeStops.length;
   const pickItems = routeStock ?? [];
-  const primaryAction =
-    routeRow.status === "draft" || routeRow.status === "assigned"
-      ? { href: `/operator/routes/${routeId}/pick-list?start=1`, label: routeRow.operator_id ? "Start Route" : "Claim & Start" }
-      : routeRow.status === "in_progress"
-        ? { href: `/operator/routes/${routeId}/leftovers`, label: "End Route" }
-        : null;
+  const hasPickup = pickItems.some((item: any) => Number(item.picked_qty ?? 0) > 0);
+  const continueHref = nextOperatorRouteHref({ routeId, status: routeRow.status, hasPickup, stops: routeStops, start: true });
+  const primaryAction = continueHref
+    ? {
+        href: continueHref,
+        label: availableRouteStatuses.includes(String(routeRow.status) as any)
+          ? (routeRow.operator_id ? "Start Route" : "Claim & Start")
+          : "Continue Route",
+      }
+    : null;
 
   return (
     <>
@@ -110,7 +115,7 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
         {/* Pick List Section */}
         <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
           <h2 className="text-lg font-semibold mb-4">Pick list</h2>
-          {routeRow.status === "draft" || routeRow.status === "assigned" ? (
+          {availableRouteStatuses.includes(String(routeRow.status) as any) ? (
             <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
               <strong>Ready to start?</strong> Click "{routeRow.operator_id ? "Start Route" : "Claim & Start"}" above to view your pick list and begin picking stock from storage.
             </div>
@@ -166,12 +171,12 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
                     </div>
                   </div>
 
-                  {routeRow.status === "in_progress" || routeRow.status === "completed" ? (
+                  {[...activeRouteStatuses, "completed", "reviewed"].includes(String(routeRow.status) as any) ? (
                     <Link
                       href={`/operator/routes/${routeId}/stops/${stop.id}`}
                       className="btn-primary mt-1 w-full text-base sm:w-auto"
                     >
-                      {stop.status === "completed" ? "View stop" : "Continue filling"}
+                      {stop.status === "completed" ? "Edit stop" : "Continue filling"}
                     </Link>
                   ) : null}
                 </div>

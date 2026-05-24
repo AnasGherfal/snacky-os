@@ -34,7 +34,7 @@ export async function GET(
   }
 
   try {
-    const { data: route, error: routeError } = await supabase.from("routes").select("id, operator_id").eq("id", routeId).maybeSingle();
+    const { data: route, error: routeError } = await supabase.from("routes").select("id, operator_id, status").eq("id", routeId).maybeSingle();
     if (routeError) throw routeError;
     if (!route) {
       return NextResponse.json({ error: "Route not found" }, { status: 404 });
@@ -138,15 +138,24 @@ export async function GET(
       storageByProduct.set(productId, (storageByProduct.get(productId) ?? 0) + Number(row.quantity_on_hand ?? 0));
     });
 
-    const { data: pickListItems, error: pickListError } = productIds.length
-      ? await supabase.from("route_pick_list_items").select("product_id, picked_qty").eq("route_id", routeId).in("product_id", productIds)
-      : { data: [], error: null };
+    const { data: pickListItems, error: pickListError } = await supabase
+      .from("route_pick_list_items")
+      .select("product_id, picked_qty, planned_qty, action_type, reason, notes")
+      .eq("route_id", routeId);
     if (pickListError && !isMissingTable(pickListError, "route_pick_list_items")) throw pickListError;
     const pickedByProduct = new Map<string, number>();
     (pickListItems ?? []).forEach((line: any) => {
       const productId = String(line.product_id);
       pickedByProduct.set(productId, (pickedByProduct.get(productId) ?? 0) + Number(line.picked_qty ?? 0));
     });
+    const extraItems = (pickListItems ?? [])
+      .filter((line: any) => line.action_type === "extra_product")
+      .map((line: any) => ({
+        productId: line.product_id,
+        quantity: Number(line.picked_qty ?? 0),
+        reason: line.reason ?? "Customer demand",
+        notes: line.notes ?? "",
+      }));
 
     const { data: pickMovements, error: pickMovementError } = await supabase
       .from("inventory_movements")
@@ -163,7 +172,7 @@ export async function GET(
       sku: line.sku ?? null,
       planned_qty: Number(line.planned_qty ?? 0),
       picked_qty: pickedByProduct.has(String(line.product_id)) ? pickedByProduct.get(String(line.product_id)) : null,
-      available_storage_qty: storageByProduct.get(String(line.product_id)) ?? 0,
+      available_storage_qty: (storageByProduct.get(String(line.product_id)) ?? 0) + (pickedByProduct.get(String(line.product_id)) ?? 0),
       machine_items: line.machine_items,
     }));
 
@@ -185,13 +194,16 @@ export async function GET(
       category: product.category,
       brand: product.brand,
       imageUrl: product.image_url,
-      availableStorageQty: optionStorageByProduct.get(String(product.id)) ?? 0,
+      availableStorageQty: (optionStorageByProduct.get(String(product.id)) ?? 0) + (pickedByProduct.get(String(product.id)) ?? 0),
     }));
 
     return NextResponse.json({
       items,
       productOptions,
+      extraItems,
       confirmed,
+      locked: ["completed", "reviewed", "cancelled", "canceled"].includes(String(route.status)),
+      routeStatus: route.status,
       debug: process.env.NODE_ENV === "development"
         ? { routeId, routeStopItemsCount: stopItems?.length ?? 0, aggregatedPickListCount: items.length, routePickListItemsCount: pickListItems?.length ?? 0, operatorTeamMemberId: profile?.team_member_id ?? null }
         : undefined,

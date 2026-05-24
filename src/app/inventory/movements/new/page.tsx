@@ -3,6 +3,7 @@ import { FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
 import { StockMovementForm } from "@/components/StockMovementForm";
 import { getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canAddProducts, canViewFinancials, isOwnerAdminRole } from "@/lib/authz";
+import { activeRouteStatuses, availableRouteStatuses } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +25,7 @@ export default async function NewStockMovementPage({ searchParams }: { searchPar
         supabase.from("current_inventory_by_location").select("product_id, quantity_on_hand").eq("location_type", "storage"),
         supabase.from("storage_locations").select("id, name").eq("active", true).in("location_type", ["main_storage", "vehicle", "temporary", "other"]).order("name"),
         supabase.from("team_members").select("id, full_name").or("role.eq.operator,roles.cs.{operator}").eq("active", true).order("full_name"),
-        supabase.from("routes").select("id, route_date, operator_id, status").in("status", ["draft", "assigned", "in_progress"]).order("route_date", { ascending: false }),
+        supabase.from("routes").select("id, route_date, operator_id, status").in("status", [...availableRouteStatuses, ...activeRouteStatuses]).order("route_date", { ascending: false }),
         supabase.from("inventory_movements").select("product_id, created_at").order("created_at", { ascending: false }).limit(100),
       ])
     : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }];

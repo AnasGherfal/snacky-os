@@ -3,6 +3,7 @@ import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, Section
 import { getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canExecuteRoutes, isAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
+import { activeRouteStatuses, availableRouteStatuses, isTerminalRouteStatus, nextOperatorRouteHref } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { RouteCreatedToast } from "@/app/routes/[id]/RouteCreatedToast";
 import { assignRoute, cancelRoute, deleteDraftRoute } from "@/lib/route-actions";
@@ -159,7 +160,12 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   ]);
   const machineById = new Map((machines ?? []).map((machine: any) => [machine.id, machine]));
   const canManageRouteAssignment = isAdminRole(profile);
-  const canStartRoute = canExecuteRoutes(profile) && Boolean(profile.team_member_id) && ["draft", "assigned"].includes(routeRow.status);
+  const hasPickMovements = Boolean(movements?.some((movement: any) => movement.reason === "storage_to_operator_bag"));
+  const hasReturnMovements = Boolean(movements?.some((movement: any) => movement.reason === "operator_bag_to_storage"));
+  const canStartRoute = canExecuteRoutes(profile) && Boolean(profile.team_member_id) && availableRouteStatuses.includes(String(routeRow.status) as any);
+  const continueHref = canExecuteRoutes(profile)
+    ? nextOperatorRouteHref({ routeId: id, status: routeRow.status, hasPickup: hasPickMovements, stops: routeStops, start: true })
+    : null;
   const productById = new Map((products ?? []).map((product: any) => [product.id, product]));
   const routeActivityQueries: PromiseLike<any>[] = [
     supabase
@@ -211,13 +217,11 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     .filter((activity: any, index: number, rows: any[]) => rows.findIndex((row: any) => row.id === activity.id) === index)
     .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     .slice(0, 100);
-  const hasPickMovements = Boolean(movements?.some((movement: any) => movement.reason === "storage_to_operator_bag"));
-  const hasReturnMovements = Boolean(movements?.some((movement: any) => movement.reason === "operator_bag_to_storage"));
   const completedStopCount = routeStops.filter((stop: any) => stop.status === "completed").length;
   const timeline = [
     { label: "Draft", done: true, detail: `Created ${new Date(routeRow.created_at).toLocaleString("en-US")}` },
-    { label: "Assigned", done: ["assigned", "in_progress", "completed", "reviewed"].includes(routeRow.status), detail: operator?.full_name ?? "Operator pending" },
-    { label: "Picked", done: hasPickMovements || ["in_progress", "completed", "reviewed"].includes(routeRow.status), detail: hasPickMovements ? "Storage moved to operator bag" : "Awaiting pick confirmation" },
+    { label: "Available", done: [...availableRouteStatuses, ...activeRouteStatuses, "completed", "reviewed"].includes(String(routeRow.status) as any), detail: operator?.full_name ?? "Unassigned / available" },
+    { label: "Picked", done: hasPickMovements || ["pickup_confirmed", "machine_filling", "completed", "reviewed"].includes(routeRow.status), detail: hasPickMovements ? "Storage moved to operator bag" : "Awaiting pick confirmation" },
     { label: "Stops completed", done: routeStops.length > 0 && completedStopCount === routeStops.length, detail: `${completedStopCount}/${routeStops.length} stops` },
     { label: "Cash recorded", done: Boolean(cashCollections?.length), detail: `${cashCollections?.length ?? 0} cash records` },
     { label: "Leftovers returned", done: hasReturnMovements || ["completed", "reviewed"].includes(routeRow.status), detail: hasReturnMovements ? "Operator bag returned to storage" : "Awaiting leftover return" },
@@ -235,24 +239,29 @@ export default async function RouteDetailPage({ params, searchParams }: { params
           action={
             <div className="flex flex-wrap gap-2">
               <SecondaryButton href="/routes">Back to routes</SecondaryButton>
-              {canStartRoute ? (
+              {continueHref ? (
+                <Link href={continueHref} className="btn-primary">
+                  {canStartRoute ? (routeRow.operator_id ? "Start Route" : "Claim & Start") : "Continue Route"}
+                </Link>
+              ) : null}
+              {canStartRoute && !continueHref ? (
                 <Link href={`/operator/routes/${id}/pick-list?start=1`} className="btn-primary">
                   {routeRow.operator_id ? "Start Route" : "Claim & Start"}
                 </Link>
               ) : null}
-              {routeRow.status === "draft" ? (
+              {availableRouteStatuses.includes(String(routeRow.status) as any) ? (
                 <ConfirmDialog
                   action={deleteDraftRoute}
-                  triggerLabel="Delete draft"
-                  title="Delete draft route?"
-                  description="Draft routes can be hard-deleted only before inventory, cash, or finance history exists."
-                  confirmLabel="Delete draft"
+                  triggerLabel="Delete route"
+                  title="Delete route?"
+                  description="Routes can be hard-deleted only before inventory, cash, or finance history exists."
+                  confirmLabel="Delete route"
                   buttonClassName="btn-danger"
                   confirmButtonClassName="btn-danger"
                   hiddenFields={[{ name: "id", value: id }]}
                 />
               ) : null}
-              {["assigned", "in_progress"].includes(routeRow.status) ? (
+              {![...["completed", "reviewed", "cancelled", "canceled"]].includes(String(routeRow.status)) ? (
                 <ConfirmDialog
                   action={cancelRoute}
                   triggerLabel="Cancel route"
@@ -497,7 +506,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
           </section>
         </div>
 
-        {canManageRouteAssignment && !["completed", "reviewed", "cancelled"].includes(routeRow.status) ? (
+        {canManageRouteAssignment && !isTerminalRouteStatus(routeRow.status) ? (
           <section className="surface-card p-4">
             <div className="mb-4">
               <h2 className="text-lg font-semibold">Route assignment</h2>

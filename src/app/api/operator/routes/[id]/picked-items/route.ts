@@ -13,6 +13,18 @@ function errorMessage(error: unknown) {
   return "Unknown database error";
 }
 
+function movementQuantity(value: unknown) {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.floor(parsed));
+}
+
+function machineFillDelta(movement: any) {
+  const qty = movementQuantity(movement?.quantity);
+  if (movement?.reason === "manual_correction" && movement?.from_entity_type === "machine" && movement?.to_entity_type === "operator_bag") return -qty;
+  return qty;
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -39,9 +51,9 @@ export async function GET(
         .eq("route_id", routeId),
       supabase
         .from("inventory_movements")
-        .select("product_id, quantity")
+        .select("product_id, quantity, reason, from_entity_type, to_entity_type")
         .eq("related_route_id", routeId)
-        .eq("reason", "operator_bag_to_machine"),
+        .in("reason", ["operator_bag_to_machine", "manual_correction"]),
     ]);
 
     if (stockError) throw stockError;
@@ -50,7 +62,7 @@ export async function GET(
     const filledByProduct = new Map<string, number>();
     (fillMovements ?? []).forEach((movement: any) => {
       const productId = String(movement.product_id);
-      filledByProduct.set(productId, (filledByProduct.get(productId) ?? 0) + Number(movement.quantity ?? 0));
+      filledByProduct.set(productId, (filledByProduct.get(productId) ?? 0) + machineFillDelta(movement));
     });
 
     const items = (stockLines ?? [])
