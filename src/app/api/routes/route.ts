@@ -1,7 +1,7 @@
 import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { logActivity } from "@/lib/activity-log";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canExecuteRoutes, isOwnerAdminRole } from "@/lib/authz";
 import { availableRouteStatuses, activeRouteStatuses } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -374,7 +374,7 @@ export async function POST(request: Request) {
     return jsonError("You are not authorized to create routes.", 403);
   }
 
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) return jsonError("Supabase is not configured.", 500);
 
   let payload: CreateRoutePayload;

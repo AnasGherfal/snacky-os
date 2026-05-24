@@ -63,6 +63,55 @@ type RecentMovementRow = {
   product_id: string | null;
 };
 
+type RouteBuilderQueryIssue = {
+  key: string;
+  label: string;
+  table: string;
+  message: string;
+};
+
+function supabaseErrorPayload(error: any) {
+  return {
+    code: error?.code ?? null,
+    message: error?.message ?? String(error ?? "Unknown Supabase error"),
+    details: error?.details ?? null,
+    hint: error?.hint ?? null,
+  };
+}
+
+function logRouteBuilderQueryError({
+  key,
+  label,
+  table,
+  error,
+  profile,
+  params,
+}: {
+  key: string;
+  label: string;
+  table: string;
+  error: any;
+  profile: Awaited<ReturnType<typeof getCurrentProfile>>;
+  params: Record<string, unknown>;
+}) {
+  const errorPayload = supabaseErrorPayload(error);
+  console.error(`[routes:new] ${label}`, {
+    data_source: key,
+    table_or_view: table,
+    supabase_error: errorPayload,
+    current_user_id: profile?.id ?? null,
+    user_roles: profile?.roles ?? [],
+    organization_id: null,
+    query_parameters: params,
+  });
+  return {
+    key,
+    label,
+    table,
+    message: `${label}: ${errorPayload.message}`,
+  };
+}
+
 export default async function NewRoutePage() {
   const profile = await getCurrentProfile();
   if (!profile || !canAccessPath({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/routes/new")) {
@@ -104,12 +153,87 @@ export default async function NewRoutePage() {
     supabase.from("products").select("id, sku, barcode, name, category, brand, image_url, active").eq("active", true).order("name"),
     supabase.from("inventory_movements").select("product_id, created_at").order("created_at", { ascending: false }).limit(80),
   ]);
-  const loadError = operatorsError ?? machinesError ?? recommendationsError ?? storageError ?? reservedError ?? productsError ?? movementsError;
-  if (loadError) {
-    console.error("[routes:new] Failed to load route creation data", loadError);
+  const queryIssues = [
+    operatorsError
+      ? logRouteBuilderQueryError({
+          key: "operators",
+          label: "Could not load route operators",
+          table: "team_members",
+          error: operatorsError,
+          profile,
+          params: { role_filter: ["owner", "admin", "supervisor", "operator"], active: true, order: "full_name" },
+        })
+      : null,
+    machinesError
+      ? logRouteBuilderQueryError({
+          key: "machines",
+          label: "Could not load active machines",
+          table: "machines",
+          error: machinesError,
+          profile,
+          params: { status: "active", order: "name" },
+        })
+      : null,
+    recommendationsError
+      ? logRouteBuilderQueryError({
+          key: "recommendations",
+          label: "Could not load refill recommendations",
+          table: "refill_recommendations",
+          error: recommendationsError,
+          profile,
+          params: { order: "machine_name" },
+        })
+      : null,
+    storageError
+      ? logRouteBuilderQueryError({
+          key: "storage_inventory",
+          label: "Could not load storage stock",
+          table: "current_inventory_by_location",
+          error: storageError,
+          profile,
+          params: { location_type: "storage", order: "product_name" },
+        })
+      : null,
+    reservedError
+      ? logRouteBuilderQueryError({
+          key: "reservations",
+          label: "Could not load route reservations",
+          table: "route_stock_lines",
+          error: reservedError,
+          profile,
+          params: { route_statuses: [...availableRouteStatuses, ...activeRouteStatuses] },
+        })
+      : null,
+    productsError
+      ? logRouteBuilderQueryError({
+          key: "products",
+          label: "Could not load active products",
+          table: "products",
+          error: productsError,
+          profile,
+          params: { active: true, order: "name" },
+        })
+      : null,
+    movementsError
+      ? logRouteBuilderQueryError({
+          key: "recent_movements",
+          label: "Could not load recent inventory movements",
+          table: "inventory_movements",
+          error: movementsError,
+          profile,
+          params: { order: "created_at desc", limit: 80 },
+        })
+      : null,
+  ].filter((issue): issue is RouteBuilderQueryIssue => Boolean(issue));
+
+  if (queryIssues.length) {
     return (
       <>
-        <ErrorState title="Could not load route builder" body="Snacky OS could not load operators, machines, recommendations, storage, or products for route creation." action={<SecondaryButton href="/routes/new">Retry</SecondaryButton>} />
+        <ErrorState
+          title={queryIssues[0].label}
+          body={queryIssues.map((issue) => issue.message).join(" ")}
+          action={<SecondaryButton href="/routes/new">Retry</SecondaryButton>}
+        />
       </>
     );
   }

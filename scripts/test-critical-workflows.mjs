@@ -156,12 +156,33 @@ test("warehouse purchase flow creates ledger inventory and viewer is denied", { 
     assert.ifError(productError);
     created.productIds.push(product.id);
 
+    const { data: secondProduct, error: secondProductError } = await warehouse.client
+      .from("products")
+      .insert({
+        sku: `QA-${id}-B`,
+        name: `QA Product ${id} B`,
+        category: "drink",
+        cost_price: 0,
+        selling_price: 2,
+        current_cost_price_lyd: 0,
+        current_selling_price_lyd: 2,
+        cost_price_source: "manual",
+        selling_price_source: "manual",
+        import_source: "qa",
+        active: true,
+      })
+      .select("id, sku, name")
+      .single();
+    assert.ifError(secondProductError);
+    created.productIds.push(secondProduct.id);
+
     const { error: viewerProductError } = await viewer.client
       .from("products")
       .insert({ sku: `QA-DENIED-${id}`, name: "Denied product", category: "snack", cost_price: 0, selling_price: 1 });
     assert.ok(viewerProductError, "viewer product insert should be denied by RLS");
 
     const totalUnits = 15;
+    const secondTotalUnits = 8;
     const { data: purchaseRows, error: purchaseError } = await warehouse.client.rpc("snacky_create_purchase_with_lines", {
       p_supplier_id: supplier.id,
       p_order_date: new Date().toISOString().slice(0, 10),
@@ -193,25 +214,41 @@ test("warehouse purchase flow creates ledger inventory and viewer is denied", { 
           line_total: 18,
           line_total_lyd: 18,
         },
+        {
+          product_id: secondProduct.id,
+          line_position: 1,
+          boxes_qty: 1,
+          units_per_box: 6,
+          loose_units_qty: 2,
+          total_units: secondTotalUnits,
+          unit_cost: 1.5,
+          unit_cost_lyd: 1.5,
+          line_total: 12,
+          line_total_lyd: 12,
+        },
       ],
     });
     assert.ifError(purchaseError);
     const purchase = Array.isArray(purchaseRows) ? purchaseRows[0] : purchaseRows;
     assert.equal(purchase.status, "received");
-    assert.equal(purchase.movement_count, 1);
+    assert.equal(purchase.movement_count, 2);
     created.purchaseIds.push(purchase.id);
 
     const { data: movements, error: movementsError } = await warehouse.client
       .from("inventory_movements")
       .select("id, product_id, quantity, from_entity_type, to_entity_type, reason, related_purchase_id")
       .eq("related_purchase_id", purchase.id)
-      .eq("product_id", product.id);
+      .in("product_id", [product.id, secondProduct.id]);
     assert.ifError(movementsError);
-    assert.equal(movements.length, 1);
-    assert.equal(Number(movements[0].quantity), totalUnits);
-    assert.equal(movements[0].from_entity_type, "supplier");
-    assert.equal(movements[0].to_entity_type, "storage");
-    assert.equal(movements[0].reason, "purchase_received");
+    assert.equal(movements.length, 2);
+    const movementByProductId = new Map(movements.map((movement) => [movement.product_id, movement]));
+    assert.equal(Number(movementByProductId.get(product.id)?.quantity), totalUnits);
+    assert.equal(Number(movementByProductId.get(secondProduct.id)?.quantity), secondTotalUnits);
+    for (const movement of movements) {
+      assert.equal(movement.from_entity_type, "supplier");
+      assert.equal(movement.to_entity_type, "storage");
+      assert.equal(movement.reason, "purchase_received");
+    }
 
     const { data: inventoryRows, error: inventoryError } = await warehouse.client
       .from("current_inventory_by_location")
@@ -221,6 +258,15 @@ test("warehouse purchase flow creates ledger inventory and viewer is denied", { 
     assert.ifError(inventoryError);
     const storageQty = inventoryRows.reduce((sum, row) => sum + Number(row.quantity_on_hand ?? 0), 0);
     assert.equal(storageQty, totalUnits);
+
+    const { data: secondInventoryRows, error: secondInventoryError } = await warehouse.client
+      .from("current_inventory_by_location")
+      .select("quantity_on_hand")
+      .eq("product_id", secondProduct.id)
+      .eq("location_type", "storage");
+    assert.ifError(secondInventoryError);
+    const secondStorageQty = secondInventoryRows.reduce((sum, row) => sum + Number(row.quantity_on_hand ?? 0), 0);
+    assert.equal(secondStorageQty, secondTotalUnits);
 
     const { error: viewerPurchaseError } = await viewer.client.rpc("snacky_create_purchase_with_lines", {
       p_supplier_id: supplier.id,
