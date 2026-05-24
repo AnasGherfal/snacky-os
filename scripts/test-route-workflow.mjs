@@ -18,8 +18,11 @@ import {
   isActiveRouteStatus,
   isOperatorVisibleRouteStatus,
   isRouteReservationStatus,
+  isRouteStopActiveStatus,
+  isRouteStopDoneStatus,
   isRouteStatusEnumMismatch,
   isTerminalRouteStatus,
+  nextOperatorRouteHref,
   routeDisplayStatus,
   routeStatusForNewRoute,
 } from "../src/lib/route-workflow.ts";
@@ -67,6 +70,44 @@ test("route creation and display statuses handle current and migrated databases"
   assert.equal(routeDisplayStatus(routeStatusForNewRoute(null), null), ROUTE_AVAILABLE_STATUS);
   assert.equal(routeDisplayStatus("ready", null), ROUTE_AVAILABLE_STATUS);
   assert.equal(routeDisplayStatus("assigned", "operator-1"), ROUTE_ASSIGNED_STATUS);
+});
+
+test("partial route continuation respects independent stop statuses", () => {
+  assert.equal(isRouteStopDoneStatus("completed"), true);
+  assert.equal(isRouteStopDoneStatus("skipped"), true);
+  assert.equal(isRouteStopActiveStatus("picked"), true);
+  assert.equal(isRouteStopActiveStatus("in_progress"), true);
+
+  const routeId = "route-1";
+  const stops = [
+    { id: "stop-a", status: "completed", stop_order: 1 },
+    { id: "stop-b", status: "skipped", stop_order: 2 },
+    { id: "stop-c", status: "pending", stop_order: 3 },
+  ];
+  assert.equal(
+    nextOperatorRouteHref({ routeId, status: "in_progress", hasPickup: true, stops }),
+    "/operator/routes/route-1/pick-list",
+  );
+
+  assert.equal(
+    nextOperatorRouteHref({
+      routeId,
+      status: "in_progress",
+      hasPickup: true,
+      stops: [{ id: "stop-c", status: "picked", stop_order: 3 }, ...stops.slice(0, 2)],
+    }),
+    "/operator/routes/route-1/stops/stop-c",
+  );
+
+  assert.equal(
+    nextOperatorRouteHref({
+      routeId,
+      status: "in_progress",
+      hasPickup: true,
+      stops: stops.map((stop) => stop.id === "stop-c" ? { ...stop, status: "skipped" } : stop),
+    }),
+    "/operator/routes/route-1/leftovers",
+  );
 });
 
 test("database write statuses avoid production enum mismatch values", () => {

@@ -19,6 +19,16 @@ export type VmsSheetRecords = {
   columnSamples: Record<string, string[]>;
 };
 
+export type VmsSalesReportPeriod = {
+  reportStartDate: string;
+  reportEndDate: string;
+  salesMonth: string;
+  sourceTitle: string;
+  sourceRowIndex: number;
+};
+
+export const VMS_SALES_DATE_RANGE_ERROR = "Could not find sales report date range in the Excel title. Please check the VMS export format.";
+
 export type VmsFieldDef = {
   field: string;
   label: string;
@@ -194,6 +204,19 @@ function compact(value: string) {
   return normalizeHeader(value).replace(/_/g, "");
 }
 
+function extraAliasesForField(field: string) {
+  const aliases: Record<string, string[]> = {
+    machine_identifier: ["Machine code", "Machine Code", "Machine number", "Machine Number"],
+    machine_name: ["Machine name", "Machine Name"],
+    product_identifier: ["Product Number", "Product No", "Product number", "Commodity Number", "Commodity No", "Goods Number", "product_number"],
+    product_name: ["product name", "Product name", "Commodity Name", "commodity_name"],
+    sold_qty: ["Number of transaction", "Number of transactions", "Transaction Count", "Transactions", "transaction_count", "number_of_transaction"],
+    total_sales_amount: ["Transaction amount", "Transaction Amount", "Total Sales LYD", "total_sales_lyd", "transaction_amount"],
+    selling_price: ["Commodity price", "Commodity Price", "Commodity unit price", "commodity_price"],
+  };
+  return aliases[field] ?? [];
+}
+
 function looksNumeric(value: string) {
   const cleaned = value.replace(/,/g, "").replace(/[^\d.-]/g, "").trim();
   return cleaned !== "" && Number.isFinite(Number(cleaned));
@@ -204,8 +227,61 @@ function looksDate(value: string) {
   return !Number.isNaN(new Date(value).getTime()) || /^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/.test(value.trim()) || /^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}$/.test(value.trim());
 }
 
+function dateOnly(year: string, month: string, day: string) {
+  const y = Number(year);
+  const m = Number(month);
+  const d = Number(day);
+  if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return null;
+  if (y < 1900 || y > 2100 || m < 1 || m > 12 || d < 1 || d > 31) return null;
+
+  const date = new Date(Date.UTC(y, m - 1, d));
+  if (date.getUTCFullYear() !== y || date.getUTCMonth() !== m - 1 || date.getUTCDate() !== d) return null;
+  return `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+function monthStartFromDateOnly(value: string) {
+  const [year, month] = value.split("-");
+  return `${year}-${month}-01`;
+}
+
+export function parseSalesReportPeriodFromText(text: string, sourceRowIndex = 0): VmsSalesReportPeriod | null {
+  const raw = String(text ?? "").trim();
+  if (!raw) return null;
+
+  const datePattern = String.raw`(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})`;
+  const rangePattern = new RegExp(`${datePattern}\\s*(?:/|~|\\u2013|\\u2014|-|\\bto\\b)\\s*${datePattern}`, "i");
+  const match = raw.match(rangePattern);
+  if (!match) return null;
+
+  const reportStartDate = dateOnly(match[1], match[2], match[3]);
+  const reportEndDate = dateOnly(match[4], match[5], match[6]);
+  if (!reportStartDate || !reportEndDate || reportStartDate > reportEndDate) return null;
+
+  return {
+    reportStartDate,
+    reportEndDate,
+    salesMonth: monthStartFromDateOnly(reportStartDate),
+    sourceTitle: raw,
+    sourceRowIndex,
+  };
+}
+
+export function findSalesReportPeriod(rows: unknown[][], headerRowIndex?: number): VmsSalesReportPeriod | null {
+  const nonEmptyRows = cleanRows(rows);
+  if (!nonEmptyRows.length) return null;
+
+  const headerIndex = Math.max(0, Math.min(headerRowIndex ?? detectHeaderRowIndex(nonEmptyRows, "sales"), nonEmptyRows.length - 1));
+  const metadataRows = nonEmptyRows.slice(0, headerIndex);
+  for (const [index, row] of metadataRows.entries()) {
+    const period = parseSalesReportPeriodFromText(row.filter(Boolean).join(" "), index);
+    if (period) return period;
+  }
+
+  return null;
+}
+
 function fieldExpectsNumber(field: string) {
-  return /(qty|quantity|amount|price|cost|profit|capacity|temperature|cash|trays|min|par|sold)/.test(field);
+  return /(qty|quantity|amount|price|cost|profit|capacity|temperature|cash|trays|min|par|sold|count|transaction|refund)/.test(field);
 }
 
 function fieldExpectsDate(field: string) {
@@ -218,7 +294,7 @@ function scoreHeaderForField(header: string, field: VmsFieldDef, sampleValues: s
 
   const headerCompact = compact(header);
   const headerTokens = splitTokens(header);
-  const aliases = [field.field, field.label, ...field.aliases];
+  const aliases = [field.field, field.label, ...field.aliases, ...extraAliasesForField(field.field)];
   let score = 0;
 
   for (const alias of aliases) {

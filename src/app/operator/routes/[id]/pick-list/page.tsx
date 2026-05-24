@@ -6,7 +6,7 @@ import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from 
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { QuantityStepper } from "@/components/QuantityStepper";
 import { EmptyState, ErrorState, LoadingState, PageHeader, SecondaryButton, SectionCard } from "@/components/ui";
-import { confirmPickList, startRoute } from "@/lib/operator-actions";
+import { applyPendingStopRecommendationRefresh, confirmPickList, previewPendingStopRecommendationRefresh, startRoute, type PendingStopRefreshComparison } from "@/lib/operator-actions";
 
 const UNASSIGNED_EXTRA_TARGET = "__unassigned__";
 
@@ -31,6 +31,7 @@ interface PickStopGroup {
   machineCode: string;
   locationName: string;
   stopOrder: number;
+  stopStatus: string | null;
   items: PickStopItem[];
 }
 interface ProductOption {
@@ -60,8 +61,17 @@ interface RouteTotal {
   availableStorageQty: number;
 }
 type PickListDraft = {
+  selectedStopIds: string[];
   stopItems: { routeStopItemId: string; confirmedQty: number; reason: string; notes: string }[];
   extras: ExtraPickItem[];
+};
+
+type RefreshPreviewState = {
+  loading: boolean;
+  applying: boolean;
+  comparisons: PendingStopRefreshComparison[];
+  message: string;
+  error: string;
 };
 
 function safeRouteHref(routeId: string) {
@@ -74,6 +84,7 @@ function newExtraRow(): ExtraPickItem {
 
 function comparablePickDraft(draft: PickListDraft) {
   return JSON.stringify({
+    selectedStopIds: [...(draft.selectedStopIds ?? [])].sort(),
     stopItems: [...draft.stopItems].sort((a, b) => a.routeStopItemId.localeCompare(b.routeStopItemId)),
     extras: draft.extras
       .map(({ id: _id, ...item }) => item)
@@ -101,6 +112,7 @@ export default function PickListPage() {
   const shouldStartRoute = searchParams.get("start") === "1";
   const startAttempted = useRef(false);
   const [stopGroups, setStopGroups] = useState<PickStopGroup[]>([]);
+  const [selectedStopIds, setSelectedStopIds] = useState<string[]>([]);
   const [productOptions, setProductOptions] = useState<ProductOption[]>([]);
   const [extras, setExtras] = useState<ExtraPickItem[]>([]);
   const [alreadyConfirmed, setAlreadyConfirmed] = useState(false);
@@ -109,13 +121,18 @@ export default function PickListPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [refreshPreview, setRefreshPreview] = useState<RefreshPreviewState>({ loading: false, applying: false, comparisons: [], message: "", error: "" });
   const errorRef = useRef<HTMLDivElement | null>(null);
   const initialPickDraftRef = useRef<string>("");
   const draftKey = useDraftKey("route-pickup", [routeId || "missing-route"]);
 
-  const allStopItems = useMemo(() => stopGroups.flatMap((group) => group.items), [stopGroups]);
+  const selectedStopGroups = useMemo(
+    () => stopGroups.filter((group) => group.routeStopId && selectedStopIds.includes(group.routeStopId)),
+    [selectedStopIds, stopGroups],
+  );
+  const allStopItems = useMemo(() => selectedStopGroups.flatMap((group) => group.items), [selectedStopGroups]);
   const productById = useMemo(() => new Map(productOptions.map((product) => [product.id, product])), [productOptions]);
-  const stopById = useMemo(() => new Map(stopGroups.filter((group) => group.routeStopId).map((group) => [group.routeStopId as string, group])), [stopGroups]);
+  const stopById = useMemo(() => new Map(selectedStopGroups.filter((group) => group.routeStopId).map((group) => [group.routeStopId as string, group])), [selectedStopGroups]);
   const pickedByProduct = useMemo(() => {
     const totals = new Map<string, number>();
     allStopItems.forEach((item) => totals.set(item.productId, (totals.get(item.productId) ?? 0) + item.confirmedQty));
@@ -161,6 +178,7 @@ export default function PickListPage() {
   const unassignedExtraCount = extras.filter((item) => item.productId && item.quantity > 0 && item.targetStopId === UNASSIGNED_EXTRA_TARGET).length;
 
   const pickDraft = useMemo<PickListDraft>(() => ({
+    selectedStopIds,
     stopItems: allStopItems.map((item) => ({
       routeStopItemId: item.routeStopItemId,
       confirmedQty: item.confirmedQty,
@@ -168,7 +186,7 @@ export default function PickListPage() {
       notes: item.notes,
     })),
     extras,
-  }), [allStopItems, extras]);
+  }), [allStopItems, extras, selectedStopIds]);
   const shouldSavePickDraft = useCallback((draft: PickListDraft) => {
     if (!routeId || locked || !initialPickDraftRef.current) return false;
     return comparablePickDraft(draft) !== initialPickDraftRef.current;
@@ -178,6 +196,8 @@ export default function PickListPage() {
     value: pickDraft,
     shouldSave: shouldSavePickDraft,
     onRestore: (draft) => {
+      const availableStopIds = new Set(stopGroups.map((group) => group.routeStopId).filter(Boolean) as string[]);
+      setSelectedStopIds((draft.selectedStopIds ?? []).filter((stopId) => availableStopIds.has(stopId)));
       const draftByStopItem = new Map((draft.stopItems ?? []).map((item) => [item.routeStopItemId, item]));
       setStopGroups((current) => current.map((group) => ({
         ...group,
@@ -190,98 +210,108 @@ export default function PickListPage() {
     },
   });
 
-  useEffect(() => {
-    const fetchPickList = async () => {
-      if (!routeId) {
-        setError("Route id is missing. Go back to your operator routes and open the route again.");
-        setLoading(false);
-        return;
+  const loadPickList = useCallback(async ({ keepSelection = false }: { keepSelection?: boolean } = {}) => {
+    if (!routeId) {
+      setError("Route id is missing. Go back to your operator routes and open the route again.");
+      setLoading(false);
+      return;
+    }
+
+    try {
+      if (shouldStartRoute && !startAttempted.current) {
+        startAttempted.current = true;
+        await startRoute(routeId);
+        setNotice("Route started.");
       }
 
-      try {
-        if (shouldStartRoute && !startAttempted.current) {
-          startAttempted.current = true;
-          await startRoute(routeId);
-          setNotice("Route started.");
-        }
-
-        const response = await fetch(`/api/operator/routes/${routeId}/pick-list`);
-        const data = await response.json();
-        if (!response.ok) {
-          const message = process.env.NODE_ENV === "development" && data.details ? `${data.error}: ${data.details}` : data.error;
-          throw new Error(message || "Failed to fetch pick list");
-        }
-
-        const confirmed = Boolean(data.confirmed);
-        setAlreadyConfirmed(confirmed);
-        setLocked(Boolean(data.locked));
-        const responseStopGroups = Array.isArray(data.stopGroups) ? data.stopGroups : [];
-        const responseProductOptions = Array.isArray(data.productOptions) ? data.productOptions : [];
-        const responseExtraItems = Array.isArray(data.extraItems) ? data.extraItems : [];
-        const nextStopGroups = responseStopGroups.map((group: any) => ({
-          routeStopId: group.route_stop_id ? String(group.route_stop_id) : null,
-          machineId: group.machine_id ? String(group.machine_id) : null,
-          machineName: group.machine_name || "Unknown machine",
-          machineCode: group.machine_code || "-",
-          locationName: group.location_name || "Unknown location",
-          stopOrder: Number(group.stop_order ?? 0),
-          items: (Array.isArray(group.items) ? group.items : []).map((item: any) => {
-            const requestedQty = Number(item.planned_qty ?? 0);
-            const availableStorageQty = Number(item.available_storage_qty ?? 0);
-            const hasSavedPickQty = item.picked_qty !== null && item.picked_qty !== undefined;
-            return {
-              routeStopItemId: String(item.route_stop_item_id ?? ""),
-              routeStopId: item.route_stop_id ? String(item.route_stop_id) : group.route_stop_id ? String(group.route_stop_id) : null,
-              machineId: item.machine_id ? String(item.machine_id) : group.machine_id ? String(group.machine_id) : null,
-              productId: String(item.product_id ?? ""),
-              productName: item.product_name || "Unknown product",
-              sku: item.sku ?? null,
-              requestedQty,
-              availableStorageQty,
-              confirmedQty: hasSavedPickQty ? Number(item.picked_qty ?? 0) : Math.min(requestedQty, availableStorageQty),
-              reason: item.reason ?? "Product not available in storage",
-              notes: item.notes ?? "",
-              source: item.source ?? "refill_recommendation",
-            };
-          }).filter((item: PickStopItem) => item.routeStopItemId && item.productId),
-        })).filter((group: PickStopGroup) => group.items.length > 0);
-        const nextExtras = responseExtraItems.map((item: any) => ({
-          id: crypto.randomUUID(),
-          targetStopId: targetStopId(item.routeStopId ?? item.route_stop_id),
-          productId: String(item.productId ?? item.product_id ?? ""),
-          quantity: Number(item.quantity ?? 0),
-          reason: item.reason ?? "Customer demand",
-          notes: item.notes ?? "",
-        })).filter((item: ExtraPickItem) => item.productId || item.quantity > 0);
-        setStopGroups(nextStopGroups);
-        setProductOptions(responseProductOptions.map((product: any) => ({
-          id: String(product.id ?? ""),
-          sku: product.sku ?? null,
-          barcode: product.barcode ?? null,
-          name: product.name || "Unnamed product",
-          category: product.category ?? null,
-          brand: product.brand ?? null,
-          imageUrl: product.imageUrl ?? null,
-          availableStorageQty: Number(product.availableStorageQty ?? 0),
-        })).filter((product: ProductOption) => product.id));
-        setExtras(nextExtras);
-        initialPickDraftRef.current = comparablePickDraft({
-          stopItems: nextStopGroups.flatMap((group: PickStopGroup) => group.items.map((item) => ({
-            routeStopItemId: item.routeStopItemId,
-            confirmedQty: item.confirmedQty,
-            reason: item.reason,
-            notes: item.notes,
-          }))),
-          extras: nextExtras,
-        });
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load pick list");
-      } finally {
-        setLoading(false);
+      const response = await fetch(`/api/operator/routes/${routeId}/pick-list`);
+      const data = await response.json();
+      if (!response.ok) {
+        const message = process.env.NODE_ENV === "development" && data.details ? `${data.error}: ${data.details}` : data.error;
+        throw new Error(message || "Failed to fetch pick list");
       }
-    };
-    fetchPickList();
+
+      const confirmed = Boolean(data.confirmed);
+      setAlreadyConfirmed(confirmed);
+      setLocked(Boolean(data.locked));
+      const responseStopGroups = Array.isArray(data.stopGroups) ? data.stopGroups : [];
+      const responseProductOptions = Array.isArray(data.productOptions) ? data.productOptions : [];
+      const responseExtraItems = Array.isArray(data.extraItems) ? data.extraItems : [];
+      const nextStopGroups = responseStopGroups.map((group: any) => ({
+        routeStopId: group.route_stop_id ? String(group.route_stop_id) : null,
+        machineId: group.machine_id ? String(group.machine_id) : null,
+        machineName: group.machine_name || "Unknown machine",
+        machineCode: group.machine_code || "-",
+        locationName: group.location_name || "Unknown location",
+        stopOrder: Number(group.stop_order ?? 0),
+        stopStatus: group.stop_status ?? "pending",
+        items: (Array.isArray(group.items) ? group.items : []).map((item: any) => {
+          const requestedQty = Number(item.planned_qty ?? 0);
+          const availableStorageQty = Number(item.available_storage_qty ?? 0);
+          const hasSavedPickQty = item.picked_qty !== null && item.picked_qty !== undefined;
+          return {
+            routeStopItemId: String(item.route_stop_item_id ?? ""),
+            routeStopId: item.route_stop_id ? String(item.route_stop_id) : group.route_stop_id ? String(group.route_stop_id) : null,
+            machineId: item.machine_id ? String(item.machine_id) : group.machine_id ? String(group.machine_id) : null,
+            productId: String(item.product_id ?? ""),
+            productName: item.product_name || "Unknown product",
+            sku: item.sku ?? null,
+            requestedQty,
+            availableStorageQty,
+            confirmedQty: hasSavedPickQty ? Number(item.picked_qty ?? 0) : Math.min(requestedQty, availableStorageQty),
+            reason: item.reason ?? "Product not available in storage",
+            notes: item.notes ?? "",
+            source: item.source ?? "refill_recommendation",
+          };
+        }).filter((item: PickStopItem) => item.routeStopItemId && item.productId),
+      })).filter((group: PickStopGroup) => group.items.length > 0);
+      const nextStopIds = nextStopGroups.map((group: PickStopGroup) => group.routeStopId).filter((id: string | null): id is string => Boolean(id));
+      const nextExtras = responseExtraItems.map((item: any) => ({
+        id: crypto.randomUUID(),
+        targetStopId: targetStopId(item.routeStopId ?? item.route_stop_id),
+        productId: String(item.productId ?? item.product_id ?? ""),
+        quantity: Number(item.quantity ?? 0),
+        reason: item.reason ?? "Customer demand",
+        notes: item.notes ?? "",
+      })).filter((item: ExtraPickItem) => item.productId || item.quantity > 0);
+      setStopGroups(nextStopGroups);
+      setSelectedStopIds((current) => {
+        if (!keepSelection) return nextStopIds;
+        const nextAvailable = new Set(nextStopIds);
+        const preserved = current.filter((stopId) => nextAvailable.has(stopId));
+        return preserved.length ? preserved : nextStopIds;
+      });
+      setProductOptions(responseProductOptions.map((product: any) => ({
+        id: String(product.id ?? ""),
+        sku: product.sku ?? null,
+        barcode: product.barcode ?? null,
+        name: product.name || "Unnamed product",
+        category: product.category ?? null,
+        brand: product.brand ?? null,
+        imageUrl: product.imageUrl ?? null,
+        availableStorageQty: Number(product.availableStorageQty ?? 0),
+      })).filter((product: ProductOption) => product.id));
+      setExtras(nextExtras);
+      initialPickDraftRef.current = comparablePickDraft({
+        selectedStopIds: nextStopIds,
+        stopItems: nextStopGroups.flatMap((group: PickStopGroup) => group.items.map((item) => ({
+          routeStopItemId: item.routeStopItemId,
+          confirmedQty: item.confirmedQty,
+          reason: item.reason,
+          notes: item.notes,
+        }))),
+        extras: nextExtras,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load pick list");
+    } finally {
+      setLoading(false);
+    }
   }, [routeId, shouldStartRoute]);
+
+  useEffect(() => {
+    loadPickList();
+  }, [loadPickList]);
 
   useEffect(() => {
     if (error) errorRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -305,9 +335,51 @@ export default function PickListPage() {
     setError("");
   };
 
+  const toggleStopSelection = (stopId: string) => {
+    setSelectedStopIds((current) => current.includes(stopId) ? current.filter((id) => id !== stopId) : [...current, stopId]);
+  };
+
+  const handlePreviewRefresh = async () => {
+    setRefreshPreview({ loading: true, applying: false, comparisons: [], message: "", error: "" });
+    setError("");
+    const result = await previewPendingStopRecommendationRefresh(routeId);
+    if (!result.success) {
+      setRefreshPreview({ loading: false, applying: false, comparisons: [], message: "", error: result.error || "Could not refresh pending recommendations." });
+      return;
+    }
+    setRefreshPreview({
+      loading: false,
+      applying: false,
+      comparisons: result.comparisons ?? [],
+      message: result.hasChanges
+        ? "Review recommendation changes before applying them to pending stops."
+        : result.eligibleStopCount
+          ? "Pending recommendations are already current."
+          : "There are no pending stops to refresh.",
+      error: "",
+    });
+  };
+
+  const handleApplyRefresh = async () => {
+    setRefreshPreview((current) => ({ ...current, applying: true, error: "" }));
+    const result = await applyPendingStopRecommendationRefresh(routeId);
+    if (!result.success) {
+      setRefreshPreview((current) => ({ ...current, applying: false, error: result.error || "Could not apply pending updates." }));
+      return;
+    }
+    setRefreshPreview({ loading: false, applying: false, comparisons: [], message: result.message || "Pending stop recommendations refreshed.", error: "" });
+    setNotice(result.message || "Pending stop recommendations refreshed.");
+    await loadPickList({ keepSelection: true });
+  };
+
   const handleConfirmPick = async () => {
     if (locked) {
       router.push(routeHref);
+      return;
+    }
+
+    if (!selectedStopIds.length) {
+      setError("Choose at least one pending machine stop for this pickup batch.");
       return;
     }
 
@@ -346,6 +418,7 @@ export default function PickListPage() {
               notes: item.notes,
             };
           }),
+        { stopIds: selectedStopIds },
       );
       if (result && "success" in result && result.success === false) {
         throw new Error(result.error || "Could not save added product");
@@ -384,11 +457,52 @@ export default function PickListPage() {
         {notice ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">{notice}</div> : null}
         {error ? <div ref={errorRef} className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div> : null}
 
+        <section className="rounded-lg border border-slate-200 bg-white p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="font-semibold text-slate-900">Pending stop recommendations</h2>
+              <p className="mt-1 text-sm text-slate-500">Refresh pending machines before confirming this pickup batch.</p>
+            </div>
+            <button type="button" onClick={handlePreviewRefresh} className="btn-secondary w-full sm:w-auto" disabled={locked || refreshPreview.loading || refreshPreview.applying}>
+              {refreshPreview.loading ? "Checking..." : "Refresh recommendations for pending stops"}
+            </button>
+          </div>
+          {refreshPreview.error ? <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{refreshPreview.error}</div> : null}
+          {refreshPreview.message ? <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{refreshPreview.message}</div> : null}
+          {refreshPreview.comparisons.length ? (
+            <div className="mt-4 space-y-3">
+              {refreshPreview.comparisons.map((machine) => (
+                <div key={machine.routeStopId} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <div className="font-semibold text-slate-900">Machine {machine.stopOrder}: {machine.machineName}</div>
+                  <div className="mt-2 divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
+                    {machine.changes.map((change) => (
+                      <div key={change.productId} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 px-3 py-2 text-sm">
+                        <span className="min-w-0 break-words font-medium text-slate-900">{change.productName}</span>
+                        <span className={change.difference > 0 ? "font-semibold text-emerald-700" : change.difference < 0 ? "font-semibold text-rose-700" : "font-semibold text-slate-700"}>
+                          {change.oldQty} -&gt; {change.newQty} ({change.difference > 0 ? `+${change.difference}` : change.difference})
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <button type="button" onClick={handleApplyRefresh} className="btn-primary w-full sm:w-auto" disabled={refreshPreview.applying}>
+                  {refreshPreview.applying ? "Applying..." : "Accept Updates"}
+                </button>
+                <button type="button" onClick={() => setRefreshPreview({ loading: false, applying: false, comparisons: [], message: "Current plan kept.", error: "" })} className="btn-secondary w-full sm:w-auto" disabled={refreshPreview.applying}>
+                  Keep Current Plan
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </section>
+
         <div className="grid gap-3 sm:grid-cols-3">
           <SectionCard>
             <div className="p-4">
-              <p className="mb-1 text-xs text-slate-500">Machine stops</p>
-              <p className="text-2xl font-bold text-slate-900">{stopGroups.length}</p>
+              <p className="mb-1 text-xs text-slate-500">Selected stops</p>
+              <p className="text-2xl font-bold text-slate-900">{selectedStopIds.length}/{stopGroups.length}</p>
             </div>
           </SectionCard>
           <SectionCard>
@@ -405,11 +519,44 @@ export default function PickListPage() {
           </SectionCard>
         </div>
 
+        {stopGroups.length ? (
+          <section className="rounded-lg border border-slate-200 bg-white p-4">
+            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="font-semibold text-slate-900">Select stops for this pickup batch</h2>
+                <p className="text-sm text-slate-500">Only selected machines are deducted from storage and added to your bag.</p>
+              </div>
+              <div className="flex gap-2">
+                <button type="button" className="btn-secondary text-xs" onClick={() => setSelectedStopIds(stopGroups.map((group) => group.routeStopId).filter((id): id is string => Boolean(id)))}>Select all</button>
+                <button type="button" className="btn-secondary text-xs" onClick={() => setSelectedStopIds([])}>Clear</button>
+              </div>
+            </div>
+            <div className="grid gap-2 md:grid-cols-2">
+              {stopGroups.map((group) => {
+                const stopId = group.routeStopId ?? "";
+                const checked = Boolean(stopId && selectedStopIds.includes(stopId));
+                const planned = group.items.reduce((sum, item) => sum + item.requestedQty, 0);
+                return (
+                  <label key={stopId || group.machineId || group.machineName} className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm ${checked ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}>
+                    <input type="checkbox" checked={checked} onChange={() => stopId && toggleStopSelection(stopId)} className="mt-1" />
+                    <span className="min-w-0">
+                      <span className="block font-semibold text-slate-900">Stop {group.stopOrder || "-"} - {group.machineName}</span>
+                      <span className="block break-words text-slate-500">{group.locationName} - {planned} units planned</span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
+
         {stopGroups.length === 0 ? (
-          <EmptyState title="No planned pickup items" body="This route has no machine-level products assigned yet. You can still add active products below." />
+          <EmptyState title="No pending pickup items" body="All machine stops are already picked, completed, or skipped. Continue active stops from the route page." />
+        ) : selectedStopGroups.length === 0 ? (
+          <EmptyState title="No stops selected" body="Choose at least one pending machine stop for this pickup batch." />
         ) : (
           <div className="space-y-4">
-            {stopGroups.map((group) => {
+            {selectedStopGroups.map((group) => {
               const groupPlanned = group.items.reduce((sum, item) => sum + item.requestedQty, 0);
               const groupPicked = group.items.reduce((sum, item) => sum + item.confirmedQty, 0);
               return (
@@ -501,7 +648,7 @@ export default function PickListPage() {
               <AdjustmentRow
                 key={item.id}
                 products={productOptions}
-                stopGroups={stopGroups}
+                stopGroups={selectedStopGroups}
                 targetStopId={item.targetStopId}
                 productId={item.productId}
                 quantity={item.quantity}
@@ -537,8 +684,8 @@ export default function PickListPage() {
 
         <div className="sticky bottom-3 z-10 -mx-3 flex flex-col gap-2 border-t border-slate-200 bg-slate-100/95 px-3 py-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:border-0 sm:bg-transparent sm:p-0">
           {error ? <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 sm:hidden">{error}</div> : null}
-          <button type="button" onClick={handleConfirmPick} disabled={submitting} className="btn-primary w-full flex-1 disabled:cursor-not-allowed disabled:opacity-50">
-            {locked ? "Back to Route" : submitting ? "Saving..." : alreadyConfirmed ? "Save Pickup Changes" : "Confirm Pickup"}
+          <button type="button" onClick={handleConfirmPick} disabled={submitting || (!locked && selectedStopIds.length === 0)} className="btn-primary w-full flex-1 disabled:cursor-not-allowed disabled:opacity-50">
+            {locked ? "Back to Route" : submitting ? "Saving..." : alreadyConfirmed ? "Confirm Pickup Batch" : "Confirm Pickup Batch"}
           </button>
           <SecondaryButton href={routeHref} type="button">Cancel</SecondaryButton>
         </div>

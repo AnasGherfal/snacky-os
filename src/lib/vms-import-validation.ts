@@ -107,7 +107,7 @@ export function vmsMachineIdentifier(row: Record<string, string>) {
 
 export function vmsProductIdentifier(row: Record<string, string>) {
   return {
-    vmsProductId: vmsValue(row, ["product_identifier", "product_id", "vms_product_id", "product_code", "product_no", "goods_id", "goods_code", "goods_no", "commodity_id", "commodity_code", "sku", "item_code", "item_id", "item_no", "plu", "barcode", "article_no"]),
+    vmsProductId: vmsValue(row, ["product_identifier", "product_id", "vms_product_id", "product_code", "product_number", "product_no", "goods_id", "goods_code", "goods_number", "goods_no", "commodity_id", "commodity_code", "commodity_number", "commodity_no", "sku", "item_code", "item_id", "item_no", "plu", "barcode", "article_no"]),
     vmsProductName: vmsValue(row, ["product_name", "vms_product_name", "product", "product_description", "product_desc", "goods_name", "goods", "commodity_name", "commodity", "item_name", "item", "item_description", "description", "sku_name", "article_name", "merchandise_name", "name"]),
   };
 }
@@ -293,8 +293,8 @@ export function validateVmsRows({
     }
 
     if (reportType === "sales") {
-      const amount = vmsNumber(vmsValue(row, ["total_sales_amount", "revenue_amount", "sales_amount", "total_sales", "sale_amount", "amount", "total_amount", "paid_amount", "revenue", "gross_sales", "turnover", "net_sales"]));
-      const soldQty = vmsNumber(vmsValue(row, ["sold_qty", "quantity_sold", "units_sold", "sales_units", "units", "qty", "quantity", "sales_qty", "sales_quantity", "volume", "sales_volume"]));
+      const amount = vmsNumber(vmsValue(row, ["total_sales_amount", "transaction_amount", "revenue_amount", "sales_amount", "total_sales", "total_sales_lyd", "sale_amount", "amount", "total_amount", "paid_amount", "revenue", "gross_sales", "turnover", "net_sales"]));
+      const soldQty = vmsNumber(vmsValue(row, ["sold_qty", "transaction_count", "number_of_transaction", "number_of_transactions", "quantity_sold", "units_sold", "sales_units", "units", "qty", "quantity", "sales_qty", "sales_quantity", "volume", "sales_volume"]));
       if ((amount === null || amount < 0) && (soldQty === null || soldQty < 0)) reasons.push("invalid quantity or amount");
       const rawDate = vmsValue(row, ["sale_date", "period_end", "date", "sales_date", "business_date", "stat_date", "day", "datetime", "timestamp", "settlement_date", "end_date", "report_date"]);
       if (rawDate && !vmsDate(rawDate)) warnings.push("invalid date");

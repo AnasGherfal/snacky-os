@@ -97,6 +97,26 @@ type RouteStopLike = {
   stop_order?: number | null;
 };
 
+export const ROUTE_STOP_PENDING_STATUS = "pending";
+export const ROUTE_STOP_PICKED_STATUS = "picked";
+export const ROUTE_STOP_IN_PROGRESS_STATUS = "in_progress";
+export const ROUTE_STOP_COMPLETED_STATUS = "completed";
+export const ROUTE_STOP_SKIPPED_STATUS = "skipped";
+
+export const ROUTE_STOP_DONE_STATUSES = [
+  ROUTE_STOP_COMPLETED_STATUS,
+  ROUTE_STOP_SKIPPED_STATUS,
+] as const;
+
+export const ROUTE_STOP_ACTIVE_STATUSES = [
+  ROUTE_STOP_PICKED_STATUS,
+  ROUTE_STOP_IN_PROGRESS_STATUS,
+  "arrived",
+  "refilling",
+  "cash_collected",
+  "issue_reported",
+] as const;
+
 function includesStatus<const T extends readonly string[]>(statuses: T, status: string | null | undefined) {
   return statuses.includes(String(status ?? "") as T[number]);
 }
@@ -158,6 +178,18 @@ export function routeDisplayStatus(status: string | null | undefined, operatorId
   return status ?? "unknown";
 }
 
+export function isRouteStopDoneStatus(status: string | null | undefined) {
+  return includesStatus(ROUTE_STOP_DONE_STATUSES, status);
+}
+
+export function isRouteStopActiveStatus(status: string | null | undefined) {
+  return includesStatus(ROUTE_STOP_ACTIVE_STATUSES, status);
+}
+
+export function isRouteStopPendingStatus(status: string | null | undefined) {
+  return String(status ?? "") === ROUTE_STOP_PENDING_STATUS;
+}
+
 export function nextOperatorRouteHref({
   routeId,
   status,
@@ -177,8 +209,17 @@ export function nextOperatorRouteHref({
     return `/operator/routes/${routeId}/pick-list${start ? "?start=1" : ""}`;
   }
 
+  const activeStop = [...stops]
+    .filter((stop) => isRouteStopActiveStatus(stop.status))
+    .sort((a, b) => Number(a.stop_order ?? 0) - Number(b.stop_order ?? 0))[0];
+
+  if (activeStop) return `/operator/routes/${routeId}/stops/${activeStop.id}`;
+
+  const hasPendingStops = stops.some((stop) => isRouteStopPendingStatus(stop.status));
+  if (hasPendingStops) return `/operator/routes/${routeId}/pick-list${start ? "?start=1" : ""}`;
+
   const nextStop = [...stops]
-    .filter((stop) => stop.status !== "completed")
+    .filter((stop) => !isRouteStopDoneStatus(stop.status))
     .sort((a, b) => Number(a.stop_order ?? 0) - Number(b.stop_order ?? 0))[0];
 
   return nextStop ? `/operator/routes/${routeId}/stops/${nextStop.id}` : `/operator/routes/${routeId}/leftovers`;

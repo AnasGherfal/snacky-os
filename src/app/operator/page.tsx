@@ -2,7 +2,7 @@ import Link from "next/link";
 import { EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canExecuteRoutes } from "@/lib/authz";
-import { isOperatorVisibleRouteStatus, isTerminalRouteStatus, routeDisplayStatus } from "@/lib/route-workflow";
+import { isOperatorVisibleRouteStatus, isRouteStopDoneStatus, isTerminalRouteStatus, routeDisplayStatus } from "@/lib/route-workflow";
 
 export const dynamic = "force-dynamic";
 
@@ -69,14 +69,14 @@ export default async function OperatorPage() {
         ) : (
           <div className="grid gap-4 md:grid-cols-2">
             {routes.map((route: any) => {
-              const completedStops = route.route_stops?.filter((stop: any) => stop.status === "completed").length ?? 0;
+              const completedStops = route.route_stops?.filter((stop: any) => isRouteStopDoneStatus(stop.status)).length ?? 0;
               const totalStops = route.route_stops?.length ?? 0;
               return (
                 <Link key={route.id} href={`/operator/routes/${route.id}`} className="block rounded-lg border border-slate-200 bg-white p-4 transition hover:shadow-md">
                   <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
                       <div className="font-semibold text-slate-900">{route.route_date}</div>
-                      <div className="mt-1 text-sm text-slate-500">{completedStops}/{totalStops} stops completed</div>
+                      <div className="mt-1 text-sm text-slate-500">{completedStops}/{totalStops} stops completed or skipped</div>
                     </div>
                     <div className="shrink-0">
                       <StatusBadge status={routeDisplayStatus(route.status, route.operator_id)} />

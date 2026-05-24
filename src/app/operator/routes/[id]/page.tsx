@@ -1,9 +1,11 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge, SectionCard } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute } from "@/lib/authz";
-import { isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, nextOperatorRouteHref, routeDisplayStatus } from "@/lib/route-workflow";
+import { isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isRouteStopActiveStatus, isRouteStopDoneStatus, isRouteStopPendingStatus, nextOperatorRouteHref, routeDisplayStatus } from "@/lib/route-workflow";
+import { skipStop } from "@/lib/operator-actions";
 
 export default async function OperatorRouteDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: routeId } = await params;
@@ -58,7 +60,7 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
     ? await supabase.from("machines").select("id, name, machine_code").in("id", machineIds)
     : { data: [] };
   const machineById = new Map((machines ?? []).map((machine: any) => [machine.id, machine]));
-  const completedStops = routeStops.filter((s: any) => s.status === "completed").length;
+  const doneStops = routeStops.filter((s: any) => isRouteStopDoneStatus(s.status)).length;
   const totalStops = routeStops.length;
   const pickItems = routeStock ?? [];
   const hasPickup = pickItems.some((item: any) => Number(item.picked_qty ?? 0) > 0);
@@ -93,7 +95,7 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
             <div className="p-4">
               <div className="text-sm text-slate-500 mb-1">Progress</div>
               <div className="font-semibold text-lg">
-                {completedStops}/{totalStops}
+                {doneStops}/{totalStops}
               </div>
             </div>
           </SectionCard>
@@ -171,12 +173,34 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
                   </div>
 
                   {isActiveRouteStatus(routeRow.status) || isCompletedRouteStatus(routeRow.status) ? (
-                    <Link
-                      href={`/operator/routes/${routeId}/stops/${stop.id}`}
-                      className="btn-primary mt-1 w-full text-base sm:w-auto"
-                    >
-                      {stop.status === "completed" ? "Edit stop" : "Continue filling"}
-                    </Link>
+                    <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                      {isRouteStopPendingStatus(stop.status) ? (
+                        <Link href={`/operator/routes/${routeId}/pick-list`} className="btn-primary w-full text-base sm:w-auto">
+                          Pick this stop
+                        </Link>
+                      ) : isRouteStopActiveStatus(stop.status) || stop.status === "completed" ? (
+                        <Link
+                          href={`/operator/routes/${routeId}/stops/${stop.id}`}
+                          className="btn-primary w-full text-base sm:w-auto"
+                        >
+                          {stop.status === "completed" ? "Edit stop" : "Continue filling"}
+                        </Link>
+                      ) : null}
+                      {!isRouteStopDoneStatus(stop.status) ? (
+                        <ConfirmDialog
+                          action={skipStop}
+                          triggerLabel="Skip stop"
+                          title="Skip this machine?"
+                          description="Skipped stops count as finished for route closure, but any picked stock must still be returned on the leftovers screen."
+                          confirmLabel="Skip stop"
+                          buttonClassName="btn-secondary w-full sm:w-auto"
+                          confirmButtonClassName="btn-danger"
+                          hiddenFields={[{ name: "route_id", value: routeId }, { name: "stop_id", value: stop.id }]}
+                          reasonLabel="Skip reason"
+                          reasonPlaceholder="Machine inaccessible, closed location, or another reason."
+                        />
+                      ) : null}
+                    </div>
                   ) : null}
                 </div>
               ))}

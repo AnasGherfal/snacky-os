@@ -7,12 +7,15 @@ import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
 import {
   applyColumnMapping,
+  findSalesReportPeriod,
   parseReportType,
   parseVmsUpload,
   requiredMissing,
   sheetRowsToRecords,
   normalizeHeader,
+  VMS_SALES_DATE_RANGE_ERROR,
   vmsExpectedFields,
+  type VmsSalesReportPeriod,
   type VmsReportType,
 } from "@/lib/vms-parser";
 import { buildProductLookupMap, resolveVmsProduct, vmsLookupKey, vmsProductDisplay } from "@/lib/vms-import-validation";
@@ -40,6 +43,7 @@ type ImportSummary = {
   unmappedProducts: string[];
   errors: string[];
   columnMapping: Record<string, string>;
+  salesReportPeriod?: VmsSalesReportPeriod | null;
 };
 
 type VmsRawRowStatus = "pending" | "imported" | "needs_mapping" | "unknown_machine" | "invalid_row" | "skipped";
@@ -101,6 +105,42 @@ function dateValue(input: string) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+const salesRowDateAliases = ["sale_date", "period_end", "date", "sales_date", "business_date", "stat_date", "day", "datetime", "timestamp", "settlement_date", "end_date", "report_date"];
+
+function dateOnlyFromDate(date: Date) {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+}
+
+function startOfDateIso(dateOnly: string) {
+  return `${dateOnly}T00:00:00.000Z`;
+}
+
+function endOfDateIso(dateOnly: string) {
+  return `${dateOnly}T23:59:59.999Z`;
+}
+
+function monthStartFromDateOnly(dateOnly: string) {
+  const [year, month] = dateOnly.split("-");
+  return `${year}-${month}-01`;
+}
+
+function salesPeriodFromRowDate(row: Record<string, string>): VmsSalesReportPeriod | null {
+  const periodDate = dateValue(value(row, salesRowDateAliases));
+  if (!periodDate) return null;
+  const reportStartDate = dateOnlyFromDate(periodDate);
+  return {
+    reportStartDate,
+    reportEndDate: reportStartDate,
+    salesMonth: monthStartFromDateOnly(reportStartDate),
+    sourceTitle: "",
+    sourceRowIndex: -1,
+  };
+}
+
+function hasSalesRowDate(rows: Record<string, string>[]) {
+  return rows.some((row) => Boolean(salesPeriodFromRowDate(row)));
+}
+
 function productKey(vmsProductId: string, vmsProductName: string) {
   return `${vmsProductId.trim()}::${vmsProductName.trim()}`.toLowerCase();
 }
@@ -124,7 +164,7 @@ function machineIdentifier(row: Record<string, string>) {
 
 function productIdentifier(row: Record<string, string>) {
   return {
-    vmsProductId: value(row, ["product_identifier", "vms_product_id", "product_code", "product_id", "product_no", "goods_id", "goods_code", "goods_no", "commodity_id", "commodity_code", "sku", "item_code", "item_id", "item_no", "plu", "barcode", "article_no"]),
+    vmsProductId: value(row, ["product_identifier", "vms_product_id", "product_code", "product_id", "product_number", "product_no", "goods_id", "goods_code", "goods_number", "goods_no", "commodity_id", "commodity_code", "commodity_number", "commodity_no", "sku", "item_code", "item_id", "item_no", "plu", "barcode", "article_no"]),
     vmsProductName: value(row, ["product_name", "vms_product_name", "product", "product_description", "product_desc", "goods_name", "goods", "commodity_name", "commodity", "item_name", "item", "item_description", "description", "sku_name", "article_name", "merchandise_name", "name"]),
   };
 }
@@ -211,7 +251,7 @@ function markNeedsProductMapping(summary: ImportSummary, productLabel: string) {
 }
 
 function explicitSellingPrice(row: Record<string, string>) {
-  return numberValue(value(row, ["selling_price", "sale_price", "sales_price", "vms_selling_price", "selling_price_lyd", "unit_price", "retail_price", "price"]));
+  return numberValue(value(row, ["commodity_price", "commodity_unit_price", "selling_price", "sale_price", "sales_price", "vms_selling_price", "selling_price_lyd", "unit_price", "retail_price", "price"]));
 }
 
 function explicitCostPrice(row: Record<string, string>) {
@@ -646,6 +686,7 @@ async function runVmsImport({
   columnMapping,
   firstDataRowNumber = 2,
   sourceRowNumbers,
+  salesReportPeriod = null,
   autoCreateMissingProducts = true,
   updateCostFromVms = false,
 }: {
@@ -661,9 +702,15 @@ async function runVmsImport({
   columnMapping: Record<string, string>;
   firstDataRowNumber?: number;
   sourceRowNumbers?: number[];
+  salesReportPeriod?: VmsSalesReportPeriod | null;
   autoCreateMissingProducts?: boolean;
   updateCostFromVms?: boolean;
 }) {
+  if (reportType === "sales" && !salesReportPeriod && !hasSalesRowDate(rows)) {
+    const target = existingBatchId ? `/vms-import/${existingBatchId}` : "/vms-import";
+    redirect(`${target}?error=${encodeURIComponent(VMS_SALES_DATE_RANGE_ERROR)}`);
+  }
+
   const summary: ImportSummary = {
     reportType,
     fileName,
@@ -686,6 +733,7 @@ async function runVmsImport({
     unmappedProducts: [],
     errors: [],
     columnMapping,
+    salesReportPeriod,
   };
 
   let batch: { id: string; reprocess_count?: number | null } | null = null;
@@ -823,7 +871,8 @@ async function runVmsImport({
     const productLabel = vmsProductDisplay(vmsProductId, vmsProductName);
     const importedSellingPrice = explicitSellingPrice(row);
     const importedCostPrice = explicitCostPrice(row);
-    const lastSeenAt = dateValue(value(row, ["updated_at", "last_online_at", "captured_at", "last_updated", "date", "sale_date", "period_end", "report_date", "sync_time"])) ?? new Date();
+    const lastSeenAt = dateValue(value(row, ["updated_at", "last_online_at", "captured_at", "last_updated", "date", "sale_date", "period_end", "report_date", "sync_time"]))
+      ?? (reportType === "sales" && salesReportPeriod ? new Date(startOfDateIso(salesReportPeriod.reportEndDate)) : new Date());
 
     let mapping: any = null;
     let productId: string | null = null;
@@ -1076,8 +1125,8 @@ async function runVmsImport({
       continue;
     }
 
-    const soldQty = numberValue(value(row, ["sold_qty", "quantity_sold", "units_sold", "sales_units", "units", "qty", "quantity", "sales_qty", "sales_quantity", "volume", "sales_volume"]));
-    const salesAmount = numberValue(value(row, ["total_sales_amount", "revenue_amount", "sales_amount", "total_sales", "sale_amount", "amount", "total_amount", "paid_amount", "revenue", "gross_sales", "turnover", "net_sales"]));
+    const soldQty = numberValue(value(row, ["sold_qty", "transaction_count", "number_of_transaction", "number_of_transactions", "quantity_sold", "units_sold", "sales_units", "units", "qty", "quantity", "sales_qty", "sales_quantity", "volume", "sales_volume"]));
+    const salesAmount = numberValue(value(row, ["total_sales_amount", "transaction_amount", "revenue_amount", "sales_amount", "total_sales", "total_sales_lyd", "sale_amount", "amount", "total_amount", "paid_amount", "revenue", "gross_sales", "turnover", "net_sales"]));
     if ((salesAmount === null || salesAmount < 0) && (soldQty === null || soldQty < 0)) {
       const reason = "invalid sales quantity or amount.";
       markInvalidRow(summary, rowNumber, reason);
@@ -1085,11 +1134,20 @@ async function runVmsImport({
       continue;
     }
 
-    const periodDate = dateValue(value(row, ["sale_date", "period_end", "date", "sales_date", "business_date", "stat_date", "day", "datetime", "timestamp", "settlement_date", "end_date", "report_date"])) ?? new Date();
-    const periodStart = new Date(periodDate);
-    periodStart.setHours(0, 0, 0, 0);
-    const periodEnd = new Date(periodDate);
-    periodEnd.setHours(23, 59, 59, 999);
+    const rowPeriod = salesReportPeriod ?? salesPeriodFromRowDate(row);
+    if (!rowPeriod) {
+      markInvalidRow(summary, rowNumber, VMS_SALES_DATE_RANGE_ERROR);
+      finishRow("invalid_row", [VMS_SALES_DATE_RANGE_ERROR]);
+      continue;
+    }
+
+    const machineCode = value(row, ["machine_code", "machine_identifier", "vms_machine_id", "machine_id", "terminal_id", "device_id"]) || identifier;
+    const machineName = value(row, ["machine_name", "machine", "device_name", "location"]) || machine?.name || "";
+    const productNumber = value(row, ["product_number", "product_identifier", "vms_product_id", "product_code", "product_id", "goods_number", "goods_code", "commodity_number", "commodity_code"]);
+    const commodityPrice = explicitSellingPrice(row);
+    const refundCount = numberValue(value(row, ["refund_count", "refund_qty", "refund_quantity"]));
+    const refundAmount = numberValue(value(row, ["refund_amount", "refund_total"]));
+    const totalTransaction = numberValue(value(row, ["total_transaction", "total_transactions"]));
     salesSnapshots.push({
       import_batch_id: batch.id,
       import_row_number: rowNumber,
@@ -1098,13 +1156,26 @@ async function runVmsImport({
       product_id: productId,
       sold_qty: Math.max(0, Math.floor(soldQty ?? 0)),
       sales_amount: Math.max(0, salesAmount ?? 0),
-      cash_sales_amount: numberValue(value(row, ["cash_sales_amount", "cash_sales", "cash_amount", "cash_revenue", "cash_total"])) ?? 0,
-      card_sales_amount: numberValue(value(row, ["card_sales_amount", "card_sales", "card_amount", "credit_card", "card_revenue", "online_sales"])) ?? 0,
+      cash_sales_amount: numberValue(value(row, ["cash_sales_amount", "cash_sales", "cash_sales_lyd", "cash_amount", "cash_revenue", "cash_total"])) ?? 0,
+      card_sales_amount: numberValue(value(row, ["card_sales_amount", "card_sales", "card_sales_lyd", "card_amount", "credit_card", "card_revenue", "online_sales"])) ?? 0,
       cost_amount: numberValue(value(row, ["cost_amount", "cost", "cogs", "total_cost", "product_cost"])),
       profit_amount: numberValue(value(row, ["profit_amount", "profit", "gross_profit", "margin_amount", "net_profit"])),
-      period_start: periodStart.toISOString(),
-      period_end: periodEnd.toISOString(),
-      metadata: { raw: row },
+      period_start: startOfDateIso(rowPeriod.reportStartDate),
+      period_end: endOfDateIso(rowPeriod.reportEndDate),
+      machine_code: machineCode || null,
+      machine_name: machineName || null,
+      product_number: productNumber || vmsProductId || null,
+      product_name: productNameForMapping || null,
+      commodity_price: commodityPrice,
+      transaction_count: Math.max(0, Math.floor(soldQty ?? 0)),
+      transaction_amount: Math.max(0, salesAmount ?? 0),
+      refund_count: refundCount === null ? null : Math.max(0, Math.floor(refundCount)),
+      refund_amount: refundAmount === null ? null : Math.max(0, refundAmount),
+      total_transaction: totalTransaction,
+      sales_period_start: rowPeriod.reportStartDate,
+      sales_period_end: rowPeriod.reportEndDate,
+      sales_month: rowPeriod.salesMonth,
+      metadata: { raw: row, sales_report_period: rowPeriod },
     });
     summary.importedRows += 1;
     finishRow("imported");
@@ -1314,6 +1385,10 @@ export async function completeVmsImport(formData: FormData) {
   const { records } = sheetRowsToRecords(sheet.rows, { reportType, headerRowIndex });
   const rows = applyColumnMapping(records, mapping);
   if (!rows.length) previewRedirect(previewId, sheet.name, reportType, "Selected sheet has no data rows.", headerRowIndex);
+  const salesReportPeriod = reportType === "sales" ? findSalesReportPeriod(sheet.rows, headerRowIndex) : null;
+  if (reportType === "sales" && !salesReportPeriod && !hasSalesRowDate(rows)) {
+    previewRedirect(previewId, sheet.name, reportType, VMS_SALES_DATE_RANGE_ERROR, headerRowIndex);
+  }
 
   await runVmsImport({
     supabase,
@@ -1326,6 +1401,7 @@ export async function completeVmsImport(formData: FormData) {
     originalRows: records,
     columnMapping: mapping,
     firstDataRowNumber: headerRowIndex + 2,
+    salesReportPeriod,
     autoCreateMissingProducts,
     updateCostFromVms,
   });
@@ -1394,6 +1470,7 @@ export async function reprocessVmsImportBatch(formData: FormData) {
     originalRows: rawRows.map((row: any) => jsonRecord(row.raw_data)),
     columnMapping: jsonRecord(batch.column_mapping),
     sourceRowNumbers: rawRows.map((row: any) => Number(row.row_number)),
+    salesReportPeriod: previousSummary.salesReportPeriod ?? null,
     autoCreateMissingProducts: previousSummary.autoCreateMissingProducts ?? true,
     updateCostFromVms: previousSummary.updateCostFromVms ?? false,
   });

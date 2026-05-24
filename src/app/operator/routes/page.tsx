@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { EmptyState, ErrorState, PageHeader, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canExecuteRoutes } from "@/lib/authz";
-import { isOperatorVisibleRouteStatus, isTerminalRouteStatus, routeDisplayStatus } from "@/lib/route-workflow";
+import { isOperatorVisibleRouteStatus, isRouteStopDoneStatus, isTerminalRouteStatus, routeDisplayStatus } from "@/lib/route-workflow";
 
 export default async function OperatorRoutesPage({ searchParams }: { searchParams: Promise<{ view?: string }> }) {
   const { view = "my" } = await searchParams;
@@ -73,7 +73,7 @@ export default async function OperatorRoutesPage({ searchParams }: { searchParam
         ) : (
           <div className="space-y-4">
             {routes.map((route: any) => {
-              const completedStops = route.route_stops?.filter((s: any) => s.status === "completed").length ?? 0;
+              const completedStops = route.route_stops?.filter((s: any) => isRouteStopDoneStatus(s.status)).length ?? 0;
               const totalStops = route.route_stops?.length ?? 0;
               const progress = totalStops > 0 ? Math.round((completedStops / totalStops) * 100) : 0;
               const isAvailable = !route.operator_id && isOperatorVisibleRouteStatus(route.status);
@@ -108,7 +108,7 @@ export default async function OperatorRoutesPage({ searchParams }: { searchParam
                   </div>
 
                   <div className="text-sm text-slate-600">
-                    {completedStops}/{totalStops} completed
+                    {completedStops}/{totalStops} completed or skipped
                   </div>
                 </Link>
               );

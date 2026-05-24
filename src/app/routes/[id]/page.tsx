@@ -3,7 +3,7 @@ import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, Section
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canExecuteRoutes, isAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
-import { isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isPickupConfirmedStatus, isTerminalRouteStatus, nextOperatorRouteHref, routeDisplayStatus } from "@/lib/route-workflow";
+import { isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isPickupConfirmedStatus, isRouteStopDoneStatus, isTerminalRouteStatus, nextOperatorRouteHref, routeDisplayStatus } from "@/lib/route-workflow";
 import { RouteCreatedToast } from "@/app/routes/[id]/RouteCreatedToast";
 import { assignRoute, cancelRoute, deleteDraftRoute } from "@/lib/route-actions";
 import Link from "next/link";
@@ -61,7 +61,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   }
 
   const routeRow: any = route;
-  const [{ data: operator }, { data: performers }, { data: stops, error: stopsError }, { data: stopItems, error: stopItemsError }, { data: routeStock, error: routeStockError }, { data: fillLines, error: fillLinesError }, { data: pickListItems, error: pickListItemsError }] = await Promise.all([
+  const [{ data: operator }, { data: performers }, { data: stops, error: stopsError }, { data: stopItems, error: stopItemsError }, { data: routeStock, error: routeStockError }, { data: fillLines, error: fillLinesError }, { data: pickListItems, error: pickListItemsError }, { data: pickupBatches, error: pickupBatchesError }] = await Promise.all([
     routeRow.operator_id
       ? supabase.from("team_members").select("id, full_name").eq("id", routeRow.operator_id).maybeSingle()
       : Promise.resolve({ data: null }),
@@ -88,9 +88,14 @@ export default async function RouteDetailPage({ params, searchParams }: { params
       .order("created_at", { ascending: true }),
     supabase
       .from("route_pick_list_items")
-      .select("id, product_id, planned_qty, picked_qty, action_type, substituted_for_product_id, reason, notes, needs_review, created_at, product:products!route_pick_list_items_product_id_fkey(id, name), substituted_product:products!route_pick_list_items_substituted_for_product_id_fkey(id, name)")
+      .select("id, pickup_batch_id, product_id, planned_qty, picked_qty, action_type, substituted_for_product_id, reason, notes, needs_review, created_at, product:products!route_pick_list_items_product_id_fkey(id, name), substituted_product:products!route_pick_list_items_substituted_for_product_id_fkey(id, name)")
       .eq("route_id", id)
       .order("created_at", { ascending: true }),
+    supabase
+      .from("route_pickup_batches")
+      .select("id, status, selected_stop_ids, product_summary, storage_deducted, confirmed_at, operator:team_members(full_name)")
+      .eq("route_id", id)
+      .order("confirmed_at", { ascending: true }),
   ]);
 
   if (stopsError) console.error("[routes:detail] Failed to load route stops", { id, error: stopsError });
@@ -127,6 +132,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   if (routeStockError) console.error("[routes:detail] Failed to load route stock", { id, error: routeStockError });
   if (fillLinesError) console.error("[routes:detail] Failed to load operator fill lines", { id, error: fillLinesError });
   if (pickListItemsError && !isMissingTable(pickListItemsError, "route_pick_list_items")) console.error("[routes:detail] Failed to load route pick list items", { id, error: pickListItemsError });
+  if (pickupBatchesError && !isMissingTable(pickupBatchesError, "route_pickup_batches")) console.error("[routes:detail] Failed to load pickup batches", { id, error: pickupBatchesError });
 
   const routeStops = stops ?? [];
   const machineIds = Array.from(new Set([...routeStops.map((stop: any) => stop.machine_id), ...(stopItems ?? []).map((item: any) => item.machine_id)].filter(Boolean)));
@@ -216,12 +222,12 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     .filter((activity: any, index: number, rows: any[]) => rows.findIndex((row: any) => row.id === activity.id) === index)
     .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     .slice(0, 100);
-  const completedStopCount = routeStops.filter((stop: any) => stop.status === "completed").length;
+  const completedStopCount = routeStops.filter((stop: any) => isRouteStopDoneStatus(stop.status)).length;
   const timeline = [
     { label: "Draft", done: true, detail: `Created ${new Date(routeRow.created_at).toLocaleString("en-US")}` },
     { label: "Available", done: isAvailableRouteStatus(routeRow.status) || isActiveRouteStatus(routeRow.status) || isCompletedRouteStatus(routeRow.status), detail: operator?.full_name ?? "Unassigned / available" },
     { label: "Picked", done: hasPickMovements || isPickupConfirmedStatus(routeRow.status), detail: hasPickMovements ? "Storage moved to operator bag" : "Awaiting pick confirmation" },
-    { label: "Stops completed", done: routeStops.length > 0 && completedStopCount === routeStops.length, detail: `${completedStopCount}/${routeStops.length} stops` },
+    { label: "Stops completed", done: routeStops.length > 0 && completedStopCount === routeStops.length, detail: `${completedStopCount}/${routeStops.length} completed or skipped` },
     { label: "Cash recorded", done: Boolean(cashCollections?.length), detail: `${cashCollections?.length ?? 0} cash records` },
     { label: "Leftovers returned", done: hasReturnMovements || isCompletedRouteStatus(routeRow.status), detail: hasReturnMovements ? "Operator bag returned to storage" : "Awaiting leftover return" },
     { label: "Completed", done: isCompletedRouteStatus(routeRow.status), detail: routeRow.completed_at ? new Date(routeRow.completed_at).toLocaleString("en-US") : "Not completed" },
@@ -369,6 +375,32 @@ export default async function RouteDetailPage({ params, searchParams }: { params
                 </div>
               )})}
             </div>
+          )}
+        </section>
+
+        <section className="surface-card p-4">
+          <h2 className="text-lg font-semibold">Pickup batches</h2>
+          {!pickupBatches?.length ? (
+            <EmptyState title="No pickup batches yet" body="Each partial storage pickup will appear here after confirmation." />
+          ) : (
+            <DataTable headers={["Confirmed", "Operator", "Stops", "Products", "Storage"]}>
+              {pickupBatches.map((batch: any, index: number) => {
+                const products = Array.isArray(batch.product_summary) ? batch.product_summary : [];
+                return (
+                  <tr key={batch.id}>
+                    <td>{batch.confirmed_at ? new Date(batch.confirmed_at).toLocaleString("en-US") : `Batch ${index + 1}`}</td>
+                    <td>{batch.operator?.full_name ?? "-"}</td>
+                    <td>{Array.isArray(batch.selected_stop_ids) ? batch.selected_stop_ids.length : 0}</td>
+                    <td>
+                      {products.length
+                        ? products.map((product: any) => `${product.product_name ?? "Product"}: ${product.quantity}`).join(", ")
+                        : "-"}
+                    </td>
+                    <td><StatusBadge status={batch.storage_deducted ? "deducted" : "none"} /></td>
+                  </tr>
+                );
+              })}
+            </DataTable>
           )}
         </section>
 

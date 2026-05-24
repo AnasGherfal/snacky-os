@@ -451,6 +451,12 @@ test("route, inventory, purchase, and additive role regression flow", { skip: ca
     const pickListBody = JSON.parse(pickListText);
     assert.equal(pickListBody.confirmed, true);
     assert.equal(pickListBody.extraItems.some((item) => item.productId === extraProduct.id), true);
+    assert.equal(Array.isArray(pickListBody.stopGroups), true);
+    assert.equal(pickListBody.stopGroups.length, 2);
+    const groupedProductRows = pickListBody.stopGroups.flatMap((group) => group.items.filter((item) => item.product_id === product.id));
+    assert.equal(groupedProductRows.length, 2);
+    assert.deepEqual(groupedProductRows.map((item) => item.planned_qty).sort(), [2, 2]);
+    assert.deepEqual(groupedProductRows.map((item) => item.picked_qty).sort(), [2, 2]);
 
     await assertPageOk(`/operator/routes/${multiMachineRouteId}/pick-list`, operatorWarehouse.cookie, "operator pick-list page after pickup");
 

@@ -76,7 +76,7 @@ export async function GET(
 
     const { data: stops, error: stopsError } = await supabase
       .from("route_stops")
-      .select("id, machine_id, stop_order, machine:machines(id, name, machine_code, location:locations(id, name))")
+      .select("id, machine_id, stop_order, status, machine:machines(id, name, machine_code, location:locations(id, name))")
       .eq("route_id", routeId)
       .order("stop_order", { ascending: true });
     if (stopsError) throw stopsError;
@@ -89,6 +89,7 @@ export async function GET(
       if (stopId) stopById.set(stopId, stop);
       if (machineId) stopByMachine.set(machineId, stop);
     });
+    const pendingStopIds = new Set((stops ?? []).filter((stop: any) => String(stop.status ?? "") === "pending").map((stop: any) => String(stop.id)));
 
     let { data: stopItems, error: stopItemsError }: { data: any[] | null; error: any } = await supabase
       .from("route_stop_items")
@@ -157,7 +158,7 @@ export async function GET(
     const legacyPickedByProduct = new Map<string, { quantity: number; reason: string | null; notes: string | null }>();
     const pickedByProduct = new Map<string, number>();
     const extraItems = (pickListItems ?? [])
-      .filter((line: any) => line.action_type === "extra_product" && line.product_id && !line.route_stop_item_id)
+      .filter((line: any) => line.action_type === "extra_product" && line.product_id && line.route_stop_id && pendingStopIds.has(String(line.route_stop_id)) && !line.route_stop_item_id)
       .map((line: any) => {
         const productId = String(line.product_id ?? "").trim();
         const quantity = unitQuantity(line.picked_qty);
@@ -177,6 +178,8 @@ export async function GET(
       if (actionType !== "planned_pick" && !(actionType === "extra_product" && line.route_stop_item_id)) return;
       const productId = String(line.product_id ?? "").trim();
       if (!productId) return;
+      const lineStopId = line.route_stop_id ? String(line.route_stop_id) : null;
+      if (!lineStopId || !pendingStopIds.has(lineStopId)) return;
       const quantity = unitQuantity(line.picked_qty);
       pickedByProduct.set(productId, (pickedByProduct.get(productId) ?? 0) + quantity);
       const next = { quantity, reason: line.reason ?? null, notes: line.notes ?? null };
@@ -243,6 +246,7 @@ export async function GET(
       stopGroupsById.set(String(stop.id), {
         route_stop_id: stop.id,
         machine_id: stop.machine_id,
+        stop_status: stop.status,
         machine_name: (machine as any)?.name ?? "Unknown machine",
         machine_code: (machine as any)?.machine_code ?? "-",
         location_name: (location as any)?.name ?? "Unknown location",
@@ -258,6 +262,7 @@ export async function GET(
       const routeStopId = line.route_stop_id ? String(line.route_stop_id) : null;
       const routeStopItemId = String(line.id ?? "");
       const stop = routeStopId ? stopById.get(routeStopId) : stopByMachine.get(String(line.machine_id ?? ""));
+      if (String(stop?.status ?? "") !== "pending") return;
       const machine = firstRelation(stop?.machine) ?? firstRelation(line.machine);
       const location = firstRelation((machine as any)?.location);
       const product = firstRelation(line.product);
@@ -271,6 +276,7 @@ export async function GET(
       const group = stopGroupsById.get(groupId) ?? {
         route_stop_id: routeStopId,
         machine_id: line.machine_id,
+        stop_status: stop?.status ?? null,
         machine_name: (machine as any)?.name ?? "Unknown machine",
         machine_code: (machine as any)?.machine_code ?? "-",
         location_name: (location as any)?.name ?? "Unknown location",
@@ -416,6 +422,7 @@ export async function GET(
       confirmed,
       locked: isTerminalRouteStatus(route.status),
       routeStatus: route.status,
+      pendingStopCount: (stops ?? []).filter((stop: any) => String(stop.status ?? "") === "pending").length,
       debug: process.env.NODE_ENV === "development"
         ? { routeId, routeStopItemsCount: stopItems?.length ?? 0, aggregatedPickListCount: items.length, routePickListItemsCount: pickListItems?.length ?? 0, productOptionsCount: productOptions.length, operatorTeamMemberId: profile?.team_member_id ?? null }
         : undefined,

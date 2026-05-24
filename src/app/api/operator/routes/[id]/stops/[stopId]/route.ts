@@ -131,6 +131,17 @@ export async function GET(
       );
     }
 
+    if (stop.status === "pending") {
+      return NextResponse.json(
+        {
+          error: "Pick this stop's products before opening machine execution.",
+          code: "STOP_PICKUP_REQUIRED",
+          debug: buildDebugDetails({ profile, routeId, stopId, route, stop }),
+        },
+        { status: 409 },
+      );
+    }
+
     const { data: machine, error: machineError } = await supabase
       .from("machines")
       .select("id, name, machine_code, location:locations(id, name)")

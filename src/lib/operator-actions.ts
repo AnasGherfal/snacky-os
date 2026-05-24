@@ -9,10 +9,16 @@ import { canAccessOperatorRoute, canExecuteRoutes } from "@/lib/authz";
 import {
   ROUTE_COMPLETED_STATUS,
   ROUTE_IN_PROGRESS_STATUS,
+  ROUTE_STOP_COMPLETED_STATUS,
+  ROUTE_STOP_IN_PROGRESS_STATUS,
+  ROUTE_STOP_PENDING_STATUS,
+  ROUTE_STOP_PICKED_STATUS,
+  ROUTE_STOP_SKIPPED_STATUS,
   fallbackRouteStatusForEnumMismatch,
   isActiveRouteStatus,
   isAvailableRouteStatus,
   isRouteStatusEnumMismatch,
+  isRouteStopDoneStatus,
   isTerminalRouteStatus,
   type RouteStatus,
 } from "@/lib/route-workflow";
@@ -104,7 +110,7 @@ async function insertPickListRowsWithOptionalColumnFallback(
     const result = await supabase.from("route_pick_list_items").insert(rowsToInsert);
     if (!result.error) return result.error;
 
-    const missingColumn = optionalColumnError(result.error, ["route_stop_id", "route_stop_item_id", "machine_id"].filter((column) => !removedColumns.includes(column)));
+    const missingColumn = optionalColumnError(result.error, ["route_stop_id", "route_stop_item_id", "machine_id", "pickup_batch_id"].filter((column) => !removedColumns.includes(column)));
     if (!missingColumn) return result.error;
 
     removedColumns.push(missingColumn);
@@ -299,6 +305,7 @@ export async function confirmPickList(
   routeId: string,
   pickedItems: { routeStopItemId?: string | null; routeStopId?: string | null; machineId?: string | null; productId: string; quantity: number; plannedQty?: number; reason?: string; notes?: string }[],
   extras: { routeStopId?: string | null; machineId?: string | null; productId: string; quantity: number; reason: string; notes?: string }[] = [],
+  options: { stopIds?: string[] } = {},
 ) {
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) throw new Error("No Supabase client");
@@ -329,14 +336,25 @@ export async function confirmPickList(
       const cleaned = String(value ?? "").trim();
       return cleaned || null;
     };
+    const selectedStopIds = Array.from(new Set((options.stopIds ?? []).map((id) => String(id ?? "").trim()).filter(Boolean)));
+    const batchMode = selectedStopIds.length > 0;
+    const selectedStopIdSet = new Set(selectedStopIds);
 
     const { data: routeStops, error: routeStopsError } = await supabase
       .from("route_stops")
-      .select("id, machine_id")
+      .select("id, machine_id, status")
       .eq("route_id", routeId);
     if (routeStopsError) throwActionError(routeStopsError, "Could not load route stops.");
     const stopById = new Map((routeStops ?? []).map((stop: any) => [String(stop.id), stop]));
     const stopByMachine = new Map((routeStops ?? []).map((stop: any) => [String(stop.machine_id), stop]));
+    if (batchMode) {
+      for (const stopId of selectedStopIds) {
+        const stop = stopById.get(stopId);
+        if (!stop) throw new Error("Selected pickup stop does not belong to this route.");
+        if (isRouteStopDoneStatus(stop.status)) throw new Error("Completed or skipped stops cannot be picked again.");
+        if (String(stop.status ?? "") !== ROUTE_STOP_PENDING_STATUS) throw new Error("Only pending stops can be picked in a new batch.");
+      }
+    }
 
     let { data: routeStopItems, error: stopItemsError }: { data: any[] | null; error: any } = await supabase
       .from("route_stop_items")
@@ -422,6 +440,9 @@ export async function confirmPickList(
       const routeStopId = cleanId(item.routeStopId) ?? planned?.routeStopId ?? null;
       const machineId = cleanId(item.machineId) ?? planned?.machineId ?? (routeStopId ? cleanId(stopById.get(routeStopId)?.machine_id) : null);
       const plannedQty = Math.max(0, Number(item.plannedQty ?? planned?.plannedQty ?? 0));
+      if (batchMode && routeStopId && !selectedStopIdSet.has(routeStopId)) {
+        throw new Error("Pickup items must belong to the selected batch stops.");
+      }
 
       if (routeStopItemId || routeStopId) {
         addPickedStopItem({
@@ -460,6 +481,9 @@ export async function confirmPickList(
       const machineId = cleanId(item.machineId) ?? cleanId(stop?.machine_id);
 
       if (routeStopId) {
+        if (batchMode && !selectedStopIdSet.has(routeStopId)) {
+          throw new Error("Added products must belong to one of the selected batch stops.");
+        }
         const planned = routeStopProductToItem.get(routeStopProductKey(routeStopId, productId));
         if (planned) {
           addPickedStopItem({
@@ -632,21 +656,23 @@ export async function confirmPickList(
       returnedByProduct.set(productId, (returnedByProduct.get(productId) ?? 0) + unitQuantity(line.returned_qty));
     });
 
-    const productIdsForDelta = new Set([...pickedByProduct.keys(), ...existingPickedByProduct.keys()]);
+    const productIdsForDelta = batchMode
+      ? new Set([...pickedByProduct.keys()])
+      : new Set([...pickedByProduct.keys(), ...existingPickedByProduct.keys()]);
     const increaseByProduct = new Map<string, number>();
     const decreaseByProduct = new Map<string, number>();
 
     productIdsForDelta.forEach((productId) => {
-      const nextPicked = pickedByProduct.get(productId) ?? 0;
+      const previousPicked = existingPickedByProduct.get(productId) ?? 0;
+      const nextPicked = batchMode ? previousPicked + (pickedByProduct.get(productId) ?? 0) : pickedByProduct.get(productId) ?? 0;
       const alreadyConsumed = (filledByProduct.get(productId) ?? 0) + (returnedByProduct.get(productId) ?? 0);
       if (nextPicked < alreadyConsumed) {
         throw new Error("Picked quantity cannot be reduced below stock already filled into machines or returned to storage.");
       }
 
-      const previousPicked = existingPickedByProduct.get(productId) ?? 0;
       const delta = nextPicked - previousPicked;
       if (delta > 0) increaseByProduct.set(productId, delta);
-      if (delta < 0) decreaseByProduct.set(productId, Math.abs(delta));
+      if (!batchMode && delta < 0) decreaseByProduct.set(productId, Math.abs(delta));
     });
 
     const storageByProduct = new Map<string, { locationId: string; quantity: number }[]>();
@@ -728,6 +754,38 @@ export async function confirmPickList(
       }
     }
 
+    let pickupBatchId: string | null = null;
+    if (batchMode) {
+      const now = new Date().toISOString();
+      const productSummary = Array.from(pickedByProduct.entries()).map(([productId, quantity]) => ({
+        product_id: productId,
+        product_name: productById.get(productId)?.name ?? null,
+        quantity,
+      }));
+      const { data: pickupBatch, error: pickupBatchError } = await supabase
+        .from("route_pickup_batches")
+        .insert({
+          route_id: routeId,
+          operator_id: route.operator_id,
+          status: "confirmed",
+          selected_stop_ids: selectedStopIds,
+          product_summary: productSummary,
+          storage_deducted: stockAllocations.length > 0,
+          confirmed_at: now,
+        })
+        .select("id")
+        .single();
+      if (pickupBatchError && !isMissingTable(pickupBatchError, "route_pickup_batches")) throwActionError(pickupBatchError, "Could not create this pickup batch.");
+      pickupBatchId = pickupBatch?.id ?? null;
+
+      if (pickupBatchId) {
+        const { error: batchStopsError } = await supabase.from("route_pickup_batch_stops").insert(
+          selectedStopIds.map((stopId) => ({ pickup_batch_id: pickupBatchId, route_stop_id: stopId })),
+        );
+        if (batchStopsError && !isMissingTable(batchStopsError, "route_pickup_batch_stops")) throwActionError(batchStopsError, "Could not save pickup batch stops.");
+      }
+    }
+
     // Create inventory movements for each picked item
     const movements = [
       ...stockAllocations.map((item) => ({
@@ -739,8 +797,9 @@ export async function confirmPickList(
         to_entity_id: route.operator_id,
         reason: "storage_to_operator_bag" as const,
         related_route_id: routeId,
+        related_pickup_batch_id: pickupBatchId,
         created_by: route.operator_id,
-        notes: `Picked for route ${routeId}`,
+        notes: pickupBatchId ? `Picked for route ${routeId} batch ${pickupBatchId}` : `Picked for route ${routeId}`,
       })),
       ...Array.from(decreaseByProduct.entries()).flatMap(([productId, quantity]) => {
         let remaining = quantity;
@@ -758,6 +817,7 @@ export async function confirmPickList(
             to_entity_id: pickedLocation.storageId,
             reason: "operator_bag_to_storage" as const,
             related_route_id: routeId,
+            related_pickup_batch_id: null,
             created_by: route.operator_id,
             notes: `Pickup quantity reduced for route ${routeId}`,
           });
@@ -789,6 +849,7 @@ export async function confirmPickList(
           planned_qty: actionType === "extra_product" ? 0 : plannedQty,
           picked_qty: pickedQty,
           action_type: actionType,
+          pickup_batch_id: pickupBatchId,
           reason: actionType === "extra_product" || pickedQty !== plannedQty ? item.reason || "Other" : null,
           notes: item.notes || null,
           needs_review: actionType === "extra_product" || pickedQty !== plannedQty,
@@ -807,6 +868,7 @@ export async function confirmPickList(
           planned_qty: plannedQty,
           picked_qty: pickedQty,
           action_type: "planned_pick",
+          pickup_batch_id: pickupBatchId,
           reason: pickedQty !== plannedQty ? item.reason || "Other" : null,
           notes: item.notes || null,
           needs_review: pickedQty !== plannedQty,
@@ -822,6 +884,7 @@ export async function confirmPickList(
         planned_qty: 0,
         picked_qty: Math.max(0, Number(item.quantity ?? 0)),
         action_type: "extra_product",
+        pickup_batch_id: pickupBatchId,
         reason: item.reason || "Other",
         notes: item.notes || null,
         needs_review: true,
@@ -829,8 +892,10 @@ export async function confirmPickList(
       })),
     ].filter((item) => Number(item.picked_qty ?? 0) > 0 || Number(item.planned_qty ?? 0) > 0);
 
-    const { error: pickListDeleteError } = await supabase.from("route_pick_list_items").delete().eq("route_id", routeId);
-    if (pickListDeleteError && !isMissingTable(pickListDeleteError, "route_pick_list_items")) throwActionError(pickListDeleteError, "Could not update the confirmed pick list.");
+    if (!batchMode) {
+      const { error: pickListDeleteError } = await supabase.from("route_pick_list_items").delete().eq("route_id", routeId);
+      if (pickListDeleteError && !isMissingTable(pickListDeleteError, "route_pick_list_items")) throwActionError(pickListDeleteError, "Could not update the confirmed pick list.");
+    }
 
     if (pickListRows.length) {
       const pickListError = await insertPickListRowsWithOptionalColumnFallback(supabase, pickListRows);
@@ -857,7 +922,9 @@ export async function confirmPickList(
       route_id: routeId,
       product_id: productId,
       planned_qty: plannedByProduct.get(productId) ?? 0,
-      picked_qty: pickedByProduct.get(productId) ?? 0,
+      picked_qty: batchMode
+        ? (existingPickedByProduct.get(productId) ?? 0) + (pickedByProduct.get(productId) ?? 0)
+        : pickedByProduct.get(productId) ?? 0,
       updated_at: new Date().toISOString(),
     }));
 
@@ -938,12 +1005,26 @@ export async function confirmPickList(
 
     if (routeStatusResult.error) throwActionError(routeStatusResult.error, "Could not start this route after picking stock.");
 
-    // Update all refill orders for this route to picked
-    const { error: refillError } = await supabase
+    if (batchMode && selectedStopIds.length) {
+      const { error: stopStatusError } = await supabase
+        .from("route_stops")
+        .update({ status: ROUTE_STOP_PICKED_STATUS })
+        .eq("route_id", routeId)
+        .in("id", selectedStopIds)
+        .eq("status", ROUTE_STOP_PENDING_STATUS);
+      if (stopStatusError) throwActionError(stopStatusError, "Could not mark selected stops as picked.");
+    }
+
+    const selectedMachineIds = batchMode
+      ? Array.from(new Set(selectedStopIds.map((stopId) => cleanId(stopById.get(stopId)?.machine_id)).filter((id): id is string => Boolean(id))))
+      : [];
+    let refillStatusQuery = supabase
       .from("refill_orders")
       .update({ status: "picked" })
       .eq("route_id", routeId)
       .in("status", ["assigned", "in_progress", "picked"]);
+    if (batchMode) refillStatusQuery = refillStatusQuery.in("machine_id", selectedMachineIds);
+    const { error: refillError } = await refillStatusQuery;
 
     if (refillError) throwActionError(refillError, "Could not update refill order status.");
 
@@ -956,11 +1037,15 @@ export async function confirmPickList(
       afterData: {
         picked_items: pickedItems,
         extras,
+        pickup_batch_id: pickupBatchId,
+        selected_stop_ids: selectedStopIds,
         movement_count: movements.length,
         pick_list_count: pickListRows.length,
       },
-      metadata: { operator_id: route.operator_id },
-      summary: `Confirmed pick list with ${movements.length} inventory movement rows`,
+      metadata: { operator_id: route.operator_id, pickup_batch_id: pickupBatchId, selected_stop_ids: selectedStopIds },
+      summary: batchMode
+        ? `Confirmed pickup batch for ${selectedStopIds.length} stops with ${movements.length} inventory movement rows`
+        : `Confirmed pick list with ${movements.length} inventory movement rows`,
     });
 
     revalidateRouteWorkflow(routeId);
@@ -998,6 +1083,528 @@ export async function arrivedAtStop(stopId: string) {
   } catch (error) {
     console.error("Error marking arrival:", error);
     throw new Error(getErrorMessage(error, "Could not mark arrival at this stop."));
+  }
+}
+
+function firstRelation<T>(value: T | T[] | null | undefined): T | null {
+  if (Array.isArray(value)) return value[0] ?? null;
+  return value ?? null;
+}
+
+type RefreshRecommendationRow = {
+  recommendation_key?: string | null;
+  machine_id?: string | null;
+  machine_slot_id?: string | null;
+  slot_code?: string | null;
+  product_id?: string | null;
+  product_name?: string | null;
+  current_qty?: unknown;
+  capacity?: unknown;
+  par_qty?: unknown;
+  suggested_qty?: unknown;
+  available_storage_qty?: unknown;
+  final_qty_to_take?: unknown;
+  priority?: string | null;
+};
+
+type RefreshSlotAllocation = {
+  recommendation_key: string | null;
+  machine_slot_id: string | null;
+  slot_code: string | null;
+  current_qty: number;
+  target_qty: number;
+  recommended_take_qty: number;
+  final_take_qty: number;
+  priority: string | null;
+  allocation_kind?: "slot" | "extra";
+  over_recommended?: boolean;
+};
+
+type RefreshPlannedLine = {
+  routeId: string;
+  routeStopId: string;
+  machineId: string;
+  productId: string;
+  productName: string;
+  plannedQty: number;
+  recommendedTakeQty: number;
+  finalTakeQty: number;
+  availableStorageQty: number;
+  machineSlotId: string | null;
+  slotCode: string | null;
+  slotAllocations: RefreshSlotAllocation[];
+};
+
+export type PendingStopRefreshComparison = {
+  routeStopId: string;
+  machineId: string;
+  machineName: string;
+  machineCode: string;
+  stopOrder: number;
+  changes: {
+    productId: string;
+    productName: string;
+    oldQty: number;
+    newQty: number;
+    difference: number;
+  }[];
+};
+
+type PendingStopRefreshPlan = {
+  eligibleStops: any[];
+  comparisons: PendingStopRefreshComparison[];
+  plannedLines: RefreshPlannedLine[];
+};
+
+function refreshRecommendationQuantity(row: RefreshRecommendationRow) {
+  return unitQuantity(row.final_qty_to_take ?? row.suggested_qty);
+}
+
+function refreshRecommendationTarget(row: RefreshRecommendationRow) {
+  return unitQuantity(row.capacity ?? row.par_qty);
+}
+
+const refreshPriorityOrder = ["critical", "high", "medium", "low"];
+
+function refreshPriorityScore(priority: string | null | undefined) {
+  const index = refreshPriorityOrder.indexOf(String(priority ?? "low").toLowerCase());
+  return index === -1 ? 0 : refreshPriorityOrder.length - index;
+}
+
+function refreshAllocationSort(a: RefreshRecommendationRow, b: RefreshRecommendationRow) {
+  const priorityDifference = refreshPriorityScore(b.priority) - refreshPriorityScore(a.priority);
+  if (priorityDifference) return priorityDifference;
+  const quantityDifference = Math.max(0, Number(a.current_qty ?? 0)) - Math.max(0, Number(b.current_qty ?? 0));
+  if (quantityDifference) return quantityDifference;
+  return String(a.slot_code ?? "").localeCompare(String(b.slot_code ?? ""));
+}
+
+function allocateRefreshFinalTake(rows: RefreshRecommendationRow[], finalTakeQty: number): RefreshSlotAllocation[] {
+  let remaining = unitQuantity(finalTakeQty);
+  const allocations: RefreshSlotAllocation[] = [...rows].sort(refreshAllocationSort).map((row) => {
+    const recommendedTakeQty = refreshRecommendationQuantity(row);
+    const allocated = Math.min(remaining, recommendedTakeQty);
+    remaining -= allocated;
+    return {
+      recommendation_key: row.recommendation_key ?? null,
+      machine_slot_id: row.machine_slot_id ?? null,
+      slot_code: row.slot_code ?? null,
+      current_qty: unitQuantity(row.current_qty),
+      target_qty: refreshRecommendationTarget(row),
+      recommended_take_qty: recommendedTakeQty,
+      final_take_qty: allocated,
+      priority: row.priority ?? null,
+      allocation_kind: "slot" as const,
+    };
+  });
+
+  if (remaining > 0) {
+    allocations.push({
+      recommendation_key: null,
+      machine_slot_id: null,
+      slot_code: null,
+      current_qty: 0,
+      target_qty: 0,
+      recommended_take_qty: 0,
+      final_take_qty: remaining,
+      priority: null,
+      allocation_kind: "extra",
+      over_recommended: true,
+    });
+  }
+
+  return allocations.filter((allocation) => allocation.final_take_qty > 0 || allocation.recommended_take_qty > 0);
+}
+
+async function buildPendingStopRefreshPlan(
+  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>,
+  routeId: string,
+): Promise<PendingStopRefreshPlan> {
+  const { data: stops, error: stopsError } = await supabase
+    .from("route_stops")
+    .select("id, route_id, machine_id, stop_order, status, machine:machines(id, name, machine_code)")
+    .eq("route_id", routeId)
+    .order("stop_order", { ascending: true });
+  if (stopsError) throwActionError(stopsError, "Could not load route stops.");
+
+  const eligibleStops = (stops ?? []).filter((stop: any) => String(stop.status ?? "") === ROUTE_STOP_PENDING_STATUS);
+  if (!eligibleStops.length) return { eligibleStops: [], comparisons: [], plannedLines: [] };
+
+  const eligibleStopIds = eligibleStops.map((stop: any) => String(stop.id));
+  const eligibleMachineIds = eligibleStops.map((stop: any) => String(stop.machine_id)).filter(Boolean);
+  const stopByMachine = new Map(eligibleStops.map((stop: any) => [String(stop.machine_id), stop]));
+
+  const [{ data: oldItems, error: oldItemsError }, { data: recommendations, error: recommendationsError }] = await Promise.all([
+    supabase
+      .from("route_stop_items")
+      .select("id, route_stop_id, machine_id, product_id, planned_quantity, source, product:products(id, name)")
+      .eq("route_id", routeId)
+      .in("route_stop_id", eligibleStopIds),
+    eligibleMachineIds.length
+      ? supabase
+          .from("refill_recommendations")
+          .select("recommendation_key, machine_id, machine_slot_id, slot_code, product_id, product_name, current_qty, capacity, par_qty, suggested_qty, available_storage_qty, final_qty_to_take, priority")
+          .in("machine_id", eligibleMachineIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (oldItemsError) throwActionError(oldItemsError, "Could not load current pending stop plan.");
+  if (recommendationsError) throwActionError(recommendationsError, "Could not load latest refill recommendations.");
+
+  const oldByStopProduct = new Map<string, { productId: string; productName: string; quantity: number }>();
+  const productNames = new Map<string, string>();
+  (oldItems ?? [])
+    .filter((item: any) => String(item.source ?? "refill_recommendation") === "refill_recommendation")
+    .forEach((item: any) => {
+      const routeStopId = String(item.route_stop_id ?? "");
+      const productId = String(item.product_id ?? "");
+      if (!routeStopId || !productId) return;
+      const product = firstRelation(item.product);
+      const productName = (product as any)?.name ?? "Unknown product";
+      productNames.set(productId, productName);
+      const key = `${routeStopId}:${productId}`;
+      const current = oldByStopProduct.get(key) ?? { productId, productName, quantity: 0 };
+      current.quantity += unitQuantity(item.planned_quantity);
+      oldByStopProduct.set(key, current);
+    });
+
+  const groupedRecommendations = new Map<string, RefreshRecommendationRow[]>();
+  ((recommendations ?? []) as RefreshRecommendationRow[])
+    .filter((row) => refreshRecommendationQuantity(row) > 0)
+    .forEach((row) => {
+      const machineId = String(row.machine_id ?? "");
+      const productId = String(row.product_id ?? "");
+      const stop = stopByMachine.get(machineId);
+      if (!stop || !productId) return;
+      productNames.set(productId, row.product_name ?? productNames.get(productId) ?? "Unknown product");
+      const key = `${String(stop.id)}:${productId}`;
+      groupedRecommendations.set(key, [...(groupedRecommendations.get(key) ?? []), row]);
+    });
+
+  const plannedLines: RefreshPlannedLine[] = [];
+  groupedRecommendations.forEach((rows, key) => {
+    const [routeStopId, productId] = key.split(":");
+    const stop = eligibleStops.find((item: any) => String(item.id) === routeStopId);
+    const machineId = String(stop?.machine_id ?? "");
+    if (!stop || !machineId || !productId) return;
+    const finalTakeQty = rows.reduce((sum, row) => sum + refreshRecommendationQuantity(row), 0);
+    if (finalTakeQty <= 0) return;
+    const slotAllocations = allocateRefreshFinalTake(rows, finalTakeQty);
+    const slotCodes = Array.from(new Set(rows.map((row) => row.slot_code).filter(Boolean))) as string[];
+    plannedLines.push({
+      routeId,
+      routeStopId,
+      machineId,
+      productId,
+      productName: productNames.get(productId) ?? rows[0]?.product_name ?? "Unknown product",
+      plannedQty: finalTakeQty,
+      recommendedTakeQty: rows.reduce((sum, row) => sum + unitQuantity(row.suggested_qty), 0),
+      finalTakeQty,
+      availableStorageQty: Math.max(...rows.map((row) => unitQuantity(row.available_storage_qty)), 0),
+      machineSlotId: rows.length === 1 ? rows[0].machine_slot_id ?? null : null,
+      slotCode: rows.length === 1 ? rows[0].slot_code ?? null : slotCodes.length ? slotCodes.join(", ") : null,
+      slotAllocations,
+    });
+  });
+
+  const newByStopProduct = new Map(plannedLines.map((line) => [`${line.routeStopId}:${line.productId}`, line]));
+  const comparisons: PendingStopRefreshComparison[] = eligibleStops
+    .map((stop: any) => {
+      const routeStopId = String(stop.id);
+      const productIds = new Set<string>();
+      oldByStopProduct.forEach((item, key) => {
+        if (key.startsWith(`${routeStopId}:`)) productIds.add(item.productId);
+      });
+      newByStopProduct.forEach((item, key) => {
+        if (key.startsWith(`${routeStopId}:`)) productIds.add(item.productId);
+      });
+      const changes = Array.from(productIds)
+        .map((productId) => {
+          const oldQty = oldByStopProduct.get(`${routeStopId}:${productId}`)?.quantity ?? 0;
+          const newQty = newByStopProduct.get(`${routeStopId}:${productId}`)?.plannedQty ?? 0;
+          return {
+            productId,
+            productName: productNames.get(productId) ?? newByStopProduct.get(`${routeStopId}:${productId}`)?.productName ?? oldByStopProduct.get(`${routeStopId}:${productId}`)?.productName ?? "Unknown product",
+            oldQty,
+            newQty,
+            difference: newQty - oldQty,
+          };
+        })
+        .filter((change) => change.oldQty !== change.newQty)
+        .sort((a, b) => a.productName.localeCompare(b.productName));
+      const machine = firstRelation(stop.machine);
+      return {
+        routeStopId,
+        machineId: String(stop.machine_id ?? ""),
+        machineName: (machine as any)?.name ?? "Unknown machine",
+        machineCode: (machine as any)?.machine_code ?? "-",
+        stopOrder: Number(stop.stop_order ?? 0),
+        changes,
+      };
+    })
+    .filter((comparison) => comparison.changes.length > 0);
+
+  return { eligibleStops, comparisons, plannedLines };
+}
+
+async function refreshRouteStockPlan(
+  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>,
+  routeId: string,
+) {
+  const [{ data: allItems, error: allItemsError }, { data: stockLines, error: stockLinesError }] = await Promise.all([
+    supabase.from("route_stop_items").select("product_id, planned_quantity").eq("route_id", routeId),
+    supabase.from("route_stock_lines").select("id, product_id, picked_qty, returned_qty").eq("route_id", routeId),
+  ]);
+  if (allItemsError) throwActionError(allItemsError, "Could not recalculate route stock plan.");
+  if (stockLinesError) throwActionError(stockLinesError, "Could not load route stock lines.");
+
+  const plannedByProduct = new Map<string, number>();
+  (allItems ?? []).forEach((item: any) => {
+    const productId = String(item.product_id ?? "");
+    if (!productId) return;
+    plannedByProduct.set(productId, (plannedByProduct.get(productId) ?? 0) + unitQuantity(item.planned_quantity));
+  });
+
+  const existingProductIds = new Set((stockLines ?? []).map((line: any) => String(line.product_id)));
+  for (const line of stockLines ?? []) {
+    const productId = String((line as any).product_id ?? "");
+    const plannedQty = plannedByProduct.get(productId) ?? 0;
+    const hasHistory = unitQuantity((line as any).picked_qty) > 0 || unitQuantity((line as any).returned_qty) > 0;
+    if (plannedQty <= 0 && !hasHistory) {
+      const { error } = await supabase.from("route_stock_lines").delete().eq("id", (line as any).id);
+      if (error) throwActionError(error, "Could not remove stale route stock line.");
+      continue;
+    }
+    const { error } = await supabase
+      .from("route_stock_lines")
+      .update({ planned_qty: plannedQty, updated_at: new Date().toISOString() })
+      .eq("id", (line as any).id);
+    if (error) throwActionError(error, "Could not update route stock line.");
+  }
+
+  const newRows = Array.from(plannedByProduct.entries())
+    .filter(([productId, quantity]) => quantity > 0 && !existingProductIds.has(productId))
+    .map(([productId, quantity]) => ({ route_id: routeId, product_id: productId, planned_qty: quantity }));
+  if (newRows.length) {
+    const { error } = await supabase.from("route_stock_lines").insert(newRows);
+    if (error) throwActionError(error, "Could not add refreshed route stock lines.");
+  }
+}
+
+async function requireOperatorRouteAccess(routeId: string) {
+  const supabase = await getAuthenticatedSupabaseServerClient();
+  if (!supabase) throw new Error("No Supabase client");
+  const profile = await getCurrentProfile();
+  const { data: route, error: routeError } = await supabase.from("routes").select("id, operator_id, status").eq("id", routeId).maybeSingle();
+  if (routeError) throwActionError(routeError, "Could not load this route.");
+  if (!route) throw new Error("Route not found");
+  if (!canAccessOperatorRoute(profile ? profileContext(profile) : null, route.operator_id)) {
+    throw new Error("You are not authorized to update this route.");
+  }
+  if (isTerminalRouteStatus(route.status)) throw new Error("Completed or cancelled routes cannot be edited.");
+  return { supabase, profile, route };
+}
+
+export async function previewPendingStopRecommendationRefresh(routeId: string) {
+  try {
+    if (!routeId) throw new Error("Route id is required.");
+    const { supabase } = await requireOperatorRouteAccess(routeId);
+    const plan = await buildPendingStopRefreshPlan(supabase, routeId);
+    return {
+      success: true,
+      eligibleStopCount: plan.eligibleStops.length,
+      hasChanges: plan.comparisons.length > 0,
+      comparisons: plan.comparisons,
+    };
+  } catch (error) {
+    console.error("[operator:refresh-pending-stops] Preview failed", { route_id: routeId, error });
+    return { success: false, error: getErrorMessage(error, "Could not refresh pending recommendations."), eligibleStopCount: 0, hasChanges: false, comparisons: [] };
+  }
+}
+
+export async function applyPendingStopRecommendationRefresh(routeId: string) {
+  try {
+    if (!routeId) throw new Error("Route id is required.");
+    const { supabase, profile, route } = await requireOperatorRouteAccess(routeId);
+    const plan = await buildPendingStopRefreshPlan(supabase, routeId);
+    const eligibleStopIds = plan.eligibleStops.map((stop: any) => String(stop.id));
+    const eligibleMachineIds = plan.eligibleStops.map((stop: any) => String(stop.machine_id)).filter(Boolean);
+    if (!eligibleStopIds.length) return { success: true, applied: false, comparisons: [], message: "No pending stops to refresh." };
+    if (!plan.comparisons.length) return { success: true, applied: false, comparisons: [], message: "Pending recommendations are already current." };
+
+    const { error: deleteStopItemsError } = await supabase
+      .from("route_stop_items")
+      .delete()
+      .eq("route_id", routeId)
+      .in("route_stop_id", eligibleStopIds)
+      .eq("source", "refill_recommendation");
+    if (deleteStopItemsError) throwActionError(deleteStopItemsError, "Could not remove old pending recommendation rows.");
+
+    if (plan.plannedLines.length) {
+      const { error: insertStopItemsError } = await supabase.from("route_stop_items").insert(plan.plannedLines.map((line) => ({
+        route_id: routeId,
+        route_stop_id: line.routeStopId,
+        machine_id: line.machineId,
+        product_id: line.productId,
+        machine_slot_id: line.machineSlotId,
+        slot_code: line.slotCode,
+        planned_quantity: line.plannedQty,
+        recommended_take_qty: line.recommendedTakeQty,
+        final_take_qty: line.finalTakeQty,
+        picked_quantity: null,
+        filled_quantity: null,
+        returned_quantity: null,
+        source: "refill_recommendation",
+        slot_allocations: line.slotAllocations,
+      })));
+      if (insertStopItemsError) throwActionError(insertStopItemsError, "Could not save refreshed pending recommendation rows.");
+    }
+
+    const { data: existingOrders, error: existingOrdersError } = await supabase
+      .from("refill_orders")
+      .select("id, machine_id")
+      .eq("route_id", routeId)
+      .in("machine_id", eligibleMachineIds);
+    if (existingOrdersError) throwActionError(existingOrdersError, "Could not load refill orders for pending stops.");
+
+    const orderByMachine = new Map((existingOrders ?? []).map((order: any) => [String(order.machine_id), String(order.id)]));
+    const missingMachineIds = eligibleMachineIds.filter((machineId) => !orderByMachine.has(machineId));
+    if (missingMachineIds.length) {
+      const { data: createdOrders, error: createOrdersError } = await supabase
+        .from("refill_orders")
+        .insert(missingMachineIds.map((machineId) => ({ route_id: routeId, machine_id: machineId, status: route.operator_id ? "assigned" : "draft" })))
+        .select("id, machine_id");
+      if (createOrdersError) throwActionError(createOrdersError, "Could not create refill orders for refreshed stops.");
+      (createdOrders ?? []).forEach((order: any) => orderByMachine.set(String(order.machine_id), String(order.id)));
+    }
+
+    const orderIds = Array.from(orderByMachine.values());
+    if (orderIds.length) {
+      const { error: deleteLinesError } = await supabase
+        .from("refill_order_lines")
+        .delete()
+        .in("refill_order_id", orderIds)
+        .eq("source", "refill_recommendation");
+      if (deleteLinesError) throwActionError(deleteLinesError, "Could not remove old pending refill lines.");
+    }
+
+    const refillLines = plan.plannedLines
+      .map((line) => ({
+        refill_order_id: orderByMachine.get(line.machineId),
+        machine_slot_id: line.machineSlotId,
+        slot_code: line.slotCode,
+        product_id: line.productId,
+        current_qty_vms: 0,
+        par_qty: line.plannedQty,
+        suggested_qty: line.recommendedTakeQty,
+        available_storage_qty: line.availableStorageQty,
+        final_qty_to_take: line.finalTakeQty,
+        recommended_take_qty: line.recommendedTakeQty,
+        final_take_qty: line.finalTakeQty,
+        source: "refill_recommendation",
+        slot_allocations: line.slotAllocations,
+      }))
+      .filter((line) => Boolean(line.refill_order_id));
+    if (refillLines.length) {
+      const { error: insertLinesError } = await supabase.from("refill_order_lines").insert(refillLines);
+      if (insertLinesError) throwActionError(insertLinesError, "Could not save refreshed refill lines.");
+    }
+
+    await refreshRouteStockPlan(supabase, routeId);
+
+    await logActivity({
+      profile,
+      action: "refresh_pending_route_recommendations",
+      entityType: "route",
+      entityId: routeId,
+      entityLabel: `Route ${routeId.slice(0, 8)}`,
+      afterData: { comparisons: plan.comparisons, refreshed_stop_ids: eligibleStopIds },
+      metadata: { route_id: routeId, refreshed_stop_count: eligibleStopIds.length },
+      summary: `Refreshed recommendations for ${eligibleStopIds.length} pending route stops`,
+    });
+
+    revalidateRouteWorkflow(routeId);
+    return { success: true, applied: true, comparisons: plan.comparisons, message: "Pending stop recommendations refreshed." };
+  } catch (error) {
+    console.error("[operator:refresh-pending-stops] Apply failed", { route_id: routeId, error });
+    return { success: false, applied: false, comparisons: [], error: getErrorMessage(error, "Could not apply pending recommendation updates.") };
+  }
+}
+
+export async function markStopInProgress(routeId: string, stopId: string) {
+  try {
+    if (!routeId || !stopId) throw new Error("Route and stop are required.");
+    const { supabase, profile, route } = await requireOperatorRouteAccess(routeId);
+    if (!isActiveRouteStatus(route.status)) return { success: true };
+
+    const { data: stop, error: stopError } = await supabase.from("route_stops").select("id, route_id, status").eq("id", stopId).maybeSingle();
+    if (stopError) throwActionError(stopError, "Could not load this stop.");
+    if (!stop || stop.route_id !== routeId) throw new Error("Stop not found on this route.");
+    if (String(stop.status ?? "") !== ROUTE_STOP_PICKED_STATUS) return { success: true };
+
+    const { error } = await supabase
+      .from("route_stops")
+      .update({ status: ROUTE_STOP_IN_PROGRESS_STATUS, arrived_at: new Date().toISOString() })
+      .eq("id", stopId)
+      .eq("status", ROUTE_STOP_PICKED_STATUS);
+    if (error) throwActionError(error, "Could not mark this stop in progress.");
+
+    await logActivity({
+      profile,
+      action: "start_stop",
+      entityType: "route_stop",
+      entityId: stopId,
+      entityLabel: `Stop ${stopId.slice(0, 8)}`,
+      beforeData: stop,
+      afterData: { status: ROUTE_STOP_IN_PROGRESS_STATUS },
+      metadata: { route_id: routeId },
+      summary: "Started route stop execution",
+    });
+    revalidateRouteWorkflow(routeId);
+    return { success: true };
+  } catch (error) {
+    console.error("[operator:start-stop] Failed", { route_id: routeId, stop_id: stopId, error });
+    return { success: false, error: getErrorMessage(error, "Could not start this stop.") };
+  }
+}
+
+export async function skipStop(formData: FormData) {
+  const routeId = String(formData.get("route_id") ?? "").trim();
+  const stopId = String(formData.get("stop_id") ?? "").trim();
+  const reason = String(formData.get("reason") ?? "").trim();
+  if (!routeId || !stopId) return;
+
+  try {
+    if (!reason) throw new Error("Reason is required.");
+    const { supabase, profile } = await requireOperatorRouteAccess(routeId);
+    const { data: stop, error: stopError } = await supabase.from("route_stops").select("*").eq("id", stopId).maybeSingle();
+    if (stopError) throwActionError(stopError, "Could not load this stop.");
+    if (!stop || stop.route_id !== routeId) throw new Error("Stop not found on this route.");
+    if (String(stop.status ?? "") === ROUTE_STOP_COMPLETED_STATUS) throw new Error("Completed stops cannot be skipped.");
+    if (String(stop.status ?? "") === ROUTE_STOP_SKIPPED_STATUS) return;
+
+    const { data: after, error } = await supabase
+      .from("route_stops")
+      .update({ status: ROUTE_STOP_SKIPPED_STATUS, completed_at: new Date().toISOString(), notes: reason })
+      .eq("id", stopId)
+      .select("*")
+      .single();
+    if (error) throwActionError(error, "Could not skip this stop.");
+
+    await logActivity({
+      profile,
+      action: "skip_stop",
+      entityType: "route_stop",
+      entityId: stopId,
+      entityLabel: `Stop ${stopId.slice(0, 8)}`,
+      beforeData: stop,
+      afterData: after,
+      metadata: { route_id: routeId, reason },
+      summary: "Skipped route stop",
+    });
+    revalidateRouteWorkflow(routeId);
+  } catch (error) {
+    console.error("[operator:skip-stop] Failed", { route_id: routeId, stop_id: stopId, error });
+    throw new Error(getErrorMessage(error, "Could not skip this stop."));
   }
 }
 
@@ -1870,12 +2477,12 @@ export async function completeRoute(routeId: string) {
     }
     const { data: openStops, error: stopsError } = await supabase
       .from("route_stops")
-      .select("id")
+      .select("id, status")
       .eq("route_id", routeId)
-      .neq("status", "completed")
-      .limit(1);
+      .limit(500);
     if (stopsError) throwActionError(stopsError, "Could not verify route stop status.");
-    if (openStops?.length) throw new Error("Complete every machine stop before closing the route.");
+    const unfinishedStops = (openStops ?? []).filter((stop: any) => !isRouteStopDoneStatus(stop.status));
+    if (unfinishedStops.length) throw new Error("Complete or skip every machine stop before closing the route.");
 
     const [{ data: routeStockLines, error: stockError }, { data: filledMovements, error: filledError }] = await Promise.all([
       supabase

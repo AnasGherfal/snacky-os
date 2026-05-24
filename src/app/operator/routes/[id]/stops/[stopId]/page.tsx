@@ -6,7 +6,7 @@ import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from 
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { QuantityStepper } from "@/components/QuantityStepper";
 import { EmptyState, ErrorState, LoadingState, PageHeader, SecondaryButton } from "@/components/ui";
-import { completeStop, uploadRefillProofPhoto } from "@/lib/operator-actions";
+import { completeStop, markStopInProgress, uploadRefillProofPhoto } from "@/lib/operator-actions";
 
 const reasonOptions = [
   "Product not available in storage",
@@ -265,6 +265,11 @@ export default function MachineStopPage() {
         }
 
         setStopData(data);
+        if (data.stopStatus === "picked") {
+          markStopInProgress(routeId, stopId).then((result) => {
+            if (result.success) setStopData((current) => current ? { ...current, stopStatus: "in_progress" } : current);
+          }).catch((err) => console.warn("[operator:stop] Could not mark stop in progress", err));
+        }
         const initialQtys: Record<string, number> = {};
         const initialNotes: Record<string, string> = {};
         const initialUnavailable: Record<string, boolean> = {};
