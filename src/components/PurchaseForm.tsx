@@ -931,7 +931,7 @@ export function PurchaseForm({
     try {
       const result = await action(formData);
       if (!result.ok) {
-        setSubmitMessage({ type: "error", text: result.message || "Could not save purchase.", debug: result.debugMessage });
+        setSubmitMessage({ type: "error", text: result.message || "Could not save purchase. Please contact admin.", debug: result.debugMessage });
         return;
       }
       setSubmitMessage({ type: "success", text: result.message });
@@ -942,7 +942,7 @@ export function PurchaseForm({
       }
     } catch (error) {
       console.error("[purchases] Client submit failed", error);
-      setSubmitMessage({ type: "error", text: "Could not save purchase.", debug: error instanceof Error ? error.message : undefined });
+      setSubmitMessage({ type: "error", text: "Could not save purchase. Please contact admin.", debug: error instanceof Error ? error.message : undefined });
     } finally {
       submittingRef.current = false;
       setSubmitIntent(null);

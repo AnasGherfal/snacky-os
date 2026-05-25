@@ -42,6 +42,9 @@ export type PurchaseSubmitResult = {
 
 class PurchaseFormError extends Error {}
 
+const PURCHASE_CREATE_RPC = "snacky_create_purchase_with_lines";
+const PURCHASE_SAVE_ADMIN_MESSAGE = "Could not save purchase. Please contact admin.";
+
 function roundMoney(value: number) {
   return Math.round(value * 100) / 100;
 }
@@ -325,6 +328,8 @@ function logPurchaseSaveFailure({
   supplierId,
   lines,
   receiptStatus,
+  rpcName,
+  payloadKeys,
 }: {
   step: string;
   error: unknown;
@@ -333,9 +338,13 @@ function logPurchaseSaveFailure({
   supplierId: string | null;
   lines: PurchaseLineInput[];
   receiptStatus?: Record<string, unknown>;
+  rpcName?: string;
+  payloadKeys?: string[];
 }) {
   console.error("[purchases] Purchase save failed", {
     failed_step: step,
+    rpc_name: rpcName ?? null,
+    payload_keys: payloadKeys ?? null,
     user_id: profile?.id ?? null,
     user_roles: profile?.roles ?? [],
     purchase_date: purchaseDate,
@@ -439,7 +448,7 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
     const totals = buildTotals(fd, lineRows.reduce((sum, line) => sum + Number(line.line_total), 0));
     const submitAction = String(fd.get("submit_action") || "draft");
 
-    const { data: purchaseRows, error: purchaseError } = await supabase.rpc("snacky_create_purchase_with_lines", {
+    const rpcPayload = {
       p_supplier_id: supplierId,
       p_order_date: purchaseDateForLog,
       p_receipt_number: String(fd.get("receipt_number") || "").trim() || null,
@@ -458,7 +467,9 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
       p_created_by: profile.team_member_id,
       p_submit_action: submitAction === "received" ? "received" : "draft",
       p_lines: lineRows,
-    });
+    };
+
+    const { data: purchaseRows, error: purchaseError } = await supabase.rpc(PURCHASE_CREATE_RPC, rpcPayload);
 
     const purchase = Array.isArray(purchaseRows) ? purchaseRows[0] : purchaseRows;
     if (purchaseError || !purchase) {
@@ -470,12 +481,10 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
         supplierId,
         lines,
         receiptStatus: receiptStatusForLog,
+        rpcName: PURCHASE_CREATE_RPC,
+        payloadKeys: Object.keys(rpcPayload),
       });
-      formError(
-        purchaseError?.code === "42501"
-          ? "Permission denied while saving this purchase."
-          : purchaseError?.message || "Could not save purchase transaction.",
-      );
+      formError(PURCHASE_SAVE_ADMIN_MESSAGE);
     }
 
     await saveApprovedReceiptAliases(supabase, profile, lines);
@@ -539,7 +548,7 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
         receiptStatus: receiptStatusForLog,
       });
     }
-    return purchaseSubmitError(error, "Could not save purchase.");
+    return purchaseSubmitError(error, PURCHASE_SAVE_ADMIN_MESSAGE);
   }
 }
 

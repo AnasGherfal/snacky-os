@@ -10,6 +10,7 @@ import { canAccessOperatorRoute, canExecuteRoutes } from "@/lib/authz";
 import {
   ROUTE_COMPLETED_STATUS,
   ROUTE_IN_PROGRESS_STATUS,
+  ROUTE_PICKUP_CONFIRMED_STATUS,
   ROUTE_STOP_COMPLETED_STATUS,
   ROUTE_STOP_IN_PROGRESS_STATUS,
   ROUTE_STOP_PENDING_STATUS,
@@ -27,7 +28,7 @@ import { REFILL_PHOTO_BUCKET } from "@/lib/storage-buckets";
 
 const REFILL_PHOTO_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"];
 const REFILL_PHOTO_MAX_SIZE = 10 * 1024 * 1024;
-const PICKUP_CONFIRMATION_USER_ERROR = "Could not confirm pickup. Please contact admin.";
+const PICKUP_CONFIRMATION_FALLBACK_ERROR = "Pickup confirmation failed before a specific database reason was returned.";
 
 function isMissingTable(error: any, tableName: string) {
   return error?.code === "PGRST205" && String(error?.message ?? "").includes(tableName);
@@ -43,8 +44,90 @@ function getErrorMessage(error: unknown, fallback = "Something went wrong.") {
   return fallback;
 }
 
+class ActionDatabaseError extends Error {
+  code?: string;
+  details?: unknown;
+  hint?: unknown;
+  cause?: unknown;
+
+  constructor(error: unknown, fallback?: string) {
+    super(getErrorMessage(error, fallback));
+    this.name = "ActionDatabaseError";
+    this.cause = error;
+    if (error && typeof error === "object") {
+      const row = error as { code?: unknown; details?: unknown; hint?: unknown };
+      if (row.code) this.code = String(row.code);
+      if (row.details) this.details = row.details;
+      if (row.hint) this.hint = row.hint;
+    }
+  }
+}
+
 function throwActionError(error: unknown, fallback?: string): never {
-  throw new Error(getErrorMessage(error, fallback));
+  throw new ActionDatabaseError(error, fallback);
+}
+
+function errorField(error: unknown, field: "code" | "details" | "hint" | "message" | "stack" | "name"): unknown {
+  if (error && typeof error === "object") {
+    const direct = (error as Record<string, unknown>)[field];
+    if (direct) return direct;
+    const cause = (error as { cause?: unknown }).cause;
+    if (cause && cause !== error) return errorField(cause, field);
+  }
+  return null;
+}
+
+function serializeActionError(error: unknown): Record<string, unknown> {
+  const cause = error && typeof error === "object" ? (error as { cause?: unknown }).cause : null;
+  return {
+    name: errorField(error, "name") ?? (error instanceof Error ? error.name : null),
+    code: errorField(error, "code"),
+    message: getErrorMessage(error, "Unknown error"),
+    details: errorField(error, "details"),
+    hint: errorField(error, "hint"),
+    stack: errorField(error, "stack") ?? (error instanceof Error ? error.stack : null),
+    cause: cause && cause !== error ? serializeActionError(cause) : undefined,
+  };
+}
+
+function pickupPublicError(error: unknown) {
+  const info = serializeActionError(error);
+  const message = String(info.message ?? "");
+  const code = String(info.code ?? "");
+  const text = [code, message, info.details, info.hint].map((value) => String(value ?? "")).join(" ").toLowerCase();
+
+  if (text.includes("not enough warehouse stock") || text.includes("not enough storage stock")) return message;
+  if (text.includes("missing from inventory") || text.includes("product not found")) return message;
+  if (text.includes("route status") || text.includes("start the route")) return message;
+  if (text.includes("stop status") || text.includes("only pending stops")) return message;
+  if (text.includes("selected pickup stop") || text.includes("selected batch stops")) return message;
+  if (text.includes("picked quantity cannot be reduced")) return message;
+  if (text.includes("route must be assigned")) return message;
+
+  if (code === "42501" || text.includes("row-level security") || text.includes("permission")) {
+    return "User does not have permission to confirm pickup.";
+  }
+  if (code === "42883" || code === "PGRST202" || (text.includes("function") && text.includes("confirm_route_pickup_batch"))) {
+    return "Database schema is missing the confirm pickup function.";
+  }
+  if (code === "42703" || code === "PGRST204" || text.includes("schema cache") || text.includes("column")) {
+    return "Database schema is missing a column needed for pickup confirmation.";
+  }
+  if (text.includes("invalid input value for enum route_status")) {
+    return "Database schema is missing a route status needed for pickup confirmation.";
+  }
+  if (text.includes("invalid input value for enum route_stop_status")) {
+    return "Database schema is missing a route stop status needed for pickup confirmation.";
+  }
+  if (code === "23503") {
+    return "Inventory movement could not be created because linked route, product, operator, storage, or pickup batch data is missing.";
+  }
+  if (code === "23514" || text.includes("movement_quantity_positive")) {
+    return "Inventory movement could not be created because one quantity or status is invalid.";
+  }
+  if (text.includes("inventory movement")) return message;
+
+  return "Could not confirm pickup. Check route status, stop status, permissions, storage stock, and database setup.";
 }
 
 function profileContext(profile: NonNullable<Awaited<ReturnType<typeof getCurrentProfile>>>) {
@@ -271,15 +354,20 @@ export async function confirmPickList(
   pickedItems: { routeStopItemId?: string | null; routeStopId?: string | null; machineId?: string | null; productId: string; quantity: number; plannedQty?: number; reason?: string; notes?: string }[],
   extras: { routeStopId?: string | null; machineId?: string | null; productId: string; quantity: number; reason: string; notes?: string }[] = [],
   options: { stopIds?: string[] } = {},
-) {
+): Promise<ActionResult> {
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) throw new Error("No Supabase client");
   const readClient = getSupabaseAdminClient() ?? supabase;
   let logProfile: Awaited<ReturnType<typeof getCurrentProfile>> | null = null;
   let logRouteOperatorId: string | null = null;
+  let logRouteStatus: string | null = null;
   let logPickupBatchId: string | null = null;
   let logSelectedStopIds: string[] = [];
   let logProductIds: string[] = [];
+  let logStopStatusesBeforePickup: Record<string, unknown>[] = [];
+  let logSubmittedPickupItems: Record<string, unknown>[] = [];
+  const logStorageAvailability: Record<string, unknown>[] = [];
+  let logInventoryMovementPayload: Record<string, unknown>[] = [];
   let logPayload: Record<string, unknown> = {};
 
   try {
@@ -294,6 +382,7 @@ export async function confirmPickList(
     if (routeError) throwActionError(routeError, "Could not load this route.");
     if (!route) throw new Error("Route not found");
     logRouteOperatorId = route.operator_id ?? null;
+    logRouteStatus = route.status ?? null;
     if (!canAccessOperatorRoute(profile ? profileContext(profile) : null, route.operator_id)) {
       throw new Error("You are not authorized to pick stock for this route");
     }
@@ -315,6 +404,11 @@ export async function confirmPickList(
       .select("id, machine_id, status")
       .eq("route_id", routeId);
     if (routeStopsError) throwActionError(routeStopsError, "Could not load route stops.");
+    logStopStatusesBeforePickup = (routeStops ?? []).map((stop: any) => ({
+      route_stop_id: String(stop.id ?? ""),
+      machine_id: stop.machine_id ?? null,
+      status: stop.status ?? null,
+    }));
     const stopById = new Map((routeStops ?? []).map((stop: any) => [String(stop.id), stop]));
     const stopByMachine = new Map((routeStops ?? []).map((stop: any) => [String(stop.machine_id), stop]));
     if (batchMode) {
@@ -537,6 +631,35 @@ export async function confirmPickList(
     const pickedStopItemRows = Array.from(pickedStopItems.values());
     const pickedItemRows = [...pickedStopItemRows, ...legacyPickedRows];
     const extraRows = Array.from(unassignedExtras.values());
+    logSubmittedPickupItems = [
+      ...pickedStopItemRows.map((item) => ({
+        route_stop_item_id: item.id || null,
+        route_stop_id: item.routeStopId,
+        machine_id: item.machineId,
+        product_id: item.productId,
+        planned_qty: unitQuantity(item.plannedQty),
+        operator_pickup_qty: unitQuantity(item.quantity),
+        action_type: item.actionType ?? "planned_pick",
+      })),
+      ...legacyPickedRows.map((item) => ({
+        route_stop_item_id: null,
+        route_stop_id: null,
+        machine_id: null,
+        product_id: item.productId,
+        planned_qty: unitQuantity(item.plannedQty),
+        operator_pickup_qty: unitQuantity(item.quantity),
+        action_type: "planned_pick",
+      })),
+      ...extraRows.map((item) => ({
+        route_stop_item_id: null,
+        route_stop_id: null,
+        machine_id: null,
+        product_id: item.productId,
+        planned_qty: 0,
+        operator_pickup_qty: unitQuantity(item.quantity),
+        action_type: "extra_product",
+      })),
+    ];
     const actualPickLines = [
       ...pickedItemRows.map((item) => ({ productId: item.productId, quantity: item.quantity })),
       ...extraRows.map((item) => ({ productId: item.productId, quantity: item.quantity })),
@@ -675,19 +798,28 @@ export async function confirmPickList(
       const shortage = Math.max(0, quantity - available);
       const product = productById.get(productId);
       const isManual = manualProductIds.has(productId);
-      console.info("[operator:pick-list] Pickup validation", {
+      const availabilityLogRow = {
         route_id: routeId,
         product_id: productId,
         product_name: product?.name ?? "Unknown product",
         user_id: profile?.id ?? null,
         user_roles: profile?.roles ?? [],
+        route_status: route.status ?? null,
         route_operator_id: route.operator_id ?? null,
         original_route_product: plannedByProduct.has(productId),
         manually_added: isManual,
-        available_warehouse_stock: available,
-        entered_quantity: pickedByProduct.get(productId) ?? 0,
+        planned_qty: plannedByProduct.get(productId) ?? 0,
+        operator_pickup_qty: pickedByProduct.get(productId) ?? 0,
+        warehouse_storage_available: available,
+        storage_locations: storageByProduct.get(productId) ?? [],
         additional_quantity_needed: quantity,
         calculated_shortage: shortage,
+      };
+      logStorageAvailability.push(availabilityLogRow);
+      console.info("[operator:pick-list] Pickup validation", {
+        ...availabilityLogRow,
+        available_warehouse_stock: available,
+        entered_quantity: pickedByProduct.get(productId) ?? 0,
       });
       if (shortage > 0) {
         shortageMessages.push(`${product?.name ?? "Selected product"}: entered ${pickedByProduct.get(productId) ?? quantity}, available ${available}, shortage ${shortage}`);
@@ -778,6 +910,7 @@ export async function confirmPickList(
         return returnRows;
       }),
     ];
+    logInventoryMovementPayload = movements;
 
     const pickListRows = [
       ...pickedStopItemRows.map((item) => {
@@ -897,6 +1030,10 @@ export async function confirmPickList(
     const selectedMachineIds = batchMode
       ? Array.from(new Set(selectedStopIds.map((stopId) => cleanId(stopById.get(stopId)?.machine_id)).filter((id): id is string => Boolean(id))))
       : [];
+    const remainingPendingStopCount = batchMode
+      ? (routeStops ?? []).filter((stop: any) => String(stop.status ?? "") === ROUTE_STOP_PENDING_STATUS && !selectedStopIdSet.has(String(stop.id ?? ""))).length
+      : 0;
+    const nextRouteStatus = batchMode && remainingPendingStopCount === 0 ? ROUTE_PICKUP_CONFIRMED_STATUS : ROUTE_IN_PROGRESS_STATUS;
 
     logPayload = {
       pickup_batch: pickupBatchPayload,
@@ -909,12 +1046,14 @@ export async function confirmPickList(
       refill_line_picks: refillLinePickRows,
       selected_stop_ids: selectedStopIds,
       selected_machine_ids: selectedMachineIds,
+      next_route_status: nextRouteStatus,
+      remaining_pending_stop_count: remainingPendingStopCount,
     };
 
     const { data: pickupRpcRows, error: pickupRpcError } = await supabase.rpc("confirm_route_pickup_batch", {
       p_route_id: routeId,
       p_expected_route_status: route.status,
-      p_next_route_status: ROUTE_IN_PROGRESS_STATUS,
+      p_next_route_status: nextRouteStatus,
       p_started_at: confirmedAt,
       p_replace_pick_list: !batchMode,
       p_pickup_batch: pickupBatchPayload,
@@ -929,7 +1068,7 @@ export async function confirmPickList(
       p_selected_machine_ids: selectedMachineIds,
     });
 
-    if (pickupRpcError) throwActionError(pickupRpcError, PICKUP_CONFIRMATION_USER_ERROR);
+    if (pickupRpcError) throwActionError(pickupRpcError, PICKUP_CONFIRMATION_FALLBACK_ERROR);
     const rpcPickupBatch = Array.isArray(pickupRpcRows) ? pickupRpcRows[0]?.pickup_batch_id : null;
     pickupBatchId = pickupBatchId ?? (rpcPickupBatch ? String(rpcPickupBatch) : null);
     logPickupBatchId = pickupBatchId;
@@ -955,22 +1094,35 @@ export async function confirmPickList(
     });
 
     revalidateRouteWorkflow(routeId);
-    return { success: true };
+    return actionSuccess();
   } catch (error) {
+    const errorInfo = serializeActionError(error);
     console.error("[operator:pick-list] Error confirming pick list", {
       route_id: routeId,
       pickup_batch_id: logPickupBatchId,
-      stop_ids: logSelectedStopIds,
+      selected_stop_ids: logSelectedStopIds,
       product_ids: logProductIds,
       user_id: logProfile?.id ?? null,
+      user_role: logProfile?.role ?? null,
       user_roles: logProfile?.roles ?? [],
+      user_team_member_id: logProfile?.team_member_id ?? null,
+      route_status: logRouteStatus,
       route_operator_id: logRouteOperatorId,
-      failing_payload: logPayload,
-      picked_items: pickedItems,
+      stop_statuses_before_pickup: logStopStatusesBeforePickup,
+      submitted_pickup_items: logSubmittedPickupItems,
+      warehouse_storage_stock_available: logStorageAvailability,
+      inventory_movement_payload: logInventoryMovementPayload,
+      rpc_payload: logPayload,
+      exact_supabase_postgres_error_code: errorInfo.code,
+      exact_supabase_postgres_error_message: errorInfo.message,
+      exact_supabase_postgres_error_details: errorInfo.details,
+      exact_supabase_postgres_error_hint: errorInfo.hint,
+      stack_trace: errorInfo.stack,
+      raw_error: errorInfo,
+      submitted_raw_picked_items: pickedItems,
       extras,
-      error,
     });
-    return { success: false, error: PICKUP_CONFIRMATION_USER_ERROR };
+    return actionFailure(pickupPublicError(error), { code: String(errorInfo.code ?? "") || undefined });
   }
 }
 

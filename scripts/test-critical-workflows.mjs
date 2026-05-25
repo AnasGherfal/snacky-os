@@ -96,10 +96,20 @@ test("warehouse purchase flow creates ledger inventory and viewer is denied", { 
       email: `qa-warehouse-${id}@snacky.test`,
       password,
       role: "warehouse",
-      roles: ["operator", "warehouse"],
+      roles: ["warehouse"],
     });
     created.authUserIds.push(warehouse.authUserId);
     created.teamMemberIds.push(warehouse.teamMemberId);
+
+    const operatorWarehouse = await createQaUser({
+      service,
+      email: `qa-operator-warehouse-${id}@snacky.test`,
+      password,
+      role: "warehouse",
+      roles: ["operator", "warehouse"],
+    });
+    created.authUserIds.push(operatorWarehouse.authUserId);
+    created.teamMemberIds.push(operatorWarehouse.teamMemberId);
 
     const viewer = await createQaUser({
       service,
@@ -111,14 +121,18 @@ test("warehouse purchase flow creates ledger inventory and viewer is denied", { 
     created.authUserIds.push(viewer.authUserId);
     created.teamMemberIds.push(viewer.teamMemberId);
 
-    const [{ data: isWarehouse }, { data: isOperator }, { data: canAddProducts }] = await Promise.all([
+    const [{ data: isWarehouse }, { data: isOperator }, { data: canAddProducts }, { data: additiveIsWarehouse }, { data: additiveIsOperator }] = await Promise.all([
       warehouse.client.rpc("snacky_current_profile_has_any_role", { allowed_roles: ["warehouse"] }),
       warehouse.client.rpc("snacky_current_profile_has_any_role", { allowed_roles: ["operator"] }),
       warehouse.client.rpc("snacky_current_profile_can_add_products"),
+      operatorWarehouse.client.rpc("snacky_current_profile_has_any_role", { allowed_roles: ["warehouse"] }),
+      operatorWarehouse.client.rpc("snacky_current_profile_has_any_role", { allowed_roles: ["operator"] }),
     ]);
     assert.equal(isWarehouse, true);
-    assert.equal(isOperator, true);
+    assert.equal(isOperator, false);
     assert.equal(canAddProducts, true);
+    assert.equal(additiveIsWarehouse, true);
+    assert.equal(additiveIsOperator, true);
 
     const { data: storage, error: storageError } = await service
       .from("storage_locations")
@@ -267,6 +281,57 @@ test("warehouse purchase flow creates ledger inventory and viewer is denied", { 
     assert.ifError(secondInventoryError);
     const secondStorageQty = secondInventoryRows.reduce((sum, row) => sum + Number(row.quantity_on_hand ?? 0), 0);
     assert.equal(secondStorageQty, secondTotalUnits);
+
+    const additiveTotalUnits = 4;
+    const { data: additivePurchaseRows, error: additivePurchaseError } = await operatorWarehouse.client.rpc("snacky_create_purchase_with_lines", {
+      p_supplier_id: supplier.id,
+      p_order_date: new Date().toISOString().slice(0, 10),
+      p_receipt_number: `QA-ADD-RCPT-${id}`,
+      p_payment_method: "cash",
+      p_payment_status: "paid",
+      p_receipt_url: null,
+      p_receipt_file_name: null,
+      p_receipt_content_type: null,
+      p_receipt_storage_path: null,
+      p_notes: "QA additive-role purchase regression test",
+      p_calculated_total_lyd: 8,
+      p_manual_total_lyd: null,
+      p_total_adjustment_lyd: null,
+      p_total_source: "calculated",
+      p_total_amount: 8,
+      p_created_by: operatorWarehouse.teamMemberId,
+      p_submit_action: "received",
+      p_lines: [
+        {
+          product_id: product.id,
+          line_position: 0,
+          boxes_qty: 1,
+          units_per_box: 4,
+          loose_units_qty: 0,
+          total_units: additiveTotalUnits,
+          unit_cost: 2,
+          unit_cost_lyd: 2,
+          line_total: 8,
+          line_total_lyd: 8,
+        },
+      ],
+    });
+    assert.ifError(additivePurchaseError);
+    const additivePurchase = Array.isArray(additivePurchaseRows) ? additivePurchaseRows[0] : additivePurchaseRows;
+    assert.equal(additivePurchase.status, "received");
+    assert.equal(additivePurchase.movement_count, 1);
+    created.purchaseIds.push(additivePurchase.id);
+
+    const { data: additiveMovements, error: additiveMovementsError } = await operatorWarehouse.client
+      .from("inventory_movements")
+      .select("id, product_id, quantity, from_entity_type, to_entity_type, reason, related_purchase_id")
+      .eq("related_purchase_id", additivePurchase.id);
+    assert.ifError(additiveMovementsError);
+    assert.equal(additiveMovements.length, 1);
+    assert.equal(Number(additiveMovements[0].quantity), additiveTotalUnits);
+    assert.equal(additiveMovements[0].from_entity_type, "supplier");
+    assert.equal(additiveMovements[0].to_entity_type, "storage");
+    assert.equal(additiveMovements[0].reason, "purchase_received");
 
     const { error: viewerPurchaseError } = await viewer.client.rpc("snacky_create_purchase_with_lines", {
       p_supplier_id: supplier.id,
