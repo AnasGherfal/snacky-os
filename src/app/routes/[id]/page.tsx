@@ -15,6 +15,19 @@ function isMissingTable(error: any, tableName: string) {
   return error?.code === "PGRST205" && String(error?.message ?? "").includes(tableName);
 }
 
+function errorText(error: unknown) {
+  if (!error || typeof error !== "object") return String(error ?? "");
+  const row = error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown };
+  return [row.code, row.message, row.details, row.hint].map((value) => String(value ?? "")).filter(Boolean).join(" ");
+}
+
+function isMissingColumn(error: unknown, columns: string[]) {
+  const text = errorText(error).toLowerCase();
+  const code = String((error as { code?: unknown } | null)?.code ?? "");
+  if (!["42703", "PGRST204"].includes(code) && !text.includes("schema cache") && !text.includes("column")) return false;
+  return columns.some((column) => text.includes(column.toLowerCase()));
+}
+
 export default async function RouteDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string }> }) {
   const { id } = await params;
   const { error = "" } = await searchParams;
@@ -131,7 +144,18 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   }
   if (routeStockError) console.error("[routes:detail] Failed to load route stock", { id, error: routeStockError });
   if (fillLinesError) console.error("[routes:detail] Failed to load operator fill lines", { id, error: fillLinesError });
-  if (pickListItemsError && !isMissingTable(pickListItemsError, "route_pick_list_items")) console.error("[routes:detail] Failed to load route pick list items", { id, error: pickListItemsError });
+  let routePickListItems: any[] = pickListItems ?? [];
+  if (pickListItemsError && isMissingColumn(pickListItemsError, ["pickup_batch_id"])) {
+    const { data: fallbackPickListItems, error: fallbackPickListItemsError } = await supabase
+      .from("route_pick_list_items")
+      .select("id, product_id, planned_qty, picked_qty, action_type, substituted_for_product_id, reason, notes, needs_review, created_at, product:products!route_pick_list_items_product_id_fkey(id, name), substituted_product:products!route_pick_list_items_substituted_for_product_id_fkey(id, name)")
+      .eq("route_id", id)
+      .order("created_at", { ascending: true });
+    routePickListItems = fallbackPickListItems ?? [];
+    if (fallbackPickListItemsError && !isMissingTable(fallbackPickListItemsError, "route_pick_list_items")) console.error("[routes:detail] Failed to load fallback route pick list items", { id, error: fallbackPickListItemsError });
+  } else if (pickListItemsError && !isMissingTable(pickListItemsError, "route_pick_list_items")) {
+    console.error("[routes:detail] Failed to load route pick list items", { id, error: pickListItemsError });
+  }
   if (pickupBatchesError && !isMissingTable(pickupBatchesError, "route_pickup_batches")) console.error("[routes:detail] Failed to load pickup batches", { id, error: pickupBatchesError });
 
   const routeStops = stops ?? [];
@@ -140,7 +164,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     ...routeStopItems.map((line: any) => line.product_id),
     ...(routeStock ?? []).map((line: any) => line.product_id),
     ...(fillLines ?? []).flatMap((line: any) => [line.assigned_product_id, line.product_id, line.substitute_product_id]),
-    ...(pickListItems ?? []).flatMap((line: any) => [line.product_id, line.substituted_for_product_id]),
+    ...routePickListItems.flatMap((line: any) => [line.product_id, line.substituted_for_product_id]),
   ].filter(Boolean)));
   const [{ data: machines }, { data: products }, { data: movements }, { data: cashCollections }, { data: issues }] = await Promise.all([
     machineIds.length ? supabase.from("machines").select("id, name, machine_code").in("id", machineIds) : Promise.resolve({ data: [] }),
@@ -410,13 +434,13 @@ export default async function RouteDetailPage({ params, searchParams }: { params
               <h2 className="text-lg font-semibold">Confirmed pick list</h2>
               <p className="text-sm text-slate-500">Actual products picked before the operator left storage.</p>
             </div>
-            <StatusBadge status={(pickListItems ?? []).some((line: any) => line.needs_review) ? "needs_review" : "ok"} />
+            <StatusBadge status={routePickListItems.some((line: any) => line.needs_review) ? "needs_review" : "ok"} />
           </div>
-          {!pickListItems?.length ? (
+          {!routePickListItems.length ? (
             <EmptyState title="Pick list not confirmed" body="The operator has not confirmed storage-to-bag picking for this route yet." />
           ) : (
             <DataTable headers={["Product", "Type", "Planned", "Picked", "Review", "Reason"]}>
-              {pickListItems.map((line: any) => (
+              {routePickListItems.map((line: any) => (
                 <tr key={line.id}>
                   <td>{line.product?.name ?? productById.get(line.product_id)?.name ?? "Unknown product"}</td>
                   <td><StatusBadge status={line.action_type} /></td>

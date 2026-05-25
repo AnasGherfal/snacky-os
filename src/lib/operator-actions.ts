@@ -1,5 +1,6 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "@/lib/activity-log";
 import { actionFailure, actionSuccess, type ActionResult } from "@/lib/action-result";
@@ -26,6 +27,7 @@ import { REFILL_PHOTO_BUCKET } from "@/lib/storage-buckets";
 
 const REFILL_PHOTO_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"];
 const REFILL_PHOTO_MAX_SIZE = 10 * 1024 * 1024;
+const PICKUP_CONFIRMATION_USER_ERROR = "Could not confirm pickup. Please contact admin.";
 
 function isMissingTable(error: any, tableName: string) {
   return error?.code === "PGRST205" && String(error?.message ?? "").includes(tableName);
@@ -80,63 +82,6 @@ function unitQuantity(value: unknown) {
   const parsed = Number(value ?? 0);
   if (!Number.isFinite(parsed)) return 0;
   return Math.max(0, Math.floor(parsed));
-}
-
-function optionalColumnError(error: unknown, optionalColumns: string[]) {
-  if (!error || typeof error !== "object") return null;
-  const row = error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown };
-  const code = String(row.code ?? "");
-  const text = [row.code, row.message, row.details, row.hint].map((value) => String(value ?? "")).join(" ").toLowerCase();
-  if (!["42703", "PGRST204"].includes(code) && !text.includes("schema cache") && !text.includes("column")) return null;
-  return optionalColumns.find((column) => text.includes(column.toLowerCase())) ?? null;
-}
-
-function stripColumnFromRows<T extends Record<string, unknown>>(rows: T[], column: string) {
-  return rows.map((row) => {
-    const next = { ...row };
-    delete next[column];
-    return next;
-  });
-}
-
-async function insertPickListRowsWithOptionalColumnFallback(
-  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>,
-  rows: Record<string, unknown>[],
-) {
-  let rowsToInsert = rows;
-  const removedColumns: string[] = [];
-
-  for (;;) {
-    const result = await supabase.from("route_pick_list_items").insert(rowsToInsert);
-    if (!result.error) return result.error;
-
-    const missingColumn = optionalColumnError(result.error, ["route_stop_id", "route_stop_item_id", "machine_id", "pickup_batch_id"].filter((column) => !removedColumns.includes(column)));
-    if (!missingColumn) return result.error;
-
-    removedColumns.push(missingColumn);
-    rowsToInsert = stripColumnFromRows(rowsToInsert, missingColumn);
-    console.warn("[operator:pick-list] Retrying pick list insert without optional stop column", { missingColumn, removedColumns });
-  }
-}
-
-async function insertInventoryMovementsWithOptionalColumnFallback(
-  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>,
-  rows: Record<string, unknown>[],
-) {
-  let rowsToInsert = rows;
-  const removedColumns: string[] = [];
-
-  for (;;) {
-    const result = await supabase.from("inventory_movements").insert(rowsToInsert);
-    if (!result.error) return result.error;
-
-    const missingColumn = optionalColumnError(result.error, ["related_pickup_batch_id"].filter((column) => !removedColumns.includes(column)));
-    if (!missingColumn) return result.error;
-
-    removedColumns.push(missingColumn);
-    rowsToInsert = stripColumnFromRows(rowsToInsert, missingColumn);
-    console.warn("[operator:pick-list] Retrying inventory movement insert without optional pickup batch column", { missingColumn, removedColumns });
-  }
 }
 
 function machineFillDelta(movement: any) {
@@ -332,6 +277,10 @@ export async function confirmPickList(
   const readClient = getSupabaseAdminClient() ?? supabase;
   let logProfile: Awaited<ReturnType<typeof getCurrentProfile>> | null = null;
   let logRouteOperatorId: string | null = null;
+  let logPickupBatchId: string | null = null;
+  let logSelectedStopIds: string[] = [];
+  let logProductIds: string[] = [];
+  let logPayload: Record<string, unknown> = {};
 
   try {
     const profile = await getCurrentProfile();
@@ -359,6 +308,7 @@ export async function confirmPickList(
     const selectedStopIds = Array.from(new Set((options.stopIds ?? []).map((id) => String(id ?? "").trim()).filter(Boolean)));
     const batchMode = selectedStopIds.length > 0;
     const selectedStopIdSet = new Set(selectedStopIds);
+    logSelectedStopIds = selectedStopIds;
 
     const { data: routeStops, error: routeStopsError } = await supabase
       .from("route_stops")
@@ -538,40 +488,32 @@ export async function confirmPickList(
       });
     });
 
+    const newRouteStopItemRows: Record<string, unknown>[] = [];
     if (newAssignedExtras.size) {
-      const insertRows = Array.from(newAssignedExtras.values()).map((item) => ({
-        route_id: routeId,
-        route_stop_id: item.routeStopId,
-        machine_id: item.machineId,
-        product_id: item.productId,
-        machine_slot_id: null,
-        slot_code: null,
-        planned_quantity: item.quantity,
-        picked_quantity: item.quantity,
-        source: "manual_admin_assignment",
-        notes: "Added during storage pickup",
-      }));
-      const { data: createdStopItems, error: createStopItemError } = await supabase
-        .from("route_stop_items")
-        .insert(insertRows)
-        .select("id, route_stop_id, machine_id, product_id, planned_quantity");
-      if (createStopItemError && !isMissingTable(createStopItemError, "route_stop_items")) throwActionError(createStopItemError, "Could not save machine-assigned added products.");
-
-      (createdStopItems ?? []).forEach((line: any) => {
-        const productId = String(line.product_id ?? "");
-        const routeStopId = cleanId(line.route_stop_id);
-        const extra = newAssignedExtras.get(routeStopProductKey(routeStopId, productId));
-        if (!extra || !productId || !routeStopId) return;
+      Array.from(newAssignedExtras.values()).forEach((extra) => {
+        const stopItemId = randomUUID();
         const planned: PlannedStopItem = {
-          id: String(line.id ?? ""),
-          routeStopId,
-          machineId: cleanId(line.machine_id),
-          productId,
-          plannedQty: unitQuantity(line.planned_quantity),
+          id: stopItemId,
+          routeStopId: extra.routeStopId,
+          machineId: extra.machineId,
+          productId: extra.productId,
+          plannedQty: unitQuantity(extra.quantity),
         };
+        newRouteStopItemRows.push({
+          id: stopItemId,
+          route_stop_id: extra.routeStopId,
+          machine_id: extra.machineId,
+          product_id: extra.productId,
+          machine_slot_id: null,
+          slot_code: null,
+          planned_quantity: extra.quantity,
+          picked_quantity: extra.quantity,
+          source: "manual_admin_assignment",
+          notes: "Added during storage pickup",
+        });
         plannedStopItems.push(planned);
         routeStopItemById.set(planned.id, planned);
-        routeStopProductToItem.set(routeStopProductKey(routeStopId, productId), planned);
+        routeStopProductToItem.set(routeStopProductKey(extra.routeStopId, extra.productId), planned);
         addPickedStopItem({
           ...planned,
           quantity: extra.quantity,
@@ -608,6 +550,7 @@ export async function confirmPickList(
     if (!pickedByProduct.size) throw new Error("No stock quantities were picked.");
 
     const productIds = Array.from(pickedByProduct.keys());
+    logProductIds = productIds;
     const { data: productRows, error: productError } = productIds.length
       ? await readClient
           .from("products")
@@ -774,37 +717,26 @@ export async function confirmPickList(
       }
     }
 
-    let pickupBatchId: string | null = null;
-    if (batchMode) {
-      const now = new Date().toISOString();
-      const productSummary = Array.from(pickedByProduct.entries()).map(([productId, quantity]) => ({
-        product_id: productId,
-        product_name: productById.get(productId)?.name ?? null,
-        quantity,
-      }));
-      const { data: pickupBatch, error: pickupBatchError } = await supabase
-        .from("route_pickup_batches")
-        .insert({
+    const confirmedAt = new Date().toISOString();
+    let pickupBatchId: string | null = batchMode ? randomUUID() : null;
+    logPickupBatchId = pickupBatchId;
+    const productSummary = Array.from(pickedByProduct.entries()).map(([productId, quantity]) => ({
+      product_id: productId,
+      product_name: productById.get(productId)?.name ?? null,
+      quantity,
+    }));
+    const pickupBatchPayload = batchMode
+      ? {
+          id: pickupBatchId,
           route_id: routeId,
           operator_id: route.operator_id,
           status: "confirmed",
           selected_stop_ids: selectedStopIds,
           product_summary: productSummary,
           storage_deducted: stockAllocations.length > 0,
-          confirmed_at: now,
-        })
-        .select("id")
-        .single();
-      if (pickupBatchError && !isMissingTable(pickupBatchError, "route_pickup_batches")) throwActionError(pickupBatchError, "Could not create this pickup batch.");
-      pickupBatchId = pickupBatch?.id ?? null;
-
-      if (pickupBatchId) {
-        const { error: batchStopsError } = await supabase.from("route_pickup_batch_stops").insert(
-          selectedStopIds.map((stopId) => ({ pickup_batch_id: pickupBatchId, route_stop_id: stopId })),
-        );
-        if (batchStopsError && !isMissingTable(batchStopsError, "route_pickup_batch_stops")) throwActionError(batchStopsError, "Could not save pickup batch stops.");
-      }
-    }
+          confirmed_at: confirmedAt,
+        }
+      : null;
 
     // Create inventory movements for each picked item
     const movements = [
@@ -846,12 +778,6 @@ export async function confirmPickList(
         return returnRows;
       }),
     ];
-
-    if (movements.length) {
-      const movementError = await insertInventoryMovementsWithOptionalColumnFallback(supabase, movements);
-
-      if (movementError) throwActionError(movementError, "Could not create pickup adjustment inventory movements.");
-    }
 
     const pickListRows = [
       ...pickedStopItemRows.map((item) => {
@@ -910,16 +836,6 @@ export async function confirmPickList(
       })),
     ].filter((item) => Number(item.picked_qty ?? 0) > 0 || Number(item.planned_qty ?? 0) > 0);
 
-    if (!batchMode) {
-      const { error: pickListDeleteError } = await supabase.from("route_pick_list_items").delete().eq("route_id", routeId);
-      if (pickListDeleteError && !isMissingTable(pickListDeleteError, "route_pick_list_items")) throwActionError(pickListDeleteError, "Could not update the confirmed pick list.");
-    }
-
-    if (pickListRows.length) {
-      const pickListError = await insertPickListRowsWithOptionalColumnFallback(supabase, pickListRows);
-      if (pickListError && !isMissingTable(pickListError, "route_pick_list_items")) throwActionError(pickListError, "Could not save the confirmed pick list.");
-    }
-
     const { data: routeOrders, error: routeOrdersError } = await supabase
       .from("refill_orders")
       .select("id, machine_id, refill_order_lines(id, product_id, final_qty_to_take, suggested_qty)")
@@ -936,34 +852,14 @@ export async function confirmPickList(
       });
     });
 
-    const stockLineRows = Array.from(new Set([...Array.from(plannedByProduct.keys()), ...Array.from(pickedByProduct.keys())])).map((productId) => ({
-      route_id: routeId,
-      product_id: productId,
-      planned_qty: plannedByProduct.get(productId) ?? 0,
-      picked_qty: batchMode
-        ? (existingPickedByProduct.get(productId) ?? 0) + (pickedByProduct.get(productId) ?? 0)
-        : pickedByProduct.get(productId) ?? 0,
-      updated_at: new Date().toISOString(),
-    }));
+    const stopItemPickRows = pickedStopItemRows
+      .filter((entry) => Number(entry.quantity) >= 0 && entry.id)
+      .map((item) => ({
+        id: item.id,
+        picked_quantity: Math.max(0, Number(item.quantity ?? 0)),
+      }));
 
-    if (stockLineRows.length) {
-      const { error: stockLineError } = await supabase
-        .from("route_stock_lines")
-        .upsert(stockLineRows, { onConflict: "route_id,product_id" });
-
-      if (stockLineError) throwActionError(stockLineError, "Could not update route stock totals.");
-    }
-
-    for (const item of pickedStopItemRows.filter((entry) => Number(entry.quantity) >= 0)) {
-      if (item.id) {
-        const { error: stopItemPickError } = await supabase
-          .from("route_stop_items")
-          .update({ picked_quantity: Math.max(0, Number(item.quantity ?? 0)), updated_at: new Date().toISOString() })
-          .eq("id", item.id);
-        if (stopItemPickError && !isMissingTable(stopItemPickError, "route_stop_items")) throwActionError(stopItemPickError, "Could not update machine-level pickup quantities.");
-      }
-    }
-
+    const refillLinePickRows: { id: string; picked_qty: number }[] = [];
     for (const item of pickedStopItemRows.filter((entry) => Number(entry.quantity) >= 0)) {
       let remaining = Number(item.quantity);
       const lines = item.machineId ? (linesByMachineProduct.get(`${item.machineId}:${String(item.productId)}`) ?? []) : [];
@@ -972,13 +868,7 @@ export async function confirmPickList(
         const plannedQty = Number(line.final_qty_to_take ?? line.suggested_qty ?? 0);
         const pickedQty = Math.max(0, Math.min(remaining, plannedQty));
         remaining -= pickedQty;
-
-        const { error: lineError } = await supabase
-          .from("refill_order_lines")
-          .update({ picked_qty: pickedQty })
-          .eq("id", line.id);
-
-        if (lineError) throwActionError(lineError, "Could not update refill line picked quantities.");
+        refillLinePickRows.push({ id: line.id, picked_qty: pickedQty });
       }
     }
 
@@ -990,61 +880,59 @@ export async function confirmPickList(
         const plannedQty = Number(line.final_qty_to_take ?? line.suggested_qty ?? 0);
         const pickedQty = Math.max(0, Math.min(remaining, plannedQty));
         remaining -= pickedQty;
-
-        const { error: lineError } = await supabase
-          .from("refill_order_lines")
-          .update({ picked_qty: pickedQty })
-          .eq("id", line.id);
-
-        if (lineError) throwActionError(lineError, "Could not update refill line picked quantities.");
+        refillLinePickRows.push({ id: line.id, picked_qty: pickedQty });
       }
     }
 
-    // Keep the persisted route status on the stable in_progress enum value; the
-    // route_stock_lines and pick-list rows carry the pickup detail.
-    let nextPickupStatus: RouteStatus = ROUTE_IN_PROGRESS_STATUS;
-    let routeStatusResult = await supabase
-      .from("routes")
-      .update({ status: nextPickupStatus, started_at: new Date().toISOString() })
-      .eq("id", routeId)
-      .eq("status", route.status);
-
-    if (routeStatusResult.error && isRouteStatusEnumMismatch(routeStatusResult.error, nextPickupStatus)) {
-      const fallbackStatus = fallbackRouteStatusForEnumMismatch(nextPickupStatus);
-      if (fallbackStatus) {
-        nextPickupStatus = fallbackStatus;
-        routeStatusResult = await supabase
-          .from("routes")
-          .update({ status: nextPickupStatus, started_at: new Date().toISOString() })
-          .eq("id", routeId)
-          .eq("status", route.status);
-      }
-    }
-
-    if (routeStatusResult.error) throwActionError(routeStatusResult.error, "Could not start this route after picking stock.");
-
-    if (batchMode && selectedStopIds.length) {
-      const { error: stopStatusError } = await supabase
-        .from("route_stops")
-        .update({ status: ROUTE_STOP_PICKED_STATUS })
-        .eq("route_id", routeId)
-        .in("id", selectedStopIds)
-        .eq("status", ROUTE_STOP_PENDING_STATUS);
-      if (stopStatusError) throwActionError(stopStatusError, "Could not mark selected stops as picked.");
-    }
+    const stockLineRows = Array.from(new Set([...Array.from(plannedByProduct.keys()), ...Array.from(pickedByProduct.keys())])).map((productId) => ({
+      route_id: routeId,
+      product_id: productId,
+      planned_qty: plannedByProduct.get(productId) ?? 0,
+      picked_qty: batchMode
+        ? (existingPickedByProduct.get(productId) ?? 0) + (pickedByProduct.get(productId) ?? 0)
+        : pickedByProduct.get(productId) ?? 0,
+      updated_at: confirmedAt,
+    }));
 
     const selectedMachineIds = batchMode
       ? Array.from(new Set(selectedStopIds.map((stopId) => cleanId(stopById.get(stopId)?.machine_id)).filter((id): id is string => Boolean(id))))
       : [];
-    let refillStatusQuery = supabase
-      .from("refill_orders")
-      .update({ status: "picked" })
-      .eq("route_id", routeId)
-      .in("status", ["assigned", "in_progress", "picked"]);
-    if (batchMode) refillStatusQuery = refillStatusQuery.in("machine_id", selectedMachineIds);
-    const { error: refillError } = await refillStatusQuery;
 
-    if (refillError) throwActionError(refillError, "Could not update refill order status.");
+    logPayload = {
+      pickup_batch: pickupBatchPayload,
+      batch_stop_ids: batchMode ? selectedStopIds : [],
+      new_stop_item_rows: newRouteStopItemRows,
+      inventory_movements: movements,
+      pick_list_rows: pickListRows,
+      stock_line_rows: stockLineRows,
+      stop_item_picks: stopItemPickRows,
+      refill_line_picks: refillLinePickRows,
+      selected_stop_ids: selectedStopIds,
+      selected_machine_ids: selectedMachineIds,
+    };
+
+    const { data: pickupRpcRows, error: pickupRpcError } = await supabase.rpc("confirm_route_pickup_batch", {
+      p_route_id: routeId,
+      p_expected_route_status: route.status,
+      p_next_route_status: ROUTE_IN_PROGRESS_STATUS,
+      p_started_at: confirmedAt,
+      p_replace_pick_list: !batchMode,
+      p_pickup_batch: pickupBatchPayload,
+      p_batch_stop_ids: batchMode ? selectedStopIds : [],
+      p_new_stop_item_rows: newRouteStopItemRows,
+      p_inventory_movements: movements,
+      p_pick_list_rows: pickListRows,
+      p_stock_line_rows: stockLineRows,
+      p_stop_item_picks: stopItemPickRows,
+      p_refill_line_picks: refillLinePickRows,
+      p_selected_stop_ids: selectedStopIds,
+      p_selected_machine_ids: selectedMachineIds,
+    });
+
+    if (pickupRpcError) throwActionError(pickupRpcError, PICKUP_CONFIRMATION_USER_ERROR);
+    const rpcPickupBatch = Array.isArray(pickupRpcRows) ? pickupRpcRows[0]?.pickup_batch_id : null;
+    pickupBatchId = pickupBatchId ?? (rpcPickupBatch ? String(rpcPickupBatch) : null);
+    logPickupBatchId = pickupBatchId;
 
     await logActivity({
       profile,
@@ -1071,14 +959,18 @@ export async function confirmPickList(
   } catch (error) {
     console.error("[operator:pick-list] Error confirming pick list", {
       route_id: routeId,
+      pickup_batch_id: logPickupBatchId,
+      stop_ids: logSelectedStopIds,
+      product_ids: logProductIds,
       user_id: logProfile?.id ?? null,
       user_roles: logProfile?.roles ?? [],
       route_operator_id: logRouteOperatorId,
+      failing_payload: logPayload,
       picked_items: pickedItems,
       extras,
       error,
     });
-    return { success: false, error: getErrorMessage(error, "Could not confirm the pick list.") };
+    return { success: false, error: PICKUP_CONFIRMATION_USER_ERROR };
   }
 }
 

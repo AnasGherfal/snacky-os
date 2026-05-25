@@ -7,6 +7,7 @@ import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { QuantityStepper } from "@/components/QuantityStepper";
 import { EmptyState, ErrorState, LoadingState, PageHeader, SecondaryButton } from "@/components/ui";
 import { completeStop, markStopInProgress, uploadRefillProofPhoto } from "@/lib/operator-actions";
+import { ROUTE_STOP_COMPLETED_STATUS, ROUTE_STOP_IN_PROGRESS_STATUS, ROUTE_STOP_PICKED_STATUS } from "@/lib/route-workflow";
 
 const reasonOptions = [
   "Product not available in storage",
@@ -265,9 +266,9 @@ export default function MachineStopPage() {
         }
 
         setStopData(data);
-        if (data.stopStatus === "picked") {
+        if (data.stopStatus === ROUTE_STOP_PICKED_STATUS) {
           markStopInProgress(routeId, stopId).then((result) => {
-            if (result.success) setStopData((current) => current ? { ...current, stopStatus: "in_progress" } : current);
+            if (result.success) setStopData((current) => current ? { ...current, stopStatus: ROUTE_STOP_IN_PROGRESS_STATUS } : current);
           }).catch((err) => console.warn("[operator:stop] Could not mark stop in progress", err));
         }
         const initialQtys: Record<string, number> = {};
@@ -347,8 +348,8 @@ export default function MachineStopPage() {
 
   const handleCompleteStop = async () => {
     if (!stopData) return;
-    const canReuseCompletedProof = stopData.stopStatus === "completed" && stopData.hasCompletionPhoto;
-    if (!cleaningDone && stopData.stopStatus !== "completed") {
+    const canReuseCompletedProof = stopData.stopStatus === ROUTE_STOP_COMPLETED_STATUS && stopData.hasCompletionPhoto;
+    if (!cleaningDone && stopData.stopStatus !== ROUTE_STOP_COMPLETED_STATUS) {
       setError("Please complete the cleaning checklist before finishing.");
       return;
     }
@@ -431,7 +432,7 @@ export default function MachineStopPage() {
     );
   }
 
-  const isEditingCompletedStop = stopData.stopStatus === "completed";
+  const isEditingCompletedStop = stopData.stopStatus === ROUTE_STOP_COMPLETED_STATUS;
   const canSubmitStop = !submitting && (cleaningDone || isEditingCompletedStop);
 
   return (

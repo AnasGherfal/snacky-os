@@ -4,7 +4,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge, SectionCard } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute } from "@/lib/authz";
-import { isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isRouteStopActiveStatus, isRouteStopDoneStatus, isRouteStopPendingStatus, nextOperatorRouteHref, routeDisplayStatus } from "@/lib/route-workflow";
+import { isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isRouteStopActiveStatus, isRouteStopDoneStatus, isRouteStopPendingStatus, nextOperatorRouteHref, routeDisplayStatus, ROUTE_STOP_COMPLETED_STATUS } from "@/lib/route-workflow";
 import { skipStop } from "@/lib/operator-actions";
 
 export default async function OperatorRouteDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -178,12 +178,12 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
                         <Link href={`/operator/routes/${routeId}/pick-list`} className="btn-primary w-full text-base sm:w-auto">
                           Pick this stop
                         </Link>
-                      ) : isRouteStopActiveStatus(stop.status) || stop.status === "completed" ? (
+                      ) : isRouteStopActiveStatus(stop.status) || stop.status === ROUTE_STOP_COMPLETED_STATUS ? (
                         <Link
                           href={`/operator/routes/${routeId}/stops/${stop.id}`}
                           className="btn-primary w-full text-base sm:w-auto"
                         >
-                          {stop.status === "completed" ? "Edit stop" : "Continue filling"}
+                          {stop.status === ROUTE_STOP_COMPLETED_STATUS ? "Edit stop" : "Continue filling"}
                         </Link>
                       ) : null}
                       {!isRouteStopDoneStatus(stop.status) ? (

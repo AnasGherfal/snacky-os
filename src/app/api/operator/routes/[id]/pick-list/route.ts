@@ -2,7 +2,7 @@ import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-
 import { NextResponse } from "next/server";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute } from "@/lib/authz";
-import { isTerminalRouteStatus } from "@/lib/route-workflow";
+import { isTerminalRouteStatus, ROUTE_STOP_PENDING_STATUS } from "@/lib/route-workflow";
 
 function isMissingTable(error: any, tableName: string) {
   return error?.code === "PGRST205" && String(error?.message ?? "").includes(tableName);
@@ -89,7 +89,7 @@ export async function GET(
       if (stopId) stopById.set(stopId, stop);
       if (machineId) stopByMachine.set(machineId, stop);
     });
-    const pendingStopIds = new Set((stops ?? []).filter((stop: any) => String(stop.status ?? "") === "pending").map((stop: any) => String(stop.id)));
+    const pendingStopIds = new Set((stops ?? []).filter((stop: any) => String(stop.status ?? "") === ROUTE_STOP_PENDING_STATUS).map((stop: any) => String(stop.id)));
 
     let { data: stopItems, error: stopItemsError }: { data: any[] | null; error: any } = await supabase
       .from("route_stop_items")
@@ -158,7 +158,10 @@ export async function GET(
     const legacyPickedByProduct = new Map<string, { quantity: number; reason: string | null; notes: string | null }>();
     const pickedByProduct = new Map<string, number>();
     const extraItems = (pickListItems ?? [])
-      .filter((line: any) => line.action_type === "extra_product" && line.product_id && line.route_stop_id && pendingStopIds.has(String(line.route_stop_id)) && !line.route_stop_item_id)
+      .filter((line: any) => {
+        if (line.action_type !== "extra_product" || !line.product_id || line.route_stop_item_id) return false;
+        return !line.route_stop_id || pendingStopIds.has(String(line.route_stop_id));
+      })
       .map((line: any) => {
         const productId = String(line.product_id ?? "").trim();
         const quantity = unitQuantity(line.picked_qty);
@@ -179,7 +182,7 @@ export async function GET(
       const productId = String(line.product_id ?? "").trim();
       if (!productId) return;
       const lineStopId = line.route_stop_id ? String(line.route_stop_id) : null;
-      if (!lineStopId || !pendingStopIds.has(lineStopId)) return;
+      if (lineStopId && !pendingStopIds.has(lineStopId)) return;
       const quantity = unitQuantity(line.picked_qty);
       pickedByProduct.set(productId, (pickedByProduct.get(productId) ?? 0) + quantity);
       const next = { quantity, reason: line.reason ?? null, notes: line.notes ?? null };
@@ -262,7 +265,7 @@ export async function GET(
       const routeStopId = line.route_stop_id ? String(line.route_stop_id) : null;
       const routeStopItemId = String(line.id ?? "");
       const stop = routeStopId ? stopById.get(routeStopId) : stopByMachine.get(String(line.machine_id ?? ""));
-      if (String(stop?.status ?? "") !== "pending") return;
+      if (String(stop?.status ?? "") !== ROUTE_STOP_PENDING_STATUS) return;
       const machine = firstRelation(stop?.machine) ?? firstRelation(line.machine);
       const location = firstRelation((machine as any)?.location);
       const product = firstRelation(line.product);
@@ -422,7 +425,7 @@ export async function GET(
       confirmed,
       locked: isTerminalRouteStatus(route.status),
       routeStatus: route.status,
-      pendingStopCount: (stops ?? []).filter((stop: any) => String(stop.status ?? "") === "pending").length,
+      pendingStopCount: (stops ?? []).filter((stop: any) => String(stop.status ?? "") === ROUTE_STOP_PENDING_STATUS).length,
       debug: process.env.NODE_ENV === "development"
         ? { routeId, routeStopItemsCount: stopItems?.length ?? 0, aggregatedPickListCount: items.length, routePickListItemsCount: pickListItems?.length ?? 0, productOptionsCount: productOptions.length, operatorTeamMemberId: profile?.team_member_id ?? null }
         : undefined,

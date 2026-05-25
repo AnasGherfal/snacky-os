@@ -7,6 +7,7 @@ import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { QuantityStepper } from "@/components/QuantityStepper";
 import { EmptyState, ErrorState, LoadingState, PageHeader, SecondaryButton, SectionCard } from "@/components/ui";
 import { applyPendingStopRecommendationRefresh, confirmPickList, previewPendingStopRecommendationRefresh, startRoute, type PendingStopRefreshComparison } from "@/lib/operator-actions";
+import { ROUTE_STOP_PENDING_STATUS } from "@/lib/route-workflow";
 
 const UNASSIGNED_EXTRA_TARGET = "__unassigned__";
 
@@ -244,7 +245,7 @@ export default function PickListPage() {
         machineCode: group.machine_code || "-",
         locationName: group.location_name || "Unknown location",
         stopOrder: Number(group.stop_order ?? 0),
-        stopStatus: group.stop_status ?? "pending",
+        stopStatus: group.stop_status ?? ROUTE_STOP_PENDING_STATUS,
         items: (Array.isArray(group.items) ? group.items : []).map((item: any) => {
           const requestedQty = Number(item.planned_qty ?? 0);
           const availableStorageQty = Number(item.available_storage_qty ?? 0);

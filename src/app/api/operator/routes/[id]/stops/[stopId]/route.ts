@@ -2,6 +2,7 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { NextResponse } from "next/server";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute } from "@/lib/authz";
+import { ROUTE_STOP_PENDING_STATUS } from "@/lib/route-workflow";
 
 function buildDebugDetails({
   profile,
@@ -30,6 +31,13 @@ function buildDebugDetails({
 
 function isMissingTable(error: any, tableName: string) {
   return error?.code === "PGRST205" && String(error?.message ?? "").includes(tableName);
+}
+
+function isMissingColumn(error: any, columns: string[]) {
+  const code = String(error?.code ?? "");
+  const text = [error?.code, error?.message, error?.details, error?.hint].map((value) => String(value ?? "")).join(" ").toLowerCase();
+  if (!["42703", "PGRST204"].includes(code) && !text.includes("schema cache") && !text.includes("column")) return false;
+  return columns.some((column) => text.includes(column.toLowerCase()));
 }
 
 function errorMessage(error: unknown) {
@@ -131,15 +139,40 @@ export async function GET(
       );
     }
 
-    if (stop.status === "pending") {
-      return NextResponse.json(
-        {
-          error: "Pick this stop's products before opening machine execution.",
-          code: "STOP_PICKUP_REQUIRED",
-          debug: buildDebugDetails({ profile, routeId, stopId, route, stop }),
-        },
-        { status: 409 },
-      );
+    if (stop.status === ROUTE_STOP_PENDING_STATUS) {
+      let { data: legacyPickupRows, error: legacyPickupError }: { data: any[] | null; error: any } = await supabase
+        .from("route_pick_list_items")
+        .select("id, route_stop_id, route_stop_item_id, machine_id, picked_qty")
+        .eq("route_id", routeId)
+        .gt("picked_qty", 0);
+
+      if (legacyPickupError && isMissingColumn(legacyPickupError, ["route_stop_id", "route_stop_item_id", "machine_id"])) {
+        const fallback = await supabase
+          .from("route_pick_list_items")
+          .select("id, picked_qty")
+          .eq("route_id", routeId)
+          .gt("picked_qty", 0);
+        legacyPickupRows = fallback.data ? fallback.data.map((row: any) => ({ ...row, route_stop_id: null, route_stop_item_id: null, machine_id: null })) : null;
+        legacyPickupError = fallback.error;
+      }
+
+      const hasLegacyRoutePickup = !legacyPickupError && (legacyPickupRows ?? []).some((row: any) => {
+        const rowStopId = row.route_stop_id ? String(row.route_stop_id) : null;
+        const rowMachineId = row.machine_id ? String(row.machine_id) : null;
+        return rowStopId === stopId || rowMachineId === String(stop?.machine_id ?? "") || (!rowStopId && !rowMachineId);
+      });
+
+      if (!hasLegacyRoutePickup) {
+        if (legacyPickupError && !isMissingTable(legacyPickupError, "route_pick_list_items")) console.error("[operator:stop] Failed to verify pending stop pickup", { routeId, stopId, error: legacyPickupError });
+        return NextResponse.json(
+          {
+            error: "Pick this stop's products before opening machine execution.",
+            code: "STOP_PICKUP_REQUIRED",
+            debug: buildDebugDetails({ profile, routeId, stopId, route, stop }),
+          },
+          { status: 409 },
+        );
+      }
     }
 
     const { data: machine, error: machineError } = await supabase

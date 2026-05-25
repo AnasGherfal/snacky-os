@@ -1,5 +1,6 @@
 alter type route_stop_status add value if not exists 'picked';
 alter type route_stop_status add value if not exists 'in_progress';
+alter type route_stop_status add value if not exists 'canceled';
 
 create table if not exists public.route_pickup_batches (
   id uuid primary key default gen_random_uuid(),

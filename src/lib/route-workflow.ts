@@ -102,13 +102,28 @@ export const ROUTE_STOP_PICKED_STATUS = "picked";
 export const ROUTE_STOP_IN_PROGRESS_STATUS = "in_progress";
 export const ROUTE_STOP_COMPLETED_STATUS = "completed";
 export const ROUTE_STOP_SKIPPED_STATUS = "skipped";
+export const ROUTE_STOP_CANCELED_STATUS = "canceled";
 
-export const ROUTE_STOP_DONE_STATUSES = [
+export const ROUTE_STOP_STATUSES = [
+  ROUTE_STOP_PENDING_STATUS,
+  ROUTE_STOP_PICKED_STATUS,
+  ROUTE_STOP_IN_PROGRESS_STATUS,
   ROUTE_STOP_COMPLETED_STATUS,
   ROUTE_STOP_SKIPPED_STATUS,
+  ROUTE_STOP_CANCELED_STATUS,
+  "arrived",
+  "refilling",
+  "cash_collected",
+  "issue_reported",
 ] as const;
 
-export const ROUTE_STOP_ACTIVE_STATUSES = [
+export const COMPLETED_STOP_STATUSES = [
+  ROUTE_STOP_COMPLETED_STATUS,
+  ROUTE_STOP_SKIPPED_STATUS,
+  ROUTE_STOP_CANCELED_STATUS,
+] as const;
+
+export const ACTIVE_STOP_STATUSES = [
   ROUTE_STOP_PICKED_STATUS,
   ROUTE_STOP_IN_PROGRESS_STATUS,
   "arrived",
@@ -116,6 +131,9 @@ export const ROUTE_STOP_ACTIVE_STATUSES = [
   "cash_collected",
   "issue_reported",
 ] as const;
+
+export const ROUTE_STOP_DONE_STATUSES = COMPLETED_STOP_STATUSES;
+export const ROUTE_STOP_ACTIVE_STATUSES = ACTIVE_STOP_STATUSES;
 
 function includesStatus<const T extends readonly string[]>(statuses: T, status: string | null | undefined) {
   return statuses.includes(String(status ?? "") as T[number]);

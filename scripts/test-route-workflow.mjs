@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   ACTIVE_ROUTE_STATUSES,
+  ACTIVE_STOP_STATUSES,
+  COMPLETED_STOP_STATUSES,
   OPERATOR_VISIBLE_ROUTE_STATUSES,
   ROUTE_ASSIGNED_STATUS,
   ROUTE_AVAILABLE_STATUS,
@@ -13,6 +15,7 @@ import {
   ROUTE_IN_PROGRESS_STATUS,
   ROUTE_PICKUP_CONFIRMED_STATUS,
   ROUTE_RESERVATION_STATUSES,
+  ROUTE_STOP_STATUSES,
   TERMINAL_ROUTE_STATUSES,
   fallbackRouteStatusForEnumMismatch,
   isActiveRouteStatus,
@@ -73,8 +76,12 @@ test("route creation and display statuses handle current and migrated databases"
 });
 
 test("partial route continuation respects independent stop statuses", () => {
+  assert.deepEqual([...ROUTE_STOP_STATUSES], ["pending", "picked", "in_progress", "completed", "skipped", "canceled", "arrived", "refilling", "cash_collected", "issue_reported"]);
+  assert.deepEqual([...ACTIVE_STOP_STATUSES], ["picked", "in_progress", "arrived", "refilling", "cash_collected", "issue_reported"]);
+  assert.deepEqual([...COMPLETED_STOP_STATUSES], ["completed", "skipped", "canceled"]);
   assert.equal(isRouteStopDoneStatus("completed"), true);
   assert.equal(isRouteStopDoneStatus("skipped"), true);
+  assert.equal(isRouteStopDoneStatus("canceled"), true);
   assert.equal(isRouteStopActiveStatus("picked"), true);
   assert.equal(isRouteStopActiveStatus("in_progress"), true);
 
