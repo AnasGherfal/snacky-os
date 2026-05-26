@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { LocalDraftForm } from "@/components/LocalDraft";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, FormField, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canCreateVmsImports, canValidateVmsImports, canViewVmsImports, getEffectivePermissions } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { cleanSearchParams, getPagination } from "@/lib/pagination";
@@ -38,7 +38,6 @@ import {
   type VmsFieldDef,
   type VmsReportType,
 } from "@/lib/vms-parser";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
@@ -85,6 +84,8 @@ type VmsImportSearchParams = {
   reportStartDate?: string;
   reportEndDate?: string;
 };
+
+type SupabaseServerClient = NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>;
 
 type PreviewSheet = { name: string; rows: string[][] };
 
@@ -676,7 +677,7 @@ async function loadVmsImportBatches({
   currentUserId,
   effectivePermissions,
 }: {
-  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  supabase: SupabaseServerClient;
   from: number;
   to: number;
   selectedBatchId: string | null;
@@ -761,7 +762,7 @@ async function loadVmsReviewSummary({
   currentUserId,
   effectivePermissions,
 }: {
-  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  supabase: SupabaseServerClient;
   selectedBatchId: string | null;
   currentUserId: string | null;
   effectivePermissions: string[];
@@ -832,7 +833,7 @@ async function loadVmsValidationReferences({
   currentUserId,
   effectivePermissions,
 }: {
-  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  supabase: SupabaseServerClient;
   selectedPreviewId: string | null;
   currentUserId: string | null;
   effectivePermissions: string[];
@@ -980,7 +981,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
   const { page, pageSize, from, to } = getPagination(paginationParams);
   if (params.batchId) redirect(`/vms-import/${params.batchId}`);
 
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) {
     return (
       <>

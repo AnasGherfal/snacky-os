@@ -1,10 +1,9 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { DataTable, ErrorState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canConfirmVmsImports, canViewVmsImports, getEffectivePermissions } from "@/lib/authz";
 import { reprocessVmsImportBatch } from "@/lib/vms-import-actions";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { parseReportType, vmsExpectedFields, vmsReportTypes } from "@/lib/vms-parser";
 
 export const dynamic = "force-dynamic";
@@ -142,7 +141,7 @@ export default async function VmsImportBatchDetailPage({
     );
   }
 
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) notFound();
 
   const [{ data: batch, error: batchError }, { data: rows, error: rowsError }] = await Promise.all([

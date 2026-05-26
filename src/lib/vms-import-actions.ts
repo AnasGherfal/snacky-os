@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "@/lib/activity-log";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canConfirmVmsImports, canCreateVmsImports } from "@/lib/authz";
 import {
   applyColumnMapping,
@@ -1676,7 +1676,7 @@ async function saveVmsPreviewRows({
 export async function prepareVmsImport(formData: FormData) {
   const profile = await getCurrentProfile();
   if (!profile || !canCreateVmsImports(profile)) redirect("/unauthorized");
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) redirect("/vms-import?error=Supabase%20is%20not%20configured.");
 
   const reportType = parseReportType(formData.get("report_type") || formData.get("import_type")) ?? "custom";
@@ -1725,7 +1725,7 @@ export async function importVmsCsv(formData: FormData) {
 export async function completeVmsImport(formData: FormData) {
   const profile = await getCurrentProfile();
   if (!profile || !canConfirmVmsImports(profile)) redirect("/unauthorized");
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) redirect("/vms-import?error=Supabase%20is%20not%20configured.");
 
   const previewId = String(formData.get("preview_id") || "");
@@ -1790,7 +1790,7 @@ function jsonRecord(value: unknown): Record<string, string> {
 export async function reprocessVmsImportBatch(formData: FormData) {
   const profile = await getCurrentProfile();
   if (!profile || !canConfirmVmsImports(profile)) redirect("/unauthorized");
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) redirect("/vms-import?error=Supabase%20is%20not%20configured.");
 
   const batchId = String(formData.get("batch_id") || "");
