@@ -1604,6 +1604,52 @@ async function runVmsImport({
   redirect(`/vms-import/${batch.id}`);
 }
 
+type VmsPreviewSheetPayload = { name: string; rows: string[][] };
+
+function isMissingPreviewRowsSchemaError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const supabaseError = error as { code?: string; message?: string; details?: string; hint?: string };
+  const text = `${supabaseError.message ?? ""} ${supabaseError.details ?? ""} ${supabaseError.hint ?? ""}`.toLowerCase();
+  return supabaseError.code === "42P01"
+    || supabaseError.code === "42703"
+    || supabaseError.code === "PGRST204"
+    || supabaseError.code === "PGRST205"
+    || text.includes("does not exist")
+    || text.includes("schema cache");
+}
+
+async function saveVmsPreviewRows({
+  supabase,
+  previewId,
+  sheets,
+}: {
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  previewId: string;
+  sheets: VmsPreviewSheetPayload[];
+}) {
+  const rows = sheets.flatMap((sheet) => sheet.rows.map((row, index) => ({
+    preview_id: previewId,
+    sheet_name: sheet.name,
+    row_number: index + 1,
+    raw_row: row,
+  })));
+  if (!rows.length) return;
+
+  for (let index = 0; index < rows.length; index += 500) {
+    const chunk = rows.slice(index, index + 500);
+    const { error } = await supabase.from("vms_import_preview_rows").insert(chunk);
+    if (!error) continue;
+
+    if (isMissingPreviewRowsSchemaError(error)) {
+      console.warn("[vms-import] Preview row table is unavailable; using preview sheet JSON only", error);
+      return;
+    }
+
+    console.error("[vms-import] Failed to save preview rows", error);
+    redirect("/vms-import?error=Could%20not%20save%20VMS%20preview%20rows.%20Run%20the%20latest%20migration.");
+  }
+}
+
 export async function prepareVmsImport(formData: FormData) {
   const profile = await getCurrentProfile();
   if (!profile || !canCreateVmsImports(profile)) redirect("/unauthorized");
@@ -1639,6 +1685,12 @@ export async function prepareVmsImport(formData: FormData) {
     console.error("[vms-import] Failed to create preview", error);
     redirect("/vms-import?error=Could%20not%20prepare%20VMS%20import%20preview.");
   }
+
+  await saveVmsPreviewRows({
+    supabase,
+    previewId: preview.id,
+    sheets: parsed.sheets,
+  });
 
   redirect(`/vms-import?previewId=${preview.id}&sheet=${encodeURIComponent(parsed.sheets[0].name)}&reportType=${reportType}&step=2`);
 }

@@ -1,4 +1,4 @@
-import { normalizeHeader, type VmsReportType } from "@/lib/vms-parser";
+import { normalizeHeader, type VmsReportType } from "./vms-parser.ts";
 
 export type VmsReferenceMachine = {
   id: string;
@@ -142,6 +142,15 @@ export function vmsLookupKey(value: string | null | undefined) {
   return String(value ?? "").trim().toLowerCase();
 }
 
+export function vmsNormalizedLookupKey(value: string | null | undefined) {
+  return String(value ?? "")
+    .normalize("NFKD")
+    .replace(/\p{Mark}/gu, "")
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}]+/gu, "")
+    .trim();
+}
+
 export function vmsProductDisplay(vmsProductId: string, vmsProductName: string) {
   if (vmsProductId && vmsProductName && vmsProductId !== vmsProductName) return `${vmsProductId} - ${vmsProductName}`;
   return vmsProductName || vmsProductId || "";
@@ -150,6 +159,8 @@ export function vmsProductDisplay(vmsProductId: string, vmsProductName: string) 
 function addMachineKey(map: Map<string, VmsReferenceMachine>, key: string | null | undefined, machine: VmsReferenceMachine) {
   const normalized = vmsLookupKey(key);
   if (normalized) map.set(normalized, machine);
+  const compact = vmsNormalizedLookupKey(key);
+  if (compact && compact !== normalized) map.set(compact, machine);
 }
 
 function addMappingKey(map: Map<string, VmsReferenceMapping>, key: string, mapping: VmsReferenceMapping) {
@@ -164,6 +175,12 @@ function addProductKey(
 ) {
   const normalized = vmsLookupKey(key);
   if (normalized && !map.has(normalized)) map.set(normalized, { product, source });
+  const compact = vmsNormalizedLookupKey(key);
+  if (compact && compact !== normalized && !map.has(compact)) map.set(compact, { product, source });
+}
+
+function lookupByFlexibleKey<T>(map: Map<string, T>, value: string | null | undefined) {
+  return map.get(vmsLookupKey(value)) ?? map.get(vmsNormalizedLookupKey(value)) ?? null;
 }
 
 export function buildMachineMap(machines: VmsReferenceMachine[]) {
@@ -179,6 +196,13 @@ export function buildMachineMap(machines: VmsReferenceMachine[]) {
 export function buildMachineMapWithSavedMappings(machines: VmsReferenceMachine[], machineMappings: VmsReferenceMachineMapping[] = []) {
   const machineById = new Map(machines.map((machine) => [String(machine.id), machine]));
   const map = buildMachineMap(machines);
+
+  const khalijUniversityMachine = machines.find((machine) => vmsLookupKey(machine.name) === vmsLookupKey("جامعة طرابلس الاهلية"));
+  if (khalijUniversityMachine) {
+    ["KhalijUniversity", "Khalij University", "@الخليج", "@خليج"].forEach((alias) => {
+      addMachineKey(map, alias, khalijUniversityMachine);
+    });
+  }
 
   machineMappings.forEach((mapping) => {
     if (mapping.status && mapping.status !== "confirmed") return;
@@ -210,12 +234,23 @@ export function buildProductMappingMap(mappings: VmsReferenceMapping[]) {
     addMappingKey(map, vmsProductKey(id, name), mapping);
     if (id) addMappingKey(map, vmsProductKey(id, ""), mapping);
     if (name) addMappingKey(map, vmsProductKey("", name), mapping);
+    const normalizedId = vmsNormalizedLookupKey(id);
+    const normalizedName = vmsNormalizedLookupKey(name);
+    addMappingKey(map, vmsProductKey(normalizedId, normalizedName), mapping);
+    if (normalizedId) addMappingKey(map, vmsProductKey(normalizedId, ""), mapping);
+    if (normalizedName) addMappingKey(map, vmsProductKey("", normalizedName), mapping);
   });
   return map;
 }
 
 export function findVmsProductMapping(map: Map<string, VmsReferenceMapping>, vmsProductId: string, vmsProductName: string) {
-  return map.get(vmsProductKey(vmsProductId, vmsProductName)) ?? map.get(vmsProductKey(vmsProductId, "")) ?? map.get(vmsProductKey("", vmsProductName)) ?? null;
+  return map.get(vmsProductKey(vmsProductId, vmsProductName))
+    ?? map.get(vmsProductKey(vmsProductId, ""))
+    ?? map.get(vmsProductKey("", vmsProductName))
+    ?? map.get(vmsProductKey(vmsNormalizedLookupKey(vmsProductId), vmsNormalizedLookupKey(vmsProductName)))
+    ?? map.get(vmsProductKey(vmsNormalizedLookupKey(vmsProductId), ""))
+    ?? map.get(vmsProductKey("", vmsNormalizedLookupKey(vmsProductName)))
+    ?? null;
 }
 
 export function resolveVmsProduct({
@@ -243,12 +278,12 @@ export function resolveVmsProduct({
     return { status: "matched", productId: String(mapping.product_id), displayValue, source: "vms_mapping", mapping };
   }
 
-  const byIdentifier = productLookupMap.get(vmsLookupKey(vmsProductId));
+  const byIdentifier = lookupByFlexibleKey(productLookupMap, vmsProductId);
   if (byIdentifier) {
     return { status: "matched", productId: byIdentifier.product.id, displayValue, source: byIdentifier.source, mapping };
   }
 
-  const byName = productLookupMap.get(vmsLookupKey(vmsProductName));
+  const byName = lookupByFlexibleKey(productLookupMap, vmsProductName);
   if (byName) {
     return { status: "matched", productId: byName.product.id, displayValue, source: byName.source, mapping };
   }
@@ -298,7 +333,7 @@ export function validateVmsRows({
     let machineIsUnknown = false;
     let productNeedsMapping = false;
     const machineId = vmsMachineIdentifier(row);
-    const machine = machineId ? machineMap.get(vmsLookupKey(machineId)) : null;
+    const machine = machineId ? lookupByFlexibleKey(machineMap, machineId) : null;
     const { vmsProductId, vmsProductName } = vmsProductIdentifier(row);
     const productResolution = resolveVmsProduct({ mappingMap, productLookupMap, vmsProductId, vmsProductName });
 

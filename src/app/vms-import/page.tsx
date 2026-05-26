@@ -4,11 +4,19 @@ import { LocalDraftForm } from "@/components/LocalDraft";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, FormField, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
-import { canCreateVmsImports, canViewVmsImports, getEffectivePermissions } from "@/lib/authz";
+import { canCreateVmsImports, canValidateVmsImports, canViewVmsImports, getEffectivePermissions } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { cleanSearchParams, getPagination } from "@/lib/pagination";
 import { completeVmsImport, prepareVmsImport } from "@/lib/vms-import-actions";
-import { validateVmsRows, vmsValue, type VmsValidationResult } from "@/lib/vms-import-validation";
+import {
+  validateVmsRows,
+  vmsValue,
+  type VmsReferenceMachine,
+  type VmsReferenceMachineMapping,
+  type VmsReferenceMapping,
+  type VmsReferenceProduct,
+  type VmsValidationResult,
+} from "@/lib/vms-import-validation";
 import {
   createVmsSalesSourceRowKey,
   parseVmsImportMode,
@@ -99,7 +107,7 @@ function clampStep(value: string | undefined, hasPreview: boolean) {
   return Number.isFinite(parsed) ? Math.min(7, Math.max(2, Math.floor(parsed))) : 2;
 }
 
-function batchMetric(batch: any, key: keyof ImportSummary, fallback = 0) {
+function batchMetric(batch: VmsBatchRow | null | undefined, key: keyof ImportSummary, fallback = 0) {
   const summary = parseSummary(batch?.notes);
   return Number(summary?.[key] ?? fallback);
 }
@@ -155,6 +163,61 @@ type VmsReviewSummary = {
   productMappingsNeedingReview: number | null;
   machineMappingsNeedingReview: number | null;
   savedHeaderMappings: number | null;
+};
+
+type ImporterRow = {
+  id: string;
+  full_name: string | null;
+};
+
+type SavedHeaderMapping = {
+  id: string;
+  last_used_mapping: unknown;
+  updated_at: string | null;
+  use_count: number | null;
+};
+
+type ValidationReferenceRows = {
+  machines: VmsReferenceMachine[];
+  products: VmsReferenceProduct[];
+  productMappings: VmsReferenceMapping[];
+  machineMappings: VmsReferenceMachineMapping[];
+  headerMappings: VmsHeaderMappingReference[];
+  previewRows: VmsPreviewRowReference[];
+};
+
+type VmsHeaderMappingReference = {
+  id: string;
+  report_type?: string | null;
+  source_signature?: string | null;
+};
+
+type VmsPreviewRowReference = {
+  id: string;
+  preview_id?: string | null;
+  sheet_name?: string | null;
+  row_number: number;
+  raw_row?: unknown;
+};
+
+type ValidationReferenceCounts = {
+  machines: number;
+  products: number;
+  productMappings: number;
+  machineMappings: number;
+  headerMappings: number;
+  previewRows: number;
+};
+
+type ValidationBlockingError = {
+  queryName: string;
+  error: SupabaseQueryError | null;
+};
+
+type ValidationReferenceLoadResult = ValidationReferenceRows & {
+  counts: ValidationReferenceCounts;
+  notices: string[];
+  blockingError: ValidationBlockingError | null;
 };
 
 const preferredBatchSelect = [
@@ -674,14 +737,12 @@ async function loadVmsImportBatches({
 }
 
 async function countRows({
-  supabase,
   queryName,
   selectedBatchId,
   currentUserId,
   effectivePermissions,
   build,
 }: {
-  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
   queryName: string;
   selectedBatchId: string | null;
   currentUserId: string | null;
@@ -707,7 +768,6 @@ async function loadVmsReviewSummary({
 }): Promise<VmsReviewSummary> {
   const [productMappingsNeedingReview, machineMappingsNeedingReview, savedHeaderMappings] = await Promise.all([
     countRows({
-      supabase,
       queryName: "vms_product_mappings.needs_review_count",
       selectedBatchId,
       currentUserId,
@@ -715,7 +775,6 @@ async function loadVmsReviewSummary({
       build: () => supabase.from("vms_product_mappings").select("id", { count: "exact", head: true }).eq("match_status", "needs_review"),
     }),
     countRows({
-      supabase,
       queryName: "vms_machine_mappings.needs_review_count",
       selectedBatchId,
       currentUserId,
@@ -723,7 +782,6 @@ async function loadVmsReviewSummary({
       build: () => supabase.from("vms_machine_mappings").select("id", { count: "exact", head: true }).eq("status", "needs_review"),
     }),
     countRows({
-      supabase,
       queryName: "vms_header_mappings.count",
       selectedBatchId,
       currentUserId,
@@ -733,6 +791,175 @@ async function loadVmsReviewSummary({
   ]);
 
   return { productMappingsNeedingReview, machineMappingsNeedingReview, savedHeaderMappings };
+}
+
+async function loadValidationRows<T>({
+  queryName,
+  selectedBatchId,
+  currentUserId,
+  effectivePermissions,
+  build,
+}: {
+  queryName: string;
+  selectedBatchId: string | null;
+  currentUserId: string | null;
+  effectivePermissions: string[];
+  build: () => PromiseLike<{ data: T[] | null; error: unknown }>;
+}) {
+  const { data, error } = await build();
+  if (!error) {
+    return { queryName, data: data ?? [], error: null as SupabaseQueryError | null };
+  }
+
+  logVmsImportLoadIssue({ queryName, error, selectedBatchId, currentUserId, effectivePermissions });
+  return { queryName, data: [] as T[], error: queryError(error) };
+}
+
+function validationReferenceErrorMessage(blockingError: ValidationBlockingError) {
+  if (isPermissionError(blockingError.error)) return "You do not have permission to validate VMS imports.";
+  if (isMissingSchemaError(blockingError.error)) return "VMS import database tables are missing. Run the latest migration.";
+  if (blockingError.queryName === "machines.validation_references") return "Could not load machines needed to validate this VMS import.";
+  if (blockingError.queryName === "products.validation_references") return "Could not load products needed to validate this VMS import.";
+  if (blockingError.queryName === "vms_import_preview_rows.current_preview") return "Could not load preview rows for this import. Run the latest migration or re-upload the file.";
+  if (blockingError.queryName === "vms_import_preview_rows.empty") return "This import batch has no preview rows. Please re-upload the file.";
+  if (blockingError.queryName === "vms_import_previews.selected") return "This import preview no longer exists. Please re-upload the file.";
+  return "Could not load VMS import. Technical details are in console.";
+}
+
+async function loadVmsValidationReferences({
+  supabase,
+  selectedPreviewId,
+  currentUserId,
+  effectivePermissions,
+}: {
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  selectedPreviewId: string | null;
+  currentUserId: string | null;
+  effectivePermissions: string[];
+}): Promise<ValidationReferenceLoadResult> {
+  const [
+    machinesResult,
+    productsResult,
+    productMappingsResult,
+    machineMappingsResult,
+    headerMappingsResult,
+    previewRowsResult,
+  ] = await Promise.all([
+    loadValidationRows<VmsReferenceMachine>({
+      queryName: "machines.validation_references",
+      selectedBatchId: selectedPreviewId,
+      currentUserId,
+      effectivePermissions,
+      build: () => supabase.from("machines").select("id, machine_code, vms_machine_id, name, location_id"),
+    }),
+    loadValidationRows<VmsReferenceProduct>({
+      queryName: "products.validation_references",
+      selectedBatchId: selectedPreviewId,
+      currentUserId,
+      effectivePermissions,
+      build: () => supabase.from("products").select("id, sku, barcode, name"),
+    }),
+    loadValidationRows<VmsReferenceMapping>({
+      queryName: "vms_product_mappings.validation_references",
+      selectedBatchId: selectedPreviewId,
+      currentUserId,
+      effectivePermissions,
+      build: () => supabase.from("vms_product_mappings").select("id, vms_product_id, vms_product_name, product_id, match_status"),
+    }),
+    loadValidationRows<VmsReferenceMachineMapping>({
+      queryName: "vms_machine_mappings.validation_references",
+      selectedBatchId: selectedPreviewId,
+      currentUserId,
+      effectivePermissions,
+      build: () => supabase.from("vms_machine_mappings").select("id, vms_machine_key, vms_machine_name, machine_id, location_id, status, aliases"),
+    }),
+    loadValidationRows<VmsHeaderMappingReference>({
+      queryName: "vms_header_mappings.validation_references",
+      selectedBatchId: selectedPreviewId,
+      currentUserId,
+      effectivePermissions,
+      build: () => supabase.from("vms_header_mappings").select("id, report_type, source_signature"),
+    }),
+    selectedPreviewId
+      ? loadValidationRows<VmsPreviewRowReference>({
+        queryName: "vms_import_preview_rows.current_preview",
+        selectedBatchId: selectedPreviewId,
+        currentUserId,
+        effectivePermissions,
+        build: () => supabase
+          .from("vms_import_preview_rows")
+          .select("id, preview_id, sheet_name, row_number, raw_row")
+          .eq("preview_id", selectedPreviewId)
+          .order("row_number", { ascending: true }),
+      })
+      : Promise.resolve({ queryName: "vms_import_preview_rows.current_preview", data: [] as VmsPreviewRowReference[], error: null as SupabaseQueryError | null }),
+  ]);
+
+  const notices: string[] = [];
+  if (productMappingsResult.error) {
+    notices.push("Saved product mappings could not be loaded. Validation will continue and mark unmatched products as Needs Review.");
+  }
+  if (machineMappingsResult.error) {
+    notices.push("Saved machine mappings could not be loaded. Validation will continue and mark unmatched machines as Needs Review.");
+  }
+  if (headerMappingsResult.error) {
+    notices.push("Saved header mappings could not be loaded. Auto-detected column mappings are still available.");
+  }
+  const counts = {
+    machines: machinesResult.data.length,
+    products: productsResult.data.length,
+    productMappings: productMappingsResult.error ? 0 : productMappingsResult.data.length,
+    machineMappings: machineMappingsResult.error ? 0 : machineMappingsResult.data.length,
+    headerMappings: headerMappingsResult.error ? 0 : headerMappingsResult.data.length,
+    previewRows: previewRowsResult.error ? 0 : previewRowsResult.data.length,
+  };
+
+  if (!productMappingsResult.error && !machineMappingsResult.error && counts.productMappings === 0 && counts.machineMappings === 0) {
+    notices.push("No saved mappings found yet. Please map the new products/machines below.");
+  }
+
+  const blockingError = machinesResult.error
+    ? { queryName: machinesResult.queryName, error: machinesResult.error }
+    : productsResult.error
+      ? { queryName: productsResult.queryName, error: productsResult.error }
+      : previewRowsResult.error
+        ? { queryName: previewRowsResult.queryName, error: previewRowsResult.error }
+        : selectedPreviewId && counts.previewRows === 0
+          ? { queryName: "vms_import_preview_rows.empty", error: null }
+          : null;
+
+  console.info("[vms-import] Validation references loaded", {
+    selectedBatchId: selectedPreviewId,
+    currentUserId,
+    effectivePermissions,
+    counts,
+    failedQueries: [
+      machinesResult,
+      productsResult,
+      productMappingsResult,
+      machineMappingsResult,
+      headerMappingsResult,
+      previewRowsResult,
+    ]
+      .filter((result) => result.error)
+      .map((result) => ({
+        queryName: result.queryName,
+        code: result.error?.code ?? null,
+        message: result.error?.message ?? null,
+      })),
+  });
+
+  return {
+    machines: machinesResult.data,
+    products: productsResult.data,
+    productMappings: productMappingsResult.error ? [] : productMappingsResult.data,
+    machineMappings: machineMappingsResult.error ? [] : machineMappingsResult.data,
+    headerMappings: headerMappingsResult.error ? [] : headerMappingsResult.data,
+    previewRows: previewRowsResult.error ? [] : previewRowsResult.data,
+    counts,
+    notices: Array.from(new Set(notices)),
+    blockingError,
+  };
 }
 
 export default async function VmsImportPage({ searchParams }: { searchParams: Promise<VmsImportSearchParams> }) {
@@ -828,7 +1055,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
       effectivePermissions,
     });
   }
-  const importerById = new Map((importers ?? []).map((member: any) => [String(member.id), member.full_name]));
+  const importerById = new Map(((importers ?? []) as ImporterRow[]).map((member) => [String(member.id), member.full_name]));
   const reviewSummary = await loadVmsReviewSummary({
     supabase,
     selectedBatchId: selectedPreviewId,
@@ -850,7 +1077,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
   const mappingDetection = selectedSheet ? detectColumnMappingDetails(selectedRows.headers, selectedReportType, selectedRows.columnSamples) : { mapping: {}, details: [] };
   const useSavedMapping = booleanParam(params.useSavedMapping, true);
   const headerSignature = selectedSheet ? vmsHeaderSignature(selectedReportType, selectedRows.headers) : "";
-  let savedHeaderMapping: any = null;
+  let savedHeaderMapping: SavedHeaderMapping | null = null;
   if (selectedSheet && headerSignature) {
     const { data, error } = await supabase
       .from("vms_header_mappings")
@@ -861,7 +1088,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
     if (error && error.code !== "42P01") {
       console.warn("[vms-import] Saved header mapping lookup failed", error);
     }
-    savedHeaderMapping = data ?? null;
+    savedHeaderMapping = (data as SavedHeaderMapping | null) ?? null;
   }
   const savedMappingDefaults = savedHeaderMapping?.last_used_mapping && typeof savedHeaderMapping.last_used_mapping === "object"
     ? savedHeaderMapping.last_used_mapping as Record<string, string>
@@ -877,37 +1104,53 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
   const previewFields = vmsExpectedFields[selectedReportType].filter((field) => field.required || field.requiredGroup || selectedMapping[field.field]).slice(0, 6);
   const currentStep = clampStep(params.step, Boolean(preview));
 
+  if (preview && !selectedSheet) {
+    return (
+      <>
+        <PageHeader title="VMS Import" subtitle="A step-by-step import wizard for VMS Excel and CSV reports." />
+        <ErrorState title="This import batch has no preview rows" body="This import batch has no preview rows. Please re-upload the file." action={<SecondaryButton href="/vms-import">Start over</SecondaryButton>} />
+      </>
+    );
+  }
+
   let validation: VmsValidationResult | null = null;
-  if (selectedSheet && currentStep >= 5) {
-    const [
-      { data: machines, error: machinesError },
-      { data: machineMappings, error: machineMappingsError },
-      { data: mappings, error: mappingsError },
-      { data: products, error: productsError },
-    ] = await Promise.all([
-      supabase.from("machines").select("id, machine_code, vms_machine_id, name, location_id"),
-      supabase.from("vms_machine_mappings").select("id, vms_machine_key, vms_machine_name, machine_id, location_id, status, aliases"),
-      supabase.from("vms_product_mappings").select("id, vms_product_id, vms_product_name, product_id, match_status"),
-      supabase.from("products").select("id, sku, barcode, name"),
-    ]);
-    const validationLoadError = machinesError ?? mappingsError ?? productsError;
-    if (validationLoadError || (machineMappingsError && machineMappingsError.code !== "42P01")) {
-      console.error("[vms-import] Failed to load validation references", validationLoadError ?? machineMappingsError);
+  let validationReferenceNotices: string[] = [];
+  if (selectedSheet && currentStep >= 6) {
+    if (!canValidateVmsImports(profile)) {
       return (
         <>
-          <ErrorState title="Could not validate VMS rows" body="Snacky OS could not load machines, mappings, or products needed to validate the import." action={<SecondaryButton href="/vms-import">Start over</SecondaryButton>} />
+          <PageHeader title="VMS Import" subtitle="A step-by-step import wizard for VMS Excel and CSV reports." />
+          <ErrorState title="VMS import validation required" body="You do not have permission to validate VMS imports." action={<SecondaryButton href="/vms-import">Back to VMS import</SecondaryButton>} />
         </>
       );
     }
+
+    const validationReferences = await loadVmsValidationReferences({
+      supabase,
+      selectedPreviewId,
+      currentUserId: profile?.id ?? null,
+      effectivePermissions,
+    });
+    validationReferenceNotices = validationReferences.notices;
+
+    if (validationReferences.blockingError) {
+      return (
+        <>
+          <PageHeader title="VMS Import" subtitle="A step-by-step import wizard for VMS Excel and CSV reports." />
+          <ErrorState title="Could not validate VMS rows" body={validationReferenceErrorMessage(validationReferences.blockingError)} action={<SecondaryButton href="/vms-import">Start over</SecondaryButton>} />
+        </>
+      );
+    }
+
     validation = validateVmsRows({
       reportType: selectedReportType,
       rows: mappedRows,
       originalRows: selectedRows.records,
       firstDataRowNumber: selectedRows.headerRowIndex + 2,
-      machines: (machines ?? []) as any[],
-      machineMappings: (machineMappings ?? []) as any[],
-      mappings: (mappings ?? []) as any[],
-      products: (products ?? []) as any[],
+      machines: validationReferences.machines,
+      machineMappings: validationReferences.machineMappings,
+      mappings: validationReferences.productMappings,
+      products: validationReferences.products,
       autoCreateMissingProducts: autoCreateProducts,
     });
   }
@@ -946,7 +1189,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
           console.warn("[vms-import] Duplicate preview lookup failed", duplicateError);
           break;
         }
-        duplicatePreviewCount += new Set((duplicates ?? []).map((row: any) => String(row.source_row_key))).size;
+        duplicatePreviewCount += new Set(((duplicates ?? []) as { source_row_key: string | null }[]).map((row) => String(row.source_row_key))).size;
       }
     }
   }
@@ -1201,6 +1444,11 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
               Required mapping missing: {missingRequired.join(", ")}.
             </div>
           ) : null}
+          {validationReferenceNotices.map((notice) => (
+            <div key={notice} className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900" role="status">
+              {notice}
+            </div>
+          ))}
           {validation ? (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
               <StatCard label="Total rows" value={validation.totalRows} />
@@ -1301,6 +1549,11 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
             <h2 className="text-lg font-semibold text-slate-900">Step 7: Confirm Import</h2>
             <p className="mt-1 text-sm text-slate-500">This is the only step that saves snapshots, mappings, and the import batch.</p>
           </div>
+          {validationReferenceNotices.map((notice) => (
+            <div key={notice} className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900" role="status">
+              {notice}
+            </div>
+          ))}
           {validation ? (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
               <StatCard label="Total rows" value={validation.totalRows} />

@@ -42,6 +42,7 @@ export const appPermissions = [
   "vms.mapping.manage",
   "vms_import.view",
   "vms_import.create",
+  "vms_import.validate",
   "vms_import.confirm",
   "vms_import.manage_mappings",
   "system.settings",
@@ -246,6 +247,10 @@ export function canViewVmsImports(input: RoleInput) {
 
 export function canCreateVmsImports(input: RoleInput) {
   return hasPermission(input, "vms_import.create") || hasPermission(input, "vms.import");
+}
+
+export function canValidateVmsImports(input: RoleInput) {
+  return hasPermission(input, "vms_import.validate") || hasPermission(input, "vms.import");
 }
 
 export function canConfirmVmsImports(input: RoleInput) {
