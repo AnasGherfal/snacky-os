@@ -1181,15 +1181,14 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
       for (let index = 0; index < uniqueKeys.length; index += 500) {
         const chunk = uniqueKeys.slice(index, index + 500);
         const { data: duplicates, error: duplicateError } = await supabase
-          .from("vms_sales_snapshots")
-          .select("source_row_key")
-          .in("source_row_key", chunk)
-          .eq("import_row_status", "imported");
+          .from("vms_sales_raw")
+          .select("duplicate_hash")
+          .in("duplicate_hash", chunk);
         if (duplicateError && duplicateError.code !== "42703") {
           console.warn("[vms-import] Duplicate preview lookup failed", duplicateError);
           break;
         }
-        duplicatePreviewCount += new Set(((duplicates ?? []) as { source_row_key: string | null }[]).map((row) => String(row.source_row_key))).size;
+        duplicatePreviewCount += new Set(((duplicates ?? []) as { duplicate_hash: string | null }[]).map((row) => String(row.duplicate_hash))).size;
       }
     }
   }

@@ -904,7 +904,7 @@ async function runVmsImport({
     await supabase
       .from("vms_import_batches")
       .update({
-        status: "processing",
+        status: "draft",
         import_mode: importMode,
         report_start_date: reportStartDate,
         report_end_date: reportEndDate,
@@ -934,7 +934,7 @@ async function runVmsImport({
         imported_by: profile?.team_member_id ?? null,
         uploaded_by: profile?.team_member_id ?? null,
         uploaded_at: new Date().toISOString(),
-        status: "processing",
+        status: "draft",
         import_mode: importMode,
         report_start_date: reportStartDate,
         report_end_date: reportEndDate,
@@ -1036,6 +1036,7 @@ async function runVmsImport({
 
   const stockSnapshots: any[] = [];
   const salesSnapshots: any[] = [];
+  const salesRawRows: Record<string, unknown>[] = [];
   const planogramRows: any[] = [];
   const latestMappingRowsById = new Map<string, any>();
   const vmsSellingPriceByProductId = new Map<string, number>();
@@ -1383,7 +1384,7 @@ async function runVmsImport({
       grossSalesAmount,
       netSalesAmount,
     });
-    salesSnapshots.push({
+    const salesSnapshot = {
       import_batch_id: batch.id,
       import_row_number: rowNumber,
       import_row_status: "imported",
@@ -1416,6 +1417,21 @@ async function runVmsImport({
       net_sales_amount: netSalesAmount,
       gross_profit_amount: numberValue(value(row, ["profit_amount", "profit", "gross_profit", "margin_amount", "net_profit"])),
       metadata: { raw: row, sales_report_period: rowPeriod },
+    };
+    salesSnapshots.push(salesSnapshot);
+    salesRawRows.push({
+      import_batch_id: batch.id,
+      row_number: rowNumber,
+      raw_row: originalRow,
+      normalized_row: row,
+      machine_id: machine.id,
+      product_id: productId,
+      sale_date: rowPeriod.reportEndDate,
+      sale_datetime: endOfDateIso(rowPeriod.reportEndDate),
+      quantity: Math.max(0, Math.floor(soldQty ?? 0)),
+      gross_sales_lyd: grossSalesAmount,
+      net_sales_lyd: netSalesAmount,
+      duplicate_hash: sourceRowKey,
     });
     summary.importedRows += 1;
     finishRow("imported");
@@ -1464,7 +1480,7 @@ async function runVmsImport({
     } else {
       const { data: rpcResult, error } = await supabase.rpc("apply_vms_sales_snapshot_import", {
         p_batch_id: batch.id,
-        p_import_mode: importMode,
+        p_import_mode: importMode === VMS_IMPORT_MODES.REPLACE_RANGE ? "replace_range" : importMode,
         p_report_start_date: reportStartDate,
         p_report_end_date: reportEndDate,
         p_sales_rows: salesSnapshots,
@@ -1498,6 +1514,17 @@ async function runVmsImport({
     } catch (staleError) {
       console.error("[vms-import] Sales stale marking failed", staleError);
       summary.errors.push("Old sales snapshot rows could not be marked stale.");
+    }
+  }
+
+  if (salesRawRows.length && !fatalImportError) {
+    const { error } = await supabase
+      .from("vms_sales_raw")
+      .upsert(salesRawRows, { onConflict: "duplicate_hash", ignoreDuplicates: true });
+    if (error) {
+      console.error("[vms-import] Sales raw row upsert failed", error);
+      summary.errors.push("Sales raw row save failed.");
+      fatalImportError = true;
     }
   }
 
@@ -1540,11 +1567,7 @@ async function runVmsImport({
   }
 
   summary.rowsNeedingReview = summary.needsProductMappingRows + summary.unknownMachineRows + summary.invalidRows;
-  const status = fatalImportError
-    ? "failed"
-    : summary.errors.length || summary.skippedRows || summary.unknownMachines.length || summary.unmappedProducts.length
-      ? "completed_with_warnings"
-      : "imported";
+  const status = fatalImportError ? "failed" : "imported";
   const batchUpdate: Record<string, unknown> = {
     status,
     row_count: summary.totalRows,

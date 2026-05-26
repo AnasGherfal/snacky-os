@@ -2,16 +2,16 @@ import { createHash } from "node:crypto";
 import { normalizeHeader, vmsExpectedFields, type VmsReportType, type VmsSalesReportPeriod } from "./vms-parser.ts";
 
 export const VMS_IMPORT_MODES = {
-  APPEND_NEW: "append_new",
-  REPLACE_RANGE: "replace_range",
+  APPEND_NEW: "append",
+  REPLACE_RANGE: "replace_date_range",
   PREVIEW_ONLY: "preview_only",
 } as const;
 
 export type VmsImportMode = (typeof VMS_IMPORT_MODES)[keyof typeof VMS_IMPORT_MODES];
 
 export const vmsImportModeLabels: Record<VmsImportMode, string> = {
-  append_new: "Append new records",
-  replace_range: "Replace selected date range",
+  append: "Append new records",
+  replace_date_range: "Replace selected date range",
   preview_only: "Preview only",
 };
 
@@ -32,9 +32,10 @@ export const salesRowDateAliases = [
 
 export function parseVmsImportMode(value: unknown): VmsImportMode {
   const normalized = String(value ?? "").trim();
-  return normalized === VMS_IMPORT_MODES.REPLACE_RANGE || normalized === VMS_IMPORT_MODES.PREVIEW_ONLY
-    ? normalized
-    : VMS_IMPORT_MODES.APPEND_NEW;
+  if (normalized === "replace_range") return VMS_IMPORT_MODES.REPLACE_RANGE;
+  if (normalized === "append_new") return VMS_IMPORT_MODES.APPEND_NEW;
+  if (normalized === VMS_IMPORT_MODES.REPLACE_RANGE || normalized === VMS_IMPORT_MODES.PREVIEW_ONLY) return normalized;
+  return VMS_IMPORT_MODES.APPEND_NEW;
 }
 
 export function vmsHeaderSignature(reportType: VmsReportType, headers: string[]) {

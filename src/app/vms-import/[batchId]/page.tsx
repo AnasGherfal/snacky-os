@@ -251,7 +251,7 @@ export default async function VmsImportBatchDetailPage({
         </div>
         {batch.report_type === "sales" ? (
           <div className="mt-3 grid gap-3 md:grid-cols-3">
-            <StatCard label="Import mode" value={String(batch.import_mode ?? summary?.importType ?? "append_new").replaceAll("_", " ")} />
+            <StatCard label="Import mode" value={String(batch.import_mode ?? summary?.importType ?? "append").replaceAll("_", " ")} />
             <StatCard label="Report start" value={batch.report_start_date ?? "-"} />
             <StatCard label="Report end" value={batch.report_end_date ?? "-"} />
           </div>

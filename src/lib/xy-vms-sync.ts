@@ -900,7 +900,7 @@ async function createStockImportBatch(context: SyncContext) {
       sheet_name: "queryMachineHdGoodPlus",
       report_type: "stock",
       imported_by: context.profile?.team_member_id ?? null,
-      status: "running",
+      status: "draft",
       row_count: 0,
       rows_imported: 0,
       rows_skipped: 0,
@@ -916,7 +916,7 @@ async function finishStockImportBatch(context: SyncContext, batchId: string, sta
   const { error } = await context.supabase
     .from("vms_import_batches")
     .update({
-      status: stats.errors.length ? "completed_with_warnings" : "completed",
+      status: "imported",
       row_count: stats.rowCount,
       rows_imported: stats.rowsImported,
       rows_skipped: stats.rowsSkipped,
