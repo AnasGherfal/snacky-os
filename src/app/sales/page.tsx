@@ -2,7 +2,7 @@ import { BarList, KpiSection } from "@/components/KpiDashboard";
 import { DataTable, EmptyState, PageHeader } from "@/components/ui";
 import { requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
-import { dateKey, formatInteger, groupSum, locationName, machineName, monthKey, productName, salesAmount, soldQty } from "@/lib/kpi";
+import { formatInteger, groupSum } from "@/lib/kpi";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 function chronologicalSales(rows: { label: string; value: number }[]) {
@@ -14,24 +14,22 @@ export default async function SalesDashboardPage() {
   const supabase = getSupabaseServerClient();
   const { data } = supabase
     ? await supabase
-        .from("vms_sales_snapshots")
-        .select(
-          "id, machine_id, product_id, sold_qty, sales_amount, cash_sales_amount, card_sales_amount, period_start, period_end, machine:machines(id, name, machine_code, location:locations(id, name)), product:products(id, name, sku)"
-        )
-        .eq("import_row_status", "imported")
-        .order("period_end", { ascending: false })
+        .from("vms_sales_clean")
+        .select("id, machine_id, product_id, units_sold, net_sales_amount, gross_sales_amount, cash_sales_amount, card_sales_amount, sale_date, sales_month, machine_name, location_name, product_name")
+        .order("sale_date", { ascending: false })
     : { data: null };
 
   const sales = (data ?? []) as any[];
-  const totalSales = sales.reduce((sum, row) => sum + salesAmount(row), 0);
-  const totalUnits = sales.reduce((sum, row) => sum + soldQty(row), 0);
+  const totalSales = sales.reduce((sum, row) => sum + Number(row.net_sales_amount ?? row.gross_sales_amount ?? 0), 0);
+  const totalUnits = sales.reduce((sum, row) => sum + Number(row.units_sold ?? 0), 0);
   const totalCash = sales.reduce((sum, row) => sum + Number(row.cash_sales_amount ?? 0), 0);
   const totalCard = sales.reduce((sum, row) => sum + Number(row.card_sales_amount ?? 0), 0);
-  const byDay = chronologicalSales(groupSum(sales, (row) => dateKey(row.period_end), salesAmount)).slice(-14);
-  const byMonth = chronologicalSales(groupSum(sales, (row) => monthKey(row.period_end), salesAmount)).slice(-12);
-  const byMachine = groupSum(sales, machineName, salesAmount).slice(0, 10);
-  const byLocation = groupSum(sales, locationName, salesAmount).slice(0, 10);
-  const byProduct = groupSum(sales, productName, salesAmount).slice(0, 10);
+  const revenue = (row: any) => Number(row.net_sales_amount ?? row.gross_sales_amount ?? 0);
+  const byDay = chronologicalSales(groupSum(sales, (row) => row.sale_date ?? "Unknown", revenue)).slice(-14);
+  const byMonth = chronologicalSales(groupSum(sales, (row) => String(row.sales_month ?? "Unknown").slice(0, 7), revenue)).slice(-12);
+  const byMachine = groupSum(sales, (row) => row.machine_name ?? "Unmapped machine", revenue).slice(0, 10);
+  const byLocation = groupSum(sales, (row) => row.location_name ?? "No location", revenue).slice(0, 10);
+  const byProduct = groupSum(sales, (row) => row.product_name ?? "Unmapped product", revenue).slice(0, 10);
   const hasTenderBreakdown = totalCash > 0 || totalCard > 0;
 
   return (
@@ -77,8 +75,8 @@ export default async function SalesDashboardPage() {
           <KpiSection title="Sales by product">
             <DataTable headers={["Product", "Units", "Revenue"]}>
               {byProduct.map((row) => {
-                const productRows = sales.filter((sale) => productName(sale) === row.label);
-                const units = productRows.reduce((sum, sale) => sum + soldQty(sale), 0);
+                const productRows = sales.filter((sale) => (sale.product_name ?? "Unmapped product") === row.label);
+                const units = productRows.reduce((sum, sale) => sum + Number(sale.units_sold ?? 0), 0);
 
                 return (
                   <tr key={row.label}>

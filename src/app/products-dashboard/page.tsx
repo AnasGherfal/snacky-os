@@ -10,14 +10,19 @@ export default async function ProductsDashboardPage() {
   const supabase = getSupabaseServerClient();
   const [salesResult, productsResult, inventoryResult, stockResult] = supabase
     ? await Promise.all([
-        supabase.from("vms_sales_snapshots").select("id, product_id, sold_qty, sales_amount, period_end, product:products(id, sku, name, cost_price, current_cost_price_lyd, selling_price, current_selling_price_lyd)").eq("import_row_status", "imported"),
+        supabase.from("vms_sales_clean").select("id, product_id, units_sold, net_sales_amount, gross_profit_amount, sale_date, cost_missing"),
         supabase.from("products").select("id, sku, name, cost_price, current_cost_price_lyd, selling_price, current_selling_price_lyd, active").order("name"),
         supabase.from("current_inventory_by_location").select("product_id, product_name, location_type, quantity_on_hand"),
         supabase.from("vms_stock_snapshots").select("product_id, current_qty").eq("import_row_status", "imported"),
       ])
     : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }];
 
-  const sales = (salesResult.data ?? []) as any[];
+  const sales = ((salesResult.data ?? []) as any[]).map((row) => ({
+    ...row,
+    sold_qty: row.units_sold,
+    sales_amount: row.net_sales_amount,
+    period_end: row.sale_date,
+  }));
   const products = (productsResult.data ?? []) as any[];
   const inventory = (inventoryResult.data ?? []) as any[];
   const stockouts = groupCount(((stockResult.data ?? []) as any[]).filter((row) => Number(row.current_qty ?? 0) <= 0 && row.product_id), (row) => String(row.product_id));
@@ -32,9 +37,8 @@ export default async function ProductsDashboardPage() {
     const productSales = sales.filter((row) => row.product_id === product.id);
     const units = productSales.reduce((sum, row) => sum + soldQty(row), 0);
     const revenue = productSales.reduce((sum, row) => sum + salesAmount(row), 0);
-    const cost = Number(product.current_cost_price_lyd ?? product.cost_price ?? 0);
-    const hasCost = cost > 0;
-    const grossProfit = hasCost ? revenue - units * cost : null;
+    const hasCost = productSales.some((row) => !row.cost_missing);
+    const grossProfit = hasCost ? productSales.reduce((sum, row) => sum + Number(row.gross_profit_amount ?? 0), 0) : null;
     const margin = hasCost && revenue > 0 ? (Number(grossProfit) / revenue) * 100 : null;
     const storageQty = storageByProduct.get(String(product.id)) ?? 0;
     const dailyVelocity = units / observedDays;
@@ -61,6 +65,7 @@ export default async function ProductsDashboardPage() {
   const totalUnits = metrics.reduce((sum, row) => sum + row.units, 0);
   const totalGrossProfit = metrics.reduce((sum, row) => sum + Number(row.grossProfit ?? 0), 0);
   const hasAnyCost = metrics.some((row) => row.grossProfit !== null);
+  const missingCostProducts = metrics.filter((row) => row.revenue > 0 && row.grossProfit === null).length;
 
   return (
     <>
@@ -78,6 +83,12 @@ export default async function ProductsDashboardPage() {
             <KpiSection title="Gross profit"><div className="text-3xl font-semibold">{hasAnyCost ? lyd(totalGrossProfit) : "-"}</div></KpiSection>
             <KpiSection title="Products with stockouts"><div className="text-3xl font-semibold">{metrics.filter((row) => row.stockoutCount > 0).length}</div></KpiSection>
           </div>
+
+          {missingCostProducts ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900">
+              Cost missing for {missingCostProducts} products. Profit may be incomplete.
+            </div>
+          ) : null}
 
           {!sales.length ? <EmptyState title="No product sales yet" body="VMS sales snapshots are required for velocity, revenue, and margin metrics." /> : null}
 

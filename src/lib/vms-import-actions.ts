@@ -18,20 +18,32 @@ import {
   type VmsSalesReportPeriod,
   type VmsReportType,
 } from "@/lib/vms-parser";
+import {
+  VMS_IMPORT_MODES,
+  createVmsSalesSourceRowKey,
+  parseVmsImportMode,
+  splitColumnMappingByRequirement,
+  vmsHeaderSignature,
+  type VmsImportMode,
+} from "@/lib/vms-sales-import";
 import { buildProductLookupMap, resolveVmsProduct, vmsLookupKey, vmsProductDisplay } from "@/lib/vms-import-validation";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 type ImportSummary = {
   reportType: VmsReportType;
+  importMode: VmsImportMode;
   fileName: string;
   fileType: string;
   sheetName: string;
   totalRows: number;
+  rowsFound: number;
   importedRows: number;
   needsProductMappingRows: number;
   unknownMachineRows: number;
   invalidRows: number;
   skippedRows: number;
+  rowsSkippedDuplicate: number;
+  rowsNeedingReview: number;
   productsCreated: number;
   productsUpdated: number;
   mappingsCreated: number;
@@ -516,6 +528,7 @@ async function ensureConfirmedMapping({
     vms_product_name: mappingName,
     product_id: productId,
     match_status: "confirmed",
+    confidence_score: 1,
     vms_selling_price_lyd: importedSellingPrice !== null && importedSellingPrice >= 0 ? importedSellingPrice : existing?.vms_selling_price_lyd ?? null,
     vms_cost_price_lyd: importedCostPrice !== null && importedCostPrice >= 0 ? importedCostPrice : existing?.vms_cost_price_lyd ?? null,
     latest_machine_id: machineId,
@@ -584,6 +597,130 @@ function readMapping(formData: FormData, reportType: VmsReportType) {
   return mapping;
 }
 
+async function saveHeaderMappingMemory({
+  supabase,
+  profile,
+  reportType,
+  headerNames,
+  mapping,
+}: {
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  profile: Awaited<ReturnType<typeof getCurrentProfile>>;
+  reportType: VmsReportType;
+  headerNames: string[];
+  mapping: Record<string, string>;
+}) {
+  if (!headerNames.length) return;
+  const sourceSignature = vmsHeaderSignature(reportType, headerNames);
+  const splitMapping = splitColumnMappingByRequirement(reportType, mapping);
+  const { error } = await supabase
+    .from("vms_header_mappings")
+    .upsert({
+      report_type: reportType,
+      source_signature: sourceSignature,
+      header_names: headerNames,
+      required_field_mapping: splitMapping.required,
+      optional_field_mapping: splitMapping.optional,
+      last_used_mapping: mapping,
+      updated_by: profile?.team_member_id ?? null,
+      updated_at: new Date().toISOString(),
+      created_by: profile?.team_member_id ?? null,
+    }, { onConflict: "report_type,source_signature" });
+  if (error) {
+    console.error("[vms-import] Header mapping memory save failed", {
+      reportType,
+      sourceSignature,
+      errorCode: error.code,
+      errorMessage: error.message,
+      error,
+    });
+  }
+}
+
+async function loadMachineMappingMemory(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>) {
+  const [{ data: mappings, error: mappingError }, { data: aliases, error: aliasError }] = await Promise.all([
+    supabase.from("vms_machine_mappings").select("id, vms_machine_key, vms_machine_name, machine_id, location_id, status, aliases"),
+    supabase.from("vms_machine_aliases").select("mapping_id, alias, alias_key"),
+  ]);
+  if (mappingError || aliasError) {
+    console.error("[vms-import] Machine mapping memory load failed", {
+      mappingErrorCode: mappingError?.code,
+      mappingErrorMessage: mappingError?.message,
+      aliasErrorCode: aliasError?.code,
+      aliasErrorMessage: aliasError?.message,
+    });
+    return [];
+  }
+  const aliasByMapping = new Map<string, string[]>();
+  (aliases ?? []).forEach((alias: any) => {
+    const key = String(alias.mapping_id ?? "");
+    if (!key) return;
+    aliasByMapping.set(key, [...(aliasByMapping.get(key) ?? []), String(alias.alias ?? alias.alias_key ?? "")].filter(Boolean));
+  });
+  return (mappings ?? []).map((mapping: any) => ({
+    ...mapping,
+    aliases: [...(Array.isArray(mapping.aliases) ? mapping.aliases : []), ...(aliasByMapping.get(String(mapping.id)) ?? [])],
+  }));
+}
+
+function addMachineMemoryKey(map: Map<string, any>, key: string | null | undefined, machine: any) {
+  const normalized = vmsLookupKey(key);
+  if (normalized && !map.has(normalized)) map.set(normalized, machine);
+}
+
+async function rememberMachineMapping({
+  supabase,
+  profile,
+  vmsMachineIdentifier,
+  machine,
+  status = "confirmed",
+}: {
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  profile: Awaited<ReturnType<typeof getCurrentProfile>>;
+  vmsMachineIdentifier: string;
+  machine?: any | null;
+  status?: "confirmed" | "needs_review";
+}) {
+  const key = vmsLookupKey(vmsMachineIdentifier);
+  if (!key) return;
+  const payload: Record<string, unknown> = {
+    vms_machine_key: key,
+    vms_machine_name: vmsMachineIdentifier,
+    machine_id: machine?.id ?? null,
+    location_id: machine?.location_id ?? null,
+    confidence_score: machine?.id ? 1 : 0,
+    status,
+    aliases: [vmsMachineIdentifier],
+    updated_by: profile?.team_member_id ?? null,
+    updated_at: new Date().toISOString(),
+    created_by: profile?.team_member_id ?? null,
+  };
+  const { data, error } = await supabase
+    .from("vms_machine_mappings")
+    .upsert(payload, { onConflict: "vms_machine_key" })
+    .select("id")
+    .maybeSingle();
+  if (error) {
+    console.error("[vms-import] Machine mapping memory save failed", {
+      vmsMachineIdentifier,
+      machineId: machine?.id ?? null,
+      errorCode: error.code,
+      errorMessage: error.message,
+      error,
+    });
+    return;
+  }
+  if (data?.id) {
+    await supabase
+      .from("vms_machine_aliases")
+      .upsert({
+        mapping_id: data.id,
+        alias: vmsMachineIdentifier,
+        alias_key: key,
+      }, { onConflict: "alias_key" });
+  }
+}
+
 async function ensureNeedsReviewMapping(
   supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>,
   mappingsByKey: Map<string, any>,
@@ -600,6 +737,7 @@ async function ensureNeedsReviewMapping(
       vms_product_id: vmsProductId || null,
       vms_product_name: vmsProductName,
       match_status: "needs_review",
+      confidence_score: 0,
     })
     .select("id, vms_product_id, vms_product_name, product_id, match_status, vms_selling_price_lyd, vms_cost_price_lyd")
     .maybeSingle();
@@ -678,15 +816,19 @@ async function runVmsImport({
   profile,
   existingBatchId,
   reportType,
+  importMode = VMS_IMPORT_MODES.APPEND_NEW,
   fileName,
   fileType,
   sheetName,
+  headerNames = [],
   rows,
   originalRows,
   columnMapping,
   firstDataRowNumber = 2,
   sourceRowNumbers,
   salesReportPeriod = null,
+  reportStartDate = salesReportPeriod?.reportStartDate ?? null,
+  reportEndDate = salesReportPeriod?.reportEndDate ?? null,
   autoCreateMissingProducts = true,
   updateCostFromVms = false,
 }: {
@@ -694,15 +836,19 @@ async function runVmsImport({
   profile: Awaited<ReturnType<typeof getCurrentProfile>>;
   existingBatchId?: string;
   reportType: VmsReportType;
+  importMode?: VmsImportMode;
   fileName: string;
   fileType: string;
   sheetName: string;
+  headerNames?: string[];
   rows: Record<string, string>[];
   originalRows?: Record<string, string>[];
   columnMapping: Record<string, string>;
   firstDataRowNumber?: number;
   sourceRowNumbers?: number[];
   salesReportPeriod?: VmsSalesReportPeriod | null;
+  reportStartDate?: string | null;
+  reportEndDate?: string | null;
   autoCreateMissingProducts?: boolean;
   updateCostFromVms?: boolean;
 }) {
@@ -713,15 +859,19 @@ async function runVmsImport({
 
   const summary: ImportSummary = {
     reportType,
+    importMode,
     fileName,
     fileType,
     sheetName,
     totalRows: rows.length,
+    rowsFound: rows.length,
     importedRows: 0,
     needsProductMappingRows: 0,
     unknownMachineRows: 0,
     invalidRows: 0,
     skippedRows: 0,
+    rowsSkippedDuplicate: 0,
+    rowsNeedingReview: 0,
     productsCreated: 0,
     productsUpdated: 0,
     mappingsCreated: 0,
@@ -755,9 +905,15 @@ async function runVmsImport({
       .from("vms_import_batches")
       .update({
         status: "processing",
+        import_mode: importMode,
+        report_start_date: reportStartDate,
+        report_end_date: reportEndDate,
         row_count: rows.length,
+        rows_found: rows.length,
         rows_imported: 0,
         rows_skipped: 0,
+        rows_skipped_duplicate: 0,
+        rows_needing_review: 0,
         error_count: 0,
         errors: [],
         unknown_machines: [],
@@ -776,8 +932,14 @@ async function runVmsImport({
         sheet_name: sheetName,
         report_type: reportType,
         imported_by: profile?.team_member_id ?? null,
+        uploaded_by: profile?.team_member_id ?? null,
+        uploaded_at: new Date().toISOString(),
         status: "processing",
+        import_mode: importMode,
+        report_start_date: reportStartDate,
+        report_end_date: reportEndDate,
         row_count: rows.length,
+        rows_found: rows.length,
         column_mapping: columnMapping,
       })
       .select("id, reprocess_count")
@@ -801,10 +963,43 @@ async function runVmsImport({
   }));
   await upsertRawRows(supabase, initialRawRows);
 
-  const [{ data: machines }, { data: mappings }, { data: products }] = await Promise.all([
-    supabase.from("machines").select("id, machine_code, vms_machine_id, name"),
+  if (importMode === VMS_IMPORT_MODES.PREVIEW_ONLY) {
+    summary.skippedRows = rows.length;
+    const batchUpdate: Record<string, unknown> = {
+      status: "previewed",
+      row_count: summary.totalRows,
+      rows_found: summary.rowsFound,
+      rows_imported: 0,
+      rows_skipped: rows.length,
+      rows_skipped_duplicate: 0,
+      rows_needing_review: 0,
+      error_count: 0,
+      errors: [],
+      preview_summary: summary,
+      review_summary: [],
+      notes: JSON.stringify(summary),
+    };
+    await supabase.from("vms_import_batches").update(batchUpdate).eq("id", batch.id);
+    await saveHeaderMappingMemory({ supabase, profile, reportType, headerNames, mapping: columnMapping });
+    await logActivity({
+      profile,
+      action: "preview_vms",
+      entityType: "vms_import",
+      entityId: batch.id,
+      entityLabel: `${reportType} ${fileType.toUpperCase()} ${fileName}`,
+      afterData: summary,
+      metadata: { report_type: reportType, file_name: fileName, file_type: fileType, sheet_name: sheetName, import_mode: importMode },
+      summary: `Previewed ${summary.totalRows} ${reportType} rows from VMS ${fileType.toUpperCase()}`,
+    });
+    revalidatePath("/vms-import");
+    redirect(`/vms-import/${batch.id}`);
+  }
+
+  const [{ data: machines }, { data: mappings }, { data: products }, machineMappingMemory] = await Promise.all([
+    supabase.from("machines").select("id, machine_code, vms_machine_id, name, location_id"),
     supabase.from("vms_product_mappings").select("id, vms_product_id, vms_product_name, product_id, match_status, vms_selling_price_lyd, vms_cost_price_lyd"),
     supabase.from("products").select("id, sku, barcode, name"),
+    loadMachineMappingMemory(supabase),
   ]);
 
   const machineByVmsId = new Map<string, any>();
@@ -812,6 +1007,15 @@ async function runVmsImport({
     if (machine.vms_machine_id) machineByVmsId.set(vmsLookupKey(machine.vms_machine_id), machine);
     if (machine.machine_code) machineByVmsId.set(vmsLookupKey(machine.machine_code), machine);
     if (machine.name) machineByVmsId.set(vmsLookupKey(machine.name), machine);
+  });
+  const machineById = new Map((machines ?? []).map((machine: any) => [String(machine.id), machine]));
+  (machineMappingMemory ?? []).forEach((mapping: any) => {
+    if (mapping.status && mapping.status !== "confirmed") return;
+    const machine = mapping.machine_id ? machineById.get(String(mapping.machine_id)) : null;
+    if (!machine) return;
+    addMachineMemoryKey(machineByVmsId, mapping.vms_machine_key, machine);
+    addMachineMemoryKey(machineByVmsId, mapping.vms_machine_name, machine);
+    (mapping.aliases ?? []).forEach((alias: string) => addMachineMemoryKey(machineByVmsId, alias, machine));
   });
 
   const mappingsByKey = new Map<string, any>();
@@ -837,6 +1041,8 @@ async function runVmsImport({
   const vmsSellingPriceByProductId = new Map<string, number>();
   const vmsCostPriceByProductId = new Map<string, number>();
   const finalRawRows: VmsRawRowPayload[] = [];
+  const rememberedMachineKeys = new Set<string>();
+  let fatalImportError = false;
 
   for (const [index, row] of rows.entries()) {
     const rowNumber = sourceRowNumbers?.[index] ?? index + firstDataRowNumber;
@@ -866,6 +1072,12 @@ async function runVmsImport({
     };
     const identifier = machineIdentifier(row);
     const machine = identifier ? machineByVmsId.get(vmsLookupKey(identifier)) : null;
+    const rememberMachineOnce = async (status: "confirmed" | "needs_review") => {
+      const key = vmsLookupKey(identifier);
+      if (!identifier || !key || rememberedMachineKeys.has(key)) return;
+      rememberedMachineKeys.add(key);
+      await rememberMachineMapping({ supabase, profile, vmsMachineIdentifier: identifier, machine, status });
+    };
     const { vmsProductId, vmsProductName } = productIdentifier(row);
     const productNameForMapping = vmsProductName || vmsProductId;
     const productLabel = vmsProductDisplay(vmsProductId, vmsProductName);
@@ -914,6 +1126,7 @@ async function runVmsImport({
           id: mapping.id,
           vms_product_id: vmsProductId || null,
           vms_product_name: productNameForMapping,
+          confidence_score: mapping.match_status === "confirmed" ? 1 : 0,
           vms_selling_price_lyd: importedSellingPrice !== null && importedSellingPrice >= 0 ? importedSellingPrice : mapping.vms_selling_price_lyd ?? null,
           vms_cost_price_lyd: importedCostPrice !== null && importedCostPrice >= 0 ? importedCostPrice : mapping.vms_cost_price_lyd ?? null,
           latest_machine_id: machine?.id ?? null,
@@ -945,6 +1158,7 @@ async function runVmsImport({
             id: reviewMapping.id,
             vms_product_id: vmsProductId || null,
             vms_product_name: productNameForMapping,
+            confidence_score: reviewMapping.match_status === "confirmed" ? 1 : 0,
             vms_selling_price_lyd: importedSellingPrice !== null && importedSellingPrice >= 0 ? importedSellingPrice : reviewMapping.vms_selling_price_lyd ?? null,
             vms_cost_price_lyd: importedCostPrice !== null && importedCostPrice >= 0 ? importedCostPrice : reviewMapping.vms_cost_price_lyd ?? null,
             latest_machine_id: machine?.id ?? null,
@@ -1047,10 +1261,12 @@ async function runVmsImport({
         continue;
       }
       if (!machine) {
+        await rememberMachineOnce("needs_review");
         markUnknownMachine(summary, rowNumber, identifier);
         finishRow("unknown_machine", [`unknown machine: ${identifier}`]);
         continue;
       }
+      await rememberMachineOnce("confirmed");
     }
 
     if (reportType === "machine_status") {
@@ -1148,10 +1364,31 @@ async function runVmsImport({
     const refundCount = numberValue(value(row, ["refund_count", "refund_qty", "refund_quantity"]));
     const refundAmount = numberValue(value(row, ["refund_amount", "refund_total"]));
     const totalTransaction = numberValue(value(row, ["total_transaction", "total_transactions"]));
+    const vmsTransactionId = value(row, ["vms_transaction_id", "transaction_id", "transaction_no", "txn_id", "order_id", "order_no", "receipt_id", "receipt_no"]);
+    const grossSalesAmount = Math.max(0, salesAmount ?? 0);
+    const netSalesAmount = Math.max(0, grossSalesAmount - Math.max(0, refundAmount ?? 0));
+    const sourceRowKey = createVmsSalesSourceRowKey({
+      vmsTransactionId,
+      machineId: machine.id,
+      machineCode,
+      machineName,
+      productId,
+      productCode: productNumber || vmsProductId,
+      productName: productNameForMapping,
+      saleStartDate: rowPeriod.reportStartDate,
+      saleEndDate: rowPeriod.reportEndDate,
+      reportStartDate: salesReportPeriod?.reportStartDate ?? rowPeriod.reportStartDate,
+      reportEndDate: salesReportPeriod?.reportEndDate ?? rowPeriod.reportEndDate,
+      soldQty: Math.max(0, Math.floor(soldQty ?? 0)),
+      grossSalesAmount,
+      netSalesAmount,
+    });
     salesSnapshots.push({
       import_batch_id: batch.id,
       import_row_number: rowNumber,
       import_row_status: "imported",
+      source_row_key: sourceRowKey,
+      vms_transaction_id: vmsTransactionId || null,
       machine_id: machine.id,
       product_id: productId,
       sold_qty: Math.max(0, Math.floor(soldQty ?? 0)),
@@ -1175,6 +1412,9 @@ async function runVmsImport({
       sales_period_start: rowPeriod.reportStartDate,
       sales_period_end: rowPeriod.reportEndDate,
       sales_month: rowPeriod.salesMonth,
+      gross_sales_amount: grossSalesAmount,
+      net_sales_amount: netSalesAmount,
+      gross_profit_amount: numberValue(value(row, ["profit_amount", "profit", "gross_profit", "margin_amount", "net_profit"])),
       metadata: { raw: row, sales_report_period: rowPeriod },
     });
     summary.importedRows += 1;
@@ -1206,18 +1446,50 @@ async function runVmsImport({
   }
 
   if (salesSnapshots.length) {
-    const { error } = await supabase.from("vms_sales_snapshots").upsert(salesSnapshots, { onConflict: "import_batch_id,import_row_number" });
-    if (error) {
-      console.error("[vms-import] Sales snapshot upsert failed", error);
-      summary.errors.push("Sales snapshot save failed.");
-      summary.skippedRows += salesSnapshots.length;
-      summary.importedRows -= salesSnapshots.length;
-    } else if (existingBatchId) {
+    if (existingBatchId) {
+      const { error } = await supabase.from("vms_sales_snapshots").upsert(salesSnapshots, { onConflict: "import_batch_id,import_row_number" });
+      if (error) {
+        console.error("[vms-import] Sales snapshot reprocess upsert failed", error);
+        summary.errors.push("Sales snapshot save failed.");
+        summary.skippedRows += salesSnapshots.length;
+        summary.importedRows -= salesSnapshots.length;
+        fatalImportError = true;
+      }
       try {
         await markStaleSnapshotRows(supabase, "vms_sales_snapshots", batch.id, salesSnapshots.map((row) => Number(row.import_row_number)).filter(Number.isFinite));
       } catch (staleError) {
         console.error("[vms-import] Sales stale marking failed", staleError);
         summary.errors.push("Old sales snapshot rows could not be marked stale.");
+      }
+    } else {
+      const { data: rpcResult, error } = await supabase.rpc("apply_vms_sales_snapshot_import", {
+        p_batch_id: batch.id,
+        p_import_mode: importMode,
+        p_report_start_date: reportStartDate,
+        p_report_end_date: reportEndDate,
+        p_sales_rows: salesSnapshots,
+      });
+      if (error) {
+        console.error("[vms-import] Sales snapshot transaction failed", {
+          batchId: batch.id,
+          importMode,
+          reportStartDate,
+          reportEndDate,
+          errorCode: error.code,
+          errorMessage: error.message,
+          error,
+        });
+        summary.errors.push("Sales snapshot save failed.");
+        summary.skippedRows += salesSnapshots.length;
+        summary.importedRows -= salesSnapshots.length;
+        fatalImportError = true;
+      } else {
+        const result = Array.isArray(rpcResult) ? rpcResult[0] : rpcResult;
+        const insertedRows = Number(result?.rows_inserted ?? salesSnapshots.length);
+        const duplicateRows = Number(result?.rows_skipped_duplicate ?? Math.max(0, salesSnapshots.length - insertedRows));
+        summary.importedRows -= Math.max(0, salesSnapshots.length - insertedRows);
+        summary.skippedRows += duplicateRows;
+        summary.rowsSkippedDuplicate += duplicateRows;
       }
     }
   } else if (existingBatchId && reportType === "sales") {
@@ -1251,32 +1523,49 @@ async function runVmsImport({
     await upsertRawRows(supabase, finalRawRows);
   }
 
-  const productIds = new Set([...vmsSellingPriceByProductId.keys(), ...vmsCostPriceByProductId.keys()]);
-  for (const productId of productIds) {
-    const payload: Record<string, unknown> = { price_updated_at: new Date().toISOString(), updated_at: new Date().toISOString() };
-    const sellingPrice = vmsSellingPriceByProductId.get(productId);
-    const costPrice = vmsCostPriceByProductId.get(productId);
-    if (sellingPrice !== undefined) Object.assign(payload, { vms_selling_price_lyd: sellingPrice, current_selling_price_lyd: sellingPrice, selling_price: sellingPrice, selling_price_source: "vms" });
-    if (costPrice !== undefined) Object.assign(payload, { current_cost_price_lyd: costPrice, cost_price: costPrice, cost_price_source: "vms" });
-    const { error } = await supabase.from("products").update(payload).eq("id", productId);
-    if (error) {
-      console.error("[vms-import] Product price update failed", { productId, error });
-      summary.errors.push("Product price update failed.");
+  if (!fatalImportError) {
+    const productIds = new Set([...vmsSellingPriceByProductId.keys(), ...vmsCostPriceByProductId.keys()]);
+    for (const productId of productIds) {
+      const payload: Record<string, unknown> = { price_updated_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+      const sellingPrice = vmsSellingPriceByProductId.get(productId);
+      const costPrice = vmsCostPriceByProductId.get(productId);
+      if (sellingPrice !== undefined) Object.assign(payload, { vms_selling_price_lyd: sellingPrice, current_selling_price_lyd: sellingPrice, selling_price: sellingPrice, selling_price_source: "vms" });
+      if (costPrice !== undefined) Object.assign(payload, { current_cost_price_lyd: costPrice, cost_price: costPrice, cost_price_source: "vms" });
+      const { error } = await supabase.from("products").update(payload).eq("id", productId);
+      if (error) {
+        console.error("[vms-import] Product price update failed", { productId, error });
+        summary.errors.push("Product price update failed.");
+      }
     }
   }
 
-  const status = summary.errors.length || summary.skippedRows || summary.unknownMachines.length || summary.unmappedProducts.length ? "completed_with_warnings" : "completed";
+  summary.rowsNeedingReview = summary.needsProductMappingRows + summary.unknownMachineRows + summary.invalidRows;
+  const status = fatalImportError
+    ? "failed"
+    : summary.errors.length || summary.skippedRows || summary.unknownMachines.length || summary.unmappedProducts.length
+      ? "completed_with_warnings"
+      : "imported";
   const batchUpdate: Record<string, unknown> = {
     status,
     row_count: summary.totalRows,
+    rows_found: summary.rowsFound,
     rows_imported: summary.importedRows,
     rows_skipped: summary.skippedRows,
+    rows_skipped_duplicate: summary.rowsSkippedDuplicate,
+    rows_needing_review: summary.rowsNeedingReview,
     error_count: summary.errors.length,
     errors: summary.errors,
     unknown_machines: summary.unknownMachines,
     unmapped_products: summary.unmappedProducts,
+    preview_summary: summary,
+    review_summary: {
+      unknown_machines: summary.unknownMachines,
+      unmapped_products: summary.unmappedProducts,
+      errors: summary.errors,
+    },
     notes: JSON.stringify(summary),
   };
+  if (fatalImportError) batchUpdate.failed_at = new Date().toISOString();
   if (existingBatchId) {
     batchUpdate.last_reprocessed_at = new Date().toISOString();
     batchUpdate.reprocess_count = Number(batch.reprocess_count ?? 0) + 1;
@@ -1286,6 +1575,8 @@ async function runVmsImport({
     .from("vms_import_batches")
     .update(batchUpdate)
     .eq("id", batch.id);
+
+  await saveHeaderMappingMemory({ supabase, profile, reportType, headerNames, mapping: columnMapping });
 
   await logActivity({
     profile,
@@ -1369,6 +1660,9 @@ export async function completeVmsImport(formData: FormData) {
   const headerRowIndex = Number.isFinite(headerRowRaw) ? Math.max(0, Math.floor(headerRowRaw)) : 0;
   const autoCreateMissingProducts = booleanOption(formData.get("auto_create_products"), true);
   const updateCostFromVms = booleanOption(formData.get("update_cost_from_vms"), false);
+  const importMode = parseVmsImportMode(formData.get("import_mode"));
+  const submittedReportStartDate = String(formData.get("report_start_date") || "").trim() || null;
+  const submittedReportEndDate = String(formData.get("report_end_date") || "").trim() || null;
   if (!previewId || !sheetName || !reportType) redirect("/vms-import?error=Missing%20VMS%20import%20preview%20details.");
 
   const { data: preview } = await supabase.from("vms_import_previews").select("*").eq("id", previewId).maybeSingle();
@@ -1382,7 +1676,7 @@ export async function completeVmsImport(formData: FormData) {
   const missing = requiredMissing(mapping, reportType);
   if (missing.length) previewRedirect(previewId, sheet.name, reportType, `Map required fields: ${missing.join(", ")}`, headerRowIndex);
 
-  const { records } = sheetRowsToRecords(sheet.rows, { reportType, headerRowIndex });
+  const { headers, records } = sheetRowsToRecords(sheet.rows, { reportType, headerRowIndex });
   const rows = applyColumnMapping(records, mapping);
   if (!rows.length) previewRedirect(previewId, sheet.name, reportType, "Selected sheet has no data rows.", headerRowIndex);
   const salesReportPeriod = reportType === "sales" ? findSalesReportPeriod(sheet.rows, headerRowIndex) : null;
@@ -1394,14 +1688,18 @@ export async function completeVmsImport(formData: FormData) {
     supabase,
     profile,
     reportType,
+    importMode,
     fileName: preview.file_name,
     fileType: preview.file_type,
     sheetName: sheet.name,
+    headerNames: headers,
     rows,
     originalRows: records,
     columnMapping: mapping,
     firstDataRowNumber: headerRowIndex + 2,
     salesReportPeriod,
+    reportStartDate: submittedReportStartDate ?? salesReportPeriod?.reportStartDate ?? null,
+    reportEndDate: submittedReportEndDate ?? salesReportPeriod?.reportEndDate ?? null,
     autoCreateMissingProducts,
     updateCostFromVms,
   });

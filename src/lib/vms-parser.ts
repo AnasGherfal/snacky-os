@@ -78,6 +78,7 @@ export const vmsExpectedFields: Record<VmsReportType, VmsFieldDef[]> = {
     { field: "revenue_amount", label: "Revenue amount", aliases: ["Sales Amount", "Revenue", "Amount", "Total Sales", "Turnover", "sales_amount", "total_sales", "المبيعات", "الإيراد", "القيمة"] },
     { field: "cost_amount", label: "Cost amount", aliases: ["Cost", "Product Cost", "Total Cost", "cost_amount", "cogs", "التكلفة"] },
     { field: "profit_amount", label: "Profit amount", aliases: ["Profit", "Gross Profit", "profit_amount", "gross_profit", "الربح"] },
+    { field: "vms_transaction_id", label: "VMS transaction ID", aliases: ["Transaction ID", "Transaction No", "Order ID", "Order No", "Receipt ID", "Receipt No", "Txn ID", "txn_id", "transaction_id", "transaction_no", "order_id", "receipt_id"] },
     { field: "payment_method", label: "Payment method", aliases: ["Payment Method", "Payment", "Tender", "Method", "payment_method"] },
     { field: "selling_price", label: "Selling price", aliases: ["Selling Price", "Price", "Unit Price", "selling_price", "sale_price", "سعر البيع"] },
   ],

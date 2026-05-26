@@ -10,6 +10,7 @@ const adminLinks = [
   { title: "Settings", href: "/settings", description: "Business settings and operating configuration." },
   { title: "XY VMS API", href: "/admin/vms-api", description: "Sync Xingyuan machines, products, stock, and status server-side." },
   { title: "VMS Import", href: "/vms-import", description: "Upload stock or sales CSV files from the vending system." },
+  { title: "KPI Definitions", href: "/admin/kpi-definitions", description: "Reference definitions for VMS sales, profit, velocity, NSM, variance, and growth metrics." },
   { title: "Historical Route Deduction", href: "/admin/historical-route-deduction", description: "Preview and apply one-time storage deductions for old manually recorded route/refill data." },
   { title: "Product Mapping", href: "/vms-mappings", description: "Connect VMS product names to Snacky products." },
   { title: "Activity Log", href: "/activity", description: "Audit user actions and operational changes." },

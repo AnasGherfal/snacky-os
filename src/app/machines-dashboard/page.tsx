@@ -2,7 +2,7 @@ import { BarList, KpiSection } from "@/components/KpiDashboard";
 import { DataTable, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
 import { requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
-import { formatInteger, formatLydOrDash, groupCount, latestObservedMonth, monthKey, salesAmount, soldQty } from "@/lib/kpi";
+import { formatInteger, formatLydOrDash, groupCount, latestObservedMonth, monthKey, salesAmount } from "@/lib/kpi";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export default async function MachinesDashboardPage() {
@@ -10,7 +10,7 @@ export default async function MachinesDashboardPage() {
   const supabase = getSupabaseServerClient();
   const [salesResult, machinesResult, refillResult, historicalRefillResult, stockResult, issuesResult, cashResult] = supabase
     ? await Promise.all([
-        supabase.from("vms_sales_snapshots").select("id, machine_id, product_id, sold_qty, sales_amount, period_end, product:products(id, cost_price, current_cost_price_lyd)").eq("import_row_status", "imported"),
+        supabase.from("vms_sales_clean").select("id, machine_id, product_id, units_sold, net_sales_amount, gross_profit_amount, sale_date, sales_month, cost_missing"),
         supabase.from("machines").select("id, machine_code, name, status, target_nsm, rent_amount, location:locations(id, name)").order("name"),
         supabase.from("refill_orders").select("id, machine_id, status, generated_at, completed_at"),
         supabase.from("machine_refill_history").select("id, machine_id, machine_name, fill_status, issues_found, refill_at"),
@@ -20,7 +20,12 @@ export default async function MachinesDashboardPage() {
       ])
     : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }];
 
-  const sales = (salesResult.data ?? []) as any[];
+  const sales = ((salesResult.data ?? []) as any[]).map((row) => ({
+    ...row,
+    sold_qty: row.units_sold,
+    sales_amount: row.net_sales_amount,
+    period_end: row.sale_date,
+  }));
   const machines = (machinesResult.data ?? []) as any[];
   const refills = (refillResult.data ?? []) as any[];
   const historicalRefills = (historicalRefillResult.data ?? []) as any[];
@@ -42,10 +47,7 @@ export default async function MachinesDashboardPage() {
     const revenue = machineSales.reduce((sum, row) => sum + salesAmount(row), 0);
     const nsm = latestMonthSales.reduce((sum, row) => sum + salesAmount(row), 0);
     const targetNsm = Number(machine.target_nsm ?? 0);
-    const grossProfitRows = latestMonthSales.map((row) => {
-      const cost = Number(row.product?.current_cost_price_lyd ?? row.product?.cost_price ?? 0);
-      return cost > 0 ? salesAmount(row) - soldQty(row) * cost : null;
-    });
+    const grossProfitRows = latestMonthSales.map((row) => row.cost_missing ? null : Number(row.gross_profit_amount ?? 0));
     const hasProfitData = grossProfitRows.some((value) => value !== null);
     const grossProfit = grossProfitRows.reduce<number>((sum, value) => sum + (value ?? 0), 0);
     const profitAfterRent = hasProfitData ? grossProfit - Number(machine.rent_amount ?? 0) : null;

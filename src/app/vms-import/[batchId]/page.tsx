@@ -20,6 +20,8 @@ type ImportSummary = {
   unknownMachineRows?: number;
   invalidRows?: number;
   skippedRows?: number;
+  rowsSkippedDuplicate?: number;
+  rowsNeedingReview?: number;
   productsCreated?: number;
   productsUpdated?: number;
   mappingsCreated?: number;
@@ -121,7 +123,7 @@ export default async function VmsImportBatchDetailPage({
   const [{ data: batch }, { data: rows }] = await Promise.all([
     supabase
       .from("vms_import_batches")
-      .select("id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, status, row_count, rows_imported, rows_skipped, error_count, notes, column_mapping, last_reprocessed_at, reprocess_count")
+      .select("id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, status, row_count, rows_imported, rows_skipped, rows_skipped_duplicate, rows_needing_review, import_mode, report_start_date, report_end_date, error_count, notes, column_mapping, last_reprocessed_at, reprocess_count")
       .eq("id", batchId)
       .maybeSingle(),
     supabase
@@ -188,11 +190,19 @@ export default async function VmsImportBatchDetailPage({
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
           <StatCard label="Total rows" value={summary?.totalRows ?? batch.row_count ?? rowList.length} />
           <StatCard label="Imported" value={summary?.importedRows ?? batch.rows_imported ?? importedRows.length} />
+          <StatCard label="Duplicates skipped" value={summary?.rowsSkippedDuplicate ?? batch.rows_skipped_duplicate ?? 0} />
           <StatCard label="Needs mapping" value={summary?.needsProductMappingRows ?? needsMappingRows.length} />
           <StatCard label="Unknown machines" value={summary?.unknownMachineRows ?? unknownMachineRows.length} />
           <StatCard label="Invalid rows" value={summary?.invalidRows ?? invalidRows.length} />
           <StatCard label="Saved rows" value={rowList.length} />
         </div>
+        {batch.report_type === "sales" ? (
+          <div className="mt-3 grid gap-3 md:grid-cols-3">
+            <StatCard label="Import mode" value={String(batch.import_mode ?? summary?.importType ?? "append_new").replaceAll("_", " ")} />
+            <StatCard label="Report start" value={batch.report_start_date ?? "-"} />
+            <StatCard label="Report end" value={batch.report_end_date ?? "-"} />
+          </div>
+        ) : null}
         {batch.report_type === "product_list" ? (
           <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
             <StatCard label="Products created" value={summary?.productsCreated ?? 0} />

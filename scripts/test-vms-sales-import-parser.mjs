@@ -8,6 +8,10 @@ import {
   requiredMissing,
   sheetRowsToRecords,
 } from "../src/lib/vms-parser.ts";
+import {
+  createVmsSalesSourceRowKey,
+  vmsHeaderSignature,
+} from "../src/lib/vms-sales-import.ts";
 
 const salesRows = [
   ["Statistical statement of commodity profit(2026-03-01/2026-03-31)"],
@@ -62,4 +66,36 @@ test("VMS sales header detection skips the title row and maps transaction column
   assert.equal(mappedRows[0].product_identifier, "P001");
   assert.equal(mappedRows[0].sold_qty, "10");
   assert.equal(mappedRows[0].total_sales_amount, "25.00");
+});
+
+test("VMS sales source row key is stable for duplicate imports", () => {
+  const first = createVmsSalesSourceRowKey({
+    machineId: "machine-1",
+    productId: "product-1",
+    saleStartDate: "2026-03-01",
+    saleEndDate: "2026-03-31",
+    reportStartDate: "2026-03-01",
+    reportEndDate: "2026-03-31",
+    soldQty: 10,
+    grossSalesAmount: 25,
+    netSalesAmount: 22.5,
+  });
+  const second = createVmsSalesSourceRowKey({
+    machineId: "machine-1",
+    productId: "product-1",
+    saleStartDate: "2026-03-01",
+    saleEndDate: "2026-03-31",
+    reportStartDate: "2026-03-01",
+    reportEndDate: "2026-03-31",
+    soldQty: 10,
+    grossSalesAmount: 25.0,
+    netSalesAmount: 22.5,
+  });
+
+  assert.equal(first, second);
+});
+
+test("VMS header signature identifies reusable report formats", () => {
+  const signature = vmsHeaderSignature("sales", salesRows[1]);
+  assert.equal(signature, "sales:merchant_id|merchant_name|machine_code|machine_name|product_number|product_name|commodity_price|number_of_transaction|transaction_amount|refund_count|refund_amount");
 });

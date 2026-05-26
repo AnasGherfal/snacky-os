@@ -14,7 +14,18 @@ function jwtExpiresAt(token: string | null) {
   }
 }
 
-function setSessionCookies(cookieStore: Awaited<ReturnType<typeof cookies>>, session: { access_token: string; refresh_token: string; expires_in: number }) {
+type RefreshedSession = {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+  expires_at?: number | null;
+};
+
+function sessionExpiresAt(session: Pick<RefreshedSession, "access_token" | "expires_at">) {
+  return typeof session.expires_at === "number" && Number.isFinite(session.expires_at) ? session.expires_at * 1000 : jwtExpiresAt(session.access_token);
+}
+
+function setSessionCookies(cookieStore: Awaited<ReturnType<typeof cookies>>, session: RefreshedSession) {
   cookieStore.set(accessTokenCookie, session.access_token, {
     httpOnly: true,
     sameSite: "lax",
@@ -64,10 +75,11 @@ export async function POST() {
   }
 
   setSessionCookies(cookieStore, data.session);
-  const expiresAt = jwtExpiresAt(data.session.access_token);
+  const expiresAt = sessionExpiresAt(data.session);
 
   return NextResponse.json({
     ok: true,
+    authenticated: true,
     expiresAt,
     secondsUntilExpiry: expiresAt ? Math.max(0, Math.floor((expiresAt - Date.now()) / 1000)) : data.session.expires_in,
   });

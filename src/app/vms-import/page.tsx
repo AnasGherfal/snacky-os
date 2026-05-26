@@ -5,13 +5,23 @@ import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, FormField, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
+import { lyd } from "@/lib/format";
 import { cleanSearchParams, getPagination } from "@/lib/pagination";
 import { completeVmsImport, prepareVmsImport } from "@/lib/vms-import-actions";
-import { validateVmsRows, type VmsValidationResult } from "@/lib/vms-import-validation";
+import { validateVmsRows, vmsValue, type VmsValidationResult } from "@/lib/vms-import-validation";
+import {
+  createVmsSalesSourceRowKey,
+  parseVmsImportMode,
+  salesPeriodFromMappedRow,
+  vmsHeaderSignature,
+  vmsImportModeLabels,
+  type VmsImportMode,
+} from "@/lib/vms-sales-import";
 import {
   applyColumnMapping,
   detectColumnMappingDetails,
   detectHeaderRowIndex,
+  findSalesReportPeriod,
   parseReportType,
   requiredMissing,
   sheetRowsToRecords,
@@ -36,6 +46,8 @@ type ImportSummary = {
   unknownMachineRows?: number;
   invalidRows?: number;
   skippedRows?: number;
+  rowsSkippedDuplicate?: number;
+  rowsNeedingReview?: number;
   reprocessCount?: number;
   productsCreated?: number;
   productsUpdated?: number;
@@ -60,6 +72,10 @@ type VmsImportSearchParams = {
   error?: string;
   autoCreateProducts?: string;
   updateCostFromVms?: string;
+  useSavedMapping?: string;
+  importMode?: string;
+  reportStartDate?: string;
+  reportEndDate?: string;
 };
 
 type PreviewSheet = { name: string; rows: string[][] };
@@ -123,6 +139,70 @@ function sampleList(samples: Record<string, string[]>, header: string) {
   return values.length ? values.join(" | ") : "-";
 }
 
+function findMappedSalesReportRange(rows: Record<string, string>[]) {
+  const dates = rows
+    .map((row) => salesPeriodFromMappedRow(row)?.reportStartDate)
+    .filter((value): value is string => Boolean(value))
+    .sort();
+  if (!dates.length) return { start: "", end: "" };
+  return { start: dates[0], end: dates[dates.length - 1] };
+}
+
+function mappedNumber(input: string) {
+  const raw = String(input ?? "").trim();
+  if (!raw) return null;
+  const negative = raw.includes("(") && raw.includes(")");
+  let cleaned = raw.replace(/[^\d,.\-]/g, "");
+  const lastComma = cleaned.lastIndexOf(",");
+  const lastDot = cleaned.lastIndexOf(".");
+  if (lastComma > -1 && lastDot > -1) {
+    cleaned = lastComma > lastDot ? cleaned.replace(/\./g, "").replace(",", ".") : cleaned.replace(/,/g, "");
+  } else if (lastComma > -1) {
+    const decimals = cleaned.length - lastComma - 1;
+    cleaned = decimals > 0 && decimals <= 2 ? cleaned.replace(",", ".") : cleaned.replace(/,/g, "");
+  }
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? (negative ? -Math.abs(parsed) : parsed) : null;
+}
+
+function buildPreviewSalesSourceKey({
+  row,
+  validationRow,
+  reportRange,
+  titlePeriod,
+}: {
+  row: Record<string, string>;
+  validationRow: NonNullable<VmsValidationResult>["rows"][number];
+  reportRange: { start: string; end: string };
+  titlePeriod: { reportStartDate: string; reportEndDate: string } | null;
+}) {
+  if (validationRow.status !== "imported") return null;
+  const rowPeriod = titlePeriod ?? salesPeriodFromMappedRow(row);
+  if (!rowPeriod) return null;
+  const machineId = validationRow.matchedMachineId;
+  const productId = validationRow.matchedProductId;
+  if (!machineId || !productId) return null;
+  const soldQty = mappedNumber(vmsValue(row, ["sold_qty", "transaction_count", "number_of_transaction", "number_of_transactions", "quantity_sold", "units_sold", "sales_units", "units", "qty", "quantity", "sales_qty", "sales_quantity", "volume", "sales_volume"])) ?? 0;
+  const grossSalesAmount = mappedNumber(vmsValue(row, ["total_sales_amount", "transaction_amount", "revenue_amount", "sales_amount", "total_sales", "total_sales_lyd", "sale_amount", "amount", "total_amount", "paid_amount", "revenue", "gross_sales", "turnover", "net_sales"])) ?? 0;
+  const refundAmount = mappedNumber(vmsValue(row, ["refund_amount", "refund_total"])) ?? 0;
+  return createVmsSalesSourceRowKey({
+    vmsTransactionId: vmsValue(row, ["vms_transaction_id", "transaction_id", "transaction_no", "txn_id", "order_id", "order_no", "receipt_id", "receipt_no"]),
+    machineId,
+    machineCode: validationRow.machineIdentifier,
+    machineName: validationRow.machineIdentifier,
+    productId,
+    productCode: validationRow.productIdentifier,
+    productName: validationRow.productName,
+    saleStartDate: rowPeriod.reportStartDate,
+    saleEndDate: rowPeriod.reportEndDate,
+    reportStartDate: titlePeriod?.reportStartDate ?? reportRange.start,
+    reportEndDate: titlePeriod?.reportEndDate ?? reportRange.end,
+    soldQty,
+    grossSalesAmount,
+    netSalesAmount: Math.max(0, grossSalesAmount - Math.max(0, refundAmount)),
+  });
+}
+
 function rowPreview(row: string[]) {
   const text = row.filter(Boolean).slice(0, 6).join(" | ");
   return text || "Blank row";
@@ -165,6 +245,9 @@ function WizardStateInputs({
   mapping,
   autoCreateProducts,
   updateCostFromVms,
+  importMode,
+  reportStartDate,
+  reportEndDate,
   includeImportOptions = true,
   finalAction = false,
 }: {
@@ -176,6 +259,9 @@ function WizardStateInputs({
   mapping?: Record<string, string>;
   autoCreateProducts?: boolean;
   updateCostFromVms?: boolean;
+  importMode?: VmsImportMode;
+  reportStartDate?: string;
+  reportEndDate?: string;
   includeImportOptions?: boolean;
   finalAction?: boolean;
 }) {
@@ -191,6 +277,15 @@ function WizardStateInputs({
       ) : null}
       {includeImportOptions && updateCostFromVms !== undefined ? (
         <input type="hidden" name={finalAction ? "update_cost_from_vms" : "updateCostFromVms"} value={optionValue(updateCostFromVms)} />
+      ) : null}
+      {includeImportOptions && importMode ? (
+        <input type="hidden" name={finalAction ? "import_mode" : "importMode"} value={importMode} />
+      ) : null}
+      {includeImportOptions && reportStartDate ? (
+        <input type="hidden" name={finalAction ? "report_start_date" : "reportStartDate"} value={reportStartDate} />
+      ) : null}
+      {includeImportOptions && reportEndDate ? (
+        <input type="hidden" name={finalAction ? "report_end_date" : "reportEndDate"} value={reportEndDate} />
       ) : null}
       {mapping
         ? Object.entries(mapping).map(([field, column]) => (
@@ -375,7 +470,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
   const [{ data: batches, count: batchCount, error: batchesError }, { data: preview, error: previewError }] = await Promise.all([
     supabase
       .from("vms_import_batches")
-      .select("id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, status, row_count, rows_imported, rows_skipped, error_count, notes, last_reprocessed_at, reprocess_count", { count: "exact" })
+      .select("id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, status, row_count, rows_imported, rows_skipped, rows_skipped_duplicate, import_mode, error_count, notes, last_reprocessed_at, reprocess_count", { count: "exact" })
       .order("imported_at", { ascending: false })
       .range(from, to),
     params.previewId
@@ -420,7 +515,29 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
     ? sheetRowsToRecords(selectedSheet.rows, { reportType: selectedReportType, headerRowIndex: selectedHeaderRow })
     : { headerRowIndex: 0, headerConfidence: 0, headers: [], records: [], samples: {}, columnSamples: {} };
   const mappingDetection = selectedSheet ? detectColumnMappingDetails(selectedRows.headers, selectedReportType, selectedRows.columnSamples) : { mapping: {}, details: [] };
-  const selectedMapping = readMapping(params, selectedReportType, mappingDetection.mapping);
+  const useSavedMapping = booleanParam(params.useSavedMapping, true);
+  const headerSignature = selectedSheet ? vmsHeaderSignature(selectedReportType, selectedRows.headers) : "";
+  let savedHeaderMapping: any = null;
+  if (selectedSheet && headerSignature) {
+    const { data, error } = await supabase
+      .from("vms_header_mappings")
+      .select("id, last_used_mapping, updated_at, use_count")
+      .eq("report_type", selectedReportType)
+      .eq("source_signature", headerSignature)
+      .maybeSingle();
+    if (error && error.code !== "42P01") {
+      console.warn("[vms-import] Saved header mapping lookup failed", error);
+    }
+    savedHeaderMapping = data ?? null;
+  }
+  const savedMappingDefaults = savedHeaderMapping?.last_used_mapping && typeof savedHeaderMapping.last_used_mapping === "object"
+    ? savedHeaderMapping.last_used_mapping as Record<string, string>
+    : {};
+  const selectedMapping = readMapping(
+    params,
+    selectedReportType,
+    useSavedMapping && Object.keys(savedMappingDefaults).length ? { ...mappingDetection.mapping, ...savedMappingDefaults } : mappingDetection.mapping,
+  );
   const missingRequired = selectedSheet ? requiredMissing(selectedMapping, selectedReportType) : [];
   const mappedRows = selectedSheet ? applyColumnMapping(selectedRows.records, selectedMapping) : [];
   const mappedPreviewRows = mappedRows.slice(0, 8);
@@ -429,13 +546,19 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
 
   let validation: VmsValidationResult | null = null;
   if (selectedSheet && currentStep >= 5) {
-    const [{ data: machines, error: machinesError }, { data: mappings, error: mappingsError }, { data: products, error: productsError }] = await Promise.all([
-      supabase.from("machines").select("id, machine_code, vms_machine_id, name"),
+    const [
+      { data: machines, error: machinesError },
+      { data: machineMappings, error: machineMappingsError },
+      { data: mappings, error: mappingsError },
+      { data: products, error: productsError },
+    ] = await Promise.all([
+      supabase.from("machines").select("id, machine_code, vms_machine_id, name, location_id"),
+      supabase.from("vms_machine_mappings").select("id, vms_machine_key, vms_machine_name, machine_id, location_id, status, aliases"),
       supabase.from("vms_product_mappings").select("id, vms_product_id, vms_product_name, product_id, match_status"),
       supabase.from("products").select("id, sku, barcode, name"),
     ]);
     const validationLoadError = machinesError ?? mappingsError ?? productsError;
-    if (validationLoadError) {
+    if (validationLoadError || (machineMappingsError && machineMappingsError.code !== "42P01")) {
       console.error("[vms-import] Failed to load validation references", validationLoadError);
       return (
         <>
@@ -449,11 +572,57 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
       originalRows: selectedRows.records,
       firstDataRowNumber: selectedRows.headerRowIndex + 2,
       machines: (machines ?? []) as any[],
+      machineMappings: (machineMappings ?? []) as any[],
       mappings: (mappings ?? []) as any[],
       products: (products ?? []) as any[],
       autoCreateMissingProducts: autoCreateProducts,
     });
   }
+
+  const importMode = parseVmsImportMode(params.importMode);
+  const titleSalesReportPeriod = selectedSheet && selectedReportType === "sales"
+    ? findSalesReportPeriod(selectedSheet.rows, selectedRows.headerRowIndex)
+    : null;
+  const mappedSalesRange = selectedReportType === "sales" ? findMappedSalesReportRange(mappedRows) : { start: "", end: "" };
+  const reportStartDate = params.reportStartDate ?? titleSalesReportPeriod?.reportStartDate ?? mappedSalesRange.start;
+  const reportEndDate = params.reportEndDate ?? titleSalesReportPeriod?.reportEndDate ?? mappedSalesRange.end;
+  let duplicatePreviewCount = 0;
+  if (validation && selectedReportType === "sales" && currentStep >= 6) {
+    const sourceKeys = mappedRows
+      .flatMap((row, index) => {
+        const validationRow = validation?.rows[index];
+        if (!validationRow) return [];
+        const key = buildPreviewSalesSourceKey({
+          row,
+          validationRow,
+          reportRange: { start: reportStartDate, end: reportEndDate },
+          titlePeriod: titleSalesReportPeriod,
+        });
+        return key ? [key] : [];
+      });
+    const uniqueKeys = Array.from(new Set(sourceKeys));
+    if (uniqueKeys.length) {
+      for (let index = 0; index < uniqueKeys.length; index += 500) {
+        const chunk = uniqueKeys.slice(index, index + 500);
+        const { data: duplicates, error: duplicateError } = await supabase
+          .from("vms_sales_snapshots")
+          .select("source_row_key")
+          .in("source_row_key", chunk)
+          .eq("import_row_status", "imported");
+        if (duplicateError && duplicateError.code !== "42703") {
+          console.warn("[vms-import] Duplicate preview lookup failed", duplicateError);
+          break;
+        }
+        duplicatePreviewCount += new Set((duplicates ?? []).map((row: any) => String(row.source_row_key))).size;
+      }
+    }
+  }
+  const estimatedSalesTotal = selectedReportType === "sales"
+    ? mappedRows.reduce((sum, row) => sum + (mappedNumber(vmsValue(row, ["total_sales_amount", "transaction_amount", "revenue_amount", "sales_amount", "total_sales", "total_sales_lyd", "sale_amount", "amount", "total_amount", "paid_amount", "revenue", "gross_sales", "turnover", "net_sales"])) ?? 0), 0)
+    : 0;
+  const machinesFound = validation ? new Set(validation.rows.map((row) => row.machineIdentifier).filter(Boolean)).size : 0;
+  const productsFound = validation ? new Set(validation.rows.map((row) => row.productIdentifier || row.productName).filter(Boolean)).size : 0;
+  const rowsReadyToImport = validation ? Math.max(0, validation.importedRows - duplicatePreviewCount) : 0;
 
   const baseState = {
     previewId: String(preview?.id ?? params.previewId ?? ""),
@@ -462,6 +631,9 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
     headerRow: selectedRows.headerRowIndex,
     autoCreateProducts,
     updateCostFromVms,
+    importMode,
+    reportStartDate,
+    reportEndDate,
   };
 
   return (
@@ -571,6 +743,26 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
             <h2 className="text-lg font-semibold text-slate-900">Step 5: Column Mapping</h2>
             <p className="mt-1 text-sm text-slate-500">Map VMS columns to Snacky fields. Required fields must be mapped before validation.</p>
           </div>
+          {savedHeaderMapping ? (
+            <div className="flex flex-col gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 md:flex-row md:items-center md:justify-between">
+              <div>
+                We found a saved mapping for this VMS report. {useSavedMapping ? "It is applied by default." : "Apply it to reuse the last successful mapping."}
+              </div>
+              <Link
+                href={queryFor({
+                  previewId: preview.id,
+                  sheet: selectedSheet.name,
+                  reportType: selectedReportType,
+                  headerRow: String(selectedRows.headerRowIndex),
+                  step: "5",
+                  useSavedMapping: useSavedMapping ? "no" : "yes",
+                })}
+                className="btn-secondary"
+              >
+                {useSavedMapping ? "Use auto-detect" : "Apply saved mapping"}
+              </Link>
+            </div>
+          ) : null}
           {missingRequired.length ? (
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
               Required fields still missing: {missingRequired.join(", ")}.
@@ -665,11 +857,21 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
           {validation ? (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
               <StatCard label="Total rows" value={validation.totalRows} />
-              <StatCard label="Imported" value={validation.importedRows} />
+              <StatCard label="Rows to import" value={rowsReadyToImport} note={selectedReportType === "sales" ? `${duplicatePreviewCount} duplicates skipped` : undefined} />
               <StatCard label="Needs product mapping" value={validation.needsProductMappingRows} note={`${validation.missingProductMappingCount} unique products`} />
               <StatCard label="Unknown machine" value={validation.unknownMachineRows} note={`${validation.unknownMachineCount} unique machines`} />
               <StatCard label="Invalid row" value={validation.invalidRows} />
               <StatCard label="Warnings" value={validation.warningRows} />
+            </div>
+          ) : null}
+          {selectedReportType === "sales" ? (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+              <StatCard label="Import mode" value={vmsImportModeLabels[importMode]} />
+              <StatCard label="Report period" value={reportStartDate && reportEndDate ? `${reportStartDate} to ${reportEndDate}` : "-"} />
+              <StatCard label="Machines found" value={machinesFound} />
+              <StatCard label="Products found" value={productsFound} />
+              <StatCard label="Duplicate rows" value={duplicatePreviewCount} />
+              <StatCard label="Estimated sales" value={lyd(estimatedSalesTotal)} />
             </div>
           ) : null}
           <div>
@@ -686,16 +888,19 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
               </DataTable>
             )}
           </div>
-          {validation?.reviewRowsList.length ? (
-            <DataTable headers={["Row", "Status", "Reasons", "Machine", "Product", "Original row data"]}>
-              {validation.reviewRowsList.slice(0, 100).map((row) => (
-                <tr key={row.rowNumber}>
-                  <td>{row.rowNumber}</td>
-                  <td><StatusBadge status={row.status.replaceAll("_", " ")} /></td>
-                  <td className="max-w-xs">{row.reasons.join(", ")}</td>
-                  <td>{row.machineIdentifier ?? "-"}</td>
-                  <td>{productCell(row)}</td>
-                  <td><OriginalRowData row={row.originalRow} /></td>
+          {validation?.reviewGroups.length ? (
+            <DataTable headers={["Needs review group", "Count", "Example rows", "Question"]}>
+              {validation.reviewGroups.slice(0, 50).map((group) => (
+                <tr key={group.key}>
+                  <td>
+                    <div className="font-medium text-slate-900">{group.title}</div>
+                    <div className="mt-1"><StatusBadge status={group.type.replaceAll("_", " ")} /></div>
+                  </td>
+                  <td>{group.count}</td>
+                  <td className="max-w-md text-xs text-slate-600">
+                    {group.examples.map((row) => `Row ${row.rowNumber}: ${row.machineIdentifier ?? "-"} / ${productCell(row)}`).join(" | ")}
+                  </td>
+                  <td className="max-w-md">{group.question}</td>
                 </tr>
               ))}
             </DataTable>
@@ -722,9 +927,22 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
               <WizardStateInputs step={5} {...baseState} mapping={selectedMapping} />
               <button className="btn-secondary">Back to mapping</button>
             </form>
-            <form>
-              <WizardStateInputs step={7} {...baseState} mapping={selectedMapping} />
-              <button className="btn-primary">Continue to confirm</button>
+            <form className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_minmax(160px,auto)_minmax(160px,auto)_auto]">
+              <WizardStateInputs step={7} {...baseState} mapping={selectedMapping} includeImportOptions={false} />
+              <input type="hidden" name="autoCreateProducts" value={optionValue(autoCreateProducts)} />
+              <input type="hidden" name="updateCostFromVms" value={optionValue(updateCostFromVms)} />
+              <FormField label="Import mode">
+                <select name="importMode" defaultValue={importMode} className="field-input">
+                  {Object.entries(vmsImportModeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                </select>
+              </FormField>
+              <FormField label="Range start">
+                <input name="reportStartDate" type="date" defaultValue={reportStartDate} className="field-input" />
+              </FormField>
+              <FormField label="Range end">
+                <input name="reportEndDate" type="date" defaultValue={reportEndDate} className="field-input" />
+              </FormField>
+              <button className="btn-primary self-end">Continue to confirm</button>
             </form>
           </div>
         </section>
@@ -739,11 +957,18 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
           {validation ? (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
               <StatCard label="Total rows" value={validation.totalRows} />
-              <StatCard label="Imported" value={validation.importedRows} />
+              <StatCard label="Rows to import" value={rowsReadyToImport} />
               <StatCard label="Needs product mapping" value={validation.needsProductMappingRows} />
               <StatCard label="Unknown machine" value={validation.unknownMachineRows} />
               <StatCard label="Invalid row" value={validation.invalidRows} />
-              <StatCard label="Warnings" value={validation.warningRows} />
+              <StatCard label="Duplicates skipped" value={duplicatePreviewCount} />
+            </div>
+          ) : null}
+          {selectedReportType === "sales" ? (
+            <div className="grid gap-3 md:grid-cols-3">
+              <StatCard label="Import mode" value={vmsImportModeLabels[importMode]} />
+              <StatCard label="Report period" value={reportStartDate && reportEndDate ? `${reportStartDate} to ${reportEndDate}` : "-"} />
+              <StatCard label="Estimated sales from file" value={lyd(estimatedSalesTotal)} />
             </div>
           ) : null}
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
@@ -783,13 +1008,15 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
           <EmptyState title="No VMS imports yet" body="Upload a VMS Excel/CSV report to create the first import batch." />
         ) : (
           <>
-            <DataTable headers={["Status", "File name", "Report type", "Rows imported", "Needs mapping", "Rows failed", "Imported by", "Date"]}>
+            <DataTable headers={["Status", "File name", "Report type", "Mode", "Rows imported", "Duplicates", "Needs mapping", "Rows failed", "Imported by", "Date"]}>
               {batches.map((batch: any) => (
                 <tr key={batch.id}>
                   <td><Link href={`/vms-import/${batch.id}`}><StatusBadge status={batch.status} /></Link></td>
                   <td className="font-medium text-slate-900"><Link className="link-secondary" href={`/vms-import/${batch.id}`}>{batch.file_name ?? "-"}</Link></td>
                   <td>{reportLabel(batch.report_type ?? batch.source_type)}</td>
+                  <td>{vmsImportModeLabels[parseVmsImportMode(batch.import_mode)]}</td>
                   <td>{batch.rows_imported ?? batchMetric(batch, "importedRows", 0)}</td>
+                  <td>{batch.rows_skipped_duplicate ?? batchMetric(batch, "rowsSkippedDuplicate", 0)}</td>
                   <td>{batchMetric(batch, "needsProductMappingRows", 0)}</td>
                   <td>{batchMetric(batch, "invalidRows", batch.error_count ?? 0)}</td>
                   <td>{batch.imported_by ? importerById.get(String(batch.imported_by)) ?? "Unknown" : "-"}</td>

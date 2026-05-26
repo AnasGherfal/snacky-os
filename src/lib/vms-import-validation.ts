@@ -5,6 +5,17 @@ export type VmsReferenceMachine = {
   machine_code?: string | null;
   vms_machine_id?: string | null;
   name?: string | null;
+  location_id?: string | null;
+};
+
+export type VmsReferenceMachineMapping = {
+  id?: string | null;
+  vms_machine_key?: string | null;
+  vms_machine_name?: string | null;
+  machine_id?: string | null;
+  location_id?: string | null;
+  status?: string | null;
+  aliases?: string[] | null;
 };
 
 export type VmsReferenceMapping = {
@@ -38,6 +49,7 @@ export type VmsValidatedRow = {
   severity: "valid" | "warning" | "error";
   reasons: string[];
   machineIdentifier: string | null;
+  matchedMachineId: string | null;
   productIdentifier: string | null;
   productName: string | null;
   matchedProductId: string | null;
@@ -63,6 +75,16 @@ export type VmsValidationResult = {
   invalidRowsList: VmsValidatedRow[];
   errorRowsList: VmsValidatedRow[];
   warningRowsList: VmsValidatedRow[];
+  reviewGroups: VmsReviewIssueGroup[];
+};
+
+export type VmsReviewIssueGroup = {
+  key: string;
+  type: "unknown_product" | "unknown_machine" | "missing_date" | "missing_quantity" | "missing_sales_amount" | "duplicate_suspected" | "header_mapping_missing" | "invalid_row";
+  title: string;
+  count: number;
+  examples: VmsValidatedRow[];
+  question: string;
 };
 
 export function vmsValue(row: Record<string, string>, aliases: string[]) {
@@ -154,6 +176,22 @@ export function buildMachineMap(machines: VmsReferenceMachine[]) {
   return map;
 }
 
+export function buildMachineMapWithSavedMappings(machines: VmsReferenceMachine[], machineMappings: VmsReferenceMachineMapping[] = []) {
+  const machineById = new Map(machines.map((machine) => [String(machine.id), machine]));
+  const map = buildMachineMap(machines);
+
+  machineMappings.forEach((mapping) => {
+    if (mapping.status && mapping.status !== "confirmed") return;
+    const machine = mapping.machine_id ? machineById.get(String(mapping.machine_id)) : null;
+    if (!machine) return;
+    addMachineKey(map, mapping.vms_machine_key, machine);
+    addMachineKey(map, mapping.vms_machine_name, machine);
+    (mapping.aliases ?? []).forEach((alias) => addMachineKey(map, alias, machine));
+  });
+
+  return map;
+}
+
 export function buildProductLookupMap(products: VmsReferenceProduct[]) {
   const map = new Map<string, { product: VmsReferenceProduct; source: VmsResolvedProduct["source"] }>();
   products.forEach((product) => {
@@ -232,6 +270,7 @@ export function validateVmsRows({
   originalRows,
   firstDataRowNumber,
   machines,
+  machineMappings = [],
   mappings,
   products,
   autoCreateMissingProducts = true,
@@ -241,11 +280,12 @@ export function validateVmsRows({
   originalRows: Record<string, string>[];
   firstDataRowNumber: number;
   machines: VmsReferenceMachine[];
+  machineMappings?: VmsReferenceMachineMapping[];
   mappings: VmsReferenceMapping[];
   products: VmsReferenceProduct[];
   autoCreateMissingProducts?: boolean;
 }): VmsValidationResult {
-  const machineMap = buildMachineMap(machines);
+  const machineMap = buildMachineMapWithSavedMappings(machines, machineMappings);
   const mappingMap = buildProductMappingMap(mappings);
   const productLookupMap = buildProductLookupMap(products);
   const unknownMachines = new Set<string>();
@@ -322,6 +362,7 @@ export function validateVmsRows({
       severity: status === "imported" ? (warnings.length ? "warning" : "valid") : status === "needs_mapping" ? "warning" : "error",
       reasons: allReasons,
       machineIdentifier: machineId || null,
+      matchedMachineId: machine?.id ?? null,
       productIdentifier: vmsProductId || null,
       productName: vmsProductName || null,
       matchedProductId: productResolution.productId,
@@ -331,6 +372,7 @@ export function validateVmsRows({
   });
 
   const reviewRowsList = validatedRows.filter((row) => row.status !== "imported");
+  const reviewGroups = buildVmsReviewIssueGroups(reviewRowsList);
 
   return {
     totalRows: validatedRows.length,
@@ -350,5 +392,71 @@ export function validateVmsRows({
     invalidRowsList: validatedRows.filter((row) => row.status === "invalid_row"),
     errorRowsList: validatedRows.filter((row) => row.severity === "error"),
     warningRowsList: validatedRows.filter((row) => row.severity === "warning"),
+    reviewGroups,
   };
+}
+
+function issueTypeForRow(row: VmsValidatedRow): VmsReviewIssueGroup["type"] {
+  const text = row.reasons.join(" ").toLowerCase();
+  if (row.status === "needs_mapping") return "unknown_product";
+  if (row.status === "unknown_machine") return "unknown_machine";
+  if (text.includes("date") || text.includes("range")) return "missing_date";
+  if (text.includes("amount")) return "missing_sales_amount";
+  if (text.includes("quantity") || text.includes("qty")) return "missing_quantity";
+  if (text.includes("mapping") || text.includes("column")) return "header_mapping_missing";
+  if (text.includes("duplicate")) return "duplicate_suspected";
+  return "invalid_row";
+}
+
+function issueValueForRow(row: VmsValidatedRow, type: VmsReviewIssueGroup["type"]) {
+  if (type === "unknown_product") return vmsProductDisplay(row.productIdentifier ?? "", row.productName ?? "") || "Missing product";
+  if (type === "unknown_machine") return row.machineIdentifier ?? "Missing machine";
+  return row.reasons[0] ?? row.status;
+}
+
+function issueQuestion(type: VmsReviewIssueGroup["type"], value: string) {
+  if (type === "unknown_product") return `Product '${value}' appears in this upload. Which Snacky product should it map to?`;
+  if (type === "unknown_machine") return `Machine '${value}' appears in this upload. Which Snacky machine/location should it map to?`;
+  if (type === "missing_date") return "Which report date or date column should Snacky OS use for these rows?";
+  if (type === "missing_quantity") return "Which quantity/transaction-count column should Snacky OS use for these rows?";
+  if (type === "missing_sales_amount") return "Which sales amount column should Snacky OS use for these rows?";
+  if (type === "header_mapping_missing") return "Which VMS column should be mapped for this missing field?";
+  if (type === "duplicate_suspected") return "Should these suspected duplicate rows be skipped?";
+  return "How should these rows be corrected before import?";
+}
+
+function issueTitle(type: VmsReviewIssueGroup["type"], value: string) {
+  if (type === "unknown_product") return `Unknown product: ${value}`;
+  if (type === "unknown_machine") return `Unknown machine: ${value}`;
+  if (type === "missing_date") return "Missing or invalid date";
+  if (type === "missing_quantity") return "Missing or invalid quantity";
+  if (type === "missing_sales_amount") return "Missing or invalid sales amount";
+  if (type === "header_mapping_missing") return "Header mapping missing";
+  if (type === "duplicate_suspected") return "Duplicate suspected";
+  return `Invalid row: ${value}`;
+}
+
+export function buildVmsReviewIssueGroups(rows: VmsValidatedRow[]) {
+  const groups = new Map<string, VmsReviewIssueGroup>();
+  rows.forEach((row) => {
+    const type = issueTypeForRow(row);
+    const value = issueValueForRow(row, type);
+    const key = `${type}:${vmsLookupKey(value)}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.count += 1;
+      if (existing.examples.length < 3) existing.examples.push(row);
+      return;
+    }
+    groups.set(key, {
+      key,
+      type,
+      title: issueTitle(type, value),
+      count: 1,
+      examples: [row],
+      question: issueQuestion(type, value),
+    });
+  });
+
+  return Array.from(groups.values()).sort((a, b) => b.count - a.count || a.title.localeCompare(b.title));
 }
