@@ -251,6 +251,24 @@ begin
   end if;
 end $$;
 
+drop function if exists public.confirm_route_pickup_batch(
+  uuid,
+  public.route_status,
+  public.route_status,
+  timestamptz,
+  boolean,
+  jsonb,
+  uuid[],
+  jsonb,
+  jsonb,
+  jsonb,
+  jsonb,
+  jsonb,
+  jsonb,
+  uuid[],
+  uuid[]
+);
+
 create or replace function public.confirm_route_pickup_batch(
   p_route_id uuid,
   p_expected_route_status public.route_status,

@@ -41,6 +41,10 @@ alter table public.vms_import_batches
 alter table public.vms_import_batches alter column import_mode set default 'append';
 alter table public.vms_import_batches alter column status set default 'draft';
 
+alter table public.vms_import_batches
+  drop constraint if exists vms_import_batches_import_mode_check,
+  drop constraint if exists vms_import_batches_status_check;
+
 update public.vms_import_batches
 set import_mode = case import_mode
   when 'append_new' then 'append'
