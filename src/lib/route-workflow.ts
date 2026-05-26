@@ -1,48 +1,42 @@
-export const ROUTE_STATUSES = [
-  "draft",
-  "available",
-  "ready",
-  "assigned",
-  "started",
-  "in_progress",
-  "pickup_confirmed",
-  "filling",
-  "machine_filling",
-  "completed",
-  "reviewed",
-  "cancelled",
-  "canceled",
+export const ROUTE_STATUSES = {
+  DRAFT: "draft",
+  ASSIGNED: "assigned",
+  IN_PROGRESS: "in_progress",
+  PICKUP_CONFIRMED: "pickup_confirmed",
+  COMPLETED: "completed",
+  REVIEWED: "reviewed",
+  CANCELLED: "cancelled",
+} as const;
+
+export const ROUTE_STATUS_VALUES = [
+  ROUTE_STATUSES.DRAFT,
+  ROUTE_STATUSES.ASSIGNED,
+  ROUTE_STATUSES.IN_PROGRESS,
+  ROUTE_STATUSES.PICKUP_CONFIRMED,
+  ROUTE_STATUSES.COMPLETED,
+  ROUTE_STATUSES.REVIEWED,
+  ROUTE_STATUSES.CANCELLED,
 ] as const;
 
-export type RouteStatus = (typeof ROUTE_STATUSES)[number];
+export type RouteStatus = (typeof ROUTE_STATUS_VALUES)[number];
 
-export const ROUTE_DATABASE_WRITE_STATUSES = [
-  "draft",
-  "assigned",
-  "in_progress",
-  "completed",
-  "reviewed",
-  "cancelled",
-] as const;
+export const ROUTE_DRAFT_STATUS = ROUTE_STATUSES.DRAFT;
+export const ROUTE_ASSIGNED_STATUS = ROUTE_STATUSES.ASSIGNED;
+export const ROUTE_IN_PROGRESS_STATUS = ROUTE_STATUSES.IN_PROGRESS;
+export const ROUTE_PICKUP_CONFIRMED_STATUS = ROUTE_STATUSES.PICKUP_CONFIRMED;
+export const ROUTE_COMPLETED_STATUS = ROUTE_STATUSES.COMPLETED;
+export const ROUTE_REVIEWED_STATUS = ROUTE_STATUSES.REVIEWED;
+export const ROUTE_CANCELED_STATUS = ROUTE_STATUSES.CANCELLED;
 
-export type RouteDatabaseWriteStatus = (typeof ROUTE_DATABASE_WRITE_STATUSES)[number];
+export const ROUTE_AVAILABLE_STATUS = "available";
 
-export const ROUTE_DRAFT_STATUS = "draft" satisfies RouteStatus;
-export const ROUTE_AVAILABLE_STATUS = "available" satisfies RouteStatus;
-export const ROUTE_ASSIGNED_STATUS = "assigned" satisfies RouteStatus;
-export const ROUTE_IN_PROGRESS_STATUS = "in_progress" satisfies RouteStatus;
-export const ROUTE_PICKUP_CONFIRMED_STATUS = "pickup_confirmed" satisfies RouteStatus;
-export const ROUTE_FILLING_STATUS = "filling" satisfies RouteStatus;
-export const ROUTE_COMPLETED_STATUS = "completed" satisfies RouteStatus;
-export const ROUTE_CANCELED_STATUS = "cancelled" satisfies RouteStatus;
+export const ROUTE_DATABASE_WRITE_STATUSES = ROUTE_STATUS_VALUES;
+export type RouteDatabaseWriteStatus = RouteStatus;
 
-export const ROUTE_LEGACY_AVAILABLE_STATUSES = ["ready", "draft"] as const;
-export const ROUTE_LEGACY_ACTIVE_STATUSES = ["started", "machine_filling"] as const;
-export const ROUTE_LEGACY_TERMINAL_STATUSES = ["reviewed", "canceled"] as const;
+export const REQUIRED_ROUTE_DATABASE_STATUSES = ROUTE_STATUS_VALUES;
 
 export const OPERATOR_VISIBLE_ROUTE_STATUSES = [
-  ROUTE_AVAILABLE_STATUS,
-  ...ROUTE_LEGACY_AVAILABLE_STATUSES,
+  ROUTE_DRAFT_STATUS,
 ] as const;
 
 export const UNSTARTED_ROUTE_STATUSES = [
@@ -53,14 +47,12 @@ export const UNSTARTED_ROUTE_STATUSES = [
 export const ACTIVE_ROUTE_STATUSES = [
   ROUTE_IN_PROGRESS_STATUS,
   ROUTE_PICKUP_CONFIRMED_STATUS,
-  ROUTE_FILLING_STATUS,
-  ...ROUTE_LEGACY_ACTIVE_STATUSES,
 ] as const;
 
 export const TERMINAL_ROUTE_STATUSES = [
   ROUTE_COMPLETED_STATUS,
   ROUTE_CANCELED_STATUS,
-  ...ROUTE_LEGACY_TERMINAL_STATUSES,
+  ROUTE_REVIEWED_STATUS,
 ] as const;
 
 export const ROUTE_RESERVATION_STATUSES = [
@@ -70,21 +62,19 @@ export const ROUTE_RESERVATION_STATUSES = [
 
 export const ROUTE_PICKUP_CONFIRMED_STATUSES = [
   ROUTE_PICKUP_CONFIRMED_STATUS,
-  ROUTE_FILLING_STATUS,
-  "machine_filling",
   ROUTE_COMPLETED_STATUS,
-  "reviewed",
+  ROUTE_REVIEWED_STATUS,
 ] as const;
 
 export const COMPLETED_ROUTE_STATUSES = [
   ROUTE_COMPLETED_STATUS,
-  "reviewed",
+  ROUTE_REVIEWED_STATUS,
 ] as const;
 
 export const ROUTE_DATABASE_SAFE_TERMINAL_STATUSES = [
   ROUTE_COMPLETED_STATUS,
-  "reviewed",
-  "cancelled",
+  ROUTE_REVIEWED_STATUS,
+  ROUTE_CANCELED_STATUS,
 ] as const;
 
 export const availableRouteStatuses = UNSTARTED_ROUTE_STATUSES;
@@ -97,25 +87,40 @@ type RouteStopLike = {
   stop_order?: number | null;
 };
 
-export const ROUTE_STOP_PENDING_STATUS = "pending";
-export const ROUTE_STOP_PICKED_STATUS = "picked";
-export const ROUTE_STOP_IN_PROGRESS_STATUS = "in_progress";
-export const ROUTE_STOP_COMPLETED_STATUS = "completed";
-export const ROUTE_STOP_SKIPPED_STATUS = "skipped";
-export const ROUTE_STOP_CANCELED_STATUS = "canceled";
+export const ROUTE_STOP_STATUSES = {
+  PENDING: "pending",
+  PICKED: "picked",
+  IN_PROGRESS: "in_progress",
+  COMPLETED: "completed",
+  SKIPPED: "skipped",
+  CANCELED: "canceled",
+  ARRIVED: "arrived",
+  REFILLING: "refilling",
+  CASH_COLLECTED: "cash_collected",
+  ISSUE_REPORTED: "issue_reported",
+} as const;
 
-export const ROUTE_STOP_STATUSES = [
-  ROUTE_STOP_PENDING_STATUS,
-  ROUTE_STOP_PICKED_STATUS,
-  ROUTE_STOP_IN_PROGRESS_STATUS,
-  ROUTE_STOP_COMPLETED_STATUS,
-  ROUTE_STOP_SKIPPED_STATUS,
-  ROUTE_STOP_CANCELED_STATUS,
-  "arrived",
-  "refilling",
-  "cash_collected",
-  "issue_reported",
+export const ROUTE_STOP_STATUS_VALUES = [
+  ROUTE_STOP_STATUSES.PENDING,
+  ROUTE_STOP_STATUSES.PICKED,
+  ROUTE_STOP_STATUSES.IN_PROGRESS,
+  ROUTE_STOP_STATUSES.COMPLETED,
+  ROUTE_STOP_STATUSES.SKIPPED,
+  ROUTE_STOP_STATUSES.CANCELED,
+  ROUTE_STOP_STATUSES.ARRIVED,
+  ROUTE_STOP_STATUSES.REFILLING,
+  ROUTE_STOP_STATUSES.CASH_COLLECTED,
+  ROUTE_STOP_STATUSES.ISSUE_REPORTED,
 ] as const;
+
+export const REQUIRED_ROUTE_STOP_DATABASE_STATUSES = ROUTE_STOP_STATUS_VALUES;
+
+export const ROUTE_STOP_PENDING_STATUS = ROUTE_STOP_STATUSES.PENDING;
+export const ROUTE_STOP_PICKED_STATUS = ROUTE_STOP_STATUSES.PICKED;
+export const ROUTE_STOP_IN_PROGRESS_STATUS = ROUTE_STOP_STATUSES.IN_PROGRESS;
+export const ROUTE_STOP_COMPLETED_STATUS = ROUTE_STOP_STATUSES.COMPLETED;
+export const ROUTE_STOP_SKIPPED_STATUS = ROUTE_STOP_STATUSES.SKIPPED;
+export const ROUTE_STOP_CANCELED_STATUS = ROUTE_STOP_STATUSES.CANCELED;
 
 export const COMPLETED_STOP_STATUSES = [
   ROUTE_STOP_COMPLETED_STATUS,
@@ -126,10 +131,10 @@ export const COMPLETED_STOP_STATUSES = [
 export const ACTIVE_STOP_STATUSES = [
   ROUTE_STOP_PICKED_STATUS,
   ROUTE_STOP_IN_PROGRESS_STATUS,
-  "arrived",
-  "refilling",
-  "cash_collected",
-  "issue_reported",
+  ROUTE_STOP_STATUSES.ARRIVED,
+  ROUTE_STOP_STATUSES.REFILLING,
+  ROUTE_STOP_STATUSES.CASH_COLLECTED,
+  ROUTE_STOP_STATUSES.ISSUE_REPORTED,
 ] as const;
 
 export const ROUTE_STOP_DONE_STATUSES = COMPLETED_STOP_STATUSES;
@@ -140,17 +145,15 @@ function includesStatus<const T extends readonly string[]>(statuses: T, status: 
 }
 
 export function isRouteStatus(status: string | null | undefined): status is RouteStatus {
-  return includesStatus(ROUTE_STATUSES, status);
+  return includesStatus(ROUTE_STATUS_VALUES, status);
 }
 
 export function routeStatusForNewRoute(operatorId: string | null | undefined): RouteDatabaseWriteStatus {
   return operatorId ? ROUTE_ASSIGNED_STATUS : ROUTE_DRAFT_STATUS;
 }
 
-export function fallbackRouteStatusForEnumMismatch(status: RouteStatus): RouteStatus | null {
-  if (status === ROUTE_AVAILABLE_STATUS) return ROUTE_DRAFT_STATUS;
-  if (status === ROUTE_PICKUP_CONFIRMED_STATUS || status === ROUTE_FILLING_STATUS) return ROUTE_IN_PROGRESS_STATUS;
-  if (status === "canceled") return ROUTE_CANCELED_STATUS;
+export function fallbackRouteStatusForEnumMismatch(status: string | null | undefined): RouteStatus | null {
+  if (status === ROUTE_PICKUP_CONFIRMED_STATUS) return ROUTE_IN_PROGRESS_STATUS;
   return null;
 }
 
@@ -194,6 +197,21 @@ export function isPickupConfirmedStatus(status: string | null | undefined) {
 export function routeDisplayStatus(status: string | null | undefined, operatorId?: string | null) {
   if (!operatorId && isOperatorVisibleRouteStatus(status)) return ROUTE_AVAILABLE_STATUS;
   return status ?? "unknown";
+}
+
+export function missingRouteWorkflowStatuses({
+  routeStatuses,
+  routeStopStatuses,
+}: {
+  routeStatuses: readonly string[];
+  routeStopStatuses: readonly string[];
+}) {
+  const routeStatusSet = new Set(routeStatuses);
+  const stopStatusSet = new Set(routeStopStatuses);
+  return {
+    routeStatuses: REQUIRED_ROUTE_DATABASE_STATUSES.filter((status) => !routeStatusSet.has(status)),
+    routeStopStatuses: REQUIRED_ROUTE_STOP_DATABASE_STATUSES.filter((status) => !stopStatusSet.has(status)),
+  };
 }
 
 export function isRouteStopDoneStatus(status: string | null | undefined) {

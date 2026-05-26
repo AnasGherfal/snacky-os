@@ -5,7 +5,7 @@ import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileR
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath } from "@/lib/authz";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
-import { isActiveRouteStatus, isTerminalRouteStatus, routeDisplayStatus } from "@/lib/route-workflow";
+import { isActiveRouteStatus, isCompletedRouteStatus, isTerminalRouteStatus, routeDisplayStatus } from "@/lib/route-workflow";
 
 export const dynamic = "force-dynamic";
 
@@ -64,7 +64,7 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
     { title: "Unassigned / Available", rows: routeRows.filter((route: any) => !route.operator_id && !isTerminalRouteStatus(route.status)) },
     { title: "In progress", rows: routeRows.filter((route: any) => isActiveRouteStatus(route.status)) },
     { title: "Assigned routes", rows: routeRows.filter((route: any) => route.operator_id && !isActiveRouteStatus(route.status) && !isTerminalRouteStatus(route.status)) },
-    { title: "Completed", rows: routeRows.filter((route: any) => ["completed", "reviewed"].includes(route.status)) },
+    { title: "Completed", rows: routeRows.filter((route: any) => isCompletedRouteStatus(route.status)) },
   ].filter((group) => group.rows.length);
 
   const renderRouteCards = (rows: any[]) => (

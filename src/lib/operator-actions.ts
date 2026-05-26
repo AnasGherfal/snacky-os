@@ -107,7 +107,7 @@ function pickupPublicError(error: unknown) {
   if (code === "42501" || text.includes("row-level security") || text.includes("permission")) {
     return "User does not have permission to confirm pickup.";
   }
-  if (code === "42883" || code === "PGRST202" || (text.includes("function") && text.includes("confirm_route_pickup_batch"))) {
+  if (code === "42883" || code === "PGRST202" || (text.includes("function") && (text.includes("confirm_route_pickup_batch") || text.includes("validate_route_workflow_schema")))) {
     return "Database schema is missing the confirm pickup function.";
   }
   if (code === "42703" || code === "PGRST204" || text.includes("schema cache") || text.includes("column")) {
@@ -129,6 +129,7 @@ function pickupPublicError(error: unknown) {
 
   return "Could not confirm pickup. Check route status, stop status, permissions, storage stock, and database setup.";
 }
+
 
 function profileContext(profile: NonNullable<Awaited<ReturnType<typeof getCurrentProfile>>>) {
   return {

@@ -5,6 +5,7 @@ import { DataTable, EmptyState, PageHeader, SecondaryButton, StatusBadge } from 
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
+import { isCompletedRouteStatus } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -101,7 +102,7 @@ export default async function TeamMemberActivityPage({
   const actionOptions = Array.from(new Set((actions ?? []).map((row: any) => row.action).filter(Boolean)));
   const entityOptions = Array.from(new Set((entityTypes ?? []).map((row: any) => row.entity_type).filter(Boolean)));
   const routeRows = inDateRange(routes as any[], "route_date", dateFrom, dateTo);
-  const completedRoutes = routeRows.filter((route) => ["completed", "reviewed"].includes(String(route.status))).length;
+  const completedRoutes = routeRows.filter((route) => isCompletedRouteStatus(route.status)).length;
   const cashRows = inDateRange(cashCollections as any[], "collected_at", dateFrom, dateTo);
   const issueRows = inDateRange(issues as any[], "created_at", dateFrom, dateTo);
   const movementRows = (movements ?? []) as any[];

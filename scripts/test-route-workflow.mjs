@@ -11,11 +11,11 @@ import {
   ROUTE_DATABASE_WRITE_STATUSES,
   ROUTE_DATABASE_SAFE_TERMINAL_STATUSES,
   ROUTE_DRAFT_STATUS,
-  ROUTE_FILLING_STATUS,
   ROUTE_IN_PROGRESS_STATUS,
   ROUTE_PICKUP_CONFIRMED_STATUS,
   ROUTE_RESERVATION_STATUSES,
-  ROUTE_STOP_STATUSES,
+  ROUTE_STOP_STATUS_VALUES,
+  ROUTE_STATUS_VALUES,
   TERMINAL_ROUTE_STATUSES,
   fallbackRouteStatusForEnumMismatch,
   isActiveRouteStatus,
@@ -25,6 +25,7 @@ import {
   isRouteStopDoneStatus,
   isRouteStatusEnumMismatch,
   isTerminalRouteStatus,
+  missingRouteWorkflowStatuses,
   nextOperatorRouteHref,
   routeDisplayStatus,
   routeStatusForNewRoute,
@@ -38,45 +39,45 @@ function sourceWindow(path, marker, length = 900) {
 }
 
 test("route status groups describe one consistent workflow", () => {
-  assert.deepEqual([...OPERATOR_VISIBLE_ROUTE_STATUSES], ["available", "ready", "draft"]);
-  assert.deepEqual([...ACTIVE_ROUTE_STATUSES], ["in_progress", "pickup_confirmed", "filling", "started", "machine_filling"]);
-  assert.deepEqual([...TERMINAL_ROUTE_STATUSES], ["completed", "cancelled", "reviewed", "canceled"]);
+  assert.deepEqual([...ROUTE_STATUS_VALUES], ["draft", "assigned", "in_progress", "pickup_confirmed", "completed", "reviewed", "cancelled"]);
+  assert.deepEqual([...OPERATOR_VISIBLE_ROUTE_STATUSES], ["draft"]);
+  assert.deepEqual([...ACTIVE_ROUTE_STATUSES], ["in_progress", "pickup_confirmed"]);
+  assert.deepEqual([...TERMINAL_ROUTE_STATUSES], ["completed", "cancelled", "reviewed"]);
 
-  for (const status of [ROUTE_AVAILABLE_STATUS, "ready", ROUTE_DRAFT_STATUS]) {
+  for (const status of [ROUTE_DRAFT_STATUS]) {
     assert.equal(isOperatorVisibleRouteStatus(status), true, status);
     assert.equal(isRouteReservationStatus(status), true, status);
   }
 
-  for (const status of [ROUTE_ASSIGNED_STATUS, ROUTE_IN_PROGRESS_STATUS, ROUTE_PICKUP_CONFIRMED_STATUS, ROUTE_FILLING_STATUS, "started", "machine_filling"]) {
+  for (const status of [ROUTE_ASSIGNED_STATUS, ROUTE_IN_PROGRESS_STATUS, ROUTE_PICKUP_CONFIRMED_STATUS]) {
     assert.equal(isRouteReservationStatus(status), true, status);
   }
 
-  for (const status of ["completed", "reviewed", "cancelled", "canceled"]) {
+  for (const status of ["completed", "reviewed", "cancelled"]) {
     assert.equal(isTerminalRouteStatus(status), true, status);
     assert.equal(isRouteReservationStatus(status), false, status);
   }
 
+  assert.equal(isOperatorVisibleRouteStatus(ROUTE_AVAILABLE_STATUS), false);
   assert.equal(isActiveRouteStatus("assigned"), false);
   assert.equal(isOperatorVisibleRouteStatus("assigned"), false);
 });
 
-test("route creation and display statuses handle current and migrated databases", () => {
+test("route creation and display statuses use database statuses only", () => {
   assert.equal(routeStatusForNewRoute(null), ROUTE_DRAFT_STATUS);
   assert.equal(routeStatusForNewRoute("operator-1"), ROUTE_ASSIGNED_STATUS);
 
-  assert.equal(fallbackRouteStatusForEnumMismatch(ROUTE_AVAILABLE_STATUS), ROUTE_DRAFT_STATUS);
   assert.equal(fallbackRouteStatusForEnumMismatch(ROUTE_PICKUP_CONFIRMED_STATUS), ROUTE_IN_PROGRESS_STATUS);
-  assert.equal(fallbackRouteStatusForEnumMismatch(ROUTE_FILLING_STATUS), ROUTE_IN_PROGRESS_STATUS);
-  assert.equal(fallbackRouteStatusForEnumMismatch("canceled"), "cancelled");
+  assert.equal(fallbackRouteStatusForEnumMismatch(ROUTE_AVAILABLE_STATUS), null);
+  assert.equal(fallbackRouteStatusForEnumMismatch("canceled"), null);
 
   assert.equal(routeDisplayStatus("draft", null), ROUTE_AVAILABLE_STATUS);
   assert.equal(routeDisplayStatus(routeStatusForNewRoute(null), null), ROUTE_AVAILABLE_STATUS);
-  assert.equal(routeDisplayStatus("ready", null), ROUTE_AVAILABLE_STATUS);
   assert.equal(routeDisplayStatus("assigned", "operator-1"), ROUTE_ASSIGNED_STATUS);
 });
 
 test("partial route continuation respects independent stop statuses", () => {
-  assert.deepEqual([...ROUTE_STOP_STATUSES], ["pending", "picked", "in_progress", "completed", "skipped", "canceled", "arrived", "refilling", "cash_collected", "issue_reported"]);
+  assert.deepEqual([...ROUTE_STOP_STATUS_VALUES], ["pending", "picked", "in_progress", "completed", "skipped", "canceled", "arrived", "refilling", "cash_collected", "issue_reported"]);
   assert.deepEqual([...ACTIVE_STOP_STATUSES], ["picked", "in_progress", "arrived", "refilling", "cash_collected", "issue_reported"]);
   assert.deepEqual([...COMPLETED_STOP_STATUSES], ["completed", "skipped", "canceled"]);
   assert.equal(isRouteStopDoneStatus("completed"), true);
@@ -118,25 +119,43 @@ test("partial route continuation respects independent stop statuses", () => {
 });
 
 test("database write statuses avoid production enum mismatch values", () => {
-  assert.deepEqual([...ROUTE_DATABASE_WRITE_STATUSES], ["draft", "assigned", "in_progress", "completed", "reviewed", "cancelled"]);
+  assert.deepEqual([...ROUTE_DATABASE_WRITE_STATUSES], ["draft", "assigned", "in_progress", "pickup_confirmed", "completed", "reviewed", "cancelled"]);
   assert.deepEqual([...ROUTE_DATABASE_SAFE_TERMINAL_STATUSES], ["completed", "reviewed", "cancelled"]);
 
   for (const status of ROUTE_DATABASE_WRITE_STATUSES) {
-    assert.equal(["draft", "assigned", "in_progress", "completed", "reviewed", "cancelled"].includes(status), true, status);
+    assert.equal(["draft", "assigned", "in_progress", "pickup_confirmed", "completed", "reviewed", "cancelled"].includes(status), true, status);
   }
 
-  assert.equal(ROUTE_RESERVATION_STATUSES.includes("available"), true);
+  assert.equal(ROUTE_RESERVATION_STATUSES.includes("available"), false);
   assert.equal(ROUTE_RESERVATION_STATUSES.includes("pickup_confirmed"), true);
 });
 
 test("route status enum mismatch detection matches Supabase errors", () => {
   const error = {
-    message: 'invalid input value for enum route_status: "available"',
+    message: 'invalid input value for enum route_status: "pickup_confirmed"',
     code: "22P02",
   };
-  assert.equal(isRouteStatusEnumMismatch(error, "available"), true);
+  assert.equal(isRouteStatusEnumMismatch(error, "pickup_confirmed"), true);
   assert.equal(isRouteStatusEnumMismatch(error, "assigned"), false);
-  assert.equal(isRouteStatusEnumMismatch({ message: "permission denied" }, "available"), false);
+  assert.equal(isRouteStatusEnumMismatch({ message: "permission denied" }, "pickup_confirmed"), false);
+});
+
+test("schema validation reports missing enum values before route workflow writes", () => {
+  assert.deepEqual(
+    missingRouteWorkflowStatuses({
+      routeStatuses: ["draft", "assigned", "in_progress", "completed", "reviewed", "cancelled"],
+      routeStopStatuses: [...ROUTE_STOP_STATUS_VALUES],
+    }),
+    { routeStatuses: ["pickup_confirmed"], routeStopStatuses: [] },
+  );
+
+  assert.deepEqual(
+    missingRouteWorkflowStatuses({
+      routeStatuses: [...ROUTE_STATUS_VALUES],
+      routeStopStatuses: [...ROUTE_STOP_STATUS_VALUES],
+    }),
+    { routeStatuses: [], routeStopStatuses: [] },
+  );
 });
 
 test("route reservation queries do not send UI-only statuses into route_status enum filters", () => {

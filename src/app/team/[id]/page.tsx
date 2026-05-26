@@ -6,6 +6,7 @@ import { getCurrentProfile } from "@/lib/auth";
 import type { AppPermission } from "@/lib/authz";
 import { getEffectivePermissions, isOwnerAdminRole, normalizeRoles } from "@/lib/authz";
 import { lyd } from "@/lib/format";
+import { isCompletedRouteStatus } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { deactivateTeamMember } from "@/lib/team-actions";
 
@@ -79,7 +80,7 @@ export default async function TeamMemberActivityPage({
   ]);
 
   const routeRows = (routes ?? []) as any[];
-  const completedRoutes = routeRows.filter((route) => ["completed", "reviewed"].includes(route.status)).length;
+  const completedRoutes = routeRows.filter((route) => isCompletedRouteStatus(route.status)).length;
   const actionOptions = Array.from(new Set((actions ?? []).map((row: any) => row.action).filter(Boolean)));
 
   return (

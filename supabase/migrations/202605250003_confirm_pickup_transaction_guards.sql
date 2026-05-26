@@ -1,10 +1,4 @@
-alter type public.route_status add value if not exists 'available';
-alter type public.route_status add value if not exists 'ready';
-alter type public.route_status add value if not exists 'started';
 alter type public.route_status add value if not exists 'pickup_confirmed';
-alter type public.route_status add value if not exists 'filling';
-alter type public.route_status add value if not exists 'machine_filling';
-alter type public.route_status add value if not exists 'canceled';
 
 alter type public.route_stop_status add value if not exists 'picked';
 alter type public.route_stop_status add value if not exists 'in_progress';
@@ -141,11 +135,11 @@ begin
     raise exception 'Route must be assigned to an operator before pickup can be confirmed.' using errcode = 'P0001';
   end if;
 
-  if v_route.status::text in ('completed', 'reviewed', 'cancelled', 'canceled') then
+  if v_route.status::text in ('completed', 'reviewed', 'cancelled') then
     raise exception 'Route status does not allow pickup confirmation: %.', v_route.status::text using errcode = 'P0001';
   end if;
 
-  if v_route.status::text not in ('draft', 'available', 'ready', 'assigned', 'started', 'in_progress', 'pickup_confirmed', 'filling', 'machine_filling') then
+  if v_route.status::text not in ('draft', 'assigned', 'in_progress', 'pickup_confirmed') then
     raise exception 'Route status does not allow pickup confirmation: %.', v_route.status::text using errcode = 'P0001';
   end if;
 
@@ -670,9 +664,7 @@ begin
   where route_id = p_route_id
     and status = 'pending'::public.route_stop_status;
 
-  if v_route.status::text in ('filling', 'machine_filling') then
-    v_next_route_status := v_route.status;
-  elsif v_pending_after_count = 0 then
+  if v_pending_after_count = 0 then
     v_next_route_status := 'pickup_confirmed'::public.route_status;
   else
     v_next_route_status := 'in_progress'::public.route_status;
@@ -735,5 +727,62 @@ grant execute on function public.confirm_route_pickup_batch(
   uuid[],
   uuid[]
 ) to authenticated;
+
+create or replace function public.validate_route_workflow_schema(
+  p_route_statuses text[] default array[
+    'draft',
+    'assigned',
+    'in_progress',
+    'pickup_confirmed',
+    'completed',
+    'reviewed',
+    'cancelled'
+  ],
+  p_route_stop_statuses text[] default array[
+    'pending',
+    'picked',
+    'in_progress',
+    'completed',
+    'skipped',
+    'canceled',
+    'arrived',
+    'refilling',
+    'cash_collected',
+    'issue_reported'
+  ]
+)
+returns table(enum_name text, missing_values text[])
+language sql
+stable
+security definer
+set search_path = pg_catalog, public
+as $$
+  with route_values as (
+    select enumlabel::text as value
+    from pg_catalog.pg_enum
+    where enumtypid = 'public.route_status'::regtype
+  ),
+  route_stop_values as (
+    select enumlabel::text as value
+    from pg_catalog.pg_enum
+    where enumtypid = 'public.route_stop_status'::regtype
+  ),
+  route_missing as (
+    select array_agg(required order by ord) as values
+    from unnest(p_route_statuses) with ordinality as required_status(required, ord)
+    where not exists (select 1 from route_values where value = required_status.required)
+  ),
+  route_stop_missing as (
+    select array_agg(required order by ord) as values
+    from unnest(p_route_stop_statuses) with ordinality as required_status(required, ord)
+    where not exists (select 1 from route_stop_values where value = required_status.required)
+  )
+  select 'route_status'::text, coalesce(values, '{}'::text[]) from route_missing where coalesce(array_length(values, 1), 0) > 0
+  union all
+  select 'route_stop_status'::text, coalesce(values, '{}'::text[]) from route_stop_missing where coalesce(array_length(values, 1), 0) > 0;
+$$;
+
+revoke all on function public.validate_route_workflow_schema(text[], text[]) from public;
+grant execute on function public.validate_route_workflow_schema(text[], text[]) to authenticated;
 
 select pg_notify('pgrst', 'reload schema');

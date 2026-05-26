@@ -3,7 +3,7 @@ import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, Section
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canExecuteRoutes, isAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
-import { isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isPickupConfirmedStatus, isRouteStopDoneStatus, isTerminalRouteStatus, nextOperatorRouteHref, routeDisplayStatus } from "@/lib/route-workflow";
+import { ROUTE_CANCELED_STATUS, isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isPickupConfirmedStatus, isRouteStopDoneStatus, isTerminalRouteStatus, nextOperatorRouteHref, routeDisplayStatus } from "@/lib/route-workflow";
 import { RouteCreatedToast } from "@/app/routes/[id]/RouteCreatedToast";
 import { assignRoute, cancelRoute, deleteDraftRoute } from "@/lib/route-actions";
 import Link from "next/link";
@@ -585,7 +585,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
           </section>
         ) : null}
 
-        {["cancelled", "canceled"].includes(String(routeRow.status)) ? (
+        {routeRow.status === ROUTE_CANCELED_STATUS ? (
           <section className="surface-card p-4">
             <h2 className="text-lg font-semibold">Cancellation</h2>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
