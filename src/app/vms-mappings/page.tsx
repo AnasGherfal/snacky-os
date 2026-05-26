@@ -2,10 +2,9 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, PageHeader, StatusBadge } from "@/components/ui";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canManageVmsMappings } from "@/lib/authz";
 import { cleanSearchParams, getPagination, SearchParamsRecord, supabaseLikePattern } from "@/lib/pagination";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +15,21 @@ const filters = [
   { label: "Ignored", value: "ignored" },
 ] as const;
 
+type ProductOption = { id: string; name: string | null; sku: string | null };
+type VmsProductMappingRow = {
+  id: string;
+  vms_product_id: string | null;
+  vms_product_name: string;
+  product_id: string | null;
+  match_status: string;
+  vms_selling_price_lyd: number | string | null;
+  vms_cost_price_lyd: number | string | null;
+  latest_machine_name: string | null;
+  last_seen_at: string | null;
+  updated_at: string | null;
+  product: ProductOption | ProductOption[] | null;
+};
+
 function formatDate(value: string | null | undefined) {
   if (!value) return "Not seen yet";
   return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
@@ -24,6 +38,11 @@ function formatDate(value: string | null | undefined) {
 function formatMoney(value: number | string | null | undefined, decimals = 2) {
   if (value === null || value === undefined || value === "") return "-";
   return Number(value).toFixed(decimals);
+}
+
+function mappingProductName(product: VmsProductMappingRow["product"]) {
+  const mappedProduct = Array.isArray(product) ? product[0] : product;
+  return mappedProduct?.name ?? null;
 }
 
 export default async function VmsProductMappingPage({
@@ -42,7 +61,7 @@ export default async function VmsProductMappingPage({
   const activeStatus = filters.some((filter) => filter.value === status) ? status : "all";
   const search = q.trim();
 
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) {
     return <ErrorState title="VMS mappings unavailable" body="Supabase is not configured, so Snacky OS cannot load VMS product mappings." />;
   }
@@ -54,7 +73,7 @@ export default async function VmsProductMappingPage({
     supabase.from("vms_product_mappings").select("id", { count: "exact", head: true }).eq("match_status", "ignored"),
   ]);
   const productIds = search
-    ? ((await supabase.from("products").select("id").or(["sku", "name"].map((column) => `${column}.ilike.${supabaseLikePattern(search.replaceAll(",", " "))}`).join(",")).limit(100)).data ?? []).map((product: any) => product.id)
+    ? ((await supabase.from("products").select("id").or(["sku", "name"].map((column) => `${column}.ilike.${supabaseLikePattern(search.replaceAll(",", " "))}`).join(",")).limit(100)).data ?? []).map((product: { id: string }) => product.id)
     : [];
   let query = supabase
     .from("vms_product_mappings")
@@ -139,11 +158,11 @@ export default async function VmsProductMappingPage({
       ) : (
         <>
           <DataTable headers={["VMS Product ID", "VMS Product Name", "Snacky Product", "VMS Selling", "VMS Cost", "Latest Machine", "Match Status", "Last Seen", "Actions"]}>
-            {(rows ?? []).map((mapping: any) => (
+            {((rows ?? []) as VmsProductMappingRow[]).map((mapping) => (
               <tr key={mapping.id}>
                 <td>{mapping.vms_product_id ?? "-"}</td>
                 <td className="font-medium text-slate-900">{mapping.vms_product_name}</td>
-                <td>{mapping.product?.name ?? <span className="text-slate-400">Unmapped</span>}</td>
+                <td>{mappingProductName(mapping.product) ?? <span className="text-slate-400">Unmapped</span>}</td>
                 <td>{formatMoney(mapping.vms_selling_price_lyd)}</td>
                 <td>{formatMoney(mapping.vms_cost_price_lyd, 4)}</td>
                 <td>{mapping.latest_machine_name ?? "-"}</td>

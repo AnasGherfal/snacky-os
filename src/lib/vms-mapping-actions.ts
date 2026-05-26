@@ -3,9 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canManageVmsMappings } from "@/lib/authz";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 const allowedStatuses = new Set(["confirmed", "needs_review", "ignored"]);
 
@@ -15,7 +14,7 @@ export async function updateVmsProductMapping(formData: FormData) {
   const profile = await getCurrentProfile();
   if (!canManageVmsMappings(profile)) redirect("/unauthorized");
 
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   const id = String(formData.get("id") || "");
   if (!supabase) redirect(`/vms-mappings/${id}/edit?error=Supabase%20is%20not%20configured.`);
   if (!id) redirect("/vms-mappings?error=Missing%20mapping.");

@@ -1,9 +1,8 @@
 import { notFound, redirect } from "next/navigation";
 import { LocalDraftForm } from "@/components/LocalDraft";
 import { ErrorState, FormField, FormPageLayout, FormSection, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canManageVmsMappings } from "@/lib/authz";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { updateVmsProductMapping } from "@/lib/vms-mapping-actions";
 
 export const dynamic = "force-dynamic";
@@ -13,6 +12,8 @@ const statusOptions = [
   { value: "needs_review", label: "Needs Review", helper: "Imported product needs manual matching." },
   { value: "ignored", label: "Ignored", helper: "Product should not affect operations." },
 ];
+
+type ProductOption = { id: string; name: string; sku: string | null };
 
 function formatDate(value: string | null | undefined) {
   if (!value) return "Not seen yet";
@@ -36,7 +37,7 @@ export default async function EditVmsProductMappingPage({
 
   const { id } = await params;
   const { error } = await searchParams;
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
 
   if (!supabase) {
     return (
@@ -104,7 +105,7 @@ export default async function EditVmsProductMappingPage({
               <FormField label="Select Snacky Product" hint="Only real active products from the products table are available.">
                 <select name="product_id" defaultValue={mapping.product_id ?? ""} className="field-input">
                   <option value="">Unmapped</option>
-                  {products?.map((product: any) => (
+                  {(products ?? []).map((product: ProductOption) => (
                     <option key={product.id} value={product.id}>
                       {product.name}{product.sku ? ` (${product.sku})` : ""}
                     </option>
