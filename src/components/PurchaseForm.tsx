@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from "@/components/LocalDraft";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { FormField, FormSection } from "@/components/ui";
+import { latestKnownProductUnitCost, resolvePurchaseUnitCost } from "@/lib/purchase-cost-memory";
 import type { PurchaseSubmitResult } from "@/lib/purchase-actions";
 import type { ReceiptConfidenceLabel, ReceiptLineAction, ReceiptScanDraft } from "@/lib/receipt-scan-types";
 
@@ -27,6 +28,12 @@ type ProductOption = {
   current_cost_price_lyd: number | null;
   lastPurchaseCost: number | null;
   last_purchase_cost_lyd: number | null;
+  lastPurchaseDate?: string | null;
+  last_purchase_date?: string | null;
+  lastSupplierId?: string | null;
+  last_supplier_id?: string | null;
+  lastSupplierName?: string | null;
+  last_supplier_name?: string | null;
   currentStorageQty: number;
   vmsNames: string[];
 };
@@ -37,6 +44,9 @@ type PurchaseLine = {
   unitsPerBox: number;
   looseUnitsQty: number;
   unitCost: number;
+  unitCostBlank: boolean;
+  unitCostZeroConfirmed: boolean;
+  unitCostSource: "blank" | "manual" | "product_memory" | "receipt";
   lineTotal: number;
   pricingMode: "unit" | "total";
   receiptLineName: string | null;
@@ -96,13 +106,16 @@ type LocalPurchaseDraft = {
 function newLine(line?: Partial<PurchaseLine>): PurchaseLine {
   const receiptLineName = line?.receiptLineName ?? null;
   const id = globalThis.crypto?.randomUUID?.() ?? `line-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const unitCost = Math.max(0, Number(line?.unitCost ?? 0));
+  const unitCostBlank = line?.unitCostBlank ?? unitCost <= 0;
+  const unitCostZeroConfirmed = Boolean(line?.unitCostZeroConfirmed);
+  const unitCostSource = line?.unitCostSource ?? (unitCost > 0 ? "manual" : "blank");
   return {
     id,
     productId: "",
     boxesQty: 0,
     unitsPerBox: 1,
     looseUnitsQty: 0,
-    unitCost: 0,
     lineTotal: 0,
     pricingMode: "unit",
     receiptLineName,
@@ -119,6 +132,10 @@ function newLine(line?: Partial<PurchaseLine>): PurchaseLine {
     newProductCategory: "snack",
     newProductCaseQuantity: 1,
     ...line,
+    unitCost,
+    unitCostBlank,
+    unitCostZeroConfirmed,
+    unitCostSource,
   };
 }
 
@@ -217,9 +234,10 @@ function PurchaseNumberInput({
   placeholder,
   disabled,
   align = "right",
+  emptyWhenZero,
 }: {
   value: number;
-  onChange: (value: number) => void;
+  onChange: (value: number, meta?: { rawText: string; blank: boolean }) => void;
   integer?: boolean;
   precision?: number;
   min?: number;
@@ -228,15 +246,17 @@ function PurchaseNumberInput({
   placeholder?: string;
   disabled?: boolean;
   align?: "left" | "right" | "center";
+  emptyWhenZero?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [text, setText] = useState(() => formatNumericValue(value, precision, min === 0));
+  const shouldEmptyZero = emptyWhenZero ?? min === 0;
+  const [text, setText] = useState(() => formatNumericValue(value, precision, shouldEmptyZero));
 
   useEffect(() => {
     if (document.activeElement !== inputRef.current) {
-      setText(formatNumericValue(value, precision, min === 0));
+      setText(formatNumericValue(value, precision, shouldEmptyZero));
     }
-  }, [value, precision, min]);
+  }, [value, precision, shouldEmptyZero]);
 
   const padding = `${prefix ? "pl-12" : "pl-3"} ${suffix ? "pr-12" : "pr-3"}`;
   const textAlign = align === "center" ? "text-center" : align === "right" ? "text-right" : "text-left";
@@ -255,12 +275,12 @@ function PurchaseNumberInput({
           const next = event.target.value;
           if (!/^\d*([.,]\d*)?$/.test(next)) return;
           setText(next);
-          onChange(parseNumericText(next, integer));
+          onChange(parseNumericText(next, integer), { rawText: next, blank: next.trim() === "" });
         }}
         onBlur={() => {
           const parsed = Math.max(min, parseNumericText(text, integer));
-          onChange(parsed);
-          setText(formatNumericValue(parsed, precision, min === 0));
+          onChange(parsed, { rawText: text, blank: text.trim() === "" });
+          setText(formatNumericValue(parsed, precision, emptyWhenZero ?? (min === 0 && text.trim() === "")));
         }}
         className={`field-input ${padding} ${textAlign} font-medium tabular-nums`}
       />
@@ -282,6 +302,9 @@ function lineFromScan(scanLine: ReceiptScanDraft["lines"][number]): Partial<Purc
     unitsPerBox: 1,
     looseUnitsQty: quantity,
     unitCost: Number(scanLine.unitCost || 0),
+    unitCostBlank: Number(scanLine.unitCost || 0) <= 0,
+    unitCostZeroConfirmed: false,
+    unitCostSource: Number(scanLine.unitCost || 0) > 0 ? "receipt" : "blank",
     lineTotal: Number(scanLine.lineTotal || 0),
     pricingMode: scanLine.lineTotal > 0 ? "total" : "unit",
     receiptLineName: scanLine.receiptItemName,
@@ -404,6 +427,8 @@ function ProductCombobox({
           {products.length ? products.map((product) => {
             const selected = selectedProductId === product.id;
             const lastPurchaseCost = product.lastPurchaseCost ?? product.last_purchase_cost_lyd;
+            const lastPurchaseDate = product.lastPurchaseDate ?? product.last_purchase_date;
+            const lastSupplierName = product.lastSupplierName ?? product.last_supplier_name;
             return (
               <button
                 key={product.id}
@@ -424,6 +449,11 @@ function ProductCombobox({
                   <span className={`mt-1 block whitespace-normal text-xs leading-4 ${selected ? "text-white/85" : "text-slate-600"}`}>
                     Case {productUnitsPerBox(product)} | Storage {Number(product.currentStorageQty || 0)} | Last purchase {lastPurchaseCost === null ? "-" : money(Number(lastPurchaseCost))}
                   </span>
+                  {lastPurchaseDate || lastSupplierName ? (
+                    <span className={`mt-1 block whitespace-normal text-xs leading-4 ${selected ? "text-white/80" : "text-slate-500"}`}>
+                      {lastPurchaseDate ?? "No date"}{lastSupplierName ? ` | ${lastSupplierName}` : ""}
+                    </span>
+                  ) : null}
                 </span>
               </button>
             );
@@ -656,7 +686,7 @@ export function PurchaseForm({
         const totalUnits = Math.max(0, Math.floor(line.boxesQty)) * Math.max(1, Math.floor(line.unitsPerBox)) + Math.max(0, Math.floor(line.looseUnitsQty));
         const lineTotal = line.pricingMode === "total" ? Math.max(0, Number(line.lineTotal || 0)) : totalUnits * Math.max(0, Number(line.unitCost || 0));
         const unitCost = line.pricingMode === "total" && totalUnits > 0 ? lineTotal / totalUnits : Math.max(0, Number(line.unitCost || 0));
-        return { ...line, unitCost, totalUnits, lineTotal, product: productById.get(line.productId), included: line.matchAction !== "ignore" && (line.productId || line.matchAction === "create") };
+        return { ...line, unitCost, totalUnits, lineTotal, product: productById.get(line.productId), included: line.matchAction !== "ignore" && Boolean(line.productId || line.matchAction === "create") };
       }),
     [lines, productById],
   );
@@ -671,6 +701,9 @@ export function PurchaseForm({
     unitsPerBox: line.unitsPerBox,
     looseUnitsQty: line.looseUnitsQty,
     unitCost: line.unitCost,
+    unitCostBlank: line.unitCostBlank,
+    unitCostZeroConfirmed: line.unitCostZeroConfirmed,
+    unitCostSource: line.unitCostSource,
     lineTotal: line.lineTotal,
     pricingMode: line.pricingMode,
     receiptLineName: line.receiptLineName,
@@ -696,11 +729,31 @@ export function PurchaseForm({
     });
   };
 
+  const productCostMemoryPatch = (line: PurchaseLine, product: ProductOption | null | undefined): Partial<PurchaseLine> => {
+    const rememberedCost = latestKnownProductUnitCost(product);
+    if (rememberedCost === null) return {};
+    const canUseProductMemory =
+      line.unitCostBlank ||
+      line.unitCostSource === "blank" ||
+      line.unitCostSource === "product_memory" ||
+      (line.pricingMode === "unit" && line.unitCost <= 0 && line.lineTotal <= 0);
+    if (!canUseProductMemory || line.lineTotal > 0) return {};
+    return {
+      unitCost: rememberedCost,
+      unitCostBlank: false,
+      unitCostZeroConfirmed: false,
+      unitCostSource: "product_memory",
+      pricingMode: "unit",
+      lineTotal: 0,
+    };
+  };
+
   const selectProduct = (line: PurchaseLine, product: ProductOption) => {
     updateLine(line.id, {
       productId: product.id,
       unitsPerBox: productUnitsPerBox(product),
       matchAction: line.receiptLineName && line.matchAction !== "accept" ? "change" : line.matchAction,
+      ...productCostMemoryPatch(line, product),
     });
     setSearchByLine((current) => ({ ...current, [line.id]: product.name }));
   };
@@ -745,7 +798,12 @@ export function PurchaseForm({
     if (action === "accept") {
       if (!line.suggestedProductId) return;
       const suggestedProduct = productById.get(line.suggestedProductId);
-      updateLine(line.id, { matchAction: "accept", productId: line.suggestedProductId, unitsPerBox: productUnitsPerBox(suggestedProduct) });
+      updateLine(line.id, {
+        matchAction: "accept",
+        productId: line.suggestedProductId,
+        unitsPerBox: productUnitsPerBox(suggestedProduct),
+        ...productCostMemoryPatch(line, suggestedProduct),
+      });
       setSearchByLine((current) => ({ ...current, [line.id]: line.suggestedProductName ?? "" }));
       return;
     }
@@ -801,7 +859,7 @@ export function PurchaseForm({
     );
   };
 
-  const renderLineMathFields = (line: PurchaseLine & { product?: ProductOption; totalUnits: number; unitCost: number; lineTotal: number }) => (
+  const renderLineMathFields = (line: PurchaseLine & { product?: ProductOption; totalUnits: number; unitCost: number; lineTotal: number; included: boolean }) => (
     <>
       <FormField label="Boxes / Cases" hint="Full cartons or cases.">
         <PurchaseNumberInput
@@ -842,17 +900,49 @@ export function PurchaseForm({
       <FormField label="Unit Cost">
         <PurchaseNumberInput
           value={line.unitCost}
-          onChange={(unitCost) => updateLine(line.id, { unitCost, pricingMode: "unit" })}
+          onChange={(unitCost, meta) => updateLine(line.id, {
+            unitCost,
+            unitCostBlank: Boolean(meta?.blank),
+            unitCostZeroConfirmed: unitCost === 0 && !meta?.blank ? line.unitCostZeroConfirmed : false,
+            unitCostSource: meta?.blank ? "blank" : "manual",
+            pricingMode: "unit",
+          })}
           precision={4}
           prefix="LYD"
           placeholder="1.2500"
+          emptyWhenZero={line.unitCostBlank}
           disabled={line.matchAction === "ignore"}
         />
+        {line.unitCostSource === "product_memory" && line.unitCost > 0 ? (
+          <p className="mt-2 text-xs font-medium text-emerald-700">Auto-filled from the last saved purchase cost.</p>
+        ) : null}
+        {line.included && line.totalUnits > 0 && line.unitCost <= 0 && line.pricingMode !== "total" ? (
+          <label className="mt-2 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs font-medium text-amber-900">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={line.unitCostZeroConfirmed}
+              onChange={(event) => updateLine(line.id, {
+                unitCostZeroConfirmed: event.target.checked,
+                unitCostBlank: false,
+                unitCostSource: event.target.checked ? "manual" : line.unitCostSource,
+              })}
+              disabled={line.matchAction === "ignore"}
+            />
+            <span>Unit cost is 0. Confirm this product is free.</span>
+          </label>
+        ) : null}
       </FormField>
       <FormField label="Line Total">
         <PurchaseNumberInput
           value={line.lineTotal}
-          onChange={(lineTotal) => updateLine(line.id, { lineTotal, pricingMode: "total" })}
+          onChange={(lineTotal, meta) => updateLine(line.id, {
+            lineTotal,
+            unitCostBlank: lineTotal > 0 ? false : Boolean(meta?.blank) && line.unitCost <= 0,
+            unitCostZeroConfirmed: lineTotal > 0 ? false : line.unitCostZeroConfirmed,
+            unitCostSource: lineTotal > 0 ? "manual" : line.unitCostSource,
+            pricingMode: "total",
+          })}
           precision={2}
           prefix="LYD"
           placeholder="153.00"
@@ -865,6 +955,9 @@ export function PurchaseForm({
   const validateBeforeSubmit = () => {
     const nextDetailsErrors: typeof detailsErrors = {};
     const nextLineErrors: Record<string, string> = {};
+    const setLineError = (id: string, message: string) => {
+      if (!nextLineErrors[id]) nextLineErrors[id] = message;
+    };
 
     if (!details.purchaseDate) nextDetailsErrors.purchaseDate = "Enter a purchase date.";
 
@@ -873,12 +966,25 @@ export function PurchaseForm({
       const started = lineHasManualInput(line) || typedSearch.length > 0;
       if (line.matchAction === "ignore" || !started) continue;
       if (line.matchAction === "create") {
-        if (!line.newProductName.trim()) nextLineErrors[line.id] = "Enter the new product name before saving.";
+        if (!line.newProductName.trim()) setLineError(line.id, "Enter the new product name before saving.");
       } else if (!line.productId) {
-        nextLineErrors[line.id] = "Choose a product from the search results. Typed text alone is only a search.";
+        setLineError(line.id, "Choose a product from the search results. Typed text alone is only a search.");
       }
       if ((line.productId || line.matchAction === "create") && line.totalUnits <= 0) {
-        nextLineErrors[line.id] = "Quantity must be greater than zero.";
+        setLineError(line.id, "Quantity must be greater than zero.");
+      }
+      if ((line.productId || line.matchAction === "create") && line.totalUnits > 0) {
+        const costDecision = resolvePurchaseUnitCost({
+          product: line.product,
+          productName: line.matchAction === "create" ? line.newProductName || line.receiptLineName : line.product?.name,
+          unitCost: line.unitCost,
+          unitCostBlank: line.unitCostBlank,
+          unitCostZeroConfirmed: line.unitCostZeroConfirmed,
+          pricingMode: line.pricingMode,
+          lineTotal: line.lineTotal,
+          totalUnits: line.totalUnits,
+        });
+        if ("message" in costDecision) setLineError(line.id, costDecision.message);
       }
     }
 
@@ -895,6 +1001,20 @@ export function PurchaseForm({
     if (missingCreatedProduct) return "Enter a product name for every product you create from a receipt line.";
     const emptyQuantity = included.find((line) => line.totalUnits <= 0);
     if (emptyQuantity) return "Quantity must be greater than zero for every included line.";
+    const invalidCost = included.find((line) => {
+      const costDecision = resolvePurchaseUnitCost({
+        product: line.product,
+        productName: line.matchAction === "create" ? line.newProductName || line.receiptLineName : line.product?.name,
+        unitCost: line.unitCost,
+        unitCostBlank: line.unitCostBlank,
+        unitCostZeroConfirmed: line.unitCostZeroConfirmed,
+        pricingMode: line.pricingMode,
+        lineTotal: line.lineTotal,
+        totalUnits: line.totalUnits,
+      });
+      return "message" in costDecision;
+    });
+    if (invalidCost) return "Fix the highlighted unit cost before saving.";
     return "";
   };
 

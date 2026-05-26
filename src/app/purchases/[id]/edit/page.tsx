@@ -48,7 +48,7 @@ export default async function EditPurchasePage({
     supabase.from("suppliers").select("id, name").order("name"),
     supabase
       .from("products")
-      .select("id, sku, barcode, name, category, brand, case_quantity, cost_price, current_cost_price_lyd, last_purchase_cost_lyd, image_url")
+      .select("id, sku, barcode, name, category, brand, case_quantity, cost_price, current_cost_price_lyd, last_purchase_cost_lyd, last_purchase_date, last_supplier_id, image_url, last_supplier:suppliers!products_last_supplier_id_fkey(name)")
       .eq("active", true)
       .order("name"),
     supabase.from("current_inventory_by_location").select("product_id, quantity_on_hand").eq("location_type", "storage"),
@@ -101,6 +101,12 @@ export default async function EditPurchasePage({
     current_cost_price_lyd: product.current_cost_price_lyd === null ? null : Number(product.current_cost_price_lyd ?? 0),
     lastPurchaseCost: product.last_purchase_cost_lyd === null ? null : Number(product.last_purchase_cost_lyd ?? 0),
     last_purchase_cost_lyd: product.last_purchase_cost_lyd === null ? null : Number(product.last_purchase_cost_lyd ?? 0),
+    lastPurchaseDate: product.last_purchase_date ?? null,
+    last_purchase_date: product.last_purchase_date ?? null,
+    lastSupplierId: product.last_supplier_id ?? null,
+    last_supplier_id: product.last_supplier_id ?? null,
+    lastSupplierName: product.last_supplier?.name ?? null,
+    last_supplier_name: product.last_supplier?.name ?? null,
     currentStorageQty: storageQtyByProduct.get(product.id) ?? 0,
     vmsNames: vmsNamesByProduct.get(product.id) ?? [],
   }));
@@ -111,6 +117,9 @@ export default async function EditPurchasePage({
     unitsPerBox: Number(line.units_per_box ?? 1),
     looseUnitsQty: Number(line.loose_units_qty ?? 0),
     unitCost: Number(line.unit_cost_lyd ?? line.unit_cost ?? 0),
+    unitCostBlank: false,
+    unitCostZeroConfirmed: Number(line.unit_cost_lyd ?? line.unit_cost ?? 0) === 0,
+    unitCostSource: "manual" as const,
     lineTotal: Number(line.line_total_lyd ?? line.line_total ?? 0),
     pricingMode: "total" as const,
   }));

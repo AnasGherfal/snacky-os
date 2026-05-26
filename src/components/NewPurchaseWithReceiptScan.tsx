@@ -25,6 +25,12 @@ type ProductOption = {
   current_cost_price_lyd: number | null;
   lastPurchaseCost: number | null;
   last_purchase_cost_lyd: number | null;
+  lastPurchaseDate?: string | null;
+  last_purchase_date?: string | null;
+  lastSupplierId?: string | null;
+  last_supplier_id?: string | null;
+  lastSupplierName?: string | null;
+  last_supplier_name?: string | null;
   currentStorageQty: number;
   vmsNames: string[];
 };

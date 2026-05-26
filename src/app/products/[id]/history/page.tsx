@@ -75,7 +75,7 @@ export default async function ProductHistoryPage({
   const [{ data: product }, { data: users }, { data: inventory }, { data: purchaseLines }, { data: salesRows }, { data: priceLogs }, historyCounts] = await Promise.all([
     supabase
       .from("products")
-      .select("id, sku, name, category, case_quantity, active, import_source, last_vms_seen_at, current_selling_price_lyd, selling_price, selling_price_source, current_cost_price_lyd, last_purchase_cost_lyd, average_cost_lyd, cost_price_source, price_updated_at")
+      .select("id, sku, name, category, case_quantity, active, import_source, last_vms_seen_at, current_selling_price_lyd, selling_price, selling_price_source, current_cost_price_lyd, last_purchase_cost_lyd, average_cost_lyd, last_purchase_date, last_supplier_id, last_supplier:suppliers!products_last_supplier_id_fkey(name), cost_price_source, price_updated_at")
       .eq("id", id)
       .maybeSingle(),
     supabase.from("team_members").select("id, full_name").order("full_name"),
@@ -103,6 +103,7 @@ export default async function ProductHistoryPage({
     getProductHistoryCounts(supabase, id),
   ]);
   if (!product) notFound();
+  const lastSupplierName = Array.isArray((product as any).last_supplier) ? (product as any).last_supplier[0]?.name : (product as any).last_supplier?.name;
   const hasBusinessHistory = await productHasBusinessHistory(historyCounts);
 
   let query = supabase
@@ -215,6 +216,13 @@ export default async function ProductHistoryPage({
         <div className="surface-card"><div className="text-sm text-slate-500">Purchase lines</div><div className="mt-1 text-3xl font-semibold">{purchases.length}</div></div>
         <div className="surface-card"><div className="text-sm text-slate-500">VMS sales</div><div className="mt-1 text-3xl font-semibold">{sales.length ? lyd(totalSales) : "-"}</div></div>
       </section>
+
+      {canSeeCost ? (
+        <section className="mb-6 grid gap-4 md:grid-cols-2">
+          <div className="surface-card"><div className="text-sm text-slate-500">Last purchase date</div><div className="mt-1 text-lg font-semibold">{product.last_purchase_date ?? "-"}</div></div>
+          <div className="surface-card"><div className="text-sm text-slate-500">Last purchase supplier</div><div className="mt-1 text-lg font-semibold">{lastSupplierName ?? "-"}</div></div>
+        </section>
+      ) : null}
 
       <section className="surface-card mb-6">
         <h2 className="mb-3 text-base font-semibold text-slate-900">Source badges</h2>

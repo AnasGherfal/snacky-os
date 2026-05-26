@@ -90,7 +90,7 @@ export default async function EditProductPage({ params, searchParams }: { params
   if (!s) notFound();
 
   const [{ data: product }, { data: suppliers }, { data: inventory }, { data: movements }, { data: purchaseLines }, { data: sales }] = await Promise.all([
-    s.from("products").select("*").eq("id", id).single(),
+    s.from("products").select("*, last_supplier:suppliers!products_last_supplier_id_fkey(name)").eq("id", id).single(),
     s.from("suppliers").select("id,name").order("name"),
     s.from("current_inventory_by_location").select("location_type, location_name, quantity_on_hand").eq("product_id", id).order("location_type"),
     s
@@ -154,6 +154,11 @@ export default async function EditProductPage({ params, searchParams }: { params
           <div className="surface-card"><div className="text-sm text-slate-500">Current selling price</div><div className="mt-1 text-2xl font-semibold">{lyd(Number(product.current_selling_price_lyd ?? product.selling_price ?? 0))}</div><div className="mt-2"><ProductSourceBadge source={product.selling_price_source} /></div></div>
         </section>
 
+        <section className="grid gap-4 md:grid-cols-2">
+          <div className="surface-card"><div className="text-sm text-slate-500">Last purchase date</div><div className="mt-1 text-lg font-semibold">{product.last_purchase_date ?? "-"}</div></div>
+          <div className="surface-card"><div className="text-sm text-slate-500">Last purchase supplier</div><div className="mt-1 text-lg font-semibold">{product.last_supplier?.name ?? "-"}</div></div>
+        </section>
+
         <section className="surface-card">
           <h2 className="mb-3 text-base font-semibold text-slate-900">Source badges</h2>
           <div className="grid gap-3 md:grid-cols-3">
@@ -179,6 +184,8 @@ export default async function EditProductPage({ params, searchParams }: { params
               <FormField label="Current Selling Price LYD" hint="Manual changes relabel selling source as Manual. VMS Product List remains the preferred machine selling source."><input type="number" step="0.01" name="current_selling_price_lyd" defaultValue={product.current_selling_price_lyd ?? product.selling_price ?? 0} className="field-input" /></FormField>
               <FormField label="VMS Selling Price LYD" hint="Updated by VMS imports when the file provides a selling price."><input value={formatMoney(product.vms_selling_price_lyd)} readOnly className="field-input bg-slate-50" /></FormField>
               <FormField label="Last Purchase Cost LYD" hint="Updated when a purchase is received."><input value={formatMoney(product.last_purchase_cost_lyd, 4)} readOnly className="field-input bg-slate-50" /></FormField>
+              <FormField label="Last Purchase Date" hint="Updated when a purchase is received."><input value={product.last_purchase_date ?? "-"} readOnly className="field-input bg-slate-50" /></FormField>
+              <FormField label="Last Purchase Supplier" hint="Updated when a purchase is received."><input value={product.last_supplier?.name ?? "-"} readOnly className="field-input bg-slate-50" /></FormField>
               <FormField label="Average Cost LYD" hint="Reserved for weighted average cost once enabled."><input value={formatMoney(product.average_cost_lyd, 4)} readOnly className="field-input bg-slate-50" /></FormField>
               <FormField label="Units per box / Case quantity" hint="Used when receiving purchases. Example: Pepsi box = 24 cans."><input type="number" min="1" name="case_quantity" defaultValue={product.case_quantity ?? 1} className="field-input" /></FormField>
               <FormField label="Status" hint="Use the safe archive/delete controls on Movement History to change product availability.">

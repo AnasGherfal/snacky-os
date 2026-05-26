@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { LocalDraftForm } from "@/components/LocalDraft";
 import { ErrorState, FormField, FormPageLayout, FormSection, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
-import { isOwnerAdminRole } from "@/lib/authz";
+import { canManageVmsMappings } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { updateVmsProductMapping } from "@/lib/vms-mapping-actions";
 
@@ -32,7 +32,7 @@ export default async function EditVmsProductMappingPage({
   searchParams: Promise<{ error?: string }>;
 }) {
   const profile = await getCurrentProfile();
-  if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
+  if (!canManageVmsMappings(profile)) redirect("/unauthorized");
 
   const { id } = await params;
   const { error } = await searchParams;

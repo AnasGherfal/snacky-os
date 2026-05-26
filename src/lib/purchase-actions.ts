@@ -6,6 +6,7 @@ import { logActivity } from "@/lib/activity-log";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { canAddProducts, canManagePurchases } from "@/lib/authz";
 import { createPurchaseFinancialTransaction } from "@/lib/finance-actions";
+import { resolvePurchaseUnitCost, type ProductCostMemory } from "@/lib/purchase-cost-memory";
 import { resolveProductSku } from "@/lib/product-sku";
 import { resolvePurchaseReceiptUrl } from "@/lib/purchase-receipts";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -16,6 +17,8 @@ type PurchaseLineInput = {
   unitsPerBox: number;
   looseUnitsQty: number;
   unitCost: number;
+  unitCostBlank: boolean;
+  unitCostZeroConfirmed: boolean;
   lineTotal: number;
   pricingMode: "unit" | "total";
   receiptLineName: string | null;
@@ -98,19 +101,26 @@ function parseLines(raw: FormDataEntryValue | null): PurchaseLineInput[] {
     if (!Array.isArray(parsed)) return [];
     return parsed
       .map((line): PurchaseLineInput => {
-        const matchAction = parseLineAction(line.matchAction);
+        const row = line && typeof line === "object" ? (line as Record<string, unknown>) : {};
+        const matchAction = parseLineAction(row.matchAction);
+        const unitCost = Math.max(0, Number(row.unitCost || row.unit_cost || row.unit_cost_lyd || 0));
+        const unitCostZeroConfirmed = Boolean(row.unitCostZeroConfirmed ?? row.unit_cost_zero_confirmed ?? row.confirmedZeroCost);
+        const hasBlankFlag = Object.prototype.hasOwnProperty.call(row, "unitCostBlank") || Object.prototype.hasOwnProperty.call(row, "unit_cost_blank");
+        const pricingMode = row.pricingMode === "total" || row.pricing_mode === "total" ? "total" : "unit";
         return {
-          productId: String(line.productId || ""),
-          boxesQty: Math.max(0, Math.floor(Number(line.boxesQty || 0))),
-          unitsPerBox: Math.max(1, Math.floor(Number(line.unitsPerBox || 1))),
-          looseUnitsQty: Math.max(0, Math.floor(Number(line.looseUnitsQty || 0))),
-          unitCost: Math.max(0, Number(line.unitCost || 0)),
-          lineTotal: Math.max(0, Number(line.lineTotal || 0)),
-          pricingMode: line.pricingMode === "total" ? "total" : "unit",
-          receiptLineName: cleanOptionalString(line.receiptLineName),
+          productId: String(row.productId || row.product_id || ""),
+          boxesQty: Math.max(0, Math.floor(Number(row.boxesQty || row.boxes_qty || 0))),
+          unitsPerBox: Math.max(1, Math.floor(Number(row.unitsPerBox || row.units_per_box || 1))),
+          looseUnitsQty: Math.max(0, Math.floor(Number(row.looseUnitsQty || row.loose_units_qty || 0))),
+          unitCost,
+          unitCostBlank: hasBlankFlag ? Boolean(row.unitCostBlank ?? row.unit_cost_blank) : unitCost === 0 && !unitCostZeroConfirmed,
+          unitCostZeroConfirmed,
+          lineTotal: Math.max(0, Number(row.lineTotal || row.line_total || row.line_total_lyd || 0)),
+          pricingMode,
+          receiptLineName: cleanOptionalString(row.receiptLineName ?? row.receipt_line_name),
           matchAction,
-          matchConfidence: line.matchConfidence === null || line.matchConfidence === undefined ? null : Math.max(0, Math.min(1, Number(line.matchConfidence || 0))),
-          newProduct: parseNewProduct(line.newProduct),
+          matchConfidence: row.matchConfidence === null || row.matchConfidence === undefined ? null : Math.max(0, Math.min(1, Number(row.matchConfidence || 0))),
+          newProduct: parseNewProduct(row.newProduct ?? row.new_product),
         };
       })
       .filter((line) => line.matchAction !== "ignore" && (line.productId || line.matchAction === "create") && line.boxesQty * line.unitsPerBox + line.looseUnitsQty > 0);
@@ -137,6 +147,66 @@ function buildLineRows(lines: PurchaseLineInput[]) {
       unit_cost_lyd: unitCost,
       line_total: lineTotal,
       line_total_lyd: lineTotal,
+    };
+  });
+}
+
+function totalUnitsForLine(line: PurchaseLineInput) {
+  return Math.max(0, Math.floor(line.boxesQty)) * Math.max(1, Math.floor(line.unitsPerBox)) + Math.max(0, Math.floor(line.looseUnitsQty));
+}
+
+function applyInlineLineCost(line: PurchaseLineInput, productName?: string | null) {
+  const decision = resolvePurchaseUnitCost({
+    product: null,
+    productName: productName ?? line.newProduct?.name ?? line.receiptLineName,
+    unitCost: line.unitCost,
+    unitCostBlank: line.unitCostBlank,
+    unitCostZeroConfirmed: line.unitCostZeroConfirmed,
+    pricingMode: line.pricingMode,
+    lineTotal: line.lineTotal,
+    totalUnits: totalUnitsForLine(line),
+  });
+  if ("message" in decision) return { line, decision };
+  const nextLine = {
+    ...line,
+    unitCost: decision.unitCost,
+    unitCostBlank: false,
+    lineTotal: line.pricingMode === "total" && line.lineTotal > 0 ? line.lineTotal : totalUnitsForLine(line) * decision.unitCost,
+  };
+  return { line: nextLine, decision };
+}
+
+async function applySavedProductCostMemory(supabase: SupabaseServer, lines: PurchaseLineInput[]) {
+  const productIds = Array.from(new Set(lines.map((line) => line.productId).filter(Boolean)));
+  const productsById = new Map<string, ProductCostMemory>();
+  if (productIds.length) {
+    const { data, error } = await supabase
+      .from("products")
+      .select("id, name, cost_price, current_cost_price_lyd, last_purchase_cost_lyd, average_cost_lyd")
+      .in("id", productIds);
+    if (error) throw error;
+    for (const product of data ?? []) productsById.set(String((product as any).id), product as ProductCostMemory);
+  }
+
+  return lines.map((line) => {
+    const product = productsById.get(line.productId);
+    const decision = resolvePurchaseUnitCost({
+      product,
+      productName: product?.name ?? line.newProduct?.name ?? line.receiptLineName,
+      unitCost: line.unitCost,
+      unitCostBlank: line.unitCostBlank,
+      unitCostZeroConfirmed: line.unitCostZeroConfirmed,
+      pricingMode: line.pricingMode,
+      lineTotal: line.lineTotal,
+      totalUnits: totalUnitsForLine(line),
+    });
+    if ("message" in decision) formError(decision.message);
+    return {
+      ...line,
+      unitCost: decision.unitCost,
+      unitCostBlank: false,
+      lineTotal: line.pricingMode === "total" && line.lineTotal > 0 ? roundMoney(line.lineTotal) : roundMoney(totalUnitsForLine(line) * decision.unitCost),
+      pricingMode: decision.kind === "product_memory" ? "unit" : line.pricingMode,
     };
   });
 }
@@ -184,13 +254,16 @@ async function resolvePurchaseLines({
   profile,
   lines,
   supplierId,
+  submitAction,
 }: {
   supabase: SupabaseServer;
   profile: Awaited<ReturnType<typeof getCurrentProfile>>;
   lines: PurchaseLineInput[];
   supplierId: string | null;
+  submitAction: string;
 }) {
   const resolvedLines: PurchaseLineInput[] = [];
+  const isReceiving = submitAction === "received";
 
   for (const [index, line] of lines.entries()) {
     if (line.matchAction !== "create") {
@@ -201,6 +274,8 @@ async function resolvePurchaseLines({
     const productName = line.newProduct?.name || line.receiptLineName || "";
     if (!productName.trim()) formError("Product name is required for receipt-created products.");
     if (!canAddProducts(profile)) formError("You do not have permission to create products from receipt lines.");
+    const { line: lineWithCost, decision } = applyInlineLineCost(line, productName);
+    if ("message" in decision) formError(decision.message);
 
     let sku = "";
     try {
@@ -210,7 +285,8 @@ async function resolvePurchaseLines({
       formError(error instanceof Error ? error.message : "Could not create product from receipt line.");
     }
 
-    const unitCost = roundUnitCost(line.unitCost || (line.lineTotal > 0 && line.looseUnitsQty > 0 ? line.lineTotal / line.looseUnitsQty : 0));
+    const unitCost = roundUnitCost(lineWithCost.unitCost);
+    const costForProduct = isReceiving && unitCost > 0 ? unitCost : 0;
     const { data: product, error } = await supabase
       .from("products")
       .insert({
@@ -220,13 +296,13 @@ async function resolvePurchaseLines({
         category: line.newProduct?.category || "snack",
         brand: line.newProduct?.brand ?? null,
         supplier_id: supplierId,
-        cost_price: unitCost,
+        cost_price: roundMoney(costForProduct),
         selling_price: 0,
-        current_cost_price_lyd: unitCost,
-        last_purchase_cost_lyd: unitCost,
-        cost_price_source: unitCost > 0 ? "latest_purchase" : "manual",
+        current_cost_price_lyd: costForProduct,
+        last_purchase_cost_lyd: costForProduct > 0 ? costForProduct : null,
+        cost_price_source: costForProduct > 0 ? "latest_purchase" : "manual",
         import_source: "receipt_scan",
-        price_updated_at: new Date().toISOString(),
+        price_updated_at: costForProduct > 0 ? new Date().toISOString() : null,
         case_quantity: line.newProduct?.caseQuantity ?? Math.max(1, line.unitsPerBox),
         active: true,
       })
@@ -250,7 +326,7 @@ async function resolvePurchaseLines({
       });
     }
 
-    resolvedLines.push({ ...line, productId: product.id });
+    resolvedLines.push({ ...lineWithCost, productId: product.id });
   }
 
   return resolvedLines.filter((line) => line.productId);
@@ -361,6 +437,8 @@ function logPurchaseSaveFailure({
     costs: lines.map((line) => ({
       product_id: line.productId || null,
       unit_cost: line.unitCost,
+      unit_cost_blank: line.unitCostBlank,
+      unit_cost_zero_confirmed: line.unitCostZeroConfirmed,
       line_total: line.lineTotal,
       pricing_mode: line.pricingMode,
     })),
@@ -430,7 +508,9 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
     const supplierId = String(fd.get("supplier_id") || "") || null;
     supplierIdForLog = supplierId;
     purchaseDateForLog = String(fd.get("purchase_date") || new Date().toISOString().slice(0, 10));
-    lines = await resolvePurchaseLines({ supabase, profile, lines, supplierId });
+    const submitAction = String(fd.get("submit_action") || "draft");
+    lines = await resolvePurchaseLines({ supabase, profile, lines, supplierId, submitAction: submitAction === "received" ? "received" : "draft" });
+    lines = await applySavedProductCostMemory(supabase, lines);
     linesForLog = lines;
     if (!lines.length) formError("Add at least one purchased item.");
 
@@ -446,7 +526,6 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
     };
     const lineRows = buildLineRows(lines);
     const totals = buildTotals(fd, lineRows.reduce((sum, line) => sum + Number(line.line_total), 0));
-    const submitAction = String(fd.get("submit_action") || "draft");
 
     const rpcPayload = {
       p_supplier_id: supplierId,
@@ -570,7 +649,9 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
     if (!lines.length) formError("Add at least one purchased item.");
 
     const supplierId = String(fd.get("supplier_id") || "") || null;
-    lines = await resolvePurchaseLines({ supabase, profile, lines, supplierId });
+    const submitAction = String(fd.get("submit_action") || "draft");
+    lines = await resolvePurchaseLines({ supabase, profile, lines, supplierId, submitAction: submitAction === "received" ? "received" : "draft" });
+    lines = await applySavedProductCostMemory(supabase, lines);
     if (!lines.length) formError("Add at least one purchased item.");
 
     const { receiptUrl, receiptFileName, receiptContentType, receiptStoragePath, uploadUnavailable, uploadError } = await resolvePurchaseReceiptUrl(supabase, fd);
@@ -583,7 +664,6 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
     const nextReceiptStoragePath = removeReceipt ? null : receiptStoragePath ?? (receiptUrlChanged ? null : current.receipt_storage_path ?? null);
     const lineRows = buildLineRows(lines);
     const totals = buildTotals(fd, lineRows.reduce((sum, line) => sum + Number(line.line_total), 0));
-    const submitAction = String(fd.get("submit_action") || "draft");
 
     const { error: updateError } = await supabase
       .from("purchase_orders")
@@ -720,17 +800,23 @@ async function receivePurchaseById(id: string) {
   for (const line of validLines as any[]) {
     await supabase.from("purchase_order_lines").update({ received_qty: Number(line.total_units) }).eq("id", line.id);
     const latestCost = Number(line.unit_cost_lyd ?? line.unit_cost ?? 0);
-    await supabase
-      .from("products")
-      .update({
-        cost_price: latestCost,
-        current_cost_price_lyd: latestCost,
-        last_purchase_cost_lyd: latestCost,
-        cost_price_source: "latest_purchase",
-        price_updated_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", line.product_id);
+    if (latestCost > 0) {
+      const { error: productCostError } = await supabase
+        .from("products")
+        .update({
+          cost_price: roundMoney(latestCost),
+          current_cost_price_lyd: roundUnitCost(latestCost),
+          last_purchase_cost_lyd: roundUnitCost(latestCost),
+          last_purchase_date: purchase.order_date ?? receivedDate,
+          last_supplier_id: purchase.supplier_id ?? null,
+          last_purchase_line_id: line.id,
+          cost_price_source: "latest_purchase",
+          price_updated_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", line.product_id);
+      if (productCostError) throw productCostError;
+    }
   }
 
   const { error: updateError } = await supabase

@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, PageHeader, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
-import { isOwnerAdminRole } from "@/lib/authz";
+import { canManageVmsMappings } from "@/lib/authz";
 import { cleanSearchParams, getPagination, SearchParamsRecord, supabaseLikePattern } from "@/lib/pagination";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -32,7 +32,7 @@ export default async function VmsProductMappingPage({
   searchParams: Promise<SearchParamsRecord & { status?: string; q?: string; error?: string }>;
 }) {
   const profile = await getCurrentProfile();
-  if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
+  if (!canManageVmsMappings(profile)) redirect("/unauthorized");
 
   const params = cleanSearchParams(await searchParams);
   const { page, pageSize, from, to } = getPagination(params);

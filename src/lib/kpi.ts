@@ -101,7 +101,16 @@ export function locationName(row: any) {
 }
 
 export function productCost(row: any) {
-  const cost = numberValue(row.product?.current_cost_price_lyd ?? row.products?.current_cost_price_lyd ?? row.product?.cost_price ?? row.products?.cost_price);
+  const cost = numberValue(
+    row.product?.average_cost_lyd ??
+      row.products?.average_cost_lyd ??
+      row.product?.last_purchase_cost_lyd ??
+      row.products?.last_purchase_cost_lyd ??
+      row.product?.current_cost_price_lyd ??
+      row.products?.current_cost_price_lyd ??
+      row.product?.cost_price ??
+      row.products?.cost_price,
+  );
   return cost > 0 ? cost : null;
 }
 

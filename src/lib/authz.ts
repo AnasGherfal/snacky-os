@@ -40,6 +40,10 @@ export const appPermissions = [
   "activity.view",
   "vms.import",
   "vms.mapping.manage",
+  "vms_import.view",
+  "vms_import.create",
+  "vms_import.confirm",
+  "vms_import.manage_mappings",
   "system.settings",
 ] as const;
 
@@ -236,6 +240,22 @@ export function canAddProducts(input: RoleInput) {
   return hasPermission(input, "products.create");
 }
 
+export function canViewVmsImports(input: RoleInput) {
+  return hasPermission(input, "vms_import.view") || hasPermission(input, "vms.import");
+}
+
+export function canCreateVmsImports(input: RoleInput) {
+  return hasPermission(input, "vms_import.create") || hasPermission(input, "vms.import");
+}
+
+export function canConfirmVmsImports(input: RoleInput) {
+  return hasPermission(input, "vms_import.confirm") || hasPermission(input, "vms.import");
+}
+
+export function canManageVmsMappings(input: RoleInput) {
+  return hasPermission(input, "vms_import.manage_mappings") || hasPermission(input, "vms.mapping.manage");
+}
+
 export function canAccessOperatorRoute(user: AuthUserContext | null | undefined, routeOperatorId: string | null | undefined) {
   if (!user) return false;
   if (canManageOperations(user)) return true;
@@ -308,8 +328,8 @@ export function canAccessPath(user: AuthUserContext | null | undefined, pathname
 
   if (matchesPrefix(pathname, ["/team"])) return hasPermission(user, "team.manage");
   if (matchesPrefix(pathname, ["/activity"])) return hasPermission(user, "activity.view");
-  if (matchesPrefix(pathname, ["/vms-import"])) return hasPermission(user, "vms.import");
-  if (matchesPrefix(pathname, ["/vms-mappings"])) return hasPermission(user, "vms.mapping.manage");
+  if (matchesPrefix(pathname, ["/vms-import"])) return true;
+  if (matchesPrefix(pathname, ["/vms-mappings"])) return canManageVmsMappings(user);
   if (matchesPrefix(pathname, ["/settings"])) return hasPermission(user, "system.settings");
   if (matchesPrefix(pathname, ["/admin"])) return hasPermission(user, "system.settings");
 

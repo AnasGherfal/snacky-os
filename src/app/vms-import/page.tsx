@@ -4,7 +4,7 @@ import { LocalDraftForm } from "@/components/LocalDraft";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, FormField, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
-import { isOwnerAdminRole } from "@/lib/authz";
+import { canCreateVmsImports, canViewVmsImports, getEffectivePermissions } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { cleanSearchParams, getPagination } from "@/lib/pagination";
 import { completeVmsImport, prepareVmsImport } from "@/lib/vms-import-actions";
@@ -107,6 +107,147 @@ function batchMetric(batch: any, key: keyof ImportSummary, fallback = 0) {
 function formatDateTime(value: string | null | undefined) {
   if (!value) return "-";
   return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+}
+
+type SupabaseQueryError = {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+};
+
+type VmsBatchRow = {
+  id: string;
+  source_type?: string | null;
+  file_name?: string | null;
+  file_type?: string | null;
+  sheet_name?: string | null;
+  report_type?: string | null;
+  uploaded_by?: string | null;
+  uploaded_at?: string | null;
+  imported_by?: string | null;
+  imported_at?: string | null;
+  status?: string | null;
+  row_count?: number | null;
+  rows_found?: number | null;
+  rows_imported?: number | null;
+  rows_skipped?: number | null;
+  rows_skipped_duplicate?: number | null;
+  rows_needing_review?: number | null;
+  import_mode?: string | null;
+  error_count?: number | null;
+  notes?: string | null;
+  last_reprocessed_at?: string | null;
+  reprocess_count?: number | null;
+};
+
+type VmsImportPreviewRow = {
+  id: string;
+  file_name: string | null;
+  file_type: string | null;
+  file_size_bytes: number | null;
+  report_type: string | null;
+  sheets: unknown;
+  created_at: string | null;
+};
+
+type VmsReviewSummary = {
+  productMappingsNeedingReview: number | null;
+  machineMappingsNeedingReview: number | null;
+  savedHeaderMappings: number | null;
+};
+
+const preferredBatchSelect = [
+  "id",
+  "uploaded_by",
+  "uploaded_at",
+  "file_name",
+  "report_type",
+  "report_start_date",
+  "report_end_date",
+  "import_mode",
+  "status",
+  "rows_found",
+  "rows_imported",
+  "rows_skipped_duplicate",
+  "rows_needing_review",
+  "notes",
+  "source_type",
+  "file_type",
+  "sheet_name",
+  "imported_by",
+  "imported_at",
+  "row_count",
+  "rows_skipped",
+  "error_count",
+  "last_reprocessed_at",
+  "reprocess_count",
+].join(", ");
+
+const legacyBatchSelect = [
+  "id",
+  "source_type",
+  "file_name",
+  "imported_by",
+  "imported_at",
+  "status",
+  "row_count",
+  "error_count",
+  "notes",
+].join(", ");
+
+function queryError(error: unknown): SupabaseQueryError | null {
+  if (!error || typeof error !== "object") return null;
+  return error as SupabaseQueryError;
+}
+
+function errorText(error: SupabaseQueryError | null) {
+  return `${error?.code ?? ""} ${error?.message ?? ""} ${error?.details ?? ""} ${error?.hint ?? ""}`.toLowerCase();
+}
+
+function isMissingColumnError(error: SupabaseQueryError | null) {
+  const text = errorText(error);
+  return error?.code === "42703" || error?.code === "PGRST204" || text.includes("column") || text.includes("schema cache");
+}
+
+function isMissingSchemaError(error: SupabaseQueryError | null) {
+  const text = errorText(error);
+  return error?.code === "42P01" || error?.code === "PGRST205" || text.includes("does not exist") || isMissingColumnError(error);
+}
+
+function isPermissionError(error: SupabaseQueryError | null) {
+  const text = errorText(error);
+  return error?.code === "42501" || text.includes("permission denied") || text.includes("row-level security") || text.includes("rls");
+}
+
+function userFacingLoadError(error: SupabaseQueryError | null) {
+  if (isPermissionError(error)) return "You do not have permission to load VMS imports.";
+  if (isMissingSchemaError(error)) return "VMS import database tables are missing. Run the latest migration.";
+  return "Snacky OS could not load VMS imports. Technical details are available in the server console.";
+}
+
+function logVmsImportLoadIssue({
+  queryName,
+  error,
+  selectedBatchId,
+  currentUserId,
+  effectivePermissions,
+}: {
+  queryName: string;
+  error: unknown;
+  selectedBatchId: string | null;
+  currentUserId: string | null;
+  effectivePermissions: string[];
+}) {
+  const supabaseError = queryError(error);
+  console.error("[vms-import] Load query failed", {
+    queryName,
+    code: supabaseError?.code ?? null,
+    message: supabaseError?.message ?? String(error ?? "Unknown error"),
+    selectedBatchId,
+    currentUserId,
+    effectivePermissions,
+  });
 }
 
 function parseHeaderRow(value: string | undefined, fallback: number) {
@@ -364,6 +505,20 @@ function StatCard({ label, value, note }: { label: string; value: string | numbe
   );
 }
 
+function ReviewSummaryCard({ summary, batchReviewRows }: { summary: VmsReviewSummary; batchReviewRows: number }) {
+  return (
+    <section className="surface-card mb-6">
+      <h2 className="mb-4 text-lg font-semibold text-slate-900">Needs Review</h2>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard label="Import rows" value={batchReviewRows} />
+        <StatCard label="Product mappings" value={summary.productMappingsNeedingReview ?? "-"} />
+        <StatCard label="Machine mappings" value={summary.machineMappingsNeedingReview ?? "-"} />
+        <StatCard label="Saved header mappings" value={summary.savedHeaderMappings ?? "-"} />
+      </div>
+    </section>
+  );
+}
+
 function MappingStatus({
   required,
   selectedColumn,
@@ -450,9 +605,148 @@ function VmsImportDebugPanel({
   );
 }
 
+async function loadVmsImportBatches({
+  supabase,
+  from,
+  to,
+  selectedBatchId,
+  currentUserId,
+  effectivePermissions,
+}: {
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  from: number;
+  to: number;
+  selectedBatchId: string | null;
+  currentUserId: string | null;
+  effectivePermissions: string[];
+}) {
+  const preferred = await supabase
+    .from("vms_import_batches")
+    .select(preferredBatchSelect, { count: "exact" })
+    .order("imported_at", { ascending: false })
+    .range(from, to);
+
+  if (!preferred.error) {
+    return {
+      batches: (preferred.data ?? []) as unknown as VmsBatchRow[],
+      batchCount: preferred.count ?? 0,
+      error: null,
+      schemaNotice: "",
+    };
+  }
+
+  const preferredError = queryError(preferred.error);
+  logVmsImportLoadIssue({
+    queryName: "vms_import_batches.preferred",
+    error: preferred.error,
+    selectedBatchId,
+    currentUserId,
+    effectivePermissions,
+  });
+
+  if (!isMissingColumnError(preferredError)) {
+    return { batches: [], batchCount: 0, error: preferredError, schemaNotice: "" };
+  }
+
+  const fallback = await supabase
+    .from("vms_import_batches")
+    .select(legacyBatchSelect, { count: "exact" })
+    .order("imported_at", { ascending: false })
+    .range(from, to);
+
+  if (fallback.error) {
+    logVmsImportLoadIssue({
+      queryName: "vms_import_batches.legacy_fallback",
+      error: fallback.error,
+      selectedBatchId,
+      currentUserId,
+      effectivePermissions,
+    });
+    return { batches: [], batchCount: 0, error: queryError(fallback.error), schemaNotice: "" };
+  }
+
+  return {
+    batches: (fallback.data ?? []) as unknown as VmsBatchRow[],
+    batchCount: fallback.count ?? 0,
+    error: null,
+    schemaNotice: "VMS import database columns need the latest migration. Showing available legacy import data.",
+  };
+}
+
+async function countRows({
+  supabase,
+  queryName,
+  selectedBatchId,
+  currentUserId,
+  effectivePermissions,
+  build,
+}: {
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  queryName: string;
+  selectedBatchId: string | null;
+  currentUserId: string | null;
+  effectivePermissions: string[];
+  build: () => PromiseLike<{ count: number | null; error: unknown }>;
+}) {
+  const { count, error } = await build();
+  if (!error) return count ?? 0;
+  logVmsImportLoadIssue({ queryName, error, selectedBatchId, currentUserId, effectivePermissions });
+  return null;
+}
+
+async function loadVmsReviewSummary({
+  supabase,
+  selectedBatchId,
+  currentUserId,
+  effectivePermissions,
+}: {
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  selectedBatchId: string | null;
+  currentUserId: string | null;
+  effectivePermissions: string[];
+}): Promise<VmsReviewSummary> {
+  const [productMappingsNeedingReview, machineMappingsNeedingReview, savedHeaderMappings] = await Promise.all([
+    countRows({
+      supabase,
+      queryName: "vms_product_mappings.needs_review_count",
+      selectedBatchId,
+      currentUserId,
+      effectivePermissions,
+      build: () => supabase.from("vms_product_mappings").select("id", { count: "exact", head: true }).eq("match_status", "needs_review"),
+    }),
+    countRows({
+      supabase,
+      queryName: "vms_machine_mappings.needs_review_count",
+      selectedBatchId,
+      currentUserId,
+      effectivePermissions,
+      build: () => supabase.from("vms_machine_mappings").select("id", { count: "exact", head: true }).eq("status", "needs_review"),
+    }),
+    countRows({
+      supabase,
+      queryName: "vms_header_mappings.count",
+      selectedBatchId,
+      currentUserId,
+      effectivePermissions,
+      build: () => supabase.from("vms_header_mappings").select("id", { count: "exact", head: true }),
+    }),
+  ]);
+
+  return { productMappingsNeedingReview, machineMappingsNeedingReview, savedHeaderMappings };
+}
+
 export default async function VmsImportPage({ searchParams }: { searchParams: Promise<VmsImportSearchParams> }) {
   const profile = await getCurrentProfile();
-  if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
+  const effectivePermissions = profile ? getEffectivePermissions(profile) : [];
+  const selectedBatchIdForLogs = null;
+  if (!canViewVmsImports(profile)) {
+    return (
+      <>
+        <PageHeader title="VMS Import" subtitle="A step-by-step import wizard for VMS Excel and CSV reports." />
+        <ErrorState title="VMS import access required" body="You do not have permission to view VMS imports." />
+      </>
+    );
+  }
 
   const params = await searchParams;
   const paginationParams = cleanSearchParams(params);
@@ -467,42 +761,81 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
       </>
     );
   }
-  const [{ data: batches, count: batchCount, error: batchesError }, { data: preview, error: previewError }] = await Promise.all([
-    supabase
-      .from("vms_import_batches")
-      .select("id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, status, row_count, rows_imported, rows_skipped, rows_skipped_duplicate, import_mode, error_count, notes, last_reprocessed_at, reprocess_count", { count: "exact" })
-      .order("imported_at", { ascending: false })
-      .range(from, to),
-    params.previewId
-      ? supabase
-          .from("vms_import_previews")
-          .select("id, file_name, file_type, file_size_bytes, report_type, sheets, created_at")
-          .eq("id", params.previewId)
-          .maybeSingle()
-      : Promise.resolve({ data: null, error: null }),
-  ]);
-  const importLoadError = batchesError ?? previewError;
-  if (importLoadError) {
-    console.error("[vms-import] Failed to load import page", importLoadError);
+
+  const selectedPreviewId = params.previewId ?? null;
+  const {
+    batches,
+    batchCount,
+    error: batchesError,
+    schemaNotice,
+  } = await loadVmsImportBatches({
+    supabase,
+    from,
+    to,
+    selectedBatchId: selectedPreviewId ?? selectedBatchIdForLogs,
+    currentUserId: profile?.id ?? null,
+    effectivePermissions,
+  });
+
+  if (batchesError) {
     return (
       <>
-        <ErrorState title="Could not load VMS import" body="Snacky OS could not load VMS import batches or the selected preview." action={<SecondaryButton href="/vms-import">Retry</SecondaryButton>} />
+        <PageHeader title="VMS Import" subtitle="A step-by-step import wizard for VMS Excel and CSV reports." />
+        <ErrorState title="Could not load VMS import" body={userFacingLoadError(batchesError)} action={<SecondaryButton href="/vms-import">Retry</SecondaryButton>} />
       </>
     );
   }
-  const importerIds = [...new Set((batches ?? []).map((batch: any) => batch.imported_by).filter(Boolean))];
+
+  let preview: VmsImportPreviewRow | null = null;
+  let selectedPreviewNotice = "";
+  if (selectedPreviewId) {
+    const { data, error: previewError } = await supabase
+      .from("vms_import_previews")
+      .select("id, file_name, file_type, file_size_bytes, report_type, sheets, created_at")
+      .eq("id", selectedPreviewId)
+      .maybeSingle();
+    if (previewError) {
+      logVmsImportLoadIssue({
+        queryName: "vms_import_previews.selected",
+        error: previewError,
+        selectedBatchId: selectedPreviewId,
+        currentUserId: profile?.id ?? null,
+        effectivePermissions,
+      });
+      return (
+        <>
+          <PageHeader title="VMS Import" subtitle="A step-by-step import wizard for VMS Excel and CSV reports." />
+          <ErrorState title="Could not load VMS import preview" body={userFacingLoadError(queryError(previewError))} action={<SecondaryButton href="/vms-import">Show latest imports</SecondaryButton>} />
+        </>
+      );
+    }
+    preview = data as unknown as VmsImportPreviewRow | null;
+    if (!preview) {
+      selectedPreviewNotice = "This import batch no longer exists. Showing latest imports instead.";
+    }
+  }
+
+  const importerIds = [...new Set((batches ?? []).map((batch) => batch.uploaded_by ?? batch.imported_by).filter(Boolean))];
   const { data: importers, error: importersError } = importerIds.length
     ? await supabase.from("team_members").select("id, full_name").in("id", importerIds)
     : { data: [], error: null };
   if (importersError) {
-    console.error("[vms-import] Failed to load importers", importersError);
-    return (
-      <>
-        <ErrorState title="Could not load VMS importers" body="Import batches loaded, but Snacky OS could not load the user names attached to them." action={<SecondaryButton href="/vms-import">Retry</SecondaryButton>} />
-      </>
-    );
+    logVmsImportLoadIssue({
+      queryName: "team_members.importers",
+      error: importersError,
+      selectedBatchId: selectedPreviewId,
+      currentUserId: profile?.id ?? null,
+      effectivePermissions,
+    });
   }
   const importerById = new Map((importers ?? []).map((member: any) => [String(member.id), member.full_name]));
+  const reviewSummary = await loadVmsReviewSummary({
+    supabase,
+    selectedBatchId: selectedPreviewId,
+    currentUserId: profile?.id ?? null,
+    effectivePermissions,
+  });
+  const batchReviewRows = batches.reduce((sum, batch) => sum + Number(batch.rows_needing_review ?? batchMetric(batch, "rowsNeedingReview", batchMetric(batch, "needsProductMappingRows", 0))), 0);
 
   const previewSheets = ((preview?.sheets ?? []) as PreviewSheet[]).filter((sheet) => sheet.rows?.length);
   const selectedSheet = previewSheets.find((sheet) => sheet.name === params.sheet) ?? previewSheets[0] ?? null;
@@ -559,7 +892,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
     ]);
     const validationLoadError = machinesError ?? mappingsError ?? productsError;
     if (validationLoadError || (machineMappingsError && machineMappingsError.code !== "42P01")) {
-      console.error("[vms-import] Failed to load validation references", validationLoadError);
+      console.error("[vms-import] Failed to load validation references", validationLoadError ?? machineMappingsError);
       return (
         <>
           <ErrorState title="Could not validate VMS rows" body="Snacky OS could not load machines, mappings, or products needed to validate the import." action={<SecondaryButton href="/vms-import">Start over</SecondaryButton>} />
@@ -651,7 +984,21 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
         </div>
       ) : null}
 
-      {!preview ? <div className="mb-6"><UploadCard /></div> : null}
+      {schemaNotice ? (
+        <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900" role="status">
+          {schemaNotice}
+        </div>
+      ) : null}
+
+      {selectedPreviewNotice ? (
+        <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900" role="status">
+          {selectedPreviewNotice}
+        </div>
+      ) : null}
+
+      {!preview && canCreateVmsImports(profile) ? <div className="mb-6"><UploadCard /></div> : null}
+
+      {!preview ? <ReviewSummaryCard summary={reviewSummary} batchReviewRows={batchReviewRows} /> : null}
 
       {preview && selectedSheet && currentStep === 2 ? (
         <section className="surface-card mb-6 space-y-5">
@@ -1005,22 +1352,22 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
       <section className="surface-card">
         <h2 className="mb-4 text-lg font-semibold text-slate-900">Recent imports</h2>
         {!batches?.length ? (
-          <EmptyState title="No VMS imports yet" body="Upload a VMS Excel/CSV report to create the first import batch." />
+          <EmptyState title="No VMS reports imported yet." body="Upload your first VMS report to start building sales KPIs." />
         ) : (
           <>
-            <DataTable headers={["Status", "File name", "Report type", "Mode", "Rows imported", "Duplicates", "Needs mapping", "Rows failed", "Imported by", "Date"]}>
-              {batches.map((batch: any) => (
+            <DataTable headers={["Status", "File name", "Report type", "Mode", "Rows found", "Rows imported", "Duplicates", "Needs review", "Uploaded by", "Date"]}>
+              {batches.map((batch) => (
                 <tr key={batch.id}>
                   <td><Link href={`/vms-import/${batch.id}`}><StatusBadge status={batch.status} /></Link></td>
                   <td className="font-medium text-slate-900"><Link className="link-secondary" href={`/vms-import/${batch.id}`}>{batch.file_name ?? "-"}</Link></td>
                   <td>{reportLabel(batch.report_type ?? batch.source_type)}</td>
                   <td>{vmsImportModeLabels[parseVmsImportMode(batch.import_mode)]}</td>
+                  <td>{batch.rows_found ?? batch.row_count ?? batchMetric(batch, "totalRows", 0)}</td>
                   <td>{batch.rows_imported ?? batchMetric(batch, "importedRows", 0)}</td>
                   <td>{batch.rows_skipped_duplicate ?? batchMetric(batch, "rowsSkippedDuplicate", 0)}</td>
-                  <td>{batchMetric(batch, "needsProductMappingRows", 0)}</td>
-                  <td>{batchMetric(batch, "invalidRows", batch.error_count ?? 0)}</td>
-                  <td>{batch.imported_by ? importerById.get(String(batch.imported_by)) ?? "Unknown" : "-"}</td>
-                  <td>{formatDateTime(batch.imported_at)}</td>
+                  <td>{batch.rows_needing_review ?? batchMetric(batch, "rowsNeedingReview", batchMetric(batch, "needsProductMappingRows", 0))}</td>
+                  <td>{batch.uploaded_by || batch.imported_by ? importerById.get(String(batch.uploaded_by ?? batch.imported_by)) ?? "Unknown" : "-"}</td>
+                  <td>{formatDateTime(batch.uploaded_at ?? batch.imported_at)}</td>
                 </tr>
               ))}
             </DataTable>

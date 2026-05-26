@@ -47,7 +47,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
     "active",
     "image_url",
     "suppliers(name)",
-    ...(canSeeCost ? ["current_cost_price_lyd", "last_purchase_cost_lyd", "average_cost_lyd", "cost_price_source"] : []),
+    ...(canSeeCost ? ["current_cost_price_lyd", "last_purchase_cost_lyd", "average_cost_lyd", "last_purchase_date", "last_supplier_id", "last_supplier:suppliers!products_last_supplier_id_fkey(name)", "cost_price_source"] : []),
   ].join(",");
   let query = s.from("products").select(productSelect, { count: "exact" }).order("name");
   const search = q.trim();
@@ -89,7 +89,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
           <div className="mb-3 text-sm text-slate-500">
             Showing products{search ? ` matching "${q}"` : ""}.
           </div>
-          <DataTable headers={["Image", "SKU", "Product", "Category", "Case Qty", "Supplier", "Product Source", "Current Selling", "VMS Selling", ...(canSeeCost ? ["Last Purchase Cost", "Average Cost"] : []), "Selling Source", ...(canSeeCost ? ["Cost Source"] : []), "Status", "Actions"]}>
+          <DataTable headers={["Image", "SKU", "Product", "Category", "Case Qty", "Supplier", "Product Source", "Current Selling", "VMS Selling", ...(canSeeCost ? ["Last Purchase Cost", "Last Purchase Date", "Last Supplier", "Average Cost"] : []), "Selling Source", ...(canSeeCost ? ["Cost Source"] : []), "Status", "Actions"]}>
             {data.map((product: any) => (
               <tr key={product.id}>
                 <td><ProductThumbnail imageUrl={product.image_url} name={product.name} /></td>
@@ -102,6 +102,8 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
                 <td>{formatMoney(product.current_selling_price_lyd ?? product.selling_price)}</td>
                 <td>{formatMoney(product.vms_selling_price_lyd)}</td>
                 {canSeeCost ? <td>{formatMoney(product.last_purchase_cost_lyd, 4)}</td> : null}
+                {canSeeCost ? <td>{product.last_purchase_date ?? "-"}</td> : null}
+                {canSeeCost ? <td>{product.last_supplier?.name ?? "-"}</td> : null}
                 {canSeeCost ? <td>{formatMoney(product.average_cost_lyd, 4)}</td> : null}
                 <td><ProductSourceBadge source={product.selling_price_source} /></td>
                 {canSeeCost ? <td><ProductSourceBadge source={product.cost_price_source} /></td> : null}

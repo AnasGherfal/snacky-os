@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
-import { isOwnerAdminRole } from "@/lib/authz";
+import { canManageVmsMappings } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 const allowedStatuses = new Set(["confirmed", "needs_review", "ignored"]);
@@ -13,7 +13,7 @@ const allowedStatuses = new Set(["confirmed", "needs_review", "ignored"]);
 
 export async function updateVmsProductMapping(formData: FormData) {
   const profile = await getCurrentProfile();
-  if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
+  if (!canManageVmsMappings(profile)) redirect("/unauthorized");
 
   const supabase = getSupabaseServerClient();
   const id = String(formData.get("id") || "");
