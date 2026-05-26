@@ -6,7 +6,7 @@ import { logActivity } from "@/lib/activity-log";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canManageVmsMappings } from "@/lib/authz";
 
-const allowedStatuses = new Set(["confirmed", "needs_review", "ignored"]);
+const allowedStatuses = new Set(["confirmed", "suggested", "needs_review", "ignored"]);
 
 // TODO: Add create VMS mapping activity logging when manual VMS mapping creation is implemented.
 
@@ -19,7 +19,7 @@ export async function updateVmsProductMapping(formData: FormData) {
   if (!supabase) redirect(`/vms-mappings/${id}/edit?error=Supabase%20is%20not%20configured.`);
   if (!id) redirect("/vms-mappings?error=Missing%20mapping.");
 
-  const status = String(formData.get("match_status") || "needs_review");
+  const status = String(formData.get("status") || formData.get("match_status") || "needs_review");
   if (!allowedStatuses.has(status)) redirect(`/vms-mappings/${id}/edit?error=Invalid%20mapping%20status.`);
 
   const productId = String(formData.get("product_id") || "") || null;
@@ -28,11 +28,17 @@ export async function updateVmsProductMapping(formData: FormData) {
   }
 
   const { data: beforeMapping } = await supabase.from("vms_product_mappings").select("*").eq("id", id).maybeSingle();
+  const { data: product } = productId
+    ? await supabase.from("products").select("id, name").eq("id", productId).maybeSingle()
+    : { data: null };
   const { data: afterMapping, error } = await supabase
     .from("vms_product_mappings")
     .update({
       product_id: status === "ignored" ? null : productId,
+      snacky_product_id: status === "ignored" ? null : productId,
+      snacky_product_name: status === "ignored" ? null : product?.name ?? null,
       match_status: status,
+      status,
       updated_at: new Date().toISOString(),
     })
     .eq("id", id)

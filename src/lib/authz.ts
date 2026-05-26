@@ -99,6 +99,13 @@ const rolePermissions = {
     "machines.manage",
     "finance.view",
     "finance.edit",
+    "vms.import",
+    "vms.mapping.manage",
+    "vms_import.view",
+    "vms_import.create",
+    "vms_import.validate",
+    "vms_import.confirm",
+    "vms_import.manage_mappings",
   ],
   operator: [
     "assigned_routes.view",
@@ -333,8 +340,7 @@ export function canAccessPath(user: AuthUserContext | null | undefined, pathname
 
   if (matchesPrefix(pathname, ["/team"])) return hasPermission(user, "team.manage");
   if (matchesPrefix(pathname, ["/activity"])) return hasPermission(user, "activity.view");
-  if (matchesPrefix(pathname, ["/vms-import"])) return true;
-  if (matchesPrefix(pathname, ["/vms-mappings"])) return canManageVmsMappings(user);
+  if (matchesPrefix(pathname, ["/vms-import", "/vms-mappings"])) return true;
   if (matchesPrefix(pathname, ["/settings"])) return hasPermission(user, "system.settings");
   if (matchesPrefix(pathname, ["/admin"])) return hasPermission(user, "system.settings");
 

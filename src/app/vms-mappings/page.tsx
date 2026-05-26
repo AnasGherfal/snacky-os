@@ -1,9 +1,8 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, PageHeader, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
-import { canManageVmsMappings } from "@/lib/authz";
+import { canManageVmsMappings, getEffectivePermissions } from "@/lib/authz";
 import { cleanSearchParams, getPagination, SearchParamsRecord, supabaseLikePattern } from "@/lib/pagination";
 
 export const dynamic = "force-dynamic";
@@ -11,24 +10,55 @@ export const dynamic = "force-dynamic";
 const filters = [
   { label: "All", value: "all" },
   { label: "Confirmed", value: "confirmed" },
+  { label: "Suggested", value: "suggested" },
   { label: "Needs Review", value: "needs_review" },
   { label: "Ignored", value: "ignored" },
 ] as const;
 
-type ProductOption = { id: string; name: string | null; sku: string | null };
+type SupabaseQueryError = {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+};
+
+type ProductOption = { id: string; name: string | null; sku: string | null; barcode: string | null };
 type VmsProductMappingRow = {
   id: string;
+  vms_product_code: string | null;
   vms_product_id: string | null;
   vms_product_name: string;
+  snacky_product_id: string | null;
   product_id: string | null;
-  match_status: string;
+  snacky_product_name: string | null;
+  status: string | null;
+  match_status: string | null;
+  confidence_score: number | string | null;
   vms_selling_price_lyd: number | string | null;
   vms_cost_price_lyd: number | string | null;
   latest_machine_name: string | null;
   last_seen_at: string | null;
   updated_at: string | null;
-  product: ProductOption | ProductOption[] | null;
+  product: ProductOption | null;
 };
+
+const mappingSelect = [
+  "id",
+  "vms_product_code",
+  "vms_product_id",
+  "vms_product_name",
+  "snacky_product_id",
+  "product_id",
+  "snacky_product_name",
+  "confidence_score",
+  "status",
+  "match_status",
+  "vms_selling_price_lyd",
+  "vms_cost_price_lyd",
+  "latest_machine_name",
+  "last_seen_at",
+  "updated_at",
+].join(", ");
 
 function formatDate(value: string | null | undefined) {
   if (!value) return "Not seen yet";
@@ -40,9 +70,81 @@ function formatMoney(value: number | string | null | undefined, decimals = 2) {
   return Number(value).toFixed(decimals);
 }
 
-function mappingProductName(product: VmsProductMappingRow["product"]) {
-  const mappedProduct = Array.isArray(product) ? product[0] : product;
-  return mappedProduct?.name ?? null;
+function queryText(error: unknown) {
+  if (!error || typeof error !== "object") return String(error ?? "");
+  const queryError = error as SupabaseQueryError;
+  return `${queryError.code ?? ""} ${queryError.message ?? ""} ${queryError.details ?? ""} ${queryError.hint ?? ""}`.toLowerCase();
+}
+
+function isMissingTableError(error: unknown, tableName = "vms_product_mappings") {
+  const text = queryText(error);
+  return text.includes(tableName) && (text.includes("does not exist") || text.includes("schema cache") || text.includes("could not find"));
+}
+
+function isPermissionError(error: unknown) {
+  const text = queryText(error);
+  return text.includes("42501") || text.includes("permission denied") || text.includes("row-level security") || text.includes("rls");
+}
+
+function missingColumnName(error: unknown) {
+  if (!error || typeof error !== "object") return null;
+  const message = String((error as SupabaseQueryError).message ?? "");
+  const details = String((error as SupabaseQueryError).details ?? "");
+  const combined = `${message} ${details}`;
+  return combined.match(/column "?([a-zA-Z0-9_]+)"? does not exist/i)?.[1]
+    ?? combined.match(/'([a-zA-Z0-9_]+)' column/i)?.[1]
+    ?? combined.match(/column ([a-zA-Z0-9_]+)/i)?.[1]
+    ?? null;
+}
+
+function mappingLoadErrorMessage(error: unknown, queryName: string) {
+  if (isMissingTableError(error)) return "VMS product mappings table is missing. Run the latest migration.";
+  const column = missingColumnName(error);
+  if (column) return `VMS product mappings schema is outdated. Missing column: ${column}.`;
+  if (isPermissionError(error)) return "You do not have permission to load VMS product mappings.";
+  if (queryName.startsWith("products.")) return "Could not load Snacky products for VMS mappings.";
+  return "Snacky OS could not load VMS product mappings from Supabase.";
+}
+
+function productSearchText(product: ProductOption) {
+  return [product.name, product.sku, product.barcode].filter(Boolean).join(" ").toLowerCase();
+}
+
+function normalizeMappingRow(row: VmsProductMappingRow, productById: Map<string, ProductOption>): VmsProductMappingRow {
+  const snackyProductId = row.snacky_product_id ?? row.product_id ?? null;
+  const status = row.status ?? row.match_status ?? "needs_review";
+  return {
+    ...row,
+    vms_product_code: row.vms_product_code ?? row.vms_product_id ?? null,
+    snacky_product_id: snackyProductId,
+    product_id: row.product_id ?? snackyProductId,
+    snacky_product_name: row.snacky_product_name ?? (snackyProductId ? productById.get(snackyProductId)?.name ?? null : null),
+    status,
+    match_status: row.match_status ?? status,
+    product: snackyProductId ? productById.get(snackyProductId) ?? null : null,
+  };
+}
+
+function logMappingLoadDebug(payload: {
+  queryName: string;
+  error?: unknown;
+  currentUserId: string | null;
+  effectivePermissions: string[];
+  tableExists: boolean | null;
+  mappingsLoaded: number | null;
+  productsLoaded: number | null;
+}) {
+  const error = payload.error && typeof payload.error === "object" ? payload.error as SupabaseQueryError : null;
+  console.info("[vms-mappings] loadVmsProductMappings", {
+    queryName: payload.queryName,
+    supabaseErrorCode: error?.code ?? null,
+    supabaseErrorMessage: error?.message ?? null,
+    currentUserId: payload.currentUserId,
+    effectivePermissions: payload.effectivePermissions,
+    tableExists: payload.tableExists,
+    mappingsLoaded: payload.mappingsLoaded,
+    productsLoaded: payload.productsLoaded,
+  });
 }
 
 export default async function VmsProductMappingPage({
@@ -51,7 +153,18 @@ export default async function VmsProductMappingPage({
   searchParams: Promise<SearchParamsRecord & { status?: string; q?: string; error?: string }>;
 }) {
   const profile = await getCurrentProfile();
-  if (!canManageVmsMappings(profile)) redirect("/unauthorized");
+  const effectivePermissions = profile ? getEffectivePermissions(profile) : [];
+  if (!canManageVmsMappings(profile)) {
+    return (
+      <>
+        <PageHeader
+          title="VMS Product Mapping"
+          subtitle="Match product names from VMS reports to Snacky products so sales, stock, and refill recommendations work correctly."
+        />
+        <ErrorState title="VMS mapping access required" body="You do not have permission to load VMS product mappings." />
+      </>
+    );
+  }
 
   const params = cleanSearchParams(await searchParams);
   const { page, pageSize, from, to } = getPagination(params);
@@ -66,31 +179,107 @@ export default async function VmsProductMappingPage({
     return <ErrorState title="VMS mappings unavailable" body="Supabase is not configured, so Snacky OS cannot load VMS product mappings." />;
   }
 
-  const [{ count: totalMappings }, { count: needsReviewCount }, { count: confirmedCount }, { count: ignoredCount }] = await Promise.all([
-    supabase.from("vms_product_mappings").select("id", { count: "exact", head: true }),
-    supabase.from("vms_product_mappings").select("id", { count: "exact", head: true }).eq("match_status", "needs_review"),
-    supabase.from("vms_product_mappings").select("id", { count: "exact", head: true }).eq("match_status", "confirmed"),
-    supabase.from("vms_product_mappings").select("id", { count: "exact", head: true }).eq("match_status", "ignored"),
-  ]);
+  const { data: products, error: productsError } = await supabase
+    .from("products")
+    .select("id, name, barcode, sku")
+    .order("name");
+
+  if (productsError) {
+    logMappingLoadDebug({
+      queryName: "products.load_for_vms_mappings",
+      error: productsError,
+      currentUserId: profile?.id ?? null,
+      effectivePermissions,
+      tableExists: null,
+      mappingsLoaded: null,
+      productsLoaded: null,
+    });
+    return <ErrorState title="Could not load VMS mappings" body={mappingLoadErrorMessage(productsError, "products.load_for_vms_mappings")} />;
+  }
+
+  const productRows = (products ?? []) as ProductOption[];
+  const productById = new Map(productRows.map((product) => [product.id, product]));
   const productIds = search
-    ? ((await supabase.from("products").select("id").or(["sku", "name"].map((column) => `${column}.ilike.${supabaseLikePattern(search.replaceAll(",", " "))}`).join(",")).limit(100)).data ?? []).map((product: { id: string }) => product.id)
+    ? productRows
+      .filter((product) => productSearchText(product).includes(search.toLowerCase()))
+      .slice(0, 100)
+      .map((product) => product.id)
     : [];
+
+  const countByStatus = (statusValue: string) => supabase
+    .from("vms_product_mappings")
+    .select("id", { count: "exact", head: true })
+    .eq("status", statusValue);
   let query = supabase
     .from("vms_product_mappings")
-    .select("id, vms_product_id, vms_product_name, product_id, match_status, vms_selling_price_lyd, vms_cost_price_lyd, latest_machine_name, last_seen_at, updated_at, product:products(id, name, sku)", { count: "exact" })
+    .select(mappingSelect, { count: "exact" })
     .order("updated_at", { ascending: false });
-  if (activeStatus !== "all") query = query.eq("match_status", activeStatus);
+  if (activeStatus !== "all") query = query.eq("status", activeStatus);
   if (search) {
     const pattern = supabaseLikePattern(search.replaceAll(",", " "));
-    const clauses = [`vms_product_id.ilike.${pattern}`, `vms_product_name.ilike.${pattern}`];
-    if (productIds.length) clauses.push(`product_id.in.(${productIds.join(",")})`);
+    const clauses = [`vms_product_code.ilike.${pattern}`, `vms_product_id.ilike.${pattern}`, `vms_product_name.ilike.${pattern}`, `snacky_product_name.ilike.${pattern}`];
+    if (productIds.length) {
+      clauses.push(`snacky_product_id.in.(${productIds.join(",")})`, `product_id.in.(${productIds.join(",")})`);
+    }
     query = query.or(clauses.join(","));
   }
-  const { data: rows, count, error: mappingsError } = await query.range(from, to);
-  if (mappingsError) {
-    console.error("[vms-mappings] Failed to load mappings", mappingsError);
-    return <ErrorState title="Could not load VMS mappings" body="Snacky OS could not load VMS product mappings from Supabase." />;
+
+  const [
+    totalMappingsResult,
+    needsReviewResult,
+    confirmedResult,
+    suggestedResult,
+    ignoredResult,
+    mappingsResult,
+  ] = await Promise.all([
+    supabase.from("vms_product_mappings").select("id", { count: "exact", head: true }),
+    countByStatus("needs_review"),
+    countByStatus("confirmed"),
+    countByStatus("suggested"),
+    countByStatus("ignored"),
+    query.range(from, to),
+  ]);
+
+  const loadIssues: Array<[string, unknown]> = [
+    ["vms_product_mappings.total_count", totalMappingsResult.error],
+    ["vms_product_mappings.needs_review_count", needsReviewResult.error],
+    ["vms_product_mappings.confirmed_count", confirmedResult.error],
+    ["vms_product_mappings.suggested_count", suggestedResult.error],
+    ["vms_product_mappings.ignored_count", ignoredResult.error],
+    ["vms_product_mappings.load_page", mappingsResult.error],
+  ];
+  const loadIssue = loadIssues.find(([, issue]) => Boolean(issue));
+
+  if (loadIssue) {
+    const [queryName, issue] = loadIssue;
+    logMappingLoadDebug({
+      queryName: "loadVmsProductMappings",
+      error: issue,
+      currentUserId: profile?.id ?? null,
+      effectivePermissions,
+      tableExists: isMissingTableError(issue) ? false : null,
+      mappingsLoaded: null,
+      productsLoaded: productRows.length,
+    });
+    return <ErrorState title="Could not load VMS mappings" body={mappingLoadErrorMessage(issue, queryName)} />;
   }
+
+  const rows = ((mappingsResult.data ?? []) as unknown as VmsProductMappingRow[]).map((row) => normalizeMappingRow(row, productById));
+  const count = mappingsResult.count ?? 0;
+  const totalMappings = totalMappingsResult.count ?? 0;
+  const needsReviewCount = needsReviewResult.count ?? 0;
+  const confirmedCount = confirmedResult.count ?? 0;
+  const suggestedCount = suggestedResult.count ?? 0;
+  const ignoredCount = ignoredResult.count ?? 0;
+
+  logMappingLoadDebug({
+    queryName: "loadVmsProductMappings",
+    currentUserId: profile?.id ?? null,
+    effectivePermissions,
+    tableExists: true,
+    mappingsLoaded: rows.length,
+    productsLoaded: productRows.length,
+  });
 
   return (
     <>
@@ -135,10 +324,14 @@ export default async function VmsProductMappingPage({
           </div>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="grid gap-3 md:grid-cols-4">
           <div className="rounded-lg border border-slate-200 bg-white p-4">
             <div className="mb-2 flex items-center justify-between gap-2"><StatusBadge status="confirmed" /><span className="text-lg font-semibold text-slate-900">{confirmedCount ?? 0}</span></div>
             <p className="text-sm text-slate-600">Confirmed mappings are trusted and used by imports and reprocessing.</p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-4">
+            <div className="mb-2 flex items-center justify-between gap-2"><StatusBadge status="suggested" /><span className="text-lg font-semibold text-slate-900">{suggestedCount ?? 0}</span></div>
+            <p className="text-sm text-slate-600">Suggested mappings are likely matches that still need a quick review.</p>
           </div>
           <div className="rounded-lg border border-slate-200 bg-white p-4">
             <div className="mb-2 flex items-center justify-between gap-2"><StatusBadge status="needs_review" /><span className="text-lg font-semibold text-slate-900">{needsReviewCount ?? 0}</span></div>
@@ -152,21 +345,21 @@ export default async function VmsProductMappingPage({
       </section>
 
       {!totalMappings ? (
-        <EmptyState title="No VMS products imported yet." body="Upload a VMS report to detect products." />
+        <EmptyState title="No saved product mappings yet." body="Map products from this VMS report and Snacky OS will remember them next time." />
       ) : !(rows ?? []).length ? (
         <EmptyState title="No mappings match these filters" body="Adjust the search or status filter to view more VMS products." />
       ) : (
         <>
           <DataTable headers={["VMS Product ID", "VMS Product Name", "Snacky Product", "VMS Selling", "VMS Cost", "Latest Machine", "Match Status", "Last Seen", "Actions"]}>
-            {((rows ?? []) as VmsProductMappingRow[]).map((mapping) => (
+            {rows.map((mapping) => (
               <tr key={mapping.id}>
-                <td>{mapping.vms_product_id ?? "-"}</td>
+                <td>{mapping.vms_product_code ?? mapping.vms_product_id ?? "-"}</td>
                 <td className="font-medium text-slate-900">{mapping.vms_product_name}</td>
-                <td>{mappingProductName(mapping.product) ?? <span className="text-slate-400">Unmapped</span>}</td>
+                <td>{mapping.product?.name ?? mapping.snacky_product_name ?? <span className="text-slate-400">Unmapped</span>}</td>
                 <td>{formatMoney(mapping.vms_selling_price_lyd)}</td>
                 <td>{formatMoney(mapping.vms_cost_price_lyd, 4)}</td>
                 <td>{mapping.latest_machine_name ?? "-"}</td>
-                <td><StatusBadge status={mapping.match_status} /></td>
+                <td><StatusBadge status={mapping.status ?? mapping.match_status} /></td>
                 <td>{formatDate(mapping.last_seen_at)}</td>
                 <td>
                   <Link className="link-secondary" href={`/vms-mappings/${mapping.id}/edit`}>

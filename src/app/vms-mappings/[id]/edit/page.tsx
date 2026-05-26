@@ -1,4 +1,4 @@
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 import { LocalDraftForm } from "@/components/LocalDraft";
 import { ErrorState, FormField, FormPageLayout, FormSection, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
@@ -9,11 +9,45 @@ export const dynamic = "force-dynamic";
 
 const statusOptions = [
   { value: "confirmed", label: "Confirmed", helper: "Mapping is trusted and used by imports." },
+  { value: "suggested", label: "Suggested", helper: "Likely match that should be reviewed before confirmation." },
   { value: "needs_review", label: "Needs Review", helper: "Imported product needs manual matching." },
   { value: "ignored", label: "Ignored", helper: "Product should not affect operations." },
 ];
 
 type ProductOption = { id: string; name: string; sku: string | null };
+type VmsProductMapping = {
+  id: string;
+  vms_product_code: string | null;
+  vms_product_id: string | null;
+  vms_product_name: string;
+  snacky_product_id: string | null;
+  product_id: string | null;
+  snacky_product_name: string | null;
+  status: string | null;
+  match_status: string | null;
+  vms_selling_price_lyd: number | string | null;
+  vms_cost_price_lyd: number | string | null;
+  latest_vms_machine_id: string | null;
+  latest_machine_name: string | null;
+  last_seen_at: string | null;
+};
+
+const mappingSelect = [
+  "id",
+  "vms_product_code",
+  "vms_product_id",
+  "vms_product_name",
+  "snacky_product_id",
+  "product_id",
+  "snacky_product_name",
+  "status",
+  "match_status",
+  "vms_selling_price_lyd",
+  "vms_cost_price_lyd",
+  "latest_vms_machine_id",
+  "latest_machine_name",
+  "last_seen_at",
+].join(", ");
 
 function formatDate(value: string | null | undefined) {
   if (!value) return "Not seen yet";
@@ -33,7 +67,18 @@ export default async function EditVmsProductMappingPage({
   searchParams: Promise<{ error?: string }>;
 }) {
   const profile = await getCurrentProfile();
-  if (!canManageVmsMappings(profile)) redirect("/unauthorized");
+  if (!canManageVmsMappings(profile)) {
+    return (
+      <>
+        <PageHeader
+          title="Edit VMS Product Mapping"
+          subtitle="Connect this imported VMS product to the correct Snacky product."
+          action={<SecondaryButton href="/vms-mappings">Back to mappings</SecondaryButton>}
+        />
+        <ErrorState title="VMS mapping access required" body="You do not have permission to load VMS product mappings." />
+      </>
+    );
+  }
 
   const { id } = await params;
   const { error } = await searchParams;
@@ -50,9 +95,9 @@ export default async function EditVmsProductMappingPage({
   const [{ data: mapping, error: mappingError }, { data: products }] = await Promise.all([
     supabase
       .from("vms_product_mappings")
-      .select("id, vms_product_id, vms_product_name, product_id, match_status, vms_selling_price_lyd, vms_cost_price_lyd, latest_vms_machine_id, latest_machine_name, last_seen_at")
+      .select(mappingSelect)
       .eq("id", id)
-      .maybeSingle(),
+      .maybeSingle<VmsProductMapping>(),
     supabase.from("products").select("id, name, sku").eq("active", true).order("name"),
   ]);
 
@@ -80,7 +125,7 @@ export default async function EditVmsProductMappingPage({
           <FormSection title="VMS product">
             <div className="grid gap-4 md:grid-cols-2">
               <FormField label="VMS Product ID">
-                <input value={mapping.vms_product_id ?? ""} readOnly className="field-input bg-slate-50" />
+                <input value={mapping.vms_product_code ?? mapping.vms_product_id ?? ""} readOnly className="field-input bg-slate-50" />
               </FormField>
               <FormField label="VMS Product Name">
                 <input value={mapping.vms_product_name} readOnly className="field-input bg-slate-50" />
@@ -103,7 +148,7 @@ export default async function EditVmsProductMappingPage({
           <FormSection title="Snacky mapping">
             <div className="grid gap-4 md:grid-cols-2">
               <FormField label="Select Snacky Product" hint="Only real active products from the products table are available.">
-                <select name="product_id" defaultValue={mapping.product_id ?? ""} className="field-input">
+                <select name="product_id" defaultValue={mapping.snacky_product_id ?? mapping.product_id ?? ""} className="field-input">
                   <option value="">Unmapped</option>
                   {(products ?? []).map((product: ProductOption) => (
                     <option key={product.id} value={product.id}>
@@ -113,7 +158,7 @@ export default async function EditVmsProductMappingPage({
                 </select>
               </FormField>
               <FormField label="Status">
-                <select name="match_status" defaultValue={mapping.match_status} className="field-input">
+                <select name="status" defaultValue={mapping.status ?? mapping.match_status ?? "needs_review"} className="field-input">
                   {statusOptions.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
@@ -123,7 +168,7 @@ export default async function EditVmsProductMappingPage({
               </FormField>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-3">
+            <div className="grid gap-3 md:grid-cols-4">
               {statusOptions.map((option) => (
                 <div key={option.value} className="rounded-lg border border-slate-200 bg-white p-4">
                   <div className="mb-2"><StatusBadge status={option.value} /></div>
