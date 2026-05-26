@@ -16,6 +16,21 @@ function clamp(value: number, min: number, max?: number) {
   return Math.max(min, max === undefined ? rounded : Math.min(max, rounded));
 }
 
+function normalizeNumericText(value: string) {
+  return value.replace(/[\u0660-\u0669\u06f0-\u06f9]/g, (digit) => {
+    const code = digit.charCodeAt(0);
+    if (code >= 0x0660 && code <= 0x0669) return String(code - 0x0660);
+    if (code >= 0x06f0 && code <= 0x06f9) return String(code - 0x06f0);
+    return digit;
+  });
+}
+
+function numericInputValue(value: string) {
+  const normalized = normalizeNumericText(value).trim();
+  if (!normalized) return Number.NaN;
+  return Number(normalized);
+}
+
 export function QuantityStepper({
   value,
   min = 0,
@@ -43,10 +58,12 @@ export function QuantityStepper({
       </button>
       <input
         type="number"
+        inputMode="numeric"
+        pattern="[0-9]*"
         min={min}
         max={max}
         value={safeValue}
-        onChange={(event) => onChange(clamp(Number(event.target.value), min, max))}
+        onChange={(event) => onChange(clamp(numericInputValue(event.target.value), min, max))}
         className="min-h-12 w-full border-0 text-center text-base font-semibold text-slate-900 outline-none"
         aria-label={inputLabel}
         disabled={disabled}

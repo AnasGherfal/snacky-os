@@ -6,8 +6,14 @@ import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from 
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { QuantityStepper } from "@/components/QuantityStepper";
 import { EmptyState, ErrorState, LoadingState, PageHeader, SecondaryButton } from "@/components/ui";
-import { completeStop, markStopInProgress, uploadRefillProofPhoto } from "@/lib/operator-actions";
+import { markStopInProgress, uploadRefillProofPhoto } from "@/lib/operator-actions";
 import { ROUTE_STOP_COMPLETED_STATUS, ROUTE_STOP_IN_PROGRESS_STATUS, ROUTE_STOP_PICKED_STATUS } from "@/lib/route-workflow";
+
+const STOP_REQUEST_TIMEOUT_MS = 45_000;
+const SESSION_REQUEST_TIMEOUT_MS = 15_000;
+const PROOF_PHOTO_TARGET_BYTES = 850 * 1024;
+const PROOF_PHOTO_MAX_ORIGINAL_BYTES = 10 * 1024 * 1024;
+const SUPPORTED_PROOF_PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 const reasonOptions = [
   "Product not available in storage",
@@ -112,11 +118,293 @@ function newClientId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+type ApiResponsePayload = {
+  success?: boolean;
+  authenticated?: boolean;
+  secondsUntilExpiry?: number;
+  error?: string;
+  message?: string;
+  code?: string;
+  error_code?: string;
+  details?: string;
+  debug?: StopDebugDetails;
+  [key: string]: unknown;
+};
+
+type ParsedServerResponse = {
+  payload: ApiResponsePayload | null;
+  text: string;
+  contentType: string;
+  isJson: boolean;
+};
+
+function payloadString(value: unknown) {
+  if (typeof value === "string") return value;
+  if (value === null || value === undefined) return "";
+  return String(value);
+}
+
+function responseCode(payload: ApiResponsePayload | null) {
+  return payloadString(payload?.code ?? payload?.error_code).toUpperCase();
+}
+
+function responseMessage(payload: ApiResponsePayload | null) {
+  return payloadString(payload?.error ?? payload?.message).trim();
+}
+
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = STOP_REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+async function readServerResponse(response: Response, context: Record<string, unknown>): Promise<ParsedServerResponse> {
+  const contentType = response.headers.get("content-type") ?? "";
+  const isJson = contentType.toLowerCase().includes("application/json");
+  let text = "";
+  let payload: ApiResponsePayload | null = null;
+
+  try {
+    text = await response.text();
+  } catch (error) {
+    console.warn("[operator:stop-mobile] Could not read server response body", {
+      ...context,
+      response_status_code: response.status,
+      response_content_type: contentType || null,
+      error,
+    });
+  }
+
+  if (isJson && text.trim()) {
+    try {
+      payload = JSON.parse(text) as ApiResponsePayload;
+    } catch (error) {
+      console.warn("[operator:stop-mobile] Server claimed JSON but body could not be parsed", {
+        ...context,
+        response_status_code: response.status,
+        response_content_type: contentType || null,
+        response_body_text: text.slice(0, 2000),
+        error,
+      });
+    }
+  }
+
+  if (!isJson || !response.ok || payload?.success === false) {
+    console.warn("[operator:stop-mobile] Server response", {
+      ...context,
+      response_status_code: response.status,
+      response_content_type: contentType || null,
+      response_body_text: text.slice(0, 2000),
+      response_code: responseCode(payload),
+      response_message: responseMessage(payload),
+    });
+  }
+
+  return { payload, text, contentType, isJson };
+}
+
+function stopSubmitErrorMessage(response: Response, parsed: ParsedServerResponse) {
+  const code = responseCode(parsed.payload);
+  const serverMessage = responseMessage(parsed.payload);
+  const lowerMessage = serverMessage.toLowerCase();
+
+  if (response.status === 401 || code.includes("SESSION")) {
+    return "Your session expired. Your refill draft is saved. Please sign in again and retry.";
+  }
+  if (response.status === 403 || code === "UNAUTHORIZED" || lowerMessage.includes("permission") || lowerMessage.includes("authorized")) {
+    return "Permission denied. Your refill draft is saved. Ask an admin to check your route access.";
+  }
+  if (response.status === 415 || code.includes("CONTENT") || code.includes("JSON")) {
+    return "Invalid refill payload. Your refill draft is saved. Refresh the app and retry.";
+  }
+  if (response.status === 409) {
+    return serverMessage || "This route stop was already changed. Your refill draft is saved; refresh the route before retrying.";
+  }
+  if (response.status === 400) {
+    return serverMessage || "Invalid refill payload. Your refill draft is saved. Check quantities and required fields, then retry.";
+  }
+  if (!parsed.isJson) {
+    return "Server returned a non-JSON response while completing the stop. Your refill draft is saved. Refresh the app and retry.";
+  }
+  return serverMessage || "Could not complete this stop. Your refill draft is saved. Technical details are in the console.";
+}
+
+function normalizeClientSubmitError(error: unknown) {
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return "Connection problem. Your refill draft is saved. Please retry.";
+  }
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (message.toLowerCase().includes("unexpected response")) {
+    return "Server returned an unexpected response. Your refill draft is saved. Tap Refresh App, then retry.";
+  }
+  if (message.toLowerCase().includes("failed to fetch") || message.toLowerCase().includes("network")) {
+    return "Connection problem. Your refill draft is saved. Please retry.";
+  }
+  return message || "Could not complete this stop. Your refill draft is saved.";
+}
+
+async function ensureFreshSession() {
+  const checkResponse = await fetchWithTimeout("/api/auth/session", {
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+  }, SESSION_REQUEST_TIMEOUT_MS);
+  const check = await readServerResponse(checkResponse, { operation: "operator_stop_session_check" });
+  const secondsUntilExpiry = Number(check.payload?.secondsUntilExpiry ?? 0);
+
+  if (checkResponse.ok && check.payload?.authenticated === true && secondsUntilExpiry > 60) return;
+
+  const refreshResponse = await fetchWithTimeout("/api/auth/session", {
+    method: "POST",
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+  }, SESSION_REQUEST_TIMEOUT_MS);
+  const refresh = await readServerResponse(refreshResponse, { operation: "operator_stop_session_refresh" });
+
+  if (!refreshResponse.ok || refresh.payload?.authenticated !== true) {
+    throw new Error("Your session expired. Your refill draft is saved. Please sign in again and retry.");
+  }
+}
+
+async function refreshMobileApp() {
+  try {
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key)));
+    }
+  } catch (error) {
+    console.warn("[operator:stop-mobile] Could not clear app cache", error);
+  }
+
+  try {
+    if ("serviceWorker" in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.update().catch(() => undefined)));
+    }
+  } catch (error) {
+    console.warn("[operator:stop-mobile] Could not refresh service worker", error);
+  }
+
+  window.location.reload();
+}
+
+function loadImageElement(file: File) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    const url = URL.createObjectURL(file);
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Could not load the proof photo."));
+    };
+    image.src = url;
+  });
+}
+
+async function jpegBlobFromImage(file: File, maxDimension: number, quality: number) {
+  let source: ImageBitmap | HTMLImageElement;
+  let width = 0;
+  let height = 0;
+
+  if ("createImageBitmap" in window) {
+    try {
+      const bitmap = await createImageBitmap(file);
+      source = bitmap;
+      width = bitmap.width;
+      height = bitmap.height;
+    } catch {
+      const image = await loadImageElement(file);
+      source = image;
+      width = image.naturalWidth || image.width;
+      height = image.naturalHeight || image.height;
+    }
+  } else {
+    const image = await loadImageElement(file);
+    source = image;
+    width = image.naturalWidth || image.width;
+    height = image.naturalHeight || image.height;
+  }
+
+  const scale = Math.min(1, maxDimension / Math.max(width, height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+  const context = canvas.getContext("2d");
+  if (!context) {
+    if ("close" in source) source.close();
+    throw new Error("Could not prepare the proof photo.");
+  }
+  context.drawImage(source, 0, 0, canvas.width, canvas.height);
+  if ("close" in source) source.close();
+  return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+}
+
+async function prepareProofPhoto(file: File) {
+  if (!file.type.startsWith("image/")) {
+    throw new Error("Proof photo must be an image.");
+  }
+  if (file.size <= PROOF_PHOTO_TARGET_BYTES && SUPPORTED_PROOF_PHOTO_TYPES.has(file.type)) return file;
+
+  let bestBlob: Blob | null = null;
+  const attempts = [
+    { maxDimension: 1600, quality: 0.82 },
+    { maxDimension: 1280, quality: 0.74 },
+    { maxDimension: 1024, quality: 0.68 },
+    { maxDimension: 900, quality: 0.62 },
+  ];
+
+  try {
+    for (const attempt of attempts) {
+      const blob = await jpegBlobFromImage(file, attempt.maxDimension, attempt.quality);
+      if (!blob) continue;
+      if (!bestBlob || blob.size < bestBlob.size) bestBlob = blob;
+      if (blob.size <= PROOF_PHOTO_TARGET_BYTES) break;
+    }
+  } catch (error) {
+    console.warn("[operator:stop-mobile] Proof photo compression failed", {
+      original_size: file.size,
+      original_type: file.type,
+      error,
+    });
+    throw new Error("This phone photo could not be prepared for upload. Please retake it as a smaller JPEG photo.");
+  }
+
+  if (!bestBlob) throw new Error("This phone photo could not be prepared for upload. Please retake it as a smaller JPEG photo.");
+  if (bestBlob.size > PROOF_PHOTO_MAX_ORIGINAL_BYTES) {
+    throw new Error("The proof photo is too large. Please retake it as a smaller photo and retry.");
+  }
+
+  console.info("[operator:stop-mobile] Proof photo prepared", {
+    original_size: file.size,
+    prepared_size: bestBlob.size,
+    original_type: file.type,
+    prepared_type: bestBlob.type,
+  });
+
+  const baseName = file.name.replace(/\.[^.]+$/, "") || "refill-proof";
+  return new File([bestBlob], `${baseName}.jpg`, { type: "image/jpeg", lastModified: Date.now() });
+}
+
 function comparableStopDraft(draft: StopDraft) {
   return JSON.stringify({
     ...draft,
-    extraProducts: draft.extraProducts.map(({ id: _id, ...item }) => item),
-    missingReports: draft.missingReports.map(({ id: _id, ...item }) => item),
+    extraProducts: draft.extraProducts.map((item) => ({
+      productId: item.productId,
+      quantity: item.quantity,
+      reason: item.reason,
+      notes: item.notes,
+    })),
+    missingReports: draft.missingReports.map((item) => ({
+      productName: item.productName,
+      reason: item.reason,
+      notes: item.notes,
+    })),
   });
 }
 
@@ -150,6 +438,7 @@ export default function MachineStopPage() {
   const [finalPhotoName, setFinalPhotoName] = useState("");
   const [finalPhotoFile, setFinalPhotoFile] = useState<File | null>(null);
   const initialStopDraftRef = useRef<string>("");
+  const clientSubmissionIdRef = useRef(newClientId());
   const draftKey = useDraftKey("route-stop", [routeId || "missing-route", stopId || "missing-stop"]);
   const stopDraft = useMemo<StopDraft>(() => ({
     filledQtys,
@@ -240,33 +529,46 @@ export default function MachineStopPage() {
       }
 
       try {
-        const response = await fetch(`/api/operator/routes/${routeId}/stops/${stopId}`);
-        const data = await response.json();
+        const response = await fetchWithTimeout(`/api/operator/routes/${routeId}/stops/${stopId}`, {
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+        });
+        const parsed = await readServerResponse(response, {
+          operation: "operator_stop_load",
+          route_id: routeId,
+          route_stop_id: stopId,
+          user_agent: navigator.userAgent,
+        });
+        const data = parsed.payload;
+        if (!data) {
+          throw new Error(parsed.isJson ? "Stop data could not be read. Please refresh and retry." : "Server returned a non-JSON response while loading this stop.");
+        }
         if (!response.ok) {
-          const serverMessage = data.error || "Failed to load stop data";
+          const serverMessage = responseMessage(data) || "Failed to load stop data";
           const details = process.env.NODE_ENV === "development" && data.details ? ` ${data.details}` : "";
           const debug = data.debug as StopDebugDetails | undefined;
 
-          if (response.status === 403 || data.code === "UNAUTHORIZED") {
+          if (response.status === 403 || responseCode(data) === "UNAUTHORIZED") {
             setLoadError({ title: "Unauthorized", body: `${serverMessage}${details}`, debug });
             return;
           }
 
-          if (data.code === "STOP_NOT_FOUND") {
+          if (responseCode(data) === "STOP_NOT_FOUND") {
             setLoadError({ title: "Stop unavailable", body: "This stop no longer exists.", debug });
             return;
           }
 
           setLoadError({
-            title: data.code === "STOP_ROUTE_MISMATCH" ? "Stop route mismatch" : "Stop could not be loaded",
+            title: responseCode(data) === "STOP_ROUTE_MISMATCH" ? "Stop route mismatch" : "Stop could not be loaded",
             body: `${serverMessage}${details}`,
             debug,
           });
           return;
         }
 
-        setStopData(data);
-        if (data.stopStatus === ROUTE_STOP_PICKED_STATUS) {
+        const stopPayload = data as unknown as StopData;
+        setStopData(stopPayload);
+        if (stopPayload.stopStatus === ROUTE_STOP_PICKED_STATUS) {
           markStopInProgress(routeId, stopId).then((result) => {
             if (result.success) setStopData((current) => current ? { ...current, stopStatus: ROUTE_STOP_IN_PROGRESS_STATUS } : current);
           }).catch((err) => console.warn("[operator:stop] Could not mark stop in progress", err));
@@ -274,7 +576,7 @@ export default function MachineStopPage() {
         const initialQtys: Record<string, number> = {};
         const initialNotes: Record<string, string> = {};
         const initialUnavailable: Record<string, boolean> = {};
-        data.refillItems?.forEach((item: StopRefillItem) => {
+        stopPayload.refillItems?.forEach((item: StopRefillItem) => {
           const assignedQty = Number(item.assignedQty ?? item.parQty ?? 0);
           const hasSavedQty = item.filledQty !== null && item.filledQty !== undefined;
           initialQtys[item.productId] = hasSavedQty ? Number(item.filledQty ?? 0) : Math.min(assignedQty, item.availableQty ?? assignedQty);
@@ -284,9 +586,9 @@ export default function MachineStopPage() {
         setFilledQtys(initialQtys);
         setLineNotes(initialNotes);
         setUnavailableProducts(initialUnavailable);
-        const initialExtraProducts = (data.extraItems ?? []).map((item: ExtraProductLine) => ({ ...item, id: newClientId() }));
+        const initialExtraProducts = (stopPayload.extraItems ?? []).map((item: ExtraProductLine) => ({ ...item, id: newClientId() }));
         setExtraProducts(initialExtraProducts);
-        const initialFinalPhotoName = data.hasCompletionPhoto ? "Existing proof photo saved" : "";
+        const initialFinalPhotoName = stopPayload.hasCompletionPhoto ? "Existing proof photo saved" : "";
         setFinalPhotoName(initialFinalPhotoName);
         initialStopDraftRef.current = comparableStopDraft({
           filledQtys: initialQtys,
@@ -362,17 +664,28 @@ export default function MachineStopPage() {
     setSubmitting(true);
     setError("");
     try {
+      await ensureFreshSession();
+
       let uploadedProof: Awaited<ReturnType<typeof uploadRefillProofPhoto>> | null = null;
       if (finalPhotoFile) {
+        const preparedPhoto = await prepareProofPhoto(finalPhotoFile);
         const photoFormData = new FormData();
         photoFormData.append("routeId", routeId);
         photoFormData.append("stopId", stopId);
         photoFormData.append("machineId", stopData.machineId);
-        photoFormData.append("photo", finalPhotoFile);
-        uploadedProof = await uploadRefillProofPhoto(photoFormData);
+        photoFormData.append("photo", preparedPhoto);
+        try {
+          uploadedProof = await uploadRefillProofPhoto(photoFormData);
+        } catch (uploadError) {
+          const message = normalizeClientSubmitError(uploadError);
+          throw new Error(message.includes("unexpected response")
+            ? "Server returned an unexpected response while uploading the proof photo. Your refill draft is saved. Tap Refresh App, then retry."
+            : message);
+        }
       }
 
-      const result = await completeStop({
+      const payload = {
+        clientSubmissionId: clientSubmissionIdRef.current,
         stopId,
         routeId,
         machineId: stopData.machineId,
@@ -399,15 +712,58 @@ export default function MachineStopPage() {
         completionPhotoOriginalName: uploadedProof?.originalName,
         completionPhotoUploadUnavailable: uploadedProof?.uploadUnavailable,
         issue: issueType && issueDescription ? { issueType, priority: issuePriority, description: issueDescription } : undefined,
+      };
+      const payloadText = JSON.stringify(payload);
+      const submitLog = {
+        route_id: routeId,
+        route_stop_id: stopId,
+        machine_id: stopData.machineId,
+        client_submission_id: clientSubmissionIdRef.current,
+        request_timestamp: new Date().toISOString(),
+        payload_size: new TextEncoder().encode(payloadText).length,
+        refill_line_count: payload.filledItems.length,
+        extra_item_count: payload.extraItems.length,
+        missing_product_count: payload.missingProducts.length,
+        session_checked: true,
+        user_agent: navigator.userAgent,
+      };
+      console.info("[operator:stop-mobile] Submitting stop completion", submitLog);
+
+      const response = await fetchWithTimeout(`/api/operator/routes/${routeId}/stops/${stopId}`, {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: payloadText,
       });
-      if (!result.success) {
-        throw new Error(result.error || "Failed to complete stop");
+      const parsed = await readServerResponse(response, { ...submitLog, operation: "operator_stop_complete" });
+      console.info("[operator:stop-mobile] Stop completion response", {
+        ...submitLog,
+        response_status_code: response.status,
+        response_content_type: parsed.contentType || null,
+        response_code: responseCode(parsed.payload),
+        response_message: responseMessage(parsed.payload),
+      });
+
+      if (!response.ok || parsed.payload?.success === false || !parsed.payload) {
+        throw new Error(stopSubmitErrorMessage(response, parsed));
       }
 
       localDraft.clearDraft();
+      clientSubmissionIdRef.current = newClientId();
       router.push(routeHref);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to complete stop");
+      console.warn("[operator:stop-mobile] Stop completion failed", {
+        route_id: routeId,
+        route_stop_id: stopId,
+        machine_id: stopData.machineId,
+        client_submission_id: clientSubmissionIdRef.current,
+        user_agent: navigator.userAgent,
+        error: err,
+      });
+      setError(normalizeClientSubmitError(err));
       setSubmitting(false);
       window.setTimeout(() => localDraft.saveNow(), 0);
     }
@@ -448,7 +804,10 @@ export default function MachineStopPage() {
         {!localDraft.pendingDraft ? <DraftSaveStatus status={localDraft.status} /> : null}
         {error && (
           <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-            {error}
+            <p>{error}</p>
+            <button type="button" onClick={() => void refreshMobileApp()} className="mt-3 rounded-md border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-700">
+              Refresh App
+            </button>
           </div>
         )}
 

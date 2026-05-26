@@ -1693,7 +1693,16 @@ function mapEntriesForLog(map: Map<string, number>) {
 }
 
 function normalizeSubmittedQuantity(value: unknown, label: string) {
-  const quantity = Number(value);
+  const quantity = Number(
+    typeof value === "string"
+      ? value.replace(/[\u0660-\u0669\u06f0-\u06f9]/g, (digit) => {
+          const code = digit.charCodeAt(0);
+          if (code >= 0x0660 && code <= 0x0669) return String(code - 0x0660);
+          if (code >= 0x06f0 && code <= 0x06f9) return String(code - 0x06f0);
+          return digit;
+        })
+      : value,
+  );
   if (!Number.isFinite(quantity)) throw new Error(`${label} must be a valid number.`);
   if (quantity < 0) throw new Error(`${label} cannot be negative.`);
   return Math.floor(quantity);
@@ -2352,7 +2361,12 @@ export async function completeStop({
       error_stack: error instanceof Error ? error.stack : null,
       error,
     });
-    return actionFailure(completeStopPublicError(error), { expectedCash: null, routeId, stopId });
+    return actionFailure(completeStopPublicError(error), {
+      expectedCash: null,
+      routeId,
+      stopId,
+      code: String(errorField(error, "code") ?? "COMPLETE_STOP_FAILED"),
+    });
   }
 }
 

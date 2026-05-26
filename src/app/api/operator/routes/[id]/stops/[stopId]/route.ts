@@ -1,7 +1,8 @@
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { NextResponse } from "next/server";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
-import { canAccessOperatorRoute } from "@/lib/authz";
+import { canAccessOperatorRoute, getEffectivePermissions } from "@/lib/authz";
+import { completeStop } from "@/lib/operator-actions";
 import { ROUTE_STOP_PENDING_STATUS } from "@/lib/route-workflow";
 
 function buildDebugDetails({
@@ -29,11 +30,74 @@ function buildDebugDetails({
   };
 }
 
-function isMissingTable(error: any, tableName: string) {
+type DbErrorLike = { code?: unknown; message?: unknown; details?: unknown; hint?: unknown };
+type LegacyPickupRow = { id?: string | null; route_stop_id?: string | null; route_stop_item_id?: string | null; machine_id?: string | null; picked_qty?: unknown };
+type MachineLocationRow = { id?: string | null; name?: string | null };
+type MachineRow = { id?: string | null; name?: string | null; machine_code?: string | null; location?: MachineLocationRow | MachineLocationRow[] | null };
+type ProductRelationRow = { id?: string | null; name?: string | null };
+type StopPlanItemRow = {
+  id?: string | null;
+  slot_code?: string | null;
+  machine_slot_id?: string | null;
+  product_id?: string | null;
+  planned_quantity?: unknown;
+  source?: string | null;
+  product?: ProductRelationRow | ProductRelationRow[] | null;
+};
+type RefillOrderLineRow = {
+  id?: string | null;
+  slot_code?: string | null;
+  machine_slot_id?: string | null;
+  product_id?: string | null;
+  final_qty_to_take?: unknown;
+  suggested_qty?: unknown;
+  source?: string | null;
+  product?: ProductRelationRow | ProductRelationRow[] | null;
+};
+type RefillOrderFallbackRow = { refill_order_lines?: RefillOrderLineRow[] | null };
+type SlotRow = { id?: string | null; slot_code?: string | null; product_id?: string | null };
+type FillLineRow = { product_id?: string | null; action_type?: string | null; actual_qty?: unknown; reason?: string | null; notes?: string | null; assigned_product_id?: string | null };
+type MovementRow = { product_id?: string | null; quantity?: unknown; related_route_stop_id?: string | null; reason?: string | null; from_entity_type?: string | null; to_entity_type?: string | null };
+type RouteStockLineRow = { product_id?: string | null; picked_qty?: unknown; returned_qty?: unknown };
+type ProductOptionRow = { id: string; sku?: string | null; barcode?: string | null; name: string; category?: string | null; brand?: string | null; image_url?: string | null };
+type PlannedProductLine = {
+  refillOrderLineId: string | null;
+  routeStopItemId?: string | null;
+  machineSlotId?: string | null;
+  slotCodes: Set<string>;
+  productId: string;
+  productName: string;
+  currentQty: number;
+  assignedQty: number;
+  parQty: number;
+  filledQty: number | null;
+  availableQty?: number;
+};
+type RefillLineItem = {
+  refillOrderLineId: string | null;
+  routeStopItemId?: string | null;
+  machineSlotId?: string | null;
+  slotCode: string;
+  productId: string;
+  productName: string;
+  currentQty: number;
+  assignedQty: number;
+  parQty: number;
+  filledQty: number | null;
+  reason: string | null;
+  notes: string | null;
+  availableQty?: number;
+};
+
+function firstRelation<T>(value: T | T[] | null | undefined): T | null {
+  return Array.isArray(value) ? value[0] ?? null : value ?? null;
+}
+
+function isMissingTable(error: DbErrorLike | null | undefined, tableName: string) {
   return error?.code === "PGRST205" && String(error?.message ?? "").includes(tableName);
 }
 
-function isMissingColumn(error: any, columns: string[]) {
+function isMissingColumn(error: DbErrorLike | null | undefined, columns: string[]) {
   const code = String(error?.code ?? "");
   const text = [error?.code, error?.message, error?.details, error?.hint].map((value) => String(value ?? "")).join(" ").toLowerCase();
   if (!["42703", "PGRST204"].includes(code) && !text.includes("schema cache") && !text.includes("column")) return false;
@@ -50,13 +114,37 @@ function errorMessage(error: unknown) {
   return "Unknown database error";
 }
 
+function responseStatusForCompleteStop(result: { success: boolean; error?: string; code?: string }) {
+  if (result.success) return 200;
+  const code = String(result.code ?? "");
+  const text = `${code} ${result.error ?? ""}`.toLowerCase();
+  if (text.includes("session") || text.includes("sign in")) return 401;
+  if (code === "42501" || text.includes("permission") || text.includes("authorized")) return 403;
+  if (text.includes("already completed") || text.includes("completed/canceled") || text.includes("not in progress") || text.includes("duplicate")) return 409;
+  if (text.includes("required") || text.includes("invalid") || text.includes("missing") || text.includes("cannot exceed")) return 400;
+  return 500;
+}
+
+function jsonHeaders() {
+  return { "Content-Type": "application/json; charset=utf-8" };
+}
+
+function payloadByteSize(text: string, fallbackHeader: string | null) {
+  const fallback = Number(fallbackHeader ?? 0);
+  if (Number.isFinite(fallback) && fallback > 0) return fallback;
+  return new TextEncoder().encode(text).length;
+}
+
+type CompleteStopArgs = Parameters<typeof completeStop>[0];
+type CompleteStopPayload = Partial<CompleteStopArgs> & { clientSubmissionId?: unknown };
+
 function movementQuantity(value: unknown) {
   const parsed = Number(value ?? 0);
   if (!Number.isFinite(parsed)) return 0;
   return Math.max(0, Math.floor(parsed));
 }
 
-function machineFillDelta(movement: any) {
+function machineFillDelta(movement: MovementRow) {
   const qty = movementQuantity(movement?.quantity);
   if (movement?.reason === "manual_correction" && movement?.from_entity_type === "machine" && movement?.to_entity_type === "operator_bag") return -qty;
   return qty;
@@ -140,7 +228,7 @@ export async function GET(
     }
 
     if (stop.status === ROUTE_STOP_PENDING_STATUS) {
-      let { data: legacyPickupRows, error: legacyPickupError }: { data: any[] | null; error: any } = await supabase
+      let { data: legacyPickupRows, error: legacyPickupError }: { data: LegacyPickupRow[] | null; error: DbErrorLike | null } = await supabase
         .from("route_pick_list_items")
         .select("id, route_stop_id, route_stop_item_id, machine_id, picked_qty")
         .eq("route_id", routeId)
@@ -152,11 +240,11 @@ export async function GET(
           .select("id, picked_qty")
           .eq("route_id", routeId)
           .gt("picked_qty", 0);
-        legacyPickupRows = fallback.data ? fallback.data.map((row: any) => ({ ...row, route_stop_id: null, route_stop_item_id: null, machine_id: null })) : null;
+        legacyPickupRows = fallback.data ? fallback.data.map((row: LegacyPickupRow) => ({ ...row, route_stop_id: null, route_stop_item_id: null, machine_id: null })) : null;
         legacyPickupError = fallback.error;
       }
 
-      const hasLegacyRoutePickup = !legacyPickupError && (legacyPickupRows ?? []).some((row: any) => {
+      const hasLegacyRoutePickup = !legacyPickupError && (legacyPickupRows ?? []).some((row) => {
         const rowStopId = row.route_stop_id ? String(row.route_stop_id) : null;
         const rowMachineId = row.machine_id ? String(row.machine_id) : null;
         return rowStopId === stopId || rowMachineId === String(stop?.machine_id ?? "") || (!rowStopId && !rowMachineId);
@@ -182,10 +270,11 @@ export async function GET(
       .maybeSingle();
 
     if (machineError) throw machineError;
-    const location = Array.isArray((machine as any)?.location) ? (machine as any).location[0] : (machine as any)?.location;
+    const machineRow = machine as MachineRow | null;
+    const location = firstRelation(machineRow?.location);
     const locationName = location?.name || "Unknown Location";
 
-    let { data: stopPlanItems, error: stopPlanError }: { data: any[] | null; error: any } = await supabase
+    const stopPlanResponse: { data: StopPlanItemRow[] | null; error: DbErrorLike | null } = await supabase
       .from("route_stop_items")
       .select(
         `id,
@@ -197,6 +286,8 @@ export async function GET(
         product:products(id, name)`
       )
       .eq("route_stop_id", stopId);
+    let stopPlanItems = stopPlanResponse.data;
+    const stopPlanError = stopPlanResponse.error;
 
     if (stopPlanError) {
       if (!isMissingTable(stopPlanError, "route_stop_items")) throw stopPlanError;
@@ -218,8 +309,8 @@ export async function GET(
         .eq("route_id", routeId)
         .eq("machine_id", stop.machine_id);
       if (fallback.error) throw fallback.error;
-      stopPlanItems = (fallback.data ?? []).flatMap((order: any) =>
-        (order.refill_order_lines ?? []).map((line: any) => ({
+      stopPlanItems = ((fallback.data ?? []) as RefillOrderFallbackRow[]).flatMap((order) =>
+        (order.refill_order_lines ?? []).map((line) => ({
           id: line.id,
           slot_code: line.slot_code,
           machine_slot_id: line.machine_slot_id,
@@ -232,20 +323,20 @@ export async function GET(
     }
 
     // Get machine slot codes
-    const { data: slots, error: slotsError } = await supabase
+    const { data: slots, error: slotsError }: { data: SlotRow[] | null; error: DbErrorLike | null } = await supabase
       .from("machine_slots")
       .select("id, slot_code, product_id")
       .eq("machine_id", stop.machine_id);
     if (slotsError) throw slotsError;
 
-    const slotMap = new Map(slots?.map((s: any) => [s.product_id, s.slot_code]) ?? []);
+    const slotMap = new Map((slots ?? []).map((slot) => [String(slot.product_id ?? ""), slot.slot_code ?? ""]));
 
-    const plannedByProduct = new Map<string, any>();
-    (stopPlanItems ?? []).forEach((line: any) => {
+    const plannedByProduct = new Map<string, PlannedProductLine>();
+    (stopPlanItems ?? []).forEach((line) => {
       const productId = String(line.product_id ?? "");
       if (!productId) return;
-      const product = Array.isArray(line.product) ? line.product[0] : line.product;
-      const slotCode = line.slot_code || slotMap.get(line.product_id) || "VMS item";
+      const product = firstRelation(line.product);
+      const slotCode = line.slot_code || slotMap.get(productId) || "VMS item";
       const assignedQty = Number(line.planned_quantity ?? 0);
       const current = plannedByProduct.get(productId) ?? {
         refillOrderLineId: null,
@@ -272,15 +363,16 @@ export async function GET(
     if (existingFillLinesError && !isMissingTable(existingFillLinesError, "route_stop_fill_lines")) throw existingFillLinesError;
 
     const existingAssignedFillByProduct = new Map<string, { quantity: number; reason?: string | null; notes?: string | null }>();
-    const existingExtraItems = (existingFillLines ?? [])
-      .filter((line: any) => line.action_type === "extra_product" && line.product_id)
-      .map((line: any) => ({
+    const fillLineRows = (existingFillLines ?? []) as FillLineRow[];
+    const existingExtraItems = fillLineRows
+      .filter((line) => line.action_type === "extra_product" && line.product_id)
+      .map((line) => ({
         productId: line.product_id,
         quantity: Number(line.actual_qty ?? 0),
         reason: line.reason ?? "Customer demand",
         notes: line.notes ?? "",
       }));
-    (existingFillLines ?? []).forEach((line: any) => {
+    fillLineRows.forEach((line) => {
       if (line.action_type !== "assigned_fill") return;
       const productId = String(line.product_id ?? line.assigned_product_id ?? "");
       if (!productId) return;
@@ -292,7 +384,7 @@ export async function GET(
       });
     });
 
-    const lineItems = Array.from(plannedByProduct.values()).map((line: any) => {
+    const lineItems: RefillLineItem[] = Array.from(plannedByProduct.values()).map((line) => {
       const existingFill = existingAssignedFillByProduct.get(String(line.productId));
       return ({
       refillOrderLineId: line.refillOrderLineId,
@@ -338,7 +430,7 @@ export async function GET(
 
     const filledByProduct = new Map<string, number>();
     const currentStopFilledByProduct = new Map<string, number>();
-    (fillMovements ?? []).forEach((movement: any) => {
+    ((fillMovements ?? []) as MovementRow[]).forEach((movement) => {
       const productId = String(movement.product_id);
       const qty = machineFillDelta(movement);
       filledByProduct.set(productId, (filledByProduct.get(productId) ?? 0) + qty);
@@ -347,7 +439,7 @@ export async function GET(
 
     const pickedByProduct = new Map<string, number>();
     const returnedByProduct = new Map<string, number>();
-    (routeStockLines ?? []).forEach((line: any) => {
+    ((routeStockLines ?? []) as RouteStockLineRow[]).forEach((line) => {
       const productId = String(line.product_id);
       pickedByProduct.set(productId, (pickedByProduct.get(productId) ?? 0) + Number(line.picked_qty ?? 0));
       returnedByProduct.set(productId, (returnedByProduct.get(productId) ?? 0) + Number(line.returned_qty ?? 0));
@@ -359,12 +451,12 @@ export async function GET(
       availableByProduct.set(productId, Math.max(0, pickedQty - (returnedByProduct.get(productId) ?? 0) - filledByOtherStops));
     });
 
-    lineItems.forEach((item: any) => {
+    lineItems.forEach((item) => {
       item.availableQty = availableByProduct.get(String(item.productId)) ?? 0;
     });
 
     const refillItems = lineItems;
-    const productOptions = (products ?? []).map((product: any) => ({
+    const productOptions = ((products ?? []) as ProductOptionRow[]).map((product) => ({
       id: product.id,
       sku: product.sku,
       barcode: product.barcode,
@@ -412,6 +504,162 @@ export async function GET(
         debug: buildDebugDetails({ profile, routeId, stopId, route, stop }),
       },
       { status: 500 }
+    );
+  }
+}
+
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ id: string; stopId: string }> },
+) {
+  const { id: routeId, stopId } = await params;
+  const requestTimestamp = new Date().toISOString();
+  const userAgent = request.headers.get("user-agent") ?? "";
+  const contentType = request.headers.get("content-type") ?? "";
+  const accessToken = await getAuthAccessToken();
+  const profile = await getCurrentProfile();
+  const effectivePermissions = profile ? getEffectivePermissions(profile) : [];
+
+  let payload: CompleteStopPayload | null = null;
+  let payloadText = "";
+  let statusCode = 500;
+  const baseLog = {
+    route_id: routeId,
+    route_stop_id: stopId,
+    user_id: profile?.id ?? null,
+    user_roles: profile?.roles ?? [],
+    effective_permissions: effectivePermissions,
+    session_valid: Boolean(accessToken && profile),
+    request_timestamp: requestTimestamp,
+    request_content_type: contentType || null,
+    user_agent: userAgent,
+  };
+
+  try {
+    if (!accessToken || !profile) {
+      statusCode = 401;
+      console.warn("[operator:complete-stop-api] Session missing", baseLog);
+      return NextResponse.json(
+        { success: false, code: "SESSION_EXPIRED", error: "Session expired. Your refill draft is saved. Please sign in again and retry." },
+        { status: statusCode, headers: jsonHeaders() },
+      );
+    }
+
+    if (!contentType.toLowerCase().includes("application/json")) {
+      payloadText = await request.text().catch(() => "");
+      statusCode = 415;
+      console.warn("[operator:complete-stop-api] Non-JSON request", {
+        ...baseLog,
+        payload_size: payloadByteSize(payloadText, request.headers.get("content-length")),
+        response_status_code: statusCode,
+        response_content_type: "application/json",
+        response_body_text: payloadText.slice(0, 1000),
+      });
+      return NextResponse.json(
+        { success: false, code: "INVALID_CONTENT_TYPE", error: "Invalid refill payload. Please refresh the page and retry." },
+        { status: statusCode, headers: jsonHeaders() },
+      );
+    }
+
+    payloadText = await request.text();
+    try {
+      payload = JSON.parse(payloadText) as CompleteStopPayload;
+    } catch (error) {
+      statusCode = 400;
+      console.warn("[operator:complete-stop-api] Invalid JSON payload", {
+        ...baseLog,
+        payload_size: payloadByteSize(payloadText, request.headers.get("content-length")),
+        response_status_code: statusCode,
+        response_content_type: "application/json",
+        response_body_text: payloadText.slice(0, 1000),
+        error_message: errorMessage(error),
+      });
+      return NextResponse.json(
+        { success: false, code: "INVALID_JSON", error: "Invalid refill payload. Your draft is saved; refresh and retry." },
+        { status: statusCode, headers: jsonHeaders() },
+      );
+    }
+
+    const machineId = String(payload.machineId ?? "").trim();
+    const filledItems: CompleteStopArgs["filledItems"] = Array.isArray(payload.filledItems) ? payload.filledItems : [];
+    const extraItems: NonNullable<CompleteStopArgs["extraItems"]> = Array.isArray(payload.extraItems) ? payload.extraItems : [];
+    const missingProducts: NonNullable<CompleteStopArgs["missingProducts"]> = Array.isArray(payload.missingProducts) ? payload.missingProducts : [];
+    const clientSubmissionId = String(payload.clientSubmissionId ?? "").trim() || null;
+    const issuePriority = payload.issue?.priority ? String(payload.issue.priority) : "";
+    const issue: CompleteStopArgs["issue"] = payload.issue && typeof payload.issue === "object"
+      ? {
+          issueType: String(payload.issue.issueType ?? ""),
+          priority: issuePriority === "critical" || issuePriority === "high" || issuePriority === "normal" || issuePriority === "low" ? issuePriority : "normal",
+          description: String(payload.issue.description ?? ""),
+        }
+      : undefined;
+
+    console.info("[operator:complete-stop-api] Request received", {
+      ...baseLog,
+      machine_id: machineId || null,
+      client_submission_id: clientSubmissionId,
+      payload_size: payloadByteSize(payloadText, request.headers.get("content-length")),
+      refill_line_count: filledItems.length,
+      extra_item_count: extraItems.length,
+      missing_product_count: missingProducts.length,
+    });
+
+    if (!machineId) {
+      statusCode = 400;
+      return NextResponse.json(
+        { success: false, code: "MISSING_MACHINE_ID", error: "Missing route, stop, or machine. Return to the route and open this stop again." },
+        { status: statusCode, headers: jsonHeaders() },
+      );
+    }
+
+    const result = await completeStop({
+      stopId,
+      routeId,
+      machineId,
+      filledItems,
+      extraItems,
+      missingProducts,
+      cashCollected: Boolean(payload.cashCollected),
+      cashBagId: String(payload.cashBagId ?? ""),
+      notes: String(payload.notes ?? ""),
+      completionPhotoUrl: payload.completionPhotoUrl ? String(payload.completionPhotoUrl) : null,
+      completionPhotoPath: payload.completionPhotoPath ? String(payload.completionPhotoPath) : null,
+      completionPhotoOriginalName: payload.completionPhotoOriginalName ? String(payload.completionPhotoOriginalName) : null,
+      completionPhotoUploadUnavailable: Boolean(payload.completionPhotoUploadUnavailable),
+      issue,
+    });
+    statusCode = responseStatusForCompleteStop(result);
+
+    console.info("[operator:complete-stop-api] Response ready", {
+      ...baseLog,
+      machine_id: machineId,
+      client_submission_id: clientSubmissionId,
+      payload_size: payloadByteSize(payloadText, request.headers.get("content-length")),
+      refill_line_count: filledItems.length,
+      response_status_code: statusCode,
+      response_content_type: "application/json",
+      error_code: result.success ? null : result.code ?? null,
+      error_message: result.success ? null : result.error ?? null,
+    });
+
+    return NextResponse.json(result, { status: statusCode, headers: jsonHeaders() });
+  } catch (error) {
+    statusCode = 500;
+    console.error("[operator:complete-stop-api] Unexpected failure", {
+      ...baseLog,
+      machine_id: payload?.machineId ?? null,
+      payload_size: payloadByteSize(payloadText, request.headers.get("content-length")),
+      refill_line_count: Array.isArray(payload?.filledItems) ? payload.filledItems.length : null,
+      response_status_code: statusCode,
+      response_content_type: "application/json",
+      supabase_error_code: error && typeof error === "object" ? (error as { code?: unknown }).code ?? null : null,
+      supabase_error_message: errorMessage(error),
+      error_stack: error instanceof Error ? error.stack : null,
+      error,
+    });
+    return NextResponse.json(
+      { success: false, code: "SERVER_ERROR", error: "Could not complete stop. Technical details are in the server logs." },
+      { status: statusCode, headers: jsonHeaders() },
     );
   }
 }
