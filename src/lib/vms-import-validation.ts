@@ -1,4 +1,5 @@
 import { normalizeHeader, type VmsReportType } from "./vms-parser.ts";
+import { orderDetailsAliases, orderDetailsDate, orderDetailsPaymentAmount, orderDetailsTransactionStatus, orderDetailsValue } from "./vms-order-details.ts";
 
 export type VmsReferenceMachine = {
   id: string;
@@ -292,11 +293,11 @@ export function resolveVmsProduct({
 }
 
 function requiresMachine(reportType: VmsReportType) {
-  return ["stock", "sales", "machine_status", "planogram"].includes(reportType);
+  return ["stock", "sales", "vms_order_details_weekly", "machine_status", "planogram"].includes(reportType);
 }
 
 function requiresProductIdentity(reportType: VmsReportType) {
-  return ["stock", "sales", "product_list", "planogram"].includes(reportType);
+  return ["stock", "sales", "vms_order_details_weekly", "product_list", "planogram"].includes(reportType);
 }
 
 export function validateVmsRows({
@@ -373,6 +374,17 @@ export function validateVmsRows({
       if ((amount === null || amount < 0) && (soldQty === null || soldQty < 0)) reasons.push("invalid quantity or amount");
       const rawDate = vmsValue(row, ["sale_date", "period_end", "date", "sales_date", "business_date", "stat_date", "day", "datetime", "timestamp", "settlement_date", "end_date", "report_date"]);
       if (rawDate && !vmsDate(rawDate)) warnings.push("invalid date");
+    }
+
+    if (reportType === "vms_order_details_weekly") {
+      const amount = orderDetailsPaymentAmount(row);
+      const transactionStatus = orderDetailsTransactionStatus(row);
+      const rawPaymentTime = orderDetailsValue(row, orderDetailsAliases.paymentTime);
+      const rawDeliveryTime = orderDetailsValue(row, orderDetailsAliases.deliveryTime);
+      if (amount !== null && amount < 0) reasons.push("invalid payment amount");
+      if ((rawPaymentTime && !orderDetailsDate(rawPaymentTime)) || (rawDeliveryTime && !orderDetailsDate(rawDeliveryTime))) warnings.push("invalid transaction date");
+      if (!rawPaymentTime && !rawDeliveryTime) warnings.push("missing payment or delivery time");
+      if (transactionStatus === "needs_review") warnings.push("transaction status needs review");
     }
 
     if (reportType === "planogram") {

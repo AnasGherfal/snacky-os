@@ -7,6 +7,7 @@ import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/a
 import { canConfirmVmsImports, canCreateVmsImports } from "@/lib/authz";
 import {
   applyColumnMapping,
+  detectVmsReportTypeFromRows,
   findSalesReportPeriod,
   parseReportType,
   parseVmsUpload,
@@ -18,6 +19,17 @@ import {
   type VmsSalesReportPeriod,
   type VmsReportType,
 } from "@/lib/vms-parser";
+import {
+  createVmsOrderDetailsDuplicateHash,
+  detectOrderDetailsDateRange,
+  orderDetailsAliases,
+  orderDetailsDate,
+  orderDetailsPaymentAmount,
+  orderDetailsQuantity,
+  orderDetailsTransactionStatus,
+  orderDetailsValue,
+  orderDetailsNumber,
+} from "@/lib/vms-order-details";
 import {
   VMS_IMPORT_MODES,
   createVmsSalesSourceRowKey,
@@ -56,6 +68,15 @@ type ImportSummary = {
   errors: string[];
   columnMapping: Record<string, string>;
   salesReportPeriod?: VmsSalesReportPeriod | null;
+  orderDetailsReportPeriod?: { reportStartDate: string; reportEndDate: string } | null;
+  successfulSalesRows?: number;
+  failedVendRows?: number;
+  refundedRows?: number;
+  failedPaymentRows?: number;
+  needsReviewTransactionRows?: number;
+  failedVendAmount?: number;
+  refundedAmount?: number;
+  estimatedSuccessfulSales?: number;
 };
 
 type VmsRawRowStatus = "pending" | "imported" | "needs_mapping" | "unknown_machine" | "invalid_row" | "skipped";
@@ -237,11 +258,11 @@ async function upsertRawRows(
 }
 
 function reportRequiresMachine(reportType: VmsReportType) {
-  return ["stock", "sales", "machine_status", "planogram"].includes(reportType);
+  return ["stock", "sales", "vms_order_details_weekly", "machine_status", "planogram"].includes(reportType);
 }
 
 function reportRequiresProduct(reportType: VmsReportType) {
-  return ["stock", "sales", "product_list", "planogram"].includes(reportType);
+  return ["stock", "sales", "vms_order_details_weekly", "product_list", "planogram"].includes(reportType);
 }
 
 function markInvalidRow(summary: ImportSummary, rowNumber: number, reason: string) {
@@ -263,7 +284,7 @@ function markNeedsProductMapping(summary: ImportSummary, productLabel: string) {
 }
 
 function explicitSellingPrice(row: Record<string, string>) {
-  return numberValue(value(row, ["commodity_price", "commodity_unit_price", "selling_price", "sale_price", "sales_price", "vms_selling_price", "selling_price_lyd", "unit_price", "retail_price", "price"]));
+  return numberValue(value(row, ["commodity_price", "commodity_price_1", "commodity_price_2", "discounted_price", "commodity_unit_price", "selling_price", "sale_price", "sales_price", "vms_selling_price", "selling_price_lyd", "unit_price", "retail_price", "price"]));
 }
 
 function explicitCostPrice(row: Record<string, string>) {
@@ -857,6 +878,10 @@ async function runVmsImport({
     redirect(`${target}?error=${encodeURIComponent(VMS_SALES_DATE_RANGE_ERROR)}`);
   }
 
+  const orderDetailsRange = reportType === "vms_order_details_weekly" ? detectOrderDetailsDateRange(rows) : { start: "", end: "" };
+  const effectiveReportStartDate = reportType === "vms_order_details_weekly" ? (reportStartDate || orderDetailsRange.start || null) : reportStartDate;
+  const effectiveReportEndDate = reportType === "vms_order_details_weekly" ? (reportEndDate || orderDetailsRange.end || null) : reportEndDate;
+
   const summary: ImportSummary = {
     reportType,
     importMode,
@@ -884,6 +909,17 @@ async function runVmsImport({
     errors: [],
     columnMapping,
     salesReportPeriod,
+    orderDetailsReportPeriod: reportType === "vms_order_details_weekly" && effectiveReportStartDate && effectiveReportEndDate
+      ? { reportStartDate: effectiveReportStartDate, reportEndDate: effectiveReportEndDate }
+      : null,
+    successfulSalesRows: 0,
+    failedVendRows: 0,
+    refundedRows: 0,
+    failedPaymentRows: 0,
+    needsReviewTransactionRows: 0,
+    failedVendAmount: 0,
+    refundedAmount: 0,
+    estimatedSuccessfulSales: 0,
   };
 
   let batch: { id: string; reprocess_count?: number | null } | null = null;
@@ -906,8 +942,8 @@ async function runVmsImport({
       .update({
         status: "draft",
         import_mode: importMode,
-        report_start_date: reportStartDate,
-        report_end_date: reportEndDate,
+        report_start_date: effectiveReportStartDate,
+        report_end_date: effectiveReportEndDate,
         row_count: rows.length,
         rows_found: rows.length,
         rows_imported: 0,
@@ -936,8 +972,8 @@ async function runVmsImport({
         uploaded_at: new Date().toISOString(),
         status: "draft",
         import_mode: importMode,
-        report_start_date: reportStartDate,
-        report_end_date: reportEndDate,
+        report_start_date: effectiveReportStartDate,
+        report_end_date: effectiveReportEndDate,
         row_count: rows.length,
         rows_found: rows.length,
         column_mapping: columnMapping,
@@ -1037,6 +1073,7 @@ async function runVmsImport({
   const stockSnapshots: any[] = [];
   const salesSnapshots: any[] = [];
   const salesRawRows: Record<string, unknown>[] = [];
+  const transactionRawRows: Record<string, unknown>[] = [];
   const planogramRows: any[] = [];
   const latestMappingRowsById = new Map<string, any>();
   const vmsSellingPriceByProductId = new Map<string, number>();
@@ -1084,7 +1121,7 @@ async function runVmsImport({
     const productLabel = vmsProductDisplay(vmsProductId, vmsProductName);
     const importedSellingPrice = explicitSellingPrice(row);
     const importedCostPrice = explicitCostPrice(row);
-    const lastSeenAt = dateValue(value(row, ["updated_at", "last_online_at", "captured_at", "last_updated", "date", "sale_date", "period_end", "report_date", "sync_time"]))
+    const lastSeenAt = dateValue(value(row, ["updated_at", "last_online_at", "captured_at", "last_updated", "date", "sale_date", "period_end", "report_date", "sync_time", "payment_time", "delivery_time"]))
       ?? (reportType === "sales" && salesReportPeriod ? new Date(startOfDateIso(salesReportPeriod.reportEndDate)) : new Date());
 
     let mapping: any = null;
@@ -1280,6 +1317,67 @@ async function runVmsImport({
     if (productNeedsMapping) {
       summary.skippedRows += 1;
       finishRow("needs_mapping", [`unknown product: ${productLabel}`]);
+      continue;
+    }
+
+    if (reportType === "vms_order_details_weekly") {
+      const transactionStatus = orderDetailsTransactionStatus(row);
+      const paymentAmount = Math.max(0, orderDetailsPaymentAmount(row) ?? 0);
+      const quantity = orderDetailsQuantity(row);
+      const duplicateHash = createVmsOrderDetailsDuplicateHash(row);
+      const paymentTime = orderDetailsDate(orderDetailsValue(row, orderDetailsAliases.paymentTime));
+      const deliveryTime = orderDetailsDate(orderDetailsValue(row, orderDetailsAliases.deliveryTime));
+      const refundTime = orderDetailsDate(orderDetailsValue(row, orderDetailsAliases.refundTime));
+
+      if (transactionStatus === "successful_sale") {
+        summary.successfulSalesRows = (summary.successfulSalesRows ?? 0) + 1;
+        summary.estimatedSuccessfulSales = (summary.estimatedSuccessfulSales ?? 0) + paymentAmount;
+      } else if (transactionStatus === "failed_vend") {
+        summary.failedVendRows = (summary.failedVendRows ?? 0) + 1;
+        summary.failedVendAmount = (summary.failedVendAmount ?? 0) + paymentAmount;
+      } else if (transactionStatus === "refunded") {
+        summary.refundedRows = (summary.refundedRows ?? 0) + 1;
+        summary.refundedAmount = (summary.refundedAmount ?? 0) + paymentAmount;
+      } else if (transactionStatus === "failed_payment") {
+        summary.failedPaymentRows = (summary.failedPaymentRows ?? 0) + 1;
+      } else {
+        summary.needsReviewTransactionRows = (summary.needsReviewTransactionRows ?? 0) + 1;
+      }
+
+      transactionRawRows.push({
+        import_batch_id: batch.id,
+        row_number: rowNumber,
+        merchant_id: orderDetailsValue(row, orderDetailsAliases.merchantId) || null,
+        merchant_name: orderDetailsValue(row, orderDetailsAliases.merchantName) || null,
+        machine_code: orderDetailsValue(row, orderDetailsAliases.machineCode) || identifier || null,
+        machine_name: orderDetailsValue(row, orderDetailsAliases.machineName) || machine?.name || null,
+        order_number: orderDetailsValue(row, orderDetailsAliases.orderNumber) || null,
+        cargo_lane_number: orderDetailsValue(row, orderDetailsAliases.cargoLaneNumber) || null,
+        product_number: orderDetailsValue(row, orderDetailsAliases.productNumber) || vmsProductId || null,
+        vms_product_name: orderDetailsValue(row, orderDetailsAliases.productName) || productNameForMapping || null,
+        commodity_price_1: orderDetailsNumber(orderDetailsValue(row, orderDetailsAliases.commodityPrice1)),
+        commodity_price_2: orderDetailsNumber(orderDetailsValue(row, orderDetailsAliases.commodityPrice2)),
+        discounted_price: orderDetailsNumber(orderDetailsValue(row, orderDetailsAliases.discountedPrice)),
+        delivery_time: deliveryTime?.toISOString() ?? null,
+        shipping_status: orderDetailsValue(row, orderDetailsAliases.shippingStatus) || null,
+        purchaser: orderDetailsValue(row, orderDetailsAliases.purchaser) || null,
+        refund_time: refundTime?.toISOString() ?? null,
+        remarks: orderDetailsValue(row, orderDetailsAliases.remarks) || null,
+        refund_status: orderDetailsValue(row, orderDetailsAliases.refundStatus) || null,
+        third_party_transaction_number: orderDetailsValue(row, orderDetailsAliases.thirdPartyTransactionNumber) || null,
+        third_party_order_no: orderDetailsValue(row, orderDetailsAliases.thirdPartyOrderNo) || null,
+        payment_amount: paymentAmount,
+        payment_time: paymentTime?.toISOString() ?? null,
+        quantity,
+        raw_row: originalRow,
+        normalized_row: row,
+        mapped_machine_id: machine.id,
+        mapped_product_id: productId,
+        transaction_status: transactionStatus,
+        duplicate_hash: duplicateHash,
+      });
+      summary.importedRows += 1;
+      finishRow("imported", transactionStatus === "needs_review" ? ["transaction status needs review"] : []);
       continue;
     }
 
@@ -1481,16 +1579,16 @@ async function runVmsImport({
       const { data: rpcResult, error } = await supabase.rpc("apply_vms_sales_snapshot_import", {
         p_batch_id: batch.id,
         p_import_mode: importMode === VMS_IMPORT_MODES.REPLACE_RANGE ? "replace_range" : importMode,
-        p_report_start_date: reportStartDate,
-        p_report_end_date: reportEndDate,
+        p_report_start_date: effectiveReportStartDate,
+        p_report_end_date: effectiveReportEndDate,
         p_sales_rows: salesSnapshots,
       });
       if (error) {
         console.error("[vms-import] Sales snapshot transaction failed", {
           batchId: batch.id,
           importMode,
-          reportStartDate,
-          reportEndDate,
+          reportStartDate: effectiveReportStartDate,
+          reportEndDate: effectiveReportEndDate,
           errorCode: error.code,
           errorMessage: error.message,
           error,
@@ -1525,6 +1623,59 @@ async function runVmsImport({
       console.error("[vms-import] Sales raw row upsert failed", error);
       summary.errors.push("Sales raw row save failed.");
       fatalImportError = true;
+    }
+  }
+
+  if (transactionRawRows.length && !fatalImportError) {
+    const rowsByHash = new Map<string, Record<string, unknown>>();
+    transactionRawRows.forEach((row) => {
+      const key = String(row.duplicate_hash ?? "");
+      if (key && !rowsByHash.has(key)) rowsByHash.set(key, row);
+    });
+    const duplicateRowsWithinFile = Math.max(0, transactionRawRows.length - rowsByHash.size);
+    const uniqueRows = [...rowsByHash.values()];
+    const existingExternalDuplicateHashes = new Set<string>();
+
+    for (let index = 0; index < uniqueRows.length; index += 500) {
+      const chunk = uniqueRows.slice(index, index + 500).map((row) => String(row.duplicate_hash));
+      const { data, error } = await supabase
+        .from("vms_transactions_raw")
+        .select("duplicate_hash, import_batch_id")
+        .in("duplicate_hash", chunk);
+      if (error) {
+        console.error("[vms-import] Transaction duplicate lookup failed", error);
+        summary.errors.push("Transaction duplicate lookup failed.");
+        fatalImportError = true;
+        break;
+      }
+      ((data ?? []) as { duplicate_hash: string | null; import_batch_id: string | null }[]).forEach((row) => {
+        if (!existingBatchId || String(row.import_batch_id ?? "") !== String(batch.id)) {
+          existingExternalDuplicateHashes.add(String(row.duplicate_hash));
+        }
+      });
+    }
+
+    if (!fatalImportError) {
+      const rowsToSave = uniqueRows.filter((row) => !existingExternalDuplicateHashes.has(String(row.duplicate_hash)));
+      const duplicateRows = duplicateRowsWithinFile + existingExternalDuplicateHashes.size;
+      if (duplicateRows) {
+        summary.importedRows -= duplicateRows;
+        summary.skippedRows += duplicateRows;
+        summary.rowsSkippedDuplicate += duplicateRows;
+      }
+
+      for (let index = 0; index < rowsToSave.length; index += 500) {
+        const chunk = rowsToSave.slice(index, index + 500);
+        const { error } = await supabase
+          .from("vms_transactions_raw")
+          .upsert(chunk, { onConflict: "duplicate_hash" });
+        if (!error) continue;
+
+        console.error("[vms-import] Transaction raw row upsert failed", error);
+        summary.errors.push("Transaction raw row save failed.");
+        fatalImportError = true;
+        break;
+      }
     }
   }
 
@@ -1572,6 +1723,8 @@ async function runVmsImport({
     status,
     row_count: summary.totalRows,
     rows_found: summary.rowsFound,
+    report_start_date: effectiveReportStartDate,
+    report_end_date: effectiveReportEndDate,
     rows_imported: summary.importedRows,
     rows_skipped: summary.skippedRows,
     rows_skipped_duplicate: summary.rowsSkippedDuplicate,
@@ -1679,7 +1832,8 @@ export async function prepareVmsImport(formData: FormData) {
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) redirect("/vms-import?error=Supabase%20is%20not%20configured.");
 
-  const reportType = parseReportType(formData.get("report_type") || formData.get("import_type")) ?? "custom";
+  const requestedReportType = parseReportType(formData.get("report_type") || formData.get("import_type"));
+  let reportType = requestedReportType ?? "custom";
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) redirect("/vms-import?error=Upload%20a%20VMS%20Excel%20or%20CSV%20file.");
 
@@ -1690,6 +1844,9 @@ export async function prepareVmsImport(formData: FormData) {
     redirect(`/vms-import?error=${encodeURIComponent(error instanceof Error ? error.message : "Could not parse VMS file.")}`);
   }
   if (!parsed.sheets.length) redirect("/vms-import?error=Could%20not%20read%20any%20sheets%20or%20rows%20from%20that%20file.");
+
+  const detectedReportType = parsed.sheets.map((sheet) => detectVmsReportTypeFromRows(sheet.rows)).find(Boolean) ?? null;
+  if (!requestedReportType && detectedReportType) reportType = detectedReportType;
 
   const { data: preview, error } = await supabase
     .from("vms_import_previews")
@@ -1844,6 +2001,8 @@ export async function reprocessVmsImportBatch(formData: FormData) {
     columnMapping: jsonRecord(batch.column_mapping),
     sourceRowNumbers: rawRows.map((row: any) => Number(row.row_number)),
     salesReportPeriod: previousSummary.salesReportPeriod ?? null,
+    reportStartDate: previousSummary.orderDetailsReportPeriod?.reportStartDate ?? previousSummary.salesReportPeriod?.reportStartDate ?? null,
+    reportEndDate: previousSummary.orderDetailsReportPeriod?.reportEndDate ?? previousSummary.salesReportPeriod?.reportEndDate ?? null,
     autoCreateMissingProducts: previousSummary.autoCreateMissingProducts ?? true,
     updateCostFromVms: previousSummary.updateCostFromVms ?? false,
   });

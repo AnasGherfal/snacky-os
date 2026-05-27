@@ -78,3 +78,41 @@ test("normalized product names can match products without saved mappings", () =>
   assert.equal(result.importedRows, 1);
   assert.equal(result.rows[0].matchedProductId, "product-1");
 });
+
+test("order details validation accepts mapped transaction rows and flags unknown mappings", () => {
+  const result = validateVmsRows({
+    reportType: "vms_order_details_weekly",
+    rows: [
+      {
+        machine_identifier: "M-1",
+        machine_name: "Machine One",
+        product_identifier: "P-1",
+        product_name: "Water 500ml",
+        shipping_status: "Goods Shipped",
+        payment_amount: "2.50",
+        payment_time: "2026-05-27 09:03:00",
+        quantity: "1",
+      },
+      {
+        machine_identifier: "M-2",
+        product_identifier: "P-2",
+        product_name: "Unknown Chips",
+        shipping_status: "Goods Shipped",
+        payment_amount: "3.00",
+        payment_time: "2026-05-27 09:05:00",
+      },
+    ],
+    originalRows: [{}, {}],
+    firstDataRowNumber: 2,
+    machines: [{ id: "machine-1", name: "Machine One", machine_code: "M-1", vms_machine_id: null }],
+    machineMappings: [],
+    mappings: [{ id: "mapping-1", vms_product_id: "P-1", vms_product_name: "Water 500ml", product_id: "product-1", match_status: "confirmed" }],
+    products: [{ id: "product-1", sku: "P-1", barcode: null, name: "Water 500ml" }],
+  });
+
+  assert.equal(result.importedRows, 1);
+  assert.equal(result.unknownMachineRows, 1);
+  assert.equal(result.missingProductMappingCount, 1);
+  assert.equal(result.rows[0].matchedMachineId, "machine-1");
+  assert.equal(result.rows[0].matchedProductId, "product-1");
+});

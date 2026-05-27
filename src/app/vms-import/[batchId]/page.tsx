@@ -28,6 +28,13 @@ type ImportSummary = {
   mappingsNeedingReview?: number;
   autoCreateMissingProducts?: boolean;
   updateCostFromVms?: boolean;
+  orderDetailsReportPeriod?: { reportStartDate: string; reportEndDate: string } | null;
+  successfulSalesRows?: number;
+  failedVendRows?: number;
+  refundedRows?: number;
+  failedPaymentRows?: number;
+  needsReviewTransactionRows?: number;
+  estimatedSuccessfulSales?: number;
   unmappedProducts?: string[];
   unknownMachines?: string[];
   errors?: string[];
@@ -253,6 +260,17 @@ export default async function VmsImportBatchDetailPage({
             <StatCard label="Import mode" value={String(batch.import_mode ?? summary?.importType ?? "append").replaceAll("_", " ")} />
             <StatCard label="Report start" value={batch.report_start_date ?? "-"} />
             <StatCard label="Report end" value={batch.report_end_date ?? "-"} />
+          </div>
+        ) : null}
+        {batch.report_type === "vms_order_details_weekly" ? (
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+            <StatCard label="Report start" value={batch.report_start_date ?? summary?.orderDetailsReportPeriod?.reportStartDate ?? "-"} />
+            <StatCard label="Report end" value={batch.report_end_date ?? summary?.orderDetailsReportPeriod?.reportEndDate ?? "-"} />
+            <StatCard label="Successful sales" value={summary?.successfulSalesRows ?? 0} />
+            <StatCard label="Failed vend" value={summary?.failedVendRows ?? 0} />
+            <StatCard label="Refunded" value={summary?.refundedRows ?? 0} />
+            <StatCard label="Needs review" value={summary?.needsReviewTransactionRows ?? 0} />
+            <StatCard label="Failed payment" value={summary?.failedPaymentRows ?? 0} />
           </div>
         ) : null}
         {batch.report_type === "product_list" ? (

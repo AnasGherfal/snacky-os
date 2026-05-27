@@ -3,11 +3,18 @@ import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, Section
 import { lyd } from "@/lib/format";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
+type SalesMonthlyRow = { machine_id: string | null; machine_name: string | null; sales_month: string | null; net_sales_amount: number | string | null; units_sold: number | string | null; gross_profit_amount?: number | string | null };
+type ProductMonthlyRow = { product_id: string | null; product_name: string | null; sales_month: string | null; net_sales_amount: number | string | null; units_sold: number | string | null };
+type TransactionStatusMonthlyRow = { failed_vend_count: number | string | null; failed_vend_amount: number | string | null; refund_count: number | string | null; refund_amount: number | string | null; needs_review_count: number | string | null };
+type MissingCostRow = { product_id: string | null; product_name: string | null };
+type RefillRow = { machine_name: string | null; product_name: string | null; suggested_qty: number | string | null; priority: string | null };
+type LowStorageRow = { product_name: string | null; quantity_on_hand: number | string | null };
+
 async function getDashboardData() {
   const supabase = getSupabaseServerClient();
   if (!supabase) return { data: null, error: null };
 
-  const [machines, refill, issues, lowStorage, cash, salesMonthly, productMonthly] = await Promise.all([
+  const [machines, refill, issues, lowStorage, cash, salesMonthly, productMonthly, transactionStatusMonthly, missingCostSales] = await Promise.all([
     supabase.from("machines").select("id", { count: "exact", head: true }),
     supabase.from("refill_recommendations").select("machine_name, product_name, suggested_qty, priority").order("suggested_qty", { ascending: false }).limit(8),
     supabase.from("issues").select("id", { count: "exact", head: true }).neq("status", "resolved"),
@@ -15,9 +22,11 @@ async function getDashboardData() {
     supabase.from("cash_collections").select("machine_id, vms_expected_cash, actual_cash_collected, variance").order("collected_at", { ascending: false }).limit(8),
     supabase.from("kpi_machine_monthly").select("machine_id, machine_name, sales_month, net_sales_amount, units_sold, gross_profit_amount").order("sales_month", { ascending: false }).limit(100),
     supabase.from("kpi_product_monthly").select("product_id, product_name, sales_month, net_sales_amount, units_sold").order("net_sales_amount", { ascending: false }).limit(8),
+    supabase.from("vms_transaction_status_monthly").select("sales_month, failed_vend_count, failed_vend_amount, refund_count, refund_amount, failed_payment_count, needs_review_count").order("sales_month", { ascending: false }).limit(12),
+    supabase.from("vms_sales_clean").select("product_id, product_name").eq("cost_missing", true).limit(1000),
   ]);
 
-  const loadError = machines.error ?? refill.error ?? issues.error ?? lowStorage.error ?? cash.error ?? salesMonthly.error ?? productMonthly.error;
+  const loadError = machines.error ?? refill.error ?? issues.error ?? lowStorage.error ?? cash.error ?? salesMonthly.error ?? productMonthly.error ?? transactionStatusMonthly.error ?? missingCostSales.error;
   if (loadError) {
     console.error("[dashboard] Failed to load dashboard data", loadError);
     return { data: null, error: loadError };
@@ -32,6 +41,8 @@ async function getDashboardData() {
       cashRows: cash.data ?? [],
       salesMonthlyRows: salesMonthly.data ?? [],
       productMonthlyRows: productMonthly.data ?? [],
+      transactionStatusRows: transactionStatusMonthly.data ?? [],
+      missingCostRows: missingCostSales.data ?? [],
     },
     error: null,
   };
@@ -39,12 +50,26 @@ async function getDashboardData() {
 
 export default async function DashboardPage() {
   const { data, error } = await getDashboardData();
-  const totalNetSales = (data?.salesMonthlyRows ?? []).reduce((sum: number, row: any) => sum + Number(row.net_sales_amount ?? 0), 0);
-  const totalUnitsSold = (data?.salesMonthlyRows ?? []).reduce((sum: number, row: any) => sum + Number(row.units_sold ?? 0), 0);
-  const latestSalesMonth = [...(data?.salesMonthlyRows ?? [])].map((row: any) => String(row.sales_month ?? "").slice(0, 7)).filter(Boolean).sort().at(-1);
+  const salesMonthlyRows = (data?.salesMonthlyRows ?? []) as SalesMonthlyRow[];
+  const productMonthlyRows = (data?.productMonthlyRows ?? []) as ProductMonthlyRow[];
+  const transactionStatusRows = (data?.transactionStatusRows ?? []) as TransactionStatusMonthlyRow[];
+  const missingCostRows = (data?.missingCostRows ?? []) as MissingCostRow[];
+  const refillRows = (data?.refillRows ?? []) as RefillRow[];
+  const lowStorageRows = (data?.lowStorageRows ?? []) as LowStorageRow[];
+  const totalNetSales = salesMonthlyRows.reduce((sum, row) => sum + Number(row.net_sales_amount ?? 0), 0);
+  const totalUnitsSold = salesMonthlyRows.reduce((sum, row) => sum + Number(row.units_sold ?? 0), 0);
+  const latestSalesMonth = [...salesMonthlyRows].map((row) => String(row.sales_month ?? "").slice(0, 7)).filter(Boolean).sort().at(-1);
   const latestMonthSales = latestSalesMonth
-    ? (data?.salesMonthlyRows ?? []).filter((row: any) => String(row.sales_month ?? "").startsWith(latestSalesMonth)).reduce((sum: number, row: any) => sum + Number(row.net_sales_amount ?? 0), 0)
+    ? salesMonthlyRows.filter((row) => String(row.sales_month ?? "").startsWith(latestSalesMonth)).reduce((sum, row) => sum + Number(row.net_sales_amount ?? 0), 0)
     : 0;
+  const transactionStatusTotals = transactionStatusRows.reduce((totals, row) => ({
+    failedVendCount: totals.failedVendCount + Number(row.failed_vend_count ?? 0),
+    failedVendAmount: totals.failedVendAmount + Number(row.failed_vend_amount ?? 0),
+    refundCount: totals.refundCount + Number(row.refund_count ?? 0),
+    refundAmount: totals.refundAmount + Number(row.refund_amount ?? 0),
+    needsReviewCount: totals.needsReviewCount + Number(row.needs_review_count ?? 0),
+  }), { failedVendCount: 0, failedVendAmount: 0, refundCount: 0, refundAmount: 0, needsReviewCount: 0 });
+  const missingCostProducts = new Set(missingCostRows.map((row) => String(row.product_id ?? row.product_name ?? ""))).size;
   return (
     <>
       <PageHeader title="Dashboard" subtitle="Operational control center for refills, stock, issues, and cash variances." />
@@ -59,18 +84,28 @@ export default async function DashboardPage() {
             <StatCard label="Net sales" value={lyd(totalNetSales)} />
             <StatCard label="Units sold" value={totalUnitsSold.toLocaleString("en-US")} />
             <StatCard label={latestSalesMonth ? `NSM ${latestSalesMonth}` : "Monthly net sales"} value={lyd(latestMonthSales)} />
-            <StatCard label="Machines needing refill" value={data.refillRows.length} />
+            <StatCard label="Failed vend count" value={transactionStatusTotals.failedVendCount.toLocaleString("en-US")} />
+            <StatCard label="Failed vend amount" value={lyd(transactionStatusTotals.failedVendAmount)} />
+            <StatCard label="Refund count" value={transactionStatusTotals.refundCount.toLocaleString("en-US")} />
+            <StatCard label="Refund amount" value={lyd(transactionStatusTotals.refundAmount)} />
+            <StatCard label="Needs review count" value={transactionStatusTotals.needsReviewCount.toLocaleString("en-US")} />
+            <StatCard label="Machines needing refill" value={refillRows.length} />
             <StatCard label="Open issues" value={data.openIssues} />
-            <StatCard label="Low storage products" value={data.lowStorageRows.length} />
+            <StatCard label="Low storage products" value={lowStorageRows.length} />
           </div>
+          {missingCostProducts ? (
+            <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900">
+              Cost missing for {missingCostProducts} products. Profit may be incomplete.
+            </div>
+          ) : null}
           <div className="mt-6 grid gap-4 xl:grid-cols-2">
             <SectionCard>
               <h2 className="mb-3 text-base font-semibold">Top products from VMS sales</h2>
-              {!data.productMonthlyRows.length ? (
+              {!productMonthlyRows.length ? (
                 <EmptyState title="No VMS sales yet" body="Upload VMS sales reports to populate sales KPIs." />
               ) : (
                 <DataTable headers={["Product", "Net sales", "Units"]}>
-                  {data.productMonthlyRows.map((row: any, index: number) => (
+                  {productMonthlyRows.map((row, index) => (
                     <tr key={`${row.product_id}-${index}`}>
                       <td>{row.product_name}</td>
                       <td>{lyd(Number(row.net_sales_amount ?? 0))}</td>
@@ -82,11 +117,11 @@ export default async function DashboardPage() {
             </SectionCard>
             <SectionCard>
               <h2 className="mb-3 text-base font-semibold">Machines needing refill</h2>
-              {!data.refillRows.length ? (
+              {!refillRows.length ? (
                 <EmptyState title="No refill recommendations" body="Upload mapped VMS stock data to generate machine refill recommendations." />
               ) : (
                 <DataTable headers={["Machine", "Product", "Take", "Priority"]}>
-                  {data.refillRows.map((row: any, index: number) => (
+                  {refillRows.map((row, index) => (
                     <tr key={`${row.machine_name}-${index}`}>
                       <td>{row.machine_name}</td>
                       <td>{row.product_name}</td>
@@ -99,11 +134,11 @@ export default async function DashboardPage() {
             </SectionCard>
             <SectionCard>
               <h2 className="mb-3 text-base font-semibold">Low storage products</h2>
-              {!data.lowStorageRows.length ? (
+              {!lowStorageRows.length ? (
                 <EmptyState title="No low storage products" body="Storage inventory is either healthy or ledger movements have not been recorded yet." />
               ) : (
                 <DataTable headers={["Product", "Qty"]}>
-                  {data.lowStorageRows.map((row: any, index: number) => (
+                  {lowStorageRows.map((row, index) => (
                     <tr key={`${row.product_name}-${index}`}>
                       <td>{row.product_name}</td>
                       <td>{row.quantity_on_hand}</td>

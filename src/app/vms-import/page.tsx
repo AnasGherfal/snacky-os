@@ -29,6 +29,7 @@ import {
   applyColumnMapping,
   detectColumnMappingDetails,
   detectHeaderRowIndex,
+  detectVmsReportTypeFromRows,
   findSalesReportPeriod,
   parseReportType,
   requiredMissing,
@@ -38,6 +39,13 @@ import {
   type VmsFieldDef,
   type VmsReportType,
 } from "@/lib/vms-parser";
+import {
+  createVmsOrderDetailsDuplicateHash,
+  detectOrderDetailsDateRange,
+  orderDetailsPaymentAmount,
+  orderDetailsSuccessfulSalesAmount,
+  orderDetailsTransactionStatus,
+} from "@/lib/vms-order-details";
 
 export const dynamic = "force-dynamic";
 
@@ -63,6 +71,13 @@ type ImportSummary = {
   mappingsNeedingReview?: number;
   autoCreateMissingProducts?: boolean;
   updateCostFromVms?: boolean;
+  orderDetailsReportPeriod?: { reportStartDate: string; reportEndDate: string } | null;
+  successfulSalesRows?: number;
+  failedVendRows?: number;
+  refundedRows?: number;
+  failedPaymentRows?: number;
+  needsReviewTransactionRows?: number;
+  estimatedSuccessfulSales?: number;
   unknownMachines?: string[];
   unmappedProducts?: string[];
   errors?: string[];
@@ -535,6 +550,13 @@ function UploadCard() {
         </div>
         <FormField label="VMS file" required hint="Accepted: .xlsx, .xls, .csv">
           <input name="file" type="file" accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required className="field-input" />
+        </FormField>
+        <FormField label="Report type" hint="Auto-detect usually identifies the detailed weekly order report. You can change it in the wizard.">
+          <select name="report_type" defaultValue="" className="field-input">
+            <option value="">Auto-detect</option>
+            <option value="vms_order_details_weekly">Detailed Order Details Report - Recommended</option>
+            <option value="sales">General / Summary Sales Report</option>
+          </select>
         </FormField>
         <button className="btn-primary w-full">Upload and preview</button>
       </LocalDraftForm>
@@ -1067,7 +1089,9 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
 
   const previewSheets = ((preview?.sheets ?? []) as PreviewSheet[]).filter((sheet) => sheet.rows?.length);
   const selectedSheet = previewSheets.find((sheet) => sheet.name === params.sheet) ?? previewSheets[0] ?? null;
-  const selectedReportType = parseReportType(params.reportType ?? preview?.report_type) ?? "custom";
+  const detectedReportType = selectedSheet ? detectVmsReportTypeFromRows(selectedSheet.rows) : null;
+  const previewReportType = preview?.report_type && preview.report_type !== "custom" ? parseReportType(preview.report_type) : null;
+  const selectedReportType = parseReportType(params.reportType) ?? previewReportType ?? detectedReportType ?? "custom";
   const autoCreateProducts = selectedReportType === "product_list" ? booleanParam(params.autoCreateProducts, true) : false;
   const updateCostFromVms = selectedReportType === "product_list" ? booleanParam(params.updateCostFromVms, false) : false;
   const detectedHeaderRow = selectedSheet ? detectHeaderRowIndex(selectedSheet.rows, selectedReportType) : 0;
@@ -1161,8 +1185,9 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
     ? findSalesReportPeriod(selectedSheet.rows, selectedRows.headerRowIndex)
     : null;
   const mappedSalesRange = selectedReportType === "sales" ? findMappedSalesReportRange(mappedRows) : { start: "", end: "" };
-  const reportStartDate = params.reportStartDate ?? titleSalesReportPeriod?.reportStartDate ?? mappedSalesRange.start;
-  const reportEndDate = params.reportEndDate ?? titleSalesReportPeriod?.reportEndDate ?? mappedSalesRange.end;
+  const orderDetailsRange = selectedReportType === "vms_order_details_weekly" ? detectOrderDetailsDateRange(mappedRows) : { start: "", end: "" };
+  const reportStartDate = params.reportStartDate ?? titleSalesReportPeriod?.reportStartDate ?? (selectedReportType === "vms_order_details_weekly" ? orderDetailsRange.start : mappedSalesRange.start);
+  const reportEndDate = params.reportEndDate ?? titleSalesReportPeriod?.reportEndDate ?? (selectedReportType === "vms_order_details_weekly" ? orderDetailsRange.end : mappedSalesRange.end);
   let duplicatePreviewCount = 0;
   if (validation && selectedReportType === "sales" && currentStep >= 6) {
     const sourceKeys = mappedRows
@@ -1193,9 +1218,50 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
       }
     }
   }
+  if (validation && selectedReportType === "vms_order_details_weekly" && currentStep >= 6) {
+    const sourceKeys = mappedRows
+      .flatMap((row, index) => validation?.rows[index]?.status === "imported" ? [createVmsOrderDetailsDuplicateHash(row)] : []);
+    const uniqueKeys = Array.from(new Set(sourceKeys));
+    if (uniqueKeys.length) {
+      for (let index = 0; index < uniqueKeys.length; index += 500) {
+        const chunk = uniqueKeys.slice(index, index + 500);
+        const { data: duplicates, error: duplicateError } = await supabase
+          .from("vms_transactions_raw")
+          .select("duplicate_hash")
+          .in("duplicate_hash", chunk);
+        if (duplicateError) {
+          if (!["42P01", "42703", "PGRST204", "PGRST205"].includes(duplicateError.code ?? "")) {
+            console.warn("[vms-import] Order details duplicate preview lookup failed", duplicateError);
+          }
+          break;
+        }
+        duplicatePreviewCount += new Set(((duplicates ?? []) as { duplicate_hash: string | null }[]).map((row) => String(row.duplicate_hash))).size;
+      }
+    }
+  }
+  const orderDetailsStatusCounts = selectedReportType === "vms_order_details_weekly"
+    ? mappedRows.reduce((counts, row) => {
+        const status = orderDetailsTransactionStatus(row);
+        counts[status] = (counts[status] ?? 0) + 1;
+        return counts;
+      }, {} as Record<ReturnType<typeof orderDetailsTransactionStatus>, number>)
+    : {} as Record<ReturnType<typeof orderDetailsTransactionStatus>, number>;
+  const failedRefundReviewRows =
+    (orderDetailsStatusCounts.failed_vend ?? 0)
+    + (orderDetailsStatusCounts.refunded ?? 0)
+    + (orderDetailsStatusCounts.failed_payment ?? 0)
+    + (orderDetailsStatusCounts.needs_review ?? 0);
+  const failedVendAmount = selectedReportType === "vms_order_details_weekly"
+    ? mappedRows.reduce((sum, row) => orderDetailsTransactionStatus(row) === "failed_vend" ? sum + Math.max(0, orderDetailsPaymentAmount(row) ?? 0) : sum, 0)
+    : 0;
+  const refundAmount = selectedReportType === "vms_order_details_weekly"
+    ? mappedRows.reduce((sum, row) => orderDetailsTransactionStatus(row) === "refunded" ? sum + Math.max(0, orderDetailsPaymentAmount(row) ?? 0) : sum, 0)
+    : 0;
   const estimatedSalesTotal = selectedReportType === "sales"
     ? mappedRows.reduce((sum, row) => sum + (mappedNumber(vmsValue(row, ["total_sales_amount", "transaction_amount", "revenue_amount", "sales_amount", "total_sales", "total_sales_lyd", "sale_amount", "amount", "total_amount", "paid_amount", "revenue", "gross_sales", "turnover", "net_sales"])) ?? 0), 0)
-    : 0;
+    : selectedReportType === "vms_order_details_weekly"
+      ? orderDetailsSuccessfulSalesAmount(mappedRows)
+      : 0;
   const machinesFound = validation ? new Set(validation.rows.map((row) => row.machineIdentifier).filter(Boolean)).size : 0;
   const productsFound = validation ? new Set(validation.rows.map((row) => row.productIdentifier || row.productName).filter(Boolean)).size : 0;
   const rowsReadyToImport = validation ? Math.max(0, validation.importedRows - duplicatePreviewCount) : 0;
@@ -1452,7 +1518,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
           {validation ? (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
               <StatCard label="Total rows" value={validation.totalRows} />
-              <StatCard label="Rows to import" value={rowsReadyToImport} note={selectedReportType === "sales" ? `${duplicatePreviewCount} duplicates skipped` : undefined} />
+              <StatCard label="Rows to import" value={rowsReadyToImport} note={["sales", "vms_order_details_weekly"].includes(selectedReportType) ? `${duplicatePreviewCount} duplicates skipped` : undefined} />
               <StatCard label="Needs product mapping" value={validation.needsProductMappingRows} note={`${validation.missingProductMappingCount} unique products`} />
               <StatCard label="Unknown machine" value={validation.unknownMachineRows} note={`${validation.unknownMachineCount} unique machines`} />
               <StatCard label="Invalid row" value={validation.invalidRows} />
@@ -1467,6 +1533,24 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
               <StatCard label="Products found" value={productsFound} />
               <StatCard label="Duplicate rows" value={duplicatePreviewCount} />
               <StatCard label="Estimated sales" value={lyd(estimatedSalesTotal)} />
+            </div>
+          ) : null}
+          {selectedReportType === "vms_order_details_weekly" ? (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              <StatCard label="Report type" value="Order details" />
+              <StatCard label="Date range detected" value={reportStartDate && reportEndDate ? `${reportStartDate} to ${reportEndDate}` : "-"} />
+              <StatCard label="Successful sales rows" value={orderDetailsStatusCounts.successful_sale ?? 0} />
+              <StatCard label="Failed/refund/review rows" value={failedRefundReviewRows} />
+              <StatCard label="Machines found" value={machinesFound} />
+              <StatCard label="Products found" value={productsFound} />
+              <StatCard label="New products needing mapping" value={validation?.needsProductMappingRows ?? 0} />
+              <StatCard label="New machines needing mapping" value={validation?.unknownMachineRows ?? 0} />
+              <StatCard label="Duplicates skipped" value={duplicatePreviewCount} />
+              <StatCard label="Estimated successful sales" value={lyd(estimatedSalesTotal)} />
+              <StatCard label="Failed vend count" value={orderDetailsStatusCounts.failed_vend ?? 0} note={lyd(failedVendAmount)} />
+              <StatCard label="Refund count" value={orderDetailsStatusCounts.refunded ?? 0} note={lyd(refundAmount)} />
+              <StatCard label="Failed payment count" value={orderDetailsStatusCounts.failed_payment ?? 0} />
+              <StatCard label="Needs review count" value={orderDetailsStatusCounts.needs_review ?? 0} />
             </div>
           ) : null}
           <div>
@@ -1569,6 +1653,15 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
               <StatCard label="Import mode" value={vmsImportModeLabels[importMode]} />
               <StatCard label="Report period" value={reportStartDate && reportEndDate ? `${reportStartDate} to ${reportEndDate}` : "-"} />
               <StatCard label="Estimated sales from file" value={lyd(estimatedSalesTotal)} />
+            </div>
+          ) : null}
+          {selectedReportType === "vms_order_details_weekly" ? (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              <StatCard label="Import mode" value={vmsImportModeLabels[importMode]} />
+              <StatCard label="Report period" value={reportStartDate && reportEndDate ? `${reportStartDate} to ${reportEndDate}` : "-"} />
+              <StatCard label="Successful sales rows" value={orderDetailsStatusCounts.successful_sale ?? 0} />
+              <StatCard label="Failed/refund/review rows" value={failedRefundReviewRows} />
+              <StatCard label="Estimated successful sales" value={lyd(estimatedSalesTotal)} />
             </div>
           ) : null}
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">

@@ -1,4 +1,4 @@
-export type VmsReportType = "stock" | "sales" | "product_list" | "machine_status" | "planogram" | "custom";
+export type VmsReportType = "stock" | "sales" | "vms_order_details_weekly" | "product_list" | "machine_status" | "planogram" | "custom";
 
 export type VmsParsedSheet = {
   name: string;
@@ -46,7 +46,8 @@ export type VmsMappingDetection = {
 
 export const vmsReportTypes: { value: VmsReportType; label: string }[] = [
   { value: "stock", label: "Machine Goods / Stock" },
-  { value: "sales", label: "Sales statistics" },
+  { value: "vms_order_details_weekly", label: "Detailed Order Details Report - Recommended" },
+  { value: "sales", label: "General / Summary Sales Report" },
   { value: "product_list", label: "Product list" },
   { value: "machine_status", label: "Machine status" },
   { value: "planogram", label: "Planogram / selection management" },
@@ -81,6 +82,30 @@ export const vmsExpectedFields: Record<VmsReportType, VmsFieldDef[]> = {
     { field: "vms_transaction_id", label: "VMS transaction ID", aliases: ["Transaction ID", "Transaction No", "Order ID", "Order No", "Receipt ID", "Receipt No", "Txn ID", "txn_id", "transaction_id", "transaction_no", "order_id", "receipt_id"] },
     { field: "payment_method", label: "Payment method", aliases: ["Payment Method", "Payment", "Tender", "Method", "payment_method"] },
     { field: "selling_price", label: "Selling price", aliases: ["Selling Price", "Price", "Unit Price", "selling_price", "sale_price", "سعر البيع"] },
+  ],
+  vms_order_details_weekly: [
+    { field: "merchant_id", label: "Merchant ID", aliases: ["Merchant ID", "merchant_id"] },
+    { field: "merchant_name", label: "Merchant name", aliases: ["Merchant Name", "merchant_name"] },
+    { field: "machine_identifier", label: "Machine code", required: true, aliases: ["Machine code", "Machine Code", "machine_code", "Machine ID", "Device ID", "terminal_id", "device_id"] },
+    { field: "machine_name", label: "Machine name", aliases: ["Machine name", "Machine Name", "machine_name", "Device Name", "Location"] },
+    { field: "order_number", label: "Order number", aliases: ["Order number", "Order Number", "order_number", "Order No", "Order No.", "order_no"] },
+    { field: "cargo_lane_number", label: "Cargo lane number", aliases: ["Cargo Lane Number", "Cargo lane number", "cargo_lane_number", "Lane Number", "lane_number", "Cargo Lane", "cargo_lane", "Slot", "slot_code"] },
+    { field: "product_identifier", label: "Product number", requiredGroup: "product", aliases: ["Product Number", "Product number", "product_number", "Product No", "Product No.", "Goods Number", "Commodity Number", "product_identifier"] },
+    { field: "product_name", label: "Product name", requiredGroup: "product", aliases: ["product name", "Product name", "Product Name", "vms_product_name", "Commodity Name", "Goods Name", "product"] },
+    { field: "commodity_price_1", label: "Commodity price 1", aliases: ["Commodity price (1)", "Commodity Price (1)", "commodity_price_1", "Commodity price 1", "Commodity Price 1"] },
+    { field: "commodity_price_2", label: "Commodity price 2", aliases: ["Commodity price (2)", "Commodity Price (2)", "commodity_price_2", "Commodity price 2", "Commodity Price 2"] },
+    { field: "discounted_price", label: "Discounted price", aliases: ["Discounted price", "Discounted Price", "discounted_price"] },
+    { field: "delivery_time", label: "Delivery time", requiredGroup: "transaction_time", aliases: ["Delivery time", "Delivery Time", "delivery_time", "Shipment time", "Vend time"] },
+    { field: "shipping_status", label: "Shipping status", required: true, aliases: ["Shipping status", "Shipping Status", "shipping_status", "Shipment status", "Vend status"] },
+    { field: "purchaser", label: "Purchaser", aliases: ["Purchaser", "purchaser", "Buyer", "Customer"] },
+    { field: "refund_time", label: "Refund time", aliases: ["Refund time", "Refund Time", "refund_time"] },
+    { field: "remarks", label: "Remarks", aliases: ["Remarks", "remarks", "Remark", "Notes"] },
+    { field: "refund_status", label: "Refund status", aliases: ["Refund status", "Refund Status", "refund_status"] },
+    { field: "third_party_transaction_number", label: "Third Party Transaction Number", aliases: ["Third Party Transaction Number", "Third party transaction number", "third_party_transaction_number", "Third Party Transaction No.", "Third Party Transaction No"] },
+    { field: "third_party_order_no", label: "Third Party Order No.", aliases: ["Third Party Order No.", "Third Party Order No", "Third party order no", "third_party_order_no", "Third Party Order Number"] },
+    { field: "payment_amount", label: "Payment amount", required: true, aliases: ["Payment amount", "Payment Amount", "payment_amount", "Paid amount", "Amount paid"] },
+    { field: "payment_time", label: "Time of payment", requiredGroup: "transaction_time", aliases: ["Time of payment", "Payment time", "Payment Time", "time_of_payment", "payment_time", "Paid time"] },
+    { field: "quantity", label: "Num", aliases: ["Num", "num", "Quantity", "Qty", "quantity"] },
   ],
   product_list: [
     { field: "product_identifier", label: "Product identifier", requiredGroup: "product", aliases: ["Product ID", "Product Code", "Goods ID", "Goods Code", "Item Code", "SKU", "Barcode", "VMS Product ID", "VMS Product Code", "vms_product_id", "product_id", "product_code", "goods_code", "item_code", "كود المنتج", "رقم المنتج", "الباركود"] },
@@ -188,12 +213,15 @@ function spreadsheetColumnName(index: number) {
 }
 
 function uniqueHeaders(row: string[]) {
+  const bases = row.map((header, index) => header.trim() || `Column ${spreadsheetColumnName(index)}`);
+  const totals = new Map<string, number>();
+  bases.forEach((base) => totals.set(base, (totals.get(base) ?? 0) + 1));
+
   const seen = new Map<string, number>();
-  return row.map((header, index) => {
-    const base = header.trim() || `Column ${spreadsheetColumnName(index)}`;
+  return bases.map((base) => {
     const count = (seen.get(base) ?? 0) + 1;
     seen.set(base, count);
-    return count === 1 ? base : `${base} (${count})`;
+    return (totals.get(base) ?? 0) > 1 ? `${base} (${count})` : base;
   });
 }
 
@@ -214,6 +242,10 @@ function extraAliasesForField(field: string) {
     sold_qty: ["Number of transaction", "Number of transactions", "Transaction Count", "Transactions", "transaction_count", "number_of_transaction"],
     total_sales_amount: ["Transaction amount", "Transaction Amount", "Total Sales LYD", "total_sales_lyd", "transaction_amount"],
     selling_price: ["Commodity price", "Commodity Price", "Commodity unit price", "commodity_price"],
+    payment_amount: ["Payment amount", "Payment Amount", "Amount paid"],
+    payment_time: ["Time of payment", "Payment time", "Payment Time"],
+    delivery_time: ["Delivery time", "Delivery Time"],
+    shipping_status: ["Shipping status", "Shipping Status"],
   };
   return aliases[field] ?? [];
 }
@@ -396,6 +428,29 @@ export function sheetRowsToRecords(rows: unknown[][], options: { reportType?: Vm
     samples,
     columnSamples,
   };
+}
+
+export function detectVmsReportTypeFromHeaders(headers: string[]): VmsReportType | null {
+  const normalized = new Set(headers.map(normalizeHeader).filter(Boolean));
+  const has = (aliases: string[]) => aliases.some((alias) => normalized.has(normalizeHeader(alias)));
+  const detailedSignals = [
+    has(["Order number", "Order Number", "order_number"]),
+    has(["Cargo Lane Number", "cargo_lane_number"]),
+    has(["Shipping status", "Shipping Status", "shipping_status"]),
+    has(["Payment amount", "Payment Amount", "payment_amount"]),
+    has(["Time of payment", "Payment time", "time_of_payment", "payment_time"]),
+    has(["Num", "num"]),
+  ].filter(Boolean).length;
+
+  return detailedSignals >= 4 ? "vms_order_details_weekly" : null;
+}
+
+export function detectVmsReportTypeFromRows(rows: unknown[][]): VmsReportType | null {
+  const nonEmptyRows = cleanRows(rows);
+  if (!nonEmptyRows.length) return null;
+  const headerRowIndex = detectHeaderRowIndex(nonEmptyRows);
+  const headers = uniqueHeaders(nonEmptyRows[headerRowIndex] ?? []);
+  return detectVmsReportTypeFromHeaders(headers);
 }
 
 export async function parseVmsUpload(file: File): Promise<VmsParsedFile> {
