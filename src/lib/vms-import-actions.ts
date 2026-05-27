@@ -1883,6 +1883,24 @@ async function runVmsImport({
 
 type VmsPreviewSheetPayload = { name: string; rows: string[][] };
 
+const VMS_ORIGINAL_FILE_UPLOAD_SOFT_TIMEOUT_MS = 8000;
+
+async function withSoftTimeout<T>(promise: Promise<T>, timeoutMs: number) {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<{ timedOut: true }>((resolve) => {
+    timeoutId = setTimeout(() => resolve({ timedOut: true }), timeoutMs);
+  });
+  const result = await Promise.race([
+    promise.then(
+      (value) => ({ timedOut: false as const, value }),
+      (error) => ({ timedOut: false as const, error }),
+    ),
+    timeout,
+  ]);
+  if (timeoutId) clearTimeout(timeoutId);
+  return result;
+}
+
 function isMissingPreviewRowsSchemaError(error: unknown) {
   if (!error || typeof error !== "object") return false;
   const supabaseError = error as { code?: string; message?: string; details?: string; hint?: string };
@@ -2130,6 +2148,7 @@ async function saveVmsPreviewRows({
 }
 
 export async function prepareVmsImport(formData: FormData) {
+  const previewStartedAt = Date.now();
   const profile = await getCurrentProfile();
   if (!profile || !canCreateVmsImports(profile)) redirect("/unauthorized");
   const effectivePermissions = getEffectivePermissions(profile);
@@ -2153,6 +2172,11 @@ export async function prepareVmsImport(formData: FormData) {
       effectivePermissions,
     });
     parsed = await parseVmsUpload(file);
+    console.info("[vms-import] File parsed for preview", {
+      queryName: "parseVmsUpload",
+      fileName: file.name,
+      elapsedMs: Date.now() - previewStartedAt,
+    });
   } catch (error) {
     console.error("[vms-import] File read or workbook parsing failed", {
       queryName: "parseVmsUpload",
@@ -2187,24 +2211,58 @@ export async function prepareVmsImport(formData: FormData) {
 
   const fileBuffer = Buffer.from(await file.arrayBuffer());
   const fileHash = createHash("sha256").update(fileBuffer).digest("hex");
+  console.info("[vms-import] VMS file hash prepared", {
+    queryName: "prepareVmsImport.hash_file",
+    fileName: file.name,
+    fileSize: file.size,
+    elapsedMs: Date.now() - previewStartedAt,
+  });
   const storageBucket = "vms-imports";
   const storagePath = `${profile.team_member_id ?? profile.id ?? "unknown"}/${Date.now()}-${fileHash.slice(0, 12)}-${safeStorageFileName(file.name)}`;
   let savedStoragePath: string | null = null;
-  const uploadResult = await supabase.storage
-    .from(storageBucket)
-    .upload(storagePath, fileBuffer, {
-      contentType: file.type || "application/octet-stream",
-      upsert: false,
-    });
-  if (uploadResult.error) {
-    console.warn("[vms-import] Original file storage upload failed; continuing without download reference", {
+  const uploadResult = await withSoftTimeout(
+    supabase.storage
+      .from(storageBucket)
+      .upload(storagePath, fileBuffer, {
+        contentType: file.type || "application/octet-stream",
+        upsert: false,
+      }),
+    VMS_ORIGINAL_FILE_UPLOAD_SOFT_TIMEOUT_MS,
+  );
+  if (uploadResult.timedOut) {
+    console.warn("[vms-import] Original file storage upload timed out; continuing without download reference", {
+      queryName: "storage.vms_imports.upload",
       fileName: file.name,
       fileHash,
-      errorCode: uploadResult.error.name,
-      errorMessage: uploadResult.error.message,
+      timeoutMs: VMS_ORIGINAL_FILE_UPLOAD_SOFT_TIMEOUT_MS,
+      elapsedMs: Date.now() - previewStartedAt,
+    });
+  } else if ("error" in uploadResult) {
+    console.warn("[vms-import] Original file storage upload threw; continuing without download reference", {
+      queryName: "storage.vms_imports.upload",
+      fileName: file.name,
+      fileHash,
+      error: uploadResult.error instanceof Error ? uploadResult.error.message : String(uploadResult.error),
+      elapsedMs: Date.now() - previewStartedAt,
+    });
+  } else if (uploadResult.value.error) {
+    console.warn("[vms-import] Original file storage upload failed; continuing without download reference", {
+      queryName: "storage.vms_imports.upload",
+      fileName: file.name,
+      fileHash,
+      errorCode: uploadResult.value.error.name,
+      errorMessage: uploadResult.value.error.message,
+      elapsedMs: Date.now() - previewStartedAt,
     });
   } else {
     savedStoragePath = storagePath;
+    console.info("[vms-import] Original file stored for audit", {
+      queryName: "storage.vms_imports.upload",
+      fileName: file.name,
+      storageBucket,
+      storagePath,
+      elapsedMs: Date.now() - previewStartedAt,
+    });
   }
 
   const batchResult = await createPreviewImportBatch({
@@ -2237,6 +2295,11 @@ export async function prepareVmsImport(formData: FormData) {
       importBatchId: batchResult.id,
     });
   }
+  console.info("[vms-import] Preview import batch ready", {
+    queryName: "vms_import_batches.insert.preview",
+    importBatchId: batchResult.id,
+    elapsedMs: Date.now() - previewStartedAt,
+  });
 
   let previewId: string | null = null;
   const richPreviewPayload = {
@@ -2260,6 +2323,12 @@ export async function prepareVmsImport(formData: FormData) {
 
   if (!previewInsert.error && previewInsert.data?.id) {
     previewId = String(previewInsert.data.id);
+    console.info("[vms-import] VMS import preview row created", {
+      queryName: "vms_import_previews.insert.rich",
+      previewId,
+      importBatchId: batchResult.id,
+      elapsedMs: Date.now() - previewStartedAt,
+    });
   } else {
     console.error("[vms-import] Failed to create rich preview", {
       ...previewDebugContext({ file, parsed, reportType, batchId: batchResult.id, currentUserId, effectivePermissions }),
@@ -2301,6 +2370,7 @@ export async function prepareVmsImport(formData: FormData) {
       queryName: "vms_import_previews.insert.legacy",
       importBatchId: batchResult.id,
       previewId,
+      elapsedMs: Date.now() - previewStartedAt,
     });
   }
 
@@ -2325,6 +2395,7 @@ export async function prepareVmsImport(formData: FormData) {
     previewId,
     numberOfMappingsLoaded: null,
     numberOfProductsLoaded: null,
+    elapsedMs: Date.now() - previewStartedAt,
   });
 
   redirect(`/vms-import?previewId=${previewId}&sheet=${encodeURIComponent(parsed.sheets[0].name)}&reportType=${reportType}&step=2`);

@@ -643,7 +643,11 @@ function UploadCard() {
             <option value="sales">General / Summary Sales Report</option>
           </select>
         </FormField>
-        <FormSubmitButton className="btn-primary w-full" pendingLabel="Reading file and preparing preview...">
+        <FormSubmitButton
+          className="btn-primary w-full"
+          pendingLabel="Reading file and preparing preview..."
+          slowLabel="Still working. Large VMS stock files can take a minute."
+        >
           Upload and preview
         </FormSubmitButton>
       </LocalDraftForm>
