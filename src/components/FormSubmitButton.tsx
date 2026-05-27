@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { useFormStatus } from "react-dom";
 
 type FormSubmitButtonProps = {
@@ -28,6 +28,7 @@ export function FormSubmitButton({
   const [optimisticPending, setOptimisticPending] = useState(false);
   const [showSlowLabel, setShowSlowLabel] = useState(false);
   const [timedOut, setTimedOut] = useState(false);
+  const duplicateGuardRef = useRef(false);
   const activePending = !timedOut && (pending || optimisticPending);
 
   useEffect(() => {
@@ -41,36 +42,51 @@ export function FormSubmitButton({
 
   useEffect(() => {
     if (!optimisticPending || pending) return;
-    const timer = setTimeout(() => setOptimisticPending(false), 1500);
+    const timer = setTimeout(() => {
+      setOptimisticPending(false);
+      duplicateGuardRef.current = false;
+    }, 1500);
     return () => clearTimeout(timer);
   }, [optimisticPending, pending]);
 
   useEffect(() => {
     if (!pending) {
+      if (!optimisticPending) duplicateGuardRef.current = false;
       setTimedOut(false);
       return;
     }
+    duplicateGuardRef.current = true;
+    setOptimisticPending(false);
     const timer = setTimeout(() => {
       setTimedOut(true);
       setOptimisticPending(false);
       setShowSlowLabel(false);
+      duplicateGuardRef.current = false;
     }, timeoutMs);
     return () => clearTimeout(timer);
   }, [optimisticPending, pending, timeoutMs]);
 
   function handleClick(event: MouseEvent<HTMLButtonElement>) {
-    if (disabled || activePending) return;
+    if (disabled || (pending && !timedOut)) {
+      event.preventDefault();
+      return;
+    }
     const form = event.currentTarget.form;
     if (form && !form.checkValidity()) return;
+    if (duplicateGuardRef.current && !timedOut) {
+      event.preventDefault();
+      return;
+    }
+    duplicateGuardRef.current = true;
     setTimedOut(false);
-    setOptimisticPending(true);
+    window.setTimeout(() => setOptimisticPending(true), 0);
   }
 
   return (
     <button
       type="submit"
       className={`${className} disabled:cursor-not-allowed disabled:opacity-60`}
-      disabled={disabled || activePending}
+      disabled={disabled || (pending && !timedOut)}
       aria-busy={activePending}
       onClick={handleClick}
     >
