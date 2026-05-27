@@ -165,10 +165,10 @@ export default async function VmsImportBatchDetailPage({
   searchParams,
 }: {
   params: Promise<{ batchId: string }>;
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; success?: string }>;
 }) {
   const { batchId } = await params;
-  const { error = "" } = await searchParams;
+  const { error = "", success = "" } = await searchParams;
   const profile = await getCurrentProfile();
   const effectivePermissions = profile ? getEffectivePermissions(profile) : [];
   if (!canViewVmsImports(profile)) {
@@ -254,6 +254,11 @@ export default async function VmsImportBatchDetailPage({
       {error ? (
         <div className="mb-5 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800" role="alert">
           {error}
+        </div>
+      ) : null}
+      {success ? (
+        <div className="mb-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900" role="status">
+          {success}
         </div>
       ) : null}
 

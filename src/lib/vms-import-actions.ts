@@ -2059,7 +2059,7 @@ async function runVmsImport({
   revalidatePath("/products-dashboard");
   revalidatePath("/machines-dashboard");
   revalidatePath("/inventory-dashboard");
-  redirect(`/vms-import/${batch.id}`);
+  redirect(`/vms-import/${batch.id}?success=${encodeURIComponent(existingBatchId && recordReprocess ? "VMS import reprocessed successfully." : "VMS import confirmed successfully.")}`);
 }
 
 type VmsPreviewSheetPayload = { name: string; rows: string[][] };
