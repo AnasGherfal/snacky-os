@@ -640,13 +640,15 @@ function UploadCard() {
           <select name="report_type" defaultValue="" className="field-input">
             <option value="">Auto-detect</option>
             <option value="vms_order_details_weekly">Detailed Order Details Report - Recommended</option>
+            <option value="stock">Machine Stock Report</option>
             <option value="sales">General / Summary Sales Report</option>
           </select>
         </FormField>
         <FormSubmitButton
           className="btn-primary w-full"
           pendingLabel="Reading file and preparing preview..."
-          slowLabel="Still working. Large VMS stock files can take a minute."
+          slowLabel="Still working. Snacky OS is saving the preview; please do not press again."
+          slowAfterMs={18000}
         >
           Upload and preview
         </FormSubmitButton>

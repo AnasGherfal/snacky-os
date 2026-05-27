@@ -1884,6 +1884,7 @@ async function runVmsImport({
 type VmsPreviewSheetPayload = { name: string; rows: string[][] };
 
 const VMS_ORIGINAL_FILE_UPLOAD_SOFT_TIMEOUT_MS = 8000;
+const VMS_PREVIEW_ROW_INSERT_LIMIT = 500;
 
 async function withSoftTimeout<T>(promise: Promise<T>, timeoutMs: number) {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -2087,15 +2088,32 @@ async function saveVmsPreviewRows({
   batchId: string | null;
   sheets: VmsPreviewSheetPayload[];
 }) {
-  const rows = sheets.flatMap((sheet) => sheet.rows.map((row, index) => ({
-    preview_id: previewId,
-    import_batch_id: batchId,
-    sheet_name: sheet.name,
-    row_number: index + 1,
-    raw_row: row,
-    normalized_row: {},
-    status: "pending",
-  })));
+  const rows: Array<{
+    preview_id: string;
+    import_batch_id: string | null;
+    sheet_name: string;
+    row_number: number;
+    raw_row: string[];
+    normalized_row: Record<string, never>;
+    status: "pending";
+  }> = [];
+  const totalRows = sheets.reduce((sum, sheet) => sum + sheet.rows.length, 0);
+
+  for (const sheet of sheets) {
+    for (const [index, row] of sheet.rows.entries()) {
+      if (rows.length >= VMS_PREVIEW_ROW_INSERT_LIMIT) break;
+      rows.push({
+        preview_id: previewId,
+        import_batch_id: batchId,
+        sheet_name: sheet.name,
+        row_number: index + 1,
+        raw_row: row,
+        normalized_row: {},
+        status: "pending",
+      });
+    }
+    if (rows.length >= VMS_PREVIEW_ROW_INSERT_LIMIT) break;
+  }
   if (!rows.length) return;
 
   for (let index = 0; index < rows.length; index += 500) {
@@ -2144,6 +2162,8 @@ async function saveVmsPreviewRows({
     previewId,
     importBatchId: batchId,
     rowsInserted: rows.length,
+    totalRowsAvailable: totalRows,
+    capped: totalRows > rows.length,
   });
 }
 
@@ -2220,49 +2240,59 @@ export async function prepareVmsImport(formData: FormData) {
   const storageBucket = "vms-imports";
   const storagePath = `${profile.team_member_id ?? profile.id ?? "unknown"}/${Date.now()}-${fileHash.slice(0, 12)}-${safeStorageFileName(file.name)}`;
   let savedStoragePath: string | null = null;
-  const uploadResult = await withSoftTimeout(
-    supabase.storage
-      .from(storageBucket)
-      .upload(storagePath, fileBuffer, {
-        contentType: file.type || "application/octet-stream",
-        upsert: false,
-      }),
-    VMS_ORIGINAL_FILE_UPLOAD_SOFT_TIMEOUT_MS,
-  );
-  if (uploadResult.timedOut) {
-    console.warn("[vms-import] Original file storage upload timed out; continuing without download reference", {
-      queryName: "storage.vms_imports.upload",
+  if (reportType !== "vms_order_details_weekly") {
+    console.info("[vms-import] Original file storage skipped for fast preview", {
+      queryName: "storage.vms_imports.upload.skipped",
       fileName: file.name,
+      reportType,
       fileHash,
-      timeoutMs: VMS_ORIGINAL_FILE_UPLOAD_SOFT_TIMEOUT_MS,
-      elapsedMs: Date.now() - previewStartedAt,
-    });
-  } else if ("error" in uploadResult) {
-    console.warn("[vms-import] Original file storage upload threw; continuing without download reference", {
-      queryName: "storage.vms_imports.upload",
-      fileName: file.name,
-      fileHash,
-      error: uploadResult.error instanceof Error ? uploadResult.error.message : String(uploadResult.error),
-      elapsedMs: Date.now() - previewStartedAt,
-    });
-  } else if (uploadResult.value.error) {
-    console.warn("[vms-import] Original file storage upload failed; continuing without download reference", {
-      queryName: "storage.vms_imports.upload",
-      fileName: file.name,
-      fileHash,
-      errorCode: uploadResult.value.error.name,
-      errorMessage: uploadResult.value.error.message,
       elapsedMs: Date.now() - previewStartedAt,
     });
   } else {
-    savedStoragePath = storagePath;
-    console.info("[vms-import] Original file stored for audit", {
-      queryName: "storage.vms_imports.upload",
-      fileName: file.name,
-      storageBucket,
-      storagePath,
-      elapsedMs: Date.now() - previewStartedAt,
-    });
+    const uploadResult = await withSoftTimeout(
+      supabase.storage
+        .from(storageBucket)
+        .upload(storagePath, fileBuffer, {
+          contentType: file.type || "application/octet-stream",
+          upsert: false,
+        }),
+      VMS_ORIGINAL_FILE_UPLOAD_SOFT_TIMEOUT_MS,
+    );
+    if (uploadResult.timedOut) {
+      console.warn("[vms-import] Original file storage upload timed out; continuing without download reference", {
+        queryName: "storage.vms_imports.upload",
+        fileName: file.name,
+        fileHash,
+        timeoutMs: VMS_ORIGINAL_FILE_UPLOAD_SOFT_TIMEOUT_MS,
+        elapsedMs: Date.now() - previewStartedAt,
+      });
+    } else if ("error" in uploadResult) {
+      console.warn("[vms-import] Original file storage upload threw; continuing without download reference", {
+        queryName: "storage.vms_imports.upload",
+        fileName: file.name,
+        fileHash,
+        error: uploadResult.error instanceof Error ? uploadResult.error.message : String(uploadResult.error),
+        elapsedMs: Date.now() - previewStartedAt,
+      });
+    } else if (uploadResult.value.error) {
+      console.warn("[vms-import] Original file storage upload failed; continuing without download reference", {
+        queryName: "storage.vms_imports.upload",
+        fileName: file.name,
+        fileHash,
+        errorCode: uploadResult.value.error.name,
+        errorMessage: uploadResult.value.error.message,
+        elapsedMs: Date.now() - previewStartedAt,
+      });
+    } else {
+      savedStoragePath = storagePath;
+      console.info("[vms-import] Original file stored for audit", {
+        queryName: "storage.vms_imports.upload",
+        fileName: file.name,
+        storageBucket,
+        storagePath,
+        elapsedMs: Date.now() - previewStartedAt,
+      });
+    }
   }
 
   const batchResult = await createPreviewImportBatch({
