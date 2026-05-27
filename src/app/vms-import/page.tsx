@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { FormSubmitButton } from "@/components/FormSubmitButton";
 import { LocalDraftForm } from "@/components/LocalDraft";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, FormField, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
@@ -642,7 +643,9 @@ function UploadCard() {
             <option value="sales">General / Summary Sales Report</option>
           </select>
         </FormField>
-        <button className="btn-primary w-full">Upload and preview</button>
+        <FormSubmitButton className="btn-primary w-full" pendingLabel="Reading file and preparing preview...">
+          Upload and preview
+        </FormSubmitButton>
       </LocalDraftForm>
     </SectionCard>
   );
@@ -1449,7 +1452,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
                 {previewSheets.map((sheet) => <option key={sheet.name} value={sheet.name}>{sheet.name} ({sheet.rows.length} rows)</option>)}
               </select>
             </FormField>
-            <button className="btn-primary self-end">Continue</button>
+            <FormSubmitButton className="btn-primary self-end" pendingLabel="Loading selected sheet...">Continue</FormSubmitButton>
           </form>
           <div>
             <h3 className="mb-3 text-base font-semibold text-slate-900">First 20 parsed rows</h3>
@@ -1475,7 +1478,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
             </FormField>
             <div className="flex flex-wrap gap-3">
               <Link href={queryFor({ previewId: preview.id, sheet: selectedSheet.name, step: "2" })} className="btn-secondary">Back</Link>
-              <button className="btn-primary">Choose header row</button>
+              <FormSubmitButton pendingLabel="Loading header rows...">Choose header row</FormSubmitButton>
             </div>
           </form>
         </section>
@@ -1504,7 +1507,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
             <RawRowsTable rows={selectedSheet.rows} limit={10} headerRow={selectedRows.headerRowIndex} />
             <div className="flex flex-wrap gap-3">
               <Link href={queryFor({ previewId: preview.id, sheet: selectedSheet.name, reportType: selectedReportType, step: "3" })} className="btn-secondary">Back</Link>
-              <button className="btn-primary">Continue to mapping</button>
+              <FormSubmitButton pendingLabel="Loading column mapping...">Continue to mapping</FormSubmitButton>
             </div>
           </form>
         </section>
@@ -1583,7 +1586,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
             </DataTable>
             <div className="flex flex-wrap gap-3">
               <Link href={queryFor({ previewId: preview.id, sheet: selectedSheet.name, reportType: selectedReportType, headerRow: String(selectedRows.headerRowIndex), step: "4" })} className="btn-secondary">Back</Link>
-              <button className="btn-primary">Preview and validate</button>
+              <FormSubmitButton pendingLabel="Validating mapped rows...">Preview and validate</FormSubmitButton>
             </div>
           </form>
           <div className="grid gap-5 xl:grid-cols-2">
@@ -1721,7 +1724,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
           <div className="flex flex-wrap gap-3">
             <form>
               <WizardStateInputs step={5} {...baseState} mapping={selectedMapping} />
-              <button className="btn-secondary">Back to mapping</button>
+              <FormSubmitButton className="btn-secondary" pendingLabel="Returning to mapping...">Back to mapping</FormSubmitButton>
             </form>
             <form className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_minmax(160px,auto)_minmax(160px,auto)_auto]">
               <WizardStateInputs step={7} {...baseState} mapping={selectedMapping} includeImportOptions={false} />
@@ -1738,7 +1741,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
               <FormField label="Range end">
                 <input name="reportEndDate" type="date" defaultValue={reportEndDate} className="field-input" />
               </FormField>
-              <button className="btn-primary self-end">Continue to confirm</button>
+              <FormSubmitButton className="btn-primary self-end" pendingLabel="Preparing confirmation...">Continue to confirm</FormSubmitButton>
             </form>
           </div>
         </section>
@@ -1793,11 +1796,11 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
           <div className="flex flex-wrap gap-3">
             <form>
               <WizardStateInputs step={6} {...baseState} mapping={selectedMapping} />
-              <button className="btn-secondary">Back</button>
+              <FormSubmitButton className="btn-secondary" pendingLabel="Going back...">Back</FormSubmitButton>
             </form>
             <form action={completeVmsImport}>
               <WizardStateInputs {...baseState} mapping={selectedMapping} finalAction />
-              <button className="btn-primary">Confirm Import</button>
+              <FormSubmitButton pendingLabel="Importing VMS rows and refreshing dashboards...">Confirm Import</FormSubmitButton>
             </form>
           </div>
         </section>

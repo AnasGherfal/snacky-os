@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { FormSubmitButton } from "@/components/FormSubmitButton";
 
 type HiddenField = {
   name: string;
@@ -13,6 +14,7 @@ type ConfirmDialogProps = {
   title: string;
   description: string;
   confirmLabel?: string;
+  pendingConfirmLabel?: string;
   cancelLabel?: string;
   buttonClassName?: string;
   confirmButtonClassName?: string;
@@ -31,6 +33,7 @@ export function ConfirmDialog({
   title,
   description,
   confirmLabel = "Confirm",
+  pendingConfirmLabel,
   cancelLabel = "Cancel",
   buttonClassName = "btn-secondary",
   confirmButtonClassName = "btn-danger",
@@ -83,9 +86,9 @@ export function ConfirmDialog({
                 <button type="button" className="btn-secondary" onClick={() => setOpen(false)}>
                   {cancelLabel}
                 </button>
-                <button className={confirmButtonClassName} disabled={reasonMissing}>
+                <FormSubmitButton className={confirmButtonClassName} disabled={reasonMissing} pendingLabel={pendingConfirmLabel ?? `${confirmLabel}...`}>
                   {confirmLabel}
-                </button>
+                </FormSubmitButton>
               </div>
             </form>
           </div>

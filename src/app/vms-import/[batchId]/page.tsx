@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
+import { FormSubmitButton } from "@/components/FormSubmitButton";
 import { DataTable, ErrorState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canConfirmVmsImports, canViewVmsImports, getEffectivePermissions } from "@/lib/authz";
@@ -275,7 +276,7 @@ export default async function VmsImportBatchDetailPage({
             {rowList.length && canConfirmVmsImports(profile) ? (
               <form action={reprocessVmsImportBatch}>
                 <input type="hidden" name="batch_id" value={batch.id} />
-                <button className="btn-primary">Reprocess after mapping</button>
+                <FormSubmitButton pendingLabel="Reprocessing VMS import...">Reprocess after mapping</FormSubmitButton>
               </form>
             ) : null}
           </div>
@@ -380,7 +381,7 @@ export default async function VmsImportBatchDetailPage({
                 <input type="hidden" name="action" value="disable" />
                 <div className="text-sm font-semibold text-slate-900">Disable from dashboards</div>
                 <input name="reason" className="field-input" placeholder="Reason" />
-                <button className="btn-secondary w-full">Disable</button>
+                <FormSubmitButton className="btn-secondary w-full" pendingLabel="Disabling file...">Disable</FormSubmitButton>
               </form>
             ) : (
               <form action={updateVmsImportBatchState} className="space-y-3 rounded-lg border border-slate-200 p-3">
@@ -388,7 +389,7 @@ export default async function VmsImportBatchDetailPage({
                 <input type="hidden" name="action" value={batch.status === "deleted" ? "restore" : "enable"} />
                 <div className="text-sm font-semibold text-slate-900">Restore to dashboards</div>
                 <p className="text-xs text-slate-500">Restores active imported status and recalculates dashboard views.</p>
-                <button className="btn-secondary w-full">Restore</button>
+                <FormSubmitButton className="btn-secondary w-full" pendingLabel="Restoring file...">Restore</FormSubmitButton>
               </form>
             )}
             {batch.status !== "deleted" ? (
@@ -397,7 +398,7 @@ export default async function VmsImportBatchDetailPage({
                 <input type="hidden" name="action" value="soft_delete" />
                 <div className="text-sm font-semibold text-rose-900">Soft delete</div>
                 <input name="reason" className="field-input" placeholder="Reason" />
-                <button className="btn-primary w-full">Soft delete</button>
+                <FormSubmitButton className="btn-primary w-full" pendingLabel="Soft deleting file...">Soft delete</FormSubmitButton>
               </form>
             ) : null}
             <form action={updateVmsImportBatchState} className="space-y-3 rounded-lg border border-rose-300 bg-white p-3">
@@ -405,7 +406,7 @@ export default async function VmsImportBatchDetailPage({
               <input type="hidden" name="action" value="hard_delete" />
               <div className="text-sm font-semibold text-rose-900">Advanced hard delete</div>
               <input name="confirmation" className="field-input" placeholder="Type DELETE" />
-              <button className="btn-secondary w-full">Hard delete</button>
+              <FormSubmitButton className="btn-secondary w-full" pendingLabel="Permanently deleting file...">Hard delete</FormSubmitButton>
             </form>
           </div>
         </section>
