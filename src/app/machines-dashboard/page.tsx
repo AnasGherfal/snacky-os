@@ -3,22 +3,24 @@ import { DataTable, EmptyState, PageHeader, StatusBadge } from "@/components/ui"
 import { requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
 import { formatInteger, formatLydOrDash, groupCount, latestObservedMonth, monthKey, salesAmount } from "@/lib/kpi";
+import { vmsCoverageSummary, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export default async function MachinesDashboardPage() {
   await requireCurrentProfileForPath("/machines-dashboard");
   const supabase = getSupabaseServerClient();
-  const [salesResult, machinesResult, refillResult, historicalRefillResult, stockResult, issuesResult, cashResult] = supabase
+  const [salesResult, machinesResult, refillResult, historicalRefillResult, stockResult, issuesResult, cashResult, batchResult] = supabase
     ? await Promise.all([
         supabase.from("vms_sales_clean").select("id, machine_id, product_id, units_sold, net_sales_amount, gross_profit_amount, sale_date, sales_month, cost_missing"),
         supabase.from("machines").select("id, machine_code, name, status, target_nsm, rent_amount, location:locations(id, name)").order("name"),
         supabase.from("refill_orders").select("id, machine_id, status, generated_at, completed_at"),
         supabase.from("machine_refill_history").select("id, machine_id, machine_name, fill_status, issues_found, refill_at"),
-        supabase.from("vms_stock_snapshots").select("machine_id, current_qty").eq("import_row_status", "imported"),
+        supabase.from("latest_vms_stock_by_slot").select("machine_id, current_qty"),
         supabase.from("issues").select("id, machine_id, status"),
         supabase.from("cash_collections").select("machine_id, variance"),
+        supabase.from("vms_import_batches").select("id, file_name, report_type, status, is_active, report_start_date, report_end_date, uploaded_at, imported_at, deleted_at").eq("report_type", "vms_order_details_weekly").order("report_start_date", { ascending: true }),
       ])
-    : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }];
+    : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }];
 
   const sales = ((salesResult.data ?? []) as any[]).map((row) => ({
     ...row,
@@ -27,6 +29,7 @@ export default async function MachinesDashboardPage() {
     period_end: row.sale_date,
   }));
   const machines = (machinesResult.data ?? []) as any[];
+  const coverage = vmsCoverageSummary((batchResult.data ?? []) as VmsDashboardBatch[]);
   const refills = (refillResult.data ?? []) as any[];
   const historicalRefills = (historicalRefillResult.data ?? []) as any[];
   const stockouts = groupCount(((stockResult.data ?? []) as any[]).filter((row) => Number(row.current_qty ?? 0) <= 0 && row.machine_id), (row) => String(row.machine_id));
@@ -87,6 +90,19 @@ export default async function MachinesDashboardPage() {
         <EmptyState title="No machines yet" body="Create machines and upload VMS sales snapshots to populate machine KPIs." />
       ) : (
         <div className="space-y-6">
+          <KpiSection title="Data Source" subtitle="Machine sales are calculated from active detailed VMS transaction files. Stock/refill signals use active VMS stock imports only.">
+            <div className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
+              <div><div className="font-semibold text-slate-900">Active sales batches</div><div>{coverage.active.length}</div></div>
+              <div><div className="font-semibold text-slate-900">Date range covered</div><div>{coverage.start && coverage.end ? `${coverage.start} to ${coverage.end}` : "-"}</div></div>
+              <div><div className="font-semibold text-slate-900">Last upload</div><div>{coverage.latest?.file_name ?? "-"}</div></div>
+              <div><div className="font-semibold text-slate-900">Missing periods</div><div>{coverage.gaps.length}</div></div>
+            </div>
+            {coverage.gaps.length ? (
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">
+                Warning: selected period has missing VMS detailed data. Sales may be incomplete.
+              </div>
+            ) : null}
+          </KpiSection>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <KpiSection title="Total sales"><div className="text-3xl font-semibold">{lyd(totalSales)}</div></KpiSection>
             <KpiSection title={latestMonth ? `NSM ${latestMonth}` : "NSM"}><div className="text-3xl font-semibold">{sales.length ? lyd(totalNsm) : "-"}</div></KpiSection>

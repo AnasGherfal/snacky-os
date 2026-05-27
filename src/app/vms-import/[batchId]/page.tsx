@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { DataTable, ErrorState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canConfirmVmsImports, canViewVmsImports, getEffectivePermissions } from "@/lib/authz";
-import { reprocessVmsImportBatch } from "@/lib/vms-import-actions";
+import { reprocessVmsImportBatch, updateVmsImportBatchState } from "@/lib/vms-import-actions";
 import { parseReportType, vmsExpectedFields, vmsReportTypes } from "@/lib/vms-parser";
 
 export const dynamic = "force-dynamic";
@@ -51,6 +51,37 @@ function parseSummary(notes: string | null | undefined): ImportSummary | null {
 
 function reportLabel(reportType: string | null | undefined) {
   return vmsReportTypes.find((type) => type.value === reportType)?.label ?? reportType ?? "-";
+}
+
+function dashboardUsageForReport(reportType: string | null | undefined) {
+  if (reportType === "vms_order_details_weekly") {
+    return [
+      ["Sales dashboard", true],
+      ["Product dashboard", true],
+      ["Machine dashboard", true],
+      ["Failed vend dashboard", true],
+      ["Refill recommendation", true],
+      ["Finance dashboard", false],
+    ] as const;
+  }
+  if (reportType === "sales") {
+    return [
+      ["Reconciliation only", true],
+      ["Main sales dashboard", false],
+      ["Product dashboard", false],
+      ["Machine dashboard", false],
+      ["Finance dashboard", false],
+    ] as const;
+  }
+  if (reportType === "stock" || reportType === "planogram") {
+    return [
+      ["Refill recommendation", true],
+      ["Inventory dashboard", true],
+      ["Sales revenue", false],
+      ["Finance dashboard", false],
+    ] as const;
+  }
+  return [["Not used until mapped", false]] as const;
 }
 
 function formatDateTime(value: string | null | undefined) {
@@ -154,7 +185,7 @@ export default async function VmsImportBatchDetailPage({
   const [{ data: batch, error: batchError }, { data: rows, error: rowsError }] = await Promise.all([
     supabase
       .from("vms_import_batches")
-      .select("id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, status, row_count, rows_imported, rows_skipped, rows_skipped_duplicate, rows_needing_review, import_mode, report_start_date, report_end_date, error_count, notes, column_mapping, last_reprocessed_at, reprocess_count")
+      .select("id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, uploaded_by, uploaded_at, status, is_active, deleted_at, deleted_by, delete_reason, disabled_at, disabled_by, disable_reason, source_usage, dashboard_usage, file_hash, storage_bucket, storage_path, original_file_name, detected_min_datetime, detected_max_datetime, total_successful_sales, successful_rows_count, failed_rows_count, refunded_rows_count, row_count, rows_imported, rows_skipped, rows_skipped_duplicate, rows_needing_review, import_mode, report_start_date, report_end_date, error_count, errors, notes, column_mapping, last_reprocessed_at, reprocess_count")
       .eq("id", batchId)
       .maybeSingle(),
     supabase
@@ -194,8 +225,11 @@ export default async function VmsImportBatchDetailPage({
     redirect(`/vms-import?error=${encodeURIComponent(message)}`);
   }
 
-  const { data: importer } = batch.imported_by
-    ? await supabase.from("team_members").select("id, full_name").eq("id", batch.imported_by).maybeSingle()
+  const { data: importer } = batch.uploaded_by ?? batch.imported_by
+    ? await supabase.from("team_members").select("id, full_name").eq("id", batch.uploaded_by ?? batch.imported_by).maybeSingle()
+    : { data: null };
+  const { data: signedFile } = batch.storage_bucket && batch.storage_path
+    ? await supabase.storage.from(String(batch.storage_bucket)).createSignedUrl(String(batch.storage_path), 60 * 10)
     : { data: null };
 
   const rowList = (rows ?? []) as any[];
@@ -249,11 +283,13 @@ export default async function VmsImportBatchDetailPage({
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
           <StatCard label="Total rows" value={summary?.totalRows ?? batch.row_count ?? rowList.length} />
           <StatCard label="Imported" value={summary?.importedRows ?? batch.rows_imported ?? importedRows.length} />
+          <StatCard label="Active in dashboards" value={batch.status === "imported" && batch.is_active !== false && !batch.deleted_at ? "Yes" : "No"} />
           <StatCard label="Duplicates skipped" value={summary?.rowsSkippedDuplicate ?? batch.rows_skipped_duplicate ?? 0} />
           <StatCard label="Needs mapping" value={summary?.needsProductMappingRows ?? needsMappingRows.length} />
           <StatCard label="Unknown machines" value={summary?.unknownMachineRows ?? unknownMachineRows.length} />
           <StatCard label="Invalid rows" value={summary?.invalidRows ?? invalidRows.length} />
           <StatCard label="Saved rows" value={rowList.length} />
+          <StatCard label="Successful sales" value={batch.total_successful_sales ? String(batch.total_successful_sales) : String(summary?.estimatedSuccessfulSales ?? 0)} />
         </div>
         {batch.report_type === "sales" ? (
           <div className="mt-3 grid gap-3 md:grid-cols-3">
@@ -290,6 +326,90 @@ export default async function VmsImportBatchDetailPage({
           </div>
         ) : null}
       </section>
+
+      <section className="surface-card mb-6">
+        <h2 className="mb-4 text-lg font-semibold text-slate-900">Dashboard usage</h2>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {dashboardUsageForReport(batch.report_type ?? batch.source_type).map(([label, used]) => (
+            <div key={label} className="rounded-lg border border-slate-200 bg-white p-3 text-sm">
+              <div className="font-medium text-slate-900">{label}</div>
+              <div className={used ? "mt-1 text-emerald-700" : "mt-1 text-slate-500"}>{used ? "Used" : "Not used"}</div>
+            </div>
+          ))}
+        </div>
+        <p className="mt-4 text-sm text-slate-500">
+          {batch.report_type === "vms_order_details_weekly"
+            ? "Detailed Order Details files feed transaction-level dashboards. Only successful_sale rows count as normal sales revenue."
+            : batch.report_type === "sales"
+              ? "General VMS summary files are retained for reconciliation and are not the main sales dashboard source when detailed transactions exist."
+              : "Machine stock files feed refill and inventory views, not sales revenue."}
+        </p>
+      </section>
+
+      <section className="surface-card mb-6">
+        <h2 className="mb-4 text-lg font-semibold text-slate-900">File audit</h2>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <StatCard label="Original file" value={batch.original_file_name ?? batch.file_name ?? "-"} />
+          <StatCard label="File hash" value={batch.file_hash ? String(batch.file_hash).slice(0, 12) : "-"} />
+          <StatCard label="Stored file" value={batch.storage_path ? "Yes" : "No"} />
+          <StatCard label="Uploaded at" value={formatDateTime(batch.uploaded_at ?? batch.imported_at)} />
+          <StatCard label="Detected min" value={formatDateTime(batch.detected_min_datetime)} />
+          <StatCard label="Detected max" value={formatDateTime(batch.detected_max_datetime)} />
+          <StatCard label="Disabled at" value={formatDateTime(batch.disabled_at)} />
+          <StatCard label="Deleted at" value={formatDateTime(batch.deleted_at)} />
+        </div>
+        {batch.disable_reason || batch.delete_reason ? (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            {batch.disable_reason || batch.delete_reason}
+          </div>
+        ) : null}
+        {signedFile?.signedUrl ? (
+          <div className="mt-4">
+            <Link href={signedFile.signedUrl} className="btn-secondary">Download original file</Link>
+          </div>
+        ) : null}
+      </section>
+
+      {canConfirmVmsImports(profile) ? (
+        <section className="surface-card mb-6">
+          <h2 className="mb-4 text-lg font-semibold text-slate-900">Actions</h2>
+          <div className="grid gap-3 lg:grid-cols-3">
+            {batch.status === "imported" && batch.is_active !== false ? (
+              <form action={updateVmsImportBatchState} className="space-y-3 rounded-lg border border-slate-200 p-3">
+                <input type="hidden" name="batch_id" value={batch.id} />
+                <input type="hidden" name="action" value="disable" />
+                <div className="text-sm font-semibold text-slate-900">Disable from dashboards</div>
+                <input name="reason" className="field-input" placeholder="Reason" />
+                <button className="btn-secondary w-full">Disable</button>
+              </form>
+            ) : (
+              <form action={updateVmsImportBatchState} className="space-y-3 rounded-lg border border-slate-200 p-3">
+                <input type="hidden" name="batch_id" value={batch.id} />
+                <input type="hidden" name="action" value={batch.status === "deleted" ? "restore" : "enable"} />
+                <div className="text-sm font-semibold text-slate-900">Restore to dashboards</div>
+                <p className="text-xs text-slate-500">Restores active imported status and recalculates dashboard views.</p>
+                <button className="btn-secondary w-full">Restore</button>
+              </form>
+            )}
+            {batch.status !== "deleted" ? (
+              <form action={updateVmsImportBatchState} className="space-y-3 rounded-lg border border-rose-200 bg-rose-50 p-3">
+                <input type="hidden" name="batch_id" value={batch.id} />
+                <input type="hidden" name="action" value="soft_delete" />
+                <div className="text-sm font-semibold text-rose-900">Soft delete</div>
+                <input name="reason" className="field-input" placeholder="Reason" />
+                <button className="btn-primary w-full">Soft delete</button>
+              </form>
+            ) : null}
+            <form action={updateVmsImportBatchState} className="space-y-3 rounded-lg border border-rose-300 bg-white p-3">
+              <input type="hidden" name="batch_id" value={batch.id} />
+              <input type="hidden" name="action" value="hard_delete" />
+              <div className="text-sm font-semibold text-rose-900">Advanced hard delete</div>
+              <input name="confirmation" className="field-input" placeholder="Type DELETE" />
+              <button className="btn-secondary w-full">Hard delete</button>
+            </form>
+          </div>
+        </section>
+      ) : null}
 
       <section className="surface-card mb-6">
         <h2 className="mb-4 text-lg font-semibold text-slate-900">Mapped columns</h2>

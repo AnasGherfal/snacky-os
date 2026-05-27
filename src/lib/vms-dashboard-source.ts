@@ -1,0 +1,47 @@
+export type VmsDashboardBatch = {
+  id: string;
+  file_name?: string | null;
+  report_type?: string | null;
+  status?: string | null;
+  is_active?: boolean | null;
+  report_start_date?: string | null;
+  report_end_date?: string | null;
+  uploaded_at?: string | null;
+  imported_at?: string | null;
+  deleted_at?: string | null;
+};
+
+function dateOnly(date: Date) {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+}
+
+function addDays(value: string, days: number) {
+  const [year, month, day] = value.split("-").map(Number);
+  return dateOnly(new Date(Date.UTC(year, month - 1, day + days)));
+}
+
+export function activeDetailedBatches(batches: VmsDashboardBatch[]) {
+  return batches
+    .filter((batch) => batch.report_type === "vms_order_details_weekly" && batch.status === "imported" && batch.is_active !== false && !batch.deleted_at)
+    .sort((a, b) => String(a.report_start_date ?? "").localeCompare(String(b.report_start_date ?? "")));
+}
+
+export function vmsCoverageSummary(batches: VmsDashboardBatch[]) {
+  const active = activeDetailedBatches(batches);
+  const ranges = active
+    .map((batch) => ({ start: batch.report_start_date ?? "", end: batch.report_end_date ?? "" }))
+    .filter((range) => range.start && range.end);
+  const gaps: { start: string; end: string }[] = [];
+  for (let index = 1; index < ranges.length; index += 1) {
+    const expected = addDays(ranges[index - 1].end, 1);
+    if (expected < ranges[index].start) gaps.push({ start: expected, end: addDays(ranges[index].start, -1) });
+  }
+  const latest = [...active].sort((a, b) => String(b.uploaded_at ?? b.imported_at ?? "").localeCompare(String(a.uploaded_at ?? a.imported_at ?? "")))[0] ?? null;
+  return {
+    active,
+    gaps,
+    start: ranges[0]?.start ?? "",
+    end: ranges.at(-1)?.end ?? "",
+    latest,
+  };
+}

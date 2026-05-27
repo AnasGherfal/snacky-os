@@ -117,6 +117,56 @@ function reportLabel(reportType: string | null | undefined) {
   return vmsReportTypes.find((type) => type.value === reportType)?.label ?? reportType ?? "-";
 }
 
+function dashboardUsageForReport(reportType: string | null | undefined) {
+  if (reportType === "vms_order_details_weekly") {
+    return [
+      "Sales dashboard",
+      "Product dashboard",
+      "Machine dashboard",
+      "Failed vend dashboard",
+      "Refill recommendation",
+    ];
+  }
+  if (reportType === "sales") return ["Reconciliation only"];
+  if (reportType === "stock" || reportType === "planogram") return ["Refill recommendation", "Inventory dashboard"];
+  return ["Not used until mapped"];
+}
+
+function activeLabel(batch: VmsBatchRow) {
+  return batch.status === "imported" && batch.is_active !== false && !batch.deleted_at ? "Yes" : "No";
+}
+
+function batchDateRange(batch: VmsBatchRow) {
+  if (batch.report_start_date || batch.report_end_date) return `${batch.report_start_date ?? "-"} to ${batch.report_end_date ?? "-"}`;
+  const summary = parseSummary(batch.notes);
+  const start = summary?.orderDetailsReportPeriod?.reportStartDate;
+  const end = summary?.orderDetailsReportPeriod?.reportEndDate;
+  return start || end ? `${start ?? "-"} to ${end ?? "-"}` : "-";
+}
+
+function dateOnly(date: Date) {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+}
+
+function addDays(dateOnlyValue: string, days: number) {
+  const [year, month, day] = dateOnlyValue.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + days));
+  return dateOnly(date);
+}
+
+function weeklyCoverageGaps(batches: VmsBatchRow[]) {
+  const ranges = batches
+    .map((batch) => ({ start: batch.report_start_date ?? "", end: batch.report_end_date ?? "" }))
+    .filter((range) => range.start && range.end)
+    .sort((a, b) => a.start.localeCompare(b.start));
+  const gaps: { start: string; end: string }[] = [];
+  for (let index = 1; index < ranges.length; index += 1) {
+    const expectedNext = addDays(ranges[index - 1].end, 1);
+    if (expectedNext < ranges[index].start) gaps.push({ start: expectedNext, end: addDays(ranges[index].start, -1) });
+  }
+  return { ranges, gaps };
+}
+
 function clampStep(value: string | undefined, hasPreview: boolean) {
   if (!hasPreview) return 1;
   const parsed = Number(value ?? 1);
@@ -147,6 +197,8 @@ type VmsBatchRow = {
   file_type?: string | null;
   sheet_name?: string | null;
   report_type?: string | null;
+  report_start_date?: string | null;
+  report_end_date?: string | null;
   uploaded_by?: string | null;
   uploaded_at?: string | null;
   imported_by?: string | null;
@@ -158,6 +210,22 @@ type VmsBatchRow = {
   rows_skipped?: number | null;
   rows_skipped_duplicate?: number | null;
   rows_needing_review?: number | null;
+  is_active?: boolean | null;
+  deleted_at?: string | null;
+  disabled_at?: string | null;
+  delete_reason?: string | null;
+  disable_reason?: string | null;
+  source_usage?: unknown;
+  dashboard_usage?: unknown;
+  file_hash?: string | null;
+  storage_bucket?: string | null;
+  storage_path?: string | null;
+  detected_min_datetime?: string | null;
+  detected_max_datetime?: string | null;
+  total_successful_sales?: number | string | null;
+  successful_rows_count?: number | null;
+  failed_rows_count?: number | null;
+  refunded_rows_count?: number | null;
   import_mode?: string | null;
   error_count?: number | null;
   notes?: string | null;
@@ -250,6 +318,22 @@ const preferredBatchSelect = [
   "rows_imported",
   "rows_skipped_duplicate",
   "rows_needing_review",
+  "is_active",
+  "deleted_at",
+  "disabled_at",
+  "delete_reason",
+  "disable_reason",
+  "source_usage",
+  "dashboard_usage",
+  "file_hash",
+  "storage_bucket",
+  "storage_path",
+  "detected_min_datetime",
+  "detected_max_datetime",
+  "total_successful_sales",
+  "successful_rows_count",
+  "failed_rows_count",
+  "refunded_rows_count",
   "notes",
   "source_type",
   "file_type",
@@ -1086,6 +1170,14 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
     effectivePermissions,
   });
   const batchReviewRows = batches.reduce((sum, batch) => sum + Number(batch.rows_needing_review ?? batchMetric(batch, "rowsNeedingReview", batchMetric(batch, "needsProductMappingRows", 0))), 0);
+  const activeDetailedBatches = batches.filter((batch) => batch.report_type === "vms_order_details_weekly" && batch.status === "imported" && batch.is_active !== false && !batch.deleted_at);
+  const detailedCoverage = weeklyCoverageGaps(activeDetailedBatches);
+  const overlappingActiveBatches = activeDetailedBatches.filter((batch, index) => activeDetailedBatches.some((other, otherIndex) => (
+    index !== otherIndex
+    && Boolean(batch.report_start_date && batch.report_end_date && other.report_start_date && other.report_end_date)
+    && String(batch.report_start_date) <= String(other.report_end_date)
+    && String(other.report_start_date) <= String(batch.report_end_date)
+  )));
 
   const previewSheets = ((preview?.sheets ?? []) as PreviewSheet[]).filter((sheet) => sheet.rows?.length);
   const selectedSheet = previewSheets.find((sheet) => sheet.name === params.sheet) ?? previewSheets[0] ?? null;
@@ -1308,6 +1400,31 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
       {!preview && canCreateVmsImports(profile) ? <div className="mb-6"><UploadCard /></div> : null}
 
       {!preview ? <ReviewSummaryCard summary={reviewSummary} batchReviewRows={batchReviewRows} /> : null}
+
+      {!preview ? (
+        <section className="surface-card mb-6 space-y-4">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Detailed VMS Coverage</h2>
+            <p className="mt-1 text-sm text-slate-500">Active weekly Order Details imports are the main sales/dashboard source.</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <StatCard label="Active detailed files" value={activeDetailedBatches.length} />
+            <StatCard label="Coverage start" value={detailedCoverage.ranges[0]?.start ?? "-"} />
+            <StatCard label="Coverage end" value={detailedCoverage.ranges.at(-1)?.end ?? "-"} />
+            <StatCard label="Missing weekly gaps" value={detailedCoverage.gaps.length} />
+          </div>
+          {detailedCoverage.gaps.length ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900">
+              Missing detailed VMS sales data from {detailedCoverage.gaps.map((gap) => `${gap.start} to ${gap.end}`).join(", ")}. Dashboards may be incomplete.
+            </div>
+          ) : null}
+          {overlappingActiveBatches.length ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900">
+              {overlappingActiveBatches.length} active detailed import(s) overlap another active VMS import. Duplicates are skipped where detected.
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       {preview && selectedSheet && currentStep === 2 ? (
         <section className="surface-card mb-6 space-y-5">
@@ -1701,19 +1818,25 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
           <EmptyState title="No VMS reports imported yet." body="Upload your first VMS report to start building sales KPIs." />
         ) : (
           <>
-            <DataTable headers={["Status", "File name", "Report type", "Mode", "Rows found", "Rows imported", "Duplicates", "Needs review", "Uploaded by", "Date"]}>
+            <DataTable headers={["Status", "Active", "File name", "Report type", "Date range", "Used in", "Rows found", "Rows imported", "Duplicates", "Needs review", "Successful sales", "Failed rows", "Refunds", "Uploaded by", "Date", "Notes"]}>
               {batches.map((batch) => (
                 <tr key={batch.id}>
                   <td><Link href={`/vms-import/${batch.id}`}><StatusBadge status={batch.status} /></Link></td>
+                  <td><StatusBadge status={activeLabel(batch)} /></td>
                   <td className="font-medium text-slate-900"><Link className="link-secondary" href={`/vms-import/${batch.id}`}>{batch.file_name ?? "-"}</Link></td>
                   <td>{reportLabel(batch.report_type ?? batch.source_type)}</td>
-                  <td>{vmsImportModeLabels[parseVmsImportMode(batch.import_mode)]}</td>
+                  <td>{batchDateRange(batch)}</td>
+                  <td className="max-w-xs text-xs text-slate-600">{dashboardUsageForReport(batch.report_type ?? batch.source_type).join(", ")}</td>
                   <td>{batch.rows_found ?? batch.row_count ?? batchMetric(batch, "totalRows", 0)}</td>
                   <td>{batch.rows_imported ?? batchMetric(batch, "importedRows", 0)}</td>
                   <td>{batch.rows_skipped_duplicate ?? batchMetric(batch, "rowsSkippedDuplicate", 0)}</td>
                   <td>{batch.rows_needing_review ?? batchMetric(batch, "rowsNeedingReview", batchMetric(batch, "needsProductMappingRows", 0))}</td>
+                  <td>{lyd(Number(batch.total_successful_sales ?? batchMetric(batch, "estimatedSuccessfulSales", 0)))}</td>
+                  <td>{batch.failed_rows_count ?? batchMetric(batch, "failedVendRows", 0)}</td>
+                  <td>{batch.refunded_rows_count ?? batchMetric(batch, "refundedRows", 0)}</td>
                   <td>{batch.uploaded_by || batch.imported_by ? importerById.get(String(batch.uploaded_by ?? batch.imported_by)) ?? "Unknown" : "-"}</td>
                   <td>{formatDateTime(batch.uploaded_at ?? batch.imported_at)}</td>
+                  <td className="max-w-xs text-xs text-slate-600">{batch.delete_reason || batch.disable_reason || (batch.report_type === "sales" ? "Reconciliation only" : "-")}</td>
                 </tr>
               ))}
             </DataTable>

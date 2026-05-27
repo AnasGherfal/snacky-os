@@ -1,6 +1,7 @@
 import { StatCard } from "@/components/StatCard";
 import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, SectionCard } from "@/components/ui";
 import { lyd } from "@/lib/format";
+import { vmsCoverageSummary, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 type SalesMonthlyRow = { machine_id: string | null; machine_name: string | null; sales_month: string | null; net_sales_amount: number | string | null; units_sold: number | string | null; gross_profit_amount?: number | string | null };
@@ -14,7 +15,7 @@ async function getDashboardData() {
   const supabase = getSupabaseServerClient();
   if (!supabase) return { data: null, error: null };
 
-  const [machines, refill, issues, lowStorage, cash, salesMonthly, productMonthly, transactionStatusMonthly, missingCostSales] = await Promise.all([
+  const [machines, refill, issues, lowStorage, cash, salesMonthly, productMonthly, transactionStatusMonthly, missingCostSales, vmsBatches] = await Promise.all([
     supabase.from("machines").select("id", { count: "exact", head: true }),
     supabase.from("refill_recommendations").select("machine_name, product_name, suggested_qty, priority").order("suggested_qty", { ascending: false }).limit(8),
     supabase.from("issues").select("id", { count: "exact", head: true }).neq("status", "resolved"),
@@ -24,9 +25,10 @@ async function getDashboardData() {
     supabase.from("kpi_product_monthly").select("product_id, product_name, sales_month, net_sales_amount, units_sold").order("net_sales_amount", { ascending: false }).limit(8),
     supabase.from("vms_transaction_status_monthly").select("sales_month, failed_vend_count, failed_vend_amount, refund_count, refund_amount, failed_payment_count, needs_review_count").order("sales_month", { ascending: false }).limit(12),
     supabase.from("vms_sales_clean").select("product_id, product_name").eq("cost_missing", true).limit(1000),
+    supabase.from("vms_import_batches").select("id, file_name, report_type, status, is_active, report_start_date, report_end_date, uploaded_at, imported_at, deleted_at").eq("report_type", "vms_order_details_weekly").order("report_start_date", { ascending: true }),
   ]);
 
-  const loadError = machines.error ?? refill.error ?? issues.error ?? lowStorage.error ?? cash.error ?? salesMonthly.error ?? productMonthly.error ?? transactionStatusMonthly.error ?? missingCostSales.error;
+  const loadError = machines.error ?? refill.error ?? issues.error ?? lowStorage.error ?? cash.error ?? salesMonthly.error ?? productMonthly.error ?? transactionStatusMonthly.error ?? missingCostSales.error ?? vmsBatches.error;
   if (loadError) {
     console.error("[dashboard] Failed to load dashboard data", loadError);
     return { data: null, error: loadError };
@@ -43,6 +45,7 @@ async function getDashboardData() {
       productMonthlyRows: productMonthly.data ?? [],
       transactionStatusRows: transactionStatusMonthly.data ?? [],
       missingCostRows: missingCostSales.data ?? [],
+      vmsBatchRows: vmsBatches.data ?? [],
     },
     error: null,
   };
@@ -56,6 +59,7 @@ export default async function DashboardPage() {
   const missingCostRows = (data?.missingCostRows ?? []) as MissingCostRow[];
   const refillRows = (data?.refillRows ?? []) as RefillRow[];
   const lowStorageRows = (data?.lowStorageRows ?? []) as LowStorageRow[];
+  const coverage = vmsCoverageSummary((data?.vmsBatchRows ?? []) as VmsDashboardBatch[]);
   const totalNetSales = salesMonthlyRows.reduce((sum, row) => sum + Number(row.net_sales_amount ?? 0), 0);
   const totalUnitsSold = salesMonthlyRows.reduce((sum, row) => sum + Number(row.units_sold ?? 0), 0);
   const latestSalesMonth = [...salesMonthlyRows].map((row) => String(row.sales_month ?? "").slice(0, 7)).filter(Boolean).sort().at(-1);
@@ -79,6 +83,18 @@ export default async function DashboardPage() {
         <EmptyState title="Connect Supabase to activate dashboard" body="Add environment variables and restart the app." />
       ) : (
         <>
+          <div className="mb-5 rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-700">
+            <div className="font-semibold text-slate-900">Data Source</div>
+            <p className="mt-1">
+              Dashboard KPIs use {coverage.active.length} active detailed VMS order file(s)
+              {coverage.start && coverage.end ? ` covering ${coverage.start} to ${coverage.end}` : ""}. General summary files are reconciliation only.
+            </p>
+            {coverage.gaps.length ? (
+              <p className="mt-2 font-medium text-amber-800">
+                Warning: selected period has missing VMS detailed data. Sales may be incomplete.
+              </p>
+            ) : null}
+          </div>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <StatCard label="Total machines" value={data.machines} />
             <StatCard label="Net sales" value={lyd(totalNetSales)} />

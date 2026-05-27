@@ -1,5 +1,84 @@
 -- Adds weekly VMS Order Details transaction imports as the primary sales/KPI
 -- source while keeping the summary sales import available for reconciliation.
+-- Also makes VMS import batches manageable data sources that can be disabled,
+-- soft-deleted, restored, and excluded from dashboards without losing audit data.
+
+alter table public.vms_import_batches
+  add column if not exists is_active boolean not null default true,
+  add column if not exists deleted_at timestamptz,
+  add column if not exists deleted_by uuid,
+  add column if not exists delete_reason text,
+  add column if not exists disabled_at timestamptz,
+  add column if not exists disabled_by uuid,
+  add column if not exists disable_reason text,
+  add column if not exists source_usage jsonb not null default '{}'::jsonb,
+  add column if not exists dashboard_usage jsonb,
+  add column if not exists file_hash text,
+  add column if not exists storage_bucket text,
+  add column if not exists storage_path text,
+  add column if not exists original_file_name text,
+  add column if not exists detected_min_datetime timestamptz,
+  add column if not exists detected_max_datetime timestamptz,
+  add column if not exists total_successful_sales numeric not null default 0,
+  add column if not exists successful_rows_count integer not null default 0,
+  add column if not exists failed_rows_count integer not null default 0,
+  add column if not exists refunded_rows_count integer not null default 0;
+
+update public.vms_import_batches
+set is_active = false
+where status in ('failed', 'deleted', 'disabled', 'draft', 'previewed')
+   or deleted_at is not null;
+
+alter table public.vms_import_batches
+  drop constraint if exists vms_import_batches_status_check;
+
+alter table public.vms_import_batches
+  add constraint vms_import_batches_status_check
+  check (status in ('draft', 'previewed', 'imported', 'failed', 'cancelled', 'disabled', 'deleted'));
+
+create index if not exists idx_vms_import_batches_active_usage
+  on public.vms_import_batches(status, is_active, report_type, report_start_date, report_end_date)
+  where deleted_at is null;
+
+alter table public.vms_import_previews
+  add column if not exists file_hash text,
+  add column if not exists storage_bucket text,
+  add column if not exists storage_path text,
+  add column if not exists original_file_name text;
+
+do $$
+begin
+  if to_regclass('storage.buckets') is not null then
+    insert into storage.buckets (id, name, public, file_size_limit)
+    values ('vms-imports', 'vms-imports', false, 52428800)
+    on conflict (id) do nothing;
+  end if;
+
+  if to_regclass('storage.objects') is not null then
+    execute 'drop policy if exists "snacky_vms_import_files_select" on storage.objects';
+    execute 'drop policy if exists "snacky_vms_import_files_insert" on storage.objects';
+    execute 'drop policy if exists "snacky_vms_import_files_update" on storage.objects';
+    execute $policy$
+      create policy "snacky_vms_import_files_select"
+      on storage.objects for select
+      to authenticated
+      using (bucket_id = 'vms-imports' and public.snacky_current_profile_can_view_vms_import())
+    $policy$;
+    execute $policy$
+      create policy "snacky_vms_import_files_insert"
+      on storage.objects for insert
+      to authenticated
+      with check (bucket_id = 'vms-imports' and public.snacky_current_profile_can_manage_vms_mappings())
+    $policy$;
+    execute $policy$
+      create policy "snacky_vms_import_files_update"
+      on storage.objects for update
+      to authenticated
+      using (bucket_id = 'vms-imports' and public.snacky_current_profile_can_manage_vms_mappings())
+      with check (bucket_id = 'vms-imports' and public.snacky_current_profile_can_manage_vms_mappings())
+    $policy$;
+  end if;
+end $$;
 
 create table if not exists public.vms_transactions_raw (
   id uuid primary key default gen_random_uuid(),
@@ -195,6 +274,9 @@ with detailed_sales as (
     and tx.mapped_product_id is not null
     and tx.mapped_machine_id is not null
     and coalesce(tx.payment_time, tx.delivery_time) is not null
+    and vib.status = 'imported'
+    and vib.is_active = true
+    and vib.deleted_at is null
 ),
 summary_sales as (
   select
@@ -245,13 +327,20 @@ summary_sales as (
   where raw.product_id is not null
     and raw.machine_id is not null
     and raw.sale_date is not null
+    and vib.status = 'imported'
+    and vib.is_active = true
+    and vib.deleted_at is null
     and not exists (
       select 1
       from public.vms_transactions_raw tx
+      join public.vms_import_batches active_tx_batch on active_tx_batch.id = tx.import_batch_id
       where tx.transaction_status = 'successful_sale'
         and tx.mapped_product_id is not null
         and tx.mapped_machine_id is not null
         and coalesce(tx.payment_time, tx.delivery_time)::date = raw.sale_date
+        and active_tx_batch.status = 'imported'
+        and active_tx_batch.is_active = true
+        and active_tx_batch.deleted_at is null
     )
 )
 select * from detailed_sales
@@ -364,9 +453,13 @@ select
   count(*) filter (where tx.transaction_status = 'needs_review') as needs_review_count,
   count(*) as transaction_rows
 from public.vms_transactions_raw tx
+join public.vms_import_batches vib on vib.id = tx.import_batch_id
 left join public.machines m on m.id = tx.mapped_machine_id
 left join public.products p on p.id = tx.mapped_product_id
 where coalesce(tx.payment_time, tx.delivery_time) is not null
+  and vib.status = 'imported'
+  and vib.is_active = true
+  and vib.deleted_at is null
 group by sale_date, machine_id, machine_name, product_id, product_name;
 
 create or replace view public.vms_transaction_status_monthly as
@@ -382,6 +475,77 @@ select
 from public.vms_transaction_status_daily
 group by date_trunc('month', sale_date)::date;
 
+create or replace view public.latest_vms_stock_by_slot as
+with normalized as (
+  select
+    vss.id,
+    vss.import_batch_id,
+    vib.imported_at as batch_imported_at,
+    vss.sync_run_id,
+    vss.source_provider,
+    vss.machine_id,
+    nullif(btrim(vss.slot_code), '') as slot_code,
+    vss.product_id,
+    nullif(btrim(vss.vms_product_id), '') as vms_product_id,
+    nullif(btrim(vss.vms_product_name), '') as vms_product_name,
+    vss.current_qty,
+    vss.capacity,
+    vss.captured_at,
+    vss.created_at,
+    nullif(btrim(coalesce(vss.aisle_status, vss.tray_status)), '') as tray_status,
+    coalesce(
+      nullif(btrim(vss.slot_code), ''),
+      vss.product_id::text,
+      nullif(btrim(vss.vms_product_id), ''),
+      nullif(btrim(vss.vms_product_name), ''),
+      vss.id::text
+    ) as stock_item_key
+  from public.vms_stock_snapshots vss
+  left join public.vms_import_batches vib on vib.id = vss.import_batch_id
+  where vss.machine_id is not null
+    and vss.import_row_status = 'imported'
+    and (
+      vss.import_batch_id is null
+      or (
+        vib.status = 'imported'
+        and vib.is_active = true
+        and vib.deleted_at is null
+      )
+    )
+),
+ranked as (
+  select
+    normalized.*,
+    dense_rank() over (
+      partition by machine_id, stock_item_key
+      order by captured_at desc, batch_imported_at desc nulls last, created_at desc
+    ) as recency_rank
+  from normalized
+),
+latest as (
+  select *
+  from ranked
+  where recency_rank = 1
+)
+select
+  (array_agg(id order by created_at desc, id desc))[1] as id,
+  machine_id,
+  max(slot_code) as slot_code,
+  (array_agg(product_id order by (product_id is not null) desc, created_at desc, id desc))[1] as product_id,
+  sum(current_qty)::integer as current_qty,
+  nullif(sum(coalesce(capacity, 0)), 0)::integer as capacity,
+  max(captured_at) as captured_at,
+  (array_agg(vms_product_id order by (vms_product_id is not null) desc, created_at desc, id desc))[1] as vms_product_id,
+  (array_agg(vms_product_name order by (vms_product_name is not null) desc, created_at desc, id desc))[1] as vms_product_name,
+  nullif(string_agg(distinct tray_status, ', '), '') as tray_status,
+  stock_item_key,
+  (array_agg(import_batch_id order by batch_imported_at desc nulls last, created_at desc, id desc))[1] as import_batch_id,
+  max(batch_imported_at) as imported_at,
+  (array_agg(sync_run_id order by created_at desc, id desc))[1] as sync_run_id,
+  (array_agg(source_provider order by created_at desc, id desc))[1] as source_provider
+from latest
+group by machine_id, stock_item_key;
+
 grant select on public.vms_sales_clean to authenticated;
 grant select on public.kpi_machine_daily to authenticated;
 grant select on public.kpi_machine_monthly to authenticated;
@@ -390,5 +554,40 @@ grant select on public.kpi_product_monthly to authenticated;
 grant select on public.kpi_location_monthly to authenticated;
 grant select on public.vms_transaction_status_daily to authenticated;
 grant select on public.vms_transaction_status_monthly to authenticated;
+grant select on public.latest_vms_stock_by_slot to authenticated;
+
+update public.vms_import_batches vib
+set
+  detected_min_datetime = coalesce(stats.min_time, vib.detected_min_datetime),
+  detected_max_datetime = coalesce(stats.max_time, vib.detected_max_datetime),
+  total_successful_sales = coalesce(stats.total_successful_sales, vib.total_successful_sales, 0),
+  successful_rows_count = coalesce(stats.successful_rows_count, vib.successful_rows_count, 0),
+  failed_rows_count = coalesce(stats.failed_rows_count, vib.failed_rows_count, 0),
+  refunded_rows_count = coalesce(stats.refunded_rows_count, vib.refunded_rows_count, 0),
+  source_usage = case
+    when vib.report_type = 'vms_order_details_weekly' then '{"source_type":"detailed_order_transactions","main_sales_source":true,"reconciliation_only":false,"dashboards":["sales","products","machines","failed_vends","refills"],"excluded_dashboards":["finance"]}'::jsonb
+    when vib.report_type = 'sales' then '{"source_type":"general_summary_sales","main_sales_source":false,"reconciliation_only":true,"dashboards":["reconciliation"],"excluded_dashboards":["sales","products","machines","failed_vends","finance"]}'::jsonb
+    when vib.report_type in ('stock','planogram') then '{"source_type":"machine_stock","main_sales_source":false,"reconciliation_only":false,"dashboards":["refills","inventory","machines"],"excluded_dashboards":["sales","products","finance"]}'::jsonb
+    else coalesce(vib.source_usage, '{}'::jsonb)
+  end,
+  dashboard_usage = case
+    when vib.report_type = 'vms_order_details_weekly' then '{"source_type":"detailed_order_transactions","main_sales_source":true,"reconciliation_only":false,"dashboards":["sales","products","machines","failed_vends","refills"],"excluded_dashboards":["finance"]}'::jsonb
+    when vib.report_type = 'sales' then '{"source_type":"general_summary_sales","main_sales_source":false,"reconciliation_only":true,"dashboards":["reconciliation"],"excluded_dashboards":["sales","products","machines","failed_vends","finance"]}'::jsonb
+    when vib.report_type in ('stock','planogram') then '{"source_type":"machine_stock","main_sales_source":false,"reconciliation_only":false,"dashboards":["refills","inventory","machines"],"excluded_dashboards":["sales","products","finance"]}'::jsonb
+    else coalesce(vib.dashboard_usage, '{}'::jsonb)
+  end
+from (
+  select
+    import_batch_id,
+    min(coalesce(payment_time, delivery_time)) as min_time,
+    max(coalesce(payment_time, delivery_time)) as max_time,
+    coalesce(sum(payment_amount) filter (where transaction_status = 'successful_sale'), 0) as total_successful_sales,
+    count(*) filter (where transaction_status = 'successful_sale')::integer as successful_rows_count,
+    count(*) filter (where transaction_status in ('failed_vend', 'failed_payment', 'needs_review'))::integer as failed_rows_count,
+    count(*) filter (where transaction_status = 'refunded')::integer as refunded_rows_count
+  from public.vms_transactions_raw
+  group by import_batch_id
+) stats
+where stats.import_batch_id = vib.id;
 
 select pg_notify('pgrst', 'reload schema');

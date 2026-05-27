@@ -1,10 +1,11 @@
 "use server";
 
+import { createHash } from "node:crypto";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "@/lib/activity-log";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
-import { canConfirmVmsImports, canCreateVmsImports } from "@/lib/authz";
+import { canConfirmVmsImports, canCreateVmsImports, isOwnerAdminRole } from "@/lib/authz";
 import {
   applyColumnMapping,
   detectVmsReportTypeFromRows,
@@ -108,6 +109,56 @@ function booleanOption(input: FormDataEntryValue | string | null | undefined, de
   if (["1", "true", "yes", "y", "on"].includes(normalized)) return true;
   if (["0", "false", "no", "n", "off"].includes(normalized)) return false;
   return defaultValue;
+}
+
+function vmsSourceUsage(reportType: VmsReportType) {
+  if (reportType === "vms_order_details_weekly") {
+    return {
+      source_type: "detailed_order_transactions",
+      main_sales_source: true,
+      reconciliation_only: false,
+      dashboards: ["sales", "products", "machines", "failed_vends", "refills"],
+      excluded_dashboards: ["finance"],
+      explanation: "Detailed VMS order transactions are the primary sales and KPI source. Only successful_sale rows count as normal revenue.",
+    };
+  }
+  if (reportType === "sales") {
+    return {
+      source_type: "general_summary_sales",
+      main_sales_source: false,
+      reconciliation_only: true,
+      dashboards: ["reconciliation"],
+      excluded_dashboards: ["sales", "products", "machines", "failed_vends", "finance"],
+      explanation: "General VMS summary sales files are retained for reconciliation/checking totals and do not replace detailed transactions.",
+    };
+  }
+  if (reportType === "stock" || reportType === "planogram") {
+    return {
+      source_type: "machine_stock",
+      main_sales_source: false,
+      reconciliation_only: false,
+      dashboards: ["refills", "inventory", "machines"],
+      excluded_dashboards: ["sales", "products", "finance"],
+      explanation: "Machine stock files feed stock/refill recommendations and do not count as sales revenue.",
+    };
+  }
+  return {
+    source_type: "unknown",
+    main_sales_source: false,
+    reconciliation_only: false,
+    dashboards: [],
+    excluded_dashboards: ["sales", "products", "machines", "finance"],
+    explanation: "This file is not used by KPI dashboards until its report type and mappings are confirmed.",
+  };
+}
+
+function safeStorageFileName(fileName: string) {
+  return fileName
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 120) || "vms-import";
 }
 
 function numberValue(input: string) {
@@ -841,6 +892,10 @@ async function runVmsImport({
   fileName,
   fileType,
   sheetName,
+  originalFileName = fileName,
+  fileHash = null,
+  storageBucket = null,
+  storagePath = null,
   headerNames = [],
   rows,
   originalRows,
@@ -861,6 +916,10 @@ async function runVmsImport({
   fileName: string;
   fileType: string;
   sheetName: string;
+  originalFileName?: string | null;
+  fileHash?: string | null;
+  storageBucket?: string | null;
+  storagePath?: string | null;
   headerNames?: string[];
   rows: Record<string, string>[];
   originalRows?: Record<string, string>[];
@@ -941,9 +1000,16 @@ async function runVmsImport({
       .from("vms_import_batches")
       .update({
         status: "draft",
+        is_active: false,
         import_mode: importMode,
         report_start_date: effectiveReportStartDate,
         report_end_date: effectiveReportEndDate,
+        file_hash: fileHash,
+        storage_bucket: storageBucket,
+        storage_path: storagePath,
+        original_file_name: originalFileName,
+        source_usage: vmsSourceUsage(reportType),
+        dashboard_usage: vmsSourceUsage(reportType),
         row_count: rows.length,
         rows_found: rows.length,
         rows_imported: 0,
@@ -971,9 +1037,16 @@ async function runVmsImport({
         uploaded_by: profile?.team_member_id ?? null,
         uploaded_at: new Date().toISOString(),
         status: "draft",
+        is_active: false,
         import_mode: importMode,
         report_start_date: effectiveReportStartDate,
         report_end_date: effectiveReportEndDate,
+        file_hash: fileHash,
+        storage_bucket: storageBucket,
+        storage_path: storagePath,
+        original_file_name: originalFileName,
+        source_usage: vmsSourceUsage(reportType),
+        dashboard_usage: vmsSourceUsage(reportType),
         row_count: rows.length,
         rows_found: rows.length,
         column_mapping: columnMapping,
@@ -1003,8 +1076,15 @@ async function runVmsImport({
     summary.skippedRows = rows.length;
     const batchUpdate: Record<string, unknown> = {
       status: "previewed",
+      is_active: false,
       row_count: summary.totalRows,
       rows_found: summary.rowsFound,
+      source_usage: vmsSourceUsage(reportType),
+      dashboard_usage: vmsSourceUsage(reportType),
+      file_hash: fileHash,
+      storage_bucket: storageBucket,
+      storage_path: storagePath,
+      original_file_name: originalFileName,
       rows_imported: 0,
       rows_skipped: rows.length,
       rows_skipped_duplicate: 0,
@@ -1531,6 +1611,8 @@ async function runVmsImport({
       net_sales_lyd: netSalesAmount,
       duplicate_hash: sourceRowKey,
     });
+    summary.successfulSalesRows = (summary.successfulSalesRows ?? 0) + 1;
+    summary.estimatedSuccessfulSales = (summary.estimatedSuccessfulSales ?? 0) + netSalesAmount;
     summary.importedRows += 1;
     finishRow("imported");
   }
@@ -1719,12 +1801,26 @@ async function runVmsImport({
 
   summary.rowsNeedingReview = summary.needsProductMappingRows + summary.unknownMachineRows + summary.invalidRows;
   const status = fatalImportError ? "failed" : "imported";
+  const sourceUsage = vmsSourceUsage(reportType);
   const batchUpdate: Record<string, unknown> = {
     status,
+    is_active: status === "imported" && summary.importedRows > 0,
     row_count: summary.totalRows,
     rows_found: summary.rowsFound,
     report_start_date: effectiveReportStartDate,
     report_end_date: effectiveReportEndDate,
+    source_usage: sourceUsage,
+    dashboard_usage: sourceUsage,
+    file_hash: fileHash,
+    storage_bucket: storageBucket,
+    storage_path: storagePath,
+    original_file_name: originalFileName,
+    detected_min_datetime: effectiveReportStartDate ? startOfDateIso(effectiveReportStartDate) : null,
+    detected_max_datetime: effectiveReportEndDate ? endOfDateIso(effectiveReportEndDate) : null,
+    total_successful_sales: summary.estimatedSuccessfulSales ?? 0,
+    successful_rows_count: reportType === "vms_order_details_weekly" ? summary.successfulSalesRows ?? 0 : summary.importedRows,
+    failed_rows_count: (summary.failedVendRows ?? 0) + (summary.failedPaymentRows ?? 0) + (summary.needsReviewTransactionRows ?? 0),
+    refunded_rows_count: summary.refundedRows ?? 0,
     rows_imported: summary.importedRows,
     rows_skipped: summary.skippedRows,
     rows_skipped_duplicate: summary.rowsSkippedDuplicate,
@@ -1848,6 +1944,28 @@ export async function prepareVmsImport(formData: FormData) {
   const detectedReportType = parsed.sheets.map((sheet) => detectVmsReportTypeFromRows(sheet.rows)).find(Boolean) ?? null;
   if (!requestedReportType && detectedReportType) reportType = detectedReportType;
 
+  const fileBuffer = Buffer.from(await file.arrayBuffer());
+  const fileHash = createHash("sha256").update(fileBuffer).digest("hex");
+  const storageBucket = "vms-imports";
+  const storagePath = `${profile.team_member_id ?? profile.id ?? "unknown"}/${Date.now()}-${fileHash.slice(0, 12)}-${safeStorageFileName(file.name)}`;
+  let savedStoragePath: string | null = null;
+  const uploadResult = await supabase.storage
+    .from(storageBucket)
+    .upload(storagePath, fileBuffer, {
+      contentType: file.type || "application/octet-stream",
+      upsert: false,
+    });
+  if (uploadResult.error) {
+    console.warn("[vms-import] Original file storage upload failed; continuing without download reference", {
+      fileName: file.name,
+      fileHash,
+      errorCode: uploadResult.error.name,
+      errorMessage: uploadResult.error.message,
+    });
+  } else {
+    savedStoragePath = storagePath;
+  }
+
   const { data: preview, error } = await supabase
     .from("vms_import_previews")
     .insert({
@@ -1857,6 +1975,10 @@ export async function prepareVmsImport(formData: FormData) {
       report_type: reportType,
       sheets: parsed.sheets,
       uploaded_by: profile.team_member_id,
+      file_hash: fileHash,
+      storage_bucket: savedStoragePath ? storageBucket : null,
+      storage_path: savedStoragePath,
+      original_file_name: file.name,
     })
     .select("id")
     .single();
@@ -1924,6 +2046,10 @@ export async function completeVmsImport(formData: FormData) {
     fileName: preview.file_name,
     fileType: preview.file_type,
     sheetName: sheet.name,
+    originalFileName: preview.original_file_name ?? preview.file_name,
+    fileHash: preview.file_hash ?? null,
+    storageBucket: preview.storage_bucket ?? null,
+    storagePath: preview.storage_path ?? null,
     headerNames: headers,
     rows,
     originalRows: records,
@@ -1935,6 +2061,161 @@ export async function completeVmsImport(formData: FormData) {
     autoCreateMissingProducts,
     updateCostFromVms,
   });
+}
+
+function isMissingTableMutationError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const supabaseError = error as { code?: string; message?: string };
+  const text = String(supabaseError.message ?? "").toLowerCase();
+  return supabaseError.code === "42P01"
+    || supabaseError.code === "42703"
+    || supabaseError.code === "PGRST204"
+    || supabaseError.code === "PGRST205"
+    || text.includes("does not exist")
+    || text.includes("schema cache");
+}
+
+async function hardDeleteBatchRows(
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>,
+  table: string,
+  batchId: string,
+) {
+  const { error } = await supabase.from(table).delete().eq("import_batch_id", batchId);
+  if (error && !isMissingTableMutationError(error)) throw error;
+}
+
+function revalidateVmsDataSourcePaths(batchId?: string) {
+  revalidatePath("/vms-import");
+  if (batchId) revalidatePath(`/vms-import/${batchId}`);
+  revalidatePath("/dashboard");
+  revalidatePath("/sales");
+  revalidatePath("/products-dashboard");
+  revalidatePath("/machines-dashboard");
+  revalidatePath("/inventory-dashboard");
+  revalidatePath("/refills");
+  revalidatePath("/routes/new");
+  revalidatePath("/reports");
+}
+
+export async function updateVmsImportBatchState(formData: FormData) {
+  const profile = await getCurrentProfile();
+  if (!profile || !canConfirmVmsImports(profile)) redirect("/unauthorized");
+  const supabase = await getAuthenticatedSupabaseServerClient();
+  if (!supabase) redirect("/vms-import?error=Supabase%20is%20not%20configured.");
+
+  const batchId = String(formData.get("batch_id") || "");
+  const action = String(formData.get("action") || "");
+  const reason = String(formData.get("reason") || "").trim();
+  const confirmation = String(formData.get("confirmation") || "").trim();
+  if (!batchId) redirect("/vms-import?error=Missing%20VMS%20import%20batch.");
+
+  const { data: beforeBatch, error: beforeError } = await supabase
+    .from("vms_import_batches")
+    .select("*")
+    .eq("id", batchId)
+    .maybeSingle();
+  if (beforeError || !beforeBatch?.id) {
+    console.error("[vms-import] Batch state lookup failed", beforeError);
+    redirect("/vms-import?error=Could%20not%20find%20that%20VMS%20import%20batch.");
+  }
+
+  const actorId = profile.team_member_id ?? profile.id ?? null;
+  const now = new Date().toISOString();
+  let payload: Record<string, unknown> | null = null;
+  let activitySummary = "";
+
+  if (action === "disable") {
+    payload = {
+      status: "disabled",
+      is_active: false,
+      disabled_at: now,
+      disabled_by: actorId,
+      disable_reason: reason || null,
+      updated_at: now,
+    };
+    activitySummary = `Disabled VMS import ${beforeBatch.file_name ?? batchId}`;
+  } else if (action === "enable" || action === "restore") {
+    payload = {
+      status: "imported",
+      is_active: true,
+      disabled_at: null,
+      disabled_by: null,
+      disable_reason: null,
+      deleted_at: null,
+      deleted_by: null,
+      delete_reason: null,
+      updated_at: now,
+    };
+    activitySummary = `Restored VMS import ${beforeBatch.file_name ?? batchId}`;
+  } else if (action === "soft_delete") {
+    payload = {
+      status: "deleted",
+      is_active: false,
+      deleted_at: now,
+      deleted_by: actorId,
+      delete_reason: reason || null,
+      updated_at: now,
+    };
+    activitySummary = `Soft deleted VMS import ${beforeBatch.file_name ?? batchId}`;
+  } else if (action === "hard_delete") {
+    if (!isOwnerAdminRole(profile)) redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Only owner/admin users can hard delete VMS imports.")}`);
+    if (confirmation !== "DELETE") redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Type DELETE to permanently remove this VMS import.")}`);
+
+    for (const table of [
+      "vms_transactions_raw",
+      "vms_sales_raw",
+      "vms_sales_snapshots",
+      "vms_stock_snapshots",
+      "vms_import_rows",
+      "vms_import_raw_rows",
+      "vms_import_preview_rows",
+    ]) {
+      await hardDeleteBatchRows(supabase, table, batchId);
+    }
+    if (beforeBatch.storage_bucket && beforeBatch.storage_path) {
+      await supabase.storage.from(String(beforeBatch.storage_bucket)).remove([String(beforeBatch.storage_path)]);
+    }
+    await supabase.from("vms_import_batches").delete().eq("id", batchId);
+    await logActivity({
+      profile,
+      action: "delete",
+      entityType: "vms_import",
+      entityId: batchId,
+      entityLabel: beforeBatch.file_name ?? batchId,
+      beforeData: beforeBatch,
+      summary: `Hard deleted VMS import ${beforeBatch.file_name ?? batchId}`,
+    });
+    revalidateVmsDataSourcePaths(batchId);
+    redirect("/vms-import?error=VMS%20import%20was%20permanently%20deleted.");
+  } else {
+    redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Unknown VMS import action.")}`);
+  }
+
+  if (!payload) redirect(`/vms-import/${batchId}?error=${encodeURIComponent("No VMS import action was applied.")}`);
+  const { data: afterBatch, error } = await supabase
+    .from("vms_import_batches")
+    .update(payload)
+    .eq("id", batchId)
+    .select("*")
+    .maybeSingle();
+  if (error) {
+    console.error("[vms-import] Batch state update failed", error);
+    redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Could not update this VMS import batch. Run the latest migration.")}`);
+  }
+
+  await logActivity({
+    profile,
+    action: "update",
+    entityType: "vms_import",
+    entityId: batchId,
+    entityLabel: afterBatch?.file_name ?? beforeBatch.file_name ?? batchId,
+    beforeData: beforeBatch,
+    afterData: afterBatch,
+    summary: activitySummary,
+  });
+
+  revalidateVmsDataSourcePaths(batchId);
+  redirect(`/vms-import/${batchId}`);
 }
 
 function jsonRecord(value: unknown): Record<string, string> {
@@ -1955,7 +2236,7 @@ export async function reprocessVmsImportBatch(formData: FormData) {
 
   const { data: batch, error: batchError } = await supabase
     .from("vms_import_batches")
-    .select("id, file_name, file_type, sheet_name, report_type, column_mapping, notes")
+    .select("id, file_name, file_type, sheet_name, report_type, column_mapping, notes, original_file_name, file_hash, storage_bucket, storage_path")
     .eq("id", batchId)
     .maybeSingle();
 
@@ -1996,6 +2277,10 @@ export async function reprocessVmsImportBatch(formData: FormData) {
     fileName: batch.file_name ?? "VMS import",
     fileType: batch.file_type ?? "csv",
     sheetName: batch.sheet_name ?? "Sheet",
+    originalFileName: batch.original_file_name ?? batch.file_name ?? "VMS import",
+    fileHash: batch.file_hash ?? null,
+    storageBucket: batch.storage_bucket ?? null,
+    storagePath: batch.storage_path ?? null,
     rows: rawRows.map((row: any) => jsonRecord(row.normalized_data)),
     originalRows: rawRows.map((row: any) => jsonRecord(row.raw_data)),
     columnMapping: jsonRecord(batch.column_mapping),
