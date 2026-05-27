@@ -8,6 +8,8 @@ type FormSubmitButtonProps = {
   pendingLabel?: string;
   slowLabel?: string;
   slowAfterMs?: number;
+  timeoutLabel?: string;
+  timeoutMs?: number;
   className?: string;
   disabled?: boolean;
 };
@@ -17,13 +19,16 @@ export function FormSubmitButton({
   pendingLabel = "Saving...",
   slowLabel,
   slowAfterMs = 12000,
+  timeoutLabel = "Save took too long. Please check your connection and retry.",
+  timeoutMs = 30000,
   className = "btn-primary",
   disabled = false,
 }: FormSubmitButtonProps) {
   const { pending } = useFormStatus();
-  const [clickedPending, setClickedPending] = useState(false);
+  const [optimisticPending, setOptimisticPending] = useState(false);
   const [showSlowLabel, setShowSlowLabel] = useState(false);
-  const activePending = pending || clickedPending;
+  const [timedOut, setTimedOut] = useState(false);
+  const activePending = !timedOut && (pending || optimisticPending);
 
   useEffect(() => {
     if (!activePending || !slowLabel) {
@@ -34,11 +39,31 @@ export function FormSubmitButton({
     return () => clearTimeout(timer);
   }, [activePending, slowAfterMs, slowLabel]);
 
+  useEffect(() => {
+    if (!optimisticPending || pending) return;
+    const timer = setTimeout(() => setOptimisticPending(false), 1500);
+    return () => clearTimeout(timer);
+  }, [optimisticPending, pending]);
+
+  useEffect(() => {
+    if (!pending) {
+      setTimedOut(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setTimedOut(true);
+      setOptimisticPending(false);
+      setShowSlowLabel(false);
+    }, timeoutMs);
+    return () => clearTimeout(timer);
+  }, [optimisticPending, pending, timeoutMs]);
+
   function handleClick(event: MouseEvent<HTMLButtonElement>) {
     if (disabled || activePending) return;
     const form = event.currentTarget.form;
     if (form && !form.checkValidity()) return;
-    setClickedPending(true);
+    setTimedOut(false);
+    setOptimisticPending(true);
   }
 
   return (
@@ -56,6 +81,11 @@ export function FormSubmitButton({
             {pendingLabel}
           </span>
           {showSlowLabel ? <span className="text-xs font-medium opacity-80">{slowLabel}</span> : null}
+        </span>
+      ) : timedOut ? (
+        <span className="inline-flex flex-col items-center justify-center gap-1 text-center">
+          <span>{children}</span>
+          <span className="text-xs font-medium opacity-80">{timeoutLabel}</span>
         </span>
       ) : children}
     </button>

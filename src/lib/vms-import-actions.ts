@@ -1885,14 +1885,20 @@ type VmsPreviewSheetPayload = { name: string; rows: string[][] };
 
 const VMS_ORIGINAL_FILE_UPLOAD_SOFT_TIMEOUT_MS = 8000;
 const VMS_PREVIEW_ROW_INSERT_LIMIT = 500;
+const VMS_SAVE_QUERY_TIMEOUT_MS = 30000;
 
-async function withSoftTimeout<T>(promise: Promise<T>, timeoutMs: number) {
+type SoftTimeoutResult<T> =
+  | { timedOut: true }
+  | { timedOut: false; value: T }
+  | { timedOut: false; error: unknown };
+
+async function withSoftTimeout<T>(promise: PromiseLike<T>, timeoutMs: number): Promise<SoftTimeoutResult<T>> {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   const timeout = new Promise<{ timedOut: true }>((resolve) => {
     timeoutId = setTimeout(() => resolve({ timedOut: true }), timeoutMs);
   });
   const result = await Promise.race([
-    promise.then(
+    Promise.resolve(promise).then(
       (value) => ({ timedOut: false as const, value }),
       (error) => ({ timedOut: false as const, error }),
     ),
@@ -2045,7 +2051,21 @@ async function createPreviewImportBatch({
     dashboard_usage: vmsSourceUsage(reportType),
   };
 
-  const rich = await supabase.from("vms_import_batches").insert(richPayload).select("id").single();
+  const richResult = await withSoftTimeout(
+    supabase.from("vms_import_batches").insert(richPayload).select("id").single(),
+    VMS_SAVE_QUERY_TIMEOUT_MS,
+  );
+  if (richResult.timedOut) {
+    return {
+      id: null,
+      error: { code: "TIMEOUT", message: "VMS import batch save took too long. Please check your connection and retry." },
+      warning: null as string | null,
+    };
+  }
+  if ("error" in richResult) {
+    return { id: null, error: richResult.error, warning: null as string | null };
+  }
+  const rich = richResult.value;
   if (!rich.error && rich.data?.id) return { id: String(rich.data.id), warning: null as string | null };
   console.error("[vms-import] Preview batch rich insert failed", {
     queryName: "vms_import_batches.insert.rich_preview",
@@ -2059,15 +2079,29 @@ async function createPreviewImportBatch({
     return { id: null, error: rich.error, warning: null as string | null };
   }
 
-  const fallback = await supabase.from("vms_import_batches").insert({
-    source_type: basePayload.source_type,
-    file_name: basePayload.file_name,
-    imported_by: basePayload.imported_by,
-    status: "previewed",
-    row_count: rowsFound,
-    error_count: 0,
-    notes: basePayload.notes,
-  }).select("id").single();
+  const fallbackResult = await withSoftTimeout(
+    supabase.from("vms_import_batches").insert({
+      source_type: basePayload.source_type,
+      file_name: basePayload.file_name,
+      imported_by: basePayload.imported_by,
+      status: "previewed",
+      row_count: rowsFound,
+      error_count: 0,
+      notes: basePayload.notes,
+    }).select("id").single(),
+    VMS_SAVE_QUERY_TIMEOUT_MS,
+  );
+  if (fallbackResult.timedOut) {
+    return {
+      id: null,
+      error: { code: "TIMEOUT", message: "VMS import batch save took too long. Please check your connection and retry." },
+      warning: null as string | null,
+    };
+  }
+  if ("error" in fallbackResult) {
+    return { id: null, error: fallbackResult.error, warning: null as string | null };
+  }
+  const fallback = fallbackResult.value;
   if (!fallback.error && fallback.data?.id) {
     return {
       id: String(fallback.data.id),
@@ -2118,7 +2152,33 @@ async function saveVmsPreviewRows({
 
   for (let index = 0; index < rows.length; index += 500) {
     const chunk = rows.slice(index, index + 500);
-    const { error } = await supabase.from("vms_import_preview_rows").insert(chunk);
+    const insertResult = await withSoftTimeout(
+      supabase.from("vms_import_preview_rows").insert(chunk),
+      VMS_SAVE_QUERY_TIMEOUT_MS,
+    );
+    if (insertResult.timedOut) {
+      console.error("[vms-import] Preview row insert timed out", {
+        queryName: "vms_import_preview_rows.insert",
+        previewId,
+        importBatchId: batchId,
+        chunkStart: index,
+        chunkSize: chunk.length,
+        timeoutMs: VMS_SAVE_QUERY_TIMEOUT_MS,
+      });
+      redirect(`/vms-import?error=${encodeURIComponent("Save took too long. Please check your connection and retry.")}`);
+    }
+    if ("error" in insertResult) {
+      console.error("[vms-import] Preview row insert threw", {
+        queryName: "vms_import_preview_rows.insert",
+        previewId,
+        importBatchId: batchId,
+        chunkStart: index,
+        chunkSize: chunk.length,
+        error: insertResult.error instanceof Error ? insertResult.error.message : String(insertResult.error),
+      });
+      redirect(`/vms-import?error=${encodeURIComponent("Could not save VMS preview rows. Please retry.")}`);
+    }
+    const { error } = insertResult.value;
     if (!error) continue;
 
     if (isMissingPreviewRowsSchemaError(error)) {
@@ -2135,7 +2195,33 @@ async function saveVmsPreviewRows({
         row_number: row.row_number,
         raw_row: row.raw_row,
       }));
-      const legacy = await supabase.from("vms_import_preview_rows").insert(legacyChunk);
+      const legacyResult = await withSoftTimeout(
+        supabase.from("vms_import_preview_rows").insert(legacyChunk),
+        VMS_SAVE_QUERY_TIMEOUT_MS,
+      );
+      if (legacyResult.timedOut) {
+        console.error("[vms-import] Legacy preview row insert timed out", {
+          queryName: "vms_import_preview_rows.insert.legacy",
+          previewId,
+          importBatchId: batchId,
+          chunkStart: index,
+          chunkSize: legacyChunk.length,
+          timeoutMs: VMS_SAVE_QUERY_TIMEOUT_MS,
+        });
+        redirect(`/vms-import?error=${encodeURIComponent("Save took too long. Please check your connection and retry.")}`);
+      }
+      if ("error" in legacyResult) {
+        console.error("[vms-import] Legacy preview row insert threw", {
+          queryName: "vms_import_preview_rows.insert.legacy",
+          previewId,
+          importBatchId: batchId,
+          chunkStart: index,
+          chunkSize: legacyChunk.length,
+          error: legacyResult.error instanceof Error ? legacyResult.error.message : String(legacyResult.error),
+        });
+        redirect(`/vms-import?error=${encodeURIComponent("Could not save VMS preview rows. Please retry.")}`);
+      }
+      const legacy = legacyResult.value;
       if (!legacy.error) continue;
       console.error("[vms-import] Legacy preview row insert failed", {
         queryName: "vms_import_preview_rows.insert.legacy",
@@ -2307,7 +2393,7 @@ export async function prepareVmsImport(formData: FormData) {
   });
 
   if (!batchResult.id) {
-    const batchError = "error" in batchResult ? batchResult.error : null;
+    const batchError = ("error" in batchResult ? batchResult.error : null) as { code?: string; message?: string; details?: string; hint?: string } | null;
     console.error("[vms-import] Failed to create preview import batch", {
       ...previewDebugContext({ file, parsed, reportType, batchId: null, currentUserId, effectivePermissions }),
       queryName: "vms_import_batches.insert.preview",
@@ -2345,11 +2431,33 @@ export async function prepareVmsImport(formData: FormData) {
     storage_path: savedStoragePath,
     original_file_name: file.name,
   };
-  const previewInsert = await supabase
-    .from("vms_import_previews")
-    .insert(richPreviewPayload)
-    .select("id")
-    .single();
+  const previewInsertResult = await withSoftTimeout(
+    supabase
+      .from("vms_import_previews")
+      .insert(richPreviewPayload)
+      .select("id")
+      .single(),
+    VMS_SAVE_QUERY_TIMEOUT_MS,
+  );
+
+  if (previewInsertResult.timedOut) {
+    console.error("[vms-import] Preview insert timed out", {
+      ...previewDebugContext({ file, parsed, reportType, batchId: batchResult.id, currentUserId, effectivePermissions }),
+      queryName: "vms_import_previews.insert.rich",
+      timeoutMs: VMS_SAVE_QUERY_TIMEOUT_MS,
+    });
+    redirect(`/vms-import?error=${encodeURIComponent("Save took too long. Please check your connection and retry.")}`);
+  }
+  if ("error" in previewInsertResult) {
+    console.error("[vms-import] Preview insert threw", {
+      ...previewDebugContext({ file, parsed, reportType, batchId: batchResult.id, currentUserId, effectivePermissions }),
+      queryName: "vms_import_previews.insert.rich",
+      error: previewInsertResult.error instanceof Error ? previewInsertResult.error.message : String(previewInsertResult.error),
+    });
+    redirect(`/vms-import?error=${encodeURIComponent("Could not save VMS import preview. Please retry.")}`);
+  }
+
+  const previewInsert = previewInsertResult.value;
 
   if (!previewInsert.error && previewInsert.data?.id) {
     previewId = String(previewInsert.data.id);
@@ -2373,17 +2481,37 @@ export async function prepareVmsImport(formData: FormData) {
       redirect(`/vms-import?error=${encodeURIComponent(previewErrorMessage(previewInsert.error, "VMS import previews"))}`);
     }
 
-    const fallback = await supabase
-      .from("vms_import_previews")
-      .insert({
-        file_name: file.name,
-        file_type: parsed.fileType,
-        report_type: reportType,
-        sheets: parsed.sheets,
-        uploaded_by: profile.team_member_id,
-      })
-      .select("id")
-      .single();
+    const fallbackResult = await withSoftTimeout(
+      supabase
+        .from("vms_import_previews")
+        .insert({
+          file_name: file.name,
+          file_type: parsed.fileType,
+          report_type: reportType,
+          sheets: parsed.sheets,
+          uploaded_by: profile.team_member_id,
+        })
+        .select("id")
+        .single(),
+      VMS_SAVE_QUERY_TIMEOUT_MS,
+    );
+    if (fallbackResult.timedOut) {
+      console.error("[vms-import] Legacy preview insert timed out", {
+        ...previewDebugContext({ file, parsed, reportType, batchId: batchResult.id, currentUserId, effectivePermissions }),
+        queryName: "vms_import_previews.insert.legacy",
+        timeoutMs: VMS_SAVE_QUERY_TIMEOUT_MS,
+      });
+      redirect(`/vms-import?error=${encodeURIComponent("Save took too long. Please check your connection and retry.")}`);
+    }
+    if ("error" in fallbackResult) {
+      console.error("[vms-import] Legacy preview insert threw", {
+        ...previewDebugContext({ file, parsed, reportType, batchId: batchResult.id, currentUserId, effectivePermissions }),
+        queryName: "vms_import_previews.insert.legacy",
+        error: fallbackResult.error instanceof Error ? fallbackResult.error.message : String(fallbackResult.error),
+      });
+      redirect(`/vms-import?error=${encodeURIComponent("Could not save VMS import preview. Please retry.")}`);
+    }
+    const fallback = fallbackResult.value;
     if (fallback.error || !fallback.data?.id) {
       console.error("[vms-import] Failed to create legacy preview", {
         ...previewDebugContext({ file, parsed, reportType, batchId: batchResult.id, currentUserId, effectivePermissions }),
