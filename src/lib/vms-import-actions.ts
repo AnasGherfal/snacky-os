@@ -655,8 +655,9 @@ async function ensureConfirmedMapping({
   return data ? { mapping: data, action: "created" as const } : null;
 }
 
-function previewRedirect(previewId: string, sheetName: string, reportType: string, error?: string, headerRow?: number) {
+function previewRedirect(previewId: string, sheetName: string, reportType: string, error?: string, headerRow?: number, importBatchId?: string) {
   const params = new URLSearchParams({ previewId, sheet: sheetName, reportType });
+  if (importBatchId) params.set("importBatchId", importBatchId);
   if (headerRow !== undefined) params.set("headerRow", String(headerRow));
   if (error) params.set("error", error);
   redirect(`/vms-import?${params.toString()}`);
@@ -989,82 +990,188 @@ async function runVmsImport({
   let batch: { id: string; reprocess_count?: number | null } | null = null;
 
   if (existingBatchId) {
-    const { data: existingBatch, error: existingBatchError } = await supabase
-      .from("vms_import_batches")
-      .select("id, reprocess_count")
-      .eq("id", existingBatchId)
-      .maybeSingle();
+    const lookupResult = await withSoftTimeout(
+      supabase
+        .from("vms_import_batches")
+        .select("id, reprocess_count")
+        .eq("id", existingBatchId)
+        .maybeSingle(),
+      VMS_SAVE_QUERY_TIMEOUT_MS,
+    );
 
-    if (existingBatchError || !existingBatch?.id) {
-      console.error("[vms-import] Reprocess batch lookup failed", existingBatchError);
-      redirect("/vms-import?error=Could%20not%20find%20that%20VMS%20import%20batch.");
+    if (lookupResult.timedOut) {
+      const timeoutError = { code: "TIMEOUT", message: "VMS import batch lookup took too long." };
+      logVmsBatchMutationFailure({
+        queryName: "vms_import_batches.select.confirm_existing",
+        error: timeoutError,
+        profile,
+        selectedImportBatchId: existingBatchId,
+        currentStep: "confirm_import",
+      });
+      redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(timeoutError))}`);
+    }
+    if ("error" in lookupResult) {
+      logVmsBatchMutationFailure({
+        queryName: "vms_import_batches.select.confirm_existing",
+        error: lookupResult.error,
+        profile,
+        selectedImportBatchId: existingBatchId,
+        currentStep: "confirm_import",
+      });
+      redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(lookupResult.error))}`);
     }
 
-    batch = existingBatch;
-    await supabase
-      .from("vms_import_batches")
-      .update({
-        status: "draft",
-        is_active: false,
-        import_mode: importMode,
-        report_start_date: effectiveReportStartDate,
-        report_end_date: effectiveReportEndDate,
-        file_hash: fileHash,
-        storage_bucket: storageBucket,
-        storage_path: storagePath,
-        original_file_name: originalFileName,
-        source_usage: vmsSourceUsage(reportType),
-        dashboard_usage: vmsSourceUsage(reportType),
-        row_count: rows.length,
-        rows_found: rows.length,
-        rows_imported: 0,
-        rows_skipped: 0,
-        rows_skipped_duplicate: 0,
-        rows_needing_review: 0,
-        error_count: 0,
-        errors: [],
-        unknown_machines: [],
-        unmapped_products: [],
-        column_mapping: columnMapping,
-      })
-      .eq("id", batch.id);
+    const existingLookup = lookupResult.value;
+    if (existingLookup.error || !existingLookup.data?.id) {
+      logVmsBatchMutationFailure({
+        queryName: "vms_import_batches.select.confirm_existing",
+        error: existingLookup.error ?? { code: "NOT_FOUND", message: "No existing preview batch found for final import." },
+        profile,
+        selectedImportBatchId: existingBatchId,
+        currentStep: "confirm_import",
+      });
+      redirect("/vms-import?error=Could%20not%20find%20the%20preview%20VMS%20import%20batch.%20Please%20re-upload%20the%20file.");
+    }
+
+    batch = existingLookup.data;
+    const confirmStartPayload = {
+      status: "draft",
+      is_active: false,
+      import_mode: importMode,
+      report_start_date: effectiveReportStartDate,
+      report_end_date: effectiveReportEndDate,
+      file_hash: fileHash,
+      storage_bucket: storageBucket,
+      storage_path: storagePath,
+      original_file_name: originalFileName,
+      source_usage: vmsSourceUsage(reportType),
+      dashboard_usage: vmsSourceUsage(reportType),
+      row_count: rows.length,
+      rows_found: rows.length,
+      rows_imported: 0,
+      rows_skipped: 0,
+      rows_skipped_duplicate: 0,
+      rows_needing_review: 0,
+      error_count: 0,
+      errors: [],
+      unknown_machines: [],
+      unmapped_products: [],
+      column_mapping: columnMapping,
+    };
+    const updateResult = await withSoftTimeout(
+      supabase
+        .from("vms_import_batches")
+        .update(confirmStartPayload)
+        .eq("id", batch.id),
+      VMS_SAVE_QUERY_TIMEOUT_MS,
+    );
+    if (updateResult.timedOut) {
+      const timeoutError = { code: "TIMEOUT", message: "VMS import batch update took too long." };
+      logVmsBatchMutationFailure({
+        queryName: "vms_import_batches.update.confirm_existing",
+        error: timeoutError,
+        payload: confirmStartPayload,
+        profile,
+        selectedImportBatchId: batch.id,
+        currentStep: "confirm_import",
+      });
+      redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(timeoutError))}`);
+    }
+    if ("error" in updateResult) {
+      logVmsBatchMutationFailure({
+        queryName: "vms_import_batches.update.confirm_existing",
+        error: updateResult.error,
+        payload: confirmStartPayload,
+        profile,
+        selectedImportBatchId: batch.id,
+        currentStep: "confirm_import",
+      });
+      redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(updateResult.error))}`);
+    }
+    if (updateResult.value.error) {
+      logVmsBatchMutationFailure({
+        queryName: "vms_import_batches.update.confirm_existing",
+        error: updateResult.value.error,
+        payload: confirmStartPayload,
+        profile,
+        selectedImportBatchId: batch.id,
+        currentStep: "confirm_import",
+      });
+      redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(updateResult.value.error))}`);
+    }
 
   } else {
-    const { data: newBatch, error: batchError } = await supabase
-      .from("vms_import_batches")
-      .insert({
-        source_type: `${reportType}_${fileType}`,
-        file_name: fileName,
-        file_type: fileType,
-        sheet_name: sheetName,
-        report_type: reportType,
-        imported_by: profile?.team_member_id ?? null,
-        uploaded_by: profile?.team_member_id ?? null,
-        uploaded_at: new Date().toISOString(),
-        status: "draft",
-        is_active: false,
-        import_mode: importMode,
-        report_start_date: effectiveReportStartDate,
-        report_end_date: effectiveReportEndDate,
-        file_hash: fileHash,
-        storage_bucket: storageBucket,
-        storage_path: storagePath,
-        original_file_name: originalFileName,
-        source_usage: vmsSourceUsage(reportType),
-        dashboard_usage: vmsSourceUsage(reportType),
-        row_count: rows.length,
-        rows_found: rows.length,
-        column_mapping: columnMapping,
-      })
-      .select("id, reprocess_count")
-      .single();
+    const createPayload = {
+      source_type: `${reportType}_${fileType}`,
+      file_name: fileName,
+      file_type: fileType,
+      sheet_name: sheetName,
+      report_type: reportType,
+      imported_by: profile?.team_member_id ?? null,
+      uploaded_by: profile?.team_member_id ?? null,
+      uploaded_at: new Date().toISOString(),
+      status: "draft",
+      is_active: false,
+      import_mode: importMode,
+      report_start_date: effectiveReportStartDate,
+      report_end_date: effectiveReportEndDate,
+      file_hash: fileHash,
+      storage_bucket: storageBucket,
+      storage_path: storagePath,
+      original_file_name: originalFileName,
+      source_usage: vmsSourceUsage(reportType),
+      dashboard_usage: vmsSourceUsage(reportType),
+      row_count: rows.length,
+      rows_found: rows.length,
+      column_mapping: columnMapping,
+    };
+    const createResult = await withSoftTimeout(
+      supabase
+        .from("vms_import_batches")
+        .insert(createPayload)
+        .select("id, reprocess_count")
+        .single(),
+      VMS_SAVE_QUERY_TIMEOUT_MS,
+    );
 
-    if (batchError || !newBatch?.id) {
-      console.error("[vms-import] Failed to create batch", batchError);
-      redirect("/vms-import?error=Could%20not%20create%20import%20batch.");
+    if (createResult.timedOut) {
+      const timeoutError = { code: "TIMEOUT", message: "VMS import batch create took too long." };
+      logVmsBatchMutationFailure({
+        queryName: "vms_import_batches.insert.final",
+        error: timeoutError,
+        payload: createPayload,
+        profile,
+        selectedImportBatchId: null,
+        currentStep: "confirm_import",
+      });
+      redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(timeoutError))}`);
+    }
+    if ("error" in createResult) {
+      logVmsBatchMutationFailure({
+        queryName: "vms_import_batches.insert.final",
+        error: createResult.error,
+        payload: createPayload,
+        profile,
+        selectedImportBatchId: null,
+        currentStep: "confirm_import",
+      });
+      redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(createResult.error))}`);
     }
 
-    batch = newBatch;
+    const create = createResult.value;
+    if (create.error || !create.data?.id) {
+      logVmsBatchMutationFailure({
+        queryName: "vms_import_batches.insert.final",
+        error: create.error ?? { code: "NO_BATCH_ID", message: "VMS import batch insert returned no id." },
+        payload: createPayload,
+        profile,
+        selectedImportBatchId: null,
+        currentStep: "confirm_import",
+      });
+      redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(create.error))}`);
+    }
+
+    batch = create.data;
   }
 
   if (!batch?.id) redirect("/vms-import?error=Could%20not%20prepare%20VMS%20import%20batch.");
@@ -1100,7 +1207,44 @@ async function runVmsImport({
       review_summary: [],
       notes: JSON.stringify(summary),
     };
-    await supabase.from("vms_import_batches").update(batchUpdate).eq("id", batch.id);
+    const previewUpdateResult = await withSoftTimeout(
+      supabase.from("vms_import_batches").update(batchUpdate).eq("id", batch.id),
+      VMS_SAVE_QUERY_TIMEOUT_MS,
+    );
+    if (previewUpdateResult.timedOut) {
+      const timeoutError = { code: "TIMEOUT", message: "VMS import preview batch update took too long." };
+      logVmsBatchMutationFailure({
+        queryName: "vms_import_batches.update.preview_only",
+        error: timeoutError,
+        payload: batchUpdate,
+        profile,
+        selectedImportBatchId: batch.id,
+        currentStep: "preview_only",
+      });
+      redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(timeoutError))}`);
+    }
+    if ("error" in previewUpdateResult) {
+      logVmsBatchMutationFailure({
+        queryName: "vms_import_batches.update.preview_only",
+        error: previewUpdateResult.error,
+        payload: batchUpdate,
+        profile,
+        selectedImportBatchId: batch.id,
+        currentStep: "preview_only",
+      });
+      redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(previewUpdateResult.error))}`);
+    }
+    if (previewUpdateResult.value.error) {
+      logVmsBatchMutationFailure({
+        queryName: "vms_import_batches.update.preview_only",
+        error: previewUpdateResult.value.error,
+        payload: batchUpdate,
+        profile,
+        selectedImportBatchId: batch.id,
+        currentStep: "preview_only",
+      });
+      redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(previewUpdateResult.value.error))}`);
+    }
     await saveHeaderMappingMemory({ supabase, profile, reportType, headerNames, mapping: columnMapping });
     await logActivity({
       profile,
@@ -1848,10 +1992,47 @@ async function runVmsImport({
     batchUpdate.reprocess_count = Number(batch.reprocess_count ?? 0) + 1;
   }
 
-  await supabase
-    .from("vms_import_batches")
-    .update(batchUpdate)
-    .eq("id", batch.id);
+  const finalUpdateResult = await withSoftTimeout(
+    supabase
+      .from("vms_import_batches")
+      .update(batchUpdate)
+      .eq("id", batch.id),
+    VMS_SAVE_QUERY_TIMEOUT_MS,
+  );
+  if (finalUpdateResult.timedOut) {
+    const timeoutError = { code: "TIMEOUT", message: "VMS import final batch update took too long." };
+    logVmsBatchMutationFailure({
+      queryName: "vms_import_batches.update.final",
+      error: timeoutError,
+      payload: batchUpdate,
+      profile,
+      selectedImportBatchId: batch.id,
+      currentStep: "confirm_import",
+    });
+    redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(timeoutError))}`);
+  }
+  if ("error" in finalUpdateResult) {
+    logVmsBatchMutationFailure({
+      queryName: "vms_import_batches.update.final",
+      error: finalUpdateResult.error,
+      payload: batchUpdate,
+      profile,
+      selectedImportBatchId: batch.id,
+      currentStep: "confirm_import",
+    });
+    redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(finalUpdateResult.error))}`);
+  }
+  if (finalUpdateResult.value.error) {
+    logVmsBatchMutationFailure({
+      queryName: "vms_import_batches.update.final",
+      error: finalUpdateResult.value.error,
+      payload: batchUpdate,
+      profile,
+      selectedImportBatchId: batch.id,
+      currentStep: "confirm_import",
+    });
+    redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(finalUpdateResult.value.error))}`);
+  }
 
   await saveHeaderMappingMemory({ supabase, profile, reportType, headerNames, mapping: columnMapping });
 
@@ -1944,6 +2125,92 @@ function previewErrorMessage(error: unknown, tableName: string) {
     return `Preview schema is outdated${match?.[1] ? `. Missing column: ${match[1]}.` : ". Run the latest migration."}`;
   }
   return `${tableName} failed while preparing the VMS import preview. Technical details are in the server console.`;
+}
+
+function supabaseMutationError(error: unknown) {
+  return error && typeof error === "object" ? error as { code?: string; message?: string; details?: string; hint?: string } : null;
+}
+
+function mutationErrorText(error: unknown) {
+  const supabaseError = supabaseMutationError(error);
+  return `${supabaseError?.code ?? ""} ${supabaseError?.message ?? ""} ${supabaseError?.details ?? ""} ${supabaseError?.hint ?? ""}`.toLowerCase();
+}
+
+function missingColumnName(error: unknown) {
+  const supabaseError = supabaseMutationError(error);
+  const text = `${supabaseError?.message ?? ""} ${supabaseError?.details ?? ""} ${supabaseError?.hint ?? ""}`;
+  return text.match(/column ['"]?([a-zA-Z0-9_]+)['"]?/i)?.[1] ?? null;
+}
+
+function isBatchMissingTableError(error: unknown) {
+  const supabaseError = supabaseMutationError(error);
+  const text = mutationErrorText(error);
+  return supabaseError?.code === "42P01" || supabaseError?.code === "PGRST205" || text.includes("does not exist");
+}
+
+function isBatchMissingColumnError(error: unknown) {
+  const supabaseError = supabaseMutationError(error);
+  const text = mutationErrorText(error);
+  return supabaseError?.code === "42703" || supabaseError?.code === "PGRST204" || text.includes("column") || text.includes("schema cache");
+}
+
+function isBatchPermissionError(error: unknown) {
+  const supabaseError = supabaseMutationError(error);
+  const text = mutationErrorText(error);
+  return supabaseError?.code === "42501" || text.includes("permission denied") || text.includes("row-level security") || text.includes("rls");
+}
+
+function isBatchConstraintError(error: unknown) {
+  const supabaseError = supabaseMutationError(error);
+  const text = mutationErrorText(error);
+  return supabaseError?.code === "23514" || text.includes("violates check constraint") || text.includes("import_mode") || text.includes("status");
+}
+
+function batchMutationErrorMessage(error: unknown) {
+  const supabaseError = supabaseMutationError(error);
+  if (supabaseError?.code === "TIMEOUT") return "Save took too long. Please check your connection and retry.";
+  if (isBatchPermissionError(error)) return "You do not have permission to create or confirm VMS imports.";
+  if (isBatchMissingTableError(error)) return "VMS import batches table is missing. Run the latest migration.";
+  if (isBatchMissingColumnError(error)) {
+    const column = missingColumnName(error);
+    return `VMS import batch schema is outdated${column ? `. Missing column: ${column}.` : ". Run the latest migration."}`;
+  }
+  if (isBatchConstraintError(error)) {
+    return `VMS import batch status or import mode was rejected by the database constraint. Technical detail: ${supabaseError?.message ?? "check constraint failed"}`;
+  }
+  if (supabaseError?.code === "23505") return "This VMS import batch already exists. Open the existing import or reprocess it instead of creating a duplicate.";
+  return "Could not save VMS import batch. Technical details are in the server console.";
+}
+
+function logVmsBatchMutationFailure({
+  queryName,
+  error,
+  payload,
+  profile,
+  selectedImportBatchId,
+  currentStep,
+}: {
+  queryName: string;
+  error: unknown;
+  payload?: unknown;
+  profile: Awaited<ReturnType<typeof getCurrentProfile>>;
+  selectedImportBatchId?: string | null;
+  currentStep: string;
+}) {
+  const supabaseError = supabaseMutationError(error);
+  console.error("[vms-import] VMS import batch mutation failed", {
+    queryName,
+    code: supabaseError?.code,
+    message: supabaseError?.message,
+    details: supabaseError?.details,
+    hint: supabaseError?.hint,
+    payload,
+    currentUserId: profile?.id ?? profile?.team_member_id ?? null,
+    sessionExists: Boolean(profile),
+    effectivePermissions: profile ? getEffectivePermissions(profile) : [],
+    selectedImportBatchId: selectedImportBatchId ?? null,
+    currentStep,
+  });
 }
 
 function previewDebugContext({
@@ -2556,7 +2823,7 @@ export async function prepareVmsImport(formData: FormData) {
     elapsedMs: Date.now() - previewStartedAt,
   });
 
-  redirect(`/vms-import?previewId=${previewId}&sheet=${encodeURIComponent(parsed.sheets[0].name)}&reportType=${reportType}&step=2`);
+  redirect(`/vms-import?previewId=${previewId}&importBatchId=${batchResult.id}&sheet=${encodeURIComponent(parsed.sheets[0].name)}&reportType=${reportType}&step=2`);
 }
 
 export async function importVmsCsv(formData: FormData) {
@@ -2579,26 +2846,119 @@ export async function completeVmsImport(formData: FormData) {
   const importMode = parseVmsImportMode(formData.get("import_mode"));
   const submittedReportStartDate = String(formData.get("report_start_date") || "").trim() || null;
   const submittedReportEndDate = String(formData.get("report_end_date") || "").trim() || null;
+  const submittedImportBatchId = String(formData.get("import_batch_id") || formData.get("importBatchId") || "").trim() || undefined;
   if (!previewId || !sheetName || !reportType) redirect("/vms-import?error=Missing%20VMS%20import%20preview%20details.");
 
-  const { data: preview } = await supabase.from("vms_import_previews").select("*").eq("id", previewId).maybeSingle();
+  const previewLookupResult = await withSoftTimeout(
+    supabase.from("vms_import_previews").select("*").eq("id", previewId).maybeSingle(),
+    VMS_SAVE_QUERY_TIMEOUT_MS,
+  );
+  if (previewLookupResult.timedOut) {
+    const timeoutError = { code: "TIMEOUT", message: "VMS import preview lookup took too long." };
+    logVmsBatchMutationFailure({
+      queryName: "vms_import_previews.select.confirm",
+      error: timeoutError,
+      profile,
+      selectedImportBatchId: submittedImportBatchId ?? null,
+      currentStep: "confirm_import",
+    });
+    redirect(`/vms-import?error=${encodeURIComponent("Save took too long. Please check your connection and retry.")}`);
+  }
+  if ("error" in previewLookupResult) {
+    logVmsBatchMutationFailure({
+      queryName: "vms_import_previews.select.confirm",
+      error: previewLookupResult.error,
+      profile,
+      selectedImportBatchId: submittedImportBatchId ?? null,
+      currentStep: "confirm_import",
+    });
+    redirect(`/vms-import?error=${encodeURIComponent("Could not load the VMS import preview before confirming. Technical details are in the server console.")}`);
+  }
+  const { data: preview, error: previewLookupError } = previewLookupResult.value;
+  if (previewLookupError) {
+    logVmsBatchMutationFailure({
+      queryName: "vms_import_previews.select.confirm",
+      error: previewLookupError,
+      profile,
+      selectedImportBatchId: submittedImportBatchId ?? null,
+      currentStep: "confirm_import",
+    });
+    redirect(`/vms-import?error=${encodeURIComponent(previewErrorMessage(previewLookupError, "VMS import previews"))}`);
+  }
   if (!preview) redirect("/vms-import?error=VMS%20import%20preview%20not%20found.");
-  const previewBatchId = String((preview as { import_batch_id?: string | null }).import_batch_id ?? "").trim() || undefined;
+  let previewBatchId = submittedImportBatchId || String((preview as { import_batch_id?: string | null }).import_batch_id ?? "").trim() || undefined;
 
   const sheets = (preview.sheets ?? []) as { name: string; rows: string[][] }[];
   const sheet = sheets.find((candidate) => candidate.name === sheetName) ?? sheets[0];
   if (!sheet) redirect("/vms-import?error=Selected%20sheet%20was%20not%20found.");
 
+  if (!previewBatchId) {
+    const previewRowBatchResult = await withSoftTimeout(
+      supabase
+        .from("vms_import_preview_rows")
+        .select("import_batch_id")
+        .eq("preview_id", previewId)
+        .not("import_batch_id", "is", null)
+        .limit(1)
+        .maybeSingle(),
+      VMS_SAVE_QUERY_TIMEOUT_MS,
+    );
+    if (!previewRowBatchResult.timedOut && !("error" in previewRowBatchResult)) {
+      const { data: previewRowBatch, error: previewRowBatchError } = previewRowBatchResult.value;
+      if (!previewRowBatchError && previewRowBatch?.import_batch_id) {
+        previewBatchId = String(previewRowBatch.import_batch_id);
+      } else if (previewRowBatchError && !isMissingPreviewRowsSchemaError(previewRowBatchError)) {
+        logVmsBatchMutationFailure({
+          queryName: "vms_import_preview_rows.select.batch_link",
+          error: previewRowBatchError,
+          profile,
+          selectedImportBatchId: null,
+          currentStep: "confirm_import",
+        });
+      }
+    } else {
+      const linkLookupError = previewRowBatchResult.timedOut
+        ? { code: "TIMEOUT", message: "VMS import preview row batch link lookup took too long." }
+        : previewRowBatchResult.error;
+      logVmsBatchMutationFailure({
+        queryName: "vms_import_preview_rows.select.batch_link",
+        error: linkLookupError,
+        profile,
+        selectedImportBatchId: null,
+        currentStep: "confirm_import",
+      });
+    }
+  }
+
+  if (!previewBatchId) {
+    console.error("[vms-import] Confirm import missing preview batch link", {
+      queryName: "completeVmsImport.preview_batch_link",
+      previewId,
+      submittedImportBatchId: submittedImportBatchId ?? null,
+      sheetName,
+      reportType,
+      currentUserId: profile.id ?? profile.team_member_id ?? null,
+      effectivePermissions: getEffectivePermissions(profile),
+    });
+    previewRedirect(
+      previewId,
+      sheet.name,
+      reportType,
+      "VMS import preview is missing its import batch link. Re-upload the file after running the latest migration.",
+      headerRowIndex,
+    );
+  }
+
   const mapping = readMapping(formData, reportType);
   const missing = requiredMissing(mapping, reportType);
-  if (missing.length) previewRedirect(previewId, sheet.name, reportType, `Map required fields: ${missing.join(", ")}`, headerRowIndex);
+  if (missing.length) previewRedirect(previewId, sheet.name, reportType, `Map required fields: ${missing.join(", ")}`, headerRowIndex, previewBatchId);
 
   const { headers, records } = sheetRowsToRecords(sheet.rows, { reportType, headerRowIndex });
   const rows = applyColumnMapping(records, mapping);
-  if (!rows.length) previewRedirect(previewId, sheet.name, reportType, "Selected sheet has no data rows.", headerRowIndex);
+  if (!rows.length) previewRedirect(previewId, sheet.name, reportType, "Selected sheet has no data rows.", headerRowIndex, previewBatchId);
   const salesReportPeriod = reportType === "sales" ? findSalesReportPeriod(sheet.rows, headerRowIndex) : null;
   if (reportType === "sales" && !salesReportPeriod && !hasSalesRowDate(rows)) {
-    previewRedirect(previewId, sheet.name, reportType, VMS_SALES_DATE_RANGE_ERROR, headerRowIndex);
+    previewRedirect(previewId, sheet.name, reportType, VMS_SALES_DATE_RANGE_ERROR, headerRowIndex, previewBatchId);
   }
 
   await runVmsImport({

@@ -87,6 +87,7 @@ type ImportSummary = {
 type VmsImportSearchParams = {
   [key: string]: string | undefined;
   batchId?: string;
+  importBatchId?: string;
   previewId?: string;
   sheet?: string;
   reportType?: string;
@@ -543,6 +544,7 @@ function requirementSatisfied(field: VmsFieldDef, fields: VmsFieldDef[], mapping
 
 function WizardStateInputs({
   step,
+  importBatchId,
   previewId,
   sheetName,
   reportType,
@@ -557,6 +559,7 @@ function WizardStateInputs({
   finalAction = false,
 }: {
   step?: number;
+  importBatchId?: string;
   previewId: string;
   sheetName: string;
   reportType: VmsReportType;
@@ -573,6 +576,7 @@ function WizardStateInputs({
   return (
     <>
       {step ? <input type="hidden" name="step" value={step} /> : null}
+      {importBatchId ? <input type="hidden" name={finalAction ? "import_batch_id" : "importBatchId"} value={importBatchId} /> : null}
       <input type="hidden" name={finalAction ? "preview_id" : "previewId"} value={previewId} />
       <input type="hidden" name={finalAction ? "sheet_name" : "sheet"} value={sheetName} />
       <input type="hidden" name={finalAction ? "report_type" : "reportType"} value={reportType} />
@@ -1131,6 +1135,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
 
   let preview: VmsImportPreviewRow | null = null;
   let selectedPreviewNotice = "";
+  let selectedImportBatchId = String(params.importBatchId ?? "").trim();
   if (selectedPreviewId) {
     const { data, error: previewError } = await supabase
       .from("vms_import_previews")
@@ -1155,6 +1160,25 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
     preview = data as unknown as VmsImportPreviewRow | null;
     if (!preview) {
       selectedPreviewNotice = "This import batch no longer exists. Showing latest imports instead.";
+    } else if (!selectedImportBatchId) {
+      const { data: previewRowBatch, error: previewRowBatchError } = await supabase
+        .from("vms_import_preview_rows")
+        .select("import_batch_id")
+        .eq("preview_id", selectedPreviewId)
+        .not("import_batch_id", "is", null)
+        .limit(1)
+        .maybeSingle();
+      if (!previewRowBatchError && previewRowBatch?.import_batch_id) {
+        selectedImportBatchId = String(previewRowBatch.import_batch_id);
+      } else if (previewRowBatchError && !isMissingSchemaError(queryError(previewRowBatchError))) {
+        logVmsImportLoadIssue({
+          queryName: "vms_import_preview_rows.batch_link",
+          error: previewRowBatchError,
+          selectedBatchId: selectedPreviewId,
+          currentUserId: profile?.id ?? null,
+          effectivePermissions,
+        });
+      }
     }
   }
 
@@ -1368,6 +1392,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
   const rowsReadyToImport = validation ? Math.max(0, validation.importedRows - duplicatePreviewCount) : 0;
 
   const baseState = {
+    importBatchId: selectedImportBatchId,
     previewId: String(preview?.id ?? params.previewId ?? ""),
     sheetName: selectedSheet?.name ?? "",
     reportType: selectedReportType,
@@ -1451,6 +1476,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
             <StatCard label="Sheets detected" value={previewSheets.length} />
           </div>
           <form className="grid gap-3 md:grid-cols-[1fr_auto]">
+            {baseState.importBatchId ? <input type="hidden" name="importBatchId" value={baseState.importBatchId} /> : null}
             <input type="hidden" name="previewId" value={preview.id} />
             <input type="hidden" name="step" value={3} />
             <FormField label="Sheet">
@@ -1474,6 +1500,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
             <p className="mt-1 text-sm text-slate-500">The report type controls which fields are expected and how rows are validated.</p>
           </div>
           <form className="space-y-4">
+            {baseState.importBatchId ? <input type="hidden" name="importBatchId" value={baseState.importBatchId} /> : null}
             <input type="hidden" name="step" value={4} />
             <input type="hidden" name="previewId" value={baseState.previewId} />
             <input type="hidden" name="sheet" value={baseState.sheetName} />
@@ -1483,7 +1510,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
               </select>
             </FormField>
             <div className="flex flex-wrap gap-3">
-              <Link href={queryFor({ previewId: preview.id, sheet: selectedSheet.name, step: "2" })} className="btn-secondary">Back</Link>
+              <Link href={queryFor({ importBatchId: baseState.importBatchId, previewId: preview.id, sheet: selectedSheet.name, step: "2" })} className="btn-secondary">Back</Link>
               <FormSubmitButton pendingLabel="Loading header rows...">Choose header row</FormSubmitButton>
             </div>
           </form>
@@ -1497,6 +1524,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
             <p className="mt-1 text-sm text-slate-500">Choose the row that contains column headers. Title rows above it will be ignored.</p>
           </div>
           <form className="space-y-4">
+            {baseState.importBatchId ? <input type="hidden" name="importBatchId" value={baseState.importBatchId} /> : null}
             <input type="hidden" name="step" value={5} />
             <input type="hidden" name="previewId" value={baseState.previewId} />
             <input type="hidden" name="sheet" value={baseState.sheetName} />
@@ -1512,7 +1540,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
             </FormField>
             <RawRowsTable rows={selectedSheet.rows} limit={10} headerRow={selectedRows.headerRowIndex} />
             <div className="flex flex-wrap gap-3">
-              <Link href={queryFor({ previewId: preview.id, sheet: selectedSheet.name, reportType: selectedReportType, step: "3" })} className="btn-secondary">Back</Link>
+              <Link href={queryFor({ importBatchId: baseState.importBatchId, previewId: preview.id, sheet: selectedSheet.name, reportType: selectedReportType, step: "3" })} className="btn-secondary">Back</Link>
               <FormSubmitButton pendingLabel="Loading column mapping...">Continue to mapping</FormSubmitButton>
             </div>
           </form>
@@ -1532,6 +1560,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
               </div>
               <Link
                 href={queryFor({
+                  importBatchId: baseState.importBatchId,
                   previewId: preview.id,
                   sheet: selectedSheet.name,
                   reportType: selectedReportType,
@@ -1591,7 +1620,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
               })}
             </DataTable>
             <div className="flex flex-wrap gap-3">
-              <Link href={queryFor({ previewId: preview.id, sheet: selectedSheet.name, reportType: selectedReportType, headerRow: String(selectedRows.headerRowIndex), step: "4" })} className="btn-secondary">Back</Link>
+              <Link href={queryFor({ importBatchId: baseState.importBatchId, previewId: preview.id, sheet: selectedSheet.name, reportType: selectedReportType, headerRow: String(selectedRows.headerRowIndex), step: "4" })} className="btn-secondary">Back</Link>
               <FormSubmitButton pendingLabel="Validating mapped rows...">Preview and validate</FormSubmitButton>
             </div>
           </form>
