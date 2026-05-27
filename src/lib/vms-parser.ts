@@ -442,7 +442,17 @@ export function detectVmsReportTypeFromHeaders(headers: string[]): VmsReportType
     has(["Num", "num"]),
   ].filter(Boolean).length;
 
-  return detailedSignals >= 4 ? "vms_order_details_weekly" : null;
+  if (detailedSignals >= 4) return "vms_order_details_weekly";
+
+  const summarySignals = [
+    has(["Machine ID", "Machine Code", "Machine", "machine_identifier", "machine_code"]),
+    has(["Product ID", "Product Code", "Product Number", "Goods ID", "product_identifier", "product_number"]),
+    has(["Product Name", "Goods Name", "product name", "product_name"]),
+    has(["Sold Qty", "Sales Qty", "Quantity Sold", "Number of transaction", "number_of_transaction", "sold_qty"]),
+    has(["Sales Amount", "Transaction amount", "Revenue", "Total Sales", "sales_amount", "total_sales_amount"]),
+  ].filter(Boolean).length;
+
+  return summarySignals >= 3 ? "sales" : null;
 }
 
 export function detectVmsReportTypeFromRows(rows: unknown[][]): VmsReportType | null {
@@ -460,16 +470,26 @@ export async function parseVmsUpload(file: File): Promise<VmsParsedFile> {
   }
 
   if (extension === "xls" || extension === "xlsx") {
-    const XLSX = await import("xlsx");
-    const workbook = XLSX.read(Buffer.from(await file.arrayBuffer()), { type: "buffer", cellDates: true });
-    return {
-      fileType: extension,
-      sheets: workbook.SheetNames.map((name) => {
-        const sheet = workbook.Sheets[name];
-        const rows = sheet ? XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: false, defval: "" }) : [];
-        return { name, rows: cleanRows(rows) };
-      }).filter((sheet) => sheet.rows.length),
-    };
+    try {
+      const XLSX = await import("xlsx");
+      const workbook = XLSX.read(Buffer.from(await file.arrayBuffer()), { type: "buffer", cellDates: true });
+      return {
+        fileType: extension,
+        sheets: workbook.SheetNames.map((name) => {
+          const sheet = workbook.Sheets[name];
+          const rows = sheet ? XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: false, defval: "" }) : [];
+          return { name, rows: cleanRows(rows) };
+        }).filter((sheet) => sheet.rows.length),
+      };
+    } catch (error) {
+      console.error("[vms-parser] Excel parse failed", {
+        fileName: file.name,
+        fileType: extension,
+        fileSize: file.size,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw new Error("This VMS file format could not be read. Please upload .xls, .xlsx, or .csv exported from VMS.");
+    }
   }
 
   throw new Error("Upload a .xlsx, .xls, or .csv file.");

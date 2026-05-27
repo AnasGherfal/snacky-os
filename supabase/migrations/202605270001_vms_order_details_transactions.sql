@@ -41,10 +41,14 @@ create index if not exists idx_vms_import_batches_active_usage
   where deleted_at is null;
 
 alter table public.vms_import_previews
+  add column if not exists import_batch_id uuid references public.vms_import_batches(id) on delete set null,
   add column if not exists file_hash text,
   add column if not exists storage_bucket text,
   add column if not exists storage_path text,
   add column if not exists original_file_name text;
+
+create index if not exists idx_vms_import_previews_batch
+  on public.vms_import_previews(import_batch_id);
 
 do $$
 begin

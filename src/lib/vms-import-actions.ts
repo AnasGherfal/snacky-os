@@ -5,9 +5,10 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "@/lib/activity-log";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
-import { canConfirmVmsImports, canCreateVmsImports, isOwnerAdminRole } from "@/lib/authz";
+import { canConfirmVmsImports, canCreateVmsImports, getEffectivePermissions, isOwnerAdminRole } from "@/lib/authz";
 import {
   applyColumnMapping,
+  detectHeaderRowIndex,
   detectVmsReportTypeFromRows,
   findSalesReportPeriod,
   parseReportType,
@@ -907,6 +908,7 @@ async function runVmsImport({
   reportEndDate = salesReportPeriod?.reportEndDate ?? null,
   autoCreateMissingProducts = true,
   updateCostFromVms = false,
+  recordReprocess = Boolean(existingBatchId),
 }: {
   supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
   profile: Awaited<ReturnType<typeof getCurrentProfile>>;
@@ -931,7 +933,10 @@ async function runVmsImport({
   reportEndDate?: string | null;
   autoCreateMissingProducts?: boolean;
   updateCostFromVms?: boolean;
+  recordReprocess?: boolean;
 }) {
+  const isReprocess = Boolean(existingBatchId && recordReprocess);
+
   if (reportType === "sales" && !salesReportPeriod && !hasSalesRowDate(rows)) {
     const target = existingBatchId ? `/vms-import/${existingBatchId}` : "/vms-import";
     redirect(`${target}?error=${encodeURIComponent(VMS_SALES_DATE_RANGE_ERROR)}`);
@@ -1624,7 +1629,7 @@ async function runVmsImport({
       summary.errors.push("Stock snapshot save failed.");
       summary.skippedRows += stockSnapshots.length;
       summary.importedRows -= stockSnapshots.length;
-    } else if (existingBatchId) {
+    } else if (isReprocess) {
       try {
         await markStaleSnapshotRows(supabase, "vms_stock_snapshots", batch.id, stockSnapshots.map((row) => Number(row.import_row_number)).filter(Number.isFinite));
       } catch (staleError) {
@@ -1632,7 +1637,7 @@ async function runVmsImport({
         summary.errors.push("Old stock snapshot rows could not be marked stale.");
       }
     }
-  } else if (existingBatchId && reportType === "stock") {
+  } else if (isReprocess && reportType === "stock") {
     try {
       await markStaleSnapshotRows(supabase, "vms_stock_snapshots", batch.id, []);
     } catch (staleError) {
@@ -1642,7 +1647,7 @@ async function runVmsImport({
   }
 
   if (salesSnapshots.length) {
-    if (existingBatchId) {
+    if (isReprocess) {
       const { error } = await supabase.from("vms_sales_snapshots").upsert(salesSnapshots, { onConflict: "import_batch_id,import_row_number" });
       if (error) {
         console.error("[vms-import] Sales snapshot reprocess upsert failed", error);
@@ -1688,7 +1693,7 @@ async function runVmsImport({
         summary.rowsSkippedDuplicate += duplicateRows;
       }
     }
-  } else if (existingBatchId && reportType === "sales") {
+  } else if (isReprocess && reportType === "sales") {
     try {
       await markStaleSnapshotRows(supabase, "vms_sales_snapshots", batch.id, []);
     } catch (staleError) {
@@ -1731,7 +1736,7 @@ async function runVmsImport({
         break;
       }
       ((data ?? []) as { duplicate_hash: string | null; import_batch_id: string | null }[]).forEach((row) => {
-        if (!existingBatchId || String(row.import_batch_id ?? "") !== String(batch.id)) {
+        if (!isReprocess || String(row.import_batch_id ?? "") !== String(batch.id)) {
           existingExternalDuplicateHashes.add(String(row.duplicate_hash));
         }
       });
@@ -1838,7 +1843,7 @@ async function runVmsImport({
     notes: JSON.stringify(summary),
   };
   if (fatalImportError) batchUpdate.failed_at = new Date().toISOString();
-  if (existingBatchId) {
+  if (existingBatchId && recordReprocess) {
     batchUpdate.last_reprocessed_at = new Date().toISOString();
     batchUpdate.reprocess_count = Number(batch.reprocess_count ?? 0) + 1;
   }
@@ -1858,7 +1863,7 @@ async function runVmsImport({
     entityLabel: `${reportType} ${fileType.toUpperCase()} ${fileName}`,
     afterData: summary,
     metadata: { report_type: reportType, file_name: fileName, file_type: fileType, sheet_name: sheetName },
-    summary: `${existingBatchId ? "Reprocessed" : "Imported"} ${summary.importedRows} ${reportType} rows from VMS ${fileType.toUpperCase()}`,
+    summary: `${existingBatchId && recordReprocess ? "Reprocessed" : "Imported"} ${summary.importedRows} ${reportType} rows from VMS ${fileType.toUpperCase()}`,
   });
 
   revalidatePath("/vms-import");
@@ -1890,20 +1895,188 @@ function isMissingPreviewRowsSchemaError(error: unknown) {
     || text.includes("schema cache");
 }
 
+function isPermissionPreviewError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const supabaseError = error as { code?: string; message?: string; details?: string; hint?: string };
+  const text = `${supabaseError.message ?? ""} ${supabaseError.details ?? ""} ${supabaseError.hint ?? ""}`.toLowerCase();
+  return supabaseError.code === "42501" || text.includes("permission denied") || text.includes("row-level security") || text.includes("rls");
+}
+
+function isMissingColumnPreviewError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const supabaseError = error as { code?: string; message?: string; details?: string; hint?: string };
+  const text = `${supabaseError.message ?? ""} ${supabaseError.details ?? ""} ${supabaseError.hint ?? ""}`.toLowerCase();
+  return supabaseError.code === "42703" || supabaseError.code === "PGRST204" || text.includes("column") || text.includes("schema cache");
+}
+
+function previewErrorMessage(error: unknown, tableName: string) {
+  const supabaseError = error && typeof error === "object" ? error as { code?: string; message?: string; details?: string; hint?: string } : null;
+  if (isPermissionPreviewError(error)) return "You do not have permission to create VMS import previews.";
+  if (supabaseError?.code === "42P01" || supabaseError?.code === "PGRST205") return `${tableName} table is missing. Run the latest migration.`;
+  if (isMissingColumnPreviewError(error)) {
+    const text = `${supabaseError?.message ?? ""} ${supabaseError?.details ?? ""} ${supabaseError?.hint ?? ""}`;
+    const match = text.match(/column ['"]?([a-zA-Z0-9_]+)['"]?/i);
+    return `Preview schema is outdated${match?.[1] ? `. Missing column: ${match[1]}.` : ". Run the latest migration."}`;
+  }
+  return `${tableName} failed while preparing the VMS import preview. Technical details are in the server console.`;
+}
+
+function previewDebugContext({
+  file,
+  parsed,
+  reportType,
+  batchId,
+  currentUserId,
+  effectivePermissions,
+}: {
+  file: File;
+  parsed?: { fileType: string; sheets: VmsPreviewSheetPayload[] } | null;
+  reportType?: VmsReportType | "custom" | null;
+  batchId?: string | null;
+  currentUserId?: string | null;
+  effectivePermissions?: string[];
+}) {
+  const firstSheet = parsed?.sheets?.[0] ?? null;
+  const detectedHeaderRowIndex = firstSheet ? detectHeaderRowIndex(firstSheet.rows, reportType && reportType !== "custom" ? reportType : undefined) : null;
+  const headerRow = detectedHeaderRowIndex !== null && firstSheet ? firstSheet.rows[detectedHeaderRowIndex] ?? [] : [];
+  const normalizedHeaderCounts = new Map<string, number>();
+  headerRow.forEach((header) => {
+    const normalized = normalizeHeader(String(header ?? ""));
+    if (normalized) normalizedHeaderCounts.set(normalized, (normalizedHeaderCounts.get(normalized) ?? 0) + 1);
+  });
+  return {
+    fileName: file.name,
+    fileType: parsed?.fileType ?? file.name.split(".").pop()?.toLowerCase() ?? null,
+    fileSize: file.size,
+    detectedReportType: reportType ?? null,
+    detectedHeaderRowIndex,
+    headersFound: headerRow,
+    duplicateHeadersFound: [...normalizedHeaderCounts.entries()].filter(([, count]) => count > 1).map(([header]) => header),
+    rowsParsedCount: parsed?.sheets?.reduce((sum, sheet) => sum + sheet.rows.length, 0) ?? 0,
+    importBatchId: batchId ?? null,
+    currentUserId: currentUserId ?? null,
+    effectivePermissions: effectivePermissions ?? [],
+  };
+}
+
+function detectPreviewImportDateRange(parsed: { sheets: VmsPreviewSheetPayload[] }, reportType: VmsReportType) {
+  if (reportType !== "vms_order_details_weekly") return { start: null as string | null, end: null as string | null };
+
+  for (const sheet of parsed.sheets) {
+    const records = sheetRowsToRecords(sheet.rows, { reportType }).records;
+    const range = detectOrderDetailsDateRange(records);
+    if (range.start && range.end) return { start: range.start, end: range.end };
+  }
+
+  return { start: null as string | null, end: null as string | null };
+}
+
+async function createPreviewImportBatch({
+  supabase,
+  profile,
+  file,
+  parsed,
+  reportType,
+  fileHash,
+  storageBucket,
+  storagePath,
+}: {
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  profile: Awaited<ReturnType<typeof getCurrentProfile>>;
+  file: File;
+  parsed: { fileType: string; sheets: VmsPreviewSheetPayload[] };
+  reportType: VmsReportType;
+  fileHash: string | null;
+  storageBucket: string | null;
+  storagePath: string | null;
+}) {
+  const rowsFound = parsed.sheets.reduce((sum, sheet) => sum + sheet.rows.length, 0);
+  const dateRange = detectPreviewImportDateRange(parsed, reportType);
+  const basePayload = {
+    source_type: `${reportType}_${parsed.fileType}`,
+    file_name: file.name,
+    file_type: parsed.fileType,
+    sheet_name: parsed.sheets[0]?.name ?? null,
+    report_type: reportType,
+    imported_by: profile?.team_member_id ?? null,
+    uploaded_by: profile?.team_member_id ?? null,
+    uploaded_at: new Date().toISOString(),
+    status: "previewed",
+    row_count: rowsFound,
+    rows_found: rowsFound,
+    report_start_date: dateRange.start,
+    report_end_date: dateRange.end,
+    rows_imported: 0,
+    rows_skipped: 0,
+    rows_skipped_duplicate: 0,
+    rows_needing_review: 0,
+    error_count: 0,
+    notes: JSON.stringify({ reportType, fileName: file.name, rowsFound, previewOnly: true }),
+  };
+  const richPayload = {
+    ...basePayload,
+    is_active: false,
+    file_hash: fileHash,
+    storage_bucket: storageBucket,
+    storage_path: storagePath,
+    original_file_name: file.name,
+    detected_min_datetime: dateRange.start ? startOfDateIso(dateRange.start) : null,
+    detected_max_datetime: dateRange.end ? endOfDateIso(dateRange.end) : null,
+    source_usage: vmsSourceUsage(reportType),
+    dashboard_usage: vmsSourceUsage(reportType),
+  };
+
+  const rich = await supabase.from("vms_import_batches").insert(richPayload).select("id").single();
+  if (!rich.error && rich.data?.id) return { id: String(rich.data.id), warning: null as string | null };
+  console.error("[vms-import] Preview batch rich insert failed", {
+    queryName: "vms_import_batches.insert.rich_preview",
+    code: rich.error?.code,
+    message: rich.error?.message,
+    details: rich.error?.details,
+    hint: rich.error?.hint,
+  });
+
+  if (!isMissingColumnPreviewError(rich.error)) {
+    return { id: null, error: rich.error, warning: null as string | null };
+  }
+
+  const fallback = await supabase.from("vms_import_batches").insert({
+    source_type: basePayload.source_type,
+    file_name: basePayload.file_name,
+    imported_by: basePayload.imported_by,
+    status: "previewed",
+    row_count: rowsFound,
+    error_count: 0,
+    notes: basePayload.notes,
+  }).select("id").single();
+  if (!fallback.error && fallback.data?.id) {
+    return {
+      id: String(fallback.data.id),
+      warning: "VMS import batch schema is outdated. Preview will continue with limited file metadata.",
+    };
+  }
+  return { id: null, error: fallback.error, warning: null as string | null };
+}
+
 async function saveVmsPreviewRows({
   supabase,
   previewId,
+  batchId,
   sheets,
 }: {
   supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
   previewId: string;
+  batchId: string | null;
   sheets: VmsPreviewSheetPayload[];
 }) {
   const rows = sheets.flatMap((sheet) => sheet.rows.map((row, index) => ({
     preview_id: previewId,
+    import_batch_id: batchId,
     sheet_name: sheet.name,
     row_number: index + 1,
     raw_row: row,
+    normalized_row: {},
+    status: "pending",
   })));
   if (!rows.length) return;
 
@@ -1913,18 +2086,54 @@ async function saveVmsPreviewRows({
     if (!error) continue;
 
     if (isMissingPreviewRowsSchemaError(error)) {
-      console.warn("[vms-import] Preview row table is unavailable; using preview sheet JSON only", error);
-      return;
+      console.warn("[vms-import] Preview row rich insert failed; trying legacy preview row shape", {
+        queryName: "vms_import_preview_rows.insert.rich",
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+      });
+      const legacyChunk = chunk.map((row) => ({
+        preview_id: row.preview_id,
+        sheet_name: row.sheet_name,
+        row_number: row.row_number,
+        raw_row: row.raw_row,
+      }));
+      const legacy = await supabase.from("vms_import_preview_rows").insert(legacyChunk);
+      if (!legacy.error) continue;
+      console.error("[vms-import] Legacy preview row insert failed", {
+        queryName: "vms_import_preview_rows.insert.legacy",
+        code: legacy.error.code,
+        message: legacy.error.message,
+        details: legacy.error.details,
+        hint: legacy.error.hint,
+      });
+      redirect(`/vms-import?error=${encodeURIComponent(previewErrorMessage(legacy.error, "Preview rows"))}`);
     }
 
-    console.error("[vms-import] Failed to save preview rows", error);
-    redirect("/vms-import?error=Could%20not%20save%20VMS%20preview%20rows.%20Run%20the%20latest%20migration.");
+    console.error("[vms-import] Failed to save preview rows", {
+      queryName: "vms_import_preview_rows.insert",
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+    });
+    redirect(`/vms-import?error=${encodeURIComponent(previewErrorMessage(error, "Preview rows"))}`);
   }
+
+  console.info("[vms-import] Saved VMS preview rows", {
+    queryName: "vms_import_preview_rows.insert",
+    previewId,
+    importBatchId: batchId,
+    rowsInserted: rows.length,
+  });
 }
 
 export async function prepareVmsImport(formData: FormData) {
   const profile = await getCurrentProfile();
   if (!profile || !canCreateVmsImports(profile)) redirect("/unauthorized");
+  const effectivePermissions = getEffectivePermissions(profile);
+  const currentUserId = profile.id ?? profile.team_member_id ?? null;
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) redirect("/vms-import?error=Supabase%20is%20not%20configured.");
 
@@ -1933,16 +2142,48 @@ export async function prepareVmsImport(formData: FormData) {
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) redirect("/vms-import?error=Upload%20a%20VMS%20Excel%20or%20CSV%20file.");
 
-  let parsed;
+  let parsed: Awaited<ReturnType<typeof parseVmsUpload>>;
   try {
+    console.info("[vms-import] Reading uploaded VMS file", {
+      queryName: "parseVmsUpload",
+      fileName: file.name,
+      fileType: file.name.split(".").pop()?.toLowerCase() ?? null,
+      fileSize: file.size,
+      currentUserId,
+      effectivePermissions,
+    });
     parsed = await parseVmsUpload(file);
   } catch (error) {
+    console.error("[vms-import] File read or workbook parsing failed", {
+      queryName: "parseVmsUpload",
+      fileName: file.name,
+      fileType: file.name.split(".").pop()?.toLowerCase() ?? null,
+      fileSize: file.size,
+      currentUserId,
+      effectivePermissions,
+      error: error instanceof Error ? error.message : String(error),
+    });
     redirect(`/vms-import?error=${encodeURIComponent(error instanceof Error ? error.message : "Could not parse VMS file.")}`);
   }
-  if (!parsed.sheets.length) redirect("/vms-import?error=Could%20not%20read%20any%20sheets%20or%20rows%20from%20that%20file.");
+  const rowsParsedCount = parsed.sheets.reduce((sum, sheet) => sum + sheet.rows.length, 0);
+  if (!parsed.sheets.length || rowsParsedCount === 0) {
+    console.warn("[vms-import] Parsed VMS file contained no rows", {
+      ...previewDebugContext({ file, parsed, reportType, currentUserId, effectivePermissions }),
+      queryName: "parseVmsUpload",
+    });
+    redirect("/vms-import?error=No%20VMS%20rows%20found%20in%20this%20file.%20Please%20check%20that%20the%20file%20contains%20exported%20VMS%20data.");
+  }
 
   const detectedReportType = parsed.sheets.map((sheet) => detectVmsReportTypeFromRows(sheet.rows)).find(Boolean) ?? null;
   if (!requestedReportType && detectedReportType) reportType = detectedReportType;
+  const debugContext = previewDebugContext({ file, parsed, reportType, currentUserId, effectivePermissions });
+  console.info("[vms-import] Parsed VMS file for preview", {
+    ...debugContext,
+    queryName: "loadVmsPreviewFile",
+    requestedReportType: requestedReportType ?? null,
+    detectedReportType,
+    sheetCount: parsed.sheets.length,
+  });
 
   const fileBuffer = Buffer.from(await file.arrayBuffer());
   const fileHash = createHash("sha256").update(fileBuffer).digest("hex");
@@ -1966,35 +2207,127 @@ export async function prepareVmsImport(formData: FormData) {
     savedStoragePath = storagePath;
   }
 
-  const { data: preview, error } = await supabase
+  const batchResult = await createPreviewImportBatch({
+    supabase,
+    profile,
+    file,
+    parsed,
+    reportType,
+    fileHash,
+    storageBucket: savedStoragePath ? storageBucket : null,
+    storagePath: savedStoragePath,
+  });
+
+  if (!batchResult.id) {
+    const batchError = "error" in batchResult ? batchResult.error : null;
+    console.error("[vms-import] Failed to create preview import batch", {
+      ...previewDebugContext({ file, parsed, reportType, batchId: null, currentUserId, effectivePermissions }),
+      queryName: "vms_import_batches.insert.preview",
+      code: batchError?.code,
+      message: batchError?.message,
+      details: batchError?.details,
+      hint: batchError?.hint,
+    });
+    redirect(`/vms-import?error=${encodeURIComponent(previewErrorMessage(batchError, "VMS import batches"))}`);
+  }
+  if (batchResult.warning) {
+    console.warn("[vms-import] Preview batch created with schema warning", {
+      queryName: "vms_import_batches.insert.preview",
+      warning: batchResult.warning,
+      importBatchId: batchResult.id,
+    });
+  }
+
+  let previewId: string | null = null;
+  const richPreviewPayload = {
+    import_batch_id: batchResult.id,
+    file_name: file.name,
+    file_type: parsed.fileType,
+    file_size_bytes: file.size,
+    report_type: reportType,
+    sheets: parsed.sheets,
+    uploaded_by: profile.team_member_id,
+    file_hash: fileHash,
+    storage_bucket: savedStoragePath ? storageBucket : null,
+    storage_path: savedStoragePath,
+    original_file_name: file.name,
+  };
+  const previewInsert = await supabase
     .from("vms_import_previews")
-    .insert({
-      file_name: file.name,
-      file_type: parsed.fileType,
-      file_size_bytes: file.size,
-      report_type: reportType,
-      sheets: parsed.sheets,
-      uploaded_by: profile.team_member_id,
-      file_hash: fileHash,
-      storage_bucket: savedStoragePath ? storageBucket : null,
-      storage_path: savedStoragePath,
-      original_file_name: file.name,
-    })
+    .insert(richPreviewPayload)
     .select("id")
     .single();
 
-  if (error || !preview?.id) {
-    console.error("[vms-import] Failed to create preview", error);
-    redirect("/vms-import?error=Could%20not%20prepare%20VMS%20import%20preview.");
+  if (!previewInsert.error && previewInsert.data?.id) {
+    previewId = String(previewInsert.data.id);
+  } else {
+    console.error("[vms-import] Failed to create rich preview", {
+      ...previewDebugContext({ file, parsed, reportType, batchId: batchResult.id, currentUserId, effectivePermissions }),
+      queryName: "vms_import_previews.insert.rich",
+      code: previewInsert.error?.code,
+      message: previewInsert.error?.message,
+      details: previewInsert.error?.details,
+      hint: previewInsert.error?.hint,
+    });
+
+    if (!isMissingColumnPreviewError(previewInsert.error)) {
+      redirect(`/vms-import?error=${encodeURIComponent(previewErrorMessage(previewInsert.error, "VMS import previews"))}`);
+    }
+
+    const fallback = await supabase
+      .from("vms_import_previews")
+      .insert({
+        file_name: file.name,
+        file_type: parsed.fileType,
+        report_type: reportType,
+        sheets: parsed.sheets,
+        uploaded_by: profile.team_member_id,
+      })
+      .select("id")
+      .single();
+    if (fallback.error || !fallback.data?.id) {
+      console.error("[vms-import] Failed to create legacy preview", {
+        ...previewDebugContext({ file, parsed, reportType, batchId: batchResult.id, currentUserId, effectivePermissions }),
+        queryName: "vms_import_previews.insert.legacy",
+        code: fallback.error?.code,
+        message: fallback.error?.message,
+        details: fallback.error?.details,
+        hint: fallback.error?.hint,
+      });
+      redirect(`/vms-import?error=${encodeURIComponent(previewErrorMessage(fallback.error, "VMS import previews"))}`);
+    }
+    previewId = String(fallback.data.id);
+    console.warn("[vms-import] Preview created with legacy schema", {
+      queryName: "vms_import_previews.insert.legacy",
+      importBatchId: batchResult.id,
+      previewId,
+    });
+  }
+
+  if (!previewId) {
+    console.error("[vms-import] Preview insert returned no id", {
+      ...previewDebugContext({ file, parsed, reportType, batchId: batchResult.id, currentUserId, effectivePermissions }),
+      queryName: "vms_import_previews.insert",
+    });
+    redirect("/vms-import?error=VMS%20import%20preview%20failed%20because%20the%20preview%20insert%20returned%20no%20id.%20Technical%20details%20are%20in%20the%20server%20console.");
   }
 
   await saveVmsPreviewRows({
     supabase,
-    previewId: preview.id,
+    previewId,
+    batchId: batchResult.id,
     sheets: parsed.sheets,
   });
 
-  redirect(`/vms-import?previewId=${preview.id}&sheet=${encodeURIComponent(parsed.sheets[0].name)}&reportType=${reportType}&step=2`);
+  console.info("[vms-import] Prepared VMS import preview", {
+    ...previewDebugContext({ file, parsed, reportType, batchId: batchResult.id, currentUserId, effectivePermissions }),
+    queryName: "prepareVmsImport",
+    previewId,
+    numberOfMappingsLoaded: null,
+    numberOfProductsLoaded: null,
+  });
+
+  redirect(`/vms-import?previewId=${previewId}&sheet=${encodeURIComponent(parsed.sheets[0].name)}&reportType=${reportType}&step=2`);
 }
 
 export async function importVmsCsv(formData: FormData) {
@@ -2021,6 +2354,7 @@ export async function completeVmsImport(formData: FormData) {
 
   const { data: preview } = await supabase.from("vms_import_previews").select("*").eq("id", previewId).maybeSingle();
   if (!preview) redirect("/vms-import?error=VMS%20import%20preview%20not%20found.");
+  const previewBatchId = String((preview as { import_batch_id?: string | null }).import_batch_id ?? "").trim() || undefined;
 
   const sheets = (preview.sheets ?? []) as { name: string; rows: string[][] }[];
   const sheet = sheets.find((candidate) => candidate.name === sheetName) ?? sheets[0];
@@ -2041,6 +2375,8 @@ export async function completeVmsImport(formData: FormData) {
   await runVmsImport({
     supabase,
     profile,
+    existingBatchId: previewBatchId,
+    recordReprocess: false,
     reportType,
     importMode,
     fileName: preview.file_name,
