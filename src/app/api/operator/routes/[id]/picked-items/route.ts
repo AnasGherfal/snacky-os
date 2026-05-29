@@ -45,7 +45,7 @@ export async function GET(
       return NextResponse.json({ error: "Route not available" }, { status: 403 });
     }
 
-    const [{ data: stockLines, error: stockError }, { data: fillMovements, error: fillError }] = await Promise.all([
+    const [{ data: stockLines, error: stockError }, { data: fillMovements, error: fillError }, { data: returnMovements, error: returnError }] = await Promise.all([
       supabase
         .from("route_stock_lines")
         .select(`id, product_id, picked_qty, returned_qty, product:products(id, name)`)
@@ -55,22 +55,40 @@ export async function GET(
         .select("product_id, quantity, reason, from_entity_type, to_entity_type")
         .eq("related_route_id", routeId)
         .in("reason", ["operator_bag_to_machine", "manual_correction"]),
+      supabase
+        .from("inventory_movements")
+        .select("product_id, quantity")
+        .eq("related_route_id", routeId)
+        .eq("reason", "operator_bag_to_storage"),
     ]);
 
     if (stockError) throw stockError;
     if (fillError) throw fillError;
+    if (returnError) throw returnError;
 
     const filledByProduct = new Map<string, number>();
     (fillMovements ?? []).forEach((movement: any) => {
       const productId = String(movement.product_id);
       filledByProduct.set(productId, (filledByProduct.get(productId) ?? 0) + machineFillDelta(movement));
     });
+    const returnedByProduct = new Map<string, number>();
+    (returnMovements ?? []).forEach((movement: any) => {
+      const productId = String(movement.product_id ?? "");
+      const quantity = movementQuantity(movement.quantity);
+      if (!productId || quantity <= 0) return;
+      returnedByProduct.set(productId, (returnedByProduct.get(productId) ?? 0) + quantity);
+    });
 
     const items = (stockLines ?? [])
       .map((line: any) => ({
         productId: line.product_id,
         productName: line.product?.name || "Unknown Product",
-        quantity: Math.max(0, Number(line.picked_qty ?? 0) - (filledByProduct.get(String(line.product_id)) ?? 0) - Number(line.returned_qty ?? 0)),
+        quantity: Math.max(
+          0,
+          Number(line.picked_qty ?? 0)
+            - (filledByProduct.get(String(line.product_id)) ?? 0)
+            - Math.max(Number(line.returned_qty ?? 0), returnedByProduct.get(String(line.product_id)) ?? 0),
+        ),
       }))
       .filter((item: any) => item.quantity > 0);
 

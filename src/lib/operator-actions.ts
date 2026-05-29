@@ -2,11 +2,12 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { actionFailure, actionSuccess, type ActionResult } from "@/lib/action-result";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
-import { canAccessOperatorRoute, canExecuteRoutes } from "@/lib/authz";
+import { canAccessOperatorRoute, canExecuteRoutes, getEffectivePermissions } from "@/lib/authz";
 import {
   ROUTE_COMPLETED_STATUS,
   ROUTE_IN_PROGRESS_STATUS,
@@ -19,6 +20,7 @@ import {
   fallbackRouteStatusForEnumMismatch,
   isActiveRouteStatus,
   isAvailableRouteStatus,
+  isCompletedRouteStatus,
   isRouteStatusEnumMismatch,
   isRouteStopDoneStatus,
   isTerminalRouteStatus,
@@ -174,6 +176,43 @@ function machineFillDelta(movement: any) {
     return -qty;
   }
   return qty;
+}
+
+function addProductQuantity(map: Map<string, number>, productId: unknown, quantity: unknown) {
+  const key = String(productId ?? "");
+  const qty = unitQuantity(quantity);
+  if (!key || qty <= 0) return;
+  map.set(key, (map.get(key) ?? 0) + qty);
+}
+
+function productQuantitiesFromMovements(movements: any[] | null | undefined, delta: (movement: any) => number = (movement) => unitQuantity(movement?.quantity)) {
+  const totals = new Map<string, number>();
+  (movements ?? []).forEach((movement) => addProductQuantity(totals, movement?.product_id, delta(movement)));
+  return totals;
+}
+
+function routeCompletionPublicError(error: unknown) {
+  const info = serializeActionError(error);
+  const message = String(info.message ?? "");
+  const code = String(info.code ?? "");
+  const text = [code, message, info.details, info.hint].map((value) => String(value ?? "")).join(" ").toLowerCase();
+
+  if (text.includes("complete or skip every machine stop")) return message;
+  if (text.includes("return all leftover")) return message;
+  if (text.includes("not authorized")) return message;
+  if (text.includes("route not found")) return message;
+  if (text.includes("already cancelled") || text.includes("cancelled route")) return message;
+  if (code === "42501" || text.includes("row-level security") || text.includes("permission")) return "You do not have permission to complete this route.";
+  if (code === "42703" || code === "PGRST204" || text.includes("schema cache") || text.includes("column")) return "Route completion database schema is missing a required column. Run the latest migration.";
+  if (code === "23503") return "Route completion could not save because linked route, operator, product, or storage data is missing.";
+  if (code === "23514") return "Route completion could not save because one route status or quantity is invalid.";
+  return message || "Could not complete this route.";
+}
+
+function isMissingCompletionAuditColumn(error: unknown) {
+  const info = serializeActionError(error);
+  const text = [info.code, info.message, info.details, info.hint].map((value) => String(value ?? "")).join(" ").toLowerCase();
+  return text.includes("completed_by") || text.includes("completion_attempts") || text.includes("last_completion_error") || text.includes("schema cache");
 }
 
 function safeFileSegment(value: string, fallback: string) {
@@ -2382,19 +2421,20 @@ export async function recordLeftovers({
   leftoverItems: { productId: string; quantity: number }[];
 }) {
   const supabase = await getAuthenticatedSupabaseServerClient();
-  if (!supabase) throw new Error("No Supabase client");
+  if (!supabase) return actionFailure("Supabase is not configured.", { code: "NO_SUPABASE" });
 
   try {
     const profile = await getCurrentProfile();
     // Get route to find operator
     const { data: route, error: routeError } = await supabase
       .from("routes")
-      .select("id, operator_id")
+      .select("id, operator_id, status")
       .eq("id", routeId)
       .maybeSingle();
 
     if (routeError) throwActionError(routeError, "Could not load this route.");
     if (!route) throw new Error("Route not found");
+    if (isCompletedRouteStatus(route.status)) return actionSuccess({ routeId, alreadyCompleted: true });
     if (!canAccessOperatorRoute(profile ? profileContext(profile) : null, route.operator_id)) {
       throw new Error("You are not authorized to return leftovers for this route");
     }
@@ -2425,18 +2465,27 @@ export async function recordLeftovers({
       .eq("route_id", routeId);
     if (routeStockError) throwActionError(routeStockError, "Could not load route stock.");
 
-    const { data: filledMovements, error: filledError } = await supabase
-      .from("inventory_movements")
-      .select("product_id, quantity, reason, from_entity_type, to_entity_type")
-      .eq("related_route_id", routeId)
-      .in("reason", ["operator_bag_to_machine", "manual_correction"]);
+    const [{ data: filledMovements, error: filledError }, { data: returnMovements, error: returnError }] = await Promise.all([
+      supabase
+        .from("inventory_movements")
+        .select("product_id, quantity, reason, from_entity_type, to_entity_type")
+        .eq("related_route_id", routeId)
+        .in("reason", ["operator_bag_to_machine", "manual_correction"]),
+      supabase
+        .from("inventory_movements")
+        .select("product_id, quantity")
+        .eq("related_route_id", routeId)
+        .eq("reason", "operator_bag_to_storage"),
+    ]);
     if (filledError) throwActionError(filledError, "Could not verify filled route stock.");
+    if (returnError) throwActionError(returnError, "Could not verify returned route stock.");
 
     const filledByProduct = new Map<string, number>();
     (filledMovements ?? []).forEach((movement: any) => {
       const productId = String(movement.product_id);
       filledByProduct.set(productId, (filledByProduct.get(productId) ?? 0) + machineFillDelta(movement));
     });
+    const returnedByProduct = productQuantitiesFromMovements(returnMovements);
 
     const routeProductIds = new Set((routeStockLines ?? []).map((line: any) => String(line.product_id)));
     for (const productId of leftoversByProduct.keys()) {
@@ -2446,14 +2495,14 @@ export async function recordLeftovers({
     for (const line of routeStockLines ?? []) {
       const productId = String(line.product_id);
       const returnQty = leftoversByProduct.get(productId) ?? 0;
-      const available = Math.max(0, Number(line.picked_qty ?? 0) - (filledByProduct.get(productId) ?? 0) - Number(line.returned_qty ?? 0));
+      const available = Math.max(0, Number(line.picked_qty ?? 0) - (filledByProduct.get(productId) ?? 0));
       if (returnQty > available) throw new Error("Returned quantity cannot exceed remaining operator bag stock.");
     }
 
     const movements = Array.from(leftoversByProduct.entries())
-      .map((item) => ({
-        product_id: item[0],
-        quantity: item[1],
+      .map(([productId, desiredQuantity]) => ({
+        product_id: productId,
+        quantity: Math.max(0, desiredQuantity - (returnedByProduct.get(productId) ?? 0)),
         from_entity_type: "operator_bag" as const,
         from_entity_id: route.operator_id,
         to_entity_type: "storage" as const,
@@ -2462,7 +2511,8 @@ export async function recordLeftovers({
         related_route_id: routeId,
         created_by: route.operator_id,
         notes: `Leftovers returned from route ${routeId}`,
-      }));
+      }))
+      .filter((movement) => movement.quantity > 0);
 
     if (movements.length > 0) {
       const { error: movementError } = await supabase
@@ -2474,10 +2524,14 @@ export async function recordLeftovers({
 
     for (const line of routeStockLines ?? []) {
       const productId = String(line.product_id);
-      const returnQty = leftoversByProduct.get(productId) ?? 0;
+      const returnQty = Math.max(
+        Number(line.returned_qty ?? 0),
+        leftoversByProduct.get(productId) ?? 0,
+        returnedByProduct.get(productId) ?? 0,
+      );
       const { error: stockLineError } = await supabase
         .from("route_stock_lines")
-        .update({ returned_qty: Number(line.returned_qty ?? 0) + returnQty, updated_at: new Date().toISOString() })
+        .update({ returned_qty: returnQty, updated_at: new Date().toISOString() })
         .eq("id", line.id);
       if (stockLineError) throwActionError(stockLineError, "Could not update route stock returns.");
     }
@@ -2495,18 +2549,18 @@ export async function recordLeftovers({
     });
 
     if (routeOrders?.length) {
-      for (const item of leftoverItems.filter((entry) => Number(entry.quantity) >= 0)) {
-        let remaining = Number(item.quantity);
-        const lines = linesByProduct.get(String(item.productId)) ?? [];
+      for (const [productId, desiredQuantity] of leftoversByProduct.entries()) {
+        let remaining = desiredQuantity;
+        const lines = linesByProduct.get(productId) ?? [];
 
         for (const line of lines) {
-          const available = Math.max(0, Number(line.picked_qty ?? 0) - Number(line.filled_qty ?? 0) - Number(line.returned_qty ?? 0));
-          const returnedQty = Math.max(0, Math.min(remaining, available));
-          remaining -= returnedQty;
+          const available = Math.max(0, Number(line.picked_qty ?? 0) - Number(line.filled_qty ?? 0));
+          const returnedQty = Math.max(Number(line.returned_qty ?? 0), Math.min(remaining, available));
+          remaining = Math.max(0, remaining - returnedQty);
 
           const { error: lineError } = await supabase
             .from("refill_order_lines")
-            .update({ returned_qty: Number(line.returned_qty ?? 0) + returnedQty })
+            .update({ returned_qty: returnedQty })
             .eq("id", line.id);
 
           if (lineError) throwActionError(lineError, "Could not update refill line returns.");
@@ -2529,10 +2583,19 @@ export async function recordLeftovers({
     });
 
     revalidateRouteWorkflow(routeId);
-    return { success: true };
+    return actionSuccess({ routeId, movementsCreated: movements.length });
   } catch (error) {
-    console.error("Error recording leftovers:", error);
-    throw new Error(getErrorMessage(error, "Could not record route leftovers."));
+    console.error("[operator:route-leftovers] Error recording leftovers", {
+      route_id: routeId,
+      leftover_items: leftoverItems,
+      error_message: getErrorMessage(error, "Could not record route leftovers."),
+      error_stack: error instanceof Error ? error.stack : null,
+      error,
+    });
+    return actionFailure(getErrorMessage(error, "Could not record route leftovers."), {
+      routeId,
+      code: String(errorField(error, "code") ?? "ROUTE_LEFTOVERS_FAILED"),
+    });
   }
 }
 
@@ -2542,58 +2605,119 @@ export async function recordLeftovers({
  */
 export async function completeRoute(routeId: string) {
   const supabase = await getAuthenticatedSupabaseServerClient();
-  if (!supabase) throw new Error("No Supabase client");
+  if (!supabase) return actionFailure("Supabase is not configured.", { routeId, code: "NO_SUPABASE" });
+
+  let logRoute: any = null;
+  let logProfile: Awaited<ReturnType<typeof getCurrentProfile>> = null;
+  let logStopCount = 0;
+  let logRouteStockLineCount = 0;
+  let logMovementCount = 0;
+  let attemptedRouteUpdatePayload: Record<string, unknown> | null = null;
 
   try {
     const profile = await getCurrentProfile();
-    const { data: route, error: routeError } = await supabase.from("routes").select("id, operator_id").eq("id", routeId).maybeSingle();
+    logProfile = profile;
+    const { data: route, error: routeError } = await supabase
+      .from("routes")
+      .select("id, operator_id, status, completed_at")
+      .eq("id", routeId)
+      .maybeSingle();
     if (routeError) throwActionError(routeError, "Could not load this route.");
     if (!route) throw new Error("Route not found");
+    logRoute = route;
     if (!canAccessOperatorRoute(profile ? profileContext(profile) : null, route.operator_id)) {
       throw new Error("You are not authorized to complete this route");
     }
+    if (isCompletedRouteStatus(route.status)) {
+      revalidateRouteWorkflow(routeId);
+      return actionSuccess({ routeId, alreadyCompleted: true });
+    }
+    if (String(route.status ?? "") === "cancelled" || String(route.status ?? "") === "canceled") {
+      throw new Error("A cancelled route cannot be completed.");
+    }
+
     const { data: openStops, error: stopsError } = await supabase
       .from("route_stops")
       .select("id, status")
       .eq("route_id", routeId)
       .limit(500);
     if (stopsError) throwActionError(stopsError, "Could not verify route stop status.");
+    logStopCount = openStops?.length ?? 0;
     const unfinishedStops = (openStops ?? []).filter((stop: any) => !isRouteStopDoneStatus(stop.status));
     if (unfinishedStops.length) throw new Error("Complete or skip every machine stop before closing the route.");
 
-    const [{ data: routeStockLines, error: stockError }, { data: filledMovements, error: filledError }] = await Promise.all([
+    const [{ data: routeStockLines, error: stockError }, { data: filledMovements, error: filledError }, { data: returnMovements, error: returnError }] = await Promise.all([
       supabase
         .from("route_stock_lines")
-        .select("product_id, picked_qty, returned_qty")
+        .select("id, product_id, picked_qty, returned_qty")
         .eq("route_id", routeId),
       supabase
         .from("inventory_movements")
         .select("product_id, quantity, reason, from_entity_type, to_entity_type")
         .eq("related_route_id", routeId)
         .in("reason", ["operator_bag_to_machine", "manual_correction"]),
+      supabase
+        .from("inventory_movements")
+        .select("product_id, quantity")
+        .eq("related_route_id", routeId)
+        .eq("reason", "operator_bag_to_storage"),
     ]);
     if (stockError) throwActionError(stockError, "Could not load route stock.");
     if (filledError) throwActionError(filledError, "Could not verify filled route stock.");
+    if (returnError) throwActionError(returnError, "Could not verify returned route stock.");
+    logRouteStockLineCount = routeStockLines?.length ?? 0;
+    logMovementCount = (filledMovements?.length ?? 0) + (returnMovements?.length ?? 0);
 
     const filledByProduct = new Map<string, number>();
     (filledMovements ?? []).forEach((movement: any) => {
       const productId = String(movement.product_id);
       filledByProduct.set(productId, (filledByProduct.get(productId) ?? 0) + machineFillDelta(movement));
     });
+    const returnedByProduct = productQuantitiesFromMovements(returnMovements);
+
+    for (const line of routeStockLines ?? []) {
+      const productId = String(line.product_id);
+      const returnedFromMovements = returnedByProduct.get(productId) ?? 0;
+      const savedReturnedQty = Number(line.returned_qty ?? 0);
+      if (returnedFromMovements > savedReturnedQty) {
+        const { error: repairLineError } = await supabase
+          .from("route_stock_lines")
+          .update({ returned_qty: returnedFromMovements, updated_at: new Date().toISOString() })
+          .eq("id", line.id);
+        if (repairLineError) throwActionError(repairLineError, "Could not repair returned route stock.");
+      }
+    }
+
     const unreturnedStock = (routeStockLines ?? []).filter((line: any) => {
       const pickedQty = Number(line.picked_qty ?? 0);
-      const returnedQty = Number(line.returned_qty ?? 0);
+      const returnedQty = Math.max(Number(line.returned_qty ?? 0), returnedByProduct.get(String(line.product_id)) ?? 0);
       const filledQty = filledByProduct.get(String(line.product_id)) ?? 0;
       return pickedQty - returnedQty - filledQty > 0;
     });
     if (unreturnedStock.length) throw new Error("Return all leftover operator bag stock before completing the route.");
 
-    const { error } = await supabase
+    const completedAt = new Date().toISOString();
+    const actorTeamMemberId = profile?.team_member_id ?? null;
+    attemptedRouteUpdatePayload = {
+      status: ROUTE_COMPLETED_STATUS,
+      completed_at: completedAt,
+      completed_by: actorTeamMemberId,
+      last_completion_error: null,
+    };
+    let updateResult = await supabase
       .from("routes")
-      .update({ status: ROUTE_COMPLETED_STATUS, completed_at: new Date().toISOString() })
+      .update(attemptedRouteUpdatePayload)
       .eq("id", routeId);
 
-    if (error) throwActionError(error, "Could not complete this route.");
+    if (updateResult.error && isMissingCompletionAuditColumn(updateResult.error)) {
+      attemptedRouteUpdatePayload = { status: ROUTE_COMPLETED_STATUS, completed_at: completedAt };
+      updateResult = await supabase
+        .from("routes")
+        .update(attemptedRouteUpdatePayload)
+        .eq("id", routeId);
+    }
+
+    if (updateResult.error) throwActionError(updateResult.error, "Could not complete this route.");
     await logActivity({
       profile,
       action: "update",
@@ -2601,15 +2725,72 @@ export async function completeRoute(routeId: string) {
       entityId: routeId,
       entityLabel: `Route ${routeId.slice(0, 8)}`,
       beforeData: route,
-      afterData: { status: ROUTE_COMPLETED_STATUS },
-      summary: "Completed route",
+      afterData: { status: ROUTE_COMPLETED_STATUS, completed_at: completedAt },
+      metadata: {
+        route_id: routeId,
+        stop_count: logStopCount,
+        route_stock_line_count: logRouteStockLineCount,
+        inventory_movement_count_checked: logMovementCount,
+      },
+      summary: route.completed_at ? "Confirmed already completed route" : "Completed route",
     });
     revalidateRouteWorkflow(routeId);
-    return { success: true };
+    return actionSuccess({ routeId, completedAt });
   } catch (error) {
-    console.error("Error completing route:", error);
-    throw new Error(getErrorMessage(error, "Could not complete this route."));
+    const publicError = routeCompletionPublicError(error);
+    console.error("[operator:complete-route] Error completing route", {
+      route_id: routeId,
+      current_route_status: logRoute?.status ?? null,
+      stop_count: logStopCount,
+      refill_lines_count: logRouteStockLineCount,
+      inventory_movement_count_attempted: logMovementCount,
+      failing_query_or_step: errorField(error, "code") ? "supabase" : "route_completion_validation",
+      supabase_error_code: errorField(error, "code"),
+      supabase_error_message: errorField(error, "message") ?? getErrorMessage(error, "Could not complete this route."),
+      stack: error instanceof Error ? error.stack : errorField(error, "stack"),
+      current_user_id: logProfile?.id ?? null,
+      effective_permissions: logProfile ? getEffectivePermissions(logProfile) : [],
+      route_update_payload: attemptedRouteUpdatePayload,
+      error,
+    });
+
+    try {
+      const profile = await getCurrentProfile();
+      await supabase
+        .from("routes")
+        .update({ last_completion_error: publicError })
+        .eq("id", routeId);
+      await logActivity({
+        profile,
+        action: "route_completion_failed",
+        entityType: "route",
+        entityId: routeId,
+        entityLabel: `Route ${routeId.slice(0, 8)}`,
+        afterData: serializeActionError(error),
+        metadata: { route_id: routeId },
+        summary: publicError,
+      });
+    } catch {
+      // Best-effort audit only; the user-facing failure should still return cleanly.
+    }
+
+    return actionFailure(publicError, {
+      routeId,
+      code: String(errorField(error, "code") ?? "ROUTE_COMPLETION_FAILED"),
+    });
   }
+}
+
+export async function repairRouteCompletion(formData: FormData) {
+  const routeId = String(formData.get("route_id") || "").trim();
+  if (!routeId) redirect("/routes?error=Missing%20route%20id.");
+
+  const result = await completeRoute(routeId);
+  if (result.success) {
+    const alreadyCompleted = "alreadyCompleted" in result && Boolean(result.alreadyCompleted);
+    redirect(`/routes/${routeId}?success=${encodeURIComponent(alreadyCompleted ? "Route was already completed." : "Route completed successfully.")}`);
+  }
+  redirect(`/routes/${routeId}?error=${encodeURIComponent(result.error)}`);
 }
 
 /**

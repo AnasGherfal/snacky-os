@@ -27,6 +27,7 @@ export default function LeftoversPage() {
   const [items, setItems] = useState<LeftoverItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [progressMessage, setProgressMessage] = useState("");
   const [error, setError] = useState("");
   const [leftoverQtys, setLeftoverQtys] = useState<Record<string, number>>({});
   const initialLeftoversDraftRef = useRef("");
@@ -75,6 +76,7 @@ export default function LeftoversPage() {
   const handleCompleteRoute = async () => {
     localDraft.saveNow();
     setSubmitting(true);
+    setProgressMessage("Checking returned stock...");
     setError("");
     try {
       // Record leftovers
@@ -85,16 +87,21 @@ export default function LeftoversPage() {
           quantity: leftoverQtys[item.productId] || 0,
         }));
 
-      await recordLeftovers({ routeId, leftoverItems });
+      setProgressMessage("Creating return movements...");
+      const leftoversResult = await recordLeftovers({ routeId, leftoverItems });
+      if (!leftoversResult.success) throw new Error(leftoversResult.error);
 
       // Complete the route
-      await completeRoute(routeId);
+      setProgressMessage("Finalizing route...");
+      const completionResult = await completeRoute(routeId);
+      if (!completionResult.success) throw new Error(completionResult.error);
 
       localDraft.clearDraft();
       router.push("/operator/routes");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to complete route");
       setSubmitting(false);
+      setProgressMessage("");
       window.setTimeout(() => localDraft.saveNow(), 0);
     }
   };
@@ -133,6 +140,11 @@ export default function LeftoversPage() {
             {error}
           </div>
         )}
+        {submitting && progressMessage ? (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900" role="status">
+            {progressMessage}
+          </div>
+        ) : null}
 
         {items.length === 0 ? (
           <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-6 text-center">
@@ -143,7 +155,7 @@ export default function LeftoversPage() {
               disabled={submitting}
               className="mt-4 btn-primary"
             >
-              {submitting ? "Completing..." : "Complete Route"}
+              {submitting ? progressMessage || "Completing..." : "Complete Route"}
             </button>
           </div>
         ) : (
@@ -190,7 +202,7 @@ export default function LeftoversPage() {
                 disabled={submitting}
                 className="flex-1 btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {submitting ? "Completing..." : "Complete Route"}
+                {submitting ? progressMessage || "Completing..." : "Complete Route"}
               </button>
               <SecondaryButton
                 href={routeHref}

@@ -6,6 +6,7 @@ import { lyd } from "@/lib/format";
 import { ROUTE_CANCELED_STATUS, isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isPickupConfirmedStatus, isRouteStopDoneStatus, isTerminalRouteStatus, nextOperatorRouteHref, routeDisplayStatus } from "@/lib/route-workflow";
 import { RouteCreatedToast } from "@/app/routes/[id]/RouteCreatedToast";
 import { assignRoute, cancelRoute, deleteDraftRoute } from "@/lib/route-actions";
+import { repairRouteCompletion } from "@/lib/operator-actions";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -28,9 +29,9 @@ function isMissingColumn(error: unknown, columns: string[]) {
   return columns.some((column) => text.includes(column.toLowerCase()));
 }
 
-export default async function RouteDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string }> }) {
+export default async function RouteDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; success?: string }> }) {
   const { id } = await params;
-  const { error = "" } = await searchParams;
+  const { error = "", success = "" } = await searchParams;
   const profile = await getCurrentProfile();
   if (!profile || !canAccessPath({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/routes")) {
     redirect("/unauthorized");
@@ -302,10 +303,23 @@ export default async function RouteDetailPage({ params, searchParams }: { params
                   hiddenFields={[{ name: "id", value: id }]}
                 />
               ) : null}
+              {canManageRouteAssignment && !isTerminalRouteStatus(routeRow.status) ? (
+                <ConfirmDialog
+                  action={repairRouteCompletion}
+                  triggerLabel="Repair & complete"
+                  title="Repair and complete route?"
+                  description="Snacky OS will reuse existing return movements, repair saved returned quantities, and complete the route without duplicating inventory."
+                  confirmLabel="Repair & complete"
+                  buttonClassName="btn-secondary"
+                  confirmButtonClassName="btn-primary"
+                  hiddenFields={[{ name: "route_id", value: id }]}
+                />
+              ) : null}
             </div>
           }
         />
         {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{error}</div> : null}
+        {success ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900">{success}</div> : null}
 
         <div className="grid gap-4 md:grid-cols-3">
           <SectionCard>
