@@ -45,54 +45,65 @@ export async function GET(
       return NextResponse.json({ error: "Route not available" }, { status: 403 });
     }
 
-    const [{ data: stockLines, error: stockError }, { data: fillMovements, error: fillError }, { data: returnMovements, error: returnError }] = await Promise.all([
-      supabase
-        .from("route_stock_lines")
-        .select(`id, product_id, picked_qty, returned_qty, product:products(id, name)`)
-        .eq("route_id", routeId),
-      supabase
-        .from("inventory_movements")
-        .select("product_id, quantity, reason, from_entity_type, to_entity_type")
-        .eq("related_route_id", routeId)
-        .in("reason", ["operator_bag_to_machine", "manual_correction"]),
-      supabase
-        .from("inventory_movements")
-        .select("product_id, quantity")
-        .eq("related_route_id", routeId)
-        .eq("reason", "operator_bag_to_storage"),
-    ]);
+    const { data: routeMovements, error: movementError } = await supabase
+      .from("inventory_movements")
+      .select("product_id, quantity, reason, from_entity_type, to_entity_type")
+      .eq("related_route_id", routeId)
+      .limit(5000);
 
-    if (stockError) throw stockError;
-    if (fillError) throw fillError;
-    if (returnError) throw returnError;
+    if (movementError) throw movementError;
 
-    const filledByProduct = new Map<string, number>();
-    (fillMovements ?? []).forEach((movement: any) => {
-      const productId = String(movement.product_id);
-      filledByProduct.set(productId, (filledByProduct.get(productId) ?? 0) + machineFillDelta(movement));
-    });
-    const returnedByProduct = new Map<string, number>();
-    (returnMovements ?? []).forEach((movement: any) => {
+    const balanceByProduct = new Map<string, number>();
+    const summaryByProduct = new Map<string, { productId: string; loadedQty: number; filledQty: number; returnedQty: number; adjustmentQty: number; remainingQty: number }>();
+    const summaryFor = (productId: string) => {
+      const existing = summaryByProduct.get(productId);
+      if (existing) return existing;
+      const created = { productId, loadedQty: 0, filledQty: 0, returnedQty: 0, adjustmentQty: 0, remainingQty: 0 };
+      summaryByProduct.set(productId, created);
+      return created;
+    };
+    (routeMovements ?? []).forEach((movement: any) => {
       const productId = String(movement.product_id ?? "");
       const quantity = movementQuantity(movement.quantity);
       if (!productId || quantity <= 0) return;
-      returnedByProduct.set(productId, (returnedByProduct.get(productId) ?? 0) + quantity);
+      const summary = summaryFor(productId);
+      if (movement.to_entity_type === "operator_bag" && movement.from_entity_type !== "operator_bag") {
+        balanceByProduct.set(productId, (balanceByProduct.get(productId) ?? 0) + quantity);
+        summary.loadedQty += quantity;
+      }
+      if (movement.from_entity_type === "operator_bag" && movement.to_entity_type !== "operator_bag") {
+        balanceByProduct.set(productId, (balanceByProduct.get(productId) ?? 0) - quantity);
+        if (movement.to_entity_type === "machine") summary.filledQty += quantity;
+        else if (movement.to_entity_type === "storage") summary.returnedQty += quantity;
+        else summary.adjustmentQty += quantity;
+      }
     });
 
-    const items = (stockLines ?? [])
-      .map((line: any) => ({
-        productId: line.product_id,
-        productName: line.product?.name || "Unknown Product",
-        quantity: Math.max(
-          0,
-          Number(line.picked_qty ?? 0)
-            - (filledByProduct.get(String(line.product_id)) ?? 0)
-            - Math.max(Number(line.returned_qty ?? 0), returnedByProduct.get(String(line.product_id)) ?? 0),
-        ),
-      }))
+    const positiveBalances = Array.from(balanceByProduct.entries())
+      .map(([productId, quantity]) => ({ productId, quantity: Math.max(0, quantity) }))
       .filter((item: any) => item.quantity > 0);
+    const productIds = Array.from(new Set([...positiveBalances.map((item) => item.productId), ...summaryByProduct.keys()]));
+    const { data: products, error: productError } = productIds.length
+      ? await supabase.from("products").select("id, name").in("id", productIds)
+      : { data: [], error: null };
+    if (productError) throw productError;
+    const productById = new Map((products ?? []).map((product: any) => [String(product.id), product.name ?? "Unknown Product"]));
 
-    return NextResponse.json({ items });
+    const items = positiveBalances.map((item) => ({
+      productId: item.productId,
+      productName: productById.get(item.productId) ?? "Unknown Product",
+      quantity: item.quantity,
+    }));
+    const reconciliation = Array.from(summaryByProduct.values())
+      .map((row) => ({
+        ...row,
+        productName: productById.get(row.productId) ?? "Unknown Product",
+        remainingQty: Math.max(0, balanceByProduct.get(row.productId) ?? 0),
+      }))
+      .filter((row) => row.loadedQty > 0 || row.filledQty > 0 || row.returnedQty > 0 || row.adjustmentQty > 0 || row.remainingQty > 0)
+      .sort((a, b) => a.productName.localeCompare(b.productName));
+
+    return NextResponse.json({ items, reconciliation });
   } catch (error) {
     console.error("Error fetching picked items:", error);
     return NextResponse.json(

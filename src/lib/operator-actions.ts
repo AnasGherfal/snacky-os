@@ -191,6 +191,33 @@ function productQuantitiesFromMovements(movements: any[] | null | undefined, del
   return totals;
 }
 
+function routeBagMovementDelta(movement: any) {
+  const qty = unitQuantity(movement?.quantity);
+  if (qty <= 0) return 0;
+  const intoBag = movement?.to_entity_type === "operator_bag";
+  const outOfBag = movement?.from_entity_type === "operator_bag";
+  if (intoBag && !outOfBag) return qty;
+  if (outOfBag && !intoBag) return -qty;
+  return 0;
+}
+
+function routeBagBalanceFromMovements(movements: any[] | null | undefined) {
+  const balances = new Map<string, number>();
+  (movements ?? []).forEach((movement) => {
+    const productId = String(movement?.product_id ?? "");
+    const delta = routeBagMovementDelta(movement);
+    if (!productId || delta === 0) return;
+    balances.set(productId, (balances.get(productId) ?? 0) + delta);
+  });
+  return balances;
+}
+
+function positiveRouteBagBalances(movements: any[] | null | undefined) {
+  return Array.from(routeBagBalanceFromMovements(movements).entries())
+    .map(([productId, quantity]) => ({ productId, quantity: Math.max(0, quantity) }))
+    .filter((item) => item.quantity > 0);
+}
+
 function routeCompletionPublicError(error: unknown) {
   const info = serializeActionError(error);
   const message = String(info.message ?? "");
@@ -2465,7 +2492,11 @@ export async function recordLeftovers({
       .eq("route_id", routeId);
     if (routeStockError) throwActionError(routeStockError, "Could not load route stock.");
 
-    const [{ data: filledMovements, error: filledError }, { data: returnMovements, error: returnError }] = await Promise.all([
+    const [{ data: routeMovements, error: movementBalanceError }, { data: filledMovements, error: filledError }, { data: returnMovements, error: returnError }] = await Promise.all([
+      supabase
+        .from("inventory_movements")
+        .select("product_id, quantity, reason, from_entity_type, from_entity_id, to_entity_type, to_entity_id")
+        .eq("related_route_id", routeId),
       supabase
         .from("inventory_movements")
         .select("product_id, quantity, reason, from_entity_type, to_entity_type")
@@ -2477,6 +2508,7 @@ export async function recordLeftovers({
         .eq("related_route_id", routeId)
         .eq("reason", "operator_bag_to_storage"),
     ]);
+    if (movementBalanceError) throwActionError(movementBalanceError, "Could not calculate route operator bag inventory.");
     if (filledError) throwActionError(filledError, "Could not verify filled route stock.");
     if (returnError) throwActionError(returnError, "Could not verify returned route stock.");
 
@@ -2486,16 +2518,19 @@ export async function recordLeftovers({
       filledByProduct.set(productId, (filledByProduct.get(productId) ?? 0) + machineFillDelta(movement));
     });
     const returnedByProduct = productQuantitiesFromMovements(returnMovements);
+    const bagBalanceByProduct = routeBagBalanceFromMovements(routeMovements);
 
-    const routeProductIds = new Set((routeStockLines ?? []).map((line: any) => String(line.product_id)));
+    const routeProductIds = new Set([
+      ...(routeStockLines ?? []).map((line: any) => String(line.product_id)),
+      ...bagBalanceByProduct.keys(),
+    ]);
     for (const productId of leftoversByProduct.keys()) {
       if (!routeProductIds.has(productId)) throw new Error("Returned product is not part of this route stock.");
     }
 
-    for (const line of routeStockLines ?? []) {
-      const productId = String(line.product_id);
+    for (const productId of leftoversByProduct.keys()) {
       const returnQty = leftoversByProduct.get(productId) ?? 0;
-      const available = Math.max(0, Number(line.picked_qty ?? 0) - (filledByProduct.get(productId) ?? 0));
+      const available = Math.max(0, bagBalanceByProduct.get(productId) ?? 0);
       if (returnQty > available) throw new Error("Returned quantity cannot exceed remaining operator bag stock.");
     }
 
@@ -2646,16 +2681,20 @@ export async function completeRoute(routeId: string) {
     const unfinishedStops = (openStops ?? []).filter((stop: any) => !isRouteStopDoneStatus(stop.status));
     if (unfinishedStops.length) throw new Error("Complete or skip every machine stop before closing the route.");
 
-    const [{ data: routeStockLines, error: stockError }, { data: filledMovements, error: filledError }, { data: returnMovements, error: returnError }] = await Promise.all([
+    const [
+      { data: routeStockLines, error: stockError },
+      { data: routeMovements, error: movementBalanceError },
+      { data: returnMovements, error: returnError },
+    ] = await Promise.all([
       supabase
         .from("route_stock_lines")
         .select("id, product_id, picked_qty, returned_qty")
         .eq("route_id", routeId),
       supabase
         .from("inventory_movements")
-        .select("product_id, quantity, reason, from_entity_type, to_entity_type")
+        .select("product_id, quantity, reason, from_entity_type, from_entity_id, to_entity_type, to_entity_id, related_route_stop_id, related_machine_id")
         .eq("related_route_id", routeId)
-        .in("reason", ["operator_bag_to_machine", "manual_correction"]),
+        .limit(5000),
       supabase
         .from("inventory_movements")
         .select("product_id, quantity")
@@ -2663,17 +2702,12 @@ export async function completeRoute(routeId: string) {
         .eq("reason", "operator_bag_to_storage"),
     ]);
     if (stockError) throwActionError(stockError, "Could not load route stock.");
-    if (filledError) throwActionError(filledError, "Could not verify filled route stock.");
+    if (movementBalanceError) throwActionError(movementBalanceError, "Could not calculate route operator bag inventory.");
     if (returnError) throwActionError(returnError, "Could not verify returned route stock.");
     logRouteStockLineCount = routeStockLines?.length ?? 0;
-    logMovementCount = (filledMovements?.length ?? 0) + (returnMovements?.length ?? 0);
-
-    const filledByProduct = new Map<string, number>();
-    (filledMovements ?? []).forEach((movement: any) => {
-      const productId = String(movement.product_id);
-      filledByProduct.set(productId, (filledByProduct.get(productId) ?? 0) + machineFillDelta(movement));
-    });
+    logMovementCount = routeMovements?.length ?? 0;
     const returnedByProduct = productQuantitiesFromMovements(returnMovements);
+    const remainingBagStock = positiveRouteBagBalances(routeMovements);
 
     for (const line of routeStockLines ?? []) {
       const productId = String(line.product_id);
@@ -2688,13 +2722,15 @@ export async function completeRoute(routeId: string) {
       }
     }
 
-    const unreturnedStock = (routeStockLines ?? []).filter((line: any) => {
-      const pickedQty = Number(line.picked_qty ?? 0);
-      const returnedQty = Math.max(Number(line.returned_qty ?? 0), returnedByProduct.get(String(line.product_id)) ?? 0);
-      const filledQty = filledByProduct.get(String(line.product_id)) ?? 0;
-      return pickedQty - returnedQty - filledQty > 0;
-    });
-    if (unreturnedStock.length) throw new Error("Return all leftover operator bag stock before completing the route.");
+    if (remainingBagStock.length) {
+      const productIds = remainingBagStock.map((item) => item.productId);
+      const { data: products } = productIds.length
+        ? await supabase.from("products").select("id, name").in("id", productIds)
+        : { data: [] };
+      const productById = new Map((products ?? []).map((product: any) => [String(product.id), product.name ?? "Unknown product"]));
+      const lines = remainingBagStock.map((item) => `- ${productById.get(item.productId) ?? "Unknown product"}: ${item.quantity}`).join("\n");
+      throw new Error(`Calculated remaining operator bag inventory detected:\n${lines}`);
+    }
 
     const completedAt = new Date().toISOString();
     const actorTeamMemberId = profile?.team_member_id ?? null;

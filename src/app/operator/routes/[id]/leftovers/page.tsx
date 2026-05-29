@@ -13,6 +13,16 @@ interface LeftoverItem {
   quantity: number;
 }
 
+type ReconciliationItem = {
+  productId: string;
+  productName: string;
+  loadedQty: number;
+  filledQty: number;
+  returnedQty: number;
+  adjustmentQty: number;
+  remainingQty: number;
+};
+
 type LeftoversDraft = {
   leftoverQtys: Record<string, number>;
 };
@@ -25,6 +35,7 @@ export default function LeftoversPage() {
   const routeHref = routeId ? `/operator/routes/${routeId}` : "/operator";
 
   const [items, setItems] = useState<LeftoverItem[]>([]);
+  const [reconciliation, setReconciliation] = useState<ReconciliationItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [progressMessage, setProgressMessage] = useState("");
@@ -57,6 +68,7 @@ export default function LeftoversPage() {
         if (!response.ok) throw new Error("Failed to fetch picked items");
         const data = await response.json();
         setItems(data.items || []);
+        setReconciliation(data.reconciliation || []);
         // Initialize with all quantities (operator will reduce if needed)
         const initialQtys: Record<string, number> = {};
         data.items?.forEach((item: LeftoverItem) => {
@@ -144,6 +156,43 @@ export default function LeftoversPage() {
           <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900" role="status">
             {progressMessage}
           </div>
+        ) : null}
+
+        {reconciliation.length ? (
+          <SectionCard>
+            <div className="space-y-3 p-4">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">Route Inventory Reconciliation</h2>
+                <p className="mt-1 text-sm text-slate-500">Calculated from inventory movements for this route.</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-slate-200 text-sm">
+                  <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2">Product</th>
+                      <th className="px-3 py-2">Loaded</th>
+                      <th className="px-3 py-2">To machines</th>
+                      <th className="px-3 py-2">Returned</th>
+                      <th className="px-3 py-2">Adjustments</th>
+                      <th className="px-3 py-2">Remaining</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {reconciliation.map((row) => (
+                      <tr key={row.productId}>
+                        <td className="px-3 py-2 font-medium text-slate-900">{row.productName}</td>
+                        <td className="px-3 py-2">{row.loadedQty}</td>
+                        <td className="px-3 py-2">{row.filledQty}</td>
+                        <td className="px-3 py-2">{row.returnedQty}</td>
+                        <td className="px-3 py-2">{row.adjustmentQty}</td>
+                        <td className="px-3 py-2 font-semibold">{row.remainingQty}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </SectionCard>
         ) : null}
 
         {items.length === 0 ? (

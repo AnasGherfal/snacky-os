@@ -402,11 +402,12 @@ export async function GET(
     });
     });
 
-    const [{ data: routeStockLines, error: stockError }, { data: fillMovements, error: fillMovementsError }, { data: products, error: productsError }, { data: refillHistory, error: refillHistoryError }] = await Promise.all([
+    const [{ data: routeMovements, error: movementError }, { data: fillMovements, error: fillMovementsError }, { data: products, error: productsError }, { data: refillHistory, error: refillHistoryError }] = await Promise.all([
       supabase
-        .from("route_stock_lines")
-        .select("product_id, picked_qty, returned_qty, product:products(id, name)")
-        .eq("route_id", routeId),
+        .from("inventory_movements")
+        .select("product_id, quantity, related_route_stop_id, reason, from_entity_type, to_entity_type")
+        .eq("related_route_id", routeId)
+        .limit(5000),
       supabase
         .from("inventory_movements")
         .select("product_id, quantity, related_route_stop_id, reason, from_entity_type, to_entity_type")
@@ -423,7 +424,7 @@ export async function GET(
         .eq("legacy_refill_id", `route_stop:${stopId}`)
         .maybeSingle(),
     ]);
-    if (stockError) throw stockError;
+    if (movementError) throw movementError;
     if (fillMovementsError) throw fillMovementsError;
     if (productsError) throw productsError;
     if (refillHistoryError) throw refillHistoryError;
@@ -437,18 +438,22 @@ export async function GET(
       if (movement.related_route_stop_id === stopId) currentStopFilledByProduct.set(productId, (currentStopFilledByProduct.get(productId) ?? 0) + qty);
     });
 
-    const pickedByProduct = new Map<string, number>();
-    const returnedByProduct = new Map<string, number>();
-    ((routeStockLines ?? []) as RouteStockLineRow[]).forEach((line) => {
-      const productId = String(line.product_id);
-      pickedByProduct.set(productId, (pickedByProduct.get(productId) ?? 0) + Number(line.picked_qty ?? 0));
-      returnedByProduct.set(productId, (returnedByProduct.get(productId) ?? 0) + Number(line.returned_qty ?? 0));
+    const bagBalanceByProduct = new Map<string, number>();
+    ((routeMovements ?? []) as MovementRow[]).forEach((movement) => {
+      const productId = String(movement.product_id ?? "");
+      const qty = movementQuantity(movement.quantity);
+      if (!productId || qty <= 0) return;
+      if (movement.to_entity_type === "operator_bag" && movement.from_entity_type !== "operator_bag") {
+        bagBalanceByProduct.set(productId, (bagBalanceByProduct.get(productId) ?? 0) + qty);
+      }
+      if (movement.from_entity_type === "operator_bag" && movement.to_entity_type !== "operator_bag") {
+        bagBalanceByProduct.set(productId, (bagBalanceByProduct.get(productId) ?? 0) - qty);
+      }
     });
 
     const availableByProduct = new Map<string, number>();
-    pickedByProduct.forEach((pickedQty, productId) => {
-      const filledByOtherStops = (filledByProduct.get(productId) ?? 0) - (currentStopFilledByProduct.get(productId) ?? 0);
-      availableByProduct.set(productId, Math.max(0, pickedQty - (returnedByProduct.get(productId) ?? 0) - filledByOtherStops));
+    new Set([...bagBalanceByProduct.keys(), ...currentStopFilledByProduct.keys()]).forEach((productId) => {
+      availableByProduct.set(productId, Math.max(0, (bagBalanceByProduct.get(productId) ?? 0) + (currentStopFilledByProduct.get(productId) ?? 0)));
     });
 
     lineItems.forEach((item) => {
