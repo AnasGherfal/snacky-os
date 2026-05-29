@@ -112,6 +112,163 @@ function booleanOption(input: FormDataEntryValue | string | null | undefined, de
   return defaultValue;
 }
 
+const ALLOWED_VMS_IMPORT_BATCH_FIELDS = new Set([
+  "uploaded_by",
+  "uploaded_at",
+  "file_name",
+  "file_type",
+  "sheet_name",
+  "report_type",
+  "report_start_date",
+  "report_end_date",
+  "import_mode",
+  "status",
+  "source_type",
+  "rows_found",
+  "row_count",
+  "rows_imported",
+  "rows_skipped",
+  "rows_skipped_duplicate",
+  "rows_needing_review",
+  "notes",
+  "errors",
+  "unknown_machines",
+  "unmapped_products",
+  "preview_summary",
+  "review_summary",
+  "is_active",
+  "file_hash",
+  "storage_bucket",
+  "storage_path",
+  "original_file_name",
+  "detected_min_datetime",
+  "detected_max_datetime",
+  "total_successful_sales",
+  "successful_rows_count",
+  "failed_rows_count",
+  "refunded_rows_count",
+  "failed_at",
+  "last_reprocessed_at",
+  "reprocess_count",
+  "deleted_at",
+  "deleted_by",
+  "delete_reason",
+  "disabled_at",
+  "disabled_by",
+  "disable_reason",
+  "created_at",
+  "updated_at",
+]);
+
+function sanitizeVmsImportBatchPayload(payload: Record<string, unknown>, context: { queryName: string; currentStep: string; selectedImportBatchId?: string | null }) {
+  const invalidKeys = Object.keys(payload).filter((key) => !ALLOWED_VMS_IMPORT_BATCH_FIELDS.has(key));
+  if (invalidKeys.length) {
+    console.error("[vms-import] Invalid vms_import_batches payload detected", {
+      queryName: context.queryName,
+      currentStep: context.currentStep,
+      selectedImportBatchId: context.selectedImportBatchId ?? null,
+      invalidKeys,
+      payload,
+    });
+    const formattedKeys = invalidKeys.map((key) => `\`${key}\``).join(", ");
+    throw new Error(
+      `Internal import bug: invalid field${invalidKeys.length > 1 ? "s" : ""} ${formattedKeys} were included in batch payload. Raw VMS columns must not be inserted into vms_import_batches.`,
+    );
+  }
+  return Object.fromEntries(Object.entries(payload).filter(([key]) => ALLOWED_VMS_IMPORT_BATCH_FIELDS.has(key)));
+}
+
+function buildVmsImportStateRedirect(params: {
+  previewId?: string | null;
+  importBatchId?: string | null;
+  sheetName?: string | null;
+  reportType?: string | null;
+  headerRow?: number | null;
+  step?: number | null;
+  importMode?: string | null;
+  reportStartDate?: string | null;
+  reportEndDate?: string | null;
+  autoCreateProducts?: boolean | null;
+  updateCostFromVms?: boolean | null;
+  mapping?: Record<string, string> | null;
+  error?: string | null;
+}) {
+  const searchParams = new URLSearchParams();
+  if (params.previewId) searchParams.set("previewId", params.previewId);
+  if (params.importBatchId) searchParams.set("importBatchId", params.importBatchId);
+  if (params.sheetName) searchParams.set("sheet", params.sheetName);
+  if (params.reportType) searchParams.set("reportType", params.reportType);
+  if (params.headerRow != null) searchParams.set("headerRow", String(params.headerRow));
+  if (params.step != null) searchParams.set("step", String(params.step));
+  if (params.importMode) searchParams.set("importMode", params.importMode);
+  if (params.reportStartDate) searchParams.set("reportStartDate", params.reportStartDate);
+  if (params.reportEndDate) searchParams.set("reportEndDate", params.reportEndDate);
+  if (params.autoCreateProducts != null) searchParams.set("autoCreateProducts", String(params.autoCreateProducts));
+  if (params.updateCostFromVms != null) searchParams.set("updateCostFromVms", String(params.updateCostFromVms));
+  if (params.mapping) {
+    for (const [key, value] of Object.entries(params.mapping)) {
+      searchParams.set(`map_${key}`, value);
+    }
+  }
+  if (params.error) searchParams.set("error", params.error);
+  return `/vms-import?${searchParams.toString()}`;
+}
+
+function buildVmsImportStateRedirectFromFormData(formData: FormData, error: string, step = 7) {
+  const mapping: Record<string, string> = {};
+  for (const [key, value] of formData.entries()) {
+    if (key.startsWith("map_") && typeof value === "string" && value !== "") {
+      mapping[key.slice(4)] = value;
+    }
+  }
+  const stepRaw = formData.get("step") || formData.get("currentStep");
+  const parsedStep = Number(stepRaw);
+  const headerRowRaw = formData.get("header_row") as string | null || formData.get("headerRow") as string | null;
+  const headerRow = headerRowRaw ? Number(headerRowRaw) : null;
+  return buildVmsImportStateRedirect({
+    previewId: formData.get("preview_id") as string | null || formData.get("previewId") as string | null,
+    importBatchId: formData.get("import_batch_id") as string | null || formData.get("importBatchId") as string | null,
+    sheetName: formData.get("sheet_name") as string | null || formData.get("sheet") as string | null,
+    reportType: formData.get("report_type") as string | null || formData.get("reportType") as string | null,
+    headerRow,
+    step: Number.isFinite(parsedStep) && parsedStep > 0 ? parsedStep : step,
+    importMode: formData.get("import_mode") as string | null || formData.get("importMode") as string | null,
+    reportStartDate: formData.get("report_start_date") as string | null || formData.get("reportStartDate") as string | null,
+    reportEndDate: formData.get("report_end_date") as string | null || formData.get("reportEndDate") as string | null,
+    autoCreateProducts: booleanOption(formData.get("auto_create_products"), true),
+    updateCostFromVms: booleanOption(formData.get("update_cost_from_vms"), false),
+    mapping: Object.keys(mapping).length ? mapping : null,
+    error,
+  });
+}
+  const mapping: Record<string, string> = {};
+  for (const [key, value] of formData.entries()) {
+    if (key.startsWith("map_") && typeof value === "string" && value !== "") {
+      mapping[key.slice(4)] = value;
+    }
+  }
+  return buildVmsImportStateRedirect({
+    previewId: formData.get("preview_id") as string | null || formData.get("previewId") as string | null,
+    importBatchId: formData.get("import_batch_id") as string | null || formData.get("importBatchId") as string | null,
+    sheetName: formData.get("sheet_name") as string | null || formData.get("sheet") as string | null,
+    reportType: formData.get("report_type") as string | null || formData.get("reportType") as string | null,
+    headerRow: (() => {
+      const headerRowValue = formData.get("header_row") || formData.get("headerRow");
+      return headerRowValue === null || headerRowValue === undefined || headerRowValue === "" ? null : Number(headerRowValue);
+    })(),
+    step,
+    importMode: formData.get("import_mode") as string | null || formData.get("importMode") as string | null,
+    reportStartDate: formData.get("report_start_date") as string | null || formData.get("reportStartDate") as string | null,
+    reportEndDate: formData.get("report_end_date") as string | null || formData.get("reportEndDate") as string | null,
+    autoCreateProducts: booleanOption(formData.get("auto_create_products"), true),
+    updateCostFromVms: booleanOption(formData.get("update_cost_from_vms"), false),
+    mapping: Object.keys(mapping).length ? mapping : null,
+    error,
+  });
+}
+
+export { sanitizeVmsImportBatchPayload, buildVmsImportStateRedirectFromFormData };
+
 function vmsSourceUsage(reportType: VmsReportType) {
   if (reportType === "vms_order_details_weekly") {
     return {
@@ -655,7 +812,12 @@ async function ensureConfirmedMapping({
   return data ? { mapping: data, action: "created" as const } : null;
 }
 
-function previewRedirect(previewId: string, sheetName: string, reportType: string, error?: string, headerRow?: number, importBatchId?: string) {
+function previewRedirect(formData: FormData | null, previewId: string, sheetName: string, reportType: string, error?: string, headerRow?: number, importBatchId?: string) {
+  if (formData) {
+    redirect(buildVmsImportStateRedirectFromFormData(formData, error ?? "", 7));
+    return;
+  }
+
   const params = new URLSearchParams({ previewId, sheet: sheetName, reportType });
   if (importBatchId) params.set("importBatchId", importBatchId);
   if (headerRow !== undefined) params.set("headerRow", String(headerRow));
@@ -910,6 +1072,7 @@ async function runVmsImport({
   autoCreateMissingProducts = true,
   updateCostFromVms = false,
   recordReprocess = Boolean(existingBatchId),
+  errorState,
 }: {
   supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
   profile: Awaited<ReturnType<typeof getCurrentProfile>>;
@@ -935,12 +1098,48 @@ async function runVmsImport({
   autoCreateMissingProducts?: boolean;
   updateCostFromVms?: boolean;
   recordReprocess?: boolean;
+  errorState?: {
+    previewId?: string | null;
+    importBatchId?: string | null;
+    sheetName?: string | null;
+    reportType?: string | null;
+    headerRow?: number | null;
+    importMode?: string | null;
+    reportStartDate?: string | null;
+    reportEndDate?: string | null;
+    mapping?: Record<string, string>;
+    autoCreateProducts?: boolean;
+    updateCostFromVms?: boolean;
+    step?: number;
+  };
 }) {
   const isReprocess = Boolean(existingBatchId && recordReprocess);
+  const errorRedirect = (message: string) => {
+    if (errorState) {
+      redirect(buildVmsImportStateRedirect({
+        previewId: errorState.previewId,
+        importBatchId: errorState.importBatchId,
+        sheetName: errorState.sheetName,
+        reportType: errorState.reportType,
+        headerRow: errorState.headerRow ?? null,
+        step: errorState.step ?? 7,
+        importMode: errorState.importMode ?? null,
+        reportStartDate: errorState.reportStartDate ?? null,
+        reportEndDate: errorState.reportEndDate ?? null,
+        mapping: errorState.mapping ?? null,
+        autoCreateProducts: errorState.autoCreateProducts ?? null,
+        updateCostFromVms: errorState.updateCostFromVms ?? null,
+        error: message,
+      }));
+      return;
+    }
+    const target = existingBatchId ? `/vms-import/${existingBatchId}` : "/vms-import";
+    redirect(`${target}?error=${encodeURIComponent(message)}`);
+  };
 
   if (reportType === "sales" && !salesReportPeriod && !hasSalesRowDate(rows)) {
-    const target = existingBatchId ? `/vms-import/${existingBatchId}` : "/vms-import";
-    redirect(`${target}?error=${encodeURIComponent(VMS_SALES_DATE_RANGE_ERROR)}`);
+    errorRedirect(VMS_SALES_DATE_RANGE_ERROR);
+    return;
   }
 
   const orderDetailsRange = reportType === "vms_order_details_weekly" ? detectOrderDetailsDateRange(rows) : { start: "", end: "" };
@@ -1008,7 +1207,8 @@ async function runVmsImport({
         selectedImportBatchId: existingBatchId,
         currentStep: "confirm_import",
       });
-      redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(timeoutError))}`);
+      errorRedirect(batchMutationErrorMessage(timeoutError));
+      return;
     }
     if ("error" in lookupResult) {
       logVmsBatchMutationFailure({
@@ -1018,7 +1218,8 @@ async function runVmsImport({
         selectedImportBatchId: existingBatchId,
         currentStep: "confirm_import",
       });
-      redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(lookupResult.error))}`);
+      errorRedirect(batchMutationErrorMessage(lookupResult.error));
+      return;
     }
 
     const existingLookup = lookupResult.value;
@@ -1030,34 +1231,37 @@ async function runVmsImport({
         selectedImportBatchId: existingBatchId,
         currentStep: "confirm_import",
       });
-      redirect("/vms-import?error=Could%20not%20find%20the%20preview%20VMS%20import%20batch.%20Please%20re-upload%20the%20file.");
+      errorRedirect("Could not find the preview VMS import batch. Please re-upload the file after running the latest migration.");
+      return;
     }
 
     batch = existingLookup.data;
-    const confirmStartPayload = {
+    const confirmStartPayload = sanitizeVmsImportBatchPayload({
       status: "draft",
       is_active: false,
       import_mode: importMode,
       report_start_date: effectiveReportStartDate,
       report_end_date: effectiveReportEndDate,
       file_hash: fileHash,
-      storage_bucket: storageBucket,
       storage_path: storagePath,
-      original_file_name: originalFileName,
-      source_usage: vmsSourceUsage(reportType),
-      dashboard_usage: vmsSourceUsage(reportType),
-      row_count: rows.length,
       rows_found: rows.length,
       rows_imported: 0,
-      rows_skipped: 0,
       rows_skipped_duplicate: 0,
       rows_needing_review: 0,
-      error_count: 0,
-      errors: [],
-      unknown_machines: [],
-      unmapped_products: [],
-      column_mapping: columnMapping,
-    };
+      notes: JSON.stringify({
+        reportType,
+        fileName,
+        fileType,
+        sheetName,
+        importMode,
+        rowCount: rows.length,
+        columnMapping,
+      }),
+    }, {
+      queryName: "vms_import_batches.update.confirm_existing",
+      currentStep: "confirm_import",
+      selectedImportBatchId: batch.id,
+    });
     const updateResult = await withSoftTimeout(
       supabase
         .from("vms_import_batches")
@@ -1075,7 +1279,8 @@ async function runVmsImport({
         selectedImportBatchId: batch.id,
         currentStep: "confirm_import",
       });
-      redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(timeoutError))}`);
+      errorRedirect(batchMutationErrorMessage(timeoutError));
+      return;
     }
     if ("error" in updateResult) {
       logVmsBatchMutationFailure({
@@ -1086,7 +1291,8 @@ async function runVmsImport({
         selectedImportBatchId: batch.id,
         currentStep: "confirm_import",
       });
-      redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(updateResult.error))}`);
+      errorRedirect(batchMutationErrorMessage(updateResult.error));
+      return;
     }
     if (updateResult.value.error) {
       logVmsBatchMutationFailure({
@@ -1097,17 +1303,14 @@ async function runVmsImport({
         selectedImportBatchId: batch.id,
         currentStep: "confirm_import",
       });
-      redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(updateResult.value.error))}`);
+      errorRedirect(batchMutationErrorMessage(updateResult.value.error));
+      return;
     }
 
   } else {
-    const createPayload = {
-      source_type: `${reportType}_${fileType}`,
+    const createPayload = sanitizeVmsImportBatchPayload({
       file_name: fileName,
-      file_type: fileType,
-      sheet_name: sheetName,
       report_type: reportType,
-      imported_by: profile?.team_member_id ?? null,
       uploaded_by: profile?.team_member_id ?? null,
       uploaded_at: new Date().toISOString(),
       status: "draft",
@@ -1116,15 +1319,22 @@ async function runVmsImport({
       report_start_date: effectiveReportStartDate,
       report_end_date: effectiveReportEndDate,
       file_hash: fileHash,
-      storage_bucket: storageBucket,
       storage_path: storagePath,
-      original_file_name: originalFileName,
-      source_usage: vmsSourceUsage(reportType),
-      dashboard_usage: vmsSourceUsage(reportType),
-      row_count: rows.length,
       rows_found: rows.length,
-      column_mapping: columnMapping,
-    };
+      notes: JSON.stringify({
+        reportType,
+        fileName,
+        fileType,
+        sheetName,
+        importMode,
+        rowCount: rows.length,
+        columnMapping,
+      }),
+    }, {
+      queryName: "vms_import_batches.insert.final",
+      currentStep: "confirm_import",
+      selectedImportBatchId: null,
+    });
     const createResult = await withSoftTimeout(
       supabase
         .from("vms_import_batches")
@@ -1144,7 +1354,8 @@ async function runVmsImport({
         selectedImportBatchId: null,
         currentStep: "confirm_import",
       });
-      redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(timeoutError))}`);
+      errorRedirect(batchMutationErrorMessage(timeoutError));
+      return;
     }
     if ("error" in createResult) {
       logVmsBatchMutationFailure({
@@ -1155,7 +1366,8 @@ async function runVmsImport({
         selectedImportBatchId: null,
         currentStep: "confirm_import",
       });
-      redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(createResult.error))}`);
+      errorRedirect(batchMutationErrorMessage(createResult.error));
+      return;
     }
 
     const create = createResult.value;
@@ -1168,13 +1380,17 @@ async function runVmsImport({
         selectedImportBatchId: null,
         currentStep: "confirm_import",
       });
-      redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(create.error))}`);
+      errorRedirect(batchMutationErrorMessage(create.error));
+      return;
     }
 
     batch = create.data;
   }
 
-  if (!batch?.id) redirect("/vms-import?error=Could%20not%20prepare%20VMS%20import%20batch.");
+  if (!batch?.id) {
+    errorRedirect("Could not prepare VMS import batch.");
+    return;
+  }
 
   const initialRawRows = rows.map((row, index) => rawRowPayload({
     batchId: batch.id,
@@ -1186,27 +1402,29 @@ async function runVmsImport({
 
   if (importMode === VMS_IMPORT_MODES.PREVIEW_ONLY) {
     summary.skippedRows = rows.length;
-    const batchUpdate: Record<string, unknown> = {
+    const batchUpdate = sanitizeVmsImportBatchPayload({
       status: "previewed",
       is_active: false,
-      row_count: summary.totalRows,
       rows_found: summary.rowsFound,
-      source_usage: vmsSourceUsage(reportType),
-      dashboard_usage: vmsSourceUsage(reportType),
       file_hash: fileHash,
-      storage_bucket: storageBucket,
       storage_path: storagePath,
-      original_file_name: originalFileName,
       rows_imported: 0,
-      rows_skipped: rows.length,
       rows_skipped_duplicate: 0,
       rows_needing_review: 0,
-      error_count: 0,
-      errors: [],
-      preview_summary: summary,
-      review_summary: [],
-      notes: JSON.stringify(summary),
-    };
+      notes: JSON.stringify({
+        reportType,
+        fileName,
+        fileType,
+        sheetName,
+        previewOnly: true,
+        totalRows: summary.totalRows,
+        rowsFound: summary.rowsFound,
+      }),
+    }, {
+      queryName: "vms_import_batches.update.preview_only",
+      currentStep: "preview_only",
+      selectedImportBatchId: batch.id,
+    });
     const previewUpdateResult = await withSoftTimeout(
       supabase.from("vms_import_batches").update(batchUpdate).eq("id", batch.id),
       VMS_SAVE_QUERY_TIMEOUT_MS,
@@ -1221,7 +1439,8 @@ async function runVmsImport({
         selectedImportBatchId: batch.id,
         currentStep: "preview_only",
       });
-      redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(timeoutError))}`);
+      errorRedirect(batchMutationErrorMessage(timeoutError));
+      return;
     }
     if ("error" in previewUpdateResult) {
       logVmsBatchMutationFailure({
@@ -1232,7 +1451,8 @@ async function runVmsImport({
         selectedImportBatchId: batch.id,
         currentStep: "preview_only",
       });
-      redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(previewUpdateResult.error))}`);
+      errorRedirect(batchMutationErrorMessage(previewUpdateResult.error));
+      return;
     }
     if (previewUpdateResult.value.error) {
       logVmsBatchMutationFailure({
@@ -1243,7 +1463,8 @@ async function runVmsImport({
         selectedImportBatchId: batch.id,
         currentStep: "preview_only",
       });
-      redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(previewUpdateResult.value.error))}`);
+      errorRedirect(batchMutationErrorMessage(previewUpdateResult.value.error));
+      return;
     }
     await saveHeaderMappingMemory({ supabase, profile, reportType, headerNames, mapping: columnMapping });
     await logActivity({
@@ -1950,20 +2171,15 @@ async function runVmsImport({
 
   summary.rowsNeedingReview = summary.needsProductMappingRows + summary.unknownMachineRows + summary.invalidRows;
   const status = fatalImportError ? "failed" : "imported";
-  const sourceUsage = vmsSourceUsage(reportType);
-  const batchUpdate: Record<string, unknown> = {
+  const batchUpdate = sanitizeVmsImportBatchPayload({
     status,
     is_active: status === "imported" && summary.importedRows > 0,
-    row_count: summary.totalRows,
     rows_found: summary.rowsFound,
+    rows_skipped: summary.skippedRows,
     report_start_date: effectiveReportStartDate,
     report_end_date: effectiveReportEndDate,
-    source_usage: sourceUsage,
-    dashboard_usage: sourceUsage,
     file_hash: fileHash,
-    storage_bucket: storageBucket,
     storage_path: storagePath,
-    original_file_name: originalFileName,
     detected_min_datetime: effectiveReportStartDate ? startOfDateIso(effectiveReportStartDate) : null,
     detected_max_datetime: effectiveReportEndDate ? endOfDateIso(effectiveReportEndDate) : null,
     total_successful_sales: summary.estimatedSuccessfulSales ?? 0,
@@ -1971,7 +2187,6 @@ async function runVmsImport({
     failed_rows_count: (summary.failedVendRows ?? 0) + (summary.failedPaymentRows ?? 0) + (summary.needsReviewTransactionRows ?? 0),
     refunded_rows_count: summary.refundedRows ?? 0,
     rows_imported: summary.importedRows,
-    rows_skipped: summary.skippedRows,
     rows_skipped_duplicate: summary.rowsSkippedDuplicate,
     rows_needing_review: summary.rowsNeedingReview,
     error_count: summary.errors.length,
@@ -1984,13 +2199,25 @@ async function runVmsImport({
       unmapped_products: summary.unmappedProducts,
       errors: summary.errors,
     },
-    notes: JSON.stringify(summary),
-  };
-  if (fatalImportError) batchUpdate.failed_at = new Date().toISOString();
-  if (existingBatchId && recordReprocess) {
-    batchUpdate.last_reprocessed_at = new Date().toISOString();
-    batchUpdate.reprocess_count = Number(batch.reprocess_count ?? 0) + 1;
-  }
+    notes: JSON.stringify({
+      reportType,
+      fileName,
+      fileType,
+      sheetName,
+      status,
+      importedRows: summary.importedRows,
+      rowsFound: summary.rowsFound,
+      rowsSkippedDuplicate: summary.rowsSkippedDuplicate,
+      rowsNeedingReview: summary.rowsNeedingReview,
+      errors: summary.errors,
+      unknownMachines: summary.unknownMachines,
+      unmappedProducts: summary.unmappedProducts,
+    }),
+  }, {
+    queryName: "vms_import_batches.update.final",
+    currentStep: "confirm_import",
+    selectedImportBatchId: batch.id,
+  });
 
   const finalUpdateResult = await withSoftTimeout(
     supabase
@@ -2009,7 +2236,8 @@ async function runVmsImport({
       selectedImportBatchId: batch.id,
       currentStep: "confirm_import",
     });
-    redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(timeoutError))}`);
+    errorRedirect(batchMutationErrorMessage(timeoutError));
+    return;
   }
   if ("error" in finalUpdateResult) {
     logVmsBatchMutationFailure({
@@ -2020,7 +2248,7 @@ async function runVmsImport({
       selectedImportBatchId: batch.id,
       currentStep: "confirm_import",
     });
-    redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(finalUpdateResult.error))}`);
+    errorRedirect(batchMutationErrorMessage(finalUpdateResult.error));
   }
   if (finalUpdateResult.value.error) {
     logVmsBatchMutationFailure({
@@ -2031,8 +2259,8 @@ async function runVmsImport({
       selectedImportBatchId: batch.id,
       currentStep: "confirm_import",
     });
-    redirect(`/vms-import?error=${encodeURIComponent(batchMutationErrorMessage(finalUpdateResult.value.error))}`);
-  }
+    errorRedirect(batchMutationErrorMessage(finalUpdateResult.value.error));
+      return;
 
   await saveHeaderMappingMemory({ supabase, profile, reportType, headerNames, mapping: columnMapping });
 
@@ -2285,41 +2513,41 @@ async function createPreviewImportBatch({
   const rowsFound = parsed.sheets.reduce((sum, sheet) => sum + sheet.rows.length, 0);
   const dateRange = detectPreviewImportDateRange(parsed, reportType);
   const basePayload = {
-    source_type: `${reportType}_${parsed.fileType}`,
     file_name: file.name,
-    file_type: parsed.fileType,
-    sheet_name: parsed.sheets[0]?.name ?? null,
     report_type: reportType,
-    imported_by: profile?.team_member_id ?? null,
     uploaded_by: profile?.team_member_id ?? null,
     uploaded_at: new Date().toISOString(),
     status: "previewed",
-    row_count: rowsFound,
     rows_found: rowsFound,
     report_start_date: dateRange.start,
     report_end_date: dateRange.end,
     rows_imported: 0,
-    rows_skipped: 0,
     rows_skipped_duplicate: 0,
     rows_needing_review: 0,
-    error_count: 0,
-    notes: JSON.stringify({ reportType, fileName: file.name, rowsFound, previewOnly: true }),
+    notes: JSON.stringify({
+      reportType,
+      fileName: file.name,
+      fileType: parsed.fileType,
+      sheetName: parsed.sheets[0]?.name ?? null,
+      rowsFound,
+      previewOnly: true,
+    }),
   };
   const richPayload = {
     ...basePayload,
     is_active: false,
     file_hash: fileHash,
-    storage_bucket: storageBucket,
     storage_path: storagePath,
-    original_file_name: file.name,
     detected_min_datetime: dateRange.start ? startOfDateIso(dateRange.start) : null,
     detected_max_datetime: dateRange.end ? endOfDateIso(dateRange.end) : null,
-    source_usage: vmsSourceUsage(reportType),
-    dashboard_usage: vmsSourceUsage(reportType),
   };
 
   const richResult = await withSoftTimeout(
-    supabase.from("vms_import_batches").insert(richPayload).select("id").single(),
+    supabase.from("vms_import_batches").insert(sanitizeVmsImportBatchPayload(richPayload, {
+      queryName: "vms_import_batches.insert.rich_preview",
+      currentStep: "create_preview_batch",
+      selectedImportBatchId: null,
+    })).select("id").single(),
     VMS_SAVE_QUERY_TIMEOUT_MS,
   );
   if (richResult.timedOut) {
@@ -2347,15 +2575,22 @@ async function createPreviewImportBatch({
   }
 
   const fallbackResult = await withSoftTimeout(
-    supabase.from("vms_import_batches").insert({
-      source_type: basePayload.source_type,
+    supabase.from("vms_import_batches").insert(sanitizeVmsImportBatchPayload({
       file_name: basePayload.file_name,
-      imported_by: basePayload.imported_by,
+      report_type: basePayload.report_type,
+      uploaded_by: basePayload.uploaded_by,
+      uploaded_at: basePayload.uploaded_at,
       status: "previewed",
-      row_count: rowsFound,
-      error_count: 0,
+      rows_found: rowsFound,
+      rows_imported: 0,
+      rows_skipped_duplicate: 0,
+      rows_needing_review: 0,
       notes: basePayload.notes,
-    }).select("id").single(),
+    }, {
+      queryName: "vms_import_batches.insert.preview_fallback",
+      currentStep: "create_preview_batch",
+      selectedImportBatchId: null,
+    })).select("id").single(),
     VMS_SAVE_QUERY_TIMEOUT_MS,
   );
   if (fallbackResult.timedOut) {
@@ -2941,6 +3176,7 @@ export async function completeVmsImport(formData: FormData) {
       effectivePermissions: getEffectivePermissions(profile),
     });
     previewRedirect(
+      formData,
       previewId,
       sheet.name,
       reportType,
@@ -2951,14 +3187,14 @@ export async function completeVmsImport(formData: FormData) {
 
   const mapping = readMapping(formData, reportType);
   const missing = requiredMissing(mapping, reportType);
-  if (missing.length) previewRedirect(previewId, sheet.name, reportType, `Map required fields: ${missing.join(", ")}`, headerRowIndex, previewBatchId);
+  if (missing.length) previewRedirect(formData, previewId, sheet.name, reportType, `Map required fields: ${missing.join(", ")}`, headerRowIndex, previewBatchId);
 
   const { headers, records } = sheetRowsToRecords(sheet.rows, { reportType, headerRowIndex });
   const rows = applyColumnMapping(records, mapping);
-  if (!rows.length) previewRedirect(previewId, sheet.name, reportType, "Selected sheet has no data rows.", headerRowIndex, previewBatchId);
+  if (!rows.length) previewRedirect(formData, previewId, sheet.name, reportType, "Selected sheet has no data rows.", headerRowIndex, previewBatchId);
   const salesReportPeriod = reportType === "sales" ? findSalesReportPeriod(sheet.rows, headerRowIndex) : null;
   if (reportType === "sales" && !salesReportPeriod && !hasSalesRowDate(rows)) {
-    previewRedirect(previewId, sheet.name, reportType, VMS_SALES_DATE_RANGE_ERROR, headerRowIndex, previewBatchId);
+    previewRedirect(formData, previewId, sheet.name, reportType, VMS_SALES_DATE_RANGE_ERROR, headerRowIndex, previewBatchId);
   }
 
   await runVmsImport({
@@ -2985,6 +3221,20 @@ export async function completeVmsImport(formData: FormData) {
     reportEndDate: submittedReportEndDate ?? salesReportPeriod?.reportEndDate ?? null,
     autoCreateMissingProducts,
     updateCostFromVms,
+    errorState: {
+      previewId,
+      importBatchId: previewBatchId,
+      sheetName: sheet.name,
+      reportType,
+      headerRow: headerRowIndex,
+      importMode,
+      reportStartDate: submittedReportStartDate ?? salesReportPeriod?.reportStartDate ?? null,
+      reportEndDate: submittedReportEndDate ?? salesReportPeriod?.reportEndDate ?? null,
+      mapping,
+      autoCreateProducts,
+      updateCostFromVms,
+      step: 7,
+    },
   });
 }
 

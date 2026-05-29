@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { sanitizeVmsImportBatchPayload } from "../src/lib/vms-import-actions.ts";
 import { validateVmsRows } from "../src/lib/vms-import-validation.ts";
 
 test("first import with empty mappings groups unknown products and machines without crashing", () => {
@@ -25,6 +26,13 @@ test("first import with empty mappings groups unknown products and machines with
   assert.equal(result.totalRows, 1);
   assert.equal(result.unknownMachineRows, 1);
   assert.equal(result.reviewGroups.some((group) => group.type === "unknown_machine"), true);
+});
+
+test("sanitizeVmsImportBatchPayload rejects invalid batch payload fields", () => {
+  assert.throws(
+    () => sanitizeVmsImportBatchPayload({ file_name: "test.csv", of: "bad" }, { queryName: "test", currentStep: "preview", selectedImportBatchId: null }),
+    /invalid field `of`/,
+  );
 });
 
 test("Khalij aliases resolve to جامعة طرابلس الاهلية when that machine exists", () => {
