@@ -241,31 +241,6 @@ function buildVmsImportStateRedirectFromFormData(formData: FormData, error: stri
     error,
   });
 }
-  const mapping: Record<string, string> = {};
-  for (const [key, value] of formData.entries()) {
-    if (key.startsWith("map_") && typeof value === "string" && value !== "") {
-      mapping[key.slice(4)] = value;
-    }
-  }
-  return buildVmsImportStateRedirect({
-    previewId: formData.get("preview_id") as string | null || formData.get("previewId") as string | null,
-    importBatchId: formData.get("import_batch_id") as string | null || formData.get("importBatchId") as string | null,
-    sheetName: formData.get("sheet_name") as string | null || formData.get("sheet") as string | null,
-    reportType: formData.get("report_type") as string | null || formData.get("reportType") as string | null,
-    headerRow: (() => {
-      const headerRowValue = formData.get("header_row") || formData.get("headerRow");
-      return headerRowValue === null || headerRowValue === undefined || headerRowValue === "" ? null : Number(headerRowValue);
-    })(),
-    step,
-    importMode: formData.get("import_mode") as string | null || formData.get("importMode") as string | null,
-    reportStartDate: formData.get("report_start_date") as string | null || formData.get("reportStartDate") as string | null,
-    reportEndDate: formData.get("report_end_date") as string | null || formData.get("reportEndDate") as string | null,
-    autoCreateProducts: booleanOption(formData.get("auto_create_products"), true),
-    updateCostFromVms: booleanOption(formData.get("update_cost_from_vms"), false),
-    mapping: Object.keys(mapping).length ? mapping : null,
-    error,
-  });
-}
 
 export { sanitizeVmsImportBatchPayload, buildVmsImportStateRedirectFromFormData };
 
