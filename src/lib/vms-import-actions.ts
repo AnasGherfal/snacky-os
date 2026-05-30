@@ -160,7 +160,7 @@ const ALLOWED_VMS_IMPORT_BATCH_FIELDS = new Set([
   "updated_at",
 ]);
 
-function sanitizeVmsImportBatchPayload(payload: Record<string, unknown>, context: { queryName: string; currentStep: string; selectedImportBatchId?: string | null }) {
+async function sanitizeVmsImportBatchPayload(payload: Record<string, unknown>, context: { queryName: string; currentStep: string; selectedImportBatchId?: string | null }) {
   const invalidKeys = Object.keys(payload).filter((key) => !ALLOWED_VMS_IMPORT_BATCH_FIELDS.has(key));
   if (invalidKeys.length) {
     console.error("[vms-import] Invalid vms_import_batches payload detected", {
@@ -214,7 +214,7 @@ function buildVmsImportStateRedirect(params: {
   return `/vms-import?${searchParams.toString()}`;
 }
 
-function buildVmsImportStateRedirectFromFormData(formData: FormData, error: string, step = 7) {
+async function buildVmsImportStateRedirectFromFormData(formData: FormData, error: string, step = 7) {
   const mapping: Record<string, string> = {};
   for (const [key, value] of formData.entries()) {
     if (key.startsWith("map_") && typeof value === "string" && value !== "") {
@@ -787,9 +787,9 @@ async function ensureConfirmedMapping({
   return data ? { mapping: data, action: "created" as const } : null;
 }
 
-function previewRedirect(formData: FormData | null, previewId: string, sheetName: string, reportType: string, error?: string, headerRow?: number, importBatchId?: string) {
+async function previewRedirect(formData: FormData | null, previewId: string, sheetName: string, reportType: string, error?: string, headerRow?: number, importBatchId?: string) {
   if (formData) {
-    redirect(buildVmsImportStateRedirectFromFormData(formData, error ?? "", 7));
+    redirect(await buildVmsImportStateRedirectFromFormData(formData, error ?? "", 7));
     return;
   }
 
@@ -2225,17 +2225,21 @@ async function runVmsImport({
     });
     errorRedirect(batchMutationErrorMessage(finalUpdateResult.error));
   }
-  if (finalUpdateResult.value.error) {
+  const finalUpdateValue = (!finalUpdateResult.timedOut && Object.prototype.hasOwnProperty.call(finalUpdateResult, 'value'))
+    ? (finalUpdateResult as any).value
+    : null;
+  if (finalUpdateValue?.error) {
     logVmsBatchMutationFailure({
       queryName: "vms_import_batches.update.final",
-      error: finalUpdateResult.value.error,
+      error: finalUpdateValue.error,
       payload: batchUpdate,
       profile,
       selectedImportBatchId: batch.id,
       currentStep: "confirm_import",
     });
-    errorRedirect(batchMutationErrorMessage(finalUpdateResult.value.error));
-      return;
+    errorRedirect(batchMutationErrorMessage(finalUpdateValue.error));
+    return;
+  }
 
   await saveHeaderMappingMemory({ supabase, profile, reportType, headerNames, mapping: columnMapping });
 
@@ -3084,7 +3088,10 @@ export async function completeVmsImport(formData: FormData) {
     });
     redirect(`/vms-import?error=${encodeURIComponent("Could not load the VMS import preview before confirming. Technical details are in the server console.")}`);
   }
-  const { data: preview, error: previewLookupError } = previewLookupResult.value;
+  const previewLookupValue = (!previewLookupResult.timedOut && Object.prototype.hasOwnProperty.call(previewLookupResult, 'value'))
+    ? (previewLookupResult as any).value
+    : null;
+  const { data: preview, error: previewLookupError } = previewLookupValue ?? { data: null, error: null };
   if (previewLookupError) {
     logVmsBatchMutationFailure({
       queryName: "vms_import_previews.select.confirm",
@@ -3150,7 +3157,7 @@ export async function completeVmsImport(formData: FormData) {
       currentUserId: profile.id ?? profile.team_member_id ?? null,
       effectivePermissions: getEffectivePermissions(profile),
     });
-    previewRedirect(
+    await previewRedirect(
       formData,
       previewId,
       sheet.name,
@@ -3162,14 +3169,14 @@ export async function completeVmsImport(formData: FormData) {
 
   const mapping = readMapping(formData, reportType);
   const missing = requiredMissing(mapping, reportType);
-  if (missing.length) previewRedirect(formData, previewId, sheet.name, reportType, `Map required fields: ${missing.join(", ")}`, headerRowIndex, previewBatchId);
+  if (missing.length) await previewRedirect(formData, previewId, sheet.name, reportType, `Map required fields: ${missing.join(", ")}`, headerRowIndex, previewBatchId);
 
   const { headers, records } = sheetRowsToRecords(sheet.rows, { reportType, headerRowIndex });
   const rows = applyColumnMapping(records, mapping);
-  if (!rows.length) previewRedirect(formData, previewId, sheet.name, reportType, "Selected sheet has no data rows.", headerRowIndex, previewBatchId);
+  if (!rows.length) await previewRedirect(formData, previewId, sheet.name, reportType, "Selected sheet has no data rows.", headerRowIndex, previewBatchId);
   const salesReportPeriod = reportType === "sales" ? findSalesReportPeriod(sheet.rows, headerRowIndex) : null;
   if (reportType === "sales" && !salesReportPeriod && !hasSalesRowDate(rows)) {
-    previewRedirect(formData, previewId, sheet.name, reportType, VMS_SALES_DATE_RANGE_ERROR, headerRowIndex, previewBatchId);
+    await previewRedirect(formData, previewId, sheet.name, reportType, VMS_SALES_DATE_RANGE_ERROR, headerRowIndex, previewBatchId);
   }
 
   await runVmsImport({
@@ -3206,8 +3213,8 @@ export async function completeVmsImport(formData: FormData) {
       reportStartDate: submittedReportStartDate ?? salesReportPeriod?.reportStartDate ?? null,
       reportEndDate: submittedReportEndDate ?? salesReportPeriod?.reportEndDate ?? null,
       mapping,
-      autoCreateProducts,
-      updateCostFromVms,
+      autoCreateProducts: autoCreateMissingProducts,
+      updateCostFromVms: updateCostFromVms,
       step: 7,
     },
   });
