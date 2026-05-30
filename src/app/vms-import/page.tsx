@@ -1850,6 +1850,22 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
         validation={validation}
       />
 
+      {/* Parse diagnostics panel: shows parse metadata passed from server for visibility before confirming import */}
+      {(params.rows || params.headers || preview) ? (
+        <section className="surface-card mt-4">
+          <h2 className="mb-2 text-lg font-semibold text-slate-900">Parse Diagnostics</h2>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="text-sm text-slate-700"><strong>File:</strong> {preview?.file_name ?? params.fileName ?? "-"}</div>
+            <div className="text-sm text-slate-700"><strong>File size:</strong> {preview?.file_size_bytes ? String(preview.file_size_bytes) : (params.fileSize ?? "-")}</div>
+            <div className="text-sm text-slate-700"><strong>Rows detected:</strong> {params.rows ?? String(((preview?.sheets as PreviewSheet[] ?? []).reduce((s, sh) => s + (sh.rows?.length ?? 0), 0)) ?? 0)}</div>
+            <div className="text-sm text-slate-700"><strong>Detected report type:</strong> {params.detected ?? (detectedReportType ?? "custom")}</div>
+            <div className="text-sm text-slate-700 sm:col-span-2"><strong>Headers (sample):</strong> {(params.headers ? decodeURIComponent(params.headers) : selectedRows.headers.slice(0, 20).join(", ")) || "-"}</div>
+            <div className="text-sm text-slate-700"><strong>User id:</strong> {params.uid ?? profile?.id ?? "-"}</div>
+            <div className="text-sm text-slate-700"><strong>Import batch id:</strong> {params.importBatchId ?? "-"}</div>
+          </div>
+        </section>
+      ) : null}
+
       <section className="surface-card">
         <h2 className="mb-4 text-lg font-semibold text-slate-900">Recent imports</h2>
         {!batches?.length ? (

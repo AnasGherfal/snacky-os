@@ -1088,6 +1088,22 @@ async function runVmsImport({
     step?: number;
   };
 }) {
+  // Basic sanity checks to avoid creating empty/faulty final batches
+  if (!fileName || typeof fileName !== "string" || fileName.trim() === "") {
+    console.error("[vms-import] Aborting runVmsImport: missing fileName", { fileName, errorState });
+    redirect(`/vms-import?error=${encodeURIComponent("Final import aborted: missing file name.")}`);
+    return;
+  }
+  if (!profile) {
+    console.error("[vms-import] Aborting runVmsImport: missing profile", { fileName, errorState });
+    redirect(`/vms-import?error=${encodeURIComponent("Final import aborted: missing user profile.")}`);
+    return;
+  }
+  if (!rows || !Array.isArray(rows) || rows.length === 0) {
+    console.error("[vms-import] Aborting runVmsImport: zero rows to import", { fileName, fileType, sheetName, errorState });
+    redirect(`/vms-import?error=${encodeURIComponent("Final import aborted: no rows detected in import preview.")}`);
+    return;
+  }
   const isReprocess = Boolean(existingBatchId && recordReprocess);
   const errorRedirect = (message: string) => {
     if (errorState) {
@@ -2490,6 +2506,31 @@ async function createPreviewImportBatch({
   storagePath: string | null;
 }) {
   const rowsFound = parsed.sheets.reduce((sum, sheet) => sum + sheet.rows.length, 0);
+  // Validate basic invariants before creating a DB batch record
+  if (!file?.name) {
+    console.error("[vms-import] Refusing to create preview batch: missing file name", {
+      queryName: "vms_import_batches.insert.rich_preview.validate",
+      currentUserId: profile?.id ?? profile?.team_member_id ?? null,
+      rowsFound,
+    });
+    return { id: null, error: { code: "BAD_INPUT", message: "Missing file name; aborting preview batch creation." }, warning: null as string | null };
+  }
+  if (!profile?.team_member_id && !profile?.id) {
+    console.error("[vms-import] Refusing to create preview batch: missing uploader identity", {
+      queryName: "vms_import_batches.insert.rich_preview.validate",
+      fileName: file.name,
+      rowsFound,
+    });
+    return { id: null, error: { code: "BAD_INPUT", message: "Missing uploader identity; aborting preview batch creation." }, warning: null as string | null };
+  }
+  if (rowsFound === 0) {
+    console.error("[vms-import] Refusing to create preview batch: parsed file contained zero rows", {
+      queryName: "vms_import_batches.insert.rich_preview.validate",
+      fileName: file.name,
+      currentUserId: profile?.id ?? profile?.team_member_id ?? null,
+    });
+    return { id: null, error: { code: "NO_ROWS", message: "Parsed VMS file contains no rows; aborting preview batch creation." }, warning: null as string | null };
+  }
   const dateRange = detectPreviewImportDateRange(parsed, reportType);
   const basePayload = {
     file_name: file.name,
@@ -2796,6 +2837,22 @@ export async function prepareVmsImport(formData: FormData) {
     sheetCount: parsed.sheets.length,
   });
 
+  // Additional detailed diagnostics requested for traceability
+  const firstSheet = parsed.sheets[0];
+  const detectedHeaderRowIndex = firstSheet ? detectHeaderRowIndex(firstSheet.rows, reportType && reportType !== "custom" ? reportType : undefined) : null;
+  const detectedHeaders = detectedHeaderRowIndex !== null && firstSheet ? (firstSheet.rows[detectedHeaderRowIndex] ?? []).map(String) : [];
+  const parsedRowsCount = parsed.sheets.reduce((sum, s) => sum + s.rows.length, 0);
+  console.info("[vms-import] Parse diagnostics", {
+    queryName: "prepareVmsImport.parse_diagnostics",
+    fileName: file.name,
+    fileSize: file.size,
+    detectedHeaders: detectedHeaders.slice(0, 20),
+    detectedHeadersCount: detectedHeaders.length,
+    parsedRowsCount,
+    detectedReportType,
+    currentUserId,
+  });
+
   const fileBuffer = Buffer.from(await file.arrayBuffer());
   const fileHash = createHash("sha256").update(fileBuffer).digest("hex");
   console.info("[vms-import] VMS file hash prepared", {
@@ -3037,7 +3094,10 @@ export async function prepareVmsImport(formData: FormData) {
     elapsedMs: Date.now() - previewStartedAt,
   });
 
-  redirect(`/vms-import?previewId=${previewId}&importBatchId=${batchResult.id}&sheet=${encodeURIComponent(parsed.sheets[0].name)}&reportType=${reportType}&step=2`);
+  // Include small parse diagnostics in the redirect so the UI can show them before confirmation
+  const firstSheetName = parsed.sheets[0]?.name ?? "";
+  const headerPreview = detectedHeaders.slice(0, 20).join(",");
+  redirect(`/vms-import?previewId=${previewId}&importBatchId=${batchResult.id}&sheet=${encodeURIComponent(firstSheetName)}&reportType=${reportType}&step=2&rows=${parsedRowsCount}&headers=${encodeURIComponent(headerPreview)}&detected=${encodeURIComponent(String(detectedReportType))}&uid=${encodeURIComponent(String(currentUserId ?? ""))}`);
 }
 
 export async function importVmsCsv(formData: FormData) {
