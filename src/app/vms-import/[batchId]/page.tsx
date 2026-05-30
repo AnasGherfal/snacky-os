@@ -101,10 +101,49 @@ function userFacingLoadError(error: unknown) {
   if (queryError?.code === "42501" || text.includes("permission denied") || text.includes("row-level security")) {
     return "You do not have permission to load VMS imports.";
   }
+  // Try to extract specific missing table or column names for actionable diagnostics.
+  const tableMatch = text.match(/relation ['"]?([a-z0-9_\.]+)['"]? does not exist/i) || text.match(/table ['"]?([a-z0-9_\.]+)['"]? does not exist/i);
+  if (tableMatch) {
+    const missing = tableMatch[1];
+    console.error("[vms-import:detail] Missing table detected", { missing, raw: text });
+    return `Missing database table: ${missing}. Run the latest migration to create this table.`;
+  }
+  const columnMatch = text.match(/column ['"]?([a-z0-9_]+)['"]? does not exist/i);
+  if (columnMatch) {
+    const missingCol = columnMatch[1];
+    console.error("[vms-import:detail] Missing column detected", { missingCol, raw: text });
+    return `Missing database column: ${missingCol}. Run the latest migration to add this column.`;
+  }
   if (queryError?.code === "42P01" || queryError?.code === "42703" || text.includes("does not exist") || text.includes("schema cache")) {
     return "VMS import database tables are missing. Run the latest migration.";
   }
   return "Snacky OS could not load this VMS import. Technical details are available in the server console.";
+}
+
+async function checkRequiredVmsTables(supabase: any) {
+  const required = [
+    "vms_import_batches",
+    "vms_import_previews",
+    "vms_import_preview_rows",
+    "vms_import_rows",
+    "vms_product_mappings",
+    "vms_machine_mappings",
+    "vms_header_mappings",
+  ];
+  const results: { table: string; exists: boolean; error?: string | null }[] = [];
+  for (const table of required) {
+    try {
+      const res = await supabase.from(table).select("id", { head: true }).limit(1);
+      if (res.error) {
+        results.push({ table, exists: false, error: String(res.error.message ?? res.error) });
+      } else {
+        results.push({ table, exists: true });
+      }
+    } catch (err) {
+      results.push({ table, exists: false, error: String(err instanceof Error ? err.message : err) });
+    }
+  }
+  return results;
 }
 
 function StatCard({ label, value, note }: { label: string; value: string | number; note?: string }) {
@@ -232,6 +271,21 @@ export default async function VmsImportBatchDetailPage({
   const { data: signedFile } = batch.storage_bucket && batch.storage_path
     ? await supabase.storage.from(String(batch.storage_bucket)).createSignedUrl(String(batch.storage_path), 60 * 10)
     : { data: null };
+
+  // Diagnostics: check presence of required VMS tables and counts related to this batch
+  const tableChecks = await checkRequiredVmsTables(supabase);
+  const { count: previewRowsCountValue, error: previewRowsError } = await supabase
+    .from("vms_import_preview_rows")
+    .select("id", { count: "exact", head: true })
+    .eq("import_batch_id", batch.id);
+  const previewRowsCount = previewRowsError ? null : (previewRowsCountValue ?? 0);
+  const { count: mappingCountValue, error: mappingCountError } = await supabase
+    .from("vms_product_mappings")
+    .select("id", { count: "exact", head: true });
+  const mappingCount = mappingCountError ? null : (mappingCountValue ?? 0);
+
+  // Latest batch snapshot for quick inspection
+  const { data: latestBatch } = await supabase.from("vms_import_batches").select("id, status, file_name, report_type, rows_found, rows_imported, uploaded_by, created_at").order("created_at", { ascending: false }).limit(1).maybeSingle();
 
   const rowList = (rows ?? []) as any[];
   const summary = parseSummary(batch.notes);
@@ -374,6 +428,39 @@ export default async function VmsImportBatchDetailPage({
             <Link href={signedFile.signedUrl} className="btn-secondary">Download original file</Link>
           </div>
         ) : null}
+      </section>
+
+      <section className="surface-card mb-6">
+        <h2 className="mb-4 text-lg font-semibold text-slate-900">Diagnostics</h2>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Batch snapshot</div>
+            <div className="mt-1 text-sm text-slate-900">Latest batch: {latestBatch?.id ?? "-"}</div>
+            <div className="mt-1 text-xs text-slate-500">Status: {latestBatch?.status ?? "-"} • File: {latestBatch?.file_name ?? "-"}</div>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Preview rows for this batch</div>
+            <div className="mt-1 text-2xl font-semibold text-slate-900">{previewRowsCount === null ? "?" : previewRowsCount}</div>
+            <div className="mt-1 text-xs text-slate-500">Preview rows linked by import_batch_id</div>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Mappings count</div>
+            <div className="mt-1 text-2xl font-semibold text-slate-900">{mappingCount === null ? "?" : mappingCount}</div>
+            <div className="mt-1 text-xs text-slate-500">Number of product mappings in DB</div>
+          </div>
+        </div>
+
+        <div className="mt-4">
+          <h3 className="text-sm font-semibold text-slate-900">Required table status</h3>
+          <div className="mt-2 grid gap-2">
+            {tableChecks.map((t) => (
+              <div key={t.table} className={`rounded-md p-2 ${t.exists ? "bg-emerald-50 border border-emerald-100" : "bg-rose-50 border border-rose-100"}`}>
+                <div className="text-sm font-medium text-slate-900">{t.table}</div>
+                <div className="text-xs text-slate-500">{t.exists ? "exists" : `missing — ${t.error ?? "unknown error"}`}</div>
+              </div>
+            ))}
+          </div>
+        </div>
       </section>
 
       {canConfirmVmsImports(profile) ? (

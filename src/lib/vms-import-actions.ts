@@ -178,6 +178,28 @@ async function sanitizeVmsImportBatchPayload(payload: Record<string, unknown>, c
   return Object.fromEntries(Object.entries(payload).filter(([key]) => ALLOWED_VMS_IMPORT_BATCH_FIELDS.has(key)));
 }
 
+async function checkVmsRequiredTables(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>) {
+  const required = [
+    "vms_import_batches",
+    "vms_import_previews",
+    "vms_import_preview_rows",
+    "vms_import_rows",
+    "vms_product_mappings",
+    "vms_machine_mappings",
+    "vms_header_mappings",
+  ];
+  const missing: string[] = [];
+  for (const table of required) {
+    try {
+      const res = await supabase.from(table).select("id", { head: true }).limit(1);
+      if (res.error) missing.push(table);
+    } catch (err) {
+      missing.push(table);
+    }
+  }
+  return missing;
+}
+
 function buildVmsImportStateRedirect(params: {
   previewId?: string | null;
   importBatchId?: string | null;
@@ -1253,6 +1275,15 @@ async function runVmsImport({
       currentStep: "confirm_import",
       selectedImportBatchId: batch.id,
     });
+    // Check required tables before attempting update
+    {
+      const missingTables = await checkVmsRequiredTables(supabase);
+      if (missingTables.length) {
+        console.error("[vms-import] Aborting confirm import: missing required vms tables", { missingTables, batchId: batch.id });
+        errorRedirect(`Missing required tables: ${missingTables.join(", ")}. Run the latest migration.`);
+        return;
+      }
+    }
     const updateResult = await withSoftTimeout(
       supabase
         .from("vms_import_batches")
@@ -1326,6 +1357,15 @@ async function runVmsImport({
       currentStep: "confirm_import",
       selectedImportBatchId: null,
     });
+    // Check required tables before attempting create
+    {
+      const missingTables = await checkVmsRequiredTables(supabase);
+      if (missingTables.length) {
+        console.error("[vms-import] Aborting final import create: missing required vms tables", { missingTables });
+        errorRedirect(`Missing required tables: ${missingTables.join(", ")}. Run the latest migration.`);
+        return;
+      }
+    }
     const createResult = await withSoftTimeout(
       supabase
         .from("vms_import_batches")
@@ -2530,6 +2570,17 @@ async function createPreviewImportBatch({
       currentUserId: profile?.id ?? profile?.team_member_id ?? null,
     });
     return { id: null, error: { code: "NO_ROWS", message: "Parsed VMS file contains no rows; aborting preview batch creation." }, warning: null as string | null };
+  }
+  // Ensure required VMS import tables exist before creating a preview batch.
+  const missing = await checkVmsRequiredTables(supabase);
+  if (missing.length) {
+    console.error("[vms-import] Refusing to create preview batch: missing required vms tables", {
+      queryName: "vms_import_batches.insert.rich_preview.validate",
+      missing,
+      fileName: file?.name ?? null,
+      currentUserId: profile?.id ?? profile?.team_member_id ?? null,
+    });
+    return { id: null, error: { code: "MISSING_SCHEMA", message: `Missing required tables: ${missing.join(", ")}` }, warning: null as string | null };
   }
   const dateRange = detectPreviewImportDateRange(parsed, reportType);
   const basePayload = {
