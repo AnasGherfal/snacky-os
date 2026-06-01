@@ -6,6 +6,12 @@ import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/a
 import { canConfirmVmsImports, canViewVmsImports, getEffectivePermissions } from "@/lib/authz";
 import { reprocessVmsImportBatch, updateVmsImportBatchState } from "@/lib/vms-import-actions";
 import { parseReportType, vmsExpectedFields, vmsReportTypes } from "@/lib/vms-parser";
+import {
+  VMS_IMPORT_PIPELINE_RELATIONS,
+  extractVmsSchemaIssue,
+  vmsSchemaIssueMessage,
+  type VmsSupabaseError,
+} from "@/lib/vms-schema-diagnostics";
 
 export const dynamic = "force-dynamic";
 
@@ -95,12 +101,14 @@ function queryErrorMessage(error: unknown) {
   return String((error as { message?: unknown }).message ?? "Unknown error");
 }
 
-function userFacingLoadError(error: unknown) {
+function userFacingLoadError(error: unknown, queryName?: string) {
   const queryError = error && typeof error === "object" ? error as { code?: string; message?: string; details?: string; hint?: string } : null;
   const text = `${queryError?.code ?? ""} ${queryError?.message ?? ""} ${queryError?.details ?? ""} ${queryError?.hint ?? ""}`.toLowerCase();
   if (queryError?.code === "42501" || text.includes("permission denied") || text.includes("row-level security")) {
     return "You do not have permission to load VMS imports.";
   }
+  const schemaMessage = vmsSchemaIssueMessage(error, queryName);
+  if (schemaMessage) return schemaMessage;
   // Try to extract specific missing table or column names for actionable diagnostics.
   const tableMatch = text.match(/relation ['"]?([a-z0-9_\.]+)['"]? does not exist/i) || text.match(/table ['"]?([a-z0-9_\.]+)['"]? does not exist/i);
   if (tableMatch) {
@@ -115,35 +123,48 @@ function userFacingLoadError(error: unknown) {
     return `Missing database column: ${missingCol}. Run the latest migration to add this column.`;
   }
   if (queryError?.code === "42P01" || queryError?.code === "42703" || text.includes("does not exist") || text.includes("schema cache")) {
-    return "VMS import database tables are missing. Run the latest migration.";
+    return "VMS import schema is missing or stale. Run the latest migration.";
   }
   return "Snacky OS could not load this VMS import. Technical details are available in the server console.";
 }
 
 async function checkRequiredVmsTables(supabase: any) {
-  const required = [
-    "vms_import_batches",
-    "vms_import_previews",
-    "vms_import_preview_rows",
-    "vms_import_rows",
-    "vms_product_mappings",
-    "vms_machine_mappings",
-    "vms_header_mappings",
-  ];
-  const results: { table: string; exists: boolean; error?: string | null }[] = [];
-  for (const table of required) {
+  const results: { table: string; kind: string; requiredFor: string; exists: boolean; error?: string | null; code?: string | null; missingRelation?: string | null; missingColumn?: string | null }[] = [];
+  for (const relation of VMS_IMPORT_PIPELINE_RELATIONS) {
     try {
-      const res = await supabase.from(table).select("id", { head: true }).limit(1);
+      const res = await supabase.from(relation.name).select("id", { head: true }).limit(1);
       if (res.error) {
-        results.push({ table, exists: false, error: String(res.error.message ?? res.error) });
+        const issue = extractVmsSchemaIssue(res.error, `${relation.name}.schema_check`);
+        results.push({
+          table: relation.name,
+          kind: relation.kind,
+          requiredFor: relation.requiredFor,
+          exists: false,
+          error: String(res.error.message ?? res.error),
+          code: res.error.code ?? null,
+          missingRelation: issue?.type === "missing_relation" ? issue.relation : null,
+          missingColumn: issue?.type === "missing_column" ? issue.column : null,
+        });
       } else {
-        results.push({ table, exists: true });
+        results.push({ table: relation.name, kind: relation.kind, requiredFor: relation.requiredFor, exists: true });
       }
     } catch (err) {
-      results.push({ table, exists: false, error: String(err instanceof Error ? err.message : err) });
+      results.push({ table: relation.name, kind: relation.kind, requiredFor: relation.requiredFor, exists: false, error: String(err instanceof Error ? err.message : err) });
     }
   }
   return results;
+}
+
+async function countBatchRows(supabase: any, table: string, batchId: string) {
+  const { count, error } = await supabase
+    .from(table)
+    .select("id", { count: "exact", head: true })
+    .eq("import_batch_id", batchId);
+  return {
+    count: error ? null : count ?? 0,
+    error: error ? queryErrorMessage(error) : null,
+    code: (error as VmsSupabaseError | null)?.code ?? null,
+  };
 }
 
 function StatCard({ label, value, note }: { label: string; value: string | number; note?: string }) {
@@ -222,25 +243,46 @@ export default async function VmsImportBatchDetailPage({
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) notFound();
 
-  const [{ data: batch, error: batchError }, { data: rows, error: rowsError }] = await Promise.all([
-    supabase
-      .from("vms_import_batches")
-      .select("id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, uploaded_by, uploaded_at, status, is_active, deleted_at, deleted_by, delete_reason, disabled_at, disabled_by, disable_reason, source_usage, dashboard_usage, file_hash, storage_bucket, storage_path, original_file_name, detected_min_datetime, detected_max_datetime, total_successful_sales, successful_rows_count, failed_rows_count, refunded_rows_count, row_count, rows_imported, rows_skipped, rows_skipped_duplicate, rows_needing_review, import_mode, report_start_date, report_end_date, error_count, errors, notes, column_mapping, last_reprocessed_at, reprocess_count")
-      .eq("id", batchId)
-      .maybeSingle(),
-    supabase
-      .from("vms_import_rows")
-      .select("id, row_number, raw_data, normalized_data, validation_status, validation_errors, machine_match_status, product_match_status, matched_machine_id, matched_product_id")
-      .eq("import_batch_id", batchId)
-      .order("row_number", { ascending: true }),
-  ]);
+  const preferredBatch = await supabase
+    .from("vms_import_batches")
+    .select("id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, uploaded_by, uploaded_at, status, is_active, deleted_at, deleted_by, delete_reason, disabled_at, disabled_by, disable_reason, source_usage, dashboard_usage, file_hash, storage_bucket, storage_path, original_file_name, detected_min_datetime, detected_max_datetime, total_successful_sales, successful_rows_count, failed_rows_count, refunded_rows_count, row_count, rows_found, rows_imported, rows_skipped, rows_skipped_duplicate, rows_needing_review, import_mode, report_start_date, report_end_date, error_count, errors, notes, column_mapping, last_reprocessed_at, reprocess_count")
+    .eq("id", batchId)
+    .maybeSingle();
 
-  if (batchError || rowsError) {
-    const loadError = batchError ?? rowsError;
+  let batch = preferredBatch.data as any | null;
+  let batchError = preferredBatch.error as unknown;
+  let batchSchemaNotice = "";
+  if (preferredBatch.error && extractVmsSchemaIssue(preferredBatch.error, "vms_import_batches.selected")) {
+    console.error("[vms-import:detail] Preferred batch select failed; trying legacy shape", {
+      queryName: "vms_import_batches.selected",
+      code: preferredBatch.error.code,
+      message: preferredBatch.error.message,
+      details: preferredBatch.error.details,
+      hint: preferredBatch.error.hint,
+      schemaIssue: extractVmsSchemaIssue(preferredBatch.error, "vms_import_batches.selected"),
+      selectedBatchId: batchId,
+      currentUserId: profile?.id ?? null,
+      effectivePermissions,
+    });
+    const fallbackBatch = await supabase
+      .from("vms_import_batches")
+      .select("id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, uploaded_by, uploaded_at, status, row_count, rows_found, rows_imported, error_count, notes")
+      .eq("id", batchId)
+      .maybeSingle();
+    batch = fallbackBatch.data as any | null;
+    batchError = fallbackBatch.error;
+    if (!fallbackBatch.error) {
+      batchSchemaNotice = userFacingLoadError(preferredBatch.error, "vms_import_batches.selected");
+    }
+  }
+
+  if (batchError) {
+    const loadError = batchError;
     console.error("[vms-import:detail] Failed to load batch detail", {
-      queryName: batchError ? "vms_import_batches.selected" : "vms_import_rows.for_batch",
+      queryName: "vms_import_batches.selected",
       code: (loadError as { code?: string } | null)?.code ?? null,
       message: queryErrorMessage(loadError),
+      schemaIssue: extractVmsSchemaIssue(loadError, "vms_import_batches.selected"),
       selectedBatchId: batchId,
       currentUserId: profile?.id ?? null,
       effectivePermissions,
@@ -248,7 +290,7 @@ export default async function VmsImportBatchDetailPage({
     return (
       <>
         <PageHeader title="VMS Import Batch" subtitle="Review imported VMS rows and mapping issues." action={<SecondaryButton href="/vms-import">Back to VMS import</SecondaryButton>} />
-        <ErrorState title="Could not load VMS import batch" body={userFacingLoadError(loadError)} action={<SecondaryButton href="/vms-import">Show latest imports</SecondaryButton>} />
+        <ErrorState title="Could not load VMS import batch" body={userFacingLoadError(loadError, "vms_import_batches.selected")} action={<SecondaryButton href="/vms-import">Show latest imports</SecondaryButton>} />
       </>
     );
   }
@@ -265,6 +307,27 @@ export default async function VmsImportBatchDetailPage({
     redirect(`/vms-import?error=${encodeURIComponent(message)}`);
   }
 
+  const rowsResult = await supabase
+    .from("vms_import_rows")
+    .select("id, row_number, raw_data, normalized_data, validation_status, validation_errors, machine_match_status, product_match_status, matched_machine_id, matched_product_id")
+    .eq("import_batch_id", batchId)
+    .order("row_number", { ascending: true });
+  const rows = rowsResult.error ? [] : rowsResult.data;
+  const rowsLoadError = rowsResult.error ?? null;
+  if (rowsLoadError) {
+    console.error("[vms-import:detail] Imported row audit query failed; continuing with diagnostics", {
+      queryName: "vms_import_rows.for_batch",
+      code: rowsLoadError.code,
+      message: rowsLoadError.message,
+      details: rowsLoadError.details,
+      hint: rowsLoadError.hint,
+      schemaIssue: extractVmsSchemaIssue(rowsLoadError, "vms_import_rows.for_batch"),
+      selectedBatchId: batchId,
+      currentUserId: profile?.id ?? null,
+      effectivePermissions,
+    });
+  }
+
   const { data: importer } = batch.uploaded_by ?? batch.imported_by
     ? await supabase.from("team_members").select("id, full_name").eq("id", batch.uploaded_by ?? batch.imported_by).maybeSingle()
     : { data: null };
@@ -274,18 +337,29 @@ export default async function VmsImportBatchDetailPage({
 
   // Diagnostics: check presence of required VMS tables and counts related to this batch
   const tableChecks = await checkRequiredVmsTables(supabase);
-  const { count: previewRowsCountValue, error: previewRowsError } = await supabase
-    .from("vms_import_preview_rows")
-    .select("id", { count: "exact", head: true })
-    .eq("import_batch_id", batch.id);
-  const previewRowsCount = previewRowsError ? null : (previewRowsCountValue ?? 0);
-  const { count: mappingCountValue, error: mappingCountError } = await supabase
-    .from("vms_product_mappings")
-    .select("id", { count: "exact", head: true });
-  const mappingCount = mappingCountError ? null : (mappingCountValue ?? 0);
+  const [
+    previewRowsCount,
+    importedRowsCount,
+    salesRawCount,
+    transactionsRawCount,
+    productMappingsCountResult,
+    machineMappingsCountResult,
+  ] = await Promise.all([
+    countBatchRows(supabase, "vms_import_preview_rows", batch.id),
+    countBatchRows(supabase, "vms_import_rows", batch.id),
+    countBatchRows(supabase, "vms_sales_raw", batch.id),
+    countBatchRows(supabase, "vms_transactions_raw", batch.id),
+    supabase.from("vms_product_mappings").select("id", { count: "exact", head: true }),
+    supabase.from("vms_machine_mappings").select("id", { count: "exact", head: true }),
+  ]);
+  const mappingCountError = productMappingsCountResult.error ?? machineMappingsCountResult.error ?? null;
+  const mappingCount = mappingCountError ? null : (productMappingsCountResult.count ?? 0) + (machineMappingsCountResult.count ?? 0);
 
   // Latest batch snapshot for quick inspection
-  const { data: latestBatch } = await supabase.from("vms_import_batches").select("id, status, file_name, report_type, rows_found, rows_imported, uploaded_by, created_at").order("created_at", { ascending: false }).limit(1).maybeSingle();
+  const { data: latestBatch } = await supabase.from("vms_import_batches").select("id, status, file_name, report_type, rows_found, rows_imported, uploaded_by, created_at, is_active").order("created_at", { ascending: false }).limit(1).maybeSingle();
+  const latestDiagnosticError = rowsLoadError
+    ? userFacingLoadError(rowsLoadError, "vms_import_rows.for_batch")
+    : batchSchemaNotice || null;
 
   const rowList = (rows ?? []) as any[];
   const summary = parseSummary(batch.notes);
@@ -432,31 +506,64 @@ export default async function VmsImportBatchDetailPage({
 
       <section className="surface-card mb-6">
         <h2 className="mb-4 text-lg font-semibold text-slate-900">Diagnostics</h2>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {latestDiagnosticError ? (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            Latest load issue: {latestDiagnosticError}
+          </div>
+        ) : null}
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <StatCard label="Batch id" value={batch.id} />
+          <StatCard label="File name" value={batch.file_name ?? "-"} />
+          <StatCard label="Report type" value={reportLabel(batch.report_type ?? batch.source_type)} />
+          <StatCard label="Status" value={batch.status ?? "-"} />
+          <StatCard label="Active" value={batch.status === "imported" && batch.is_active !== false && !batch.deleted_at ? "Yes" : "No"} />
+          <StatCard label="Rows found" value={batch.rows_found ?? batch.row_count ?? 0} />
+          <StatCard label="Rows imported" value={batch.rows_imported ?? 0} />
+          <StatCard label="Created/uploaded" value={formatDateTime(batch.uploaded_at ?? batch.imported_at)} />
           <div className="rounded-lg border border-slate-200 bg-white p-3">
             <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Batch snapshot</div>
             <div className="mt-1 text-sm text-slate-900">Latest batch: {latestBatch?.id ?? "-"}</div>
-            <div className="mt-1 text-xs text-slate-500">Status: {latestBatch?.status ?? "-"} • File: {latestBatch?.file_name ?? "-"}</div>
+            <div className="mt-1 text-xs text-slate-500">Status: {latestBatch?.status ?? "-"} - Active: {latestBatch?.is_active === false ? "No" : "Yes"} - File: {latestBatch?.file_name ?? "-"}</div>
           </div>
           <div className="rounded-lg border border-slate-200 bg-white p-3">
             <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Preview rows for this batch</div>
-            <div className="mt-1 text-2xl font-semibold text-slate-900">{previewRowsCount === null ? "?" : previewRowsCount}</div>
-            <div className="mt-1 text-xs text-slate-500">Preview rows linked by import_batch_id</div>
+            <div className="mt-1 text-2xl font-semibold text-slate-900">{previewRowsCount.count === null ? "?" : previewRowsCount.count}</div>
+            <div className="mt-1 text-xs text-slate-500">{previewRowsCount.error ?? "Preview rows linked by import_batch_id"}</div>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Imported audit rows</div>
+            <div className="mt-1 text-2xl font-semibold text-slate-900">{importedRowsCount.count === null ? "?" : importedRowsCount.count}</div>
+            <div className="mt-1 text-xs text-slate-500">{importedRowsCount.error ?? "Rows saved in vms_import_rows"}</div>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Raw sales rows</div>
+            <div className="mt-1 text-2xl font-semibold text-slate-900">{salesRawCount.count === null ? "?" : salesRawCount.count}</div>
+            <div className="mt-1 text-xs text-slate-500">{salesRawCount.error ?? "Rows saved in vms_sales_raw"}</div>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Raw transaction rows</div>
+            <div className="mt-1 text-2xl font-semibold text-slate-900">{transactionsRawCount.count === null ? "?" : transactionsRawCount.count}</div>
+            <div className="mt-1 text-xs text-slate-500">{transactionsRawCount.error ?? "Rows saved in vms_transactions_raw"}</div>
           </div>
           <div className="rounded-lg border border-slate-200 bg-white p-3">
             <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Mappings count</div>
             <div className="mt-1 text-2xl font-semibold text-slate-900">{mappingCount === null ? "?" : mappingCount}</div>
-            <div className="mt-1 text-xs text-slate-500">Number of product mappings in DB</div>
+            <div className="mt-1 text-xs text-slate-500">{mappingCountError ? queryErrorMessage(mappingCountError) : "Product and machine mappings in DB"}</div>
           </div>
         </div>
 
         <div className="mt-4">
-          <h3 className="text-sm font-semibold text-slate-900">Required table status</h3>
+          <h3 className="text-sm font-semibold text-slate-900">Required relation status</h3>
           <div className="mt-2 grid gap-2">
             {tableChecks.map((t) => (
               <div key={t.table} className={`rounded-md p-2 ${t.exists ? "bg-emerald-50 border border-emerald-100" : "bg-rose-50 border border-rose-100"}`}>
-                <div className="text-sm font-medium text-slate-900">{t.table}</div>
-                <div className="text-xs text-slate-500">{t.exists ? "exists" : `missing — ${t.error ?? "unknown error"}`}</div>
+                <div className="text-sm font-medium text-slate-900">{t.table} <span className="text-xs font-normal text-slate-500">({t.kind})</span></div>
+                <div className="text-xs text-slate-500">{t.requiredFor}</div>
+                <div className="mt-1 text-xs text-slate-500">
+                  {t.exists
+                    ? "exists"
+                    : `failed - ${t.missingColumn ? `missing column ${t.missingColumn}` : t.missingRelation ? `missing relation ${t.missingRelation}` : t.error ?? "unknown error"}`}
+                </div>
               </div>
             ))}
           </div>

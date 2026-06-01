@@ -47,6 +47,7 @@ import {
   orderDetailsSuccessfulSalesAmount,
   orderDetailsTransactionStatus,
 } from "@/lib/vms-order-details";
+import { extractVmsSchemaIssue, vmsSchemaIssueMessage } from "@/lib/vms-schema-diagnostics";
 
 export const dynamic = "force-dynamic";
 
@@ -385,9 +386,11 @@ function isPermissionError(error: SupabaseQueryError | null) {
   return error?.code === "42501" || text.includes("permission denied") || text.includes("row-level security") || text.includes("rls");
 }
 
-function userFacingLoadError(error: SupabaseQueryError | null) {
+function userFacingLoadError(error: SupabaseQueryError | null, queryName?: string) {
   if (isPermissionError(error)) return "You do not have permission to load VMS imports.";
-  if (isMissingSchemaError(error)) return "VMS import database tables are missing. Run the latest migration.";
+  const schemaMessage = vmsSchemaIssueMessage(error, queryName);
+  if (schemaMessage) return schemaMessage;
+  if (isMissingSchemaError(error)) return "VMS import schema is missing or stale. Run the latest migration.";
   return "Snacky OS could not load VMS imports. Technical details are available in the server console.";
 }
 
@@ -409,6 +412,9 @@ function logVmsImportLoadIssue({
     queryName,
     code: supabaseError?.code ?? null,
     message: supabaseError?.message ?? String(error ?? "Unknown error"),
+    details: supabaseError?.details ?? null,
+    hint: supabaseError?.hint ?? null,
+    schemaIssue: extractVmsSchemaIssue(error, queryName),
     selectedBatchId,
     currentUserId,
     effectivePermissions,
@@ -937,7 +943,9 @@ async function loadValidationRows<T>({
 
 function validationReferenceErrorMessage(blockingError: ValidationBlockingError) {
   if (isPermissionError(blockingError.error)) return "You do not have permission to validate VMS imports.";
-  if (isMissingSchemaError(blockingError.error)) return "VMS import database tables are missing. Run the latest migration.";
+  const schemaMessage = vmsSchemaIssueMessage(blockingError.error, blockingError.queryName);
+  if (schemaMessage) return schemaMessage;
+  if (isMissingSchemaError(blockingError.error)) return "VMS import schema is missing or stale. Run the latest migration.";
   if (blockingError.queryName === "machines.validation_references") return "Could not load machines needed to validate this VMS import.";
   if (blockingError.queryName === "products.validation_references") return "Could not load products needed to validate this VMS import.";
   if (blockingError.queryName === "vms_import_preview_rows.current_preview") return "Could not load preview rows for this import. Run the latest migration or re-upload the file.";
@@ -1128,7 +1136,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
     return (
       <>
         <PageHeader title="VMS Import" subtitle="A step-by-step import wizard for VMS Excel and CSV reports." />
-        <ErrorState title="Could not load VMS import" body={userFacingLoadError(batchesError)} action={<SecondaryButton href="/vms-import">Retry</SecondaryButton>} />
+        <ErrorState title="Could not load VMS import" body={userFacingLoadError(batchesError, "vms_import_batches.list")} action={<SecondaryButton href="/vms-import">Retry</SecondaryButton>} />
       </>
     );
   }

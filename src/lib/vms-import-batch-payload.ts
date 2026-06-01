@@ -1,0 +1,68 @@
+const ALLOWED_VMS_IMPORT_BATCH_FIELDS = new Set([
+  "uploaded_by",
+  "uploaded_at",
+  "file_name",
+  "file_type",
+  "sheet_name",
+  "report_type",
+  "report_start_date",
+  "report_end_date",
+  "import_mode",
+  "status",
+  "source_type",
+  "rows_found",
+  "row_count",
+  "rows_imported",
+  "rows_skipped",
+  "rows_skipped_duplicate",
+  "rows_needing_review",
+  "notes",
+  "errors",
+  "unknown_machines",
+  "unmapped_products",
+  "preview_summary",
+  "review_summary",
+  "is_active",
+  "file_hash",
+  "storage_bucket",
+  "storage_path",
+  "original_file_name",
+  "detected_min_datetime",
+  "detected_max_datetime",
+  "total_successful_sales",
+  "successful_rows_count",
+  "failed_rows_count",
+  "refunded_rows_count",
+  "failed_at",
+  "last_reprocessed_at",
+  "reprocess_count",
+  "deleted_at",
+  "deleted_by",
+  "delete_reason",
+  "disabled_at",
+  "disabled_by",
+  "disable_reason",
+  "created_at",
+  "updated_at",
+]);
+
+export function sanitizeVmsImportBatchPayload(
+  payload: Record<string, unknown>,
+  context: { queryName: string; currentStep: string; selectedImportBatchId?: string | null },
+) {
+  const invalidKeys = Object.keys(payload).filter((key) => !ALLOWED_VMS_IMPORT_BATCH_FIELDS.has(key));
+  if (invalidKeys.length) {
+    console.error("[vms-import] Invalid vms_import_batches payload detected", {
+      queryName: context.queryName,
+      currentStep: context.currentStep,
+      selectedImportBatchId: context.selectedImportBatchId ?? null,
+      invalidKeys,
+      payload,
+    });
+    const formattedKeys = invalidKeys.map((key) => `\`${key}\``).join(", ");
+    throw new Error(
+      `Internal import bug: invalid field${invalidKeys.length > 1 ? "s" : ""} ${formattedKeys} were included in batch payload. Raw VMS columns must not be inserted into vms_import_batches.`,
+    );
+  }
+  return Object.fromEntries(Object.entries(payload).filter(([key]) => ALLOWED_VMS_IMPORT_BATCH_FIELDS.has(key)));
+}

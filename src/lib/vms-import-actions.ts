@@ -42,6 +42,12 @@ import {
 } from "@/lib/vms-sales-import";
 import { buildProductLookupMap, resolveVmsProduct, vmsLookupKey, vmsProductDisplay } from "@/lib/vms-import-validation";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import {
+  VMS_IMPORT_REQUIRED_TABLES,
+  extractVmsSchemaIssue,
+  vmsSchemaIssueMessage,
+} from "@/lib/vms-schema-diagnostics";
+import { sanitizeVmsImportBatchPayload } from "@/lib/vms-import-batch-payload";
 
 type ImportSummary = {
   reportType: VmsReportType;
@@ -112,92 +118,38 @@ function booleanOption(input: FormDataEntryValue | string | null | undefined, de
   return defaultValue;
 }
 
-const ALLOWED_VMS_IMPORT_BATCH_FIELDS = new Set([
-  "uploaded_by",
-  "uploaded_at",
-  "file_name",
-  "file_type",
-  "sheet_name",
-  "report_type",
-  "report_start_date",
-  "report_end_date",
-  "import_mode",
-  "status",
-  "source_type",
-  "rows_found",
-  "row_count",
-  "rows_imported",
-  "rows_skipped",
-  "rows_skipped_duplicate",
-  "rows_needing_review",
-  "notes",
-  "errors",
-  "unknown_machines",
-  "unmapped_products",
-  "preview_summary",
-  "review_summary",
-  "is_active",
-  "file_hash",
-  "storage_bucket",
-  "storage_path",
-  "original_file_name",
-  "detected_min_datetime",
-  "detected_max_datetime",
-  "total_successful_sales",
-  "successful_rows_count",
-  "failed_rows_count",
-  "refunded_rows_count",
-  "failed_at",
-  "last_reprocessed_at",
-  "reprocess_count",
-  "deleted_at",
-  "deleted_by",
-  "delete_reason",
-  "disabled_at",
-  "disabled_by",
-  "disable_reason",
-  "created_at",
-  "updated_at",
-]);
-
-async function sanitizeVmsImportBatchPayload(payload: Record<string, unknown>, context: { queryName: string; currentStep: string; selectedImportBatchId?: string | null }) {
-  const invalidKeys = Object.keys(payload).filter((key) => !ALLOWED_VMS_IMPORT_BATCH_FIELDS.has(key));
-  if (invalidKeys.length) {
-    console.error("[vms-import] Invalid vms_import_batches payload detected", {
-      queryName: context.queryName,
-      currentStep: context.currentStep,
-      selectedImportBatchId: context.selectedImportBatchId ?? null,
-      invalidKeys,
-      payload,
-    });
-    const formattedKeys = invalidKeys.map((key) => `\`${key}\``).join(", ");
-    throw new Error(
-      `Internal import bug: invalid field${invalidKeys.length > 1 ? "s" : ""} ${formattedKeys} were included in batch payload. Raw VMS columns must not be inserted into vms_import_batches.`,
-    );
-  }
-  return Object.fromEntries(Object.entries(payload).filter(([key]) => ALLOWED_VMS_IMPORT_BATCH_FIELDS.has(key)));
-}
-
 async function checkVmsRequiredTables(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>) {
-  const required = [
-    "vms_import_batches",
-    "vms_import_previews",
-    "vms_import_preview_rows",
-    "vms_import_rows",
-    "vms_product_mappings",
-    "vms_machine_mappings",
-    "vms_header_mappings",
-  ];
   const missing: string[] = [];
-  for (const table of required) {
+  for (const table of VMS_IMPORT_REQUIRED_TABLES) {
     try {
       const res = await supabase.from(table).select("id", { head: true }).limit(1);
-      if (res.error) missing.push(table);
+      if (res.error) {
+        console.error("[vms-import] Required VMS relation check failed", {
+          table,
+          code: res.error.code,
+          message: res.error.message,
+          details: res.error.details,
+          hint: res.error.hint,
+          schemaIssue: extractVmsSchemaIssue(res.error, `${table}.required_schema_check`),
+        });
+        missing.push(table);
+      }
     } catch (err) {
+      console.error("[vms-import] Required VMS relation check threw", {
+        table,
+        error: err instanceof Error ? err.message : String(err),
+      });
       missing.push(table);
     }
   }
   return missing;
+}
+
+function requiredTablesMessage(missingTables: string[]) {
+  if (missingTables.length === 1) {
+    return `Missing required VMS import table: ${missingTables[0]}. Run the latest migration before importing.`;
+  }
+  return `Missing required VMS import tables: ${missingTables.join(", ")}. Run the latest migration before importing.`;
 }
 
 function buildVmsImportStateRedirect(params: {
@@ -456,11 +408,20 @@ async function upsertRawRows(
       .from("vms_import_rows")
       .upsert(chunk, { onConflict: "import_batch_id,row_number" });
     if (error) {
-      console.error("[vms-import] Raw row upsert failed", error);
-      return false;
+      console.error("[vms-import] Raw row upsert failed", {
+        queryName: "vms_import_rows.upsert",
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        chunkStart: index,
+        chunkSize: chunk.length,
+        schemaIssue: extractVmsSchemaIssue(error, "vms_import_rows.upsert"),
+      });
+      return { ok: false as const, error };
     }
   }
-  return true;
+  return { ok: true as const, error: null };
 }
 
 function reportRequiresMachine(reportType: VmsReportType) {
@@ -1250,11 +1211,15 @@ async function runVmsImport({
 
     batch = existingLookup.data;
     const confirmStartPayload = sanitizeVmsImportBatchPayload({
-      status: "draft",
+      status: "previewed",
       is_active: false,
       import_mode: importMode,
       report_start_date: effectiveReportStartDate,
       report_end_date: effectiveReportEndDate,
+      file_name: fileName,
+      file_type: fileType,
+      sheet_name: sheetName,
+      report_type: reportType,
       file_hash: fileHash,
       storage_path: storagePath,
       rows_found: rows.length,
@@ -1280,7 +1245,7 @@ async function runVmsImport({
       const missingTables = await checkVmsRequiredTables(supabase);
       if (missingTables.length) {
         console.error("[vms-import] Aborting confirm import: missing required vms tables", { missingTables, batchId: batch.id });
-        errorRedirect(`Missing required tables: ${missingTables.join(", ")}. Run the latest migration.`);
+        errorRedirect(requiredTablesMessage(missingTables));
         return;
       }
     }
@@ -1330,92 +1295,17 @@ async function runVmsImport({
     }
 
   } else {
-    const createPayload = sanitizeVmsImportBatchPayload({
-      file_name: fileName,
-      report_type: reportType,
-      uploaded_by: profile?.team_member_id ?? null,
-      uploaded_at: new Date().toISOString(),
-      status: "draft",
-      is_active: false,
-      import_mode: importMode,
-      report_start_date: effectiveReportStartDate,
-      report_end_date: effectiveReportEndDate,
-      file_hash: fileHash,
-      storage_path: storagePath,
-      rows_found: rows.length,
-      notes: JSON.stringify({
-        reportType,
-        fileName,
-        fileType,
-        sheetName,
-        importMode,
-        rowCount: rows.length,
-        columnMapping,
-      }),
-    }, {
-      queryName: "vms_import_batches.insert.final",
-      currentStep: "confirm_import",
-      selectedImportBatchId: null,
+    console.error("[vms-import] Refusing final import without an existing preview batch", {
+      queryName: "completeVmsImport.require_existing_batch",
+      fileName,
+      fileType,
+      sheetName,
+      reportType,
+      rowsFound: rows.length,
+      currentUserId: profile?.id ?? profile?.team_member_id ?? null,
     });
-    // Check required tables before attempting create
-    {
-      const missingTables = await checkVmsRequiredTables(supabase);
-      if (missingTables.length) {
-        console.error("[vms-import] Aborting final import create: missing required vms tables", { missingTables });
-        errorRedirect(`Missing required tables: ${missingTables.join(", ")}. Run the latest migration.`);
-        return;
-      }
-    }
-    const createResult = await withSoftTimeout(
-      supabase
-        .from("vms_import_batches")
-        .insert(createPayload)
-        .select("id, reprocess_count")
-        .single(),
-      VMS_SAVE_QUERY_TIMEOUT_MS,
-    );
-
-    if (createResult.timedOut) {
-      const timeoutError = { code: "TIMEOUT", message: "VMS import batch create took too long." };
-      logVmsBatchMutationFailure({
-        queryName: "vms_import_batches.insert.final",
-        error: timeoutError,
-        payload: createPayload,
-        profile,
-        selectedImportBatchId: null,
-        currentStep: "confirm_import",
-      });
-      errorRedirect(batchMutationErrorMessage(timeoutError));
-      return;
-    }
-    if ("error" in createResult) {
-      logVmsBatchMutationFailure({
-        queryName: "vms_import_batches.insert.final",
-        error: createResult.error,
-        payload: createPayload,
-        profile,
-        selectedImportBatchId: null,
-        currentStep: "confirm_import",
-      });
-      errorRedirect(batchMutationErrorMessage(createResult.error));
-      return;
-    }
-
-    const create = createResult.value;
-    if (create.error || !create.data?.id) {
-      logVmsBatchMutationFailure({
-        queryName: "vms_import_batches.insert.final",
-        error: create.error ?? { code: "NO_BATCH_ID", message: "VMS import batch insert returned no id." },
-        payload: createPayload,
-        profile,
-        selectedImportBatchId: null,
-        currentStep: "confirm_import",
-      });
-      errorRedirect(batchMutationErrorMessage(create.error));
-      return;
-    }
-
-    batch = create.data;
+    errorRedirect("Final import requires the existing preview batch. Re-upload the file so Snacky OS can create preview rows before confirming.");
+    return;
   }
 
   if (!batch?.id) {
@@ -1429,7 +1319,11 @@ async function runVmsImport({
     originalRow: originalRows?.[index] ?? row,
     mappedRow: row,
   }));
-  await upsertRawRows(supabase, initialRawRows);
+  const initialRawRowsResult = await upsertRawRows(supabase, initialRawRows);
+  if (!initialRawRowsResult.ok) {
+    errorRedirect(vmsSchemaIssueMessage(initialRawRowsResult.error, "vms_import_rows.upsert") ?? "Could not save VMS imported row audit. Technical details are in the server console.");
+    return;
+  }
 
   if (importMode === VMS_IMPORT_MODES.PREVIEW_ONLY) {
     summary.skippedRows = rows.length;
@@ -2181,7 +2075,11 @@ async function runVmsImport({
   }
 
   if (finalRawRows.length) {
-    await upsertRawRows(supabase, finalRawRows);
+    const finalRawRowsResult = await upsertRawRows(supabase, finalRawRows);
+    if (!finalRawRowsResult.ok) {
+      errorRedirect(vmsSchemaIssueMessage(finalRawRowsResult.error, "vms_import_rows.upsert") ?? "Could not update VMS imported row audit. Technical details are in the server console.");
+      return;
+    }
   }
 
   if (!fatalImportError) {
@@ -2380,6 +2278,9 @@ function isMissingColumnPreviewError(error: unknown) {
 
 function previewErrorMessage(error: unknown, tableName: string) {
   const supabaseError = error && typeof error === "object" ? error as { code?: string; message?: string; details?: string; hint?: string } : null;
+  const schemaMessage = vmsSchemaIssueMessage(error);
+  if (schemaMessage) return schemaMessage;
+  if (supabaseError?.code === "MISSING_SCHEMA" && supabaseError.message) return supabaseError.message;
   if (isPermissionPreviewError(error)) return "You do not have permission to create VMS import previews.";
   if (supabaseError?.code === "42P01" || supabaseError?.code === "PGRST205") return `${tableName} table is missing. Run the latest migration.`;
   if (isMissingColumnPreviewError(error)) {
@@ -2431,6 +2332,8 @@ function isBatchConstraintError(error: unknown) {
 
 function batchMutationErrorMessage(error: unknown) {
   const supabaseError = supabaseMutationError(error);
+  const schemaMessage = vmsSchemaIssueMessage(error, "vms_import_batches.mutation");
+  if (schemaMessage) return schemaMessage;
   if (supabaseError?.code === "TIMEOUT") return "Save took too long. Please check your connection and retry.";
   if (isBatchPermissionError(error)) return "You do not have permission to create or confirm VMS imports.";
   if (isBatchMissingTableError(error)) return "VMS import batches table is missing. Run the latest migration.";
@@ -2467,6 +2370,7 @@ function logVmsBatchMutationFailure({
     message: supabaseError?.message,
     details: supabaseError?.details,
     hint: supabaseError?.hint,
+    schemaIssue: extractVmsSchemaIssue(error, queryName),
     payload,
     currentUserId: profile?.id ?? profile?.team_member_id ?? null,
     sessionExists: Boolean(profile),
@@ -2580,7 +2484,7 @@ async function createPreviewImportBatch({
       fileName: file?.name ?? null,
       currentUserId: profile?.id ?? profile?.team_member_id ?? null,
     });
-    return { id: null, error: { code: "MISSING_SCHEMA", message: `Missing required tables: ${missing.join(", ")}` }, warning: null as string | null };
+    return { id: null, error: { code: "MISSING_SCHEMA", message: requiredTablesMessage(missing) }, warning: null as string | null };
   }
   const dateRange = detectPreviewImportDateRange(parsed, reportType);
   const basePayload = {

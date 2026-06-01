@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { sanitizeVmsImportBatchPayload } from "../src/lib/vms-import-actions.ts";
+import { sanitizeVmsImportBatchPayload } from "../src/lib/vms-import-batch-payload.ts";
 import { validateVmsRows } from "../src/lib/vms-import-validation.ts";
 
 test("first import with empty mappings groups unknown products and machines without crashing", () => {
@@ -33,6 +33,16 @@ test("sanitizeVmsImportBatchPayload rejects invalid batch payload fields", () =>
     () => sanitizeVmsImportBatchPayload({ file_name: "test.csv", of: "bad" }, { queryName: "test", currentStep: "preview", selectedImportBatchId: null }),
     /invalid field `of`/,
   );
+});
+
+test("sanitizeVmsImportBatchPayload returns a plain payload for Supabase", () => {
+  const payload = sanitizeVmsImportBatchPayload(
+    { file_name: "Order Details.xls", rows_found: 22, status: "previewed" },
+    { queryName: "test", currentStep: "preview", selectedImportBatchId: null },
+  );
+
+  assert.equal(payload instanceof Promise, false);
+  assert.deepEqual(payload, { file_name: "Order Details.xls", rows_found: 22, status: "previewed" });
 });
 
 test("Khalij aliases resolve to جامعة طرابلس الاهلية when that machine exists", () => {
