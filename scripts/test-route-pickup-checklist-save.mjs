@@ -100,6 +100,10 @@ async function cleanup(service, created) {
   for (const authUserId of created.authUserIds) await service.auth.admin.deleteUser(authUserId);
 }
 
+function rpcChecklistRow(data) {
+  return Array.isArray(data) ? data[0] : data;
+}
+
 test("route pickup checklist save persists checked state and enforces route access", { skip: canRun ? false : "Supabase local env is not configured." }, async () => {
   const service = supabaseClient(serviceRoleKey);
   const id = `${Date.now()}-${randomUUID().slice(0, 8)}`;
@@ -194,12 +198,13 @@ test("route pickup checklist save persists checked state and enforces route acce
       .single();
     assert.ifError(itemError);
 
-    const savePayload = { p_route_id: route.id, p_route_stop_item_id: item.id, p_is_checked: true };
+    const savePayload = { p_is_checked: true, p_route_id: route.id, p_route_stop_item_id: item.id };
     const { data: checkedRows, error: checkedError } = await assignedOperator.client.rpc("save_route_pickup_checklist_item", savePayload);
     assert.ifError(checkedError);
-    assert.equal(checkedRows?.[0]?.is_checked, true);
-    assert.equal(checkedRows?.[0]?.checked_by, assignedOperator.authUserId);
-    assert.ok(checkedRows?.[0]?.checked_at);
+    const checkedRow = rpcChecklistRow(checkedRows);
+    assert.equal(checkedRow?.is_checked, true);
+    assert.equal(checkedRow?.checked_by, assignedOperator.authUserId);
+    assert.ok(checkedRow?.checked_at);
 
     const { data: refreshedChecked, error: refreshedCheckedError } = await assignedOperator.client
       .from("route_stop_items")
@@ -215,14 +220,28 @@ test("route pickup checklist save persists checked state and enforces route acce
       p_is_checked: false,
     });
     assert.ifError(uncheckedError);
-    assert.equal(uncheckedRows?.[0]?.is_checked, false);
-    assert.equal(uncheckedRows?.[0]?.checked_at, null);
-    assert.equal(uncheckedRows?.[0]?.checked_by, null);
+    const uncheckedRow = rpcChecklistRow(uncheckedRows);
+    assert.equal(uncheckedRow?.is_checked, false);
+    assert.equal(uncheckedRow?.checked_at, null);
+    assert.equal(uncheckedRow?.checked_by, null);
+
+    const { error: wrongRouteError } = await assignedOperator.client.rpc("save_route_pickup_checklist_item", {
+      ...savePayload,
+      p_route_id: randomUUID(),
+    });
+    assert.ok(wrongRouteError, "wrong route_id and item_id pair should fail");
+    assert.match(`${wrongRouteError.code} ${wrongRouteError.message}`, /route not found|checklist item not found/i);
+
+    const anonymousClient = supabaseClient(anonKey);
+    const { error: anonymousError } = await anonymousClient.rpc("save_route_pickup_checklist_item", savePayload);
+    assert.ok(anonymousError, "unauthenticated users should not update pickup checklist items");
+    assert.match(`${anonymousError.code} ${anonymousError.message}`, /not authenticated|permission/i);
 
     const { data: adminCheckedRows, error: adminCheckedError } = await admin.client.rpc("save_route_pickup_checklist_item", savePayload);
     assert.ifError(adminCheckedError);
-    assert.equal(adminCheckedRows?.[0]?.is_checked, true);
-    assert.equal(adminCheckedRows?.[0]?.checked_by, admin.authUserId);
+    const adminCheckedRow = rpcChecklistRow(adminCheckedRows);
+    assert.equal(adminCheckedRow?.is_checked, true);
+    assert.equal(adminCheckedRow?.checked_by, admin.authUserId);
 
     const { error: otherOperatorError } = await otherOperator.client.rpc("save_route_pickup_checklist_item", {
       ...savePayload,

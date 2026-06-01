@@ -569,9 +569,9 @@ export async function PATCH(
     }
 
     const payload = {
+      p_is_checked: isChecked,
       p_route_id: routeId,
       p_route_stop_item_id: routeStopItem.id,
-      p_is_checked: isChecked,
     };
     checklistSaveContext = {
       ...checklistSaveContext,
