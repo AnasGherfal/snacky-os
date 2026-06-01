@@ -7,6 +7,7 @@ import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { QuantityStepper } from "@/components/QuantityStepper";
 import { EmptyState, ErrorState, LoadingState, PageHeader, SecondaryButton, SectionCard } from "@/components/ui";
 import { applyPendingStopRecommendationRefresh, confirmPickList, previewPendingStopRecommendationRefresh, startRoute, type PendingStopRefreshComparison } from "@/lib/operator-actions";
+import { pickupProductPriorityGroup, sortPickupProductRows } from "@/lib/route-pickup-checklist";
 import { ROUTE_STOP_PENDING_STATUS } from "@/lib/route-workflow";
 
 const UNASSIGNED_EXTRA_TARGET = "__unassigned__";
@@ -24,6 +25,10 @@ interface PickStopItem {
   reason: string;
   notes: string;
   source: string;
+  isChecked: boolean;
+  stopOrder: number;
+  machineName: string;
+  locationName: string;
 }
 interface PickStopGroup {
   routeStopId: string | null;
@@ -67,6 +72,54 @@ type PickListDraft = {
   extras: ExtraPickItem[];
 };
 
+type PickListApiStopItem = {
+  route_stop_item_id?: unknown;
+  route_stop_id?: unknown;
+  machine_id?: unknown;
+  product_id?: unknown;
+  product_name?: unknown;
+  sku?: unknown;
+  planned_qty?: unknown;
+  available_storage_qty?: unknown;
+  picked_qty?: unknown;
+  reason?: unknown;
+  notes?: unknown;
+  source?: unknown;
+  is_checked?: unknown;
+};
+
+type PickListApiStopGroup = {
+  route_stop_id?: unknown;
+  machine_id?: unknown;
+  machine_name?: unknown;
+  machine_code?: unknown;
+  location_name?: unknown;
+  stop_order?: unknown;
+  stop_status?: unknown;
+  items?: unknown;
+};
+
+type PickListApiExtraItem = {
+  routeStopId?: unknown;
+  route_stop_id?: unknown;
+  productId?: unknown;
+  product_id?: unknown;
+  quantity?: unknown;
+  reason?: unknown;
+  notes?: unknown;
+};
+
+type PickListApiProductOption = {
+  id?: unknown;
+  sku?: unknown;
+  barcode?: unknown;
+  name?: unknown;
+  category?: unknown;
+  brand?: unknown;
+  imageUrl?: unknown;
+  availableStorageQty?: unknown;
+};
+
 type RefreshPreviewState = {
   loading: boolean;
   applying: boolean;
@@ -79,6 +132,17 @@ function safeRouteHref(routeId: string) {
   return routeId ? `/operator/routes/${routeId}` : "/operator";
 }
 
+function optionalText(value: unknown) {
+  if (typeof value === "string") return value;
+  if (value === null || value === undefined) return null;
+  return String(value);
+}
+
+function textOrFallback(value: unknown, fallback: string) {
+  const text = optionalText(value);
+  return text && text.trim() ? text : fallback;
+}
+
 function newExtraRow(): ExtraPickItem {
   return { id: crypto.randomUUID(), targetStopId: "", productId: "", quantity: 0, reason: "Customer demand", notes: "" };
 }
@@ -88,7 +152,13 @@ function comparablePickDraft(draft: PickListDraft) {
     selectedStopIds: [...(draft.selectedStopIds ?? [])].sort(),
     stopItems: [...draft.stopItems].sort((a, b) => a.routeStopItemId.localeCompare(b.routeStopItemId)),
     extras: draft.extras
-      .map(({ id: _id, ...item }) => item)
+      .map((item) => ({
+        targetStopId: item.targetStopId,
+        productId: item.productId,
+        quantity: item.quantity,
+        reason: item.reason,
+        notes: item.notes,
+      }))
       .filter((item) => item.targetStopId || item.productId || item.quantity > 0 || item.notes.trim())
       .sort((a, b) => `${a.targetStopId}:${a.productId}:${a.reason}:${a.notes}`.localeCompare(`${b.targetStopId}:${b.productId}:${b.reason}:${b.notes}`)),
   });
@@ -120,6 +190,7 @@ export default function PickListPage() {
   const [locked, setLocked] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [savingCheckedIds, setSavingCheckedIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [refreshPreview, setRefreshPreview] = useState<RefreshPreviewState>({ loading: false, applying: false, comparisons: [], message: "", error: "" });
@@ -132,6 +203,7 @@ export default function PickListPage() {
     [selectedStopIds, stopGroups],
   );
   const allStopItems = useMemo(() => selectedStopGroups.flatMap((group) => group.items), [selectedStopGroups]);
+  const sortedChecklistItems = useMemo(() => sortPickupProductRows(allStopItems), [allStopItems]);
   const productById = useMemo(() => new Map(productOptions.map((product) => [product.id, product])), [productOptions]);
   const stopById = useMemo(() => new Map(selectedStopGroups.filter((group) => group.routeStopId).map((group) => [group.routeStopId as string, group])), [selectedStopGroups]);
   const pickedByProduct = useMemo(() => {
@@ -172,9 +244,13 @@ export default function PickListPage() {
       current.confirmedQty += item.quantity;
       totals.set(item.productId, current);
     });
-    return Array.from(totals.values()).sort((a, b) => a.productName.localeCompare(b.productName));
+    return sortPickupProductRows(Array.from(totals.values()));
   }, [allStopItems, extras, productById]);
   const totalPickedUnits = routeTotals.reduce((sum, item) => sum + item.confirmedQty, 0);
+  const checkedItemCount = allStopItems.filter((item) => item.isChecked).length;
+  const remainingItemCount = Math.max(0, allStopItems.length - checkedItemCount);
+  const checkedUnitCount = allStopItems.filter((item) => item.isChecked).reduce((sum, item) => sum + item.confirmedQty, 0);
+  const remainingUnitCount = Math.max(0, totalPickedUnits - checkedUnitCount);
   const assignedExtraCount = extras.filter((item) => item.productId && item.quantity > 0 && submittedRouteStopId(item.targetStopId)).length;
   const unassignedExtraCount = extras.filter((item) => item.productId && item.quantity > 0 && item.targetStopId === UNASSIGNED_EXTRA_TARGET).length;
 
@@ -235,18 +311,18 @@ export default function PickListPage() {
       const confirmed = Boolean(data.confirmed);
       setAlreadyConfirmed(confirmed);
       setLocked(Boolean(data.locked));
-      const responseStopGroups = Array.isArray(data.stopGroups) ? data.stopGroups : [];
-      const responseProductOptions = Array.isArray(data.productOptions) ? data.productOptions : [];
-      const responseExtraItems = Array.isArray(data.extraItems) ? data.extraItems : [];
-      const nextStopGroups = responseStopGroups.map((group: any) => ({
+      const responseStopGroups = Array.isArray(data.stopGroups) ? (data.stopGroups as PickListApiStopGroup[]) : [];
+      const responseProductOptions = Array.isArray(data.productOptions) ? (data.productOptions as PickListApiProductOption[]) : [];
+      const responseExtraItems = Array.isArray(data.extraItems) ? (data.extraItems as PickListApiExtraItem[]) : [];
+      const nextStopGroups = responseStopGroups.map((group) => ({
         routeStopId: group.route_stop_id ? String(group.route_stop_id) : null,
         machineId: group.machine_id ? String(group.machine_id) : null,
-        machineName: group.machine_name || "Unknown machine",
-        machineCode: group.machine_code || "-",
-        locationName: group.location_name || "Unknown location",
+        machineName: textOrFallback(group.machine_name, "Unknown machine"),
+        machineCode: textOrFallback(group.machine_code, "-"),
+        locationName: textOrFallback(group.location_name, "Unknown location"),
         stopOrder: Number(group.stop_order ?? 0),
-        stopStatus: group.stop_status ?? ROUTE_STOP_PENDING_STATUS,
-        items: (Array.isArray(group.items) ? group.items : []).map((item: any) => {
+        stopStatus: optionalText(group.stop_status) ?? ROUTE_STOP_PENDING_STATUS,
+        items: (Array.isArray(group.items) ? (group.items as PickListApiStopItem[]) : []).map((item) => {
           const requestedQty = Number(item.planned_qty ?? 0);
           const availableStorageQty = Number(item.available_storage_qty ?? 0);
           const hasSavedPickQty = item.picked_qty !== null && item.picked_qty !== undefined;
@@ -255,25 +331,29 @@ export default function PickListPage() {
             routeStopId: item.route_stop_id ? String(item.route_stop_id) : group.route_stop_id ? String(group.route_stop_id) : null,
             machineId: item.machine_id ? String(item.machine_id) : group.machine_id ? String(group.machine_id) : null,
             productId: String(item.product_id ?? ""),
-            productName: item.product_name || "Unknown product",
-            sku: item.sku ?? null,
+            productName: textOrFallback(item.product_name, "Unknown product"),
+            sku: optionalText(item.sku),
             requestedQty,
             availableStorageQty,
             confirmedQty: hasSavedPickQty ? Number(item.picked_qty ?? 0) : Math.min(requestedQty, availableStorageQty),
-            reason: item.reason ?? "Product not available in storage",
-            notes: item.notes ?? "",
-            source: item.source ?? "refill_recommendation",
+            reason: optionalText(item.reason) ?? "Product not available in storage",
+            notes: optionalText(item.notes) ?? "",
+            source: optionalText(item.source) ?? "refill_recommendation",
+            isChecked: Boolean(item.is_checked),
+            stopOrder: Number(group.stop_order ?? 0),
+            machineName: textOrFallback(group.machine_name, "Unknown machine"),
+            locationName: textOrFallback(group.location_name, "Unknown location"),
           };
         }).filter((item: PickStopItem) => item.routeStopItemId && item.productId),
       })).filter((group: PickStopGroup) => group.items.length > 0);
       const nextStopIds = nextStopGroups.map((group: PickStopGroup) => group.routeStopId).filter((id: string | null): id is string => Boolean(id));
-      const nextExtras = responseExtraItems.map((item: any) => ({
+      const nextExtras = responseExtraItems.map((item) => ({
         id: crypto.randomUUID(),
-        targetStopId: targetStopId(item.routeStopId ?? item.route_stop_id),
+        targetStopId: targetStopId(optionalText(item.routeStopId ?? item.route_stop_id)),
         productId: String(item.productId ?? item.product_id ?? ""),
         quantity: Number(item.quantity ?? 0),
-        reason: item.reason ?? "Customer demand",
-        notes: item.notes ?? "",
+        reason: optionalText(item.reason) ?? "Customer demand",
+        notes: optionalText(item.notes) ?? "",
       })).filter((item: ExtraPickItem) => item.productId || item.quantity > 0);
       setStopGroups(nextStopGroups);
       setSelectedStopIds((current) => {
@@ -282,14 +362,14 @@ export default function PickListPage() {
         const preserved = current.filter((stopId) => nextAvailable.has(stopId));
         return preserved.length ? preserved : nextStopIds;
       });
-      setProductOptions(responseProductOptions.map((product: any) => ({
+      setProductOptions(responseProductOptions.map((product) => ({
         id: String(product.id ?? ""),
-        sku: product.sku ?? null,
-        barcode: product.barcode ?? null,
-        name: product.name || "Unnamed product",
-        category: product.category ?? null,
-        brand: product.brand ?? null,
-        imageUrl: product.imageUrl ?? null,
+        sku: optionalText(product.sku),
+        barcode: optionalText(product.barcode),
+        name: textOrFallback(product.name, "Unnamed product"),
+        category: optionalText(product.category),
+        brand: optionalText(product.brand),
+        imageUrl: optionalText(product.imageUrl),
         availableStorageQty: Number(product.availableStorageQty ?? 0),
       })).filter((product: ProductOption) => product.id));
       setExtras(nextExtras);
@@ -311,7 +391,11 @@ export default function PickListPage() {
   }, [routeId, shouldStartRoute]);
 
   useEffect(() => {
-    loadPickList();
+    const loadTimer = window.setTimeout(() => {
+      void loadPickList();
+    }, 0);
+
+    return () => window.clearTimeout(loadTimer);
   }, [loadPickList]);
 
   useEffect(() => {
@@ -329,6 +413,40 @@ export default function PickListPage() {
       ...group,
       items: group.items.map((item) => (item.routeStopItemId === routeStopItemId ? { ...item, ...patch } : item)),
     })));
+  };
+
+  const togglePickupItemChecked = async (item: PickStopItem) => {
+    if (locked || submitting || savingCheckedIds.has(item.routeStopItemId)) return;
+
+    const nextChecked = !item.isChecked;
+    updateStopItem(item.routeStopItemId, { isChecked: nextChecked });
+    setSavingCheckedIds((current) => new Set(current).add(item.routeStopItemId));
+    setError("");
+
+    try {
+      const response = await fetch(`/api/operator/routes/${routeId}/pick-list`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          routeStopItemId: item.routeStopItemId,
+          isChecked: nextChecked,
+          pickedQty: item.confirmedQty,
+          reason: item.reason,
+          notes: item.notes,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Could not save checklist item.");
+    } catch (err) {
+      updateStopItem(item.routeStopItemId, { isChecked: item.isChecked });
+      setError(err instanceof Error ? err.message : "Could not save checklist item.");
+    } finally {
+      setSavingCheckedIds((current) => {
+        const next = new Set(current);
+        next.delete(item.routeStopItemId);
+        return next;
+      });
+    }
   };
 
   const addExtraProduct = () => {
@@ -390,6 +508,11 @@ export default function PickListPage() {
       return;
     }
 
+    const uncheckedCount = allStopItems.filter((item) => !item.isChecked).length;
+    if (uncheckedCount > 0 && !window.confirm(`You still have ${uncheckedCount} unchecked product${uncheckedCount === 1 ? "" : "s"}. Continue anyway?`)) {
+      return;
+    }
+
     setSubmitting(true);
     setError("");
     try {
@@ -402,6 +525,7 @@ export default function PickListPage() {
         plannedQty: item.requestedQty,
         reason: item.reason,
         notes: item.notes,
+        isChecked: item.isChecked,
       }));
       const result = await confirmPickList(
         routeId,
@@ -502,20 +626,20 @@ export default function PickListPage() {
         <div className="grid gap-3 sm:grid-cols-3">
           <SectionCard>
             <div className="p-4">
-              <p className="mb-1 text-xs text-slate-500">Selected stops</p>
-              <p className="text-2xl font-bold text-slate-900">{selectedStopIds.length}/{stopGroups.length}</p>
+              <p className="mb-1 text-xs text-slate-500">Checklist</p>
+              <p className="text-2xl font-bold text-slate-900">Picked {checkedItemCount} of {allStopItems.length} items</p>
             </div>
           </SectionCard>
           <SectionCard>
             <div className="p-4">
-              <p className="mb-1 text-xs text-slate-500">Products</p>
-              <p className="text-2xl font-bold text-slate-900">{routeTotals.length}</p>
+              <p className="mb-1 text-xs text-slate-500">Remaining</p>
+              <p className="text-2xl font-bold text-slate-900">{remainingItemCount}</p>
             </div>
           </SectionCard>
           <SectionCard>
             <div className="p-4">
-              <p className="mb-1 text-xs text-slate-500">Picked units</p>
-              <p className="text-2xl font-bold text-slate-900">{totalPickedUnits}</p>
+              <p className="mb-1 text-xs text-slate-500">Units left</p>
+              <p className="text-2xl font-bold text-slate-900">{remainingUnitCount}</p>
             </div>
           </SectionCard>
         </div>
@@ -556,84 +680,99 @@ export default function PickListPage() {
         ) : selectedStopGroups.length === 0 ? (
           <EmptyState title="No stops selected" body="Choose at least one pending machine stop for this pickup batch." />
         ) : (
-          <div className="space-y-4">
-            {selectedStopGroups.map((group) => {
-              const groupPlanned = group.items.reduce((sum, item) => sum + item.requestedQty, 0);
-              const groupPicked = group.items.reduce((sum, item) => sum + item.confirmedQty, 0);
-              return (
-                <details key={group.routeStopId ?? group.machineId ?? group.machineName} open className="rounded-lg border border-slate-200 bg-white">
-                  <summary className="cursor-pointer list-none border-b border-slate-200 p-4 marker:hidden">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="min-w-0">
-                        <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Stop {group.stopOrder || "-"}</div>
-                        <h2 className="break-words text-lg font-semibold text-slate-900">{group.machineName}</h2>
-                        <p className="mt-1 break-words text-sm text-slate-500">{group.locationName} - {group.machineCode}</p>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2 text-sm sm:w-56">
-                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                          <div className="text-xs text-slate-500">Planned</div>
-                          <div className="font-semibold text-slate-900">{groupPlanned}</div>
+          <section className="rounded-lg border border-slate-200 bg-white">
+            <div className="border-b border-slate-200 p-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h2 className="font-semibold text-slate-900">Warehouse checklist</h2>
+                  <p className="text-sm text-slate-500">Tap a product row after you physically pick it from storage.</p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900">
+                  Picked {checkedItemCount} of {allStopItems.length}
+                </div>
+              </div>
+            </div>
+            <div className="divide-y divide-slate-200">
+              {sortedChecklistItems.map((item) => {
+                const maxQty = maxForProduct(item.productId, item.confirmedQty, item.availableStorageQty);
+                const saving = savingCheckedIds.has(item.routeStopItemId);
+                const priorityGroup = pickupProductPriorityGroup(item.productName);
+                return (
+                  <div
+                    key={item.routeStopItemId}
+                    role="button"
+                    tabIndex={locked ? -1 : 0}
+                    onClick={() => togglePickupItemChecked(item)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        togglePickupItemChecked(item);
+                      }
+                    }}
+                    className={`cursor-pointer space-y-4 p-4 transition ${item.isChecked ? "bg-emerald-50" : "bg-white hover:bg-slate-50"} ${saving ? "opacity-70" : ""}`}
+                  >
+                    <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_190px] md:items-start">
+                      <div className="flex min-w-0 gap-3">
+                        <input
+                          type="checkbox"
+                          checked={item.isChecked}
+                          onChange={() => togglePickupItemChecked(item)}
+                          onClick={(event) => event.stopPropagation()}
+                          disabled={locked || submitting || saving}
+                          aria-label={`Mark ${item.productName} picked`}
+                          className="mt-1 h-11 w-11 shrink-0 cursor-pointer rounded-lg border-2 border-slate-300 accent-emerald-600 disabled:cursor-not-allowed"
+                        />
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className={`break-words font-semibold ${item.isChecked ? "text-emerald-950" : "text-slate-900"}`}>{item.productName}</p>
+                            {priorityGroup < 3 ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">Priority</span> : null}
+                            {saving ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Saving</span> : null}
                         </div>
-                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                          <div className="text-xs text-slate-500">Packed</div>
-                          <div className="font-semibold text-slate-900">{groupPicked}</div>
-                        </div>
+                        <p className="mt-1 break-words text-xs text-slate-500">
+                          Stop {item.stopOrder || "-"} - {item.machineName} - {item.locationName}
+                        </p>
+                        <p className="mt-1 break-words text-xs text-slate-500">
+                          SKU: {item.sku ?? "No SKU"} - Recommended: {item.requestedQty} - Route storage: {item.availableStorageQty}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">{item.source === "manual_admin_assignment" ? "Manual assignment" : "Refill recommendation"}</p>
                       </div>
                     </div>
-                  </summary>
-
-                  <div className="divide-y divide-slate-200">
-                    {group.items.map((item) => {
-                      const maxQty = maxForProduct(item.productId, item.confirmedQty, item.availableStorageQty);
-                      return (
-                        <div key={item.routeStopItemId} className="space-y-4 p-4">
-                          <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_190px] md:items-start">
-                            <div className="min-w-0">
-                              <p className="break-words font-semibold text-slate-900">{item.productName}</p>
-                              <p className="mt-1 break-words text-xs text-slate-500">
-                                SKU: {item.sku ?? "No SKU"} - Recommended: {item.requestedQty} - Route storage: {item.availableStorageQty}
-                              </p>
-                              <p className="mt-1 text-xs text-slate-500">{item.source === "manual_admin_assignment" ? "Manual assignment" : "Refill recommendation"}</p>
-                            </div>
-                            <label className="block">
-                              <span className="mb-1 block text-sm font-medium text-slate-800">Pickup qty</span>
-                              <QuantityStepper
-                                value={item.confirmedQty}
-                                max={maxQty}
-                                onChange={(quantity) => updateStopItem(item.routeStopItemId, { confirmedQty: quantity })}
-                                disabled={locked}
-                                inputLabel={`${group.machineName} ${item.productName} pickup quantity`}
-                              />
-                              <span className="mt-1 block text-xs text-slate-500">Available for this row: {maxQty}</span>
-                            </label>
-                          </div>
-
-                          {item.confirmedQty !== item.requestedQty ? (
-                            <div className="grid gap-3 md:grid-cols-2">
-                              <label className="block">
-                                <span className="mb-1 block text-sm font-medium text-slate-800">Reason</span>
-                                <select value={item.reason} onChange={(event) => updateStopItem(item.routeStopItemId, { reason: event.target.value })} className="field-input" disabled={locked}>
-                                  <option>Product not available in storage</option>
-                                  <option>Product not in operator bag</option>
-                                  <option>Product expired/damaged</option>
-                                  <option>Customer demand</option>
-                                  <option>Other</option>
-                                </select>
-                              </label>
-                              <label className="block">
-                                <span className="mb-1 block text-sm font-medium text-slate-800">Notes</span>
-                                <input value={item.notes} onChange={(event) => updateStopItem(item.routeStopItemId, { notes: event.target.value })} className="field-input" placeholder="Explain the pickup change" disabled={locked} />
-                              </label>
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })}
+                    <label className="block" onClick={(event) => event.stopPropagation()}>
+                      <span className="mb-1 block text-sm font-medium text-slate-800">Pickup qty</span>
+                      <QuantityStepper
+                        value={item.confirmedQty}
+                        max={maxQty}
+                        onChange={(quantity) => updateStopItem(item.routeStopItemId, { confirmedQty: quantity })}
+                        disabled={locked}
+                        inputLabel={`${item.machineName} ${item.productName} pickup quantity`}
+                      />
+                      <span className="mt-1 block text-xs text-slate-500">Available for this row: {maxQty}</span>
+                    </label>
                   </div>
-                </details>
+
+                  {item.confirmedQty !== item.requestedQty ? (
+                    <div className="grid gap-3 md:grid-cols-2" onClick={(event) => event.stopPropagation()}>
+                      <label className="block">
+                        <span className="mb-1 block text-sm font-medium text-slate-800">Reason</span>
+                        <select value={item.reason} onChange={(event) => updateStopItem(item.routeStopItemId, { reason: event.target.value })} className="field-input" disabled={locked}>
+                          <option>Product not available in storage</option>
+                          <option>Product not in operator bag</option>
+                          <option>Product expired/damaged</option>
+                          <option>Customer demand</option>
+                          <option>Other</option>
+                        </select>
+                      </label>
+                      <label className="block">
+                        <span className="mb-1 block text-sm font-medium text-slate-800">Notes</span>
+                        <input value={item.notes} onChange={(event) => updateStopItem(item.routeStopItemId, { notes: event.target.value })} className="field-input" placeholder="Explain the pickup change" disabled={locked} />
+                      </label>
+                    </div>
+                  ) : null}
+                </div>
               );
             })}
-          </div>
+            </div>
+          </section>
         )}
 
         <section className="rounded-lg border border-slate-200 bg-white p-4">

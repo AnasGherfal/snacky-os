@@ -141,8 +141,16 @@ export async function GET(
 
     let { data: pickListItems, error: pickListError }: { data: any[] | null; error: any } = await supabase
       .from("route_pick_list_items")
-      .select("id, route_stop_id, route_stop_item_id, machine_id, product_id, picked_qty, planned_qty, action_type, reason, notes")
+      .select("id, route_stop_id, route_stop_item_id, machine_id, product_id, picked_qty, planned_qty, action_type, reason, notes, is_checked")
       .eq("route_id", routeId);
+    if (pickListError && isMissingColumn(pickListError, ["is_checked"])) {
+      const fallback = await supabase
+        .from("route_pick_list_items")
+        .select("id, route_stop_id, route_stop_item_id, machine_id, product_id, picked_qty, planned_qty, action_type, reason, notes")
+        .eq("route_id", routeId);
+      pickListItems = fallback.data;
+      pickListError = fallback.error;
+    }
     if (pickListError && isMissingColumn(pickListError, ["route_stop_id", "route_stop_item_id", "machine_id"])) {
       const fallback = await supabase
         .from("route_pick_list_items")
@@ -153,9 +161,9 @@ export async function GET(
     }
     if (pickListError && !isMissingTable(pickListError, "route_pick_list_items")) throw pickListError;
 
-    const pickedByStopItem = new Map<string, { quantity: number; reason: string | null; notes: string | null }>();
-    const pickedByStopProduct = new Map<string, { quantity: number; reason: string | null; notes: string | null }>();
-    const legacyPickedByProduct = new Map<string, { quantity: number; reason: string | null; notes: string | null }>();
+    const pickedByStopItem = new Map<string, { quantity: number; reason: string | null; notes: string | null; isChecked: boolean }>();
+    const pickedByStopProduct = new Map<string, { quantity: number; reason: string | null; notes: string | null; isChecked: boolean }>();
+    const legacyPickedByProduct = new Map<string, { quantity: number; reason: string | null; notes: string | null; isChecked: boolean }>();
     const pickedByProduct = new Map<string, number>();
     const extraItems = (pickListItems ?? [])
       .filter((line: any) => {
@@ -185,7 +193,7 @@ export async function GET(
       if (lineStopId && !pendingStopIds.has(lineStopId)) return;
       const quantity = unitQuantity(line.picked_qty);
       pickedByProduct.set(productId, (pickedByProduct.get(productId) ?? 0) + quantity);
-      const next = { quantity, reason: line.reason ?? null, notes: line.notes ?? null };
+      const next = { quantity, reason: line.reason ?? null, notes: line.notes ?? null, isChecked: Boolean(line.is_checked) };
       if (line.route_stop_item_id) {
         const key = String(line.route_stop_item_id);
         const current = pickedByStopItem.get(key);
@@ -193,6 +201,7 @@ export async function GET(
           quantity: (current?.quantity ?? 0) + quantity,
           reason: next.reason ?? current?.reason ?? null,
           notes: next.notes ?? current?.notes ?? null,
+          isChecked: current?.isChecked || next.isChecked,
         });
         return;
       }
@@ -203,6 +212,7 @@ export async function GET(
           quantity: (current?.quantity ?? 0) + quantity,
           reason: next.reason ?? current?.reason ?? null,
           notes: next.notes ?? current?.notes ?? null,
+          isChecked: current?.isChecked || next.isChecked,
         });
         return;
       }
@@ -211,6 +221,7 @@ export async function GET(
         quantity: (current?.quantity ?? 0) + quantity,
         reason: next.reason ?? current?.reason ?? null,
         notes: next.notes ?? current?.notes ?? null,
+        isChecked: current?.isChecked || next.isChecked,
       });
     });
 
@@ -222,7 +233,7 @@ export async function GET(
       return String(a.product_id ?? "").localeCompare(String(b.product_id ?? ""));
     });
 
-    const legacyAllocationByStopItem = new Map<string, { quantity: number; reason: string | null; notes: string | null }>();
+    const legacyAllocationByStopItem = new Map<string, { quantity: number; reason: string | null; notes: string | null; isChecked: boolean }>();
     legacyPickedByProduct.forEach((legacyPick, productId) => {
       const productLines = sortedStopItems.filter((line: any) => String(line.product_id ?? "") === productId);
       let remaining = legacyPick.quantity;
@@ -237,6 +248,7 @@ export async function GET(
           quantity: allocated,
           reason: legacyPick.reason,
           notes: legacyPick.notes,
+          isChecked: legacyPick.isChecked,
         });
       });
     });
@@ -295,6 +307,7 @@ export async function GET(
         sku: (product as any)?.sku ?? null,
         planned_qty: plannedQty,
         picked_qty: savedPick ? savedPick.quantity : null,
+        is_checked: savedPick?.isChecked ?? false,
         reason: savedPick?.reason ?? null,
         notes: savedPick?.notes ?? null,
         source: line.source ?? "manual_admin_assignment",
@@ -324,6 +337,7 @@ export async function GET(
         location_name: (location as any)?.name ?? "Unknown location",
         planned_qty: plannedQty,
         picked_qty: savedPick ? savedPick.quantity : null,
+        is_checked: savedPick?.isChecked ?? false,
         source: line.source ?? "manual_admin_assignment",
       });
       plannedByProduct.set(productId, current);
@@ -439,6 +453,116 @@ export async function GET(
     });
     return NextResponse.json(
       { error: "Failed to fetch pick list", details: errorMessage(error) },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id: routeId } = await params;
+  const accessToken = await getAuthAccessToken();
+  const supabase = getSupabaseServerClient(accessToken);
+  const profile = await getCurrentProfile();
+
+  if (!supabase) {
+    return NextResponse.json({ error: "Database not available" }, { status: 500 });
+  }
+
+  if (!routeId) {
+    return NextResponse.json({ error: "Route id is required" }, { status: 400 });
+  }
+
+  try {
+    const body = await request.json();
+    const routeStopItemId = String(body?.routeStopItemId ?? "").trim();
+    const isChecked = Boolean(body?.isChecked);
+    if (!routeStopItemId) {
+      return NextResponse.json({ error: "Route stop item is required" }, { status: 400 });
+    }
+
+    const { data: route, error: routeError } = await supabase
+      .from("routes")
+      .select("id, operator_id, status")
+      .eq("id", routeId)
+      .maybeSingle();
+    if (routeError) throw routeError;
+    if (!route) return NextResponse.json({ error: "Route not found" }, { status: 404 });
+    if (!canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, route.operator_id)) {
+      return NextResponse.json({ error: "This route is not assigned to you" }, { status: 403 });
+    }
+    if (isTerminalRouteStatus(route.status)) {
+      return NextResponse.json({ error: "Completed or cancelled routes cannot be edited" }, { status: 409 });
+    }
+
+    const { data: routeStopItem, error: routeStopItemError } = await supabase
+      .from("route_stop_items")
+      .select("id, route_stop_id, machine_id, product_id, planned_quantity")
+      .eq("id", routeStopItemId)
+      .eq("route_id", routeId)
+      .maybeSingle();
+    if (routeStopItemError) throw routeStopItemError;
+    if (!routeStopItem) return NextResponse.json({ error: "Pickup item not found" }, { status: 404 });
+
+    const { data: routeStop, error: routeStopError } = await supabase
+      .from("route_stops")
+      .select("id, status")
+      .eq("id", routeStopItem.route_stop_id)
+      .eq("route_id", routeId)
+      .maybeSingle();
+    if (routeStopError) throw routeStopError;
+    if (routeStop && String(routeStop.status ?? "") !== ROUTE_STOP_PENDING_STATUS) {
+      return NextResponse.json({ error: "Only pending pickup items can be checked" }, { status: 409 });
+    }
+
+    const plannedQty = unitQuantity(routeStopItem.planned_quantity);
+    const pickedQty = unitQuantity(body?.pickedQty ?? plannedQty);
+    const reason = typeof body?.reason === "string" && body.reason.trim() ? body.reason.trim() : null;
+    const notes = typeof body?.notes === "string" && body.notes.trim() ? body.notes.trim() : null;
+    const actorId = profile?.team_member_id ?? profile?.id ?? route.operator_id ?? null;
+    const payload = {
+      route_id: routeId,
+      route_stop_id: routeStopItem.route_stop_id,
+      route_stop_item_id: routeStopItem.id,
+      machine_id: routeStopItem.machine_id,
+      product_id: routeStopItem.product_id,
+      planned_qty: plannedQty,
+      picked_qty: pickedQty,
+      action_type: "planned_pick",
+      reason: pickedQty !== plannedQty ? reason || "Other" : reason,
+      notes,
+      needs_review: pickedQty !== plannedQty,
+      is_checked: isChecked,
+      created_by: actorId,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data: existingRows, error: existingError } = await supabase
+      .from("route_pick_list_items")
+      .select("id")
+      .eq("route_id", routeId)
+      .eq("route_stop_item_id", routeStopItemId)
+      .eq("action_type", "planned_pick")
+      .limit(1);
+    if (existingError) throw existingError;
+
+    const existingId = existingRows?.[0]?.id ? String(existingRows[0].id) : null;
+    const saveResult = existingId
+      ? await supabase.from("route_pick_list_items").update(payload).eq("id", existingId).select("id, is_checked").single()
+      : await supabase.from("route_pick_list_items").insert(payload).select("id, is_checked").single();
+
+    if (saveResult.error) throw saveResult.error;
+    return NextResponse.json({ ok: true, item: saveResult.data });
+  } catch (error) {
+    console.error("[operator:pick-list] Error saving checklist item", {
+      route_id: routeId,
+      user_id: profile?.id ?? null,
+      error,
+    });
+    return NextResponse.json(
+      { error: "Failed to save checklist item", details: errorMessage(error) },
       { status: 500 }
     );
   }

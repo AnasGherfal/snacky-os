@@ -30,6 +30,7 @@ import {
   routeDisplayStatus,
   routeStatusForNewRoute,
 } from "../src/lib/route-workflow.ts";
+import { pickupProductPriorityGroup, sortPickupProductRows } from "../src/lib/route-pickup-checklist.ts";
 
 function sourceWindow(path, marker, length = 900) {
   const source = readFileSync(path, "utf8");
@@ -174,4 +175,27 @@ test("route reservation queries do not send UI-only statuses into route_status e
     assert.equal(querySource.includes('.eq("status", ROUTE_AVAILABLE_STATUS'), false);
     assert.equal(querySource.includes('"available"'), false);
   }
+});
+
+test("route pickup checklist prioritizes Mr Crunch, then Doritos, then other products", () => {
+  const sorted = sortPickupProductRows([
+    { productName: "Water 500ml" },
+    { productName: "Doritos Nacho" },
+    { productName: "طربوش Cheese" },
+    { productName: "Chips Classic" },
+    { productName: "Mr Crunch Tarboouch" },
+    { productName: "دوريتوس Green Hot" },
+  ]);
+
+  assert.deepEqual(sorted.map((row) => row.productName), [
+    "Mr Crunch Tarboouch",
+    "طربوش Cheese",
+    "Doritos Nacho",
+    "دوريتوس Green Hot",
+    "Chips Classic",
+    "Water 500ml",
+  ]);
+  assert.equal(pickupProductPriorityGroup("Tarboouch"), 1);
+  assert.equal(pickupProductPriorityGroup("Doritos Green Hot"), 2);
+  assert.equal(pickupProductPriorityGroup("Water"), 3);
 });

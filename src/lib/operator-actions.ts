@@ -132,6 +132,13 @@ function pickupPublicError(error: unknown) {
   return "Could not confirm pickup. Check route status, stop status, permissions, storage stock, and database setup.";
 }
 
+function isMissingOptionalPickupChecklistColumn(error: unknown) {
+  const info = serializeActionError(error);
+  const code = String(info.code ?? "");
+  const text = [code, info.message, info.details, info.hint].map((value) => String(value ?? "")).join(" ").toLowerCase();
+  return (code === "42703" || code === "PGRST204" || text.includes("schema cache") || text.includes("column")) && text.includes("is_checked");
+}
+
 
 function profileContext(profile: NonNullable<Awaited<ReturnType<typeof getCurrentProfile>>>) {
   return {
@@ -418,7 +425,7 @@ export async function startRoute(routeId: string) {
  */
 export async function confirmPickList(
   routeId: string,
-  pickedItems: { routeStopItemId?: string | null; routeStopId?: string | null; machineId?: string | null; productId: string; quantity: number; plannedQty?: number; reason?: string; notes?: string }[],
+  pickedItems: { routeStopItemId?: string | null; routeStopId?: string | null; machineId?: string | null; productId: string; quantity: number; plannedQty?: number; reason?: string; notes?: string; isChecked?: boolean }[],
   extras: { routeStopId?: string | null; machineId?: string | null; productId: string; quantity: number; reason: string; notes?: string }[] = [],
   options: { stopIds?: string[] } = {},
 ): Promise<ActionResult> {
@@ -521,6 +528,7 @@ export async function confirmPickList(
       quantity: number;
       reason?: string;
       notes?: string;
+      isChecked?: boolean;
       actionType?: "planned_pick" | "extra_product";
     };
 
@@ -558,6 +566,7 @@ export async function confirmPickList(
         quantity: (current?.quantity ?? 0) + item.quantity,
         reason: item.reason || current?.reason,
         notes: mergeNotes(current?.notes, item.notes),
+        isChecked: current?.isChecked || item.isChecked,
         actionType: current?.actionType === "extra_product" ? "extra_product" : item.actionType,
       });
     };
@@ -585,6 +594,7 @@ export async function confirmPickList(
           quantity,
           reason: item.reason,
           notes: item.notes,
+          isChecked: item.isChecked,
           actionType: "planned_pick",
         });
         return;
@@ -707,6 +717,7 @@ export async function confirmPickList(
         planned_qty: unitQuantity(item.plannedQty),
         operator_pickup_qty: unitQuantity(item.quantity),
         action_type: item.actionType ?? "planned_pick",
+        is_checked: Boolean(item.isChecked),
       })),
       ...legacyPickedRows.map((item) => ({
         route_stop_item_id: null,
@@ -716,6 +727,7 @@ export async function confirmPickList(
         planned_qty: unitQuantity(item.plannedQty),
         operator_pickup_qty: unitQuantity(item.quantity),
         action_type: "planned_pick",
+        is_checked: true,
       })),
       ...extraRows.map((item) => ({
         route_stop_item_id: null,
@@ -725,6 +737,7 @@ export async function confirmPickList(
         planned_qty: 0,
         operator_pickup_qty: unitQuantity(item.quantity),
         action_type: "extra_product",
+        is_checked: true,
       })),
     ];
     const actualPickLines = [
@@ -997,6 +1010,7 @@ export async function confirmPickList(
           reason: actionType === "extra_product" || pickedQty !== plannedQty ? item.reason || "Other" : null,
           notes: item.notes || null,
           needs_review: actionType === "extra_product" || pickedQty !== plannedQty,
+          is_checked: Boolean(item.isChecked),
           created_by: route.operator_id,
         };
       }),
@@ -1016,6 +1030,7 @@ export async function confirmPickList(
           reason: pickedQty !== plannedQty ? item.reason || "Other" : null,
           notes: item.notes || null,
           needs_review: pickedQty !== plannedQty,
+          is_checked: true,
           created_by: route.operator_id,
         };
       }),
@@ -1032,6 +1047,7 @@ export async function confirmPickList(
         reason: item.reason || "Other",
         notes: item.notes || null,
         needs_review: true,
+        is_checked: true,
         created_by: route.operator_id,
       })),
     ].filter((item) => Number(item.picked_qty ?? 0) > 0 || Number(item.planned_qty ?? 0) > 0);
@@ -1139,6 +1155,23 @@ export async function confirmPickList(
     const rpcPickupBatch = Array.isArray(pickupRpcRows) ? pickupRpcRows[0]?.pickup_batch_id : null;
     pickupBatchId = pickupBatchId ?? (rpcPickupBatch ? String(rpcPickupBatch) : null);
     logPickupBatchId = pickupBatchId;
+
+    const checklistRows = pickListRows.filter((row) => row.route_stop_item_id);
+    if (checklistRows.length) {
+      const checklistResults = await Promise.all(checklistRows.map((row) => {
+        let query = supabase
+          .from("route_pick_list_items")
+          .update({ is_checked: Boolean(row.is_checked) })
+          .eq("route_id", routeId)
+          .eq("route_stop_item_id", row.route_stop_item_id);
+        if (pickupBatchId) query = query.eq("pickup_batch_id", pickupBatchId);
+        return query;
+      }));
+      const checklistError = checklistResults.find((result) => result.error)?.error;
+      if (checklistError && !isMissingOptionalPickupChecklistColumn(checklistError)) {
+        throwActionError(checklistError, "Pickup was confirmed, but checklist state could not be saved.");
+      }
+    }
 
     await logActivity({
       profile,
