@@ -31,6 +31,17 @@ function errorMessage(error: unknown) {
   return "Unknown database error";
 }
 
+function supabaseErrorSummary(error: unknown) {
+  if (!error || typeof error !== "object") return { message: errorMessage(error) };
+  const row = error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown };
+  return {
+    code: row.code ?? null,
+    message: row.message ?? errorMessage(error),
+    details: row.details ?? null,
+    hint: row.hint ?? null,
+  };
+}
+
 function unitQuantity(value: unknown) {
   const parsed = Number(value ?? 0);
   if (!Number.isFinite(parsed)) return 0;
@@ -100,10 +111,31 @@ export async function GET(
         machine:machines(id, name, machine_code),
         product_id,
         planned_quantity,
+        is_checked,
+        checked_at,
+        checked_by,
         source,
         product:products(id, name, sku)`
       )
       .eq("route_id", routeId);
+
+    if (stopItemsError && isMissingColumn(stopItemsError, ["is_checked", "checked_at", "checked_by"])) {
+      const fallback = await supabase
+        .from("route_stop_items")
+        .select(
+          `id,
+          route_stop_id,
+          machine_id,
+          machine:machines(id, name, machine_code),
+          product_id,
+          planned_quantity,
+          source,
+          product:products(id, name, sku)`
+        )
+        .eq("route_id", routeId);
+      stopItems = fallback.data;
+      stopItemsError = fallback.error;
+    }
 
     if (stopItemsError) {
       if (!isMissingTable(stopItemsError, "route_stop_items")) throw stopItemsError;
@@ -307,7 +339,9 @@ export async function GET(
         sku: (product as any)?.sku ?? null,
         planned_qty: plannedQty,
         picked_qty: savedPick ? savedPick.quantity : null,
-        is_checked: savedPick?.isChecked ?? false,
+        is_checked: Boolean(line.is_checked ?? savedPick?.isChecked ?? false),
+        checked_at: line.checked_at ?? null,
+        checked_by: line.checked_by ?? null,
         reason: savedPick?.reason ?? null,
         notes: savedPick?.notes ?? null,
         source: line.source ?? "manual_admin_assignment",
@@ -337,7 +371,9 @@ export async function GET(
         location_name: (location as any)?.name ?? "Unknown location",
         planned_qty: plannedQty,
         picked_qty: savedPick ? savedPick.quantity : null,
-        is_checked: savedPick?.isChecked ?? false,
+        is_checked: Boolean(line.is_checked ?? savedPick?.isChecked ?? false),
+        checked_at: line.checked_at ?? null,
+        checked_by: line.checked_by ?? null,
         source: line.source ?? "manual_admin_assignment",
       });
       plannedByProduct.set(productId, current);
@@ -466,6 +502,17 @@ export async function PATCH(
   const accessToken = await getAuthAccessToken();
   const supabase = getSupabaseServerClient(accessToken);
   const profile = await getCurrentProfile();
+  let checklistSaveContext: Record<string, unknown> = {
+    table_name: "route_stop_items",
+    row_id: null,
+    route_id: routeId,
+    product_id: null,
+    sent_payload: null,
+    current_user_id: profile?.id ?? null,
+    current_team_member_id: profile?.team_member_id ?? null,
+    user_role: profile?.role ?? null,
+    user_roles: profile?.roles ?? [],
+  };
 
   if (!supabase) {
     return NextResponse.json({ error: "Database not available" }, { status: 500 });
@@ -478,9 +525,13 @@ export async function PATCH(
   try {
     const body = await request.json();
     const routeStopItemId = String(body?.routeStopItemId ?? "").trim();
-    const isChecked = Boolean(body?.isChecked);
+    const hasCheckedFlag = typeof body?.isChecked === "boolean" || typeof body?.is_checked === "boolean";
+    const isChecked = typeof body?.isChecked === "boolean" ? body.isChecked : Boolean(body?.is_checked);
     if (!routeStopItemId) {
       return NextResponse.json({ error: "Route stop item is required" }, { status: 400 });
+    }
+    if (!hasCheckedFlag) {
+      return NextResponse.json({ error: "Checklist checked state is required" }, { status: 400 });
     }
 
     const { data: route, error: routeError } = await supabase
@@ -517,52 +568,49 @@ export async function PATCH(
       return NextResponse.json({ error: "Only pending pickup items can be checked" }, { status: 409 });
     }
 
-    const plannedQty = unitQuantity(routeStopItem.planned_quantity);
-    const pickedQty = unitQuantity(body?.pickedQty ?? plannedQty);
-    const reason = typeof body?.reason === "string" && body.reason.trim() ? body.reason.trim() : null;
-    const notes = typeof body?.notes === "string" && body.notes.trim() ? body.notes.trim() : null;
-    const actorId = profile?.team_member_id ?? profile?.id ?? route.operator_id ?? null;
     const payload = {
-      route_id: routeId,
-      route_stop_id: routeStopItem.route_stop_id,
-      route_stop_item_id: routeStopItem.id,
-      machine_id: routeStopItem.machine_id,
-      product_id: routeStopItem.product_id,
-      planned_qty: plannedQty,
-      picked_qty: pickedQty,
-      action_type: "planned_pick",
-      reason: pickedQty !== plannedQty ? reason || "Other" : reason,
-      notes,
-      needs_review: pickedQty !== plannedQty,
-      is_checked: isChecked,
-      created_by: actorId,
-      updated_at: new Date().toISOString(),
+      p_route_id: routeId,
+      p_route_stop_item_id: routeStopItem.id,
+      p_is_checked: isChecked,
     };
+    checklistSaveContext = {
+      ...checklistSaveContext,
+      table_name: "route_stop_items",
+      query: "rpc:save_route_pickup_checklist_item",
+      row_id: routeStopItem.id,
+      route_stop_id: routeStopItem.route_stop_id,
+      route_id: routeId,
+      product_id: routeStopItem.product_id,
+      sent_payload: payload,
+      request_payload: {
+        routeStopItemId,
+        isChecked,
+        pickedQty: body?.pickedQty ?? null,
+        reason: typeof body?.reason === "string" ? body.reason : null,
+        notes: typeof body?.notes === "string" ? body.notes : null,
+      },
+    };
+    console.info("[operator:pick-list] Saving pickup checklist item", checklistSaveContext);
 
-    const { data: existingRows, error: existingError } = await supabase
-      .from("route_pick_list_items")
-      .select("id")
-      .eq("route_id", routeId)
-      .eq("route_stop_item_id", routeStopItemId)
-      .eq("action_type", "planned_pick")
-      .limit(1);
-    if (existingError) throw existingError;
+    const saveResult = await supabase.rpc("save_route_pickup_checklist_item", payload);
+    if (saveResult.error) {
+      console.error("[operator:pick-list] Pickup checklist save query failed", {
+        ...checklistSaveContext,
+        supabase_error: supabaseErrorSummary(saveResult.error),
+      });
+      throw saveResult.error;
+    }
 
-    const existingId = existingRows?.[0]?.id ? String(existingRows[0].id) : null;
-    const saveResult = existingId
-      ? await supabase.from("route_pick_list_items").update(payload).eq("id", existingId).select("id, is_checked").single()
-      : await supabase.from("route_pick_list_items").insert(payload).select("id, is_checked").single();
-
-    if (saveResult.error) throw saveResult.error;
-    return NextResponse.json({ ok: true, item: saveResult.data });
+    const savedItem = Array.isArray(saveResult.data) ? saveResult.data[0] : saveResult.data;
+    return NextResponse.json({ ok: true, item: savedItem });
   } catch (error) {
     console.error("[operator:pick-list] Error saving checklist item", {
-      route_id: routeId,
-      user_id: profile?.id ?? null,
-      error,
+      ...checklistSaveContext,
+      supabase_error: supabaseErrorSummary(error),
     });
+    const details = errorMessage(error);
     return NextResponse.json(
-      { error: "Failed to save checklist item", details: errorMessage(error) },
+      { error: `Could not save checklist item: ${details}`, details },
       { status: 500 }
     );
   }

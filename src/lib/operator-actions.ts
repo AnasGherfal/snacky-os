@@ -136,7 +136,12 @@ function isMissingOptionalPickupChecklistColumn(error: unknown) {
   const info = serializeActionError(error);
   const code = String(info.code ?? "");
   const text = [code, info.message, info.details, info.hint].map((value) => String(value ?? "")).join(" ").toLowerCase();
-  return (code === "42703" || code === "PGRST204" || text.includes("schema cache") || text.includes("column")) && text.includes("is_checked");
+  return (
+    code === "42703" ||
+    code === "PGRST204" ||
+    text.includes("schema cache") ||
+    text.includes("column")
+  ) && ["is_checked", "checked_at", "checked_by"].some((column) => text.includes(column));
 }
 
 
@@ -457,7 +462,10 @@ export async function confirmPickList(
     if (!route) throw new Error("Route not found");
     logRouteOperatorId = route.operator_id ?? null;
     logRouteStatus = route.status ?? null;
-    if (!canAccessOperatorRoute(profile ? profileContext(profile) : null, route.operator_id)) {
+    if (!profile) {
+      throw new Error("You must be signed in to pick stock for this route");
+    }
+    if (!canAccessOperatorRoute(profileContext(profile), route.operator_id)) {
       throw new Error("You are not authorized to pick stock for this route");
     }
     if (isTerminalRouteStatus(route.status)) {
@@ -1011,6 +1019,8 @@ export async function confirmPickList(
           notes: item.notes || null,
           needs_review: actionType === "extra_product" || pickedQty !== plannedQty,
           is_checked: Boolean(item.isChecked),
+          checked_at: item.isChecked ? confirmedAt : null,
+          checked_by: item.isChecked ? profile.id : null,
           created_by: route.operator_id,
         };
       }),
@@ -1031,6 +1041,8 @@ export async function confirmPickList(
           notes: item.notes || null,
           needs_review: pickedQty !== plannedQty,
           is_checked: true,
+          checked_at: confirmedAt,
+          checked_by: profile.id,
           created_by: route.operator_id,
         };
       }),
@@ -1048,6 +1060,8 @@ export async function confirmPickList(
         notes: item.notes || null,
         needs_review: true,
         is_checked: true,
+        checked_at: confirmedAt,
+        checked_by: profile.id,
         created_by: route.operator_id,
       })),
     ].filter((item) => Number(item.picked_qty ?? 0) > 0 || Number(item.planned_qty ?? 0) > 0);
@@ -1161,7 +1175,11 @@ export async function confirmPickList(
       const checklistResults = await Promise.all(checklistRows.map((row) => {
         let query = supabase
           .from("route_pick_list_items")
-          .update({ is_checked: Boolean(row.is_checked) })
+          .update({
+            is_checked: Boolean(row.is_checked),
+            checked_at: row.is_checked ? row.checked_at ?? confirmedAt : null,
+            checked_by: row.is_checked ? row.checked_by ?? profile.id : null,
+          })
           .eq("route_id", routeId)
           .eq("route_stop_item_id", row.route_stop_item_id);
         if (pickupBatchId) query = query.eq("pickup_batch_id", pickupBatchId);

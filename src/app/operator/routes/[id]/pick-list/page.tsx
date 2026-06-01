@@ -436,7 +436,10 @@ export default function PickListPage() {
         }),
       });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || "Could not save checklist item.");
+      if (!response.ok) {
+        const details = data.details && !String(data.error ?? "").includes(String(data.details)) ? `: ${data.details}` : "";
+        throw new Error(data.error ? `${data.error}${details}` : "Could not save checklist item.");
+      }
     } catch (err) {
       updateStopItem(item.routeStopItemId, { isChecked: item.isChecked });
       setError(err instanceof Error ? err.message : "Could not save checklist item.");

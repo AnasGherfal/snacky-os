@@ -15,6 +15,7 @@
     "test:historical-route-deduction": "node --experimental-strip-types --test scripts/test-historical-route-deduction.mjs",
     "test:authz-permissions": "node --experimental-strip-types --test scripts/test-authz-permissions.mjs",
     "test:route-workflow": "node --experimental-strip-types --test scripts/test-route-workflow.mjs",
+    "test:route-pickup-checklist": "node --test scripts/test-route-pickup-checklist-save.mjs",
     "check:route-schema": "node --experimental-strip-types scripts/check-route-workflow-schema.mjs",
     "test:route-inventory-regression": "node --test scripts/test-route-inventory-regression.mjs",
     "test:critical-workflows": "node --test scripts/test-critical-workflows.mjs",
