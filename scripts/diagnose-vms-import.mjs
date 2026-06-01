@@ -40,6 +40,7 @@ const relations = [
   "vms_sales_raw",
   "vms_transactions_raw",
   "vms_stock_snapshots",
+  "vms_machine_stock_snapshots",
   "vms_sales_snapshots",
   "vms_product_mappings",
   "vms_machine_mappings",
@@ -132,6 +133,7 @@ try {
       "vms_sales_raw",
       "vms_transactions_raw",
       "vms_stock_snapshots",
+      "vms_machine_stock_snapshots",
       "vms_sales_snapshots",
     ];
     batchCounts.push(...await Promise.all(countTables.map((table) => countForBatch(table, latest.data.id))));

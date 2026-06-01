@@ -80,15 +80,21 @@ function dashboardUsageForReport(reportType: string | null | undefined) {
       ["Finance dashboard", false],
     ] as const;
   }
-  if (reportType === "stock" || reportType === "planogram") {
+  if (reportType === "stock" || reportType === "machine_stock_snapshot" || reportType === "planogram") {
     return [
       ["Refill recommendation", true],
       ["Inventory dashboard", true],
+      ["Product mapping", true],
+      ["Machine mapping", true],
       ["Sales revenue", false],
       ["Finance dashboard", false],
     ] as const;
   }
   return [["Not used until mapped", false]] as const;
+}
+
+function isStockReportType(reportType: string | null | undefined) {
+  return reportType === "stock" || reportType === "machine_stock_snapshot" || reportType === "planogram";
 }
 
 function formatDateTime(value: string | null | undefined) {
@@ -423,8 +429,15 @@ export default async function VmsImportBatchDetailPage({
           <StatCard label="Unknown machines" value={summary?.unknownMachineRows ?? unknownMachineRows.length} />
           <StatCard label="Invalid rows" value={summary?.invalidRows ?? invalidRows.length} />
           <StatCard label="Saved rows" value={rowList.length} />
-          <StatCard label="Successful sales" value={batch.total_successful_sales ? String(batch.total_successful_sales) : String(summary?.estimatedSuccessfulSales ?? 0)} />
+          <StatCard label="Successful sales" value={isStockReportType(batch.report_type) ? "N/A" : (batch.total_successful_sales ? String(batch.total_successful_sales) : String(summary?.estimatedSuccessfulSales ?? 0))} />
         </div>
+        {isStockReportType(batch.report_type) ? (
+          <div className="mt-3 grid gap-3 md:grid-cols-3">
+            <StatCard label="Snapshot date" value={formatDateTime(batch.detected_min_datetime ?? batch.uploaded_at ?? batch.imported_at)} />
+            <StatCard label="Used in" value="Inventory / refills" />
+            <StatCard label="Sales revenue" value="N/A" />
+          </div>
+        ) : null}
         {batch.report_type === "sales" ? (
           <div className="mt-3 grid gap-3 md:grid-cols-3">
             <StatCard label="Import mode" value={String(batch.import_mode ?? summary?.importType ?? "append").replaceAll("_", " ")} />

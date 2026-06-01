@@ -1,4 +1,4 @@
-export type VmsReportType = "stock" | "sales" | "vms_order_details_weekly" | "product_list" | "machine_status" | "planogram" | "custom";
+export type VmsReportType = "stock" | "machine_stock_snapshot" | "sales" | "vms_order_details_weekly" | "product_list" | "machine_status" | "planogram" | "custom";
 
 export type VmsParsedSheet = {
   name: string;
@@ -45,6 +45,7 @@ export type VmsMappingDetection = {
 };
 
 export const vmsReportTypes: { value: VmsReportType; label: string }[] = [
+  { value: "machine_stock_snapshot", label: "Machine Stock Snapshot" },
   { value: "stock", label: "Machine Goods / Stock" },
   { value: "vms_order_details_weekly", label: "Detailed Order Details Report - Recommended" },
   { value: "sales", label: "General / Summary Sales Report" },
@@ -67,6 +68,22 @@ export const vmsExpectedFields: Record<VmsReportType, VmsFieldDef[]> = {
     { field: "empty_status", label: "Empty status", aliases: ["Empty Status", "Empty", "Empty Tray", "Empty Slot", "Out of Stock", "Out Of Stock", "Sold Out", "Status", "empty_status", "tray_status", "out_of_stock", "sold_out"] },
     { field: "updated_at", label: "Updated at", aliases: ["Updated At", "Last Updated", "Date", "Time", "Timestamp", "captured_at", "updated_at", "تاريخ"] },
     { field: "selling_price", label: "Selling price", aliases: ["Selling Price", "Price", "Unit Price", "Retail Price", "selling_price", "sale_price", "سعر البيع"] },
+  ],
+  machine_stock_snapshot: [
+    { field: "machine_identifier", label: "Machine code", required: true, aliases: ["Machine code", "Machine Code", "machine_code", "Machine ID", "Device ID", "Machine No", "Vending Machine"] },
+    { field: "machine_name", label: "Machine name", aliases: ["Machine name", "Machine Name", "machine_name", "Device Name"] },
+    { field: "point_name", label: "Point name", aliases: ["Point name", "Point Name", "point_name", "Location", "location_name"] },
+    { field: "product_identifier", label: "Product Number", requiredGroup: "product", aliases: ["Product Number", "Product number", "product_number", "Product No", "Goods Number", "Commodity Number", "Product Code", "vms_product_code"] },
+    { field: "product_name", label: "Product name", requiredGroup: "product", aliases: ["product name", "Product name", "Product Name", "vms_product_name", "Goods Name", "Commodity Name"] },
+    { field: "product_specification", label: "Product Specification", aliases: ["Product Specification", "Product specification", "product_specification", "Specification", "Spec"] },
+    { field: "barcode", label: "Product bar code", aliases: ["Product bar code", "Product Bar Code", "Product barcode", "Product Barcode", "barcode", "bar_code"] },
+    { field: "third_party_commodity_number", label: "Third party commodity number", aliases: ["Third party commodity number", "Third Party Commodity Number", "third_party_commodity_number", "Third party commodity no", "Third Party Commodity No"] },
+    { field: "product_unit", label: "Product Unit", aliases: ["Product Unit", "Product unit", "product_unit", "Unit"] },
+    { field: "production_date", label: "Production date", aliases: ["Production date", "Production Date", "production_date", "Manufacture date"] },
+    { field: "warranty_date", label: "Warranty date", aliases: ["Warranty date", "Warranty Date", "warranty_date", "Expiry date", "Expiration date"] },
+    { field: "current_qty", label: "Inventory quantity", required: true, aliases: ["Inventory quantity", "Inventory Quantity", "inventory_quantity", "Inventory qty", "Stock", "Current Stock", "current_qty", "stock_qty", "Quantity"] },
+    { field: "out_of_stock_qty", label: "Out of stock quantity", aliases: ["Out of stock quantity", "Out Of Stock Quantity", "out_of_stock_quantity", "out_of_stock_qty", "Missing quantity", "Empty quantity"] },
+    { field: "capacity", label: "Inventory capacity", aliases: ["Inventory capacity", "Inventory Capacity", "inventory_capacity", "Capacity", "capacity", "Max Stock", "slot_capacity"] },
   ],
   sales: [
     { field: "machine_identifier", label: "Machine identifier", required: true, aliases: ["Machine ID", "Machine Code", "Device ID", "Machine", "Machine No", "Vending Machine", "vms_machine_id", "machine_id", "machine_code", "terminal_id", "device_id", "رقم الماكينة", "كود الماكينة"] },
@@ -433,6 +450,17 @@ export function sheetRowsToRecords(rows: unknown[][], options: { reportType?: Vm
 export function detectVmsReportTypeFromHeaders(headers: string[]): VmsReportType | null {
   const normalized = new Set(headers.map(normalizeHeader).filter(Boolean));
   const has = (aliases: string[]) => aliases.some((alias) => normalized.has(normalizeHeader(alias)));
+  const stockSnapshotSignals = [
+    has(["Inventory quantity", "Inventory Quantity", "inventory_quantity"]),
+    has(["Out of stock quantity", "Out Of Stock Quantity", "out_of_stock_quantity"]),
+    has(["Inventory capacity", "Inventory Capacity", "inventory_capacity"]),
+    has(["Machine code", "Machine Code", "machine_code"]),
+    has(["Product Number", "Product number", "product_number"]),
+    has(["product name", "Product name", "Product Name", "product_name"]),
+  ].filter(Boolean).length;
+
+  if (stockSnapshotSignals >= 5) return "machine_stock_snapshot";
+
   const detailedSignals = [
     has(["Order number", "Order Number", "order_number"]),
     has(["Cargo Lane Number", "cargo_lane_number"]),

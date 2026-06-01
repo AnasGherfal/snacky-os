@@ -131,8 +131,12 @@ function dashboardUsageForReport(reportType: string | null | undefined) {
     ];
   }
   if (reportType === "sales") return ["Reconciliation only"];
-  if (reportType === "stock" || reportType === "planogram") return ["Refill recommendation", "Inventory dashboard"];
+  if (reportType === "stock" || reportType === "machine_stock_snapshot" || reportType === "planogram") return ["Inventory dashboard", "Refill recommendations", "Product mapping", "Machine mapping"];
   return ["Not used until mapped"];
+}
+
+function isStockReportType(reportType: string | null | undefined) {
+  return reportType === "stock" || reportType === "machine_stock_snapshot" || reportType === "planogram";
 }
 
 function activeLabel(batch: VmsBatchRow) {
@@ -140,6 +144,9 @@ function activeLabel(batch: VmsBatchRow) {
 }
 
 function batchDateRange(batch: VmsBatchRow) {
+  if (isStockReportType(batch.report_type ?? batch.source_type)) {
+    return `Snapshot: ${formatDateTime(batch.detected_min_datetime ?? batch.uploaded_at ?? batch.imported_at)}`;
+  }
   if (batch.report_start_date || batch.report_end_date) return `${batch.report_start_date ?? "-"} to ${batch.report_end_date ?? "-"}`;
   const summary = parseSummary(batch.notes);
   const start = summary?.orderDetailsReportPeriod?.reportStartDate;
@@ -650,7 +657,8 @@ function UploadCard() {
           <select name="report_type" defaultValue="" className="field-input">
             <option value="">Auto-detect</option>
             <option value="vms_order_details_weekly">Detailed Order Details Report - Recommended</option>
-            <option value="stock">Machine Stock Report</option>
+            <option value="machine_stock_snapshot">Machine Stock Snapshot</option>
+            <option value="stock">Machine Stock Report (legacy)</option>
             <option value="sales">General / Summary Sales Report</option>
           </select>
         </FormField>
@@ -1893,9 +1901,9 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
                   <td>{batch.rows_imported ?? batchMetric(batch, "importedRows", 0)}</td>
                   <td>{batch.rows_skipped_duplicate ?? batchMetric(batch, "rowsSkippedDuplicate", 0)}</td>
                   <td>{batch.rows_needing_review ?? batchMetric(batch, "rowsNeedingReview", batchMetric(batch, "needsProductMappingRows", 0))}</td>
-                  <td>{lyd(Number(batch.total_successful_sales ?? batchMetric(batch, "estimatedSuccessfulSales", 0)))}</td>
-                  <td>{batch.failed_rows_count ?? batchMetric(batch, "failedVendRows", 0)}</td>
-                  <td>{batch.refunded_rows_count ?? batchMetric(batch, "refundedRows", 0)}</td>
+                  <td>{isStockReportType(batch.report_type ?? batch.source_type) ? "N/A" : lyd(Number(batch.total_successful_sales ?? batchMetric(batch, "estimatedSuccessfulSales", 0)))}</td>
+                  <td>{isStockReportType(batch.report_type ?? batch.source_type) ? "N/A" : batch.failed_rows_count ?? batchMetric(batch, "failedVendRows", 0)}</td>
+                  <td>{isStockReportType(batch.report_type ?? batch.source_type) ? "N/A" : batch.refunded_rows_count ?? batchMetric(batch, "refundedRows", 0)}</td>
                   <td>{batch.uploaded_by || batch.imported_by ? importerById.get(String(batch.uploaded_by ?? batch.imported_by)) ?? "Unknown" : "-"}</td>
                   <td>{formatDateTime(batch.uploaded_at ?? batch.imported_at)}</td>
                   <td className="max-w-xs text-xs text-slate-600">{batch.delete_reason || batch.disable_reason || (batch.report_type === "sales" ? "Reconciliation only" : "-")}</td>

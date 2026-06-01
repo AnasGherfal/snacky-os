@@ -293,11 +293,11 @@ export function resolveVmsProduct({
 }
 
 function requiresMachine(reportType: VmsReportType) {
-  return ["stock", "sales", "vms_order_details_weekly", "machine_status", "planogram"].includes(reportType);
+  return ["stock", "machine_stock_snapshot", "sales", "vms_order_details_weekly", "machine_status", "planogram"].includes(reportType);
 }
 
 function requiresProductIdentity(reportType: VmsReportType) {
-  return ["stock", "sales", "vms_order_details_weekly", "product_list", "planogram"].includes(reportType);
+  return ["stock", "machine_stock_snapshot", "sales", "vms_order_details_weekly", "product_list", "planogram"].includes(reportType);
 }
 
 export function validateVmsRows({
@@ -361,8 +361,8 @@ export function validateVmsRows({
       }
     }
 
-    if (reportType === "stock") {
-      const quantity = vmsNumber(vmsValue(row, ["current_qty", "stock_qty", "stock_quantity", "quantity", "qty", "remaining", "remaining_qty", "inventory", "inventory_qty", "on_hand", "balance", "available_qty", "qty_left"]));
+    if (reportType === "stock" || reportType === "machine_stock_snapshot") {
+      const quantity = vmsNumber(vmsValue(row, ["current_qty", "inventory_quantity", "stock_qty", "stock_quantity", "quantity", "qty", "remaining", "remaining_qty", "inventory", "inventory_qty", "on_hand", "balance", "available_qty", "qty_left"]));
       if (quantity === null || quantity < 0) reasons.push("invalid quantity");
       const capturedAt = vmsValue(row, ["captured_at", "last_updated", "updated_at", "date", "report_date", "stock_date"]);
       if (capturedAt && !vmsDate(capturedAt)) warnings.push("invalid date");

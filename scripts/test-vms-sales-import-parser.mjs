@@ -67,6 +67,27 @@ const orderDetailsRows = [
   ["6591", "Snacky", "2510001719", "HT Mall", "ORD-2", "A2", "P002", "Chips", "3.00", "3.00", "3.00", "2026-05-28 10:10:00", "Not shipped", "", "", "", "", "TP-2", "", "3.00", "2026-05-28 10:09:00", "1"],
 ];
 
+const machineStockSnapshotRows = [
+  ["Inventory of machine goods"],
+  [
+    "Machine code",
+    "Machine name",
+    "Point name",
+    "Product Number",
+    "product name",
+    "Product Specification",
+    "Product bar code",
+    "Third party commodity number",
+    "Product Unit",
+    "Production date",
+    "Warranty date",
+    "Inventory quantity",
+    "Out of stock quantity",
+    "Inventory capacity",
+  ],
+  ["M-001", "Machine One", "Point A", "P-001", "Water 500ml", "500ml", "1234567890123", "TP-1", "pcs", "", "", "7", "3", "10"],
+];
+
 test("VMS sales Excel title provides the March 2026 report period", () => {
   const headerRow = detectHeaderRowIndex(salesRows, "sales");
   assert.equal(headerRow, 1);
@@ -153,6 +174,32 @@ test("VMS order details auto-detects title row and duplicate commodity price hea
   assert.equal(mappedRows[0].machine_identifier, "2510001719");
   assert.equal(mappedRows[0].product_identifier, "P001");
   assert.equal(mappedRows[0].payment_amount, "2.50");
+});
+
+test("VMS machine goods inventory report detects as machine stock snapshot", () => {
+  assert.equal(detectVmsReportTypeFromRows(machineStockSnapshotRows), "machine_stock_snapshot");
+
+  const headerRow = detectHeaderRowIndex(machineStockSnapshotRows, "machine_stock_snapshot");
+  const sheet = sheetRowsToRecords(machineStockSnapshotRows, { reportType: "machine_stock_snapshot", headerRowIndex: headerRow });
+  const mapping = detectColumnMapping(sheet.headers, "machine_stock_snapshot", sheet.columnSamples);
+  const mappedRows = applyColumnMapping(sheet.records, mapping);
+
+  assert.equal(headerRow, 1);
+  assert.equal(sheet.records.length, 1);
+  assert.deepEqual(requiredMissing(mapping, "machine_stock_snapshot"), []);
+  assert.equal(mapping.machine_identifier, "Machine code");
+  assert.equal(mapping.product_identifier, "Product Number");
+  assert.equal(mapping.current_qty, "Inventory quantity");
+  assert.equal(mapping.out_of_stock_qty, "Out of stock quantity");
+  assert.equal(mapping.capacity, "Inventory capacity");
+  assert.equal(mappedRows[0].machine_identifier, "M-001");
+  assert.equal(mappedRows[0].machine_name, "Machine One");
+  assert.equal(mappedRows[0].point_name, "Point A");
+  assert.equal(mappedRows[0].product_identifier, "P-001");
+  assert.equal(mappedRows[0].product_name, "Water 500ml");
+  assert.equal(mappedRows[0].current_qty, "7");
+  assert.equal(mappedRows[0].out_of_stock_qty, "3");
+  assert.equal(mappedRows[0].capacity, "10");
 });
 
 test("VMS order details derives date range, status, and duplicate hash", () => {

@@ -239,7 +239,7 @@ function vmsSourceUsage(reportType: VmsReportType) {
       explanation: "General VMS summary sales files are retained for reconciliation/checking totals and do not replace detailed transactions.",
     };
   }
-  if (reportType === "stock" || reportType === "planogram") {
+  if (reportType === "stock" || reportType === "machine_stock_snapshot" || reportType === "planogram") {
     return {
       source_type: "machine_stock",
       main_sales_source: false,
@@ -425,11 +425,15 @@ async function upsertRawRows(
 }
 
 function reportRequiresMachine(reportType: VmsReportType) {
-  return ["stock", "sales", "vms_order_details_weekly", "machine_status", "planogram"].includes(reportType);
+  return ["stock", "machine_stock_snapshot", "sales", "vms_order_details_weekly", "machine_status", "planogram"].includes(reportType);
 }
 
 function reportRequiresProduct(reportType: VmsReportType) {
-  return ["stock", "sales", "vms_order_details_weekly", "product_list", "planogram"].includes(reportType);
+  return ["stock", "machine_stock_snapshot", "sales", "vms_order_details_weekly", "product_list", "planogram"].includes(reportType);
+}
+
+function isMachineStockReport(reportType: VmsReportType) {
+  return reportType === "stock" || reportType === "machine_stock_snapshot";
 }
 
 function markInvalidRow(summary: ImportSummary, rowNumber: number, reason: string) {
@@ -1446,6 +1450,8 @@ async function runVmsImport({
   let productLookupMap = buildProductLookupMap(productRows);
 
   const stockSnapshots: any[] = [];
+  const machineStockSnapshots: any[] = [];
+  const machineStockSnapshotTimes: Date[] = [];
   const salesSnapshots: any[] = [];
   const salesRawRows: Record<string, unknown>[] = [];
   const transactionRawRows: Record<string, unknown>[] = [];
@@ -1779,8 +1785,8 @@ async function runVmsImport({
       continue;
     }
 
-    if (reportType === "stock") {
-      const currentQty = numberValue(value(row, ["current_qty", "stock_qty", "stock_quantity", "quantity", "qty", "remaining", "remaining_qty", "inventory", "inventory_qty", "on_hand", "balance", "available_qty", "qty_left"]));
+    if (isMachineStockReport(reportType)) {
+      const currentQty = numberValue(value(row, ["current_qty", "inventory_quantity", "stock_qty", "stock_quantity", "quantity", "qty", "remaining", "remaining_qty", "inventory", "inventory_qty", "on_hand", "balance", "available_qty", "qty_left"]));
       if (currentQty === null || currentQty < 0) {
         const reason = "invalid current quantity.";
         markInvalidRow(summary, rowNumber, reason);
@@ -1789,8 +1795,11 @@ async function runVmsImport({
       }
 
       const capturedAt = dateValue(value(row, ["updated_at", "captured_at", "last_updated", "date", "report_date", "stock_date"])) ?? new Date();
+      machineStockSnapshotTimes.push(capturedAt);
       const temperature = numberValue(value(row, ["temperature", "temperature_c", "temp", "cabinet_temperature"]));
       const cashBalance = numberValue(value(row, ["cash_balance", "banknote_balance", "cash_amount", "cash_in_machine", "cash_box"]));
+      const outOfStockQty = numberValue(value(row, ["out_of_stock_qty", "out_of_stock_quantity", "missing_or_empty_qty", "missing_qty", "empty_qty"]));
+      const capacity = numberValue(value(row, ["capacity", "inventory_capacity", "max_qty", "max_quantity", "slot_capacity"]));
       await applyMachineStatus(supabase, machine.id, row, capturedAt);
       stockSnapshots.push({
         import_batch_id: batch.id,
@@ -1803,12 +1812,33 @@ async function runVmsImport({
         vms_product_name: productNameForMapping || null,
         product_id: productId,
         current_qty: Math.floor(currentQty),
-        capacity: numberValue(value(row, ["capacity", "max_qty", "max_quantity", "slot_capacity"])) ?? null,
+        capacity,
         captured_at: capturedAt.toISOString(),
         temperature_c: temperature,
         cash_balance_lyd: cashBalance,
-        tray_status: value(row, ["empty_status", "out_of_stock", "sold_out", "tray_status", "status", "empty_trays"]) || null,
+        tray_status: value(row, ["empty_status", "out_of_stock", "sold_out", "tray_status", "status", "empty_trays"]) || (outOfStockQty && outOfStockQty > 0 ? "out_of_stock" : null),
         metadata: { raw: row },
+      });
+      machineStockSnapshots.push({
+        import_batch_id: batch.id,
+        row_number: rowNumber,
+        machine_id: machine.id,
+        product_id: productId,
+        machine_code: identifier || null,
+        machine_name: value(row, ["machine_name"]) || machine.name || null,
+        point_name: value(row, ["point_name", "location", "location_name"]) || null,
+        vms_product_code: vmsProductId || null,
+        vms_product_name: productNameForMapping || null,
+        product_specification: value(row, ["product_specification", "specification", "spec"]) || null,
+        product_barcode: value(row, ["barcode", "product_bar_code", "product_barcode", "bar_code"]) || null,
+        third_party_commodity_number: value(row, ["third_party_commodity_number", "third_party_commodity_no"]) || null,
+        product_unit: value(row, ["product_unit", "unit"]) || null,
+        production_date: dateValue(value(row, ["production_date", "manufacture_date"]))?.toISOString().slice(0, 10) ?? null,
+        warranty_date: dateValue(value(row, ["warranty_date", "expiry_date", "expiration_date"]))?.toISOString().slice(0, 10) ?? null,
+        inventory_quantity: currentQty,
+        out_of_stock_quantity: outOfStockQty ?? 0,
+        inventory_capacity: capacity,
+        raw_row: originalRow,
       });
       summary.importedRows += 1;
       finishRow("imported");
@@ -1927,12 +1957,23 @@ async function runVmsImport({
         summary.errors.push("Old stock snapshot rows could not be marked stale.");
       }
     }
-  } else if (isReprocess && reportType === "stock") {
+  } else if (isReprocess && isMachineStockReport(reportType)) {
     try {
       await markStaleSnapshotRows(supabase, "vms_stock_snapshots", batch.id, []);
     } catch (staleError) {
       console.error("[vms-import] Stock stale marking failed", staleError);
       summary.errors.push("Old stock snapshot rows could not be marked stale.");
+    }
+  }
+
+  if (machineStockSnapshots.length) {
+    const { error } = await supabase
+      .from("vms_machine_stock_snapshots")
+      .upsert(machineStockSnapshots, { onConflict: "import_batch_id,row_number" });
+    if (error) {
+      console.error("[vms-import] Machine stock snapshot audit upsert failed", error);
+      summary.errors.push("Machine stock snapshot audit save failed.");
+      fatalImportError = true;
     }
   }
 
@@ -2100,6 +2141,10 @@ async function runVmsImport({
 
   summary.rowsNeedingReview = summary.needsProductMappingRows + summary.unknownMachineRows + summary.invalidRows;
   const status = fatalImportError ? "failed" : "imported";
+  const snapshotTimeValues = machineStockSnapshotTimes.map((date) => date.getTime()).filter(Number.isFinite);
+  const stockDetectedMinDatetime = snapshotTimeValues.length ? new Date(Math.min(...snapshotTimeValues)).toISOString() : null;
+  const stockDetectedMaxDatetime = snapshotTimeValues.length ? new Date(Math.max(...snapshotTimeValues)).toISOString() : null;
+  const stockFallbackTimestamp = isMachineStockReport(reportType) ? new Date().toISOString() : null;
   const batchUpdate = sanitizeVmsImportBatchPayload({
     status,
     is_active: status === "imported" && summary.importedRows > 0,
@@ -2109,10 +2154,14 @@ async function runVmsImport({
     report_end_date: effectiveReportEndDate,
     file_hash: fileHash,
     storage_path: storagePath,
-    detected_min_datetime: effectiveReportStartDate ? startOfDateIso(effectiveReportStartDate) : null,
-    detected_max_datetime: effectiveReportEndDate ? endOfDateIso(effectiveReportEndDate) : null,
-    total_successful_sales: summary.estimatedSuccessfulSales ?? 0,
-    successful_rows_count: reportType === "vms_order_details_weekly" ? summary.successfulSalesRows ?? 0 : summary.importedRows,
+    detected_min_datetime: isMachineStockReport(reportType)
+      ? (stockDetectedMinDatetime ?? stockFallbackTimestamp)
+      : (effectiveReportStartDate ? startOfDateIso(effectiveReportStartDate) : null),
+    detected_max_datetime: isMachineStockReport(reportType)
+      ? (stockDetectedMaxDatetime ?? stockFallbackTimestamp)
+      : (effectiveReportEndDate ? endOfDateIso(effectiveReportEndDate) : null),
+    total_successful_sales: reportType === "sales" || reportType === "vms_order_details_weekly" ? summary.estimatedSuccessfulSales ?? 0 : 0,
+    successful_rows_count: reportType === "vms_order_details_weekly" ? summary.successfulSalesRows ?? 0 : reportType === "sales" ? summary.importedRows : 0,
     failed_rows_count: (summary.failedVendRows ?? 0) + (summary.failedPaymentRows ?? 0) + (summary.needsReviewTransactionRows ?? 0),
     refunded_rows_count: summary.refundedRows ?? 0,
     rows_imported: summary.importedRows,
@@ -2545,47 +2594,16 @@ async function createPreviewImportBatch({
     hint: rich.error?.hint,
   });
 
-  if (!isMissingColumnPreviewError(rich.error)) {
-    return { id: null, error: rich.error, warning: null as string | null };
+  if (isMissingColumnPreviewError(rich.error)) {
+    console.error("[vms-import] Refusing preview batch fallback because required batch metadata columns are missing", {
+      queryName: "vms_import_batches.insert.rich_preview",
+      schemaIssue: extractVmsSchemaIssue(rich.error, "vms_import_batches.insert.rich_preview"),
+      fileName: file.name,
+      reportType,
+      rowsFound,
+    });
   }
-
-  const fallbackResult = await withSoftTimeout(
-    supabase.from("vms_import_batches").insert(sanitizeVmsImportBatchPayload({
-      file_name: basePayload.file_name,
-      report_type: basePayload.report_type,
-      uploaded_by: basePayload.uploaded_by,
-      uploaded_at: basePayload.uploaded_at,
-      status: "previewed",
-      rows_found: rowsFound,
-      rows_imported: 0,
-      rows_skipped_duplicate: 0,
-      rows_needing_review: 0,
-      notes: basePayload.notes,
-    }, {
-      queryName: "vms_import_batches.insert.preview_fallback",
-      currentStep: "create_preview_batch",
-      selectedImportBatchId: null,
-    })).select("id").single(),
-    VMS_SAVE_QUERY_TIMEOUT_MS,
-  );
-  if (fallbackResult.timedOut) {
-    return {
-      id: null,
-      error: { code: "TIMEOUT", message: "VMS import batch save took too long. Please check your connection and retry." },
-      warning: null as string | null,
-    };
-  }
-  if ("error" in fallbackResult) {
-    return { id: null, error: fallbackResult.error, warning: null as string | null };
-  }
-  const fallback = fallbackResult.value;
-  if (!fallback.error && fallback.data?.id) {
-    return {
-      id: String(fallback.data.id),
-      warning: "VMS import batch schema is outdated. Preview will continue with limited file metadata.",
-    };
-  }
-  return { id: null, error: fallback.error, warning: null as string | null };
+  return { id: null, error: rich.error, warning: null as string | null };
 }
 
 async function saveVmsPreviewRows({
@@ -3334,6 +3352,7 @@ export async function updateVmsImportBatchState(formData: FormData) {
     if (confirmation !== "DELETE") redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Type DELETE to permanently remove this VMS import.")}`);
 
     for (const table of [
+      "vms_machine_stock_snapshots",
       "vms_transactions_raw",
       "vms_sales_raw",
       "vms_sales_snapshots",
