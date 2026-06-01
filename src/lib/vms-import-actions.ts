@@ -47,7 +47,7 @@ import {
   extractVmsSchemaIssue,
   vmsSchemaIssueMessage,
 } from "@/lib/vms-schema-diagnostics";
-import { sanitizeVmsImportBatchPayload } from "@/lib/vms-import-batch-payload";
+import { isOptionalVmsImportBatchMetadataField, sanitizeVmsImportBatchPayload } from "@/lib/vms-import-batch-payload";
 
 type ImportSummary = {
   reportType: VmsReportType;
@@ -1214,9 +1214,13 @@ async function runVmsImport({
     }
 
     batch = existingLookup.data;
-    const confirmStartPayload = sanitizeVmsImportBatchPayload({
+    const existingBatchRecordId = String(batch.id);
+    const confirmStartPayload = {
       status: "previewed",
       is_active: false,
+      source_usage: vmsSourceUsage(reportType),
+      dashboard_usage: vmsSourceUsage(reportType),
+      latest_error: null,
       import_mode: importMode,
       report_start_date: effectiveReportStartDate,
       report_end_date: effectiveReportEndDate,
@@ -1239,11 +1243,7 @@ async function runVmsImport({
         rowCount: rows.length,
         columnMapping,
       }),
-    }, {
-      queryName: "vms_import_batches.update.confirm_existing",
-      currentStep: "confirm_import",
-      selectedImportBatchId: batch.id,
-    });
+    };
     // Check required tables before attempting update
     {
       const missingTables = await checkVmsRequiredTables(supabase);
@@ -1253,45 +1253,48 @@ async function runVmsImport({
         return;
       }
     }
-    const updateResult = await withSoftTimeout(
-      supabase
+    const updateResult = await runVmsImportBatchMutationWithMetadataFallback({
+      queryName: "vms_import_batches.update.confirm_existing",
+      currentStep: "confirm_import",
+      selectedImportBatchId: existingBatchRecordId,
+      payload: confirmStartPayload,
+      run: (payload) => supabase
         .from("vms_import_batches")
-        .update(confirmStartPayload)
-        .eq("id", batch.id),
-      VMS_SAVE_QUERY_TIMEOUT_MS,
-    );
+        .update(payload)
+        .eq("id", existingBatchRecordId),
+    });
     if (updateResult.timedOut) {
       const timeoutError = { code: "TIMEOUT", message: "VMS import batch update took too long." };
       logVmsBatchMutationFailure({
         queryName: "vms_import_batches.update.confirm_existing",
         error: timeoutError,
-        payload: confirmStartPayload,
+        payload: updateResult.payload,
         profile,
-        selectedImportBatchId: batch.id,
+        selectedImportBatchId: existingBatchRecordId,
         currentStep: "confirm_import",
       });
       errorRedirect(batchMutationErrorMessage(timeoutError));
       return;
     }
-    if ("error" in updateResult) {
+    if (updateResult.error) {
       logVmsBatchMutationFailure({
         queryName: "vms_import_batches.update.confirm_existing",
         error: updateResult.error,
-        payload: confirmStartPayload,
+        payload: updateResult.payload,
         profile,
-        selectedImportBatchId: batch.id,
+        selectedImportBatchId: existingBatchRecordId,
         currentStep: "confirm_import",
       });
       errorRedirect(batchMutationErrorMessage(updateResult.error));
       return;
     }
-    if (updateResult.value.error) {
+    if (updateResult.value?.error) {
       logVmsBatchMutationFailure({
         queryName: "vms_import_batches.update.confirm_existing",
         error: updateResult.value.error,
-        payload: confirmStartPayload,
+        payload: updateResult.payload,
         profile,
-        selectedImportBatchId: batch.id,
+        selectedImportBatchId: existingBatchRecordId,
         currentStep: "confirm_import",
       });
       errorRedirect(batchMutationErrorMessage(updateResult.value.error));
@@ -1331,9 +1334,12 @@ async function runVmsImport({
 
   if (importMode === VMS_IMPORT_MODES.PREVIEW_ONLY) {
     summary.skippedRows = rows.length;
-    const batchUpdate = sanitizeVmsImportBatchPayload({
+    const batchUpdate = {
       status: "previewed",
       is_active: false,
+      source_usage: vmsSourceUsage(reportType),
+      dashboard_usage: vmsSourceUsage(reportType),
+      latest_error: null,
       rows_found: summary.rowsFound,
       file_hash: fileHash,
       storage_path: storagePath,
@@ -1349,21 +1355,20 @@ async function runVmsImport({
         totalRows: summary.totalRows,
         rowsFound: summary.rowsFound,
       }),
-    }, {
+    };
+    const previewUpdateResult = await runVmsImportBatchMutationWithMetadataFallback({
       queryName: "vms_import_batches.update.preview_only",
       currentStep: "preview_only",
       selectedImportBatchId: batch.id,
+      payload: batchUpdate,
+      run: (payload) => supabase.from("vms_import_batches").update(payload).eq("id", batch.id),
     });
-    const previewUpdateResult = await withSoftTimeout(
-      supabase.from("vms_import_batches").update(batchUpdate).eq("id", batch.id),
-      VMS_SAVE_QUERY_TIMEOUT_MS,
-    );
     if (previewUpdateResult.timedOut) {
       const timeoutError = { code: "TIMEOUT", message: "VMS import preview batch update took too long." };
       logVmsBatchMutationFailure({
         queryName: "vms_import_batches.update.preview_only",
         error: timeoutError,
-        payload: batchUpdate,
+        payload: previewUpdateResult.payload,
         profile,
         selectedImportBatchId: batch.id,
         currentStep: "preview_only",
@@ -1371,11 +1376,11 @@ async function runVmsImport({
       errorRedirect(batchMutationErrorMessage(timeoutError));
       return;
     }
-    if ("error" in previewUpdateResult) {
+    if (previewUpdateResult.error) {
       logVmsBatchMutationFailure({
         queryName: "vms_import_batches.update.preview_only",
         error: previewUpdateResult.error,
-        payload: batchUpdate,
+        payload: previewUpdateResult.payload,
         profile,
         selectedImportBatchId: batch.id,
         currentStep: "preview_only",
@@ -1383,11 +1388,11 @@ async function runVmsImport({
       errorRedirect(batchMutationErrorMessage(previewUpdateResult.error));
       return;
     }
-    if (previewUpdateResult.value.error) {
+    if (previewUpdateResult.value?.error) {
       logVmsBatchMutationFailure({
         queryName: "vms_import_batches.update.preview_only",
         error: previewUpdateResult.value.error,
-        payload: batchUpdate,
+        payload: previewUpdateResult.payload,
         profile,
         selectedImportBatchId: batch.id,
         currentStep: "preview_only",
@@ -2145,9 +2150,12 @@ async function runVmsImport({
   const stockDetectedMinDatetime = snapshotTimeValues.length ? new Date(Math.min(...snapshotTimeValues)).toISOString() : null;
   const stockDetectedMaxDatetime = snapshotTimeValues.length ? new Date(Math.max(...snapshotTimeValues)).toISOString() : null;
   const stockFallbackTimestamp = isMachineStockReport(reportType) ? new Date().toISOString() : null;
-  const batchUpdate = sanitizeVmsImportBatchPayload({
+  const batchUpdate = {
     status,
     is_active: status === "imported" && summary.importedRows > 0,
+    source_usage: vmsSourceUsage(reportType),
+    dashboard_usage: vmsSourceUsage(reportType),
+    latest_error: fatalImportError ? summary.errors.join("; ").slice(0, 2000) : null,
     rows_found: summary.rowsFound,
     rows_skipped: summary.skippedRows,
     report_start_date: effectiveReportStartDate,
@@ -2177,6 +2185,15 @@ async function runVmsImport({
       unmapped_products: summary.unmappedProducts,
       errors: summary.errors,
     },
+    parse_diagnostics: {
+      reportType,
+      fileType,
+      sheetName,
+      headers: headerNames,
+      rowsFound: summary.rowsFound,
+      importedRows: summary.importedRows,
+      rowsNeedingReview: summary.rowsNeedingReview,
+    },
     notes: JSON.stringify({
       reportType,
       fileName,
@@ -2191,25 +2208,24 @@ async function runVmsImport({
       unknownMachines: summary.unknownMachines,
       unmappedProducts: summary.unmappedProducts,
     }),
-  }, {
+  };
+
+  const finalUpdateResult = await runVmsImportBatchMutationWithMetadataFallback({
     queryName: "vms_import_batches.update.final",
     currentStep: "confirm_import",
     selectedImportBatchId: batch.id,
-  });
-
-  const finalUpdateResult = await withSoftTimeout(
-    supabase
+    payload: batchUpdate,
+    run: (payload) => supabase
       .from("vms_import_batches")
-      .update(batchUpdate)
+      .update(payload)
       .eq("id", batch.id),
-    VMS_SAVE_QUERY_TIMEOUT_MS,
-  );
+  });
   if (finalUpdateResult.timedOut) {
     const timeoutError = { code: "TIMEOUT", message: "VMS import final batch update took too long." };
     logVmsBatchMutationFailure({
       queryName: "vms_import_batches.update.final",
       error: timeoutError,
-      payload: batchUpdate,
+      payload: finalUpdateResult.payload,
       profile,
       selectedImportBatchId: batch.id,
       currentStep: "confirm_import",
@@ -2217,25 +2233,24 @@ async function runVmsImport({
     errorRedirect(batchMutationErrorMessage(timeoutError));
     return;
   }
-  if ("error" in finalUpdateResult) {
+  if (finalUpdateResult.error) {
     logVmsBatchMutationFailure({
       queryName: "vms_import_batches.update.final",
       error: finalUpdateResult.error,
-      payload: batchUpdate,
+      payload: finalUpdateResult.payload,
       profile,
       selectedImportBatchId: batch.id,
       currentStep: "confirm_import",
     });
     errorRedirect(batchMutationErrorMessage(finalUpdateResult.error));
+    return;
   }
-  const finalUpdateValue = (!finalUpdateResult.timedOut && Object.prototype.hasOwnProperty.call(finalUpdateResult, 'value'))
-    ? (finalUpdateResult as any).value
-    : null;
+  const finalUpdateValue = finalUpdateResult.value ?? null;
   if (finalUpdateValue?.error) {
     logVmsBatchMutationFailure({
       queryName: "vms_import_batches.update.final",
       error: finalUpdateValue.error,
-      payload: batchUpdate,
+      payload: finalUpdateResult.payload,
       profile,
       selectedImportBatchId: batch.id,
       currentStep: "confirm_import",
@@ -2333,9 +2348,9 @@ function previewErrorMessage(error: unknown, tableName: string) {
   if (isPermissionPreviewError(error)) return "You do not have permission to create VMS import previews.";
   if (supabaseError?.code === "42P01" || supabaseError?.code === "PGRST205") return `${tableName} table is missing. Run the latest migration.`;
   if (isMissingColumnPreviewError(error)) {
-    const text = `${supabaseError?.message ?? ""} ${supabaseError?.details ?? ""} ${supabaseError?.hint ?? ""}`;
-    const match = text.match(/column ['"]?([a-zA-Z0-9_]+)['"]?/i);
-    return `Preview schema is outdated${match?.[1] ? `. Missing column: ${match[1]}.` : ". Run the latest migration."}`;
+    const issue = extractVmsSchemaIssue(error);
+    const column = issue?.type === "missing_column" ? issue.column : null;
+    return `Preview schema is outdated${column ? `. Missing column: ${column}.` : ". Run the latest migration."}`;
   }
   return `${tableName} failed while preparing the VMS import preview. Technical details are in the server console.`;
 }
@@ -2350,9 +2365,11 @@ function mutationErrorText(error: unknown) {
 }
 
 function missingColumnName(error: unknown) {
+  const issue = extractVmsSchemaIssue(error, "vms_import_batches.mutation");
+  if (issue?.type === "missing_column") return issue.column;
   const supabaseError = supabaseMutationError(error);
   const text = `${supabaseError?.message ?? ""} ${supabaseError?.details ?? ""} ${supabaseError?.hint ?? ""}`;
-  return text.match(/column ['"]?([a-zA-Z0-9_]+)['"]?/i)?.[1] ?? null;
+  return text.match(/column ['"]?([a-zA-Z0-9_]+)['"]? does not exist/i)?.[1] ?? null;
 }
 
 function isBatchMissingTableError(error: unknown) {
@@ -2395,6 +2412,89 @@ function batchMutationErrorMessage(error: unknown) {
   }
   if (supabaseError?.code === "23505") return "This VMS import batch already exists. Open the existing import or reprocess it instead of creating a duplicate.";
   return "Could not save VMS import batch. Technical details are in the server console.";
+}
+
+type VmsBatchMutationResponse<T> = {
+  data?: T | null;
+  error?: unknown;
+};
+
+type VmsBatchMutationResult<T> = {
+  timedOut: boolean;
+  error?: unknown;
+  value?: VmsBatchMutationResponse<T>;
+  payload: Record<string, unknown>;
+  droppedOptionalColumns: string[];
+};
+
+function removeMissingOptionalBatchColumn(payload: Record<string, unknown>, error: unknown) {
+  const column = missingColumnName(error);
+  if (!column || !Object.prototype.hasOwnProperty.call(payload, column) || !isOptionalVmsImportBatchMetadataField(column)) return null;
+  const nextPayload = { ...payload };
+  delete nextPayload[column];
+  return { column, payload: nextPayload };
+}
+
+async function runVmsImportBatchMutationWithMetadataFallback<T>({
+  queryName,
+  currentStep,
+  selectedImportBatchId,
+  payload,
+  run,
+}: {
+  queryName: string;
+  currentStep: string;
+  selectedImportBatchId?: string | null;
+  payload: Record<string, unknown>;
+  run: (payload: Record<string, unknown>) => PromiseLike<VmsBatchMutationResponse<T>>;
+}): Promise<VmsBatchMutationResult<T>> {
+  let activePayload = sanitizeVmsImportBatchPayload(payload, { queryName, currentStep, selectedImportBatchId });
+  const droppedOptionalColumns: string[] = [];
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const result = await withSoftTimeout(run(activePayload), VMS_SAVE_QUERY_TIMEOUT_MS);
+    if (result.timedOut) return { timedOut: true, payload: activePayload, droppedOptionalColumns };
+    if ("error" in result) {
+      const fallback = removeMissingOptionalBatchColumn(activePayload, result.error);
+      if (fallback) {
+        activePayload = fallback.payload;
+        droppedOptionalColumns.push(fallback.column);
+        console.warn("[vms-import] Retrying vms_import_batches mutation without optional metadata column", {
+          queryName,
+          currentStep,
+          selectedImportBatchId: selectedImportBatchId ?? null,
+          missingColumn: fallback.column,
+        });
+        continue;
+      }
+      return { timedOut: false, error: result.error, payload: activePayload, droppedOptionalColumns };
+    }
+
+    const value = result.value;
+    if (value?.error) {
+      const fallback = removeMissingOptionalBatchColumn(activePayload, value.error);
+      if (fallback) {
+        activePayload = fallback.payload;
+        droppedOptionalColumns.push(fallback.column);
+        console.warn("[vms-import] Retrying vms_import_batches mutation without optional metadata column", {
+          queryName,
+          currentStep,
+          selectedImportBatchId: selectedImportBatchId ?? null,
+          missingColumn: fallback.column,
+        });
+        continue;
+      }
+    }
+
+    return { timedOut: false, value, payload: activePayload, droppedOptionalColumns };
+  }
+
+  return {
+    timedOut: false,
+    error: { code: "MISSING_SCHEMA", message: "Too many optional VMS import batch metadata columns are missing." },
+    payload: activePayload,
+    droppedOptionalColumns,
+  };
 }
 
 function logVmsBatchMutationFailure({
@@ -2560,20 +2660,29 @@ async function createPreviewImportBatch({
   const richPayload = {
     ...basePayload,
     is_active: false,
+    source_usage: vmsSourceUsage(reportType),
+    dashboard_usage: vmsSourceUsage(reportType),
+    latest_error: null,
     file_hash: fileHash,
     storage_path: storagePath,
     detected_min_datetime: dateRange.start ? startOfDateIso(dateRange.start) : null,
     detected_max_datetime: dateRange.end ? endOfDateIso(dateRange.end) : null,
+    parse_diagnostics: {
+      reportType,
+      fileType: parsed.fileType,
+      sheetCount: parsed.sheets.length,
+      rowsFound,
+      detectedDateRange: dateRange,
+    },
   };
 
-  const richResult = await withSoftTimeout(
-    supabase.from("vms_import_batches").insert(sanitizeVmsImportBatchPayload(richPayload, {
-      queryName: "vms_import_batches.insert.rich_preview",
-      currentStep: "create_preview_batch",
-      selectedImportBatchId: null,
-    })).select("id").single(),
-    VMS_SAVE_QUERY_TIMEOUT_MS,
-  );
+  const richResult = await runVmsImportBatchMutationWithMetadataFallback<{ id: string }>({
+    queryName: "vms_import_batches.insert.rich_preview",
+    currentStep: "create_preview_batch",
+    selectedImportBatchId: null,
+    payload: richPayload,
+    run: (payload) => supabase.from("vms_import_batches").insert(payload).select("id").single(),
+  });
   if (richResult.timedOut) {
     return {
       id: null,
@@ -2581,29 +2690,38 @@ async function createPreviewImportBatch({
       warning: null as string | null,
     };
   }
-  if ("error" in richResult) {
+  if (richResult.error) {
     return { id: null, error: richResult.error, warning: null as string | null };
   }
   const rich = richResult.value;
-  if (!rich.error && rich.data?.id) return { id: String(rich.data.id), warning: null as string | null };
+  if (!rich?.error && rich?.data?.id) {
+    const warning = richResult.droppedOptionalColumns.length
+      ? `VMS import batch metadata columns need the latest migration: ${richResult.droppedOptionalColumns.join(", ")}. Import preview can continue.`
+      : null;
+    return { id: String(rich.data.id), warning };
+  }
   console.error("[vms-import] Preview batch rich insert failed", {
     queryName: "vms_import_batches.insert.rich_preview",
-    code: rich.error?.code,
-    message: rich.error?.message,
-    details: rich.error?.details,
-    hint: rich.error?.hint,
+    code: supabaseMutationError(rich?.error)?.code,
+    message: supabaseMutationError(rich?.error)?.message,
+    details: supabaseMutationError(rich?.error)?.details,
+    hint: supabaseMutationError(rich?.error)?.hint,
   });
 
-  if (isMissingColumnPreviewError(rich.error)) {
-    console.error("[vms-import] Refusing preview batch fallback because required batch metadata columns are missing", {
+  if (isMissingColumnPreviewError(rich?.error)) {
+    console.error("[vms-import] Preview batch insert failed because a required batch column is missing", {
       queryName: "vms_import_batches.insert.rich_preview",
-      schemaIssue: extractVmsSchemaIssue(rich.error, "vms_import_batches.insert.rich_preview"),
+      schemaIssue: extractVmsSchemaIssue(rich?.error, "vms_import_batches.insert.rich_preview"),
       fileName: file.name,
       reportType,
       rowsFound,
     });
   }
-  return { id: null, error: rich.error, warning: null as string | null };
+  return {
+    id: null,
+    error: rich?.error ?? { code: "UNKNOWN", message: "VMS import batch insert returned no id." },
+    warning: null as string | null,
+  };
 }
 
 async function saveVmsPreviewRows({
@@ -3383,14 +3501,23 @@ export async function updateVmsImportBatchState(formData: FormData) {
   }
 
   if (!payload) redirect(`/vms-import/${batchId}?error=${encodeURIComponent("No VMS import action was applied.")}`);
-  const { data: afterBatch, error } = await supabase
-    .from("vms_import_batches")
-    .update(payload)
-    .eq("id", batchId)
-    .select("*")
-    .maybeSingle();
-  if (error) {
-    console.error("[vms-import] Batch state update failed", error);
+  const stateUpdateResult = await runVmsImportBatchMutationWithMetadataFallback<Record<string, unknown>>({
+    queryName: "vms_import_batches.update.state",
+    currentStep: "batch_state",
+    selectedImportBatchId: batchId,
+    payload,
+    run: (safePayload) => supabase
+      .from("vms_import_batches")
+      .update(safePayload)
+      .eq("id", batchId)
+      .select("*")
+      .maybeSingle(),
+  });
+  const afterBatch = stateUpdateResult.value?.data;
+  const afterBatchFileName = typeof afterBatch?.file_name === "string" ? afterBatch.file_name : null;
+  const error = stateUpdateResult.error ?? stateUpdateResult.value?.error ?? null;
+  if (stateUpdateResult.timedOut || error) {
+    console.error("[vms-import] Batch state update failed", error ?? "timeout");
     redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Could not update this VMS import batch. Run the latest migration.")}`);
   }
 
@@ -3399,7 +3526,7 @@ export async function updateVmsImportBatchState(formData: FormData) {
     action: "update",
     entityType: "vms_import",
     entityId: batchId,
-    entityLabel: afterBatch?.file_name ?? beforeBatch.file_name ?? batchId,
+    entityLabel: afterBatchFileName ?? beforeBatch.file_name ?? batchId,
     beforeData: beforeBatch,
     afterData: afterBatch,
     summary: activitySummary,

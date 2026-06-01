@@ -1,4 +1,4 @@
-const ALLOWED_VMS_IMPORT_BATCH_FIELDS = new Set([
+export const ALLOWED_VMS_IMPORT_BATCH_FIELDS = new Set([
   "uploaded_by",
   "uploaded_at",
   "file_name",
@@ -22,6 +22,8 @@ const ALLOWED_VMS_IMPORT_BATCH_FIELDS = new Set([
   "unmapped_products",
   "preview_summary",
   "review_summary",
+  "source_usage",
+  "dashboard_usage",
   "is_active",
   "file_hash",
   "storage_bucket",
@@ -42,9 +44,56 @@ const ALLOWED_VMS_IMPORT_BATCH_FIELDS = new Set([
   "disabled_at",
   "disabled_by",
   "disable_reason",
+  "latest_error",
+  "parse_diagnostics",
   "created_at",
   "updated_at",
 ]);
+
+export const OPTIONAL_VMS_IMPORT_BATCH_METADATA_FIELDS = new Set([
+  "source_type",
+  "file_type",
+  "sheet_name",
+  "imported_by",
+  "imported_at",
+  "row_count",
+  "rows_skipped",
+  "error_count",
+  "errors",
+  "unknown_machines",
+  "unmapped_products",
+  "column_mapping",
+  "preview_summary",
+  "review_summary",
+  "source_usage",
+  "dashboard_usage",
+  "is_active",
+  "file_hash",
+  "storage_bucket",
+  "storage_path",
+  "original_file_name",
+  "detected_min_datetime",
+  "detected_max_datetime",
+  "total_successful_sales",
+  "successful_rows_count",
+  "failed_rows_count",
+  "refunded_rows_count",
+  "failed_at",
+  "last_reprocessed_at",
+  "reprocess_count",
+  "deleted_at",
+  "deleted_by",
+  "delete_reason",
+  "disabled_at",
+  "disabled_by",
+  "disable_reason",
+  "latest_error",
+  "parse_diagnostics",
+]);
+
+export function isOptionalVmsImportBatchMetadataField(field: string | null | undefined) {
+  return Boolean(field && OPTIONAL_VMS_IMPORT_BATCH_METADATA_FIELDS.has(field));
+}
 
 export function sanitizeVmsImportBatchPayload(
   payload: Record<string, unknown>,

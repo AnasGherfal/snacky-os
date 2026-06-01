@@ -464,7 +464,7 @@ where coalesce(tx.payment_time, tx.delivery_time) is not null
   and vib.status = 'imported'
   and vib.is_active = true
   and vib.deleted_at is null
-group by sale_date, machine_id, machine_name, product_id, product_name;
+group by 1, 2, 3, 4, 5;
 
 create or replace view public.vms_transaction_status_monthly as
 select

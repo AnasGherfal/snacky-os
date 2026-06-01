@@ -89,6 +89,8 @@ const machineStockSnapshotRows = [
 ];
 
 test("VMS sales Excel title provides the March 2026 report period", () => {
+  assert.equal(detectVmsReportTypeFromRows(salesRows), "sales");
+
   const headerRow = detectHeaderRowIndex(salesRows, "sales");
   assert.equal(headerRow, 1);
 
