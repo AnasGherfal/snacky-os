@@ -656,12 +656,21 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
 
     const { receiptUrl, receiptFileName, receiptContentType, receiptStoragePath, uploadUnavailable, uploadError } = await resolvePurchaseReceiptUrl(supabase, fd);
     const existingReceiptUrl = String(fd.get("current_receipt_url") || current.receipt_url || "").trim();
+    const existingReceiptFileName = String(fd.get("current_receipt_file_name") || current.receipt_file_name || "").trim() || null;
+    const existingReceiptContentType = String(fd.get("current_receipt_content_type") || current.receipt_content_type || "").trim() || null;
+    const existingReceiptStoragePath = String(fd.get("current_receipt_storage_path") || current.receipt_storage_path || "").trim() || null;
     const removeReceipt = String(fd.get("remove_receipt") || "") === "yes";
-    const nextReceiptUrl = removeReceipt ? null : (receiptUrl ?? existingReceiptUrl) || null;
-    const receiptUrlChanged = Boolean(receiptUrl && receiptUrl !== existingReceiptUrl);
-    const nextReceiptFileName = removeReceipt ? null : receiptFileName ?? (receiptUrlChanged ? null : current.receipt_file_name ?? null);
-    const nextReceiptContentType = removeReceipt ? null : receiptContentType ?? (receiptUrlChanged ? null : current.receipt_content_type ?? null);
-    const nextReceiptStoragePath = removeReceipt ? null : receiptStoragePath ?? (receiptUrlChanged ? null : current.receipt_storage_path ?? null);
+    const hasNewStoredReceipt = Boolean(receiptStoragePath);
+    const hasNewManualReceiptUrl = Boolean(receiptUrl && !hasNewStoredReceipt && receiptUrl !== existingReceiptUrl);
+    const nextReceiptUrl = removeReceipt
+      ? null
+      : hasNewStoredReceipt || hasNewManualReceiptUrl
+        ? receiptUrl
+        : existingReceiptUrl || current.receipt_url || null;
+    const receiptUrlChanged = Boolean(nextReceiptUrl !== (current.receipt_url ?? null));
+    const nextReceiptFileName = removeReceipt ? null : hasNewStoredReceipt ? receiptFileName : hasNewManualReceiptUrl ? null : existingReceiptFileName;
+    const nextReceiptContentType = removeReceipt ? null : hasNewStoredReceipt ? receiptContentType : hasNewManualReceiptUrl ? null : existingReceiptContentType;
+    const nextReceiptStoragePath = removeReceipt ? null : hasNewStoredReceipt ? receiptStoragePath : hasNewManualReceiptUrl ? null : existingReceiptStoragePath;
     const lineRows = buildLineRows(lines);
     const totals = buildTotals(fd, lineRows.reduce((sum, line) => sum + Number(line.line_total), 0));
 

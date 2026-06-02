@@ -71,6 +71,9 @@ type InitialPurchase = {
   paymentMethod?: string | null;
   paymentStatus?: string | null;
   receiptUrl?: string | null;
+  receiptFileName?: string | null;
+  receiptContentType?: string | null;
+  receiptStoragePath?: string | null;
   notes?: string | null;
   manualTotalLyd?: number | null;
 };
@@ -585,7 +588,8 @@ export function PurchaseForm({
   const [lineErrors, setLineErrors] = useState<Record<string, string>>({});
   const [receiptPreview, setReceiptPreview] = useState<ReceiptPreviewState | null>(() => {
     const receiptUrl = initialPurchase?.receiptUrl?.trim();
-    return receiptUrl ? { url: receiptUrl, type: inferReceiptType(receiptUrl), name: "Saved receipt", source: "url" } : null;
+    const receiptType = initialPurchase?.receiptContentType?.trim() || (receiptUrl ? inferReceiptType(receiptUrl) : "");
+    return receiptUrl ? { url: receiptUrl, type: receiptType, name: initialPurchase?.receiptFileName || "Saved receipt", source: "url" } : null;
   });
   const [removeSavedReceipt, setRemoveSavedReceipt] = useState(false);
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
@@ -594,12 +598,13 @@ export function PurchaseForm({
   const initialComparableDraft = useMemo(() => {
     if (!initialPurchase?.id) return null;
     const initialReceiptUrl = initialPurchase.receiptUrl?.trim() ?? "";
+    const initialReceiptType = initialPurchase.receiptContentType?.trim() || (initialReceiptUrl ? inferReceiptType(initialReceiptUrl) : "");
     return comparablePurchaseDraft({
       details: detailsFromInitial(initialPurchase),
       manualTotal: initialPurchase.manualTotalLyd === null || initialPurchase.manualTotalLyd === undefined ? "" : String(initialPurchase.manualTotalLyd),
       lines: initialLines?.length ? initialLines.map((line) => newLine(line)) : [newLine()],
       searchByLine: {},
-      receiptPreview: initialReceiptUrl ? { url: initialReceiptUrl, type: inferReceiptType(initialReceiptUrl), name: "Saved receipt", source: "url" } : null,
+      receiptPreview: initialReceiptUrl ? { url: initialReceiptUrl, type: initialReceiptType, name: initialPurchase.receiptFileName || "Saved receipt", source: "url" } : null,
       updatedAt: "",
     });
   }, [initialLines, initialPurchase]);
@@ -1074,6 +1079,9 @@ export function PurchaseForm({
       {initialPurchase?.id ? <input type="hidden" name="id" value={initialPurchase.id} /> : null}
       <input type="hidden" name="receipt_scan_result_id" value={receiptScan?.scanResultId ?? ""} />
       <input type="hidden" name="current_receipt_url" value={initialPurchase?.receiptUrl ?? ""} />
+      <input type="hidden" name="current_receipt_file_name" value={initialPurchase?.receiptFileName ?? ""} />
+      <input type="hidden" name="current_receipt_content_type" value={initialPurchase?.receiptContentType ?? ""} />
+      <input type="hidden" name="current_receipt_storage_path" value={initialPurchase?.receiptStoragePath ?? ""} />
       <input type="hidden" name="remove_receipt" value={removeSavedReceipt ? "yes" : ""} />
       <input type="hidden" name="lines_json" value={linesJson} />
       {submitMessage ? (
@@ -1140,7 +1148,7 @@ export function PurchaseForm({
                     } else {
                       const restored = initialPurchase.receiptUrl?.trim() ?? "";
                       setDetails((current) => ({ ...current, receiptUrl: restored }));
-                      setReceiptPreview(restored ? { url: restored, type: inferReceiptType(restored), name: "Saved receipt", source: "url" } : null);
+                      setReceiptPreview(restored ? { url: restored, type: initialPurchase.receiptContentType?.trim() || inferReceiptType(restored), name: initialPurchase.receiptFileName || "Saved receipt", source: "url" } : null);
                     }
                   }}
                 />

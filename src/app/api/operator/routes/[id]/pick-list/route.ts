@@ -21,6 +21,17 @@ function isMissingColumn(error: unknown, columns: string[]) {
   return columns.some((column) => text.includes(column.toLowerCase()));
 }
 
+function isMissingRpc(error: unknown, functionName: string) {
+  const text = errorText(error).toLowerCase();
+  const code = String((error as { code?: unknown } | null)?.code ?? "");
+  const normalizedFunctionName = functionName.toLowerCase();
+  return (
+    code === "42883" ||
+    code === "PGRST202" ||
+    (text.includes(normalizedFunctionName) && (text.includes("schema cache") || text.includes("function")))
+  );
+}
+
 function errorMessage(error: unknown) {
   if (error instanceof Error && error.message) return error.message;
   if (typeof error === "string") return error;
@@ -594,6 +605,13 @@ export async function PATCH(
 
     const saveResult = await supabase.rpc("save_route_pickup_checklist_item", payload);
     if (saveResult.error) {
+      if (isMissingRpc(saveResult.error, "save_route_pickup_checklist_item")) {
+        console.warn("[operator:pick-list] Pickup checklist RPC missing; client localStorage state remains source of truth", {
+          ...checklistSaveContext,
+          supabase_error: supabaseErrorSummary(saveResult.error),
+        });
+        return NextResponse.json({ ok: true, localOnly: true, item: { id: routeStopItem.id, is_checked: isChecked } });
+      }
       console.error("[operator:pick-list] Pickup checklist save query failed", {
         ...checklistSaveContext,
         supabase_error: supabaseErrorSummary(saveResult.error),

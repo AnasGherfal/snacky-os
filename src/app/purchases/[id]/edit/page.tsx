@@ -36,7 +36,7 @@ export default async function EditPurchasePage({
   ] = await Promise.all([
     supabase
       .from("purchase_orders")
-      .select("id, supplier_id, status, order_date, receipt_number, payment_method, payment_status, receipt_url, receipt_storage_path, notes, manual_total_lyd")
+      .select("id, supplier_id, status, order_date, receipt_number, payment_method, payment_status, receipt_url, receipt_file_name, receipt_content_type, receipt_storage_path, notes, manual_total_lyd")
       .eq("id", id)
       .single(),
     supabase
@@ -158,6 +158,9 @@ export default async function EditPurchasePage({
             paymentMethod: (purchase as any).payment_method,
             paymentStatus: (purchase as any).payment_status,
             receiptUrl: initialReceiptUrl,
+            receiptFileName: (purchase as any).receipt_file_name,
+            receiptContentType: (purchase as any).receipt_content_type,
+            receiptStoragePath: (purchase as any).receipt_storage_path,
             notes: (purchase as any).notes,
             manualTotalLyd: (purchase as any).manual_total_lyd === null ? null : Number((purchase as any).manual_total_lyd),
           }}

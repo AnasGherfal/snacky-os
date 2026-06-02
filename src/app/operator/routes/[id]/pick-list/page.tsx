@@ -11,6 +11,7 @@ import { pickupProductPriorityGroup, sortPickupProductRows } from "@/lib/route-p
 import { ROUTE_STOP_PENDING_STATUS } from "@/lib/route-workflow";
 
 const UNASSIGNED_EXTRA_TARGET = "__unassigned__";
+const PICKUP_CHECKLIST_STORAGE_PREFIX = "snacky:route-pickup-checklist";
 
 interface PickStopItem {
   routeStopItemId: string;
@@ -71,6 +72,7 @@ type PickListDraft = {
   stopItems: { routeStopItemId: string; confirmedQty: number; reason: string; notes: string }[];
   extras: ExtraPickItem[];
 };
+type LocalPickupChecklistState = Record<string, boolean>;
 
 type PickListApiStopItem = {
   route_stop_item_id?: unknown;
@@ -173,6 +175,35 @@ function submittedRouteStopId(target: string) {
   return target;
 }
 
+function pickupChecklistStorageKey(routeId: string) {
+  return `${PICKUP_CHECKLIST_STORAGE_PREFIX}:${routeId}`;
+}
+
+function readLocalPickupChecklist(routeId: string): LocalPickupChecklistState {
+  if (!routeId || typeof window === "undefined") return {};
+
+  try {
+    const raw = window.localStorage.getItem(pickupChecklistStorageKey(routeId));
+    const parsed = raw ? JSON.parse(raw) : {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, boolean] => typeof entry[1] === "boolean"),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function writeLocalPickupChecklist(routeId: string, state: LocalPickupChecklistState) {
+  if (!routeId || typeof window === "undefined") return;
+
+  try {
+    window.localStorage.setItem(pickupChecklistStorageKey(routeId), JSON.stringify(state));
+  } catch {
+    // Local checklist is a UX helper. Storage quota or privacy-mode failures should not block pickup.
+  }
+}
+
 export default function PickListPage() {
   const router = useRouter();
   const params = useParams<{ id?: string | string[] }>();
@@ -196,6 +227,7 @@ export default function PickListPage() {
   const [refreshPreview, setRefreshPreview] = useState<RefreshPreviewState>({ loading: false, applying: false, comparisons: [], message: "", error: "" });
   const errorRef = useRef<HTMLDivElement | null>(null);
   const initialPickDraftRef = useRef<string>("");
+  const localChecklistRef = useRef<LocalPickupChecklistState>({});
   const draftKey = useDraftKey("route-pickup", [routeId || "missing-route"]);
 
   const selectedStopGroups = useMemo(
@@ -203,7 +235,6 @@ export default function PickListPage() {
     [selectedStopIds, stopGroups],
   );
   const allStopItems = useMemo(() => selectedStopGroups.flatMap((group) => group.items), [selectedStopGroups]);
-  const sortedChecklistItems = useMemo(() => sortPickupProductRows(allStopItems), [allStopItems]);
   const productById = useMemo(() => new Map(productOptions.map((product) => [product.id, product])), [productOptions]);
   const stopById = useMemo(() => new Map(selectedStopGroups.filter((group) => group.routeStopId).map((group) => [group.routeStopId as string, group])), [selectedStopGroups]);
   const pickedByProduct = useMemo(() => {
@@ -314,6 +345,8 @@ export default function PickListPage() {
       const responseStopGroups = Array.isArray(data.stopGroups) ? (data.stopGroups as PickListApiStopGroup[]) : [];
       const responseProductOptions = Array.isArray(data.productOptions) ? (data.productOptions as PickListApiProductOption[]) : [];
       const responseExtraItems = Array.isArray(data.extraItems) ? (data.extraItems as PickListApiExtraItem[]) : [];
+      const localChecklist = readLocalPickupChecklist(routeId);
+      localChecklistRef.current = localChecklist;
       const nextStopGroups = responseStopGroups.map((group) => ({
         routeStopId: group.route_stop_id ? String(group.route_stop_id) : null,
         machineId: group.machine_id ? String(group.machine_id) : null,
@@ -323,11 +356,12 @@ export default function PickListPage() {
         stopOrder: Number(group.stop_order ?? 0),
         stopStatus: optionalText(group.stop_status) ?? ROUTE_STOP_PENDING_STATUS,
         items: (Array.isArray(group.items) ? (group.items as PickListApiStopItem[]) : []).map((item) => {
+          const routeStopItemId = String(item.route_stop_item_id ?? "");
           const requestedQty = Number(item.planned_qty ?? 0);
           const availableStorageQty = Number(item.available_storage_qty ?? 0);
           const hasSavedPickQty = item.picked_qty !== null && item.picked_qty !== undefined;
           return {
-            routeStopItemId: String(item.route_stop_item_id ?? ""),
+            routeStopItemId,
             routeStopId: item.route_stop_id ? String(item.route_stop_id) : group.route_stop_id ? String(group.route_stop_id) : null,
             machineId: item.machine_id ? String(item.machine_id) : group.machine_id ? String(group.machine_id) : null,
             productId: String(item.product_id ?? ""),
@@ -339,7 +373,7 @@ export default function PickListPage() {
             reason: optionalText(item.reason) ?? "Product not available in storage",
             notes: optionalText(item.notes) ?? "",
             source: optionalText(item.source) ?? "refill_recommendation",
-            isChecked: Boolean(item.is_checked),
+            isChecked: Object.prototype.hasOwnProperty.call(localChecklist, routeStopItemId) ? Boolean(localChecklist[routeStopItemId]) : Boolean(item.is_checked),
             stopOrder: Number(group.stop_order ?? 0),
             machineName: textOrFallback(group.machine_name, "Unknown machine"),
             locationName: textOrFallback(group.location_name, "Unknown location"),
@@ -415,13 +449,20 @@ export default function PickListPage() {
     })));
   };
 
+  const saveLocalPickupItem = (routeStopItemId: string, isChecked: boolean) => {
+    if (!routeStopItemId) return;
+    const next = { ...localChecklistRef.current, [routeStopItemId]: isChecked };
+    localChecklistRef.current = next;
+    writeLocalPickupChecklist(routeId, next);
+  };
+
   const togglePickupItemChecked = async (item: PickStopItem) => {
-    if (locked || submitting || savingCheckedIds.has(item.routeStopItemId)) return;
+    if (locked || submitting) return;
 
     const nextChecked = !item.isChecked;
     updateStopItem(item.routeStopItemId, { isChecked: nextChecked });
+    saveLocalPickupItem(item.routeStopItemId, nextChecked);
     setSavingCheckedIds((current) => new Set(current).add(item.routeStopItemId));
-    setError("");
 
     try {
       const response = await fetch(`/api/operator/routes/${routeId}/pick-list`, {
@@ -435,14 +476,22 @@ export default function PickListPage() {
           notes: item.notes,
         }),
       });
-      const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const details = data.details && !String(data.error ?? "").includes(String(data.details)) ? `: ${data.details}` : "";
-        throw new Error(data.error ? `${data.error}${details}` : "Could not save checklist item.");
+        const data = await response.json().catch(() => ({}));
+        console.warn("[operator:pick-list] Checklist backend sync failed; local state kept", {
+          routeId,
+          routeStopItemId: item.routeStopItemId,
+          status: response.status,
+          error: data?.error ?? null,
+          details: data?.details ?? null,
+        });
       }
     } catch (err) {
-      updateStopItem(item.routeStopItemId, { isChecked: item.isChecked });
-      setError(err instanceof Error ? err.message : "Could not save checklist item.");
+      console.warn("[operator:pick-list] Checklist backend sync unavailable; local state kept", {
+        routeId,
+        routeStopItemId: item.routeStopItemId,
+        error: err,
+      });
     } finally {
       setSavingCheckedIds((current) => {
         const next = new Set(current);
@@ -695,85 +744,104 @@ export default function PickListPage() {
                 </div>
               </div>
             </div>
-            <div className="divide-y divide-slate-200">
-              {sortedChecklistItems.map((item) => {
-                const maxQty = maxForProduct(item.productId, item.confirmedQty, item.availableStorageQty);
-                const saving = savingCheckedIds.has(item.routeStopItemId);
-                const priorityGroup = pickupProductPriorityGroup(item.productName);
+            <div className="space-y-4 p-4">
+              {selectedStopGroups.map((group) => {
+                const sortedItems = sortPickupProductRows(group.items);
+                const groupCheckedCount = group.items.filter((item) => item.isChecked).length;
+                const groupKey = group.routeStopId ?? group.machineId ?? `${group.machineName}-${group.stopOrder}`;
                 return (
-                  <div
-                    key={item.routeStopItemId}
-                    role="button"
-                    tabIndex={locked ? -1 : 0}
-                    onClick={() => togglePickupItemChecked(item)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        togglePickupItemChecked(item);
-                      }
-                    }}
-                    className={`cursor-pointer space-y-4 p-4 transition ${item.isChecked ? "bg-emerald-50" : "bg-white hover:bg-slate-50"} ${saving ? "opacity-70" : ""}`}
-                  >
-                    <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_190px] md:items-start">
-                      <div className="flex min-w-0 gap-3">
-                        <input
-                          type="checkbox"
-                          checked={item.isChecked}
-                          onChange={() => togglePickupItemChecked(item)}
-                          onClick={(event) => event.stopPropagation()}
-                          disabled={locked || submitting || saving}
-                          aria-label={`Mark ${item.productName} picked`}
-                          className="mt-1 h-11 w-11 shrink-0 cursor-pointer rounded-lg border-2 border-slate-300 accent-emerald-600 disabled:cursor-not-allowed"
-                        />
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <p className={`break-words font-semibold ${item.isChecked ? "text-emerald-950" : "text-slate-900"}`}>{item.productName}</p>
-                            {priorityGroup < 3 ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">Priority</span> : null}
-                            {saving ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Saving</span> : null}
-                        </div>
-                        <p className="mt-1 break-words text-xs text-slate-500">
-                          Stop {item.stopOrder || "-"} - {item.machineName} - {item.locationName}
+                  <article key={groupKey} className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+                    <div className="flex flex-col gap-2 border-b border-slate-200 bg-white p-4 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
+                        <h3 className="break-words text-base font-semibold text-slate-900">{group.machineName}</h3>
+                        <p className="mt-1 break-words text-sm text-slate-500">
+                          {group.locationName} - Stop {group.stopOrder || "-"}
                         </p>
-                        <p className="mt-1 break-words text-xs text-slate-500">
-                          SKU: {item.sku ?? "No SKU"} - Recommended: {item.requestedQty} - Route storage: {item.availableStorageQty}
-                        </p>
-                        <p className="mt-1 text-xs text-slate-500">{item.source === "manual_admin_assignment" ? "Manual assignment" : "Refill recommendation"}</p>
+                      </div>
+                      <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-900">
+                        Picked {groupCheckedCount} of {group.items.length}
                       </div>
                     </div>
-                    <label className="block" onClick={(event) => event.stopPropagation()}>
-                      <span className="mb-1 block text-sm font-medium text-slate-800">Pickup qty</span>
-                      <QuantityStepper
-                        value={item.confirmedQty}
-                        max={maxQty}
-                        onChange={(quantity) => updateStopItem(item.routeStopItemId, { confirmedQty: quantity })}
-                        disabled={locked}
-                        inputLabel={`${item.machineName} ${item.productName} pickup quantity`}
-                      />
-                      <span className="mt-1 block text-xs text-slate-500">Available for this row: {maxQty}</span>
-                    </label>
-                  </div>
+                    <div className="divide-y divide-slate-200">
+                      {sortedItems.map((item) => {
+                        const maxQty = maxForProduct(item.productId, item.confirmedQty, item.availableStorageQty);
+                        const saving = savingCheckedIds.has(item.routeStopItemId);
+                        const priorityGroup = pickupProductPriorityGroup(item.productName);
+                        return (
+                          <div
+                            key={item.routeStopItemId}
+                            role="button"
+                            tabIndex={locked ? -1 : 0}
+                            onClick={() => togglePickupItemChecked(item)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                togglePickupItemChecked(item);
+                              }
+                            }}
+                            className={`cursor-pointer space-y-4 p-4 transition ${item.isChecked ? "bg-emerald-50" : "bg-white hover:bg-slate-50"} ${saving ? "opacity-70" : ""}`}
+                          >
+                            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_190px] md:items-start">
+                              <div className="flex min-w-0 gap-3">
+                                <input
+                                  type="checkbox"
+                                  checked={item.isChecked}
+                                  onChange={() => togglePickupItemChecked(item)}
+                                  onClick={(event) => event.stopPropagation()}
+                                  disabled={locked || submitting}
+                                  aria-label={`Mark ${item.productName} picked`}
+                                  className="mt-1 h-11 w-11 shrink-0 cursor-pointer rounded-lg border-2 border-slate-300 accent-emerald-600 disabled:cursor-not-allowed"
+                                />
+                                <div className="min-w-0">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <p className={`break-words font-semibold ${item.isChecked ? "text-emerald-950" : "text-slate-900"}`}>{item.productName}</p>
+                                    {priorityGroup < 3 ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">Priority</span> : null}
+                                    {saving ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Saving</span> : null}
+                                  </div>
+                                  <p className="mt-1 break-words text-xs text-slate-500">
+                                    SKU: {item.sku ?? "No SKU"} - Recommended: {item.requestedQty} - Route storage: {item.availableStorageQty}
+                                  </p>
+                                  <p className="mt-1 text-xs text-slate-500">{item.source === "manual_admin_assignment" ? "Manual assignment" : "Refill recommendation"}</p>
+                                </div>
+                              </div>
+                              <label className="block" onClick={(event) => event.stopPropagation()}>
+                                <span className="mb-1 block text-sm font-medium text-slate-800">Pickup qty</span>
+                                <QuantityStepper
+                                  value={item.confirmedQty}
+                                  max={maxQty}
+                                  onChange={(quantity) => updateStopItem(item.routeStopItemId, { confirmedQty: quantity })}
+                                  disabled={locked}
+                                  inputLabel={`${item.machineName} ${item.productName} pickup quantity`}
+                                />
+                                <span className="mt-1 block text-xs text-slate-500">Available for this row: {maxQty}</span>
+                              </label>
+                            </div>
 
-                  {item.confirmedQty !== item.requestedQty ? (
-                    <div className="grid gap-3 md:grid-cols-2" onClick={(event) => event.stopPropagation()}>
-                      <label className="block">
-                        <span className="mb-1 block text-sm font-medium text-slate-800">Reason</span>
-                        <select value={item.reason} onChange={(event) => updateStopItem(item.routeStopItemId, { reason: event.target.value })} className="field-input" disabled={locked}>
-                          <option>Product not available in storage</option>
-                          <option>Product not in operator bag</option>
-                          <option>Product expired/damaged</option>
-                          <option>Customer demand</option>
-                          <option>Other</option>
-                        </select>
-                      </label>
-                      <label className="block">
-                        <span className="mb-1 block text-sm font-medium text-slate-800">Notes</span>
-                        <input value={item.notes} onChange={(event) => updateStopItem(item.routeStopItemId, { notes: event.target.value })} className="field-input" placeholder="Explain the pickup change" disabled={locked} />
-                      </label>
+                            {item.confirmedQty !== item.requestedQty ? (
+                              <div className="grid gap-3 md:grid-cols-2" onClick={(event) => event.stopPropagation()}>
+                                <label className="block">
+                                  <span className="mb-1 block text-sm font-medium text-slate-800">Reason</span>
+                                  <select value={item.reason} onChange={(event) => updateStopItem(item.routeStopItemId, { reason: event.target.value })} className="field-input" disabled={locked}>
+                                    <option>Product not available in storage</option>
+                                    <option>Product not in operator bag</option>
+                                    <option>Product expired/damaged</option>
+                                    <option>Customer demand</option>
+                                    <option>Other</option>
+                                  </select>
+                                </label>
+                                <label className="block">
+                                  <span className="mb-1 block text-sm font-medium text-slate-800">Notes</span>
+                                  <input value={item.notes} onChange={(event) => updateStopItem(item.routeStopItemId, { notes: event.target.value })} className="field-input" placeholder="Explain the pickup change" disabled={locked} />
+                                </label>
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })}
                     </div>
-                  ) : null}
-                </div>
-              );
-            })}
+                  </article>
+                );
+              })}
             </div>
           </section>
         )}

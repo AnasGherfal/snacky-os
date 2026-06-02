@@ -3,7 +3,7 @@ type PickupProductRow = {
   stopOrder?: number | null;
 };
 
-const MR_CRUNCH_ALIASES = ["mr crunch", "mr crunch tarboouch", "طربوش", "tarboouch"];
+const MR_CRUNCH_ALIASES = ["mr crunch", "mr. crunch", "mr crunch tarboosh", "mr crunch tarboush", "tarboosh", "tarboush", "tarboouch", "طربوش"];
 const DORITOS_ALIASES = ["doritos", "دوريتوس", "دورتوس", "doritos green hot", "doritos nacho"];
 
 function normalizedProductName(name: string) {

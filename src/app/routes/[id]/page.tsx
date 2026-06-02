@@ -1,8 +1,10 @@
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
+import { RouteCompletionImages, type RouteCompletionStop } from "@/components/RouteCompletionImages";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canExecuteRoutes, isAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
+import { privateStorageObjectUrl, REFILL_PHOTO_BUCKET } from "@/lib/storage-buckets";
 import { ROUTE_CANCELED_STATUS, isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isPickupConfirmedStatus, isRouteStopDoneStatus, isTerminalRouteStatus, nextOperatorRouteHref, routeDisplayStatus } from "@/lib/route-workflow";
 import { RouteCreatedToast } from "@/app/routes/[id]/RouteCreatedToast";
 import { assignRoute, cancelRoute, deleteDraftRoute } from "@/lib/route-actions";
@@ -27,6 +29,11 @@ function isMissingColumn(error: unknown, columns: string[]) {
   const code = String((error as { code?: unknown } | null)?.code ?? "");
   if (!["42703", "PGRST204"].includes(code) && !text.includes("schema cache") && !text.includes("column")) return false;
   return columns.some((column) => text.includes(column.toLowerCase()));
+}
+
+function firstRelation<T>(value: T | T[] | null | undefined): T | null {
+  if (Array.isArray(value)) return value[0] ?? null;
+  return value ?? null;
 }
 
 export default async function RouteDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; success?: string }> }) {
@@ -189,6 +196,60 @@ export default async function RouteDetailPage({ params, searchParams }: { params
       : Promise.resolve({ data: [] }),
   ]);
   const machineById = new Map((machines ?? []).map((machine: any) => [machine.id, machine]));
+  const stopIds = routeStops.map((stop: any) => stop.id).filter(Boolean);
+  let completionProofRows: any[] = [];
+  if (stopIds.length) {
+    let completionProofResult: any = await supabase
+      .from("machine_refill_history")
+      .select("id, legacy_refill_id, route_stop_id, refill_at, machine_id, machine_name, operator_email, machine_photo_url, machine_photo_path, raw_record, operator:team_members(full_name)")
+      .eq("route_id", id)
+      .order("refill_at", { ascending: false });
+
+    if (completionProofResult.error && isMissingColumn(completionProofResult.error, ["route_id", "route_stop_id"])) {
+      completionProofResult = await supabase
+        .from("machine_refill_history")
+        .select("id, legacy_refill_id, refill_at, machine_id, machine_name, operator_email, machine_photo_url, machine_photo_path, raw_record, operator:team_members(full_name)")
+        .in("legacy_refill_id", stopIds.map((stopId: string) => `route_stop:${stopId}`))
+        .order("refill_at", { ascending: false });
+    }
+
+    if (completionProofResult.error) {
+      if (!isMissingTable(completionProofResult.error, "machine_refill_history")) {
+        console.error("[routes:detail] Failed to load route completion images", { id, error: completionProofResult.error });
+      }
+    } else {
+      completionProofRows = completionProofResult.data ?? [];
+    }
+  }
+  const completionProofsByStopId = new Map<string, RouteCompletionStop["images"]>();
+  completionProofRows.forEach((row: any) => {
+    const legacyRefillId = String(row.legacy_refill_id ?? "");
+    const rowStopId = row.route_stop_id ? String(row.route_stop_id) : legacyRefillId.startsWith("route_stop:") ? legacyRefillId.replace("route_stop:", "") : "";
+    if (!rowStopId) return;
+    const savedUrl = String(row.machine_photo_url ?? "").trim();
+    const savedPath = String(row.machine_photo_path ?? "").trim();
+    const photoUrl = savedUrl && (savedUrl.startsWith("/") || savedUrl.startsWith("http://") || savedUrl.startsWith("https://"))
+      ? savedUrl
+      : privateStorageObjectUrl(REFILL_PHOTO_BUCKET, savedPath || savedUrl);
+    const operator = firstRelation(row.operator);
+    const rawRecord = row.raw_record && typeof row.raw_record === "object" ? row.raw_record : {};
+    const images = completionProofsByStopId.get(rowStopId) ?? [];
+    images.push({
+      id: String(row.id ?? `${rowStopId}-${images.length}`),
+      url: photoUrl,
+      storagePath: savedPath || null,
+      uploadedAt: row.refill_at ?? null,
+      uploadedBy: (operator as any)?.full_name ?? row.operator_email ?? (rawRecord as any).operator_name ?? null,
+      label: `${row.machine_name ?? "Machine"} completion image`,
+    });
+    completionProofsByStopId.set(rowStopId, images);
+  });
+  const completionImageStops: RouteCompletionStop[] = routeStops.map((stop: any) => ({
+    id: String(stop.id),
+    title: machineById.get(stop.machine_id)?.name ?? "Unknown machine",
+    subtitle: `Stop ${stop.stop_order || "-"} - ${machineById.get(stop.machine_id)?.machine_code ?? "-"}`,
+    images: completionProofsByStopId.get(String(stop.id)) ?? [],
+  }));
   const canManageRouteAssignment = isAdminRole(profile);
   const hasPickMovements = Boolean(movements?.some((movement: any) => movement.reason === "storage_to_operator_bag"));
   const hasReturnMovements = Boolean(movements?.some((movement: any) => movement.reason === "operator_bag_to_storage"));
@@ -206,7 +267,6 @@ export default async function RouteDetailPage({ params, searchParams }: { params
       .order("created_at", { ascending: false })
       .limit(100),
   ];
-  const stopIds = routeStops.map((stop: any) => stop.id).filter(Boolean);
   const cashIds = (cashCollections ?? []).map((cash: any) => cash.id).filter(Boolean);
   if (stopIds.length) {
     routeActivityQueries.push(
@@ -359,6 +419,16 @@ export default async function RouteDetailPage({ params, searchParams }: { params
             </DataTable>
           )}
         </section>
+
+        {routeStops.length ? (
+          <section className="surface-card p-4">
+            <div className="mb-4">
+              <h2 className="text-lg font-semibold">Completion images</h2>
+              <p className="mt-1 text-sm text-slate-500">Final machine photos uploaded when the operator completes each stop.</p>
+            </div>
+            <RouteCompletionImages stops={completionImageStops} />
+          </section>
+        ) : null}
 
         <section className="surface-card p-4">
           <h2 className="text-lg font-semibold">Route stock</h2>
