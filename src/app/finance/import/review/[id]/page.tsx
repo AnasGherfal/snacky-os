@@ -48,7 +48,7 @@ export default async function FinanceImportRowReviewPage({ params, searchParams 
   const rawRecord = row.raw_record ?? {};
   const transactionDate = row.transaction_date ?? rawText(rawRecord, "date", "Date");
   const amount = row.amount ?? rawText(rawRecord, "transaction", "Transaction Amount");
-  const category = row.category ?? row.suggested_category ?? "Uncategorized";
+  const category = row.category ?? row.suggested_category ?? "";
   const accountId = row.account_id ?? row.suggested_account ?? "snacky_lyd";
   const location = row.suggested_machine ?? rawText(rawRecord, "location", "Location");
   const description = row.original_description ?? rawText(rawRecord, "transaction_description", "Transaction Description");

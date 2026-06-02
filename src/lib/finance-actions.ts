@@ -372,11 +372,6 @@ function normalizedFinanceName(value: string | null | undefined) {
   return String(value ?? "").trim().toLowerCase().replace(/[\s_-]+/g, "");
 }
 
-function employeePayeeFromImportRow(row: any) {
-  const name = importRowRawText(row, "name", "Name");
-  return ["doa", "doaa", "ahmed"].includes(normalizedFinanceName(name)) ? name : null;
-}
-
 function importRowReturnPath(row: any) {
   const suffix = row?.source_row ? `?row=${encodeURIComponent(String(row.source_row))}` : "";
   return `/finance/import/review${suffix}`;
@@ -407,7 +402,7 @@ export async function confirmFinanceImportRow(formData: FormData) {
   const amount = parseTransactionAmount(formData.get("amount"), row.amount);
   const transactionDate = String(formData.get("transaction_date") || row.transaction_date || row.raw_date || "").trim();
   const ledgerFields = resolveManualLedgerFields(formData, fallback);
-  const fallbackCategory = optionalText(row.category) ?? optionalText(row.suggested_category) ?? "Uncategorized";
+  const fallbackCategory = optionalText(row.category) ?? optionalText(row.suggested_category);
   const categoryRecord = await resolveFinanceCategory(supabase, formData, ledgerFields.flowDirection, fallbackCategory);
   const category = categoryRecord.name;
   const ledgerError = validateManualLedgerFields(ledgerFields, category);
@@ -422,10 +417,9 @@ export async function confirmFinanceImportRow(formData: FormData) {
   const location = optionalText(formData.get("location")) ?? optionalText(row.suggested_machine) ?? importRowRawText(row, "location", "Location");
   const description = optionalText(formData.get("description")) ?? optionalText(row.original_description) ?? importRowRawText(row, "transaction_description", "Transaction Description");
   const rawName = importRowRawText(row, "name", "Name");
-  const importedEmployeePayee = employeePayeeFromImportRow(row);
-  const payerText = counterparty.payerText;
-  const payeeText = counterparty.payeeText ?? (ledgerFields.direction === "money_out" ? importedEmployeePayee : null);
-  const counterpartyText = counterparty.counterpartyText ?? payeeText ?? payerText;
+  const payerText = counterparty.payerText ?? (ledgerFields.direction === "money_in" ? rawName : null);
+  const payeeText = counterparty.payeeText ?? (ledgerFields.direction === "money_out" ? rawName : null);
+  const counterpartyText = counterparty.counterpartyText ?? rawName ?? payeeText ?? payerText;
   const payload = {
     transaction_date: transactionDate,
     transaction_datetime: transactionDateTimeFromDate(transactionDate),
@@ -470,7 +464,6 @@ export async function confirmFinanceImportRow(formData: FormData) {
       import_mode: importModeForDate(transactionDate),
       opening_balance_cutoff_date: row.raw_record?.opening_balance_cutoff_date ?? null,
       original_name: rawName,
-      suggested_person: importedEmployeePayee,
       confirmed_from_import_row_id: row.id,
     },
   };
@@ -561,6 +554,19 @@ export async function ignoreFinanceImportRow(formData: FormData) {
   if (!row) redirect("/finance/import/review?error=Import%20row%20not%20found.");
 
   const reason = optionalText(formData.get("ignore_reason")) ?? "Manually ignored during row-by-row finance import review.";
+  if (row.financial_transaction_id) {
+    const { error: transactionError } = await supabase
+      .from("financial_transactions")
+      .update({
+        import_status: "ignored",
+        needs_review: true,
+        review_status: "needs_review",
+        review_reason: reason,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", row.financial_transaction_id);
+    if (transactionError) redirect(`/finance/import/review?error=${encodeURIComponent(transactionError.message)}`);
+  }
   const { data: after, error } = await supabase
     .from("finance_import_rows")
     .update({

@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
-  accountCurrency,
   financeAccountFor,
   financeAccountId,
   FINANCE_RECONCILIATION_CUTOFF_DATE,
@@ -15,7 +14,7 @@ export const FINANCE_SOURCE_FILE = "docs/current-data/financial_transactions.csv
 export const FINANCE_SOURCE_SHEET = "financial_transactions.csv";
 export const SNACKY_TRANSACTIONS_SOURCE_SHEET = "Snacky Transactions";
 export const HIGH_CONFIDENCE_THRESHOLD = 0.85;
-export const KHALIJ_UNIVERSITY_ARABIC_NAME = "جامعة طرابلس الاهلية";
+export const KHALIJ_UNIVERSITY_ARABIC_NAME = "KhalijUniversity";
 
 export type ImportStatus = "imported" | "auto_classified" | "needs_review" | "confirmed" | "ignored" | "skipped";
 export type FinanceImportMode = "historical" | "live";
@@ -124,8 +123,6 @@ const SOURCE_FILE_CANDIDATES = [
 
 const SNACKY_REQUIRED_HEADERS = [
   "date",
-  "name",
-  "transactionamount",
   "currency",
   "moneyflow",
   "transactiontype",
@@ -145,7 +142,9 @@ const NORMALIZED_REQUIRED_HEADERS = [
 const SOURCE_COLUMN_TO_RECORD_KEY: Record<string, string> = {
   date: "date",
   name: "name",
+  nametransactionamount: "name",
   transactionamount: "transaction",
+  transaction: "transaction",
   currency: "currency",
   moneyflow: "money_flow",
   transactiontype: "transaction_type",
@@ -174,14 +173,6 @@ const NORMALIZED_COLUMN_TO_RECORD_KEY: Record<string, string> = {
   accountid: "account_id",
   account_id: "account_id",
 };
-
-const MACHINE_ALIAS_OVERRIDES: FinanceMachineReference[] = [
-  { alias_name: "KhalijUniversity", name: KHALIJ_UNIVERSITY_ARABIC_NAME, vms_machine_id: "2510001719" },
-  { alias_name: "Khalij University", name: KHALIJ_UNIVERSITY_ARABIC_NAME, vms_machine_id: "2510001719" },
-  { alias_name: "2510001719", name: KHALIJ_UNIVERSITY_ARABIC_NAME, vms_machine_id: "2510001719" },
-  { alias_name: "جامعة طرابلس الاهلية", name: KHALIJ_UNIVERSITY_ARABIC_NAME, vms_machine_id: "2510001719" },
-  { alias_name: "خليج ليبيا", name: KHALIJ_UNIVERSITY_ARABIC_NAME, vms_machine_id: "2510001719" },
-];
 
 const explicitReviewValues = new Set(["", "to_confirm", "to confirm", "review"]);
 const employeeNames = new Set(["doa", "doaa", "ahmed"]);
@@ -328,8 +319,7 @@ export async function readFinanceImportRows() {
 }
 
 function cleanValue(value: string | undefined | null) {
-  const text = String(value ?? "").trim();
-  return explicitReviewValues.has(text.toLowerCase()) ? "" : text;
+  return String(value ?? "").trim();
 }
 
 function parseDate(value: string) {
@@ -394,12 +384,7 @@ function resolveDirectionFromFlow(value: string) {
 }
 
 function resolveDirection(record: Record<string, string>) {
-  const direction = resolveDirectionFromFlow(record.money_flow ?? record["Money Flow"] ?? "");
-  if (direction) return direction;
-  const signed = Number(String(record.signed_amount ?? "").replace(/,/g, ""));
-  if (Number.isFinite(signed) && signed > 0) return "money_in" as const;
-  if (Number.isFinite(signed) && signed < 0) return "money_out" as const;
-  return null;
+  return resolveDirectionFromFlow(record.money_flow ?? record["Money Flow"] ?? "");
 }
 
 function resolveCurrency(record: Record<string, string>) {
@@ -442,39 +427,11 @@ function resolveAccount(record: Record<string, string>, currency: FinanceCurrenc
 }
 
 function rawCategory(record: Record<string, string>) {
-  return cleanValue(record.transaction_type)
-    || cleanValue(record["Transaction Type"])
-    || cleanValue(record.final_bucket)
-    || cleanValue(record.bucket_override)
-    || cleanValue(record.auto_bucket)
-    || null;
-}
-
-function normalizeTransactionTypeCategory(value: string | null) {
-  const normalized = normalizeLookup(value);
-  if (!normalized) return null;
-  if (normalized === "productrestocking" || normalized === "productsrestocking" || normalized === "inventorypurchase") return "Products Restocking";
-  if (normalized === "rent") return "Rent";
-  if (normalized === "revenue" || normalized === "salesrevenue" || normalized === "machinecash" || normalized === "cashcollection") return "Revenue";
-  if (normalized === "charity" || normalized === "donation") return "Charity";
-  if (normalized === "ads" || normalized === "adincome" || normalized === "adsincome" || normalized === "adrevenue" || normalized === "advertisingincome") return "Ads";
-  if (normalized === "shipping") return "Shipping";
-  if (normalized === "salaryemployeepayment" || normalized === "salary" || normalized === "employeepayment" || normalized === "operatorpayment") return "Salary / Employee Payment";
-  if (normalized === "maintenance") return "Maintenance";
-  if (normalized === "machinepurchase") return "Machine Purchase";
-  if (normalized === "marketing" || normalized === "marketingads") return "Marketing";
-  if (normalized === "refund") return "Refund";
-  if (normalized === "ownerfunding") return "Owner Funding";
-  if (normalized === "ownerwithdrawal" || normalized === "ownertransfer" || normalized === "ownerdraw") return "Owner Withdrawal";
-  if (normalized === "exchange" || normalized === "bankexchange" || normalized === "currencyexchange") return "Exchange";
-  if (normalized === "miscellaneous" || normalized === "misc") return "Miscellaneous";
-  if (normalized === "uncategorized" || normalized === "unclassifiedexpense" || normalized === "unclassifiedincome") return "Uncategorized";
-  if (normalized === "other") return "Other";
-  return value;
+  return cleanValue(record.transaction_type) || cleanValue(record["Transaction Type"]) || null;
 }
 
 function resolveCategory(record: Record<string, string>) {
-  return normalizeTransactionTypeCategory(rawCategory(record)) ?? "Uncategorized";
+  return rawCategory(record);
 }
 
 function normalizedText(record: Record<string, string>) {
@@ -492,74 +449,8 @@ function normalizedText(record: Record<string, string>) {
     .toLowerCase();
 }
 
-function containsAny(text: string, terms: string[]) {
-  return terms.some((term) => text.includes(term.toLowerCase()));
-}
-
-function buildMachineLookup(context: FinanceClassificationContext) {
-  const lookup = new Map<string, FinanceMachineReference>();
-  const add = (key: string | null | undefined, machine: FinanceMachineReference) => {
-    const normalized = normalizeLookup(key);
-    if (normalized && !lookup.has(normalized)) lookup.set(normalized, machine);
-  };
-
-  for (const machine of [...(context.machines ?? []), ...MACHINE_ALIAS_OVERRIDES]) {
-    add(machine.name, machine);
-    add(machine.machine_code, machine);
-    add(machine.vms_machine_id, machine);
-    add(machine.alias_name, machine);
-  }
-
-  for (const alias of context.aliases ?? []) add(alias.alias_name, alias);
-  return lookup;
-}
-
-function resolveMachine(value: string | null | undefined, lookup: Map<string, FinanceMachineReference>) {
-  const normalized = normalizeLookup(value);
-  if (!normalized) return { name: null, id: null };
-  const machine = lookup.get(normalized);
-  if (!machine) return { name: null, id: null };
-  if (machine.vms_machine_id === "2510001719" || normalizeLookup(machine.alias_name) === "khalijuniversity") {
-    return { name: KHALIJ_UNIVERSITY_ARABIC_NAME, id: machine.id ?? null };
-  }
-  return { name: machine.name ?? machine.alias_name ?? value ?? null, id: machine.id ?? null };
-}
-
 function cleanDescription(record: Record<string, string>) {
   return cleanValue(record.transaction_description ?? record["Transaction Description"]) || "";
-}
-
-function dedupeDescription(record: Record<string, string>, resolvedLocationName: string | null) {
-  return [
-    cleanDescription(record),
-    resolvedLocationName,
-    cleanValue(record.location),
-    cleanValue(record.transaction_type),
-  ].filter(Boolean).join(" ").toLowerCase();
-}
-
-function businessKey(row: {
-  date: string | null;
-  amount: number | null;
-  description: string;
-  currency: string | null;
-  accountId: string | null;
-  sourceAccountId?: string | null;
-  destinationAccountId?: string | null;
-  effect?: string | null;
-}) {
-  if (!row.date || row.amount === null || !Number.isFinite(row.amount)) return null;
-  const accountPart = row.effect === "transfer"
-    ? `${row.sourceAccountId ?? ""}->${row.destinationAccountId ?? ""}`
-    : row.accountId ?? "";
-  return [
-    row.date,
-    Math.abs(row.amount).toFixed(2),
-    row.description.trim().toLowerCase().replace(/\s+/g, " "),
-    normalizeFinanceCurrency(row.currency),
-    row.effect ?? "",
-    accountPart,
-  ].join("|");
 }
 
 function sourceKey(row: { source_file?: string | null; source_sheet?: string | null; source_row?: number | null }) {
@@ -572,27 +463,7 @@ function signedAmountFor(direction: "money_in" | "money_out" | null, amount: num
 }
 
 function inferTransactionEffect(category: string | null, direction: "money_in" | "money_out" | null): FinanceTransactionEffect {
-  const normalized = normalizeLookup(category);
-  if (normalized === "ownerfunding" || normalized === "ownerwithdrawal" || normalized === "exchange") return "transfer";
   return direction === "money_in" ? "income" : "expense";
-}
-
-function suggestedTransferAccounts(category: string | null, accountId: FinanceAccountId) {
-  const currency = accountCurrency(accountId);
-  const normalized = normalizeLookup(category);
-  if (normalized === "ownerfunding") {
-    return {
-      sourceAccountId: financeAccountFor("owner", currency),
-      destinationAccountId: financeAccountFor("snacky", currency),
-    };
-  }
-  if (normalized === "ownerwithdrawal") {
-    return {
-      sourceAccountId: financeAccountFor("snacky", currency),
-      destinationAccountId: financeAccountFor("owner", currency),
-    };
-  }
-  return { sourceAccountId: null, destinationAccountId: null };
 }
 
 function reviewGroupForReason(reason: string) {
@@ -609,23 +480,6 @@ function reviewGroupForReason(reason: string) {
 
 export function classifyFinanceRows(rows: ParsedFinanceRow[], existingRows: ExistingFinanceRow[], context: FinanceClassificationContext = {}) {
   const existingSourceKeys = new Set(existingRows.filter((row) => row.source_file && row.source_sheet && row.source_row).map(sourceKey));
-  const existingSourceIds = new Map(existingRows.filter((row) => row.source_file && row.source_sheet && row.source_row).map((row) => [sourceKey(row), row.id ?? null]));
-  const existingBusinessKeys = new Set(
-    existingRows
-      .map((row) => businessKey({
-        date: String(row.transaction_date ?? "") || null,
-        amount: row.amount === null || row.amount === undefined ? Math.abs(Number(row.signed_amount ?? NaN)) : Math.abs(Number(row.amount)),
-        description: String(row.original_description ?? row.description ?? ""),
-        currency: row.currency ?? "LYD",
-        accountId: row.account_id ?? null,
-        sourceAccountId: row.source_account_id ?? null,
-        destinationAccountId: row.destination_account_id ?? null,
-        effect: row.transaction_effect ?? null,
-      }))
-      .filter((key): key is string => Boolean(key)),
-  );
-  const seenBusinessKeys = new Set<string>();
-  const machineLookup = buildMachineLookup(context);
 
   return rows.map((row): ClassifiedFinanceRow => {
     const transactionDate = parseDate(row.record.date ?? row.record.Date ?? "");
@@ -637,25 +491,11 @@ export function classifyFinanceRows(rows: ParsedFinanceRow[], existingRows: Exis
     const category = resolveCategory(row.record);
     const hadBlankCategory = !rawCategory(row.record);
     const location = cleanValue(row.record.location ?? row.record.Location);
-    const machine = resolveMachine(location, machineLookup);
     const transactionEffect = inferTransactionEffect(category, direction);
-    const transfer = suggestedTransferAccounts(category, accountResult.accountId);
     const amount = rawAmount.value;
     const signedAmount = signedAmountFor(direction, amount);
-    const duplicateKey = businessKey({
-      date: transactionDate,
-      amount,
-      description: dedupeDescription(row.record, machine.name),
-      currency: currencyResult.currency,
-      accountId: accountResult.accountId,
-      sourceAccountId: transfer.sourceAccountId,
-      destinationAccountId: transfer.destinationAccountId,
-      effect: transactionEffect,
-    });
     const currentSourceKey = sourceKey({ source_file: row.sourceFile, source_sheet: row.sourceSheet, source_row: row.sourceRow });
     const hasSourceDuplicate = existingSourceKeys.has(currentSourceKey);
-    const hasBusinessDuplicate = duplicateKey ? existingBusinessKeys.has(duplicateKey) || seenBusinessKeys.has(duplicateKey) : false;
-    const text = normalizedText(row.record);
     const reasons: string[] = [];
 
     if (!transactionDate) reasons.push("missing date");
@@ -664,9 +504,6 @@ export function classifyFinanceRows(rows: ParsedFinanceRow[], existingRows: Exis
     if (!currencyResult.known) reasons.push("unknown currency");
     if (!direction) reasons.push("missing Money Flow");
     if (hadBlankCategory) reasons.push("blank Transaction Type");
-    if (transactionEffect === "transfer" && (!transfer.sourceAccountId || !transfer.destinationAccountId)) reasons.push("unclear transfer/exchange");
-    if (containsAny(text, ["exchange", "bank / exchange", "currency exchange", "شراء دولار", "Ø´Ø±Ø§Ø¡ Ø¯ÙˆÙ„Ø§Ø±"])) reasons.push("unclear transfer/exchange");
-    if (hasBusinessDuplicate && !hasSourceDuplicate) reasons.push("duplicate suspected");
 
     let importStatus: ImportStatus;
     let shouldInsert = Boolean(transactionDate && amount !== null && direction && accountResult.known && currencyResult.known && category);
@@ -676,19 +513,13 @@ export function classifyFinanceRows(rows: ParsedFinanceRow[], existingRows: Exis
     } else if (reasons.length) {
       importStatus = "needs_review";
       shouldInsert = false;
-    } else if (machine.name || row.record.__source_format === "snacky_transactions" || transactionEffect === "transfer") {
-      importStatus = "auto_classified";
     } else {
       importStatus = "imported";
     }
 
-    if (duplicateKey && !hasSourceDuplicate) seenBusinessKeys.add(duplicateKey);
-
     const reviewReason = reasons.join("; ") || null;
     const firstReason = reasons[0] ?? "";
     const importMode = transactionDate && transactionDate <= FINANCE_RECONCILIATION_CUTOFF_DATE ? "historical" : "live";
-    const sourceAccountId = transactionEffect === "transfer" ? transfer.sourceAccountId : null;
-    const destinationAccountId = transactionEffect === "transfer" ? transfer.destinationAccountId : null;
 
     return {
       ...row,
@@ -702,24 +533,24 @@ export function classifyFinanceRows(rows: ParsedFinanceRow[], existingRows: Exis
       category: rawCategory(row.record),
       categoryForTransaction: category,
       originalDescription,
-      duplicateKey,
+      duplicateKey: null,
       currency: currencyResult.currency,
-      accountId: transactionEffect === "transfer" && sourceAccountId ? sourceAccountId : accountResult.accountId,
+      accountId: accountResult.accountId,
       transactionEffect,
-      sourceAccountId,
-      destinationAccountId,
+      sourceAccountId: null,
+      destinationAccountId: null,
       reviewReason,
       reviewGroupKey: reasons.length ? reviewGroupForReason(firstReason) : null,
       suggestedCategory: category,
       suggestedAccount: accountResult.accountId,
       suggestedCurrency: currencyResult.currency,
-      suggestedMachine: machine.name,
-      suggestedMachineId: machine.id,
-      suggestedSourceAccount: sourceAccountId,
-      suggestedDestinationAccount: destinationAccountId,
-      confidenceScore: importStatus === "needs_review" ? 0.55 : 0.92,
+      suggestedMachine: null,
+      suggestedMachineId: null,
+      suggestedSourceAccount: null,
+      suggestedDestinationAccount: null,
+      confidenceScore: importStatus === "needs_review" ? 0 : 1,
       clarificationQuestion: reasons.length ? "Confirm this source row before it affects finance." : null,
-      resolvedLocationName: machine.name ?? (location || null),
+      resolvedLocationName: location || null,
       importMode,
     };
   });
@@ -748,38 +579,33 @@ function transactionDateTimeFromDate(date: string) {
   return `${date}T12:00:00.000Z`;
 }
 
-function employeePayeeName(record: Record<string, string>) {
-  const name = cleanValue(record.name ?? record.Name);
-  return employeeNames.has(normalizeLookup(name)) ? name : null;
-}
-
 export function buildFinanceTransaction(row: ClassifiedFinanceRow, createdBy?: string | null, importBatchId?: string | null) {
   if (!canInsertClassifiedRow(row) || !row.transactionDate || !row.direction || row.amount === null || row.signedAmount === null || !row.categoryForTransaction) {
     return null;
   }
-  const employeePayee = employeePayeeName(row.record);
+  const sourceName = cleanValue(row.record.name ?? row.record.Name) || null;
 
   return {
     transaction_date: row.transactionDate,
     transaction_datetime: transactionDateTimeFromDate(row.transactionDate),
-    direction: row.transactionEffect === "transfer" ? "money_out" : row.direction,
+    direction: row.direction,
     transaction_kind: "spreadsheet_import",
-    transaction_type: cleanValue(row.record.transaction_type) || null,
-    location: row.resolvedLocationName ?? (cleanValue(row.record.location) || null),
-    description: row.originalDescription || row.resolvedLocationName || null,
+    transaction_type: row.categoryForTransaction,
+    location: cleanValue(row.record.location ?? row.record.Location) || null,
+    description: row.originalDescription || null,
     original_description: row.originalDescription || null,
     amount: row.amount,
-    signed_amount: row.transactionEffect === "transfer" ? -Math.abs(row.amount) : row.signedAmount,
+    signed_amount: row.signedAmount,
     currency: row.currency,
-    account_id: row.transactionEffect === "transfer" ? row.sourceAccountId : row.accountId,
+    account_id: row.accountId,
     transaction_effect: row.transactionEffect,
-    source_account_id: row.sourceAccountId,
-    destination_account_id: row.destinationAccountId,
-    payer_text: null,
-    payee_text: row.direction === "money_out" ? employeePayee : null,
-    counterparty_text: row.direction === "money_out" ? employeePayee : null,
-    bucket: cleanValue(row.record.auto_bucket) || null,
-    bucket_override: cleanValue(row.record.bucket_override) || null,
+    source_account_id: null,
+    destination_account_id: null,
+    payer_text: row.direction === "money_in" ? sourceName : null,
+    payee_text: row.direction === "money_out" ? sourceName : null,
+    counterparty_text: sourceName,
+    bucket: null,
+    bucket_override: null,
     final_bucket: row.categoryForTransaction,
     review_status: "confirmed",
     needs_review: false,
@@ -802,16 +628,12 @@ export function buildFinanceTransaction(row: ClassifiedFinanceRow, createdBy?: s
       import_mode: row.importMode,
       opening_balance_cutoff_date: FINANCE_RECONCILIATION_CUTOFF_DATE,
       original_row: row.record,
-      duplicate_key: row.duplicateKey,
-      suggested_person: employeePayee,
+      source_name: sourceName,
       classification: {
         confidence_score: row.confidenceScore,
         account_id: row.accountId,
         currency: row.currency,
         transaction_effect: row.transactionEffect,
-        source_account_id: row.sourceAccountId,
-        destination_account_id: row.destinationAccountId,
-        suggested_machine: row.suggestedMachine,
       },
     },
   };
@@ -855,7 +677,7 @@ export function buildFinanceImportStageRow(row: ClassifiedFinanceRow, transactio
       ...row.record,
       import_mode: row.importMode,
       opening_balance_cutoff_date: FINANCE_RECONCILIATION_CUTOFF_DATE,
-      suggested_person: employeePayeeName(row.record),
+      source_name: cleanValue(row.record.name ?? row.record.Name) || null,
     },
     updated_at: new Date().toISOString(),
   };

@@ -5,7 +5,7 @@ import { getCurrentProfile } from "@/lib/auth";
 import { canViewFinancials } from "@/lib/authz";
 import { accountLabel, formatFinanceMoney } from "@/lib/finance-balance";
 import { confirmFinanceImportRow, ignoreFinanceImportRow, importHistoricalFinanceTransactions, importUploadedFinanceTransactions } from "@/lib/finance-actions";
-import { buildFinanceReviewGroups, classifyFinanceRows, readFinanceImportRows } from "@/lib/finance-import";
+import { classifyFinanceRows, readFinanceImportRows } from "@/lib/finance-import";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -87,15 +87,6 @@ function raw(row: ImportDisplayRow, key: string, sourceHeader?: string) {
   return cell(value);
 }
 
-function normalizedName(value: unknown) {
-  return String(value ?? "").trim().toLowerCase().replace(/[\s_-]+/g, "");
-}
-
-function employeePerson(row: ImportDisplayRow) {
-  const name = raw(row, "name", "Name");
-  return ["doa", "doaa", "ahmed"].includes(normalizedName(name)) ? name : null;
-}
-
 function previewRows(rows: ReturnType<typeof classifyFinanceRows>): ImportDisplayRow[] {
   return rows.map((row) => ({
     source_file: row.sourceFile,
@@ -145,11 +136,11 @@ function canQuickConfirm(row: ImportDisplayRow) {
 }
 
 function rowSuggestion(row: ImportDisplayRow) {
-  const employee = employeePerson(row);
   if (row.suggested_source_account && row.suggested_destination_account) {
     return `${accountLabel(row.suggested_source_account)} -> ${accountLabel(row.suggested_destination_account)}`;
   }
-  return employee ? `${accountLabel(row.suggested_account ?? row.account_id)}; payee ${employee} (employee)` : accountLabel(row.suggested_account ?? row.account_id);
+  const name = raw(row, "name", "Name");
+  return `${accountLabel(row.suggested_account ?? row.account_id)}; Name: ${name}`;
 }
 
 function rowAmount(row: ImportDisplayRow) {
@@ -199,7 +190,6 @@ export default async function FinanceImportPage({ searchParams }: { searchParams
   const previewClassified = stagedRows.length ? [] : classifyFinanceRows(sourceRows, ((existingResult.data ?? []) as any[]));
   const preview = stagedRows.length ? [] : previewRows(previewClassified);
   const rows = stagedRows.length ? stagedRows : preview;
-  const reviewGroups = buildFinanceReviewGroups(previewClassified);
   const totalRows = rows.length || sourceRows.length;
   const importedCount = countStatus(rows, "imported") + countStatus(rows, "auto_classified");
   const confirmedCount = countStatus(rows, "confirmed");
@@ -257,20 +247,6 @@ export default async function FinanceImportPage({ searchParams }: { searchParams
         <StatCard label="Ignored" value={ignoredCount} note="Manual only" />
       </section>
 
-      {!stagedRows.length && reviewGroups.length ? (
-        <section className="surface-card mb-6">
-          <h2 className="text-lg font-semibold text-slate-900">Preview Review Reasons</h2>
-          <div className="mt-3 grid gap-3 md:grid-cols-2">
-            {reviewGroups.slice(0, 6).map((group) => (
-              <div key={group.key} className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
-                <div className="font-medium">{group.title}</div>
-                <div className="mt-1 text-xs">{group.reason}</div>
-              </div>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
       {!rows.length ? (
         <EmptyState title="No finance import rows found" body="Upload the Snacky Transactions CSV or add it to docs/current-data before importing." />
       ) : (
@@ -315,14 +291,14 @@ export default async function FinanceImportPage({ searchParams }: { searchParams
                   {row.id ? (
                     <div className="flex flex-col gap-2">
                       {row.financial_transaction_id ? <Link href={`/finance/transactions/${row.financial_transaction_id}`} className="btn-secondary">View</Link> : null}
-                      {canQuickConfirm(row) && !row.financial_transaction_id ? (
+                      {canQuickConfirm(row) && row.import_status !== "confirmed" ? (
                         <form action={confirmFinanceImportRow}>
                           <input type="hidden" name="row_id" value={row.id} />
                           <button className="btn-primary">Confirm</button>
                         </form>
                       ) : null}
                       {row.import_status !== "ignored" ? <Link href={`/finance/import/review/${row.id}`} className="btn-secondary">Edit and confirm</Link> : null}
-                      {row.import_status !== "confirmed" && row.import_status !== "imported" && row.import_status !== "auto_classified" ? (
+                      {row.import_status !== "ignored" ? (
                         <form action={ignoreFinanceImportRow}>
                           <input type="hidden" name="row_id" value={row.id} />
                           <button className="btn-secondary">Ignore</button>

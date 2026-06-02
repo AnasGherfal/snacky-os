@@ -9,7 +9,7 @@ import {
   sumFinanceProfitRows,
 } from "../src/lib/finance-balance.ts";
 import { resolveCashCollectionTransactionDateTime } from "../src/lib/cash-finance.ts";
-import { classifyFinanceRows, KHALIJ_UNIVERSITY_ARABIC_NAME, buildFinanceReviewGroups, parseFinanceCsvText } from "../src/lib/finance-import.ts";
+import { buildFinanceImportStageRow, buildFinanceTransaction, classifyFinanceRows, parseFinanceCsvText } from "../src/lib/finance-import.ts";
 
 function row(sourceRow, record) {
   return {
@@ -59,7 +59,7 @@ test("finance balances start from 2026-05-15 openings and ignore earlier histori
 
 test("owner funding and withdrawal do not count as profit", () => {
   const rows = [
-    { transaction_date: "2026-05-16", transaction_status: "active", direction: "money_in", amount: 1000, signed_amount: 1000, account_id: "snacky_lyd", currency: "LYD", transaction_effect: "income", final_bucket: "Sales Revenue" },
+    { transaction_date: "2026-05-16", transaction_status: "active", direction: "money_in", amount: 1000, signed_amount: 1000, account_id: "snacky_lyd", currency: "LYD", transaction_effect: "income", final_bucket: "Revenue" },
     { transaction_date: "2026-05-16", transaction_status: "active", direction: "money_out", amount: 250, signed_amount: -250, account_id: "snacky_lyd", currency: "LYD", transaction_effect: "expense", final_bucket: "Rent" },
     { transaction_date: "2026-05-16", transaction_status: "active", direction: "money_out", amount: 700, signed_amount: -700, currency: "LYD", transaction_effect: "transfer", source_account_id: "owner_lyd", destination_account_id: "snacky_lyd", final_bucket: "Owner Funding" },
     { transaction_date: "2026-05-16", transaction_status: "active", direction: "money_out", amount: 100, signed_amount: -100, currency: "LYD", transaction_effect: "transfer", source_account_id: "snacky_lyd", destination_account_id: "owner_lyd", final_bucket: "Owner Withdrawal" },
@@ -78,33 +78,12 @@ test("cash collection finance transaction date comes from collection datetime", 
   assert.equal(resolved.transactionDate, "2026-05-20");
 });
 
-test("KhalijUniversity resolves to the correct Arabic machine name", () => {
-  const [classified] = classifyFinanceRows([
-    row(2, {
-      date: "2026-04-12",
-      transaction: "1810",
-      money_flow: "Money In",
-      transaction_type: "Revenue",
-      location: "KhalijUniversity",
-      transaction_description: "TO_CONFIRM",
-      signed_amount: "1810.0",
-      auto_bucket: "Inflow",
-      bucket_override: "TO_CONFIRM",
-      final_bucket: "Inflow",
-    }),
-  ], []);
-
-  assert.equal(classified.importStatus, "auto_classified");
-  assert.equal(classified.suggestedMachine, KHALIJ_UNIVERSITY_ARABIC_NAME);
-  assert.equal(classified.resolvedLocationName, KHALIJ_UNIVERSITY_ARABIC_NAME);
-});
-
-test("Snacky Transactions CSV header is detected after summary rows", () => {
+test("Snacky Transactions CSV header is detected after summary rows, including the exported NameTransaction Amount header", () => {
   const csv = [
     "Summary,,,,,,,",
     "Anas LYD,-24360.50,,,,,,",
     "Snacky LYD,8914.00,,,,,,",
-    "Date,Name,Transaction Amount,Currency,Money Flow,Transaction Type,Location,Transaction Description",
+    "Date,NameTransaction Amount,Transaction,Currency,Money Flow,Transaction Type,Location,Transaction Description",
     "15/05/2026,Snacky,100,LYD,Money In,Revenue,KhalijUniversity,Machine cash",
     "16/05/2026,Anas,50,$,Money Out,Owner Withdrawal,,Owner took cash",
   ].join("\n");
@@ -120,25 +99,32 @@ test("Snacky Transactions CSV header is detected after summary rows", () => {
   assert.equal(parsed.rows[0].record.transaction, "100");
 });
 
-test("blank Transaction Type rows are kept as Uncategorized needs-review rows", () => {
+test("every non-empty transaction row is retained, even when required values are blank", () => {
   const parsed = parseFinanceCsvText([
-    "Date,Name,Transaction Amount,Currency,Money Flow,Transaction Type,Location,Transaction Description",
+    "Date,NameTransaction Amount,Transaction,Currency,Money Flow,Transaction Type,Location,Transaction Description",
+    ",Anas,1800,$,Money Out,,,Machine purchase",
     "16/05/2026,Snacky,75,LYD,Money Out,,KhalijUniversity,Unclear spend",
   ].join("\n"), { sourceFile: "Snacky - Financial Spreadsheet - Transactions.csv" });
-  const [classified] = classifyFinanceRows(parsed.rows, []);
+  const classified = classifyFinanceRows(parsed.rows, []);
 
-  assert.equal(classified.importStatus, "needs_review");
-  assert.equal(classified.categoryForTransaction, "Uncategorized");
-  assert.ok(classified.reasons.includes("blank Transaction Type"));
+  assert.equal(classified.length, 2);
+  assert.equal(classified[0].importStatus, "needs_review");
+  assert.equal(classified[0].record.name, "Anas");
+  assert.equal(classified[0].record.transaction, "1800");
+  assert.equal(classified[1].importStatus, "needs_review");
+  assert.equal(classified[1].categoryForTransaction, null);
+  assert.ok(classified[1].reasons.includes("blank Transaction Type"));
 });
 
-test("Name and Currency map to the correct account", () => {
+test("Name and Currency provide the suggested account without changing the original Name", () => {
   const parsed = parseFinanceCsvText([
     "Date,Name,Transaction Amount,Currency,Money Flow,Transaction Type,Location,Transaction Description",
     "16/05/2026,Snacky,75,LYD,Money In,Revenue,,Cash",
     "16/05/2026,Snacky,10,$,Money In,Revenue,,Cash",
     "16/05/2026,Anas,40,LYD,Money Out,Miscellaneous,,Cash",
     "16/05/2026,Anas,5,$,Money Out,Miscellaneous,,Cash",
+    "16/05/2026,Doa,12,LYD,Money Out,Salary / Employee Payment,,Salary",
+    "16/05/2026,Ahmed,8,$,Money Out,Salary / Employee Payment,,Salary",
   ].join("\n"), { sourceFile: "Snacky - Financial Spreadsheet - Transactions.csv" });
   const classified = classifyFinanceRows(parsed.rows, []);
 
@@ -146,29 +132,31 @@ test("Name and Currency map to the correct account", () => {
   assert.equal(classified[1].accountId, "snacky_usd");
   assert.equal(classified[2].accountId, "owner_lyd");
   assert.equal(classified[3].accountId, "owner_usd");
+  assert.equal(classified[4].accountId, "snacky_lyd");
+  assert.equal(classified[5].accountId, "snacky_usd");
+  assert.equal(classified[4].record.name, "Doa");
+  assert.equal(classified[5].record.name, "Ahmed");
 });
 
-test("Transaction Type maps to requested categories without reversing Money Flow", () => {
+test("Transaction Type is copied exactly and Money Flow alone controls direction", () => {
   const parsed = parseFinanceCsvText([
     "Date,Name,Transaction Amount,Currency,Money Flow,Transaction Type,Location,Transaction Description",
-    "16/05/2026,Snacky,75,LYD,Money Out,Products Restocking,,Inventory buy",
+    "16/05/2026,Snacky,75,LYD,Money Out,Product Restocking,,Inventory buy",
     "16/05/2026,Snacky,40,LYD,Money Out,Rent,,Rent",
     "16/05/2026,Snacky,120,LYD,Money In,Revenue,,Cash counted",
     "16/05/2026,Snacky,10,LYD,Money Out,Charity,,Donation",
     "16/05/2026,Snacky,20,LYD,Money In,Ads,,Ad income",
     "16/05/2026,Snacky,30,LYD,Money Out,Shipping,,Shipping",
-    "16/05/2026,Snacky,50,LYD,Money Out,Salary / Employee Payment,,Salary",
   ].join("\n"), { sourceFile: "Snacky - Financial Spreadsheet - Transactions.csv" });
   const classified = classifyFinanceRows(parsed.rows, []);
 
   assert.deepEqual(classified.map((item) => item.categoryForTransaction), [
-    "Products Restocking",
+    "Product Restocking",
     "Rent",
     "Revenue",
     "Charity",
     "Ads",
     "Shipping",
-    "Salary / Employee Payment",
   ]);
   assert.deepEqual(classified.map((item) => item.direction), [
     "money_out",
@@ -177,84 +165,87 @@ test("Transaction Type maps to requested categories without reversing Money Flow
     "money_out",
     "money_in",
     "money_out",
-    "money_out",
   ]);
 });
 
-test("Doa and Ahmed are employee payees on Snacky account, not owner accounts", () => {
-  const parsed = parseFinanceCsvText([
-    "Date,Name,Transaction Amount,Currency,Money Flow,Transaction Type,Location,Transaction Description",
-    "16/05/2026,Doa,75,LYD,Money Out,Salary / Employee Payment,,Salary",
-    "16/05/2026,Ahmed,40,$,Money Out,Salary / Employee Payment,,Salary",
-  ].join("\n"), { sourceFile: "Snacky - Financial Spreadsheet - Transactions.csv" });
-  const classified = classifyFinanceRows(parsed.rows, []);
-
-  assert.equal(classified[0].accountId, "snacky_lyd");
-  assert.equal(classified[1].accountId, "snacky_usd");
-  assert.equal(classified[0].importStatus, "auto_classified");
-  assert.equal(classified[1].importStatus, "auto_classified");
-});
-
-test("duplicate rows are shown for review instead of ignored", () => {
+test("duplicate-looking rows are kept as separate imported rows", () => {
   const rows = [
     row(2, {
       date: "2026-01-01",
       transaction: "100",
+      currency: "LYD",
       money_flow: "Money In",
       transaction_type: "Revenue",
+      name: "Snacky",
       location: "HTMall",
       transaction_description: "same deposit",
-      signed_amount: "100",
-      auto_bucket: "Inflow",
-      final_bucket: "Inflow",
     }),
     row(3, {
       date: "2026-01-01",
       transaction: "100",
+      currency: "LYD",
       money_flow: "Money In",
       transaction_type: "Revenue",
+      name: "Snacky",
       location: "HTMall",
       transaction_description: "same deposit",
-      signed_amount: "100",
-      auto_bucket: "Inflow",
-      final_bucket: "Inflow",
     }),
   ];
 
   const classified = classifyFinanceRows(rows, []);
   assert.equal(classified[0].importStatus, "imported");
-  assert.equal(classified[1].importStatus, "needs_review");
-  assert.ok(classified[1].reasons.includes("duplicate suspected"));
+  assert.equal(classified[1].importStatus, "imported");
+  assert.deepEqual(classified[1].reasons, []);
 });
 
-test("ambiguous review rows are grouped into clarification questions", () => {
-  const classified = classifyFinanceRows([
-    row(2, {
-      date: "2026-04-28",
-      transaction: "4680",
+test("stage rows and ledger rows preserve exact source fields one-to-one", () => {
+  const [classified] = classifyFinanceRows([
+    row(20, {
+      date: "16/05/2026",
+      name: "Ahmed",
+      transaction: "42",
+      currency: "LYD",
       money_flow: "Money Out",
-      transaction_type: "TO_CONFIRM",
-      location: "TO_CONFIRM",
-      transaction_description: "شراء دولار",
-      signed_amount: "-4680",
-      auto_bucket: "Review",
-      final_bucket: "Review",
+      transaction_type: "Shipping",
+      location: "KhalijUniversity",
+      transaction_description: "Delivery fee",
     }),
-    row(3, {
-      date: "2026-04-30",
-      transaction: "118",
+  ], []);
+  const stage = buildFinanceImportStageRow(classified, null, "batch-1");
+  const transaction = buildFinanceTransaction(classified, "user-1", "batch-1");
+
+  assert.equal(stage.source_row, 20);
+  assert.equal(stage.raw_record.name, "Ahmed");
+  assert.equal(stage.raw_record.transaction_type, "Shipping");
+  assert.equal(stage.raw_record.location, "KhalijUniversity");
+  assert.equal(stage.raw_record.transaction_description, "Delivery fee");
+  assert.equal(transaction.transaction_type, "Shipping");
+  assert.equal(transaction.final_bucket, "Shipping");
+  assert.equal(transaction.location, "KhalijUniversity");
+  assert.equal(transaction.description, "Delivery fee");
+  assert.equal(transaction.counterparty_text, "Ahmed");
+  assert.equal(transaction.direction, "money_out");
+  assert.equal(transaction.signed_amount, -42);
+});
+
+test("needs-review rows remain visible in staging and do not affect balances", () => {
+  const [classified] = classifyFinanceRows([
+    row(2, {
+      date: "",
+      name: "Snacky",
+      transaction: "4680",
+      currency: "LYD",
       money_flow: "Money Out",
-      transaction_type: "TO_CONFIRM",
+      transaction_type: "",
       location: "TO_CONFIRM",
-      transaction_description: "TO_CONFIRM",
-      signed_amount: "-118",
-      auto_bucket: "Review",
-      final_bucket: "Review",
+      transaction_description: "buy dollars",
     }),
   ], []);
 
-  const groups = buildFinanceReviewGroups(classified);
-  assert.ok(groups.length >= 1);
-  assert.ok(groups.some((group) => group.key === "unknown_currency"));
+  const stage = buildFinanceImportStageRow(classified, null, "batch-1");
+  assert.equal(classified.importStatus, "needs_review");
+  assert.equal(stage.import_status, "needs_review");
+  assert.equal(stage.raw_record.transaction_description, "buy dollars");
+  assert.equal(buildFinanceTransaction(classified, "user-1", "batch-1"), null);
   assert.equal(isBalanceAffectingTransaction({ transaction_status: "active", import_status: "needs_review", signed_amount: -4680 }), false);
 });
