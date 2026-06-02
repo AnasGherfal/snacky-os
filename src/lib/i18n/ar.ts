@@ -46,6 +46,7 @@ export const ar = {
     finance: "المالية",
     financeOverview: "نظرة مالية",
     financeTransactions: "المعاملات",
+    financeCleanup: "تنظيف المالية",
     financeImport: "استيراد المالية",
     financeReports: "تقارير المالية",
     activityLog: "سجل النشاط",

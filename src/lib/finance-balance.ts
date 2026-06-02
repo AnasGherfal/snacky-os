@@ -12,6 +12,7 @@ export type FinanceTransactionEffect = "income" | "expense" | "transfer" | "open
 export type FinanceBalances = Record<FinanceAccountId, number>;
 
 export type BalanceTransaction = {
+  transaction_date?: string | null;
   transaction_status?: string | null;
   import_status?: string | null;
   needs_review?: boolean | null;
@@ -21,8 +22,20 @@ export type BalanceTransaction = {
   account_id?: string | null;
   currency?: string | null;
   transaction_effect?: string | null;
+  final_bucket?: string | null;
+  category?: string | null;
+  transaction_type?: string | null;
   source_account_id?: string | null;
   destination_account_id?: string | null;
+};
+
+export const FINANCE_RECONCILIATION_CUTOFF_DATE = "2026-05-15";
+
+export const RECONCILED_OPENING_BALANCES: FinanceBalances = {
+  snacky_lyd: 9514,
+  snacky_usd: 660,
+  owner_lyd: -24360.5,
+  owner_usd: -418,
 };
 
 export const ZERO_FINANCE_BALANCES: FinanceBalances = {
@@ -85,6 +98,37 @@ export function isBalanceAffectingTransaction(row: BalanceTransaction) {
   return true;
 }
 
+export function isPostFinanceCutoffTransaction(row: BalanceTransaction, cutoffDate = FINANCE_RECONCILIATION_CUTOFF_DATE) {
+  if (!row.transaction_date) return true;
+  return row.transaction_date > cutoffDate;
+}
+
+export function isFinanceLedgerTransaction(row: BalanceTransaction, cutoffDate = FINANCE_RECONCILIATION_CUTOFF_DATE) {
+  if (!isBalanceAffectingTransaction(row)) return false;
+  if (!isPostFinanceCutoffTransaction(row, cutoffDate)) return false;
+  return String(row.transaction_effect ?? "") !== "opening_balance";
+}
+
+const nonProfitCategories = new Set([
+  "owner funding",
+  "owner withdrawal",
+  "bank / exchange",
+  "bank exchange",
+  "opening balance",
+]);
+
+function normalizedCategory(row: BalanceTransaction) {
+  return String(row.final_bucket ?? row.category ?? row.transaction_type ?? "").trim().toLowerCase();
+}
+
+export function isProfitAffectingTransaction(row: BalanceTransaction, cutoffDate = FINANCE_RECONCILIATION_CUTOFF_DATE) {
+  if (!isFinanceLedgerTransaction(row, cutoffDate)) return false;
+  const effect = String(row.transaction_effect || (row.direction === "money_in" ? "income" : "expense"));
+  if (effect === "transfer" || effect === "opening_balance") return false;
+  if (nonProfitCategories.has(normalizedCategory(row))) return false;
+  return effect === "income" || effect === "expense";
+}
+
 export function transactionImpacts(row: BalanceTransaction): Partial<FinanceBalances> {
   if (!isBalanceAffectingTransaction(row)) return {};
   const amount = Math.abs(numeric(row.amount || row.signed_amount));
@@ -118,6 +162,18 @@ export function computeFinanceBalances(rows: BalanceTransaction[], openingBalanc
   return balances;
 }
 
+export function computeFinanceBalancesFromCutoff({
+  rows,
+  openingBalances = RECONCILED_OPENING_BALANCES,
+  cutoffDate = FINANCE_RECONCILIATION_CUTOFF_DATE,
+}: {
+  rows: BalanceTransaction[];
+  openingBalances?: Partial<FinanceBalances>;
+  cutoffDate?: string;
+}) {
+  return computeFinanceBalances(rows.filter((row) => isFinanceLedgerTransaction(row, cutoffDate)), openingBalances);
+}
+
 export function financeTotalsByCurrency(balances: FinanceBalances) {
   return {
     LYD: roundMoney(balances.snacky_lyd + balances.owner_lyd),
@@ -136,6 +192,14 @@ export function sumFinanceRows(rows: BalanceTransaction[], currency: FinanceCurr
     if (!isBalanceAffectingTransaction(row)) return total;
     if (normalizeFinanceCurrency(row.currency) !== currency) return total;
     if (direction && row.direction !== direction) return total;
+    return roundMoney(total + signedAmount(row));
+  }, 0);
+}
+
+export function sumFinanceProfitRows(rows: BalanceTransaction[], currency: FinanceCurrency, cutoffDate = FINANCE_RECONCILIATION_CUTOFF_DATE) {
+  return rows.reduce((total, row) => {
+    if (!isProfitAffectingTransaction(row, cutoffDate)) return total;
+    if (normalizeFinanceCurrency(row.currency) !== currency) return total;
     return roundMoney(total + signedAmount(row));
   }, 0);
 }

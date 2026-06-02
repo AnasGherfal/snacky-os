@@ -2,9 +2,11 @@ import { notFound, redirect } from "next/navigation";
 import { FinanceTransactionStatusActions } from "@/components/FinanceTransactionStatusActions";
 import { FormSubmitButton } from "@/components/FormSubmitButton";
 import { LocalDraftForm } from "@/components/LocalDraft";
+import { ManualFinanceTransactionFields } from "@/components/ManualFinanceTransactionFields";
 import { FormField, FormPageLayout, FormSection, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canEditFinancialTransactions } from "@/lib/authz";
+import { DEFAULT_FINANCE_CATEGORIES, type FinanceCategoryOption } from "@/lib/finance-categories";
 import { updateFinancialTransaction } from "@/lib/finance-actions";
 import { formatFinanceMoney } from "@/lib/finance-balance";
 import { resolvePurchaseFinanceTransactionDate } from "@/lib/purchase-finance-date";
@@ -38,12 +40,13 @@ export default async function EditFinanceTransactionPage({
   const supabase = getSupabaseServerClient();
   if (!supabase) notFound();
 
-  const [{ data: transaction }, { data: purchases }, { data: machines }, { data: locations }, { data: routes }] = await Promise.all([
+  const [{ data: transaction }, { data: purchases }, { data: machines }, { data: locations }, { data: routes }, categoriesResult] = await Promise.all([
     supabase.from("financial_transactions").select("*").eq("id", id).maybeSingle(),
     supabase.from("purchase_orders").select("*").order("order_date", { ascending: false }).limit(200),
     supabase.from("machines").select("id, name, machine_code").order("name").limit(200),
     supabase.from("locations").select("id, name").order("name").limit(200),
     supabase.from("routes").select("id, route_date, status").order("route_date", { ascending: false }).limit(200),
+    supabase.from("finance_categories").select("id, name, type").eq("is_active", true).order("name"),
   ]);
   if (!transaction) notFound();
 
@@ -54,6 +57,8 @@ export default async function EditFinanceTransactionPage({
     linkedPurchase && row.transaction_kind === "product_purchase"
       ? resolvePurchaseFinanceTransactionDate(linkedPurchase, row.transaction_date)
       : row.transaction_date;
+  const categories = (categoriesResult.error ? DEFAULT_FINANCE_CATEGORIES : (categoriesResult.data ?? DEFAULT_FINANCE_CATEGORIES)) as FinanceCategoryOption[];
+  const flowDirection = row.transaction_effect === "transfer" ? "transfer" : row.direction === "money_in" ? "money_in" : "money_out";
 
   return (
     <>
@@ -93,49 +98,22 @@ export default async function EditFinanceTransactionPage({
         <LocalDraftForm action={updateFinancialTransaction} formType="finance-transaction" draftKeyParts={[id]} className="space-y-5">
           <input type="hidden" name="id" value={id} />
           <FormSection title="Transaction details">
-            <div className="grid gap-4 md:grid-cols-2">
-              <FormField label="Transaction date" required><input name="transaction_date" type="date" defaultValue={transactionDateDefault} required className="field-input" /></FormField>
-              <FormField label="Direction" required>
-                <select name="direction" defaultValue={row.direction} className="field-input">
-                  <option value="money_in">Money in</option>
-                  <option value="money_out">Money out</option>
-                </select>
-              </FormField>
-              <FormField label="Effect" required>
-                <select name="transaction_effect" defaultValue={row.transaction_effect ?? (row.direction === "money_in" ? "income" : "expense")} className="field-input">
-                  <option value="income">Income</option>
-                  <option value="expense">Expense</option>
-                  <option value="transfer">Transfer</option>
-                  <option value="opening_balance">Opening balance</option>
-                </select>
-              </FormField>
-              <FormField label="Account" required>
-                <select name="account_id" defaultValue={row.account_id ?? "snacky_lyd"} className="field-input">
-                  <option value="snacky_lyd">Snacky LYD</option>
-                  <option value="snacky_usd">Snacky USD</option>
-                  <option value="owner_lyd">Owner LYD</option>
-                  <option value="owner_usd">Owner USD</option>
-                </select>
-              </FormField>
-              <FormField label="Transfer from">
-                <select name="source_account_id" defaultValue={row.source_account_id ?? "snacky_lyd"} className="field-input">
-                  <option value="snacky_lyd">Snacky LYD</option>
-                  <option value="snacky_usd">Snacky USD</option>
-                  <option value="owner_lyd">Owner LYD</option>
-                  <option value="owner_usd">Owner USD</option>
-                </select>
-              </FormField>
-              <FormField label="Transfer to">
-                <select name="destination_account_id" defaultValue={row.destination_account_id ?? "owner_lyd"} className="field-input">
-                  <option value="owner_lyd">Owner LYD</option>
-                  <option value="owner_usd">Owner USD</option>
-                  <option value="snacky_lyd">Snacky LYD</option>
-                  <option value="snacky_usd">Snacky USD</option>
-                </select>
-              </FormField>
-              <input type="hidden" name="currency" value={row.currency ?? "LYD"} />
-              <FormField label="Amount" required><input name="amount" type="number" step="0.01" min="0" defaultValue={Number(row.amount ?? 0)} required className="field-input" /></FormField>
-              <FormField label="Category" required><input name="category" defaultValue={row.final_bucket ?? row.transaction_type ?? ""} required className="field-input" /></FormField>
+            <ManualFinanceTransactionFields
+              categories={categories}
+              defaults={{
+                transactionDate: transactionDateDefault,
+                direction: flowDirection,
+                accountId: row.account_id ?? "snacky_lyd",
+                sourceAccountId: row.source_account_id ?? "owner_lyd",
+                destinationAccountId: row.destination_account_id ?? "snacky_lyd",
+                category: row.final_bucket ?? row.transaction_type ?? "",
+                amount: Number(row.amount ?? 0),
+                payerText: row.payer_text ?? null,
+                payeeText: row.payee_text ?? null,
+                counterpartyText: row.counterparty_text ?? null,
+              }}
+            />
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
               <FormField label="Payment method">
                 <select name="payment_method" defaultValue={row.payment_method ?? ""} className="field-input">
                   <option value="">Not set</option>

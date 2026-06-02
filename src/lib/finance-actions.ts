@@ -6,6 +6,7 @@ import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
 import { canEditFinancialTransactions, canViewFinancials } from "@/lib/authz";
 import { accountCurrency, financeAccountId, type FinanceAccountId, type FinanceTransactionEffect } from "@/lib/finance-balance";
+import { categoryTypeForDirection, type FinanceCategoryType } from "@/lib/finance-categories";
 import {
   buildFinanceClarificationPrompts,
   buildFinanceImportStageRow,
@@ -47,6 +48,7 @@ function cleanCurrency(value: FormDataEntryValue | null) {
 function cleanFinanceEffect(value: FormDataEntryValue | null, direction?: string | null): FinanceTransactionEffect {
   const effect = String(value ?? "").trim();
   if (effect === "income" || effect === "expense" || effect === "transfer" || effect === "opening_balance") return effect;
+  if (direction === "transfer") return "transfer";
   return direction === "money_in" ? "income" : "expense";
 }
 
@@ -64,10 +66,6 @@ function optionalText(value: FormDataEntryValue | null) {
   return raw || null;
 }
 
-function transactionCategory(formData: FormData, fallback?: string | null) {
-  return optionalText(formData.get("category")) ?? optionalText(formData.get("final_bucket")) ?? fallback ?? null;
-}
-
 function parseTransactionAmount(value: FormDataEntryValue | null, fallback: unknown = 0) {
   const raw = String(value ?? fallback ?? "").replace(/,/g, "").trim();
   if (!raw) return 0;
@@ -77,11 +75,13 @@ function parseTransactionAmount(value: FormDataEntryValue | null, fallback: unkn
 
 function validDirection(value: FormDataEntryValue | null, fallback?: string | null) {
   const direction = String(value || fallback || "").trim();
-  return direction === "money_in" || direction === "money_out" ? direction : "";
+  if (direction === "money_in" || direction === "money_out" || direction === "transfer") return direction;
+  if (fallback === "transfer") return "transfer";
+  return "";
 }
 
 function resolveManualLedgerFields(formData: FormData, fallback?: any) {
-  const direction = validDirection(formData.get("direction"), fallback?.direction);
+  const direction = validDirection(formData.get("direction"), fallback?.transaction_effect === "transfer" ? "transfer" : fallback?.direction);
   const requestedCurrency = cleanCurrency(formData.get("currency") ?? fallback?.currency ?? "LYD");
   const transactionEffect = cleanFinanceEffect(formData.get("transaction_effect"), direction || fallback?.direction);
   const accountId = cleanFinanceAccount(formData.get("account_id") ?? fallback?.account_id, requestedCurrency);
@@ -90,6 +90,7 @@ function resolveManualLedgerFields(formData: FormData, fallback?: any) {
   const currency = transactionEffect === "transfer" ? accountCurrency(sourceAccountId) : accountCurrency(accountId);
 
   return {
+    flowDirection: direction,
     direction: transactionEffect === "transfer" ? "money_out" : direction,
     currency,
     transactionEffect,
@@ -99,14 +100,62 @@ function resolveManualLedgerFields(formData: FormData, fallback?: any) {
   };
 }
 
-function validateManualLedgerFields(fields: ReturnType<typeof resolveManualLedgerFields>) {
+function validateManualLedgerFields(fields: ReturnType<typeof resolveManualLedgerFields>, category?: string | null) {
   if (!fields.direction) return "Direction is required.";
+  const normalizedCategory = String(category ?? "").trim().toLowerCase();
+  if (fields.transactionEffect !== "transfer" && (normalizedCategory === "owner funding" || normalizedCategory === "owner withdrawal")) {
+    return `${category} must be saved as a Transfer so it affects balances without counting as profit.`;
+  }
   if (fields.transactionEffect === "transfer") {
     if (!fields.sourceAccountId || !fields.destinationAccountId) return "Transfer source and destination accounts are required.";
     if (fields.sourceAccountId === fields.destinationAccountId) return "Transfer source and destination must be different.";
     if (accountCurrency(fields.sourceAccountId) !== accountCurrency(fields.destinationAccountId)) return "Cross-currency transfers need a separate exchange workflow with an explicit rate.";
   }
   return null;
+}
+
+async function resolveFinanceCategory(
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>,
+  formData: FormData,
+  direction: string,
+  fallback?: string | null,
+) {
+  const selected = optionalText(formData.get("category"));
+  const requestedName = selected === "__new__" ? optionalText(formData.get("new_category_name")) : selected ?? fallback;
+  const name = requestedName?.trim();
+  if (!name) return { id: null as string | null, name: null as string | null };
+
+  const type = categoryTypeForDirection(direction) as FinanceCategoryType;
+  const { data: existing, error: existingError } = await supabase.from("finance_categories").select("id, name, type").eq("name", name).maybeSingle();
+  if (!existingError && existing?.id) return { id: existing.id as string, name: existing.name as string };
+
+  const { data: created, error: createError } = await supabase
+    .from("finance_categories")
+    .insert({ name, type, is_active: true })
+    .select("id, name")
+    .single();
+  if (!createError && created?.id) return { id: created.id as string, name: created.name as string };
+
+  if (createError?.code === "23505") {
+    const { data } = await supabase.from("finance_categories").select("id, name").eq("name", name).maybeSingle();
+    return { id: data?.id ?? null, name: data?.name ?? name };
+  }
+
+  console.error("[finance] Failed to resolve finance category", { name, createError, existingError });
+  return { id: null, name };
+}
+
+function counterpartyFields(formData: FormData, fields: ReturnType<typeof resolveManualLedgerFields>) {
+  const payer = optionalText(formData.get("payer_text"));
+  const payee = optionalText(formData.get("payee_text"));
+  const counterparty = optionalText(formData.get("counterparty_text"));
+  if (fields.transactionEffect === "transfer") {
+    return { payerText: null, payeeText: null, counterpartyText: counterparty };
+  }
+  if (fields.direction === "money_in") {
+    return { payerText: payer ?? counterparty, payeeText: null, counterpartyText: payer ?? counterparty };
+  }
+  return { payerText: null, payeeText: payee ?? counterparty, counterpartyText: payee ?? counterparty };
 }
 
 async function loadFinanceClassificationContext(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>) {
@@ -280,6 +329,7 @@ export async function updateFinanceSettings(formData: FormData) {
   const exchangeRate = toOptionalAmount(formData.get("exchange_rate_usd_to_lyd"));
 
   const openingBalanceDate = String(formData.get("opening_balance_date") || new Date().toISOString().slice(0, 10));
+  const reconciliationCutoffDate = String(formData.get("reconciliation_cutoff_date") || openingBalanceDate || "2026-05-15");
   const payload = {
     id: "default",
     opening_balance: snackyLyd,
@@ -288,6 +338,7 @@ export async function updateFinanceSettings(formData: FormData) {
     opening_balance_owner_lyd: ownerLyd,
     opening_balance_owner_usd: ownerUsd,
     opening_balance_date: openingBalanceDate,
+    reconciliation_cutoff_date: reconciliationCutoffDate,
     default_currency: cleanCurrency(formData.get("default_currency")),
     exchange_rate_usd_to_lyd: exchangeRate,
     updated_by: profile?.team_member_id ?? null,
@@ -297,6 +348,17 @@ export async function updateFinanceSettings(formData: FormData) {
   const { data: before } = await supabase.from("finance_settings").select("*").eq("id", "default").maybeSingle();
   const { data: after, error } = await supabase.from("finance_settings").upsert(payload, { onConflict: "id" }).select("*").single();
   if (error) redirect(`/finance?settingsError=${encodeURIComponent(error.message)}`);
+
+  const openingBalanceRows = [
+    { account_id: "snacky_lyd", currency: "LYD", balance_date: reconciliationCutoffDate, opening_balance: snackyLyd, notes: "Finance settings opening balance" },
+    { account_id: "snacky_usd", currency: "USD", balance_date: reconciliationCutoffDate, opening_balance: snackyUsd, notes: "Finance settings opening balance" },
+    { account_id: "owner_lyd", currency: "LYD", balance_date: reconciliationCutoffDate, opening_balance: ownerLyd, notes: "Finance settings opening balance" },
+    { account_id: "owner_usd", currency: "USD", balance_date: reconciliationCutoffDate, opening_balance: ownerUsd, notes: "Finance settings opening balance" },
+  ];
+  const { error: openingError } = await supabase
+    .from("finance_opening_balances")
+    .upsert(openingBalanceRows, { onConflict: "account_id,balance_date" });
+  if (openingError) console.error("[finance] Failed to sync finance opening balance records", openingError);
 
   await logActivity({
     profile,
@@ -321,13 +383,15 @@ export async function createManualFinancialTransaction(formData: FormData) {
 
   const amount = parseTransactionAmount(formData.get("amount"));
   const transactionDate = String(formData.get("transaction_date") || "").trim();
-  const category = transactionCategory(formData);
   const ledgerFields = resolveManualLedgerFields(formData);
-  const ledgerError = validateManualLedgerFields(ledgerFields);
+  const categoryRecord = await resolveFinanceCategory(supabase, formData, ledgerFields.flowDirection);
+  const category = categoryRecord.name;
+  const ledgerError = validateManualLedgerFields(ledgerFields, category);
   if (!transactionDate) redirect("/finance/transactions/new?error=Transaction%20date%20is%20required.");
   if (ledgerError) redirect(`/finance/transactions/new?error=${encodeURIComponent(ledgerError)}`);
   if (!Number.isFinite(amount) || amount < 0) redirect("/finance/transactions/new?error=Amount%20must%20be%20greater%20than%20or%20equal%20to%200.");
   if (!category) redirect("/finance/transactions/new?error=Category%20is%20required.");
+  const counterparty = counterpartyFields(formData, ledgerFields);
 
   const payload = {
     transaction_date: transactionDate,
@@ -335,7 +399,7 @@ export async function createManualFinancialTransaction(formData: FormData) {
     transaction_kind: ledgerFields.direction === "money_in" ? "manual_money_in" : "manual_money_out",
     transaction_type: optionalText(formData.get("transaction_type")),
     location: optionalText(formData.get("location")),
-    description: optionalText(formData.get("description")),
+    description: optionalText(formData.get("description")) ?? counterparty.counterpartyText,
     notes: optionalText(formData.get("notes")),
     payment_method: optionalText(formData.get("payment_method")),
     amount,
@@ -345,6 +409,10 @@ export async function createManualFinancialTransaction(formData: FormData) {
     transaction_effect: ledgerFields.transactionEffect,
     source_account_id: ledgerFields.sourceAccountId,
     destination_account_id: ledgerFields.destinationAccountId,
+    finance_category_id: categoryRecord.id,
+    payer_text: counterparty.payerText,
+    payee_text: counterparty.payeeText,
+    counterparty_text: counterparty.counterpartyText,
     bucket: optionalText(formData.get("bucket")),
     final_bucket: category,
     review_status: "confirmed",
@@ -368,7 +436,7 @@ export async function createManualFinancialTransaction(formData: FormData) {
     entityId: data.id,
     entityLabel: "Financial transaction",
     afterData: payload,
-    summary: `Created manual ${ledgerFields.direction.replace("_", " ")} transaction`,
+    summary: `Created manual ${ledgerFields.transactionEffect === "transfer" ? "transfer" : ledgerFields.direction.replace("_", " ")} transaction`,
   });
 
   revalidatePath("/finance");
@@ -386,19 +454,21 @@ export async function reviewFinancialTransaction(formData: FormData) {
   const { data: before } = await supabase.from("financial_transactions").select("*").eq("id", id).maybeSingle();
   const amount = parseTransactionAmount(formData.get("amount"), before?.amount);
   const ledgerFields = resolveManualLedgerFields(formData, before);
-  const ledgerError = validateManualLedgerFields(ledgerFields);
   const transactionDate = String(formData.get("transaction_date") || before?.transaction_date || "").trim();
-  const category = transactionCategory(formData, before?.final_bucket);
+  const categoryRecord = await resolveFinanceCategory(supabase, formData, ledgerFields.flowDirection, before?.final_bucket);
+  const category = categoryRecord.name;
+  const ledgerError = validateManualLedgerFields(ledgerFields, category);
   if (!transactionDate) throw new Error("Transaction date is required.");
   if (ledgerError) throw new Error(ledgerError);
   if (!Number.isFinite(amount) || amount < 0) throw new Error("Amount must be greater than or equal to 0.");
   if (!category) throw new Error("Category is required.");
+  const counterparty = counterpartyFields(formData, ledgerFields);
   const payload = {
     transaction_date: transactionDate,
     direction: ledgerFields.direction,
     transaction_type: optionalText(formData.get("transaction_type")),
     location: optionalText(formData.get("location")),
-    description: optionalText(formData.get("description")),
+    description: optionalText(formData.get("description")) ?? counterparty.counterpartyText,
     notes: optionalText(formData.get("notes")),
     payment_method: optionalText(formData.get("payment_method")),
     amount,
@@ -408,6 +478,10 @@ export async function reviewFinancialTransaction(formData: FormData) {
     transaction_effect: ledgerFields.transactionEffect,
     source_account_id: ledgerFields.sourceAccountId,
     destination_account_id: ledgerFields.destinationAccountId,
+    finance_category_id: categoryRecord.id,
+    payer_text: counterparty.payerText,
+    payee_text: counterparty.payeeText,
+    counterparty_text: counterparty.counterpartyText,
     final_bucket: category,
     review_status: "reviewed",
     needs_review: false,
@@ -453,13 +527,15 @@ export async function updateFinancialTransaction(formData: FormData) {
 
   const amount = parseTransactionAmount(formData.get("amount"), before.amount);
   const ledgerFields = resolveManualLedgerFields(formData, before);
-  const ledgerError = validateManualLedgerFields(ledgerFields);
   const transactionDate = String(formData.get("transaction_date") || "").trim();
-  const category = transactionCategory(formData, before.final_bucket);
+  const categoryRecord = await resolveFinanceCategory(supabase, formData, ledgerFields.flowDirection, before.final_bucket);
+  const category = categoryRecord.name;
+  const ledgerError = validateManualLedgerFields(ledgerFields, category);
   if (!transactionDate) redirect(`/finance/transactions/${id}/edit?error=Transaction%20date%20is%20required.`);
   if (ledgerError) redirect(`/finance/transactions/${id}/edit?error=${encodeURIComponent(ledgerError)}`);
   if (!Number.isFinite(amount) || amount < 0) redirect(`/finance/transactions/${id}/edit?error=Amount%20must%20be%20greater%20than%20or%20equal%20to%200.`);
   if (!category) redirect(`/finance/transactions/${id}/edit?error=Category%20is%20required.`);
+  const counterparty = counterpartyFields(formData, ledgerFields);
 
   const markReviewed = String(formData.get("mark_reviewed") || "") === "on";
   const needsManualReview = String(formData.get("needs_review") || "") === "on" && !markReviewed;
@@ -469,7 +545,7 @@ export async function updateFinancialTransaction(formData: FormData) {
     direction: ledgerFields.direction,
     transaction_type: optionalText(formData.get("transaction_type")),
     location: optionalText(formData.get("location")),
-    description: optionalText(formData.get("description")),
+    description: optionalText(formData.get("description")) ?? counterparty.counterpartyText,
     notes: optionalText(formData.get("notes")),
     payment_method: optionalText(formData.get("payment_method")),
     amount,
@@ -479,6 +555,10 @@ export async function updateFinancialTransaction(formData: FormData) {
     transaction_effect: ledgerFields.transactionEffect,
     source_account_id: ledgerFields.sourceAccountId,
     destination_account_id: ledgerFields.destinationAccountId,
+    finance_category_id: categoryRecord.id,
+    payer_text: counterparty.payerText,
+    payee_text: counterparty.payeeText,
+    counterparty_text: counterparty.counterpartyText,
     bucket: optionalText(formData.get("bucket")),
     bucket_override: optionalText(formData.get("bucket_override")),
     final_bucket: category,

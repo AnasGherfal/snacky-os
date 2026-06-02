@@ -1,9 +1,11 @@
 import { redirect } from "next/navigation";
 import { FormSubmitButton } from "@/components/FormSubmitButton";
 import { LocalDraftForm } from "@/components/LocalDraft";
+import { ManualFinanceTransactionFields } from "@/components/ManualFinanceTransactionFields";
 import { FormField, FormPageLayout, FormSection, PageHeader, SecondaryButton } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canEditFinancialTransactions } from "@/lib/authz";
+import { DEFAULT_FINANCE_CATEGORIES, type FinanceCategoryOption } from "@/lib/finance-categories";
 import { createManualFinancialTransaction } from "@/lib/finance-actions";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -13,14 +15,16 @@ export default async function NewFinanceTransactionPage({ searchParams }: { sear
   const { error } = await searchParams;
   const today = new Date().toISOString().slice(0, 10);
   const supabase = getSupabaseServerClient();
-  const [{ data: purchases }, { data: machines }, { data: locations }, { data: routes }] = supabase
+  const [{ data: purchases }, { data: machines }, { data: locations }, { data: routes }, categoriesResult] = supabase
     ? await Promise.all([
         supabase.from("purchase_orders").select("id, receipt_number, order_date, status").order("order_date", { ascending: false }).limit(200),
         supabase.from("machines").select("id, name, machine_code").order("name").limit(200),
         supabase.from("locations").select("id, name").order("name").limit(200),
         supabase.from("routes").select("id, route_date, status").order("route_date", { ascending: false }).limit(200),
+        supabase.from("finance_categories").select("id, name, type").eq("is_active", true).order("name"),
       ])
-    : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }];
+    : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [], error: null }];
+  const categories = (categoriesResult.error ? DEFAULT_FINANCE_CATEGORIES : (categoriesResult.data ?? DEFAULT_FINANCE_CATEGORIES)) as FinanceCategoryOption[];
 
   return (
     <>
@@ -36,17 +40,11 @@ export default async function NewFinanceTransactionPage({ searchParams }: { sear
         />
         {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{error}</div> : null}
         <LocalDraftForm action={createManualFinancialTransaction} formType="finance-transaction" draftKeyParts={["new"]} className="space-y-5">
-          <FormSection title="Transaction">
+          <FormSection title="Money movement">
+            <ManualFinanceTransactionFields categories={categories} defaults={{ transactionDate: today, direction: "money_out", accountId: "snacky_lyd" }} />
+          </FormSection>
+          <FormSection title="Details">
             <div className="grid gap-4 md:grid-cols-2">
-              <FormField label="Date" required><input name="transaction_date" type="date" defaultValue={today} required className="field-input" /></FormField>
-              <FormField label="Direction" required><select name="direction" className="field-input"><option value="money_out">Money out</option><option value="money_in">Money in</option></select></FormField>
-              <FormField label="Effect" required><select name="transaction_effect" className="field-input"><option value="expense">Expense</option><option value="income">Income</option><option value="transfer">Transfer</option><option value="opening_balance">Opening balance</option></select></FormField>
-              <FormField label="Currency" required><select name="currency" className="field-input"><option value="LYD">LYD</option><option value="USD">USD</option></select></FormField>
-              <FormField label="Account" required><select name="account_id" className="field-input"><option value="snacky_lyd">Snacky LYD</option><option value="snacky_usd">Snacky USD</option><option value="owner_lyd">Owner LYD</option><option value="owner_usd">Owner USD</option></select></FormField>
-              <FormField label="Transfer from"><select name="source_account_id" className="field-input"><option value="snacky_lyd">Snacky LYD</option><option value="snacky_usd">Snacky USD</option><option value="owner_lyd">Owner LYD</option><option value="owner_usd">Owner USD</option></select></FormField>
-              <FormField label="Transfer to"><select name="destination_account_id" className="field-input"><option value="owner_lyd">Owner LYD</option><option value="owner_usd">Owner USD</option><option value="snacky_lyd">Snacky LYD</option><option value="snacky_usd">Snacky USD</option></select></FormField>
-              <FormField label="Amount" required><input name="amount" type="number" step="0.01" min="0" required className="field-input" /></FormField>
-              <FormField label="Category" required><input name="category" placeholder="Rent, Inventory, Revenue..." required className="field-input" /></FormField>
               <FormField label="Payment method"><select name="payment_method" className="field-input"><option value="">Not set</option><option value="cash">Cash</option><option value="bank_transfer">Bank transfer</option><option value="card">Card</option><option value="cheque">Cheque</option><option value="other">Other</option></select></FormField>
               <FormField label="Transaction type"><input name="transaction_type" placeholder="Rent, salary, maintenance, owner transfer..." className="field-input" /></FormField>
               <FormField label="Location"><input name="location" className="field-input" /></FormField>

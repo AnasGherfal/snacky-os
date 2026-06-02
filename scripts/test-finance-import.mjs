@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { computeFinanceBalances, isBalanceAffectingTransaction } from "../src/lib/finance-balance.ts";
+import {
+  computeFinanceBalances,
+  computeFinanceBalancesFromCutoff,
+  FINANCE_RECONCILIATION_CUTOFF_DATE,
+  isBalanceAffectingTransaction,
+  RECONCILED_OPENING_BALANCES,
+  sumFinanceProfitRows,
+} from "../src/lib/finance-balance.ts";
 import { classifyFinanceRows, KHALIJ_UNIVERSITY_ARABIC_NAME, buildFinanceReviewGroups } from "../src/lib/finance-import.ts";
 
 function row(sourceRow, record) {
@@ -28,6 +35,36 @@ test("finance balances stay separated by owner/account/currency and exclude revi
   assert.equal(balances.owner_lyd, 75);
   assert.equal(balances.snacky_usd, 10);
   assert.equal(balances.owner_usd, 0);
+});
+
+test("finance balances start from 2026-05-15 openings and ignore earlier historical rows", () => {
+  const balances = computeFinanceBalancesFromCutoff({
+    rows: [
+      { transaction_date: "2026-05-15", transaction_status: "active", direction: "money_out", amount: 100000, signed_amount: -100000, account_id: "snacky_lyd", currency: "LYD", transaction_effect: "expense" },
+      { transaction_date: "2026-05-14", transaction_status: "active", direction: "money_out", amount: 100000, signed_amount: -100000, account_id: "owner_lyd", currency: "LYD", transaction_effect: "expense" },
+      { transaction_date: "2026-05-16", transaction_status: "active", direction: "money_out", amount: 500, signed_amount: -500, account_id: "snacky_lyd", currency: "LYD", transaction_effect: "expense" },
+      { transaction_date: "2026-05-16", transaction_status: "active", direction: "money_in", amount: 100, signed_amount: 100, account_id: "snacky_usd", currency: "USD", transaction_effect: "income" },
+      { transaction_date: "2026-05-17", transaction_status: "active", direction: "money_out", amount: 200, signed_amount: -200, currency: "LYD", transaction_effect: "transfer", source_account_id: "owner_lyd", destination_account_id: "snacky_lyd" },
+    ],
+    openingBalances: RECONCILED_OPENING_BALANCES,
+    cutoffDate: FINANCE_RECONCILIATION_CUTOFF_DATE,
+  });
+
+  assert.equal(balances.owner_lyd, -24560.5);
+  assert.equal(balances.owner_usd, -418);
+  assert.equal(balances.snacky_lyd, 9214);
+  assert.equal(balances.snacky_usd, 760);
+});
+
+test("owner funding and withdrawal do not count as profit", () => {
+  const rows = [
+    { transaction_date: "2026-05-16", transaction_status: "active", direction: "money_in", amount: 1000, signed_amount: 1000, account_id: "snacky_lyd", currency: "LYD", transaction_effect: "income", final_bucket: "Sales Revenue" },
+    { transaction_date: "2026-05-16", transaction_status: "active", direction: "money_out", amount: 250, signed_amount: -250, account_id: "snacky_lyd", currency: "LYD", transaction_effect: "expense", final_bucket: "Rent" },
+    { transaction_date: "2026-05-16", transaction_status: "active", direction: "money_out", amount: 700, signed_amount: -700, currency: "LYD", transaction_effect: "transfer", source_account_id: "owner_lyd", destination_account_id: "snacky_lyd", final_bucket: "Owner Funding" },
+    { transaction_date: "2026-05-16", transaction_status: "active", direction: "money_out", amount: 100, signed_amount: -100, currency: "LYD", transaction_effect: "transfer", source_account_id: "snacky_lyd", destination_account_id: "owner_lyd", final_bucket: "Owner Withdrawal" },
+  ];
+
+  assert.equal(sumFinanceProfitRows(rows, "LYD"), 750);
 });
 
 test("KhalijUniversity resolves to the correct Arabic machine name", () => {

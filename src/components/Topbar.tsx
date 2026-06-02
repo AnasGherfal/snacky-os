@@ -39,6 +39,7 @@ const titleKeys: Record<string, keyof ReturnType<typeof useI18n>["dictionary"]["
   "/vms-mappings": "productMapping",
   "/finance": "financeOverview",
   "/finance/transactions": "financeTransactions",
+  "/finance/cleanup": "financeCleanup",
   "/finance/reports": "financeReports",
   "/cash-collections": "cashCollections",
   "/issues": "issues",

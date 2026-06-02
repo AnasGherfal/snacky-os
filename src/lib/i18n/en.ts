@@ -46,6 +46,7 @@ export const en = {
     finance: "Finance",
     financeOverview: "Finance Overview",
     financeTransactions: "Transactions",
+    financeCleanup: "Finance Cleanup",
     financeImport: "Finance Import",
     financeReports: "Finance Reports",
     activityLog: "Activity Log",

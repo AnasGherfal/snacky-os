@@ -5,7 +5,7 @@ import { FinanceTransactionStatusActions } from "@/components/FinanceTransaction
 import { PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canEditFinancialTransactions, canViewFinancials } from "@/lib/authz";
-import { accountLabel, formatFinanceMoney, isBalanceAffectingTransaction } from "@/lib/finance-balance";
+import { accountLabel, FINANCE_RECONCILIATION_CUTOFF_DATE, formatFinanceMoney, isFinanceLedgerTransaction } from "@/lib/finance-balance";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -45,7 +45,7 @@ export default async function FinanceTransactionDetailPage({
   const { data: transaction } = await supabase.from("financial_transactions").select("*").eq("id", id).maybeSingle();
   if (!transaction) notFound();
   const row = transaction as any;
-  const affectsBalance = isBalanceAffectingTransaction(row);
+  const affectsBalance = isFinanceLedgerTransaction(row, FINANCE_RECONCILIATION_CUTOFF_DATE);
   const canEdit = canEditFinancialTransactions({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status });
 
   const [purchase, route, machine, location] = await Promise.all([
@@ -87,6 +87,7 @@ export default async function FinanceTransactionDetailPage({
             <DetailItem label="Kind">{label(row.transaction_kind)}</DetailItem>
             <DetailItem label="Review"><StatusBadge status={row.needs_review ? "needs_review" : row.review_status} /></DetailItem>
             <DetailItem label="Receipt">{row.receipt_url ? <a href={row.receipt_url} target="_blank" rel="noreferrer" className="link-secondary">Open receipt</a> : "-"}</DetailItem>
+            <DetailItem label="Counterparty">{row.counterparty_text ?? row.payer_text ?? row.payee_text ?? "-"}</DetailItem>
           </div>
           <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-4">
             <div className="text-xs font-medium uppercase text-slate-500">Description / notes</div>

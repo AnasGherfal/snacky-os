@@ -3,7 +3,17 @@ import { redirect } from "next/navigation";
 import { DataTable, EmptyState, ErrorState, FormField, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canViewFinancials } from "@/lib/authz";
-import { computeFinanceBalances, financeTotalsByCurrency, formatFinanceMoney, isBalanceAffectingTransaction, signedAmount, sumFinanceRows } from "@/lib/finance-balance";
+import {
+  computeFinanceBalancesFromCutoff,
+  FINANCE_RECONCILIATION_CUTOFF_DATE,
+  formatFinanceMoney,
+  isFinanceLedgerTransaction,
+  RECONCILED_OPENING_BALANCES,
+  signedAmount,
+  sumFinanceProfitRows,
+  sumFinanceRows,
+  type FinanceBalances,
+} from "@/lib/finance-balance";
 import { updateFinanceSettings } from "@/lib/finance-actions";
 import { buildFinanceClarificationPrompts, buildFinanceReviewGroups } from "@/lib/finance-import";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -37,6 +47,13 @@ type FinanceRow = {
   review_status: string | null;
   needs_review: boolean | null;
   transaction_status?: string | null;
+};
+
+type OpeningBalanceRow = {
+  account_id: keyof FinanceBalances;
+  currency: string;
+  balance_date: string;
+  opening_balance: number | string;
 };
 
 function financeAllowed(profile: Awaited<ReturnType<typeof getCurrentProfile>>) {
@@ -82,6 +99,21 @@ function amount(row: FinanceRow) {
   return signedAmount(row);
 }
 
+function openingBalancesFromRows(rows: OpeningBalanceRow[] | null | undefined, fallback: Partial<FinanceBalances>): FinanceBalances {
+  const balances: FinanceBalances = {
+    snacky_lyd: Number(fallback.snacky_lyd ?? RECONCILED_OPENING_BALANCES.snacky_lyd),
+    snacky_usd: Number(fallback.snacky_usd ?? RECONCILED_OPENING_BALANCES.snacky_usd),
+    owner_lyd: Number(fallback.owner_lyd ?? RECONCILED_OPENING_BALANCES.owner_lyd),
+    owner_usd: Number(fallback.owner_usd ?? RECONCILED_OPENING_BALANCES.owner_usd),
+  };
+
+  (rows ?? []).forEach((row) => {
+    if (row.account_id in balances) balances[row.account_id] = Number(row.opening_balance ?? 0);
+  });
+
+  return balances;
+}
+
 function StatCard({
   label,
   value,
@@ -122,8 +154,9 @@ export default async function FinancePage({
       </>
     );
   }
-  const [settingsResult, transactionsResult] = await Promise.all([
-    supabase.from("finance_settings").select("opening_balance, opening_balance_snacky_lyd, opening_balance_snacky_usd, opening_balance_owner_lyd, opening_balance_owner_usd, opening_balance_date, default_currency, exchange_rate_usd_to_lyd, updated_at").eq("id", "default").maybeSingle(),
+  const [settingsResult, openingBalancesResult, transactionsResult] = await Promise.all([
+    supabase.from("finance_settings").select("opening_balance, opening_balance_snacky_lyd, opening_balance_snacky_usd, opening_balance_owner_lyd, opening_balance_owner_usd, opening_balance_date, reconciliation_cutoff_date, default_currency, exchange_rate_usd_to_lyd, updated_at").eq("id", "default").maybeSingle(),
+    supabase.from("finance_opening_balances").select("account_id, currency, balance_date, opening_balance").eq("balance_date", FINANCE_RECONCILIATION_CUTOFF_DATE),
     supabase
       .from("financial_transactions")
       .select("id, transaction_date, direction, transaction_kind, transaction_type, description, amount, signed_amount, currency, account_id, transaction_effect, source_account_id, destination_account_id, import_status, final_bucket, review_status, needs_review, transaction_status")
@@ -143,26 +176,30 @@ export default async function FinancePage({
 
   const settings = settingsResult.error ? null : (settingsResult.data as any);
   const rows = ((transactionsResult.data ?? []) as FinanceRow[]).filter((row) => row.transaction_date);
-  const balanceRows = rows.filter(isBalanceAffectingTransaction);
   const currency = String(settings?.default_currency ?? "LYD");
-  const openingBalanceIsSet = settings !== null;
-  const openingBalances = {
-    snacky_lyd: Number(settings?.opening_balance_snacky_lyd ?? settings?.opening_balance ?? 0),
-    snacky_usd: Number(settings?.opening_balance_snacky_usd ?? 0),
-    owner_lyd: Number(settings?.opening_balance_owner_lyd ?? 0),
-    owner_usd: Number(settings?.opening_balance_owner_usd ?? 0),
+  const cutoffDate = String(settings?.reconciliation_cutoff_date ?? settings?.opening_balance_date ?? FINANCE_RECONCILIATION_CUTOFF_DATE);
+  const openingBalanceIsSet = true;
+  const settingsFallback = {
+    snacky_lyd: Number(settings?.opening_balance_snacky_lyd ?? settings?.opening_balance ?? RECONCILED_OPENING_BALANCES.snacky_lyd),
+    snacky_usd: Number(settings?.opening_balance_snacky_usd ?? RECONCILED_OPENING_BALANCES.snacky_usd),
+    owner_lyd: Number(settings?.opening_balance_owner_lyd ?? RECONCILED_OPENING_BALANCES.owner_lyd),
+    owner_usd: Number(settings?.opening_balance_owner_usd ?? RECONCILED_OPENING_BALANCES.owner_usd),
   };
-  const balances = computeFinanceBalances(balanceRows, openingBalances);
-  const totalsByCurrency = financeTotalsByCurrency(balances);
+  const openingRows = openingBalancesResult.error ? [] : (openingBalancesResult.data as OpeningBalanceRow[] | null);
+  if (openingBalancesResult.error) console.error("[finance] Failed to load finance opening balance records", openingBalancesResult.error);
+  const openingBalances = openingBalancesFromRows(openingRows, settingsFallback);
+  const ledgerRows = rows.filter((row) => isFinanceLedgerTransaction(row, cutoffDate));
+  const balances = computeFinanceBalancesFromCutoff({ rows, openingBalances, cutoffDate });
   const exchangeRate = Number(settings?.exchange_rate_usd_to_lyd ?? 0);
-  const convertedTotalLyd = exchangeRate > 0 ? totalsByCurrency.LYD + totalsByCurrency.USD * exchangeRate : null;
-  const periodRows = balanceRows.filter((row) => row.transaction_date >= periodRange.start && row.transaction_date <= periodRange.end);
+  const periodRows = ledgerRows.filter((row) => row.transaction_date >= periodRange.start && row.transaction_date <= periodRange.end);
   const periodMoneyInLyd = sumFinanceRows(periodRows, "LYD", "money_in");
   const periodMoneyOutLyd = Math.abs(sumFinanceRows(periodRows, "LYD", "money_out"));
   const periodMoneyInUsd = sumFinanceRows(periodRows, "USD", "money_in");
   const periodMoneyOutUsd = Math.abs(sumFinanceRows(periodRows, "USD", "money_out"));
   const periodNetLyd = periodMoneyInLyd - periodMoneyOutLyd;
   const periodNetUsd = periodMoneyInUsd - periodMoneyOutUsd;
+  const periodProfitLyd = sumFinanceProfitRows(periodRows, "LYD", cutoffDate);
+  const periodProfitUsd = sumFinanceProfitRows(periodRows, "USD", cutoffDate);
   const reviewCount = rows.filter((row) => row.needs_review).length;
   const latestRows = rows.slice(0, 10);
   const reviewGroups = buildFinanceReviewGroups(
@@ -199,7 +236,7 @@ export default async function FinancePage({
     <>
       <PageHeader
         title="Finance"
-        subtitle="Actual balance and cash flow from Snacky OS financial transactions."
+        subtitle={`Actual balances from reconciled opening records dated ${cutoffDate} plus Snacky OS transactions after that date.`}
         action={<PrimaryButton href="/finance/transactions/new">Manual money in/out</PrimaryButton>}
       />
 
@@ -231,45 +268,34 @@ export default async function FinancePage({
       </section>
 
       <section className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <StatCard label="Owner / Anas LYD" value={formatFinanceMoney(balances.owner_lyd, "LYD")} note="Owner account. Not business profit." tone={balances.owner_lyd < 0 ? "negative" : "strong"} />
+        <StatCard label="Owner / Anas USD" value={formatFinanceMoney(balances.owner_usd, "USD")} note="Owner account. Not business profit." tone={balances.owner_usd < 0 ? "negative" : "strong"} />
         <StatCard label="Snacky LYD" value={formatFinanceMoney(balances.snacky_lyd, "LYD")} note="Business LYD only" tone={balances.snacky_lyd < 0 ? "negative" : "strong"} />
         <StatCard label="Snacky USD" value={formatFinanceMoney(balances.snacky_usd, "USD")} note="Business USD only" tone={balances.snacky_usd < 0 ? "negative" : "strong"} />
-        <StatCard label="Owner LYD" value={formatFinanceMoney(balances.owner_lyd, "LYD")} note="Owner/personal LYD only" tone={balances.owner_lyd < 0 ? "negative" : "strong"} />
-        <StatCard label="Owner USD" value={formatFinanceMoney(balances.owner_usd, "USD")} note="Owner/personal USD only" tone={balances.owner_usd < 0 ? "negative" : "strong"} />
       </section>
 
-      <section className="surface-card mb-6">
-        <div className="grid gap-4 md:grid-cols-3">
-          <div>
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total LYD Only</div>
-            <div className="mt-2 text-2xl font-semibold text-slate-900">{formatFinanceMoney(totalsByCurrency.LYD, "LYD")}</div>
-            <div className="mt-1 text-xs text-slate-500">Snacky LYD + Owner LYD. USD is not included.</div>
-          </div>
-          <div>
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total USD Only</div>
-            <div className="mt-2 text-2xl font-semibold text-slate-900">{formatFinanceMoney(totalsByCurrency.USD, "USD")}</div>
-            <div className="mt-1 text-xs text-slate-500">Snacky USD + Owner USD. LYD is not included.</div>
-          </div>
-          <div>
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Converted Total</div>
-            <div className="mt-2 text-2xl font-semibold text-slate-900">{convertedTotalLyd === null ? "Not shown" : formatFinanceMoney(convertedTotalLyd, "LYD")}</div>
-            <div className="mt-1 text-xs text-slate-500">{convertedTotalLyd === null ? "Add a USD to LYD exchange rate to show this." : `Using 1 USD = ${exchangeRate} LYD.`}</div>
-          </div>
-        </div>
-      </section>
+      {exchangeRate > 0 ? (
+        <section className="surface-card mb-6">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Exchange rate note</div>
+          <div className="mt-2 text-sm text-slate-700">USD conversion is available at 1 USD = {exchangeRate} LYD, but balances remain separated by account and currency.</div>
+        </section>
+      ) : null}
 
-      <section className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <section className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatCard label={`LYD In ${periodRange.suffix}`} value={formatFinanceMoney(periodMoneyInLyd, "LYD")} note="Active LYD inflows only" tone="positive" />
         <StatCard label={`LYD Out ${periodRange.suffix}`} value={formatFinanceMoney(periodMoneyOutLyd, "LYD")} note="Active LYD outflows only" tone="negative" />
         <StatCard label={`LYD Net ${periodRange.suffix}`} value={formatFinanceMoney(periodNetLyd, "LYD")} note="LYD money in minus LYD money out" tone={periodNetLyd < 0 ? "negative" : "positive"} />
+        <StatCard label={`LYD Profit ${periodRange.suffix}`} value={formatFinanceMoney(periodProfitLyd, "LYD")} note="Income minus real expenses. Owner funding/withdrawal excluded." tone={periodProfitLyd < 0 ? "negative" : "positive"} />
         <StatCard label={`USD In ${periodRange.suffix}`} value={formatFinanceMoney(periodMoneyInUsd, "USD")} note="Active USD inflows only" tone="positive" />
         <StatCard label={`USD Out ${periodRange.suffix}`} value={formatFinanceMoney(periodMoneyOutUsd, "USD")} note="Active USD outflows only" tone="negative" />
         <StatCard label={`USD Net ${periodRange.suffix}`} value={formatFinanceMoney(periodNetUsd, "USD")} note="USD money in minus USD money out" tone={periodNetUsd < 0 ? "negative" : "positive"} />
+        <StatCard label={`USD Profit ${periodRange.suffix}`} value={formatFinanceMoney(periodProfitUsd, "USD")} note="Income minus real expenses. Owner funding/withdrawal excluded." tone={periodProfitUsd < 0 ? "negative" : "positive"} />
       </section>
 
       <section className="surface-card mb-6">
         <div className="flex flex-col gap-1 border-b border-slate-200 pb-4">
           <h2 className="text-base font-semibold text-slate-900">Finance Settings</h2>
-          <p className="text-sm text-slate-500">Opening balance is added once before approved active ledger inflows and outflows. Needs-review, voided, and archived rows are excluded.</p>
+          <p className="text-sm text-slate-500">Opening balance is the reconciled account balance on {cutoffDate}. Only active ledger rows after that date affect running balances.</p>
         </div>
         <form action={updateFinanceSettings} className="mt-4 grid gap-4 md:grid-cols-3 xl:grid-cols-6 md:items-end">
           <FormField label="Snacky LYD opening">
@@ -285,13 +311,16 @@ export default async function FinancePage({
             <input name="opening_balance_owner_usd" type="number" step="0.01" defaultValue={openingBalanceIsSet ? Number(openingBalances.owner_usd ?? 0) : ""} className="field-input" />
           </FormField>
           <FormField label="Opening balance date">
-            <input name="opening_balance_date" type="date" defaultValue={settings?.opening_balance_date ?? ymd(new Date())} className="field-input" />
+            <input name="opening_balance_date" type="date" defaultValue={settings?.opening_balance_date ?? cutoffDate} className="field-input" />
+          </FormField>
+          <FormField label="Reconciliation cutoff">
+            <input name="reconciliation_cutoff_date" type="date" defaultValue={cutoffDate} className="field-input" />
           </FormField>
           <FormField label="USD to LYD rate">
             <input name="exchange_rate_usd_to_lyd" type="number" step="0.0001" min="0" defaultValue={exchangeRate > 0 ? exchangeRate : ""} className="field-input" />
           </FormField>
           <input type="hidden" name="default_currency" value={currency} />
-          <button className="btn-primary xl:col-start-6">Save settings</button>
+          <button className="btn-primary">Save settings</button>
         </form>
       </section>
 
