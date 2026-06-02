@@ -4,23 +4,25 @@ import { DataTable, EmptyState, PageHeader, PrimaryButton, SecondaryButton, Stat
 import { getCurrentProfile } from "@/lib/auth";
 import { canViewFinancials } from "@/lib/authz";
 import { accountLabel, formatFinanceMoney } from "@/lib/finance-balance";
-import { applyHighConfidenceFinanceSuggestions, confirmFinanceReviewGroup, importHistoricalFinanceTransactions } from "@/lib/finance-actions";
-import { buildFinanceClarificationPrompts, buildFinanceReviewGroups, classifyFinanceRows, FINANCE_SOURCE_FILE, FINANCE_SOURCE_SHEET, readFinanceImportRows } from "@/lib/finance-import";
+import { confirmFinanceImportRow, ignoreFinanceImportRow, importHistoricalFinanceTransactions, importUploadedFinanceTransactions } from "@/lib/finance-actions";
+import { buildFinanceReviewGroups, classifyFinanceRows, readFinanceImportRows } from "@/lib/finance-import";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
 type FinanceImportParams = {
-  tab?: string;
   total?: string;
   imported?: string;
   autoClassified?: string;
   needsReview?: string;
   ignored?: string;
+  confirmed?: string;
   error?: string;
 };
 
 type ImportDisplayRow = {
+  id?: string | null;
+  import_batch_id?: string | null;
   source_file: string;
   source_sheet: string;
   source_row: number;
@@ -50,6 +52,7 @@ type ImportDisplayRow = {
   confidence_score?: number | string | null;
   clarification_question?: string | null;
   financial_transaction_id?: string | null;
+  raw_record?: Record<string, unknown> | null;
 };
 
 function countStatus(rows: ImportDisplayRow[], status: ImportDisplayRow["import_status"]) {
@@ -64,10 +67,24 @@ async function safeSupabaseQuery<T>(query: PromiseLike<{ data: T[] | null; error
   }
 }
 
+async function safeSupabaseSingle<T>(query: PromiseLike<{ data: T | null; error: { message?: string } | null }>) {
+  try {
+    return await query;
+  } catch (error) {
+    return { data: null, error: { message: error instanceof Error ? error.message : "Unable to load latest finance import." } };
+  }
+}
+
 function cell(value: unknown) {
   if (value === null || value === undefined || value === "") return "-";
   if (typeof value === "number") return Number.isFinite(value) ? String(value) : "-";
   return String(value);
+}
+
+function raw(row: ImportDisplayRow, key: string, sourceHeader?: string) {
+  const record = row.raw_record ?? {};
+  const value = record[key] ?? (sourceHeader ? record[sourceHeader] : undefined);
+  return cell(value);
 }
 
 function previewRows(rows: ReturnType<typeof classifyFinanceRows>): ImportDisplayRow[] {
@@ -79,7 +96,7 @@ function previewRows(rows: ReturnType<typeof classifyFinanceRows>): ImportDispla
     transaction_date: row.transactionDate,
     raw_date: row.record.date ?? null,
     amount: row.amount,
-    raw_amount: row.record.signed_amount || row.record.transaction || null,
+    raw_amount: row.record.transaction ?? row.record.signed_amount ?? null,
     direction: row.direction,
     raw_direction: row.record.money_flow ?? null,
     currency: row.currency,
@@ -88,7 +105,7 @@ function previewRows(rows: ReturnType<typeof classifyFinanceRows>): ImportDispla
     source_account_id: row.sourceAccountId,
     destination_account_id: row.destinationAccountId,
     category: row.categoryForTransaction,
-    raw_category: row.record.final_bucket || row.record.bucket_override || row.record.auto_bucket || row.record.transaction_type || null,
+    raw_category: row.record.transaction_type ?? null,
     original_description: row.originalDescription || null,
     review_reason: row.reviewReason,
     review_group_key: row.reviewGroupKey,
@@ -100,6 +117,7 @@ function previewRows(rows: ReturnType<typeof classifyFinanceRows>): ImportDispla
     suggested_destination_account: row.suggestedDestinationAccount,
     confidence_score: row.confidenceScore,
     clarification_question: row.clarificationQuestion,
+    raw_record: row.record,
   }));
 }
 
@@ -113,42 +131,20 @@ function StatCard({ label, value, note }: { label: string; value: string | numbe
   );
 }
 
-function confidence(value: unknown) {
-  const parsed = Number(value ?? 0);
-  return Number.isFinite(parsed) ? Math.round(parsed * 100) : 0;
+function canQuickConfirm(row: ImportDisplayRow) {
+  return Boolean(row.id && row.transaction_date && row.amount !== null && row.direction && row.currency && row.account_id && row.category && row.import_status !== "ignored");
 }
 
-function groupDisplayRows(rows: ImportDisplayRow[]) {
-  const groups = new Map<string, ImportDisplayRow[]>();
-  for (const row of rows.filter((item) => item.import_status === "needs_review")) {
-    const key = row.review_group_key || row.review_reason || "needs_review";
-    groups.set(key, [...(groups.get(key) ?? []), row]);
+function rowSuggestion(row: ImportDisplayRow) {
+  if (row.suggested_source_account && row.suggested_destination_account) {
+    return `${accountLabel(row.suggested_source_account)} -> ${accountLabel(row.suggested_destination_account)}`;
   }
+  return accountLabel(row.suggested_account ?? row.account_id);
+}
 
-  return Array.from(groups.entries())
-    .map(([key, groupRows]) => {
-      const first = groupRows[0];
-      const totalAmount = groupRows.reduce((total, row) => total + Math.abs(Number(row.amount ?? row.raw_amount ?? 0)), 0);
-      const exampleDescriptions = Array.from(new Set(groupRows.map((row) => cell(row.original_description) === "-" ? cell(row.raw_category) : cell(row.original_description)))).slice(0, 3);
-      return {
-        key,
-        title: first.clarification_question || `${groupRows.length} transactions need clarification`,
-        count: groupRows.length,
-        totalAmount,
-        currency: first.suggested_currency || first.currency || "LYD",
-        exampleDescriptions,
-        suggestedCategory: first.suggested_category || first.category,
-        suggestedAccount: first.suggested_account || first.account_id,
-        suggestedMachine: first.suggested_machine,
-        suggestedSourceAccount: first.suggested_source_account,
-        suggestedDestinationAccount: first.suggested_destination_account,
-        confidenceScore: confidence(first.confidence_score),
-        question: first.clarification_question || "What should Snacky OS do with this group?",
-        reason: first.review_reason || "Needs review",
-        canConfirm: groupRows.every((row) => row.transaction_date && row.direction && row.amount !== null && (row.suggested_category || row.category) && (row.suggested_account || row.account_id)),
-      };
-    })
-    .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+function rowAmount(row: ImportDisplayRow) {
+  const value = Number(row.amount ?? row.raw_amount ?? 0);
+  return Number.isFinite(value) ? formatFinanceMoney(Math.abs(value), row.currency ?? row.suggested_currency ?? "LYD") : cell(row.raw_amount);
 }
 
 export default async function FinanceImportPage({ searchParams }: { searchParams: Promise<FinanceImportParams> }) {
@@ -156,169 +152,177 @@ export default async function FinanceImportPage({ searchParams }: { searchParams
   if (!profile || !canViewFinancials({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) redirect("/unauthorized");
 
   const params = await searchParams;
-  const activeTab = params.tab === "needs_review" ? "needs_review" : "summary";
   const supabase = getSupabaseServerClient();
   const sourceRows = await readFinanceImportRows().catch(() => []);
-  const [stagedResult, existingResult] = supabase
+  const [latestBatchResult, existingResult] = supabase
     ? await Promise.all([
-        safeSupabaseQuery<ImportDisplayRow>(
+        safeSupabaseSingle<any>(
           supabase
-            .from("finance_import_rows")
-            .select("source_file, source_sheet, source_row, import_status, transaction_date, raw_date, amount, raw_amount, direction, raw_direction, currency, account_id, transaction_effect, source_account_id, destination_account_id, category, raw_category, original_description, review_reason, review_group_key, suggested_category, suggested_account, suggested_currency, suggested_machine, suggested_source_account, suggested_destination_account, confidence_score, clarification_question, financial_transaction_id")
-            .eq("source_file", FINANCE_SOURCE_FILE)
-            .eq("source_sheet", FINANCE_SOURCE_SHEET)
-            .order("source_row", { ascending: true }),
+            .from("finance_import_batches")
+            .select("id, source_file, source_sheet, row_count, imported_count, auto_classified_count, confirmed_count, needs_review_count, ignored_count, imported_at")
+            .order("imported_at", { ascending: false })
+            .limit(1)
+            .maybeSingle(),
         ),
         safeSupabaseQuery<any>(
           supabase
             .from("financial_transactions")
-            .select("id, source_file, source_sheet, source_row, transaction_date, amount, signed_amount, currency, account_id, source_account_id, destination_account_id, transaction_effect, description, original_description")
-            .limit(20000),
+            .select("id, source_file, source_sheet, source_row, transaction_date, amount, signed_amount, currency, account_id, source_account_id, destination_account_id, transaction_effect, description, original_description, final_bucket")
+            .limit(50000),
         ),
       ])
-    : [{ data: [], error: null }, { data: [], error: null }];
+    : [{ data: null, error: null }, { data: [], error: null }];
+
+  const latestBatch = latestBatchResult.data;
+  const stagedResult = supabase && latestBatch?.id
+    ? await safeSupabaseQuery<ImportDisplayRow>(
+        supabase
+          .from("finance_import_rows")
+          .select("id, import_batch_id, source_file, source_sheet, source_row, import_status, transaction_date, raw_date, amount, raw_amount, direction, raw_direction, currency, account_id, transaction_effect, source_account_id, destination_account_id, category, raw_category, original_description, review_reason, review_group_key, suggested_category, suggested_account, suggested_currency, suggested_machine, suggested_source_account, suggested_destination_account, confidence_score, clarification_question, financial_transaction_id, raw_record")
+          .eq("import_batch_id", latestBatch.id)
+          .order("source_row", { ascending: true })
+          .limit(5000),
+      )
+    : { data: [], error: null };
 
   const stagedRows = !stagedResult.error && stagedResult.data?.length ? (stagedResult.data as ImportDisplayRow[]) : [];
   const previewClassified = stagedRows.length ? [] : classifyFinanceRows(sourceRows, ((existingResult.data ?? []) as any[]));
   const preview = stagedRows.length ? [] : previewRows(previewClassified);
   const rows = stagedRows.length ? stagedRows : preview;
-  const attentionRows = rows.filter((row) => !["imported", "auto_classified", "confirmed"].includes(row.import_status));
-  const importedCount = countStatus(rows, "imported") + countStatus(rows, "auto_classified") + countStatus(rows, "confirmed");
-  const autoClassifiedCount = countStatus(rows, "auto_classified");
+  const reviewGroups = buildFinanceReviewGroups(previewClassified);
+  const totalRows = rows.length || sourceRows.length;
+  const importedCount = countStatus(rows, "imported") + countStatus(rows, "auto_classified");
+  const confirmedCount = countStatus(rows, "confirmed");
   const needsReviewCount = countStatus(rows, "needs_review");
   const ignoredCount = countStatus(rows, "ignored") + countStatus(rows, "skipped");
-  const totalRows = rows.length || sourceRows.length;
-  const stagedReviewGroups = groupDisplayRows(rows);
-  const previewReviewGroups = buildFinanceReviewGroups(previewClassified);
-  const reviewGroups = stagedRows.length ? stagedReviewGroups : previewReviewGroups;
-  const clarificationPrompts = stagedRows.length
-    ? stagedReviewGroups.slice(0, 10).map((group) => group.question)
-    : buildFinanceClarificationPrompts(previewReviewGroups);
-  const loadWarning = stagedResult.error?.message || existingResult.error?.message || null;
+  const loadWarning = latestBatchResult.error?.message || stagedResult.error?.message || existingResult.error?.message || null;
+  const sourceLabel = stagedRows[0]?.source_file ?? sourceRows[0]?.sourceFile ?? latestBatch?.source_file ?? "No CSV loaded";
 
   return (
     <>
       <PageHeader
-        title="Finance Import"
-        subtitle="Import clear spreadsheet rows automatically and stage only unclear rows for review."
+        title="Finance Import Review"
+        subtitle="Import the Snacky Transactions CSV exactly, keep every transaction row visible, and confirm or fix rows one at a time."
         action={<SecondaryButton href="/finance">Back to finance</SecondaryButton>}
       />
       {params.error ? <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{params.error}</div> : null}
+      {params.confirmed ? <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">Confirmed source row {params.confirmed}.</div> : null}
+      {params.ignored ? <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Ignored source row {params.ignored}.</div> : null}
       {loadWarning ? (
         <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-          Finance import history could not be loaded, so this page is showing a fresh preview from the source file. {loadWarning}
+          Finance import history could not be fully loaded. {loadWarning}
         </div>
       ) : null}
       {params.imported !== undefined ? (
         <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
-          Checked {params.total ?? totalRows} rows. Imported {params.imported} valid rows, auto-classified {params.autoClassified ?? 0}, staged {params.needsReview ?? 0} for review, ignored {params.ignored ?? 0}.
+          Checked {params.total ?? totalRows} rows. Imported {params.imported} clear rows and staged {params.needsReview ?? 0} for row-by-row review.
         </div>
       ) : null}
 
       <section className="surface-card mb-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">Import valid spreadsheet rows automatically</h2>
-            <p className="mt-2 max-w-3xl text-sm text-slate-500">
-              Source: {FINANCE_SOURCE_FILE}. Rows with valid account, currency, amount, and category are imported. Ambiguous rows are grouped into a few clarification questions.
+            <h2 className="text-lg font-semibold text-slate-900">Upload or restage transactions</h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
+              Source: {sourceLabel}. The parser starts at the row with Date, Name, Transaction Amount, Currency, Money Flow, Transaction Type, Location, and Transaction Description.
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
-            <form action={applyHighConfidenceFinanceSuggestions}>
-              <SecondaryButton type="submit">Apply High-Confidence Suggestions</SecondaryButton>
+            <form action={importUploadedFinanceTransactions} className="flex flex-col gap-2 sm:flex-row">
+              <input name="file" type="file" accept=".csv,text/csv" className="field-input sm:w-80" />
+              <PrimaryButton>Import CSV</PrimaryButton>
             </form>
             <form action={importHistoricalFinanceTransactions}>
-              <PrimaryButton>Import Valid Rows</PrimaryButton>
+              <SecondaryButton type="submit">Restage bundled CSV</SecondaryButton>
             </form>
           </div>
         </div>
       </section>
 
       <section className="mb-6 grid gap-4 md:grid-cols-5">
-        <StatCard label="Total Rows" value={totalRows} note={stagedRows.length ? "Last import result" : "Preview before import"} />
-        <StatCard label="Imported / Confirmed" value={importedCount} />
-        <StatCard label="Auto-Classified" value={autoClassifiedCount} note="High-confidence suggestions" />
+        <StatCard label="Transaction Rows" value={totalRows} note={stagedRows.length ? "Latest staged import" : "Preview before staging"} />
+        <StatCard label="Imported" value={importedCount} note="Clear rows inserted" />
+        <StatCard label="Confirmed" value={confirmedCount} note="Reviewed row by row" />
         <StatCard label="Needs Review" value={needsReviewCount} />
-        <StatCard label="Ignored" value={ignoredCount} note="Duplicates or mirrored transfer rows" />
+        <StatCard label="Ignored" value={ignoredCount} note="Manual only" />
       </section>
 
-      {clarificationPrompts.length ? (
+      {!stagedRows.length && reviewGroups.length ? (
         <section className="surface-card mb-6">
-          <h2 className="text-lg font-semibold text-slate-900">Clarification Needed</h2>
-          <div className="mt-3 grid gap-3">
-            {clarificationPrompts.map((prompt, index) => (
-              <div key={`${prompt}-${index}`} className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">{prompt}</div>
+          <h2 className="text-lg font-semibold text-slate-900">Preview Review Reasons</h2>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            {reviewGroups.slice(0, 6).map((group) => (
+              <div key={group.key} className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                <div className="font-medium">{group.title}</div>
+                <div className="mt-1 text-xs">{group.reason}</div>
+              </div>
             ))}
           </div>
         </section>
       ) : null}
 
-      <div className="mb-5 flex flex-wrap gap-2">
-        <Link href="/finance/import" className={activeTab === "summary" ? "btn-primary" : "btn-secondary"}>Summary</Link>
-        <Link href="/finance/import?tab=needs_review" className={activeTab === "needs_review" ? "btn-primary" : "btn-secondary"}>Needs Review</Link>
-      </div>
-
-      {activeTab === "needs_review" ? (
-        !reviewGroups.length ? (
-          <EmptyState title="No rows need review" body="The current import has no unclear rows. Clear rows can be imported automatically." />
-        ) : (
-          <DataTable headers={["Group", "Examples", "Total", "Suggestion", "Confidence", "Question", "Action"]}>
-            {reviewGroups.map((group) => (
-              <tr key={group.key}>
-                <td>
-                  <div className="font-medium text-slate-900">{group.title}</div>
-                  <div className="mt-1 text-xs text-slate-500">{group.count} rows</div>
-                </td>
-                <td className="max-w-md">{group.exampleDescriptions.join(" / ")}</td>
-                <td>{formatFinanceMoney(group.totalAmount, group.currency)}</td>
-                <td className="max-w-sm">
-                  <div>{group.suggestedCategory ?? "-"}</div>
-                  <div className="text-xs text-slate-500">
-                    {group.suggestedSourceAccount && group.suggestedDestinationAccount
-                      ? `${accountLabel(group.suggestedSourceAccount)} -> ${accountLabel(group.suggestedDestinationAccount)}`
-                      : accountLabel(group.suggestedAccount)}
-                  </div>
-                  {group.suggestedMachine ? <div className="text-xs text-slate-500">Machine: {group.suggestedMachine}</div> : null}
-                </td>
-                <td><StatusBadge status={`${Math.round(group.confidenceScore <= 1 ? group.confidenceScore * 100 : group.confidenceScore)}%`} /></td>
-                <td className="max-w-md">{group.question}</td>
-                <td>
-                  {group.canConfirm ? (
-                    <form action={confirmFinanceReviewGroup}>
-                      <input type="hidden" name="review_group_key" value={group.key} />
-                      <button className="btn-secondary">Confirm group</button>
-                    </form>
-                  ) : (
-                    <span className="text-sm text-slate-500">Needs answer</span>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </DataTable>
-        )
-      ) : !rows.length ? (
-        <EmptyState title="No finance import rows found" body="The source file could not be read or has no rows." />
-      ) : !attentionRows.length ? (
-        <EmptyState title="No row-by-row review needed" body={`${importedCount} clear rows are ready to import automatically. Nothing needs manual review.`} />
+      {!rows.length ? (
+        <EmptyState title="No finance import rows found" body="Upload the Snacky Transactions CSV or add it to docs/current-data before importing." />
       ) : (
         <section>
           <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <h2 className="text-lg font-semibold text-slate-900">Rows needing attention</h2>
-              <p className="mt-1 text-sm text-slate-500">Clear rows are not shown here because they do not need review.</p>
+              <h2 className="text-lg font-semibold text-slate-900">Source rows</h2>
+              <p className="mt-1 text-sm text-slate-500">Every transaction row is listed with its original CSV values and suggested Snacky OS classification.</p>
             </div>
-            {reviewGroups.length ? <SecondaryButton href="/finance/import?tab=needs_review">Review unclear rows</SecondaryButton> : null}
+            {stagedRows.length ? <SecondaryButton href="/finance/transactions">View transactions</SecondaryButton> : null}
           </div>
-          <DataTable headers={["Source row", "Status", "Reason", "Date", "Direction", "Category", "Description"]}>
-            {attentionRows.slice(0, 20).map((row) => (
+          <DataTable headers={["Row", "Original CSV", "Suggested", "Status", "Actions"]}>
+            {rows.map((row) => (
               <tr key={`${row.source_file}-${row.source_sheet}-${row.source_row}`}>
-                <td>{cell(row.source_sheet)}:{cell(row.source_row)}</td>
-                <td><StatusBadge status={row.import_status} /></td>
-                <td className="max-w-xs text-xs text-slate-500">{cell(row.review_reason ?? (row.import_status === "ignored" || row.import_status === "skipped" ? "Duplicate or ignored by import safeguards" : "-"))}</td>
-                <td>{cell(row.transaction_date ?? row.raw_date)}</td>
-                <td>{cell(row.direction?.replace("_", " ") ?? row.raw_direction)}</td>
-                <td>{cell(row.category ?? row.raw_category)}</td>
-                <td className="max-w-md">{cell(row.original_description)}</td>
+                <td>
+                  <div className="font-medium text-slate-900">#{row.source_row}</div>
+                  <div className="mt-1 text-xs text-slate-500">{row.source_sheet}</div>
+                </td>
+                <td className="min-w-[26rem]">
+                  <div className="grid gap-2 text-sm md:grid-cols-2">
+                    <div><span className="text-xs font-semibold uppercase text-slate-500">Date</span><div>{cell(row.transaction_date ?? row.raw_date ?? raw(row, "date", "Date"))}</div></div>
+                    <div><span className="text-xs font-semibold uppercase text-slate-500">Name</span><div>{raw(row, "name", "Name")}</div></div>
+                    <div><span className="text-xs font-semibold uppercase text-slate-500">Amount</span><div>{rowAmount(row)}</div></div>
+                    <div><span className="text-xs font-semibold uppercase text-slate-500">Currency</span><div>{cell(row.currency ?? raw(row, "currency", "Currency"))}</div></div>
+                    <div><span className="text-xs font-semibold uppercase text-slate-500">Money Flow</span><div>{cell(row.raw_direction ?? row.direction)}</div></div>
+                    <div><span className="text-xs font-semibold uppercase text-slate-500">Type</span><div>{cell(row.raw_category ?? row.category)}</div></div>
+                    <div><span className="text-xs font-semibold uppercase text-slate-500">Location</span><div>{raw(row, "location", "Location")}</div></div>
+                    <div><span className="text-xs font-semibold uppercase text-slate-500">Description</span><div>{cell(row.original_description ?? raw(row, "transaction_description", "Transaction Description"))}</div></div>
+                  </div>
+                </td>
+                <td className="max-w-xs">
+                  <div className="font-medium text-slate-900">{cell(row.suggested_category ?? row.category)}</div>
+                  <div className="mt-1 text-xs text-slate-500">{rowSuggestion(row)}</div>
+                  {row.suggested_machine ? <div className="mt-1 text-xs text-slate-500">Location: {row.suggested_machine}</div> : null}
+                  {row.transaction_date && row.transaction_date <= "2026-05-15" ? <div className="mt-1 text-xs text-slate-500">Historical: does not double-count current balance</div> : null}
+                </td>
+                <td>
+                  <StatusBadge status={row.import_status} />
+                  {row.review_reason ? <div className="mt-2 max-w-xs text-xs leading-5 text-amber-700">{row.review_reason}</div> : null}
+                </td>
+                <td>
+                  {row.id ? (
+                    <div className="flex flex-col gap-2">
+                      {row.financial_transaction_id ? <Link href={`/finance/transactions/${row.financial_transaction_id}`} className="btn-secondary">View</Link> : null}
+                      {canQuickConfirm(row) && !row.financial_transaction_id ? (
+                        <form action={confirmFinanceImportRow}>
+                          <input type="hidden" name="row_id" value={row.id} />
+                          <button className="btn-primary">Confirm</button>
+                        </form>
+                      ) : null}
+                      {row.import_status !== "ignored" ? <Link href={`/finance/import/review/${row.id}`} className="btn-secondary">Edit and confirm</Link> : null}
+                      {row.import_status !== "confirmed" && row.import_status !== "imported" && row.import_status !== "auto_classified" ? (
+                        <form action={ignoreFinanceImportRow}>
+                          <input type="hidden" name="row_id" value={row.id} />
+                          <button className="btn-secondary">Ignore</button>
+                        </form>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <span className="text-sm text-slate-500">Import CSV to stage actions</span>
+                  )}
+                </td>
               </tr>
             ))}
           </DataTable>

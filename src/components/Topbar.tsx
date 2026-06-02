@@ -38,6 +38,8 @@ const titleKeys: Record<string, keyof ReturnType<typeof useI18n>["dictionary"]["
   "/vms-import": "vmsImport",
   "/vms-mappings": "productMapping",
   "/finance": "financeOverview",
+  "/finance/import": "financeImport",
+  "/finance/import/review": "financeImport",
   "/finance/transactions": "financeTransactions",
   "/finance/cleanup": "financeCleanup",
   "/finance/reports": "financeReports",

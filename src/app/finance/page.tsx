@@ -335,9 +335,9 @@ export default async function FinancePage({
           <div className="flex flex-col gap-2 border-b border-slate-200 pb-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-base font-semibold text-slate-900">Import Review Summary</h2>
-              <p className="mt-1 text-sm text-slate-500">Grouped questions so finance can resolve patterns, not individual rows.</p>
+              <p className="mt-1 text-sm text-slate-500">Rows waiting for one-by-one confirmation or classification.</p>
             </div>
-            <SecondaryButton href="/finance/import?tab=needs_review">Open review groups</SecondaryButton>
+            <SecondaryButton href="/finance/import/review">Open row review</SecondaryButton>
           </div>
           <div className="mt-4 grid gap-3">
             {buildFinanceClarificationPrompts(reviewGroups).slice(0, 4).map((prompt, index) => (

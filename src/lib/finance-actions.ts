@@ -16,7 +16,10 @@ import {
   FINANCE_SOURCE_FILE,
   FINANCE_SOURCE_SHEET,
   forceConfirmClassifiedRow,
+  importModeForDate,
+  parseFinanceCsvText,
   readFinanceImportRows,
+  type ParsedFinanceRow,
 } from "@/lib/finance-import";
 import { resolvePurchaseFinanceTransactionDate } from "@/lib/purchase-finance-date";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -180,12 +183,14 @@ async function createFinanceImportBatch(
   profile: Awaited<ReturnType<typeof getCurrentProfile>>,
   mode: string,
   rowCount: number,
+  sourceFile = FINANCE_SOURCE_FILE,
+  sourceSheet = FINANCE_SOURCE_SHEET,
 ) {
   const { data, error } = await supabase
     .from("finance_import_batches")
     .insert({
-      source_file: FINANCE_SOURCE_FILE,
-      source_sheet: FINANCE_SOURCE_SHEET,
+      source_file: sourceFile,
+      source_sheet: sourceSheet,
       imported_by: profile?.team_member_id ?? null,
       mode,
       row_count: rowCount,
@@ -197,16 +202,26 @@ async function createFinanceImportBatch(
   return data.id as string;
 }
 
-async function runHistoricalFinanceImport(mode: "import" | "apply_high_confidence" | "confirm_group", groupKey?: string) {
+function financeSourceKey(row: { source_file?: string | null; source_sheet?: string | null; source_row?: number | null }) {
+  return `${row.source_file ?? ""}|${row.source_sheet ?? ""}|${Number(row.source_row ?? 0)}`;
+}
+
+function parsedFinanceSourceKey(row: ParsedFinanceRow) {
+  return `${row.sourceFile}|${row.sourceSheet}|${row.sourceRow}`;
+}
+
+async function runFinanceImportRows(rows: ParsedFinanceRow[], mode: "import" | "apply_high_confidence" | "confirm_group", groupKey?: string) {
   const profile = await getCurrentProfile();
   requireFinance(profile);
   const supabase = getSupabaseServerClient();
   if (!supabase) redirect("/finance/import?error=Supabase%20is%20not%20configured.");
+  if (!rows.length) redirect("/finance/import?error=No%20transaction%20rows%20were%20found%20in%20the%20CSV.");
 
-  const rows = await readFinanceImportRows();
+  const sourceFile = rows[0]?.sourceFile ?? FINANCE_SOURCE_FILE;
+  const sourceSheet = rows[0]?.sourceSheet ?? FINANCE_SOURCE_SHEET;
   let batchId: string | null = null;
   try {
-    batchId = await createFinanceImportBatch(supabase, profile, mode, rows.length);
+    batchId = await createFinanceImportBatch(supabase, profile, mode, rows.length, sourceFile, sourceSheet);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not create finance import batch.";
     redirect(`/finance/import?error=${encodeURIComponent(message)}`);
@@ -215,13 +230,18 @@ async function runHistoricalFinanceImport(mode: "import" | "apply_high_confidenc
   const [{ data: existingRows, error: existingError }, context] = await Promise.all([
     supabase
     .from("financial_transactions")
-      .select("id, source_file, source_sheet, source_row, transaction_date, amount, signed_amount, currency, account_id, source_account_id, destination_account_id, transaction_effect, description, original_description")
+      .select("id, source_file, source_sheet, source_row, transaction_date, amount, signed_amount, currency, account_id, source_account_id, destination_account_id, transaction_effect, description, original_description, final_bucket")
       .limit(50000),
     loadFinanceClassificationContext(supabase),
   ]);
   if (existingError) redirect(`/finance/import?error=${encodeURIComponent(existingError.message)}`);
 
   const classifiedRows = classifyFinanceRows(rows, (existingRows ?? []) as any[], context);
+  const existingTransactionBySource = new Map(
+    ((existingRows ?? []) as any[])
+      .filter((row) => row.source_file && row.source_sheet && row.source_row)
+      .map((row) => [financeSourceKey(row), row.id as string]),
+  );
   const rowsForImport = groupKey
     ? classifiedRows.filter((row) => row.reviewGroupKey === groupKey && row.importStatus === "needs_review").map(forceConfirmClassifiedRow)
     : classifiedRows;
@@ -252,7 +272,10 @@ async function runHistoricalFinanceImport(mode: "import" | "apply_high_confidenc
     insertedTransactions.map((row) => [`${row.source_file}|${row.source_sheet}|${row.source_row}`, row.id]),
   );
   const stageSource = groupKey ? classifiedRows.map((row) => rowsForImport.find((confirmed) => confirmed.sourceRow === row.sourceRow) ?? row) : classifiedRows;
-  const stageRows = stageSource.map((row) => buildFinanceImportStageRow(row, insertedBySource.get(`${row.sourceFile}|${row.sourceSheet}|${row.sourceRow}`), batchId));
+  const stageRows = stageSource.map((row) => {
+    const key = parsedFinanceSourceKey(row);
+    return buildFinanceImportStageRow(row, insertedBySource.get(key) ?? existingTransactionBySource.get(key), batchId);
+  });
   if (stageRows.length) {
     const { error } = await supabase.from("finance_import_rows").upsert(stageRows, { onConflict: "source_file,source_sheet,source_row" });
     if (error) {
@@ -285,6 +308,8 @@ async function runHistoricalFinanceImport(mode: "import" | "apply_high_confidenc
     afterData: {
       source_file: FINANCE_SOURCE_FILE,
       source_sheet: FINANCE_SOURCE_SHEET,
+      actual_source_file: sourceFile,
+      actual_source_sheet: sourceSheet,
       total_rows: rows.length,
       imported_rows: importedRows,
       auto_classified_rows: autoClassifiedRows,
@@ -298,11 +323,28 @@ async function runHistoricalFinanceImport(mode: "import" | "apply_high_confidenc
 
   revalidatePath("/finance");
   revalidatePath("/finance/import");
+  revalidatePath("/finance/import/review");
   revalidatePath("/finance/transactions");
   redirect(`/finance/import?total=${rows.length}&imported=${importedRows + autoClassifiedRows + confirmedRows}&autoClassified=${autoClassifiedRows}&needsReview=${reviewRows}&ignored=${ignoredRows}`);
 }
 
+async function runHistoricalFinanceImport(mode: "import" | "apply_high_confidence" | "confirm_group", groupKey?: string) {
+  await runFinanceImportRows(await readFinanceImportRows(), mode, groupKey);
+}
+
 export async function importHistoricalFinanceTransactions() {
+  await runHistoricalFinanceImport("import");
+}
+
+export async function importUploadedFinanceTransactions(formData: FormData) {
+  const file = formData.get("file");
+  if (file && typeof file === "object" && "text" in file && "name" in file) {
+    const upload = file as File;
+    if (upload.size > 0) {
+      const parsed = parseFinanceCsvText(await upload.text(), { sourceFile: upload.name || "Snacky - Financial Spreadsheet - Transactions.csv" });
+      await runFinanceImportRows(parsed.rows, "import");
+    }
+  }
   await runHistoricalFinanceImport("import");
 }
 
@@ -314,6 +356,217 @@ export async function confirmFinanceReviewGroup(formData: FormData) {
   const groupKey = String(formData.get("review_group_key") || "").trim();
   if (!groupKey) redirect("/finance/import?error=Review%20group%20is%20required.");
   await runHistoricalFinanceImport("confirm_group", groupKey);
+}
+
+function importRowRawText(row: any, normalizedKey: string, sourceHeader?: string) {
+  const raw = row?.raw_record && typeof row.raw_record === "object" ? row.raw_record : {};
+  return optionalText(raw[normalizedKey]) ?? optionalText(sourceHeader ? raw[sourceHeader] : null);
+}
+
+function importRowReturnPath(row: any) {
+  const suffix = row?.source_row ? `?row=${encodeURIComponent(String(row.source_row))}` : "";
+  return `/finance/import/review${suffix}`;
+}
+
+export async function confirmFinanceImportRow(formData: FormData) {
+  const profile = await getCurrentProfile();
+  requireFinanceEdit(profile);
+  const supabase = getSupabaseServerClient();
+  if (!supabase) redirect("/finance/import/review?error=Supabase%20is%20not%20configured.");
+
+  const rowId = String(formData.get("row_id") || formData.get("id") || "").trim();
+  if (!rowId) redirect("/finance/import/review?error=Import%20row%20is%20required.");
+
+  const { data: row, error: rowError } = await supabase.from("finance_import_rows").select("*").eq("id", rowId).maybeSingle();
+  if (rowError) redirect(`/finance/import/review?error=${encodeURIComponent(rowError.message)}`);
+  if (!row) redirect("/finance/import/review?error=Import%20row%20not%20found.");
+  if (row.import_status === "ignored") redirect(`${importRowReturnPath(row)}&error=Ignored%20rows%20must%20be%20reclassified%20before%20confirming.`);
+
+  const fallback = {
+    transaction_effect: row.transaction_effect,
+    direction: row.direction,
+    currency: row.currency,
+    account_id: row.account_id,
+    source_account_id: row.source_account_id,
+    destination_account_id: row.destination_account_id,
+  };
+  const amount = parseTransactionAmount(formData.get("amount"), row.amount);
+  const transactionDate = String(formData.get("transaction_date") || row.transaction_date || row.raw_date || "").trim();
+  const ledgerFields = resolveManualLedgerFields(formData, fallback);
+  const fallbackCategory = optionalText(row.category) ?? optionalText(row.suggested_category) ?? "Uncategorized";
+  const categoryRecord = await resolveFinanceCategory(supabase, formData, ledgerFields.flowDirection, fallbackCategory);
+  const category = categoryRecord.name;
+  const ledgerError = validateManualLedgerFields(ledgerFields, category);
+  const returnPath = importRowReturnPath(row);
+
+  if (!transactionDate) redirect(`${returnPath}&error=Transaction%20date%20is%20required.`);
+  if (ledgerError) redirect(`${returnPath}&error=${encodeURIComponent(ledgerError)}`);
+  if (!Number.isFinite(amount) || amount < 0) redirect(`${returnPath}&error=Amount%20must%20be%20greater%20than%20or%20equal%20to%200.`);
+  if (!category) redirect(`${returnPath}&error=Category%20is%20required.`);
+
+  const counterparty = counterpartyFields(formData, ledgerFields);
+  const location = optionalText(formData.get("location")) ?? optionalText(row.suggested_machine) ?? importRowRawText(row, "location", "Location");
+  const description = optionalText(formData.get("description")) ?? optionalText(row.original_description) ?? importRowRawText(row, "transaction_description", "Transaction Description");
+  const rawName = importRowRawText(row, "name", "Name");
+  const payload = {
+    transaction_date: transactionDate,
+    direction: ledgerFields.direction,
+    transaction_kind: "spreadsheet_import",
+    transaction_type: category,
+    location,
+    description,
+    original_description: description,
+    notes: optionalText(formData.get("notes")) ?? description,
+    amount,
+    signed_amount: ledgerFields.direction === "money_out" ? -Math.abs(amount) : Math.abs(amount),
+    currency: ledgerFields.currency,
+    account_id: ledgerFields.accountId,
+    transaction_effect: ledgerFields.transactionEffect,
+    source_account_id: ledgerFields.sourceAccountId,
+    destination_account_id: ledgerFields.destinationAccountId,
+    finance_category_id: categoryRecord.id,
+    payer_text: counterparty.payerText,
+    payee_text: counterparty.payeeText,
+    counterparty_text: counterparty.counterpartyText,
+    bucket: optionalText(row.raw_category),
+    final_bucket: category,
+    review_status: "confirmed",
+    needs_review: false,
+    transaction_status: "active",
+    import_status: "confirmed",
+    import_batch_id: row.import_batch_id ?? null,
+    source_file: row.source_file,
+    source_sheet: row.source_sheet,
+    source_row: row.source_row,
+    review_reason: null,
+    suggested_category: category,
+    suggested_account: ledgerFields.accountId,
+    suggested_machine: row.suggested_machine ?? null,
+    confidence_score: 1,
+    related_machine_id: row.suggested_machine_id ?? null,
+    created_by: profile?.team_member_id ?? null,
+    original_csv_row: row.raw_record ?? {},
+    metadata: {
+      source_format: row.raw_record?.__source_format ?? null,
+      import_mode: importModeForDate(transactionDate),
+      opening_balance_cutoff_date: row.raw_record?.opening_balance_cutoff_date ?? null,
+      original_name: rawName,
+      confirmed_from_import_row_id: row.id,
+    },
+  };
+
+  let transactionId = row.financial_transaction_id as string | null;
+  if (!transactionId) {
+    const { data: existing } = await supabase
+      .from("financial_transactions")
+      .select("id")
+      .eq("source_file", row.source_file)
+      .eq("source_sheet", row.source_sheet)
+      .eq("source_row", row.source_row)
+      .maybeSingle();
+    transactionId = existing?.id ?? null;
+  }
+
+  let savedTransaction: any;
+  if (transactionId) {
+    const { data, error } = await supabase.from("financial_transactions").update({ ...payload, updated_at: new Date().toISOString() }).eq("id", transactionId).select("*").single();
+    if (error) redirect(`${returnPath}&error=${encodeURIComponent(error.message)}`);
+    savedTransaction = data;
+  } else {
+    const { data, error } = await supabase.from("financial_transactions").insert(payload).select("*").single();
+    if (error) redirect(`${returnPath}&error=${encodeURIComponent(error.message)}`);
+    savedTransaction = data;
+    transactionId = data.id;
+  }
+
+  const { error: stageError } = await supabase
+    .from("finance_import_rows")
+    .update({
+      import_status: "confirmed",
+      financial_transaction_id: transactionId,
+      transaction_date: transactionDate,
+      amount,
+      signed_amount: ledgerFields.direction === "money_out" ? -Math.abs(amount) : Math.abs(amount),
+      direction: ledgerFields.direction,
+      currency: ledgerFields.currency,
+      account_id: ledgerFields.accountId,
+      transaction_effect: ledgerFields.transactionEffect,
+      source_account_id: ledgerFields.sourceAccountId,
+      destination_account_id: ledgerFields.destinationAccountId,
+      category,
+      original_description: description,
+      review_reason: null,
+      review_group_key: null,
+      suggested_category: category,
+      suggested_account: ledgerFields.accountId,
+      suggested_currency: ledgerFields.currency,
+      suggested_source_account: ledgerFields.sourceAccountId,
+      suggested_destination_account: ledgerFields.destinationAccountId,
+      confidence_score: 1,
+      clarification_question: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", row.id);
+  if (stageError) redirect(`${returnPath}&error=${encodeURIComponent(stageError.message)}`);
+
+  await logActivity({
+    profile,
+    action: "update",
+    entityType: "finance_import_row",
+    entityId: row.id,
+    entityLabel: `Finance import row ${row.source_row}`,
+    beforeData: row,
+    afterData: savedTransaction,
+    summary: `Confirmed finance import row ${row.source_row}`,
+  });
+
+  revalidatePath("/finance");
+  revalidatePath("/finance/import");
+  revalidatePath("/finance/import/review");
+  revalidatePath("/finance/transactions");
+  redirect(`/finance/import/review?confirmed=${encodeURIComponent(String(row.source_row))}`);
+}
+
+export async function ignoreFinanceImportRow(formData: FormData) {
+  const profile = await getCurrentProfile();
+  requireFinanceEdit(profile);
+  const supabase = getSupabaseServerClient();
+  if (!supabase) redirect("/finance/import/review?error=Supabase%20is%20not%20configured.");
+
+  const rowId = String(formData.get("row_id") || formData.get("id") || "").trim();
+  if (!rowId) redirect("/finance/import/review?error=Import%20row%20is%20required.");
+
+  const { data: row, error: rowError } = await supabase.from("finance_import_rows").select("*").eq("id", rowId).maybeSingle();
+  if (rowError) redirect(`/finance/import/review?error=${encodeURIComponent(rowError.message)}`);
+  if (!row) redirect("/finance/import/review?error=Import%20row%20not%20found.");
+
+  const reason = optionalText(formData.get("ignore_reason")) ?? "Manually ignored during row-by-row finance import review.";
+  const { data: after, error } = await supabase
+    .from("finance_import_rows")
+    .update({
+      import_status: "ignored",
+      review_reason: reason,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", row.id)
+    .select("*")
+    .single();
+  if (error) redirect(`/finance/import/review?error=${encodeURIComponent(error.message)}`);
+
+  await logActivity({
+    profile,
+    action: "update",
+    entityType: "finance_import_row",
+    entityId: row.id,
+    entityLabel: `Finance import row ${row.source_row}`,
+    beforeData: row,
+    afterData: after,
+    summary: `Ignored finance import row ${row.source_row}`,
+  });
+
+  revalidatePath("/finance/import");
+  revalidatePath("/finance/import/review");
+  redirect(`/finance/import/review?ignored=${encodeURIComponent(String(row.source_row))}`);
 }
 
 export async function updateFinanceSettings(formData: FormData) {

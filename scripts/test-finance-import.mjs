@@ -8,7 +8,7 @@ import {
   RECONCILED_OPENING_BALANCES,
   sumFinanceProfitRows,
 } from "../src/lib/finance-balance.ts";
-import { classifyFinanceRows, KHALIJ_UNIVERSITY_ARABIC_NAME, buildFinanceReviewGroups } from "../src/lib/finance-import.ts";
+import { classifyFinanceRows, KHALIJ_UNIVERSITY_ARABIC_NAME, buildFinanceReviewGroups, parseFinanceCsvText } from "../src/lib/finance-import.ts";
 
 function row(sourceRow, record) {
   return {
@@ -88,7 +88,56 @@ test("KhalijUniversity resolves to the correct Arabic machine name", () => {
   assert.equal(classified.resolvedLocationName, KHALIJ_UNIVERSITY_ARABIC_NAME);
 });
 
-test("duplicate rows are ignored by date amount description currency and account", () => {
+test("Snacky Transactions CSV header is detected after summary rows", () => {
+  const csv = [
+    "Summary,,,,,,,",
+    "Anas LYD,-24360.50,,,,,,",
+    "Snacky LYD,8914.00,,,,,,",
+    "Date,Name,Transaction Amount,Currency,Money Flow,Transaction Type,Location,Transaction Description",
+    "15/05/2026,Snacky,100,LYD,Money In,Revenue,KhalijUniversity,Machine cash",
+    "16/05/2026,Anas,50,$,Money Out,Owner Withdrawal,,Owner took cash",
+  ].join("\n");
+
+  const parsed = parseFinanceCsvText(csv, { sourceFile: "Snacky - Financial Spreadsheet - Transactions.csv" });
+
+  assert.equal(parsed.headerRow, 4);
+  assert.equal(parsed.detectedFormat, "snacky_transactions");
+  assert.equal(parsed.rows.length, 2);
+  assert.equal(parsed.rows[0].sourceRow, 5);
+  assert.equal(parsed.rows[0].record.date, "15/05/2026");
+  assert.equal(parsed.rows[0].record.name, "Snacky");
+  assert.equal(parsed.rows[0].record.transaction, "100");
+});
+
+test("blank Transaction Type rows are kept as Uncategorized needs-review rows", () => {
+  const parsed = parseFinanceCsvText([
+    "Date,Name,Transaction Amount,Currency,Money Flow,Transaction Type,Location,Transaction Description",
+    "16/05/2026,Snacky,75,LYD,Money Out,,KhalijUniversity,Unclear spend",
+  ].join("\n"), { sourceFile: "Snacky - Financial Spreadsheet - Transactions.csv" });
+  const [classified] = classifyFinanceRows(parsed.rows, []);
+
+  assert.equal(classified.importStatus, "needs_review");
+  assert.equal(classified.categoryForTransaction, "Uncategorized");
+  assert.ok(classified.reasons.includes("blank Transaction Type"));
+});
+
+test("Name and Currency map to the correct account", () => {
+  const parsed = parseFinanceCsvText([
+    "Date,Name,Transaction Amount,Currency,Money Flow,Transaction Type,Location,Transaction Description",
+    "16/05/2026,Snacky,75,LYD,Money In,Revenue,,Cash",
+    "16/05/2026,Snacky,10,$,Money In,Revenue,,Cash",
+    "16/05/2026,Anas,40,LYD,Money Out,Miscellaneous,,Cash",
+    "16/05/2026,Anas,5,$,Money Out,Miscellaneous,,Cash",
+  ].join("\n"), { sourceFile: "Snacky - Financial Spreadsheet - Transactions.csv" });
+  const classified = classifyFinanceRows(parsed.rows, []);
+
+  assert.equal(classified[0].accountId, "snacky_lyd");
+  assert.equal(classified[1].accountId, "snacky_usd");
+  assert.equal(classified[2].accountId, "owner_lyd");
+  assert.equal(classified[3].accountId, "owner_usd");
+});
+
+test("duplicate rows are shown for review instead of ignored", () => {
   const rows = [
     row(2, {
       date: "2026-01-01",
@@ -115,8 +164,9 @@ test("duplicate rows are ignored by date amount description currency and account
   ];
 
   const classified = classifyFinanceRows(rows, []);
-  assert.equal(classified[0].importStatus, "auto_classified");
-  assert.equal(classified[1].importStatus, "ignored");
+  assert.equal(classified[0].importStatus, "imported");
+  assert.equal(classified[1].importStatus, "needs_review");
+  assert.ok(classified[1].reasons.includes("duplicate suspected"));
 });
 
 test("ambiguous review rows are grouped into clarification questions", () => {

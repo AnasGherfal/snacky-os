@@ -7,13 +7,13 @@ export type FinanceCategoryOption = {
 };
 
 export const DEFAULT_FINANCE_CATEGORIES: FinanceCategoryOption[] = [
-  { name: "Sales Revenue", type: "income" },
-  { name: "Ad Revenue", type: "income" },
+  { name: "Revenue", type: "income" },
+  { name: "Ads Income", type: "income" },
+  { name: "Product Restocking", type: "expense" },
   { name: "Rent", type: "expense" },
-  { name: "Product Purchase", type: "expense" },
   { name: "Salary / Employee Payment", type: "expense" },
   { name: "Operator Payment", type: "expense" },
-  { name: "Delivery / Transport", type: "expense" },
+  { name: "Commute", type: "expense" },
   { name: "Maintenance", type: "expense" },
   { name: "Machine Purchase", type: "expense" },
   { name: "Shipping", type: "expense" },
@@ -25,6 +25,7 @@ export const DEFAULT_FINANCE_CATEGORIES: FinanceCategoryOption[] = [
   { name: "Owner Withdrawal", type: "transfer" },
   { name: "Bank / Exchange", type: "transfer" },
   { name: "Miscellaneous", type: "both" },
+  { name: "Uncategorized", type: "both" },
   { name: "Other", type: "both" },
 ];
 
