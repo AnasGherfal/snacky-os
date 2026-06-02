@@ -5,6 +5,7 @@ import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
 
 const adminLinks = [
+  { title: "Admin Tools", href: "/admin/tools", description: "Recover stuck routes, reconcile ledgers, manage VMS import state, and refresh dashboards." },
   { title: "Diagnostics", href: "/admin/diagnostics", description: "Pilot-readiness checks for environment, Supabase, imports, and core table counts." },
   { title: "Team", href: "/team", description: "Users, roles, operator accounts, and access status." },
   { title: "Settings", href: "/settings", description: "Business settings and operating configuration." },

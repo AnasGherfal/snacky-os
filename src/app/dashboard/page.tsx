@@ -71,14 +71,21 @@ async function safeDashboardQuery<T>({
   fallback: T;
   errors: DashboardErrors;
 }) {
-  const result = await promise;
-  if (result.error) {
-    const message = errorMessage(result.error);
-    console.error("[dashboard] Supabase query failed", { section: key, query: label, error: result.error });
+  try {
+    const result = await promise;
+    if (result.error) {
+      const message = errorMessage(result.error);
+      console.error("[dashboard] Supabase query failed", { section: key, query: label, error: result.error });
+      errors[key] = message;
+      return { data: fallback, count: 0 };
+    }
+    return { data: (result.data ?? fallback) as T, count: result.count ?? 0 };
+  } catch (error) {
+    const message = errorMessage(error);
+    console.error("[dashboard] Supabase query threw", { section: key, query: label, error });
     errors[key] = message;
     return { data: fallback, count: 0 };
   }
-  return { data: (result.data ?? fallback) as T, count: result.count ?? 0 };
 }
 
 async function loadVmsBatches(supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>) {

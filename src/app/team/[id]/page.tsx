@@ -4,7 +4,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DataTable, EmptyState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import type { AppPermission } from "@/lib/authz";
-import { getEffectivePermissions, isOwnerAdminRole, normalizeRoles } from "@/lib/authz";
+import { appPermissions, getEffectivePermissions, isOwnerAdminRole, normalizeRoles } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { isCompletedRouteStatus } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
@@ -16,15 +16,14 @@ function formatDate(value: string | null | undefined) {
   return value ? new Date(value).toLocaleString("en-US") : "-";
 }
 
-const permissionDebugItems: { permission: AppPermission; label: string }[] = [
-  { permission: "products.view", label: "products.view" },
-  { permission: "inventory.view", label: "inventory.view" },
-  { permission: "storage.adjust", label: "storage.adjust" },
-  { permission: "storage.movement.create", label: "storage.movement.create" },
-  { permission: "refills.create", label: "refills.create" },
-  { permission: "finance.view", label: "finance.view" },
-  { permission: "products.delete", label: "products.delete" },
-  { permission: "system.settings", label: "system.settings" },
+const permissionGroups: { title: string; permissions: AppPermission[] }[] = [
+  { title: "Operations", permissions: appPermissions.filter((permission) => permission.startsWith("routes.") || permission.startsWith("assigned_") || permission.startsWith("refills.") || permission === "operations.manage") },
+  { title: "Inventory", permissions: appPermissions.filter((permission) => permission.startsWith("inventory.") || permission.startsWith("storage.")) },
+  { title: "Purchasing", permissions: appPermissions.filter((permission) => permission.startsWith("purchase") || permission.startsWith("purchases.") || permission.startsWith("suppliers.")) },
+  { title: "Finance", permissions: appPermissions.filter((permission) => permission.startsWith("finance.")) },
+  { title: "VMS", permissions: appPermissions.filter((permission) => permission.startsWith("vms")) },
+  { title: "Admin", permissions: appPermissions.filter((permission) => ["dashboard.view", "reports.view", "team.manage", "activity.view", "system.settings"].includes(permission)) },
+  { title: "Products and Machines", permissions: appPermissions.filter((permission) => permission.startsWith("products.") || permission.startsWith("machines.") || permission.startsWith("issues.")) },
 ];
 
 export default async function TeamMemberActivityPage({
@@ -123,12 +122,19 @@ export default async function TeamMemberActivityPage({
 
       <section className="surface-card mt-6">
         <h2 className="mb-4 text-lg font-semibold text-slate-900">Effective permissions</h2>
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          {permissionDebugItems.map((item) => (
-            <div key={item.permission} className="rounded-lg border border-slate-200 bg-white p-3">
-              <div className="font-mono text-xs text-slate-500">{item.label}</div>
-              <div className={effectivePermissions.has(item.permission) ? "mt-2 text-sm font-semibold text-emerald-700" : "mt-2 text-sm font-semibold text-slate-400"}>
-                {effectivePermissions.has(item.permission) ? "allowed" : "blocked"}
+        <div className="grid gap-4 xl:grid-cols-2">
+          {permissionGroups.map((group) => (
+            <div key={group.title} className="rounded-lg border border-slate-200 bg-white p-3">
+              <h3 className="text-sm font-semibold text-slate-900">{group.title}</h3>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {group.permissions.map((permission) => (
+                  <div key={permission} className="flex items-center justify-between gap-2 rounded-md border border-slate-100 bg-slate-50 px-2 py-2">
+                    <span className="min-w-0 break-words font-mono text-xs text-slate-600">{permission}</span>
+                    <span className={effectivePermissions.has(permission) ? "shrink-0 text-xs font-semibold text-emerald-700" : "shrink-0 text-xs font-semibold text-slate-400"}>
+                      {effectivePermissions.has(permission) ? "allowed" : "blocked"}
+                    </span>
+                  </div>
+                ))}
               </div>
             </div>
           ))}

@@ -1,8 +1,9 @@
-import { BarList, KpiSection } from "@/components/KpiDashboard";
+import { BarList, KpiLoadWarning, KpiSection } from "@/components/KpiDashboard";
 import { DataTable, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
 import { requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
 import { LOW_STORAGE_QTY, formatInteger } from "@/lib/kpi";
+import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export default async function InventoryDashboardPage() {
@@ -10,15 +11,27 @@ export default async function InventoryDashboardPage() {
   const supabase = getSupabaseServerClient();
   const [inventoryResult, productsResult, reservedResult, recommendationsResult] = supabase
     ? await Promise.all([
-        supabase.from("current_inventory_by_location").select("product_id, product_name, location_type, location_name, quantity_on_hand").order("product_name"),
-        supabase.from("products").select("id, sku, name, cost_price, current_cost_price_lyd, active").order("name"),
-        supabase
-          .from("refill_order_lines")
-          .select("product_id, final_qty_to_take, picked_qty, product:products(id, name), refill_order:refill_orders(id, status)")
-          .in("refill_order.status", ["assigned", "picked", "in_progress"]),
-        supabase.from("refill_recommendations").select("product_id, product_name, final_qty_to_take, suggested_qty, available_storage_qty, priority"),
+        safeSupabaseQuery<any>({
+          label: "inventory-dashboard.current_inventory_by_location",
+          promise: supabase.from("current_inventory_by_location").select("product_id, product_name, location_type, location_name, quantity_on_hand").order("product_name"),
+        }),
+        safeSupabaseQuery<any>({
+          label: "inventory-dashboard.products",
+          promise: supabase.from("products").select("id, sku, name, cost_price, current_cost_price_lyd, active").order("name"),
+        }),
+        safeSupabaseQuery<any>({
+          label: "inventory-dashboard.refill_order_lines",
+          promise: supabase
+            .from("refill_order_lines")
+            .select("product_id, final_qty_to_take, picked_qty, product:products(id, name), refill_order:refill_orders(id, status)")
+            .in("refill_order.status", ["assigned", "picked", "in_progress"]),
+        }),
+        safeSupabaseQuery<any>({
+          label: "inventory-dashboard.refill_recommendations",
+          promise: supabase.from("refill_recommendations").select("product_id, product_name, final_qty_to_take, suggested_qty, available_storage_qty, priority"),
+        }),
       ])
-    : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }];
+    : [{ data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }];
 
   const inventory = (inventoryResult.data ?? []) as any[];
   const products = (productsResult.data ?? []) as any[];
@@ -80,16 +93,21 @@ export default async function InventoryDashboardPage() {
 
       {!supabase ? (
         <EmptyState title="Connect Supabase to activate inventory KPIs" body="Add environment variables and restart the app." />
-      ) : !inventory.length ? (
-        <EmptyState title="No inventory movement yet" body="Receive purchases and execute routes to populate ledger-based inventory dashboards." />
       ) : (
         <div className="space-y-6">
+          <KpiLoadWarning message={inventoryResult.error} />
+          <KpiLoadWarning message={productsResult.error} />
+          <KpiLoadWarning message={reservedResult.error} />
+          <KpiLoadWarning message={recommendationsResult.error} />
+
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <KpiSection title="Storage SKUs"><div className="text-3xl font-semibold">{formatInteger(storageSummary.length)}</div></KpiSection>
             <KpiSection title="Low storage products"><div className="text-3xl font-semibold">{formatInteger(lowStorage.length)}</div></KpiSection>
             <KpiSection title="Inventory value"><div className="text-3xl font-semibold">{lyd(totalInventoryValue)}</div></KpiSection>
             <KpiSection title="Operator bags"><div className="text-3xl font-semibold">{formatInteger(productsInOperatorBags)}</div></KpiSection>
           </div>
+
+          {!inventory.length ? <EmptyState title="No inventory movement yet" body="Receive purchases and execute routes to populate ledger-based inventory dashboards." /> : null}
 
           <div className="grid gap-4 xl:grid-cols-2">
             <KpiSection title="Low storage products" subtitle={`Products at or below ${LOW_STORAGE_QTY} units in storage.`}>

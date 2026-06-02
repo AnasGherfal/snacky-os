@@ -18,6 +18,15 @@ export function KpiSection({ title, subtitle, children }: { title: string; subti
   );
 }
 
+export function KpiLoadWarning({ message }: { message?: string | null }) {
+  if (!message) return null;
+  return (
+    <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">
+      This KPI section could not load: {message}
+    </div>
+  );
+}
+
 export function BarList({
   rows,
   valueFormatter = (value) => String(value),

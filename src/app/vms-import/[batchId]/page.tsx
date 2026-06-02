@@ -12,6 +12,7 @@ import {
   vmsSchemaIssueMessage,
   type VmsSupabaseError,
 } from "@/lib/vms-schema-diagnostics";
+import { privateStorageObjectUrl } from "@/lib/storage-buckets";
 
 export const dynamic = "force-dynamic";
 
@@ -337,9 +338,9 @@ export default async function VmsImportBatchDetailPage({
   const { data: importer } = batch.uploaded_by ?? batch.imported_by
     ? await supabase.from("team_members").select("id, full_name").eq("id", batch.uploaded_by ?? batch.imported_by).maybeSingle()
     : { data: null };
-  const { data: signedFile } = batch.storage_bucket && batch.storage_path
-    ? await supabase.storage.from(String(batch.storage_bucket)).createSignedUrl(String(batch.storage_path), 60 * 10)
-    : { data: null };
+  const originalFileUrl = batch.storage_bucket && batch.storage_path
+    ? privateStorageObjectUrl(String(batch.storage_bucket), String(batch.storage_path))
+    : null;
 
   // Diagnostics: check presence of required VMS tables and counts related to this batch
   const tableChecks = await checkRequiredVmsTables(supabase);
@@ -510,9 +511,9 @@ export default async function VmsImportBatchDetailPage({
             {batch.disable_reason || batch.delete_reason}
           </div>
         ) : null}
-        {signedFile?.signedUrl ? (
+        {originalFileUrl ? (
           <div className="mt-4">
-            <Link href={signedFile.signedUrl} className="btn-secondary">Download original file</Link>
+            <Link href={originalFileUrl} className="btn-secondary">Download original file</Link>
           </div>
         ) : null}
       </section>

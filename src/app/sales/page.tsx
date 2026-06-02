@@ -1,8 +1,9 @@
-import { BarList, KpiSection } from "@/components/KpiDashboard";
+import { BarList, KpiLoadWarning, KpiSection } from "@/components/KpiDashboard";
 import { DataTable, EmptyState, PageHeader } from "@/components/ui";
 import { requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
 import { formatInteger, groupSum } from "@/lib/kpi";
+import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
 import { vmsCoverageSummary, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -42,24 +43,33 @@ export default async function SalesDashboardPage() {
   const supabase = getSupabaseServerClient();
   const [salesResult, statusResult, batchResult] = supabase
     ? await Promise.all([
-      supabase
-        .from("vms_sales_clean")
-        .select("id, machine_id, product_id, units_sold, transaction_count, net_sales_amount, gross_sales_amount, cash_sales_amount, card_sales_amount, sale_date, sales_month, period_start, machine_name, location_name, product_name")
-        .order("sale_date", { ascending: false }),
-      supabase
-        .from("vms_transaction_status_daily")
-        .select("failed_vend_count, failed_vend_amount, refund_count, refund_amount, failed_payment_count, needs_review_count"),
-      supabase
-        .from("vms_import_batches")
-        .select("id, file_name, report_type, status, is_active, report_start_date, report_end_date, uploaded_at, imported_at, deleted_at")
-        .eq("report_type", "vms_order_details_weekly")
-        .order("report_start_date", { ascending: true }),
+      safeSupabaseQuery<SalesRow>({
+        label: "sales.vms_sales_clean",
+        promise: supabase
+          .from("vms_sales_clean")
+          .select("id, machine_id, product_id, units_sold, transaction_count, net_sales_amount, gross_sales_amount, cash_sales_amount, card_sales_amount, sale_date, sales_month, period_start, machine_name, location_name, product_name")
+          .order("sale_date", { ascending: false }),
+      }),
+      safeSupabaseQuery<TransactionStatusRow>({
+        label: "sales.vms_transaction_status_daily",
+        promise: supabase
+          .from("vms_transaction_status_daily")
+          .select("failed_vend_count, failed_vend_amount, refund_count, refund_amount, failed_payment_count, needs_review_count"),
+      }),
+      safeSupabaseQuery<VmsDashboardBatch>({
+        label: "sales.vms_import_batches",
+        promise: supabase
+          .from("vms_import_batches")
+          .select("id, file_name, report_type, status, is_active, report_start_date, report_end_date, uploaded_at, imported_at, deleted_at")
+          .eq("report_type", "vms_order_details_weekly")
+          .order("report_start_date", { ascending: true }),
+      }),
     ])
-    : [{ data: null }, { data: null }, { data: null }];
+    : [{ data: [], error: null }, { data: [], error: null }, { data: [], error: null }];
 
-  const sales = (salesResult.data ?? []) as SalesRow[];
-  const statuses = (statusResult.data ?? []) as TransactionStatusRow[];
-  const coverage = vmsCoverageSummary((batchResult.data ?? []) as VmsDashboardBatch[]);
+  const sales = salesResult.data as SalesRow[];
+  const statuses = statusResult.data as TransactionStatusRow[];
+  const coverage = vmsCoverageSummary(batchResult.data as VmsDashboardBatch[]);
   const totalSales = sales.reduce((sum, row) => sum + Number(row.net_sales_amount ?? row.gross_sales_amount ?? 0), 0);
   const totalUnits = sales.reduce((sum, row) => sum + Number(row.units_sold ?? 0), 0);
   const totalTransactions = sales.reduce((sum, row) => sum + Number(row.transaction_count ?? 0), 0);
@@ -92,17 +102,17 @@ export default async function SalesDashboardPage() {
 
       {!supabase ? (
         <EmptyState title="Connect Supabase to activate sales analytics" body="Add environment variables and restart the app." />
-      ) : !sales.length ? (
-        <EmptyState title="No VMS sales snapshots yet" body="Upload VMS sales data to populate this dashboard. No sales are invented here." />
       ) : (
         <div className="space-y-6">
           <KpiSection title="Data Source" subtitle="Sales dashboard is using detailed VMS Order Details transactions where transaction_status = successful_sale. General summary files are reconciliation only.">
+            <KpiLoadWarning message={batchResult.error} />
             <div className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
               <div><div className="font-semibold text-slate-900">Active batches</div><div>{coverage.active.length}</div></div>
               <div><div className="font-semibold text-slate-900">Date range covered</div><div>{coverage.start && coverage.end ? `${coverage.start} to ${coverage.end}` : "-"}</div></div>
               <div><div className="font-semibold text-slate-900">Last upload</div><div>{coverage.latest?.file_name ?? "-"}</div></div>
               <div><div className="font-semibold text-slate-900">Missing periods</div><div>{coverage.gaps.length}</div></div>
             </div>
+            {!coverage.active.length ? <p className="mt-3 text-sm font-medium text-slate-700">No VMS data imported yet</p> : null}
             {coverage.gaps.length ? (
               <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">
                 Warning: selected period has missing VMS detailed data. Sales may be incomplete: {coverage.gaps.map((gap) => `${gap.start} to ${gap.end}`).join(", ")}.
@@ -119,6 +129,12 @@ export default async function SalesDashboardPage() {
             <KpiSection title="Failed vend amount"><div className="text-3xl font-semibold text-slate-900">{lyd(statusTotals.failedVendAmount)}</div></KpiSection>
             <KpiSection title="Refund amount"><div className="text-3xl font-semibold text-slate-900">{lyd(statusTotals.refundAmount)}</div></KpiSection>
           </div>
+
+          <KpiLoadWarning message={salesResult.error} />
+          <KpiLoadWarning message={statusResult.error} />
+          {!sales.length ? (
+            <EmptyState title="No VMS sales snapshots yet" body="Upload VMS sales data to populate this dashboard. No sales are invented here." />
+          ) : null}
 
           <div className="grid gap-4 xl:grid-cols-2">
             <KpiSection title="Sales by day" subtitle="Latest observed VMS days.">

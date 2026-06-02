@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentProfile } from "@/lib/auth";
-import { AppRole, canAccessOperatorRoute, hasAnyRole, isOperatorRole, isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
+import { AppRole, canAccessOperatorRoute, canViewVmsImports, hasAnyRole, isOperatorRole, isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 import {
   ISSUE_PHOTO_BUCKET,
@@ -8,6 +8,7 @@ import {
   PRIVATE_STORAGE_BUCKETS,
   RECEIPT_IMAGE_BUCKET,
   REFILL_PHOTO_BUCKET,
+  VMS_IMPORT_BUCKET,
 } from "@/lib/storage-buckets";
 
 const receiptReaderRoles = new Set<AppRole>(["owner", "admin", "supervisor", "warehouse", "purchasing", "finance"]);
@@ -53,6 +54,7 @@ async function canReadPrivateObject(bucket: string, objectPath: string) {
   if (bucket === RECEIPT_IMAGE_BUCKET) return hasAnyRole(profile, receiptReaderRoles);
   if (bucket === MACHINE_PHOTO_BUCKET) return true;
   if (bucket === REFILL_PHOTO_BUCKET || bucket === ISSUE_PHOTO_BUCKET) return canReadRoutePhoto(bucket, objectPath);
+  if (bucket === VMS_IMPORT_BUCKET) return canViewVmsImports(profile);
   return false;
 }
 

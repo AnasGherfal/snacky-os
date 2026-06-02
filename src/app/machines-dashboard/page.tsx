@@ -1,8 +1,9 @@
-import { BarList, KpiSection } from "@/components/KpiDashboard";
+import { BarList, KpiLoadWarning, KpiSection } from "@/components/KpiDashboard";
 import { DataTable, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
 import { requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
 import { formatInteger, formatLydOrDash, groupCount, latestObservedMonth, monthKey, salesAmount } from "@/lib/kpi";
+import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
 import { vmsCoverageSummary, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -11,16 +12,40 @@ export default async function MachinesDashboardPage() {
   const supabase = getSupabaseServerClient();
   const [salesResult, machinesResult, refillResult, historicalRefillResult, stockResult, issuesResult, cashResult, batchResult] = supabase
     ? await Promise.all([
-        supabase.from("vms_sales_clean").select("id, machine_id, product_id, units_sold, net_sales_amount, gross_profit_amount, sale_date, sales_month, cost_missing"),
-        supabase.from("machines").select("id, machine_code, name, status, target_nsm, rent_amount, location:locations(id, name)").order("name"),
-        supabase.from("refill_orders").select("id, machine_id, status, generated_at, completed_at"),
-        supabase.from("machine_refill_history").select("id, machine_id, machine_name, fill_status, issues_found, refill_at"),
-        supabase.from("latest_vms_stock_by_slot").select("machine_id, current_qty"),
-        supabase.from("issues").select("id, machine_id, status"),
-        supabase.from("cash_collections").select("machine_id, variance"),
-        supabase.from("vms_import_batches").select("id, file_name, report_type, status, is_active, report_start_date, report_end_date, uploaded_at, imported_at, deleted_at").eq("report_type", "vms_order_details_weekly").order("report_start_date", { ascending: true }),
+        safeSupabaseQuery<any>({
+          label: "machines-dashboard.vms_sales_clean",
+          promise: supabase.from("vms_sales_clean").select("id, machine_id, product_id, units_sold, net_sales_amount, gross_profit_amount, sale_date, sales_month, cost_missing"),
+        }),
+        safeSupabaseQuery<any>({
+          label: "machines-dashboard.machines",
+          promise: supabase.from("machines").select("id, machine_code, name, status, target_nsm, rent_amount, location:locations(id, name)").order("name"),
+        }),
+        safeSupabaseQuery<any>({
+          label: "machines-dashboard.refill_orders",
+          promise: supabase.from("refill_orders").select("id, machine_id, status, generated_at, completed_at"),
+        }),
+        safeSupabaseQuery<any>({
+          label: "machines-dashboard.machine_refill_history",
+          promise: supabase.from("machine_refill_history").select("id, machine_id, machine_name, fill_status, issues_found, refill_at"),
+        }),
+        safeSupabaseQuery<any>({
+          label: "machines-dashboard.latest_vms_stock_by_slot",
+          promise: supabase.from("latest_vms_stock_by_slot").select("machine_id, current_qty"),
+        }),
+        safeSupabaseQuery<any>({
+          label: "machines-dashboard.issues",
+          promise: supabase.from("issues").select("id, machine_id, status"),
+        }),
+        safeSupabaseQuery<any>({
+          label: "machines-dashboard.cash_collections",
+          promise: supabase.from("cash_collections").select("machine_id, variance"),
+        }),
+        safeSupabaseQuery<VmsDashboardBatch>({
+          label: "machines-dashboard.vms_import_batches",
+          promise: supabase.from("vms_import_batches").select("id, file_name, report_type, status, is_active, report_start_date, report_end_date, uploaded_at, imported_at, deleted_at").eq("report_type", "vms_order_details_weekly").order("report_start_date", { ascending: true }),
+        }),
       ])
-    : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }];
+    : [{ data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }];
 
   const sales = ((salesResult.data ?? []) as any[]).map((row) => ({
     ...row,
@@ -86,17 +111,17 @@ export default async function MachinesDashboardPage() {
 
       {!supabase ? (
         <EmptyState title="Connect Supabase to activate machine KPIs" body="Add environment variables and restart the app." />
-      ) : !machines.length ? (
-        <EmptyState title="No machines yet" body="Create machines and upload VMS sales snapshots to populate machine KPIs." />
       ) : (
         <div className="space-y-6">
           <KpiSection title="Data Source" subtitle="Machine sales are calculated from active detailed VMS transaction files. Stock/refill signals use active VMS stock imports only.">
+            <KpiLoadWarning message={batchResult.error} />
             <div className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
               <div><div className="font-semibold text-slate-900">Active sales batches</div><div>{coverage.active.length}</div></div>
               <div><div className="font-semibold text-slate-900">Date range covered</div><div>{coverage.start && coverage.end ? `${coverage.start} to ${coverage.end}` : "-"}</div></div>
               <div><div className="font-semibold text-slate-900">Last upload</div><div>{coverage.latest?.file_name ?? "-"}</div></div>
               <div><div className="font-semibold text-slate-900">Missing periods</div><div>{coverage.gaps.length}</div></div>
             </div>
+            {!coverage.active.length ? <p className="mt-3 text-sm font-medium text-slate-700">No VMS data imported yet</p> : null}
             {coverage.gaps.length ? (
               <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">
                 Warning: selected period has missing VMS detailed data. Sales may be incomplete.
@@ -109,6 +134,16 @@ export default async function MachinesDashboardPage() {
             <KpiSection title="Open issues"><div className="text-3xl font-semibold">{machineMetrics.reduce((sum, row) => sum + row.openIssueCount, 0)}</div></KpiSection>
             <KpiSection title="Cash variance"><div className="text-3xl font-semibold">{lyd(totalCashVariance)}</div></KpiSection>
           </div>
+
+          <KpiLoadWarning message={machinesResult.error} />
+          <KpiLoadWarning message={salesResult.error} />
+          <KpiLoadWarning message={refillResult.error} />
+          <KpiLoadWarning message={historicalRefillResult.error} />
+          <KpiLoadWarning message={stockResult.error} />
+          <KpiLoadWarning message={issuesResult.error} />
+          <KpiLoadWarning message={cashResult.error} />
+
+          {!machines.length ? <EmptyState title="No machines yet" body="Create machines and upload VMS sales snapshots to populate machine KPIs." /> : null}
 
           {!sales.length ? <EmptyState title="No machine sales yet" body="VMS sales snapshots are required for sales, NSM, and profit metrics." /> : null}
 
