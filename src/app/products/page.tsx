@@ -1,10 +1,11 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { PaginationControls } from "@/components/PaginationControls";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { ProductSourceBadge } from "@/components/ProductSourceBadge";
 import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SearchInput, SecondaryButton, StatusBadge } from "@/components/ui";
-import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
-import { canAddProducts, canViewFinancials, hasPermission } from "@/lib/authz";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
+import { canAccessPath, canAddProducts, canViewFinancials, hasPermission } from "@/lib/authz";
 import { cleanSearchParams, getPagination, SearchParamsRecord, supabaseLikePattern } from "@/lib/pagination";
 
 function formatMoney(value: number | string | null | undefined, decimals = 2) {
@@ -12,9 +13,40 @@ function formatMoney(value: number | string | null | undefined, decimals = 2) {
   return Number(value).toFixed(decimals);
 }
 
-export default async function ProductsPage({ searchParams }: { searchParams: Promise<SearchParamsRecord & { q?: string; imageUpload?: string }> }) {
-  const profile = await requireCurrentProfileForPath("/products");
+function supabaseErrorPayload(error: any) {
+  return {
+    code: error?.code ?? null,
+    message: error?.message ?? String(error ?? "Unknown Supabase error"),
+    details: error?.details ?? null,
+    hint: error?.hint ?? null,
+  };
+}
+
+function supabaseErrorText(error: any) {
+  const payload = supabaseErrorPayload(error);
+  return [payload.code, payload.message, payload.details, payload.hint].filter(Boolean).join(" - ");
+}
+
+function isPermissionError(error: any) {
+  const text = supabaseErrorText(error).toLowerCase();
+  return String(error?.code ?? "") === "42501" || text.includes("permission denied") || text.includes("row-level security") || text.includes("rls");
+}
+
+export default async function ProductsPage({ searchParams }: { searchParams: Promise<SearchParamsRecord & { q?: string; imageUpload?: string; debug?: string }> }) {
+  const profile = await getCurrentProfile();
+  if (!profile) redirect(`/login?next=${encodeURIComponent("/products")}`);
   const userContext = { id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status };
+  if (!canAccessPath(userContext, "/products")) {
+    return (
+      <>
+        <ErrorState
+          title="Products permission required"
+          body="Your account cannot view the product catalog. Ask an admin to add Warehouse, Purchasing, Supervisor, Finance, or Admin access."
+          action={<SecondaryButton href="/dashboard">Back to dashboard</SecondaryButton>}
+        />
+      </>
+    );
+  }
   const canCreateProduct = canAddProducts(profile);
   const canEditProducts = hasPermission(profile, "products.edit");
   const canSeeCost = canViewFinancials(userContext);
@@ -22,6 +54,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
   const { page, pageSize, from, to } = getPagination(params);
   const q = String(params.q ?? "");
   const imageUpload = String(params.imageUpload ?? "");
+  const showDebug = hasPermission(profile, "system.settings");
   const s = await getAuthenticatedSupabaseServerClient();
   if (!s) {
     return (
@@ -46,7 +79,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
     "selling_price_source",
     "active",
     "image_url",
-    "suppliers(name)",
+    "supplier:suppliers!products_supplier_id_fkey(name)",
     ...(canSeeCost ? ["current_cost_price_lyd", "last_purchase_cost_lyd", "average_cost_lyd", "last_purchase_date", "last_supplier_id", "last_supplier:suppliers!products_last_supplier_id_fkey(name)", "cost_price_source"] : []),
   ].join(",");
   let query = s.from("products").select(productSelect, { count: "exact" }).order("name");
@@ -57,10 +90,31 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
   }
   const { data, count, error: productsError } = await query.range(from, to);
   if (productsError) {
-    console.error("[products] Failed to load products", productsError);
+    const payload = supabaseErrorPayload(productsError);
+    console.error("[products] Failed to load products", {
+      table_or_view: "products",
+      select: productSelect,
+      order: "name",
+      range: { from, to },
+      search,
+      current_user_id: profile.id,
+      user_roles: profile.roles,
+      supabase_error: payload,
+    });
+    const debugMessage = `Supabase products query failed: ${supabaseErrorText(productsError)}`;
     return (
       <>
-        <ErrorState title="Could not load products" body="Snacky OS could not load real products from Supabase." action={<SecondaryButton href="/products">Retry</SecondaryButton>} />
+        <ErrorState
+          title={isPermissionError(productsError) ? "Products permission required" : "Could not load products"}
+          body={
+            showDebug
+              ? debugMessage
+              : isPermissionError(productsError)
+                ? "Supabase blocked product access for this role. Ask an admin to check product SELECT/RLS permissions."
+                : "Snacky OS could not load products. Admin debug logs include the exact Supabase query error."
+          }
+          action={<SecondaryButton href="/products">Retry</SecondaryButton>}
+        />
       </>
     );
   }
@@ -97,7 +151,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
                 <td className="font-medium">{product.name}</td>
                 <td>{product.category}</td>
                 <td>{product.case_quantity ?? 1}</td>
-                <td>{product.suppliers?.name ?? "-"}</td>
+                <td>{product.supplier?.name ?? "-"}</td>
                 <td><ProductSourceBadge source={product.import_source} /></td>
                 <td>{formatMoney(product.current_selling_price_lyd ?? product.selling_price)}</td>
                 <td>{formatMoney(product.vms_selling_price_lyd)}</td>

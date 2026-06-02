@@ -33,6 +33,7 @@ export const ar = {
     locations: "المواقع",
     machinePlanograms: "مخططات الماكينات",
     inventory: "المخزون",
+    restockPriority: "أولوية إعادة التخزين",
     products: "المنتجات",
     storageInventory: "مخزون المستودع",
     movementLog: "سجل حركة المخزون",

@@ -308,6 +308,7 @@ export function canAccessPath(user: AuthUserContext | null | undefined, pathname
     return hasPermission(user, "storage.movement.create") || hasPermission(user, "storage.adjust");
   }
   if (matchesPrefix(pathname, ["/inventory/movements"])) return hasPermission(user, "storage.movement.view");
+  if (matchesPrefix(pathname, ["/restock-priority"])) return hasPermission(user, "products.view") || hasPermission(user, "inventory.view") || hasPermission(user, "storage.view");
   if (matchesPrefix(pathname, ["/inventory", "/warehouse"])) return hasPermission(user, "inventory.view") || hasPermission(user, "storage.view");
 
   if (pathname === "/storage-locations/new" || pathname.startsWith("/storage-locations/new/") || /^\/storage-locations\/[^/]+\/edit(?:\/|$)/.test(pathname)) {

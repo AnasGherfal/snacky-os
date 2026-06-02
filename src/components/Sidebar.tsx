@@ -11,6 +11,7 @@ import {
   ClipboardList,
   LayoutDashboard,
   Package,
+  PackagePlus,
   ShieldCheck,
   UserCircle,
   Warehouse,
@@ -77,6 +78,12 @@ const inventoryItem: NavItem = {
   icon: Warehouse,
   activePrefixes: ["/inventory", "/purchases", "/storage-locations", "/suppliers"],
 };
+const restockPriorityItem: NavItem = {
+  labelKey: "restockPriority",
+  href: "/restock-priority",
+  icon: PackagePlus,
+  activePrefixes: ["/restock-priority"],
+};
 const productsItem: NavItem = {
   labelKey: "products",
   href: "/products",
@@ -109,11 +116,11 @@ const adminItem: NavItem = {
 };
 
 const ownerAdminNav: NavSection[] = [
-  { items: [dashboardItem, operationsItem, inventoryItem, productsItem, machinesItem, financeItem, reportsItem, adminItem] },
+  { items: [dashboardItem, operationsItem, inventoryItem, restockPriorityItem, productsItem, machinesItem, financeItem, reportsItem, adminItem] },
 ];
 
 const supervisorNav: NavSection[] = [
-  { items: [dashboardItem, operationsItem, inventoryItem, productsItem, machinesItem] },
+  { items: [dashboardItem, operationsItem, inventoryItem, restockPriorityItem, productsItem, machinesItem] },
 ];
 
 const operatorNav: NavSection[] = [
@@ -146,9 +153,10 @@ function sectionsForRoles(role: AppRole, roles?: AppRole[] | null) {
   if (isSupervisorRole(context)) sections.push(...supervisorNav);
   if (isOperatorRole(context) || hasPermission(context, "assigned_routes.view")) sections.push(...operatorNav);
   if (hasPermission(context, "inventory.view") || hasPermission(context, "storage.view")) sections.push({ items: [inventoryItem] });
+  if (hasPermission(context, "products.view") || hasPermission(context, "inventory.view") || hasPermission(context, "storage.view")) sections.push({ items: [restockPriorityItem] });
   if (hasPermission(context, "products.view")) sections.push({ items: [productsItem] });
   if (hasRole(context, "warehouse") || hasPermission(context, "storage.movement.view")) sections.push({ items: [warehouseOperationsItem] });
-  if (hasRole(context, "purchasing")) sections.push({ items: [inventoryItem, productsItem] });
+  if (hasRole(context, "purchasing")) sections.push({ items: [inventoryItem, restockPriorityItem, productsItem] });
   if (hasRole(context, "finance") || hasPermission(context, "finance.view")) sections.push(...financeNav);
   if (!sections.length && hasAnyRole(context, ["viewer"])) sections.push(...viewerNav);
   return sections.length ? mergeSections(sections) : viewerNav;

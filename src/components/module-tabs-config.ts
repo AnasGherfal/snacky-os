@@ -18,6 +18,7 @@ const financeTabs: ModuleTab[] = [
 
 const inventoryTabs: ModuleTab[] = [
   { label: "Storage", href: "/inventory", exact: true },
+  { label: "Restock Priority", href: "/restock-priority" },
   { label: "Movements", href: "/inventory/movements" },
   { label: "Purchases", href: "/purchases", match: ["/purchases"] },
   { label: "Storage Locations", href: "/storage-locations" },
@@ -79,6 +80,7 @@ export function getModuleTabGroupForPath(pathname: string, moduleParam?: string 
   if (matchesPrefix(pathname, "/finance") || matchesPrefix(pathname, "/cash-collections")) return groups.finance;
   if (
     matchesPrefix(pathname, "/inventory") ||
+    matchesPrefix(pathname, "/restock-priority") ||
     matchesPrefix(pathname, "/storage-locations") ||
     matchesPrefix(pathname, "/suppliers") ||
     matchesPrefix(pathname, "/products")

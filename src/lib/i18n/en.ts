@@ -31,6 +31,7 @@ export const en = {
     inventory: "Inventory",
     storage: "Storage",
     storageLocations: "Storage Locations",
+    restockPriority: "Restock Priority",
     products: "Products",
     storageInventory: "Storage Inventory",
     movementLog: "Movement Log",

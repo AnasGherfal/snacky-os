@@ -38,6 +38,7 @@ test("warehouse only can view products and storage without finance or product de
   assert.equal(hasPermission(warehouse, "finance.view"), false);
   assert.equal(hasPermission(warehouse, "products.delete"), false);
   assert.equal(canAccessPath(warehouse, "/products"), true);
+  assert.equal(canAccessPath(warehouse, "/restock-priority"), true);
   assert.equal(canAccessPath(warehouse, "/inventory"), true);
   assert.equal(canAccessPath(warehouse, "/inventory/movements/new"), true);
   assert.equal(canAccessPath(warehouse, "/finance"), false);
@@ -54,6 +55,7 @@ test("operator and warehouse roles combine", () => {
   assert.equal(hasPermission(operatorWarehouse, "refills.create"), true);
   assert.equal(hasPermission(operatorWarehouse, "finance.view"), false);
   assert.equal(canAccessPath(operatorWarehouse, "/products"), true);
+  assert.equal(canAccessPath(operatorWarehouse, "/restock-priority"), true);
   assert.equal(canAccessPath(operatorWarehouse, "/inventory"), true);
   assert.equal(canAccessPath(operatorWarehouse, "/operator/routes"), true);
   assert.equal(canAccessPath(operatorWarehouse, "/finance"), false);
@@ -67,6 +69,7 @@ test("finance only can see finance but cannot edit products", () => {
   assert.equal(hasPermission(finance, "products.edit"), false);
   assert.equal(canAccessPath(finance, "/finance"), true);
   assert.equal(canAccessPath(finance, "/products/abc/edit"), false);
+  assert.equal(canAccessPath(finance, "/restock-priority"), false);
 });
 
 test("admin has full permission set", () => {

@@ -1,7 +1,10 @@
+import Link from "next/link";
 import { StatCard } from "@/components/StatCard";
 import { DataTable, EmptyState, PageHeader, SectionCard } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
+import { restockCounts, type RestockPriorityItem } from "@/lib/restock-priority";
+import { loadRestockPriorityData, type RestockPriorityLoadResult } from "@/lib/restock-priority-data";
 import { vmsCoverageSummary, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
 
 type SalesMonthlyRow = { machine_id: string | null; machine_name: string | null; sales_month: string | null; net_sales_amount: number | string | null; units_sold: number | string | null };
@@ -22,7 +25,8 @@ type DashboardSection =
   | "productMonthly"
   | "transactionStatusMonthly"
   | "missingCostSales"
-  | "vmsBatches";
+  | "vmsBatches"
+  | "restockPriority";
 
 type DashboardErrors = Partial<Record<DashboardSection, string>>;
 
@@ -104,6 +108,20 @@ async function loadVmsBatches(supabase: NonNullable<Awaited<ReturnType<typeof ge
     .order("report_start_date", { ascending: true });
 }
 
+async function safeRestockPriorityForDashboard(
+  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>,
+  errors: DashboardErrors,
+): Promise<RestockPriorityLoadResult> {
+  try {
+    return await loadRestockPriorityData(supabase);
+  } catch (error) {
+    const message = errorMessage(error);
+    console.error("[dashboard] Restock priority failed", { section: "restockPriority", error });
+    errors.restockPriority = message;
+    return { items: [], errors: {}, productCount: 0, usedProductFallback: false };
+  }
+}
+
 async function getDashboardData() {
   await requireCurrentProfileForPath("/dashboard");
   const supabase = await getAuthenticatedSupabaseServerClient();
@@ -121,6 +139,7 @@ async function getDashboardData() {
     transactionStatusMonthly,
     missingCostSales,
     vmsBatches,
+    restockPriority,
   ] = await Promise.all([
     safeDashboardQuery<[]>({ key: "machines", label: "machines count", promise: supabase.from("machines").select("id", { count: "exact", head: true }), fallback: [], errors }),
     safeDashboardQuery<RefillRow[]>({ key: "refill", label: "refill_recommendations top suggested_qty", promise: supabase.from("refill_recommendations").select("machine_name, product_name, suggested_qty, priority").order("suggested_qty", { ascending: false }).limit(8), fallback: [], errors }),
@@ -132,6 +151,7 @@ async function getDashboardData() {
     safeDashboardQuery<TransactionStatusMonthlyRow[]>({ key: "transactionStatusMonthly", label: "vms_transaction_status_monthly exception totals", promise: supabase.from("vms_transaction_status_monthly").select("sales_month, failed_vend_count, failed_vend_amount, refund_count, refund_amount, needs_review_count").order("sales_month", { ascending: false }).limit(12), fallback: [], errors }),
     safeDashboardQuery<MissingCostRow[]>({ key: "missingCostSales", label: "vms_sales_clean missing cost rows", promise: supabase.from("vms_sales_clean").select("product_id, product_name").eq("cost_missing", true).limit(1000), fallback: [], errors }),
     safeDashboardQuery<VmsDashboardBatch[]>({ key: "vmsBatches", label: "vms_import_batches active detailed files", promise: loadVmsBatches(supabase), fallback: [], errors }),
+    safeRestockPriorityForDashboard(supabase, errors),
   ]);
 
   return {
@@ -146,6 +166,8 @@ async function getDashboardData() {
       transactionStatusRows: transactionStatusMonthly.data,
       missingCostRows: missingCostSales.data,
       vmsBatchRows: vmsBatches.data,
+      restockItems: restockPriority.items,
+      restockWarnings: restockPriority.errors,
       errors,
     },
   };
@@ -160,6 +182,10 @@ export default async function DashboardPage() {
   const refillRows = (data?.refillRows ?? []) as RefillRow[];
   const lowStorageRows = (data?.lowStorageRows ?? []) as LowStorageRow[];
   const cashRows = (data?.cashRows ?? []) as CashRow[];
+  const restockItems = (data?.restockItems ?? []) as RestockPriorityItem[];
+  const restockSummary = restockCounts(restockItems);
+  const topRestockItems = restockItems.filter((item) => item.section !== "normal").slice(0, 5);
+  const restockWarnings = Object.values(data?.restockWarnings ?? {}).filter(Boolean);
   const errors = data?.errors ?? {};
   const coverage = vmsCoverageSummary((data?.vmsBatchRows ?? []) as VmsDashboardBatch[]);
   const hasVmsData = Boolean((data?.vmsBatchRows ?? []).length || salesMonthlyRows.length || productMonthlyRows.length || transactionStatusRows.length || refillRows.length);
@@ -218,6 +244,7 @@ export default async function DashboardPage() {
             <StatCard label="Machines needing refill" value={refillRows.length} />
             <StatCard label="Open issues" value={data.openIssues} />
             <StatCard label="Low storage products" value={lowStorageRows.length} />
+            <StatCard label="Products needing restock" value={(restockSummary.critical + restockSummary.low).toLocaleString("en-US")} />
           </div>
           {topKpiErrors.length ? (
             <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900">
@@ -230,6 +257,46 @@ export default async function DashboardPage() {
             </div>
           ) : null}
           <div className="mt-6 grid gap-4 xl:grid-cols-2">
+            <SectionCard>
+              <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h2 className="text-base font-semibold">Products needing restock</h2>
+                  <p className="mt-1 text-sm text-slate-500">Critical and low products from storage thresholds, routes, VMS stock, and sales velocity.</p>
+                </div>
+                <Link href="/restock-priority" className="btn-secondary shrink-0">View Restock Priority</Link>
+              </div>
+              <SectionLoadError message={errors.restockPriority} />
+              {!errors.restockPriority && restockWarnings.length ? (
+                <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                  Some restock signals are unavailable. Showing the working signals.
+                </div>
+              ) : null}
+              <div className="mb-4 grid grid-cols-2 gap-3">
+                <div className="rounded-lg border border-rose-100 bg-rose-50 p-3">
+                  <div className="text-xs font-semibold uppercase text-rose-700">Critical</div>
+                  <div className="mt-1 text-2xl font-semibold text-rose-800">{restockSummary.critical}</div>
+                </div>
+                <div className="rounded-lg border border-amber-100 bg-amber-50 p-3">
+                  <div className="text-xs font-semibold uppercase text-amber-700">Low</div>
+                  <div className="mt-1 text-2xl font-semibold text-amber-800">{restockSummary.low}</div>
+                </div>
+              </div>
+              {errors.restockPriority ? null : !topRestockItems.length ? (
+                <EmptyState title="No restock priorities yet" body="Set product storage thresholds or import VMS data to rank products." />
+              ) : (
+                <div className="space-y-2">
+                  {topRestockItems.map((item) => (
+                    <div key={item.productId} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 p-3">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold text-slate-900">{item.name}</div>
+                        <div className="text-xs text-slate-500">Storage {item.storageQty} · Buy {item.suggestedBuyQty} · Score {item.priorityScore}</div>
+                      </div>
+                      <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">{item.status.toUpperCase()}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </SectionCard>
             <SectionCard>
               <h2 className="mb-3 text-base font-semibold">Top products from VMS sales</h2>
               <SectionLoadError message={errors.productMonthly} />

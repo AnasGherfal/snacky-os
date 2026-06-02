@@ -30,6 +30,7 @@ const titleKeys: Record<string, keyof ReturnType<typeof useI18n>["dictionary"]["
   "/locations": "locations",
   "/machine-slots": "machinePlanograms",
   "/inventory": "storageInventory",
+  "/restock-priority": "restockPriority",
   "/inventory/movements": "movements",
   "/purchases": "purchases",
   "/products": "products",
