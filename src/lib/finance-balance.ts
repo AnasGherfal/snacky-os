@@ -13,6 +13,7 @@ export type FinanceBalances = Record<FinanceAccountId, number>;
 
 export type BalanceTransaction = {
   transaction_date?: string | null;
+  transaction_datetime?: string | null;
   transaction_status?: string | null;
   import_status?: string | null;
   needs_review?: boolean | null;
@@ -114,6 +115,7 @@ const nonProfitCategories = new Set([
   "owner withdrawal",
   "bank / exchange",
   "bank exchange",
+  "exchange",
   "opening balance",
 ]);
 

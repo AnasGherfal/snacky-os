@@ -184,6 +184,7 @@ const MACHINE_ALIAS_OVERRIDES: FinanceMachineReference[] = [
 ];
 
 const explicitReviewValues = new Set(["", "to_confirm", "to confirm", "review"]);
+const employeeNames = new Set(["doa", "doaa", "ahmed"]);
 
 function parseCsvRows(text: string) {
   const rows: string[][] = [];
@@ -433,6 +434,9 @@ function resolveAccount(record: Record<string, string>, currency: FinanceCurrenc
   if (name === "anas" || name === "owner" || name === "owneranas") {
     return { accountId: financeAccountFor("owner", currency), known: true };
   }
+  if (employeeNames.has(name)) {
+    return { accountId: financeAccountFor("snacky", currency), known: true };
+  }
   if (!hasNameColumn) return { accountId: financeAccountFor("snacky", currency), known: true };
   return { accountId: financeAccountFor("snacky", currency), known: false };
 }
@@ -446,8 +450,31 @@ function rawCategory(record: Record<string, string>) {
     || null;
 }
 
+function normalizeTransactionTypeCategory(value: string | null) {
+  const normalized = normalizeLookup(value);
+  if (!normalized) return null;
+  if (normalized === "productrestocking" || normalized === "productsrestocking" || normalized === "inventorypurchase") return "Products Restocking";
+  if (normalized === "rent") return "Rent";
+  if (normalized === "revenue" || normalized === "salesrevenue" || normalized === "machinecash" || normalized === "cashcollection") return "Revenue";
+  if (normalized === "charity" || normalized === "donation") return "Charity";
+  if (normalized === "ads" || normalized === "adincome" || normalized === "adsincome" || normalized === "adrevenue" || normalized === "advertisingincome") return "Ads";
+  if (normalized === "shipping") return "Shipping";
+  if (normalized === "salaryemployeepayment" || normalized === "salary" || normalized === "employeepayment" || normalized === "operatorpayment") return "Salary / Employee Payment";
+  if (normalized === "maintenance") return "Maintenance";
+  if (normalized === "machinepurchase") return "Machine Purchase";
+  if (normalized === "marketing" || normalized === "marketingads") return "Marketing";
+  if (normalized === "refund") return "Refund";
+  if (normalized === "ownerfunding") return "Owner Funding";
+  if (normalized === "ownerwithdrawal" || normalized === "ownertransfer" || normalized === "ownerdraw") return "Owner Withdrawal";
+  if (normalized === "exchange" || normalized === "bankexchange" || normalized === "currencyexchange") return "Exchange";
+  if (normalized === "miscellaneous" || normalized === "misc") return "Miscellaneous";
+  if (normalized === "uncategorized" || normalized === "unclassifiedexpense" || normalized === "unclassifiedincome") return "Uncategorized";
+  if (normalized === "other") return "Other";
+  return value;
+}
+
 function resolveCategory(record: Record<string, string>) {
-  return rawCategory(record) ?? "Uncategorized";
+  return normalizeTransactionTypeCategory(rawCategory(record)) ?? "Uncategorized";
 }
 
 function normalizedText(record: Record<string, string>) {
@@ -546,7 +573,7 @@ function signedAmountFor(direction: "money_in" | "money_out" | null, amount: num
 
 function inferTransactionEffect(category: string | null, direction: "money_in" | "money_out" | null): FinanceTransactionEffect {
   const normalized = normalizeLookup(category);
-  if (normalized === "ownerfunding" || normalized === "ownerwithdrawal" || normalized === "bankexchange") return "transfer";
+  if (normalized === "ownerfunding" || normalized === "ownerwithdrawal" || normalized === "exchange") return "transfer";
   return direction === "money_in" ? "income" : "expense";
 }
 
@@ -717,13 +744,24 @@ export function forceConfirmClassifiedRow(row: ClassifiedFinanceRow): Classified
   };
 }
 
+function transactionDateTimeFromDate(date: string) {
+  return `${date}T12:00:00.000Z`;
+}
+
+function employeePayeeName(record: Record<string, string>) {
+  const name = cleanValue(record.name ?? record.Name);
+  return employeeNames.has(normalizeLookup(name)) ? name : null;
+}
+
 export function buildFinanceTransaction(row: ClassifiedFinanceRow, createdBy?: string | null, importBatchId?: string | null) {
   if (!canInsertClassifiedRow(row) || !row.transactionDate || !row.direction || row.amount === null || row.signedAmount === null || !row.categoryForTransaction) {
     return null;
   }
+  const employeePayee = employeePayeeName(row.record);
 
   return {
     transaction_date: row.transactionDate,
+    transaction_datetime: transactionDateTimeFromDate(row.transactionDate),
     direction: row.transactionEffect === "transfer" ? "money_out" : row.direction,
     transaction_kind: "spreadsheet_import",
     transaction_type: cleanValue(row.record.transaction_type) || null,
@@ -737,6 +775,9 @@ export function buildFinanceTransaction(row: ClassifiedFinanceRow, createdBy?: s
     transaction_effect: row.transactionEffect,
     source_account_id: row.sourceAccountId,
     destination_account_id: row.destinationAccountId,
+    payer_text: null,
+    payee_text: row.direction === "money_out" ? employeePayee : null,
+    counterparty_text: row.direction === "money_out" ? employeePayee : null,
     bucket: cleanValue(row.record.auto_bucket) || null,
     bucket_override: cleanValue(row.record.bucket_override) || null,
     final_bucket: row.categoryForTransaction,
@@ -762,6 +803,7 @@ export function buildFinanceTransaction(row: ClassifiedFinanceRow, createdBy?: s
       opening_balance_cutoff_date: FINANCE_RECONCILIATION_CUTOFF_DATE,
       original_row: row.record,
       duplicate_key: row.duplicateKey,
+      suggested_person: employeePayee,
       classification: {
         confidence_score: row.confidenceScore,
         account_id: row.accountId,
@@ -813,6 +855,7 @@ export function buildFinanceImportStageRow(row: ClassifiedFinanceRow, transactio
       ...row.record,
       import_mode: row.importMode,
       opening_balance_cutoff_date: FINANCE_RECONCILIATION_CUTOFF_DATE,
+      suggested_person: employeePayeeName(row.record),
     },
     updated_at: new Date().toISOString(),
   };

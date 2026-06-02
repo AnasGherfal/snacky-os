@@ -140,7 +140,7 @@ export default async function FinanceTransactionsPage({
 
   let query = supabase
     .from("financial_transactions")
-    .select("id, transaction_date, direction, transaction_kind, transaction_type, description, notes, amount, signed_amount, currency, account_id, transaction_effect, source_account_id, destination_account_id, import_status, final_bucket, payment_method, transaction_status, review_status, needs_review, source_sheet, source_row, related_purchase_id, related_cash_collection_id, related_route_id, related_machine_id, related_location_id, receipt_url, created_at", { count: "exact" })
+    .select("id, transaction_date, transaction_datetime, direction, transaction_kind, transaction_type, description, notes, amount, signed_amount, currency, account_id, transaction_effect, source_account_id, destination_account_id, import_status, final_bucket, payment_method, transaction_status, review_status, needs_review, source_sheet, source_row, related_purchase_id, related_cash_collection_id, related_route_id, related_machine_id, related_location_id, receipt_url, created_at", { count: "exact" })
     .order("transaction_date", { ascending: false });
 
   if (statusFilter !== "all") query = query.eq("transaction_status", statusFilter);

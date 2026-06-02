@@ -87,6 +87,15 @@ function raw(row: ImportDisplayRow, key: string, sourceHeader?: string) {
   return cell(value);
 }
 
+function normalizedName(value: unknown) {
+  return String(value ?? "").trim().toLowerCase().replace(/[\s_-]+/g, "");
+}
+
+function employeePerson(row: ImportDisplayRow) {
+  const name = raw(row, "name", "Name");
+  return ["doa", "doaa", "ahmed"].includes(normalizedName(name)) ? name : null;
+}
+
 function previewRows(rows: ReturnType<typeof classifyFinanceRows>): ImportDisplayRow[] {
   return rows.map((row) => ({
     source_file: row.sourceFile,
@@ -136,10 +145,11 @@ function canQuickConfirm(row: ImportDisplayRow) {
 }
 
 function rowSuggestion(row: ImportDisplayRow) {
+  const employee = employeePerson(row);
   if (row.suggested_source_account && row.suggested_destination_account) {
     return `${accountLabel(row.suggested_source_account)} -> ${accountLabel(row.suggested_destination_account)}`;
   }
-  return accountLabel(row.suggested_account ?? row.account_id);
+  return employee ? `${accountLabel(row.suggested_account ?? row.account_id)}; payee ${employee} (employee)` : accountLabel(row.suggested_account ?? row.account_id);
 }
 
 function rowAmount(row: ImportDisplayRow) {

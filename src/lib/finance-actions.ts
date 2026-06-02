@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
 import { canEditFinancialTransactions, canViewFinancials } from "@/lib/authz";
+import { resolveCashCollectionTransactionDateTime } from "@/lib/cash-finance";
 import { accountCurrency, financeAccountId, type FinanceAccountId, type FinanceTransactionEffect } from "@/lib/finance-balance";
 import { categoryTypeForDirection, type FinanceCategoryType } from "@/lib/finance-categories";
 import {
@@ -74,6 +75,10 @@ function parseTransactionAmount(value: FormDataEntryValue | null, fallback: unkn
   if (!raw) return 0;
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? Math.abs(parsed) : NaN;
+}
+
+function transactionDateTimeFromDate(transactionDate: string) {
+  return `${transactionDate}T12:00:00.000Z`;
 }
 
 function validDirection(value: FormDataEntryValue | null, fallback?: string | null) {
@@ -363,6 +368,15 @@ function importRowRawText(row: any, normalizedKey: string, sourceHeader?: string
   return optionalText(raw[normalizedKey]) ?? optionalText(sourceHeader ? raw[sourceHeader] : null);
 }
 
+function normalizedFinanceName(value: string | null | undefined) {
+  return String(value ?? "").trim().toLowerCase().replace(/[\s_-]+/g, "");
+}
+
+function employeePayeeFromImportRow(row: any) {
+  const name = importRowRawText(row, "name", "Name");
+  return ["doa", "doaa", "ahmed"].includes(normalizedFinanceName(name)) ? name : null;
+}
+
 function importRowReturnPath(row: any) {
   const suffix = row?.source_row ? `?row=${encodeURIComponent(String(row.source_row))}` : "";
   return `/finance/import/review${suffix}`;
@@ -408,8 +422,13 @@ export async function confirmFinanceImportRow(formData: FormData) {
   const location = optionalText(formData.get("location")) ?? optionalText(row.suggested_machine) ?? importRowRawText(row, "location", "Location");
   const description = optionalText(formData.get("description")) ?? optionalText(row.original_description) ?? importRowRawText(row, "transaction_description", "Transaction Description");
   const rawName = importRowRawText(row, "name", "Name");
+  const importedEmployeePayee = employeePayeeFromImportRow(row);
+  const payerText = counterparty.payerText;
+  const payeeText = counterparty.payeeText ?? (ledgerFields.direction === "money_out" ? importedEmployeePayee : null);
+  const counterpartyText = counterparty.counterpartyText ?? payeeText ?? payerText;
   const payload = {
     transaction_date: transactionDate,
+    transaction_datetime: transactionDateTimeFromDate(transactionDate),
     direction: ledgerFields.direction,
     transaction_kind: "spreadsheet_import",
     transaction_type: category,
@@ -425,9 +444,9 @@ export async function confirmFinanceImportRow(formData: FormData) {
     source_account_id: ledgerFields.sourceAccountId,
     destination_account_id: ledgerFields.destinationAccountId,
     finance_category_id: categoryRecord.id,
-    payer_text: counterparty.payerText,
-    payee_text: counterparty.payeeText,
-    counterparty_text: counterparty.counterpartyText,
+    payer_text: payerText,
+    payee_text: payeeText,
+    counterparty_text: counterpartyText,
     bucket: optionalText(row.raw_category),
     final_bucket: category,
     review_status: "confirmed",
@@ -451,6 +470,7 @@ export async function confirmFinanceImportRow(formData: FormData) {
       import_mode: importModeForDate(transactionDate),
       opening_balance_cutoff_date: row.raw_record?.opening_balance_cutoff_date ?? null,
       original_name: rawName,
+      suggested_person: importedEmployeePayee,
       confirmed_from_import_row_id: row.id,
     },
   };
@@ -648,6 +668,7 @@ export async function createManualFinancialTransaction(formData: FormData) {
 
   const payload = {
     transaction_date: transactionDate,
+    transaction_datetime: transactionDateTimeFromDate(transactionDate),
     direction: ledgerFields.direction,
     transaction_kind: ledgerFields.direction === "money_in" ? "manual_money_in" : "manual_money_out",
     transaction_type: optionalText(formData.get("transaction_type")),
@@ -718,6 +739,7 @@ export async function reviewFinancialTransaction(formData: FormData) {
   const counterparty = counterpartyFields(formData, ledgerFields);
   const payload = {
     transaction_date: transactionDate,
+    transaction_datetime: transactionDateTimeFromDate(transactionDate),
     direction: ledgerFields.direction,
     transaction_type: optionalText(formData.get("transaction_type")),
     location: optionalText(formData.get("location")),
@@ -795,6 +817,7 @@ export async function updateFinancialTransaction(formData: FormData) {
   const reviewStatus = markReviewed ? "reviewed" : needsManualReview ? "needs_review" : "confirmed";
   const payload = {
     transaction_date: transactionDate,
+    transaction_datetime: transactionDateTimeFromDate(transactionDate),
     direction: ledgerFields.direction,
     transaction_type: optionalText(formData.get("transaction_type")),
     location: optionalText(formData.get("location")),
@@ -915,9 +938,10 @@ export async function createPurchaseFinancialTransaction(supabase: NonNullable<R
   const transactionDate = resolvePurchaseFinanceTransactionDate(purchase);
   const payload = {
     transaction_date: transactionDate,
+    transaction_datetime: transactionDateTimeFromDate(transactionDate),
     direction: "money_out",
     transaction_kind: "product_purchase",
-    transaction_type: "Product Restocking",
+    transaction_type: "Products Restocking",
     description: purchase.receipt_number ? `Purchase ${purchase.receipt_number}` : "Purchase received",
     amount,
     signed_amount: -Math.abs(amount),
@@ -927,7 +951,7 @@ export async function createPurchaseFinancialTransaction(supabase: NonNullable<R
     source_account_id: null,
     destination_account_id: null,
     bucket: "Inventory",
-    final_bucket: "Inventory",
+    final_bucket: "Products Restocking",
     review_status: "confirmed",
     needs_review: false,
     transaction_status: "active",
@@ -954,11 +978,13 @@ export async function createCashCollectionFinancialTransaction(supabase: NonNull
   if (!cash?.id) return;
   const parsedAmount = Number(cash?.actual_cash_collected ?? 0);
   const amount = Number.isFinite(parsedAmount) ? Math.max(0, Math.round(parsedAmount * 100) / 100) : 0;
+  const cashTransactionDateTime = resolveCashCollectionTransactionDateTime(cash);
   const payload = {
-    transaction_date: String(cash.counted_at ?? cash.collected_at ?? new Date().toISOString()).slice(0, 10),
+    transaction_date: cashTransactionDateTime.transactionDate,
+    transaction_datetime: cashTransactionDateTime.transactionDatetime,
     direction: "money_in",
     transaction_kind: "cash_collection",
-    transaction_type: "Cash Collection",
+    transaction_type: "Revenue",
     description: cash.cash_bag_id ? `Cash collection ${cash.cash_bag_id}` : `Confirmed cash collection ${cash.id.slice(0, 8)}`,
     amount,
     signed_amount: Math.abs(amount),
@@ -967,8 +993,8 @@ export async function createCashCollectionFinancialTransaction(supabase: NonNull
     transaction_effect: "income",
     source_account_id: null,
     destination_account_id: null,
-    bucket: "Cash Collection",
-    final_bucket: "Cash Collection",
+    bucket: "Revenue",
+    final_bucket: "Revenue",
     review_status: "confirmed",
     needs_review: false,
     transaction_status: "active",

@@ -76,6 +76,7 @@ export default async function FinanceTransactionDetailPage({
         <section className="surface-card">
           <div className="grid gap-5 md:grid-cols-3">
             <DetailItem label="Date">{row.transaction_date}</DetailItem>
+            <DetailItem label="Date/time">{row.transaction_datetime ? new Date(row.transaction_datetime).toLocaleString("en-US") : "-"}</DetailItem>
             <DetailItem label="Direction"><StatusBadge status={label(row.direction)} /></DetailItem>
             <DetailItem label="Status"><StatusBadge status={row.transaction_status ?? "active"} /></DetailItem>
             <DetailItem label="Balance impact"><StatusBadge status={affectsBalance ? "included" : "excluded"} /></DetailItem>

@@ -8,6 +8,7 @@ import {
   RECONCILED_OPENING_BALANCES,
   sumFinanceProfitRows,
 } from "../src/lib/finance-balance.ts";
+import { resolveCashCollectionTransactionDateTime } from "../src/lib/cash-finance.ts";
 import { classifyFinanceRows, KHALIJ_UNIVERSITY_ARABIC_NAME, buildFinanceReviewGroups, parseFinanceCsvText } from "../src/lib/finance-import.ts";
 
 function row(sourceRow, record) {
@@ -65,6 +66,16 @@ test("owner funding and withdrawal do not count as profit", () => {
   ];
 
   assert.equal(sumFinanceProfitRows(rows, "LYD"), 750);
+});
+
+test("cash collection finance transaction date comes from collection datetime", () => {
+  const resolved = resolveCashCollectionTransactionDateTime({
+    collected_at: "2026-05-20T08:45:00.000Z",
+    counted_at: "2026-05-22T13:00:00.000Z",
+  });
+
+  assert.equal(resolved.transactionDatetime, "2026-05-20T08:45:00.000Z");
+  assert.equal(resolved.transactionDate, "2026-05-20");
 });
 
 test("KhalijUniversity resolves to the correct Arabic machine name", () => {
@@ -135,6 +146,53 @@ test("Name and Currency map to the correct account", () => {
   assert.equal(classified[1].accountId, "snacky_usd");
   assert.equal(classified[2].accountId, "owner_lyd");
   assert.equal(classified[3].accountId, "owner_usd");
+});
+
+test("Transaction Type maps to requested categories without reversing Money Flow", () => {
+  const parsed = parseFinanceCsvText([
+    "Date,Name,Transaction Amount,Currency,Money Flow,Transaction Type,Location,Transaction Description",
+    "16/05/2026,Snacky,75,LYD,Money Out,Products Restocking,,Inventory buy",
+    "16/05/2026,Snacky,40,LYD,Money Out,Rent,,Rent",
+    "16/05/2026,Snacky,120,LYD,Money In,Revenue,,Cash counted",
+    "16/05/2026,Snacky,10,LYD,Money Out,Charity,,Donation",
+    "16/05/2026,Snacky,20,LYD,Money In,Ads,,Ad income",
+    "16/05/2026,Snacky,30,LYD,Money Out,Shipping,,Shipping",
+    "16/05/2026,Snacky,50,LYD,Money Out,Salary / Employee Payment,,Salary",
+  ].join("\n"), { sourceFile: "Snacky - Financial Spreadsheet - Transactions.csv" });
+  const classified = classifyFinanceRows(parsed.rows, []);
+
+  assert.deepEqual(classified.map((item) => item.categoryForTransaction), [
+    "Products Restocking",
+    "Rent",
+    "Revenue",
+    "Charity",
+    "Ads",
+    "Shipping",
+    "Salary / Employee Payment",
+  ]);
+  assert.deepEqual(classified.map((item) => item.direction), [
+    "money_out",
+    "money_out",
+    "money_in",
+    "money_out",
+    "money_in",
+    "money_out",
+    "money_out",
+  ]);
+});
+
+test("Doa and Ahmed are employee payees on Snacky account, not owner accounts", () => {
+  const parsed = parseFinanceCsvText([
+    "Date,Name,Transaction Amount,Currency,Money Flow,Transaction Type,Location,Transaction Description",
+    "16/05/2026,Doa,75,LYD,Money Out,Salary / Employee Payment,,Salary",
+    "16/05/2026,Ahmed,40,$,Money Out,Salary / Employee Payment,,Salary",
+  ].join("\n"), { sourceFile: "Snacky - Financial Spreadsheet - Transactions.csv" });
+  const classified = classifyFinanceRows(parsed.rows, []);
+
+  assert.equal(classified[0].accountId, "snacky_lyd");
+  assert.equal(classified[1].accountId, "snacky_usd");
+  assert.equal(classified[0].importStatus, "auto_classified");
+  assert.equal(classified[1].importStatus, "auto_classified");
 });
 
 test("duplicate rows are shown for review instead of ignored", () => {
