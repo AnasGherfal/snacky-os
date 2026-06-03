@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from "@/components/LocalDraft";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { FormField, FormSection } from "@/components/ui";
+import { FINANCE_ACCOUNTS } from "@/lib/finance-balance";
 import { latestKnownProductUnitCost, resolvePurchaseUnitCost } from "@/lib/purchase-cost-memory";
 import type { PurchaseSubmitResult } from "@/lib/purchase-actions";
 import type { ReceiptConfidenceLabel, ReceiptLineAction, ReceiptScanDraft } from "@/lib/receipt-scan-types";
@@ -70,6 +71,7 @@ type InitialPurchase = {
   receiptNumber?: string | null;
   paymentMethod?: string | null;
   paymentStatus?: string | null;
+  paymentAccountId?: string | null;
   receiptUrl?: string | null;
   receiptFileName?: string | null;
   receiptContentType?: string | null;
@@ -84,6 +86,7 @@ type PurchaseDetailsState = {
   receiptNumber: string;
   paymentMethod: string;
   paymentStatus: string;
+  paymentAccountId: string;
   receiptUrl: string;
   notes: string;
 };
@@ -157,6 +160,7 @@ function detailsFromInitial(initialPurchase?: InitialPurchase): PurchaseDetailsS
     receiptNumber: initialPurchase?.receiptNumber ?? "",
     paymentMethod: initialPurchase?.paymentMethod ?? "cash",
     paymentStatus: initialPurchase?.paymentStatus ?? "paid",
+    paymentAccountId: initialPurchase?.paymentAccountId ?? "snacky_lyd",
     receiptUrl: initialPurchase?.receiptUrl ?? "",
     notes: initialPurchase?.notes ?? "",
   };
@@ -180,6 +184,7 @@ function hasPurchaseDraftContent(draft: Pick<LocalPurchaseDraft, "details" | "ma
       details.notes.trim() ||
       details.paymentMethod !== "cash" ||
       details.paymentStatus !== "paid" ||
+      details.paymentAccountId !== "snacky_lyd" ||
       draft.manualTotal.trim() ||
       Object.values(draft.searchByLine ?? {}).some((value) => value.trim()) ||
       draft.lines.some((line) => lineHasManualInput(line)),
@@ -656,6 +661,7 @@ export function PurchaseForm({
         receiptNumber: current.receiptNumber || receiptScan.receiptNumber || "",
         paymentMethod: current.paymentMethod,
         paymentStatus: current.paymentStatus,
+        paymentAccountId: current.paymentAccountId,
         receiptUrl: current.receiptUrl || receiptScan.fileUrl || "",
         notes: current.notes,
       }));
@@ -1044,6 +1050,7 @@ export function PurchaseForm({
     formData.set("receipt_number", details.receiptNumber);
     formData.set("payment_method", details.paymentMethod);
     formData.set("payment_status", details.paymentStatus);
+    formData.set("payment_account_id", details.paymentAccountId);
     formData.set("receipt_url", details.receiptUrl);
     formData.set("notes", details.notes);
     formData.set("manual_total_lyd", manualTotal);
@@ -1122,6 +1129,15 @@ export function PurchaseForm({
               <option value="card">Card</option>
               <option value="credit">Credit</option>
               <option value="other">Other</option>
+            </select>
+          </FormField>
+          <FormField label="Paying account" hint="Used for the linked finance transaction when the purchase is confirmed.">
+            <select name="payment_account_id" className="field-input" value={details.paymentAccountId} onChange={(event) => setDetails((current) => ({ ...current, paymentAccountId: event.target.value }))}>
+              {FINANCE_ACCOUNTS.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.label}
+                </option>
+              ))}
             </select>
           </FormField>
           <FormField label="Payment status" hint="Only paid purchases create a finance money-out transaction when received.">

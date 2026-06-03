@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { canAddProducts, canManagePurchases } from "@/lib/authz";
+import { financeAccountId } from "@/lib/finance-balance";
 import { createPurchaseFinancialTransaction } from "@/lib/finance-actions";
 import { resolvePurchaseUnitCost, type ProductCostMemory } from "@/lib/purchase-cost-memory";
 import { resolveProductSku } from "@/lib/product-sku";
@@ -67,6 +68,10 @@ function parsePaymentStatus(value: FormDataEntryValue | null) {
   const status = String(value ?? "paid").trim();
   if (status === "partial") return "partially_paid";
   return ["paid", "unpaid", "partially_paid", "voided"].includes(status) ? status : "paid";
+}
+
+function parsePaymentAccountId(value: FormDataEntryValue | null, fallbackCurrency = "LYD") {
+  return financeAccountId(String(value ?? "").trim(), fallbackCurrency);
 }
 
 function parseLineAction(value: unknown): PurchaseLineInput["matchAction"] {
@@ -509,6 +514,7 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
     supplierIdForLog = supplierId;
     purchaseDateForLog = String(fd.get("purchase_date") || new Date().toISOString().slice(0, 10));
     const submitAction = String(fd.get("submit_action") || "draft");
+    const paymentAccountId = parsePaymentAccountId(fd.get("payment_account_id"));
     lines = await resolvePurchaseLines({ supabase, profile, lines, supplierId, submitAction: submitAction === "received" ? "received" : "draft" });
     lines = await applySavedProductCostMemory(supabase, lines);
     linesForLog = lines;
@@ -566,6 +572,17 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
       formError(PURCHASE_SAVE_ADMIN_MESSAGE);
     }
 
+    const { error: paymentAccountError } = await supabase
+      .from("purchase_orders")
+      .update({
+        payment_account_id: paymentAccountId,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", purchase.id);
+    if (paymentAccountError) {
+      console.warn("[purchases] Could not persist purchase payment account", paymentAccountError);
+    }
+
     await saveApprovedReceiptAliases(supabase, profile, lines);
     await linkReceiptScanResult(supabase, String(fd.get("receipt_scan_result_id") || ""), purchase.id);
 
@@ -589,6 +606,7 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
           received_date: new Date().toISOString().slice(0, 10),
           receipt_url: receiptUrl,
           payment_method: String(fd.get("payment_method") || "cash"),
+          payment_account_id: paymentAccountId,
         }, Number(purchase.total_amount ?? totals.total_amount ?? 0));
       } catch (financeError) {
         financeWarning = " Finance transaction was not created; review finance manually.";
@@ -650,6 +668,7 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
 
     const supplierId = String(fd.get("supplier_id") || "") || null;
     const submitAction = String(fd.get("submit_action") || "draft");
+    const paymentAccountId = parsePaymentAccountId(fd.get("payment_account_id"), "LYD");
     lines = await resolvePurchaseLines({ supabase, profile, lines, supplierId, submitAction: submitAction === "received" ? "received" : "draft" });
     lines = await applySavedProductCostMemory(supabase, lines);
     if (!lines.length) formError("Add at least one purchased item.");
@@ -682,6 +701,7 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
         receipt_number: String(fd.get("receipt_number") || "").trim() || null,
         payment_method: String(fd.get("payment_method") || "cash"),
         payment_status: parsePaymentStatus(fd.get("payment_status")),
+        payment_account_id: paymentAccountId,
         receipt_url: nextReceiptUrl,
         receipt_file_name: nextReceiptFileName,
         receipt_content_type: nextReceiptContentType,

@@ -5,6 +5,7 @@ import { cancelPurchase, deleteDraftPurchase, markPurchasePaid, receivePurchase,
 import { DataTable, EmptyState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
 import { canManagePurchases } from "@/lib/authz";
+import { accountLabel } from "@/lib/finance-balance";
 import { lyd } from "@/lib/format";
 import { dateOnly } from "@/lib/purchase-finance-date";
 import { privateStorageObjectUrl, RECEIPT_IMAGE_BUCKET } from "@/lib/storage-buckets";
@@ -82,9 +83,9 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
       .order("created_at", { ascending: false }),
     supabase
       .from("financial_transactions")
-      .select("id, amount, signed_amount, transaction_date, transaction_status, review_status")
-      .eq("related_purchase_id", id)
+      .select("id, amount, signed_amount, transaction_date, transaction_status, review_status, linked_purchase_id, source_type, source_id")
       .eq("transaction_kind", "product_purchase")
+      .eq("related_purchase_id", id)
       .order("transaction_date", { ascending: false }),
   ]);
   if (!purchase) notFound();
@@ -134,6 +135,7 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
             <div><div className="text-xs font-medium uppercase text-slate-500">Purchase date</div><div className="font-medium">{purchaseRow.order_date}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Supplier</div><div className="font-medium">{purchaseRow.supplier?.name ?? "-"}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Payment method</div><div className="font-medium">{String(purchaseRow.payment_method ?? "-").replaceAll("_", " ")}</div></div>
+            <div><div className="text-xs font-medium uppercase text-slate-500">Paying account</div><div className="font-medium">{accountLabel(purchaseRow.payment_account_id ?? "snacky_lyd")}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Payment status</div><StatusBadge status={purchaseRow.payment_status ?? "paid"} /></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Payment date</div><div className="font-medium">{paymentDate ?? "-"}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Linked finance transaction date</div><div className="font-medium">{linkedFinanceTransactionDate ?? "-"}</div></div>

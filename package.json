@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test:purchase-finance-date": "node --experimental-strip-types --test scripts/test-purchase-finance-date.mjs",
+    "test:purchase-finance-sync": "node --experimental-strip-types --test scripts/test-purchase-finance-sync.mjs",
     "test:purchase-unit-cost-memory": "node --experimental-strip-types --test scripts/test-purchase-unit-cost-memory.mjs",
     "test:vms-sales-import": "node --experimental-strip-types --test scripts/test-vms-sales-import-parser.mjs",
     "test:vms-import-validation": "node --experimental-strip-types --test scripts/test-vms-import-validation.mjs",

@@ -8,6 +8,7 @@ import { canEditFinancialTransactions, canViewFinancials } from "@/lib/authz";
 import { resolveCashCollectionTransactionDateTime } from "@/lib/cash-finance";
 import { accountCurrency, financeAccountId, type FinanceAccountId, type FinanceTransactionEffect } from "@/lib/finance-balance";
 import { categoryTypeForDirection, type FinanceCategoryType } from "@/lib/finance-categories";
+import { buildPurchaseFinanceDescription, resolvePurchaseFinanceAccountId } from "@/lib/purchase-finance-sync";
 import {
   buildFinanceClarificationPrompts,
   buildFinanceImportStageRow,
@@ -939,20 +940,47 @@ export async function updateFinancialTransactionStatus(formData: FormData) {
   redirect(`/finance/transactions/${id}?status=${status}`);
 }
 
+async function loadPurchaseSupplierName(
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>,
+  purchase: {
+    supplier_id?: string | null;
+    supplier_name?: string | null;
+    supplier?: { name?: string | null } | null;
+  },
+) {
+  const inlineName = String(purchase.supplier_name ?? purchase.supplier?.name ?? "").trim();
+  if (inlineName) return inlineName;
+  const supplierId = String(purchase.supplier_id ?? "").trim();
+  if (!supplierId) return null;
+  const { data, error } = await supabase.from("suppliers").select("name").eq("id", supplierId).maybeSingle();
+  if (error) {
+    console.warn("[finance] Could not load supplier name for purchase finance transaction", error);
+    return null;
+  }
+  return String(data?.name ?? "").trim() || null;
+}
+
 export async function createPurchaseFinancialTransaction(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>, profile: Awaited<ReturnType<typeof getCurrentProfile>>, purchase: any, amount: number) {
   if (!purchase?.id || !amount || amount <= 0) return;
-  const transactionDate = resolvePurchaseFinanceTransactionDate(purchase);
+
+  const transactionDate = String(purchase.order_date ?? "").trim() || resolvePurchaseFinanceTransactionDate(purchase);
+  const supplierName = await loadPurchaseSupplierName(supabase, purchase);
+  const accountId = resolvePurchaseFinanceAccountId(purchase);
+  const currency = accountCurrency(accountId);
+  const description = buildPurchaseFinanceDescription(purchase, supplierName);
+  const transactionDatetime = String(purchase.order_date ?? "").trim() || `${transactionDate}T00:00:00.000Z`;
   const payload = {
     transaction_date: transactionDate,
-    transaction_datetime: transactionDateTimeFromDate(transactionDate),
+    transaction_datetime: transactionDatetime,
     direction: "money_out",
     transaction_kind: "product_purchase",
     transaction_type: "Products Restocking",
-    description: purchase.receipt_number ? `Purchase ${purchase.receipt_number}` : "Purchase received",
-    amount,
+    description,
+    notes: String(purchase.notes ?? "").trim() || description,
+    amount: Math.abs(amount),
     signed_amount: -Math.abs(amount),
-    currency: "LYD",
-    account_id: "snacky_lyd",
+    currency,
+    account_id: accountId,
     transaction_effect: "expense",
     source_account_id: null,
     destination_account_id: null,
@@ -963,18 +991,41 @@ export async function createPurchaseFinancialTransaction(supabase: NonNullable<R
     transaction_status: "active",
     payment_method: purchase.payment_method ?? null,
     receipt_url: purchase.receipt_url ?? null,
+    linked_purchase_id: purchase.id,
     related_purchase_id: purchase.id,
+    source_type: "purchase",
+    source_id: purchase.id,
     created_by: profile?.team_member_id ?? null,
     updated_at: new Date().toISOString(),
   };
-  const { data: existing, error: existingError } = await supabase.from("financial_transactions").select("id").eq("transaction_kind", "product_purchase").eq("related_purchase_id", purchase.id).maybeSingle();
+  const legacyPayload = (({ linked_purchase_id: _linkedPurchaseId, source_type: _sourceType, source_id: _sourceId, ...rest }) => rest)(payload);
+  const { data: existing, error: existingError } = await supabase
+    .from("financial_transactions")
+    .select("id")
+    .eq("transaction_kind", "product_purchase")
+    .eq("related_purchase_id", purchase.id)
+    .maybeSingle();
   if (existingError) throw existingError;
   if (existing?.id) {
     const { error } = await supabase.from("financial_transactions").update(payload).eq("id", existing.id);
-    if (error) throw error;
+    if (error) {
+      if (error.code === "42703") {
+        const { error: fallbackError } = await supabase.from("financial_transactions").update(legacyPayload).eq("id", existing.id);
+        if (fallbackError) throw fallbackError;
+      } else {
+        throw error;
+      }
+    }
   } else {
     const { error } = await supabase.from("financial_transactions").insert(payload);
-    if (error) throw error;
+    if (error) {
+      if (error.code === "42703") {
+        const { error: fallbackError } = await supabase.from("financial_transactions").insert(legacyPayload);
+        if (fallbackError) throw fallbackError;
+      } else {
+        throw error;
+      }
+    }
   }
   revalidatePath("/finance");
   revalidatePath("/finance/transactions");
