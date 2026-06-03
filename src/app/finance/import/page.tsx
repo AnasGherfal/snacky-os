@@ -299,10 +299,13 @@ export default async function FinanceImportPage({ searchParams }: { searchParams
                       ) : null}
                       {row.import_status !== "ignored" ? <Link href={`/finance/import/review/${row.id}`} className="btn-secondary">Edit and confirm</Link> : null}
                       {row.import_status !== "ignored" ? (
-                        <form action={ignoreFinanceImportRow}>
-                          <input type="hidden" name="row_id" value={row.id} />
-                          <button className="btn-secondary">Ignore</button>
-                        </form>
+                        <details className="rounded-lg border border-slate-200 bg-slate-50 p-2">
+                          <summary className="cursor-pointer text-xs font-semibold text-slate-500">Advanced</summary>
+                          <form action={ignoreFinanceImportRow} className="mt-2">
+                            <input type="hidden" name="row_id" value={row.id} />
+                            <button className="btn-secondary w-full">Ignore row</button>
+                          </form>
+                        </details>
                       ) : null}
                     </div>
                   ) : (

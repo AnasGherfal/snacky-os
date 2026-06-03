@@ -42,6 +42,7 @@ const adminTabs: ModuleTab[] = [
   { label: "Settings", href: "/settings" },
   { label: "Activity Log", href: "/activity" },
   { label: "VMS Import", href: "/vms-import" },
+  { label: "VMS Data Sources", href: "/vms-import/sources" },
   { label: "XY VMS API", href: "/admin/vms-api" },
   { label: "Product Mapping", href: "/vms-mappings" },
 ];

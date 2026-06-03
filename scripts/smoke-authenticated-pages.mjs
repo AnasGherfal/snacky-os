@@ -151,18 +151,30 @@ test("authenticated high-risk pages render without crash and viewer is redirecte
     created.teamMemberIds.push(viewer.teamMemberId);
 
     for (const path of [
+      "/dashboard",
       "/inventory",
       "/inventory/movements",
+      "/inventory-dashboard",
       "/products",
       "/products/new",
+      "/products-dashboard",
+      "/restock-priority",
       "/purchases",
       "/purchases/new",
       "/routes",
       "/routes/new",
       "/machines",
+      "/machines-dashboard",
       "/locations",
       "/suppliers",
       "/cash-collections",
+      "/finance",
+      "/finance/import",
+      "/finance/import/review",
+      "/reports",
+      "/sales",
+      "/vms-import",
+      "/vms-import/sources",
     ]) {
       await assertPageOk(path, owner.cookie);
     }

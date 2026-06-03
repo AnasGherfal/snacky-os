@@ -183,6 +183,12 @@ function clampStep(value: string | undefined, hasPreview: boolean) {
   return Number.isFinite(parsed) ? Math.min(7, Math.max(2, Math.floor(parsed))) : 2;
 }
 
+function displayStepFromInternalStep(currentStep: number) {
+  if (currentStep >= 7) return 3;
+  if (currentStep >= 5) return 2;
+  return 1;
+}
+
 function batchMetric(batch: VmsBatchRow | null | undefined, key: keyof ImportSummary, fallback = 0) {
   const summary = parseSummary(batch?.notes);
   return Number(summary?.[key] ?? fallback);
@@ -619,17 +625,23 @@ function WizardStateInputs({
 }
 
 function Stepper({ currentStep }: { currentStep: number }) {
-  const steps = ["Upload", "Sheet", "Report", "Header", "Mapping", "Preview", "Confirm"];
+  const visibleStep = displayStepFromInternalStep(currentStep);
+  const steps = [
+    { label: "Upload + Auto Detect", detail: "File, sheet, report, header" },
+    { label: "Review Mapping", detail: "Products, machines, rows" },
+    { label: "Confirm Import", detail: "Save and refresh dashboards" },
+  ];
   return (
-    <div className="mb-6 grid gap-2 md:grid-cols-7">
-      {steps.map((label, index) => {
+    <div className="mb-6 grid gap-2 md:grid-cols-3">
+      {steps.map((item, index) => {
         const step = index + 1;
-        const active = step === currentStep;
-        const done = step < currentStep;
+        const active = step === visibleStep;
+        const done = step < visibleStep;
         return (
-          <div key={label} className={`rounded-lg border px-3 py-2 text-sm ${active ? "border-emerald-300 bg-emerald-50 text-emerald-900" : done ? "border-slate-200 bg-white text-slate-700" : "border-slate-200 bg-slate-50 text-slate-400"}`}>
+          <div key={item.label} className={`rounded-lg border px-3 py-2 text-sm ${active ? "border-emerald-300 bg-emerald-50 text-emerald-900" : done ? "border-slate-200 bg-white text-slate-700" : "border-slate-200 bg-slate-50 text-slate-400"}`}>
             <div className="text-xs font-semibold uppercase tracking-wide">Step {step}</div>
-            <div className="font-medium">{label}</div>
+            <div className="font-medium">{item.label}</div>
+            <div className="mt-1 text-xs opacity-80">{item.detail}</div>
           </div>
         );
       })}
@@ -647,8 +659,8 @@ function UploadCard() {
     <SectionCard>
       <LocalDraftForm action={prepareVmsImport} formType="vms-import" draftKeyParts={["upload"]} className="space-y-4 p-4">
         <div>
-          <h2 className="text-lg font-semibold text-slate-900">Upload new file</h2>
-          <p className="mt-1 text-sm text-slate-500">Upload the VMS export exactly as downloaded. Excel and CSV files are accepted.</p>
+          <h2 className="text-lg font-semibold text-slate-900">Step 1: Upload + Auto Detect</h2>
+          <p className="mt-1 text-sm text-slate-500">Upload the VMS export exactly as downloaded. Snacky OS detects the sheet, report type, headers, rows, and date/snapshot range.</p>
         </div>
         <FormField label="VMS file" required hint="Accepted: .xlsx, .xls, .csv">
           <input name="file" type="file" accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required className="field-input" />
@@ -668,7 +680,7 @@ function UploadCard() {
           slowLabel="Still working. Snacky OS is saving the preview; please do not press again."
           slowAfterMs={18000}
         >
-          Upload and preview
+          Upload + Auto Detect
         </FormSubmitButton>
       </LocalDraftForm>
     </SectionCard>
@@ -1105,7 +1117,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
   if (!canViewVmsImports(profile)) {
     return (
       <>
-        <PageHeader title="VMS Import" subtitle="A step-by-step import wizard for VMS Excel and CSV reports." />
+        <PageHeader title="VMS Import" subtitle="Three-step import: upload and detect, review mapping, confirm import." />
         <ErrorState title="VMS import access required" body="You do not have permission to view VMS imports." />
       </>
     );
@@ -1143,7 +1155,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
   if (batchesError) {
     return (
       <>
-        <PageHeader title="VMS Import" subtitle="A step-by-step import wizard for VMS Excel and CSV reports." />
+        <PageHeader title="VMS Import" subtitle="Three-step import: upload and detect, review mapping, confirm import." />
         <ErrorState title="Could not load VMS import" body={userFacingLoadError(batchesError, "vms_import_batches.list")} action={<SecondaryButton href="/vms-import">Retry</SecondaryButton>} />
       </>
     );
@@ -1168,7 +1180,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
       });
       return (
         <>
-          <PageHeader title="VMS Import" subtitle="A step-by-step import wizard for VMS Excel and CSV reports." />
+          <PageHeader title="VMS Import" subtitle="Three-step import: upload and detect, review mapping, confirm import." />
           <ErrorState title="Could not load VMS import preview" body={userFacingLoadError(queryError(previewError))} action={<SecondaryButton href="/vms-import">Show latest imports</SecondaryButton>} />
         </>
       );
@@ -1273,7 +1285,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
   if (preview && !selectedSheet) {
     return (
       <>
-        <PageHeader title="VMS Import" subtitle="A step-by-step import wizard for VMS Excel and CSV reports." />
+        <PageHeader title="VMS Import" subtitle="Three-step import: upload and detect, review mapping, confirm import." />
         <ErrorState title="This import batch has no preview rows" body="This import batch has no preview rows. Please re-upload the file." action={<SecondaryButton href="/vms-import">Start over</SecondaryButton>} />
       </>
     );
@@ -1285,7 +1297,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
     if (!canValidateVmsImports(profile)) {
       return (
         <>
-          <PageHeader title="VMS Import" subtitle="A step-by-step import wizard for VMS Excel and CSV reports." />
+          <PageHeader title="VMS Import" subtitle="Three-step import: upload and detect, review mapping, confirm import." />
           <ErrorState title="VMS import validation required" body="You do not have permission to validate VMS imports." action={<SecondaryButton href="/vms-import">Back to VMS import</SecondaryButton>} />
         </>
       );
@@ -1302,7 +1314,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
     if (validationReferences.blockingError) {
       return (
         <>
-          <PageHeader title="VMS Import" subtitle="A step-by-step import wizard for VMS Excel and CSV reports." />
+          <PageHeader title="VMS Import" subtitle="Three-step import: upload and detect, review mapping, confirm import." />
           <ErrorState title="Could not validate VMS rows" body={validationReferenceErrorMessage(validationReferences.blockingError)} action={<SecondaryButton href="/vms-import">Start over</SecondaryButton>} />
         </>
       );
@@ -1424,7 +1436,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
     <>
       <PageHeader
         title="VMS Import"
-        subtitle="A step-by-step import wizard for VMS Excel and CSV reports."
+        subtitle="Three-step import: upload and detect, review mapping, confirm import."
       />
 
       <Stepper currentStep={currentStep} />
@@ -1480,8 +1492,8 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
         <section className="surface-card mb-6 space-y-5">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <h2 className="text-lg font-semibold text-slate-900">Step 2: Sheet Selection</h2>
-              <p className="mt-1 text-sm text-slate-500">Select the sheet and inspect the first 20 rows exactly as Snacky OS read them.</p>
+              <h2 className="text-lg font-semibold text-slate-900">Step 1: Upload + Auto Detect</h2>
+              <p className="mt-1 text-sm text-slate-500">Advanced correction for Step 1. Select the sheet and inspect the first 20 rows exactly as Snacky OS read them.</p>
             </div>
             <Link href="/vms-import" className="btn-secondary">Start over</Link>
           </div>
@@ -1512,8 +1524,8 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
       {preview && selectedSheet && currentStep === 3 ? (
         <section className="surface-card mb-6 space-y-5">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">Step 3: Choose Report Type</h2>
-            <p className="mt-1 text-sm text-slate-500">The report type controls which fields are expected and how rows are validated.</p>
+            <h2 className="text-lg font-semibold text-slate-900">Step 1: Upload + Auto Detect</h2>
+            <p className="mt-1 text-sm text-slate-500">Advanced correction: confirm or override the detected report type before reviewing mappings.</p>
           </div>
           <form className="space-y-4">
             {baseState.importBatchId ? <input type="hidden" name="importBatchId" value={baseState.importBatchId} /> : null}
@@ -1536,8 +1548,8 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
       {preview && selectedSheet && currentStep === 4 ? (
         <section className="surface-card mb-6 space-y-5">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">Step 4: Header Row Detection</h2>
-            <p className="mt-1 text-sm text-slate-500">Choose the row that contains column headers. Title rows above it will be ignored.</p>
+            <h2 className="text-lg font-semibold text-slate-900">Step 1: Upload + Auto Detect</h2>
+            <p className="mt-1 text-sm text-slate-500">Advanced correction: choose the row that contains column headers. Title rows above it will be ignored.</p>
           </div>
           <form className="space-y-4">
             {baseState.importBatchId ? <input type="hidden" name="importBatchId" value={baseState.importBatchId} /> : null}
@@ -1566,9 +1578,24 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
       {preview && selectedSheet && currentStep === 5 ? (
         <section className="surface-card mb-6 space-y-5">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">Step 5: Column Mapping</h2>
-            <p className="mt-1 text-sm text-slate-500">Map VMS columns to Snacky fields. Required fields must be mapped before validation.</p>
+            <h2 className="text-lg font-semibold text-slate-900">Step 2: Review Mapping</h2>
+            <p className="mt-1 text-sm text-slate-500">Review the auto-detected sheet, report type, headers, product mappings, machine mappings, and row validation before confirming.</p>
           </div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            <StatCard label="File" value={preview.file_name ?? "-"} />
+            <StatCard label="Sheet" value={selectedSheet.name} />
+            <StatCard label="Report type" value={reportLabel(selectedReportType)} />
+            <StatCard label="Header row" value={`Row ${selectedRows.headerRowIndex + 1}`} />
+            <StatCard label="Rows detected" value={mappedRows.length} />
+          </div>
+          <details className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm">
+            <summary className="cursor-pointer font-semibold text-slate-800">Advanced detection settings</summary>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Link href={queryFor({ importBatchId: baseState.importBatchId, previewId: preview.id, sheet: selectedSheet.name, reportType: selectedReportType, headerRow: String(selectedRows.headerRowIndex), step: "2" })} className="btn-secondary">Change sheet</Link>
+              <Link href={queryFor({ importBatchId: baseState.importBatchId, previewId: preview.id, sheet: selectedSheet.name, reportType: selectedReportType, headerRow: String(selectedRows.headerRowIndex), step: "3" })} className="btn-secondary">Change report type</Link>
+              <Link href={queryFor({ importBatchId: baseState.importBatchId, previewId: preview.id, sheet: selectedSheet.name, reportType: selectedReportType, headerRow: String(selectedRows.headerRowIndex), step: "4" })} className="btn-secondary">Change header row</Link>
+            </div>
+          </details>
           {savedHeaderMapping ? (
             <div className="flex flex-col gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 md:flex-row md:items-center md:justify-between">
               <div>
@@ -1637,7 +1664,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
             </DataTable>
             <div className="flex flex-wrap gap-3">
               <Link href={queryFor({ importBatchId: baseState.importBatchId, previewId: preview.id, sheet: selectedSheet.name, reportType: selectedReportType, headerRow: String(selectedRows.headerRowIndex), step: "4" })} className="btn-secondary">Back</Link>
-              <FormSubmitButton pendingLabel="Validating mapped rows...">Preview and validate</FormSubmitButton>
+              <FormSubmitButton pendingLabel="Validating mapped rows...">Review mapped rows</FormSubmitButton>
             </div>
           </form>
           <div className="grid gap-5 xl:grid-cols-2">
@@ -1673,7 +1700,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
       {preview && selectedSheet && currentStep === 6 ? (
         <section className="surface-card mb-6 space-y-5">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">Step 6: Preview / Validation</h2>
+            <h2 className="text-lg font-semibold text-slate-900">Step 2: Review Mapping</h2>
             <p className="mt-1 text-sm text-slate-500">No data has been imported yet. Review mapped rows, product mappings, machines, and validation errors before confirming.</p>
           </div>
           {missingRequired.length ? (
@@ -1792,7 +1819,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
               <FormField label="Range end">
                 <input name="reportEndDate" type="date" defaultValue={reportEndDate} className="field-input" />
               </FormField>
-              <FormSubmitButton className="btn-primary self-end" pendingLabel="Preparing confirmation...">Continue to confirm</FormSubmitButton>
+              <FormSubmitButton className="btn-primary self-end" pendingLabel="Preparing confirmation...">Continue to Step 3</FormSubmitButton>
             </form>
           </div>
         </section>
@@ -1801,7 +1828,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
       {preview && selectedSheet && currentStep === 7 ? (
         <section className="surface-card mb-6 space-y-5">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">Step 7: Confirm Import</h2>
+            <h2 className="text-lg font-semibold text-slate-900">Step 3: Confirm Import</h2>
             <p className="mt-1 text-sm text-slate-500">This is the only step that saves snapshots, mappings, and the import batch.</p>
           </div>
           {validationReferenceNotices.map((notice) => (

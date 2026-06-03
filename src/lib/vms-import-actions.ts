@@ -3188,7 +3188,7 @@ export async function prepareVmsImport(formData: FormData) {
   // Include small parse diagnostics in the redirect so the UI can show them before confirmation
   const firstSheetName = parsed.sheets[0]?.name ?? "";
   const headerPreview = detectedHeaders.slice(0, 20).join(",");
-  redirect(`/vms-import?previewId=${previewId}&importBatchId=${batchResult.id}&sheet=${encodeURIComponent(firstSheetName)}&reportType=${reportType}&step=2&rows=${parsedRowsCount}&headers=${encodeURIComponent(headerPreview)}&detected=${encodeURIComponent(String(detectedReportType))}&uid=${encodeURIComponent(String(currentUserId ?? ""))}`);
+  redirect(`/vms-import?previewId=${previewId}&importBatchId=${batchResult.id}&sheet=${encodeURIComponent(firstSheetName)}&reportType=${reportType}&step=5&rows=${parsedRowsCount}&headers=${encodeURIComponent(headerPreview)}&detected=${encodeURIComponent(String(detectedReportType))}&uid=${encodeURIComponent(String(currentUserId ?? ""))}`);
 }
 
 export async function importVmsCsv(formData: FormData) {
