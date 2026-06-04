@@ -21,6 +21,13 @@ create table if not exists public.vms_import_batches (
   updated_at timestamptz not null default now()
 );
 
+do $$
+begin
+  if to_regclass('public.vms_import_batches') is not null then
+    execute 'alter table public.vms_import_batches enable row level security';
+  end if;
+end $$;
+
 alter table public.vms_import_batches
   add column if not exists id uuid default gen_random_uuid(),
   add column if not exists uploaded_by uuid,
@@ -134,6 +141,118 @@ set
   successful_rows_count = coalesce(successful_rows_count, 0),
   failed_rows_count = coalesce(failed_rows_count, 0),
   refunded_rows_count = coalesce(refunded_rows_count, 0),
-  is_active = coalesce(is_active, false);
+  is_active = coalesce(is_active, false)
+where uploaded_at is null
+   or import_mode is null
+   or status is null
+   or rows_found is null
+   or rows_imported is null
+   or rows_skipped_duplicate is null
+   or rows_needing_review is null
+   or created_at is null
+   or updated_at is null
+   or source_type is null
+   or row_count is null
+   or rows_skipped is null
+   or error_count is null
+   or errors is null
+   or unknown_machines is null
+   or unmapped_products is null
+   or column_mapping is null
+   or preview_summary is null
+   or review_summary is null
+   or reprocess_count is null
+   or total_successful_sales is null
+   or successful_rows_count is null
+   or failed_rows_count is null
+   or refunded_rows_count is null
+   or is_active is null;
+
+create or replace function public.snacky_current_profile_can_view_vms_import()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, auth
+as $$
+  select public.snacky_current_profile_has_any_role(array['owner', 'admin', 'supervisor']);
+$$;
+
+create or replace function public.snacky_current_profile_can_manage_vms_mappings()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, auth
+as $$
+  select public.snacky_current_profile_has_any_role(array['owner', 'admin', 'supervisor']);
+$$;
+
+grant execute on function public.snacky_current_profile_can_view_vms_import() to authenticated;
+grant execute on function public.snacky_current_profile_can_manage_vms_mappings() to authenticated;
+
+do $$
+declare
+  table_name text;
+begin
+  foreach table_name in array array[
+    'vms_import_batches',
+    'vms_import_preview_rows',
+    'vms_product_mappings',
+    'vms_machine_mappings',
+    'vms_header_mappings',
+    'vms_machine_stock_snapshots'
+  ] loop
+    if to_regclass('public.' || table_name) is null then
+      continue;
+    end if;
+
+    execute format('alter table public.%I enable row level security', table_name);
+    execute format('revoke all on public.%I from public', table_name);
+    execute format('grant select, insert, update, delete on public.%I to authenticated', table_name);
+
+    execute format('drop policy if exists "snacky_%s_select_by_vms_import_role" on public.%I', table_name, table_name);
+    execute format('drop policy if exists "snacky_%s_insert_by_vms_import_role" on public.%I', table_name, table_name);
+    execute format('drop policy if exists "snacky_%s_update_by_vms_import_role" on public.%I', table_name, table_name);
+    execute format('drop policy if exists "snacky_%s_delete_by_vms_import_role" on public.%I', table_name, table_name);
+    execute format('drop policy if exists "snacky_%s_select_by_vms_import_permission" on public.%I', table_name, table_name);
+    execute format('drop policy if exists "snacky_%s_insert_by_vms_import_permission" on public.%I', table_name, table_name);
+    execute format('drop policy if exists "snacky_%s_update_by_vms_import_permission" on public.%I', table_name, table_name);
+    execute format('drop policy if exists "snacky_%s_delete_by_vms_import_permission" on public.%I', table_name, table_name);
+    execute format('drop policy if exists "snacky_vms_select" on public.%I', table_name);
+    execute format('drop policy if exists "snacky_vms_insert" on public.%I', table_name);
+    execute format('drop policy if exists "snacky_vms_update" on public.%I', table_name);
+    execute format('drop policy if exists "snacky_vms_delete" on public.%I', table_name);
+
+    execute format($policy$
+      create policy "snacky_vms_select"
+      on public.%I for select
+      to authenticated
+      using (public.snacky_current_profile_can_view_vms_import())
+    $policy$, table_name);
+
+    execute format($policy$
+      create policy "snacky_vms_insert"
+      on public.%I for insert
+      to authenticated
+      with check (public.snacky_current_profile_can_manage_vms_mappings())
+    $policy$, table_name);
+
+    execute format($policy$
+      create policy "snacky_vms_update"
+      on public.%I for update
+      to authenticated
+      using (public.snacky_current_profile_can_manage_vms_mappings())
+      with check (public.snacky_current_profile_can_manage_vms_mappings())
+    $policy$, table_name);
+
+    execute format($policy$
+      create policy "snacky_vms_delete"
+      on public.%I for delete
+      to authenticated
+      using (public.snacky_current_profile_can_manage_vms_mappings())
+    $policy$, table_name);
+  end loop;
+end $$;
 
 select pg_notify('pgrst', 'reload schema');
