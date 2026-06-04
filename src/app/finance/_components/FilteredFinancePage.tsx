@@ -21,7 +21,7 @@ export type FinanceFilteredPageConfig = {
 };
 
 function categoryLabel(row: any) {
-  return row.final_bucket ?? row.transaction_type ?? String(row.transaction_kind ?? "transaction").replaceAll("_", " ");
+  return row.category ?? row.final_bucket ?? row.transaction_type ?? String(row.transaction_kind ?? "transaction").replaceAll("_", " ");
 }
 
 export function financeRowText(row: any) {
@@ -50,7 +50,7 @@ export async function FilteredFinancePage(config: FinanceFilteredPageConfig) {
   const { page, pageSize, from, to } = getPagination(params);
   let query = supabase
     .from("financial_transactions")
-    .select("id, transaction_date, direction, transaction_kind, transaction_type, description, notes, signed_amount, currency, final_bucket, payment_method, transaction_status, review_status, needs_review, import_status", { count: "exact" })
+    .select("id, transaction_date, direction, transaction_kind, transaction_type, description, notes, signed_amount, currency, category, final_bucket, payment_method, transaction_status, review_status, needs_review, import_status", { count: "exact" })
     .eq("transaction_status", "active")
     .order("transaction_date", { ascending: false });
   if (config.applyQuery) query = config.applyQuery(query);

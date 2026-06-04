@@ -45,7 +45,7 @@ export function ManualFinanceTransactionFields({
   const [accountId, setAccountId] = useState(defaults.accountId ?? (direction === "money_in" ? "snacky_lyd" : "snacky_lyd"));
   const [sourceAccountId, setSourceAccountId] = useState(defaults.sourceAccountId ?? "owner_lyd");
   const [destinationAccountId, setDestinationAccountId] = useState(defaults.destinationAccountId ?? "snacky_lyd");
-  const [category, setCategory] = useState(defaults.category ?? "");
+  const [category, setCategory] = useState(initialDirection === "transfer" ? "Transfer" : defaults.category ?? "");
 
   const allCategories = useMemo(
     () => (category && category !== "__new__" && !categories.some((item) => item.name === category) ? [...categories, { name: category, type: "both" as const }] : categories),
@@ -57,6 +57,10 @@ export function ManualFinanceTransactionFields({
   const categoryStillVisible = category && visibleCategories.some((item) => item.name === category);
   const setDirectionAndClearCategory = (next: "money_in" | "money_out" | "transfer") => {
     setDirection(next);
+    if (next === "transfer") {
+      setCategory("Transfer");
+      return;
+    }
     if (category && !allCategories.some((item) => item.name === category && categoryAllowedForDirection(item, next))) {
       setCategory("");
     }
@@ -116,7 +120,7 @@ export function ManualFinanceTransactionFields({
             </select>
           </FormField>
           <FormField label="Paid to">
-            <input name="payee_text" defaultValue={defaults.payeeText ?? defaults.counterpartyText ?? ""} className="field-input" />
+            <input name="paid_to_text" defaultValue={defaults.payeeText ?? defaults.counterpartyText ?? ""} className="field-input" />
           </FormField>
         </>
       ) : null}
@@ -143,24 +147,29 @@ export function ManualFinanceTransactionFields({
           <FormField label="Counterparty / memo">
             <input name="counterparty_text" defaultValue={defaults.counterpartyText ?? `${labelForAccount(sourceAccountId)} to ${labelForAccount(destinationAccountId)}`} className="field-input" />
           </FormField>
+          <input type="hidden" name="category" value="Transfer" />
         </>
       ) : null}
 
       <FormField label="Amount" required>
         <input name="amount" type="number" step="0.01" min="0" defaultValue={defaults.amount ?? ""} required className="field-input" />
       </FormField>
-      <FormField label="Category" required>
-        <select name="category" value={categoryStillVisible ? category : ""} onChange={(event) => setCategory(event.target.value)} required className="field-input">
-          <option value="">Select category</option>
-          {visibleCategories.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}
-          <option value="__new__">Add new category...</option>
-        </select>
-      </FormField>
-      {category === "__new__" || Boolean(!categoryStillVisible && category) ? (
-        <FormField label="New category name" required>
-          <input name="new_category_name" required className="field-input" />
-        </FormField>
-      ) : null}
+      {direction === "transfer" ? null : (
+        <>
+          <FormField label="Category" required>
+            <select name="category" value={categoryStillVisible ? category : ""} onChange={(event) => setCategory(event.target.value)} required className="field-input">
+              <option value="">Select category</option>
+              {visibleCategories.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}
+              <option value="__new__">Add new category...</option>
+            </select>
+          </FormField>
+          {category === "__new__" || Boolean(!categoryStillVisible && category) ? (
+            <FormField label="New category name" required>
+              <input name="new_category_name" required className="field-input" />
+            </FormField>
+          ) : null}
+        </>
+      )}
     </div>
   );
 }

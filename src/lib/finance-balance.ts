@@ -120,7 +120,7 @@ const nonProfitCategories = new Set([
 ]);
 
 function normalizedCategory(row: BalanceTransaction) {
-  return String(row.final_bucket ?? row.category ?? row.transaction_type ?? "").trim().toLowerCase();
+  return String(row.category ?? row.final_bucket ?? row.transaction_type ?? "").trim().toLowerCase();
 }
 
 export function isProfitAffectingTransaction(row: BalanceTransaction, cutoffDate = FINANCE_RECONCILIATION_CUTOFF_DATE) {

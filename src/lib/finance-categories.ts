@@ -20,6 +20,7 @@ export const DEFAULT_FINANCE_CATEGORIES: FinanceCategoryOption[] = [
   { name: "Refund", type: "both" },
   { name: "Owner Funding", type: "transfer" },
   { name: "Owner Withdrawal", type: "transfer" },
+  { name: "Transfer", type: "transfer" },
   { name: "Exchange", type: "transfer" },
   { name: "Miscellaneous", type: "both" },
   { name: "Uncategorized", type: "both" },

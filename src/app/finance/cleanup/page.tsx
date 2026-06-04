@@ -20,7 +20,7 @@ function financeAllowed(profile: Awaited<ReturnType<typeof getCurrentProfile>>) 
 }
 
 function text(row: any) {
-  return [row.final_bucket, row.transaction_type, row.description, row.notes, row.counterparty_text, row.payer_text, row.payee_text].map((value) => String(value ?? "").toLowerCase()).join(" ");
+  return [row.category, row.final_bucket, row.transaction_type, row.description, row.notes, row.counterparty_text, row.payer_text, row.paid_to_text, row.payee_text].map((value) => String(value ?? "").toLowerCase()).join(" ");
 }
 
 function hasOwnerFundingText(row: any) {
@@ -78,7 +78,7 @@ function cleanupIssues(rows: any[]) {
     "missing_category",
     "Missing category",
     "These rows need a category before finance reporting can be trusted.",
-    activeRows.filter((row) => !String(row.final_bucket ?? "").trim()),
+    activeRows.filter((row) => !String(row.category ?? row.final_bucket ?? "").trim()),
   );
   addIssue(
     issues,
@@ -121,7 +121,7 @@ export default async function FinanceCleanupPage() {
 
   const { data, error } = await supabase
     .from("financial_transactions")
-    .select("id, transaction_date, direction, transaction_kind, transaction_type, description, notes, amount, signed_amount, currency, account_id, transaction_effect, source_account_id, destination_account_id, final_bucket, payer_text, payee_text, counterparty_text, source_file, source_sheet, source_row, original_description, transaction_status, import_status, needs_review")
+    .select("id, transaction_date, direction, transaction_kind, transaction_type, description, notes, amount, signed_amount, currency, account_id, transaction_effect, source_account_id, destination_account_id, category, final_bucket, payer_text, paid_to_text, payee_text, counterparty_text, source_file, source_sheet, source_row, original_description, transaction_status, import_status, needs_review")
     .gt("transaction_date", FINANCE_RECONCILIATION_CUTOFF_DATE)
     .order("transaction_date", { ascending: false })
     .limit(10000);
@@ -166,7 +166,7 @@ export default async function FinanceCleanupPage() {
                 {issue.rows.slice(0, 20).map((row) => (
                   <tr key={`${issue.key}-${row.id}`}>
                     <td>{row.transaction_date}</td>
-                    <td>{row.final_bucket ?? "-"}</td>
+                    <td>{row.category ?? row.final_bucket ?? "-"}</td>
                     <td>{formatFinanceMoney(Number(row.signed_amount ?? row.amount ?? 0), row.currency ?? "LYD")}</td>
                     <td>{row.transaction_effect === "transfer" ? `${accountLabel(row.source_account_id)} -> ${accountLabel(row.destination_account_id)}` : accountLabel(row.account_id)}</td>
                     <td><StatusBadge status={row.transaction_effect ?? row.direction} /></td>

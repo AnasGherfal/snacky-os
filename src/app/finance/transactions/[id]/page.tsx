@@ -81,7 +81,7 @@ export default async function FinanceTransactionDetailPage({
             <DetailItem label="Direction"><StatusBadge status={label(row.direction)} /></DetailItem>
             <DetailItem label="Status"><StatusBadge status={row.transaction_status ?? "active"} /></DetailItem>
             <DetailItem label="Balance impact"><StatusBadge status={affectsBalance ? "included" : "excluded"} /></DetailItem>
-            <DetailItem label="Category">{category(row)}</DetailItem>
+            <DetailItem label="Category">{row.category ?? category(row)}</DetailItem>
             <DetailItem label="Amount"><span className={Number(row.signed_amount ?? 0) < 0 ? "text-rose-700" : "text-emerald-700"}>{formatFinanceMoney(Number(row.signed_amount ?? 0), row.currency ?? "LYD")}</span></DetailItem>
             <DetailItem label="Account">{row.transaction_effect === "transfer" ? `${accountLabel(row.source_account_id)} -> ${accountLabel(row.destination_account_id)}` : accountLabel(row.account_id)}</DetailItem>
             <DetailItem label="Effect">{label(row.transaction_effect)}</DetailItem>
@@ -89,7 +89,7 @@ export default async function FinanceTransactionDetailPage({
             <DetailItem label="Kind">{label(row.transaction_kind)}</DetailItem>
             <DetailItem label="Review"><StatusBadge status={row.needs_review ? "needs_review" : row.review_status} /></DetailItem>
             <DetailItem label="Receipt">{row.receipt_url ? <a href={row.receipt_url} target="_blank" rel="noreferrer" className="link-secondary">Open receipt</a> : "-"}</DetailItem>
-            <DetailItem label="Counterparty">{row.counterparty_text ?? row.payer_text ?? row.payee_text ?? "-"}</DetailItem>
+            <DetailItem label="Counterparty">{row.counterparty_text ?? row.payer_text ?? row.paid_to_text ?? row.payee_text ?? "-"}</DetailItem>
           </div>
           <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-4">
             <div className="text-xs font-medium uppercase text-slate-500">Description / notes</div>

@@ -8,7 +8,7 @@ import { canEditFinancialTransactions, canViewFinancials } from "@/lib/authz";
 import { resolveCashCollectionTransactionDateTime } from "@/lib/cash-finance";
 import { accountCurrency, financeAccountId, type FinanceAccountId, type FinanceTransactionEffect } from "@/lib/finance-balance";
 import { categoryTypeForDirection, type FinanceCategoryType } from "@/lib/finance-categories";
-import { buildPurchaseFinanceDescription, resolvePurchaseFinanceAccountId } from "@/lib/purchase-finance-sync";
+import { buildPurchaseFinanceTransactionPayload } from "@/lib/purchase-finance-sync";
 import {
   buildFinanceClarificationPrompts,
   buildFinanceImportStageRow,
@@ -156,15 +156,15 @@ async function resolveFinanceCategory(
 
 function counterpartyFields(formData: FormData, fields: ReturnType<typeof resolveManualLedgerFields>) {
   const payer = optionalText(formData.get("payer_text"));
-  const payee = optionalText(formData.get("payee_text"));
+  const payee = optionalText(formData.get("paid_to_text")) ?? optionalText(formData.get("payee_text"));
   const counterparty = optionalText(formData.get("counterparty_text"));
   if (fields.transactionEffect === "transfer") {
-    return { payerText: null, payeeText: null, counterpartyText: counterparty };
+    return { payerText: null, payeeText: null, paidToText: null, counterpartyText: counterparty };
   }
   if (fields.direction === "money_in") {
-    return { payerText: payer ?? counterparty, payeeText: null, counterpartyText: payer ?? counterparty };
+    return { payerText: payer ?? counterparty, payeeText: null, paidToText: null, counterpartyText: payer ?? counterparty };
   }
-  return { payerText: null, payeeText: payee ?? counterparty, counterpartyText: payee ?? counterparty };
+  return { payerText: null, payeeText: payee ?? counterparty, paidToText: payee ?? counterparty, counterpartyText: payee ?? counterparty };
 }
 
 async function loadFinanceClassificationContext(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>) {
@@ -435,14 +435,17 @@ export async function confirmFinanceImportRow(formData: FormData) {
     signed_amount: ledgerFields.direction === "money_out" ? -Math.abs(amount) : Math.abs(amount),
     currency: ledgerFields.currency,
     account_id: ledgerFields.accountId,
+    account_key: ledgerFields.accountId,
     transaction_effect: ledgerFields.transactionEffect,
     source_account_id: ledgerFields.sourceAccountId,
     destination_account_id: ledgerFields.destinationAccountId,
     finance_category_id: categoryRecord.id,
     payer_text: payerText,
     payee_text: payeeText,
+    paid_to_text: payeeText,
     counterparty_text: counterpartyText,
     bucket: optionalText(row.raw_category),
+    category,
     final_bucket: category,
     review_status: "confirmed",
     needs_review: false,
@@ -687,14 +690,17 @@ export async function createManualFinancialTransaction(formData: FormData) {
     signed_amount: ledgerFields.direction === "money_out" ? -amount : amount,
     currency: ledgerFields.currency,
     account_id: ledgerFields.accountId,
+    account_key: ledgerFields.accountId,
     transaction_effect: ledgerFields.transactionEffect,
     source_account_id: ledgerFields.sourceAccountId,
     destination_account_id: ledgerFields.destinationAccountId,
     finance_category_id: categoryRecord.id,
     payer_text: counterparty.payerText,
     payee_text: counterparty.payeeText,
+    paid_to_text: counterparty.paidToText,
     counterparty_text: counterparty.counterpartyText,
     bucket: optionalText(formData.get("bucket")),
+    category,
     final_bucket: category,
     review_status: "confirmed",
     needs_review: false,
@@ -757,13 +763,16 @@ export async function reviewFinancialTransaction(formData: FormData) {
     signed_amount: ledgerFields.direction === "money_out" ? -amount : amount,
     currency: ledgerFields.currency,
     account_id: ledgerFields.accountId,
+    account_key: ledgerFields.accountId,
     transaction_effect: ledgerFields.transactionEffect,
     source_account_id: ledgerFields.sourceAccountId,
     destination_account_id: ledgerFields.destinationAccountId,
     finance_category_id: categoryRecord.id,
     payer_text: counterparty.payerText,
     payee_text: counterparty.payeeText,
+    paid_to_text: counterparty.paidToText,
     counterparty_text: counterparty.counterpartyText,
+    category,
     final_bucket: category,
     review_status: "reviewed",
     needs_review: false,
@@ -835,15 +844,18 @@ export async function updateFinancialTransaction(formData: FormData) {
     signed_amount: ledgerFields.direction === "money_out" ? -amount : amount,
     currency: ledgerFields.currency,
     account_id: ledgerFields.accountId,
+    account_key: ledgerFields.accountId,
     transaction_effect: ledgerFields.transactionEffect,
     source_account_id: ledgerFields.sourceAccountId,
     destination_account_id: ledgerFields.destinationAccountId,
     finance_category_id: categoryRecord.id,
     payer_text: counterparty.payerText,
     payee_text: counterparty.payeeText,
+    paid_to_text: counterparty.paidToText,
     counterparty_text: counterparty.counterpartyText,
     bucket: optionalText(formData.get("bucket")),
     bucket_override: optionalText(formData.get("bucket_override")),
+    category,
     final_bucket: category,
     review_status: reviewStatus,
     needs_review: needsManualReview,
@@ -965,67 +977,47 @@ export async function createPurchaseFinancialTransaction(supabase: NonNullable<R
 
   const transactionDate = String(purchase.order_date ?? "").trim() || resolvePurchaseFinanceTransactionDate(purchase);
   const supplierName = await loadPurchaseSupplierName(supabase, purchase);
-  const accountId = resolvePurchaseFinanceAccountId(purchase);
-  const currency = accountCurrency(accountId);
-  const description = buildPurchaseFinanceDescription(purchase, supplierName);
-  const transactionDatetime = String(purchase.order_date ?? "").trim() || `${transactionDate}T00:00:00.000Z`;
-  const payload = {
-    transaction_date: transactionDate,
-    transaction_datetime: transactionDatetime,
-    direction: "money_out",
-    transaction_kind: "product_purchase",
-    transaction_type: "Products Restocking",
-    description,
-    notes: String(purchase.notes ?? "").trim() || description,
-    amount: Math.abs(amount),
-    signed_amount: -Math.abs(amount),
-    currency,
-    account_id: accountId,
-    transaction_effect: "expense",
-    source_account_id: null,
-    destination_account_id: null,
-    bucket: "Inventory",
-    final_bucket: "Products Restocking",
-    review_status: "confirmed",
-    needs_review: false,
-    transaction_status: "active",
-    payment_method: purchase.payment_method ?? null,
-    receipt_url: purchase.receipt_url ?? null,
-    linked_purchase_id: purchase.id,
-    related_purchase_id: purchase.id,
-    source_type: "purchase",
-    source_id: purchase.id,
-    created_by: profile?.team_member_id ?? null,
-    updated_at: new Date().toISOString(),
-  };
-  const legacyPayload = (({ linked_purchase_id: _linkedPurchaseId, source_type: _sourceType, source_id: _sourceId, ...rest }) => rest)(payload);
-  const { data: existing, error: existingError } = await supabase
+  const payload = buildPurchaseFinanceTransactionPayload({
+    purchase,
+    amount,
+    transactionDate,
+    supplierName,
+    createdBy: profile?.team_member_id ?? null,
+  });
+  const purchaseLinkFilter = `related_purchase_id.eq.${purchase.id},linked_purchase_id.eq.${purchase.id},and(source_type.eq.purchase,source_id.eq.${purchase.id})`;
+  const { data: existingRows, error: existingError } = await supabase
     .from("financial_transactions")
-    .select("id")
+    .select("id, transaction_status, created_at")
     .eq("transaction_kind", "product_purchase")
-    .eq("related_purchase_id", purchase.id)
-    .maybeSingle();
+    .or(purchaseLinkFilter)
+    .order("created_at", { ascending: true });
   if (existingError) throw existingError;
+  const linkedRows = (existingRows ?? []) as Array<{ id: string; transaction_status?: string | null }>;
+  const existing = linkedRows.find((row) => (row.transaction_status ?? "active") === "active") ?? linkedRows[0];
+  const duplicateActiveIds = linkedRows
+    .filter((row) => row.id !== existing?.id && (row.transaction_status ?? "active") === "active")
+    .map((row) => row.id);
+
+  if (duplicateActiveIds.length) {
+    const { error } = await supabase
+      .from("financial_transactions")
+      .update({
+        transaction_status: "voided",
+        voided_at: new Date().toISOString(),
+        voided_by: profile?.team_member_id ?? null,
+        status_reason: "Duplicate purchase finance transaction superseded by the linked transaction.",
+        updated_at: new Date().toISOString(),
+      })
+      .in("id", duplicateActiveIds);
+    if (error) throw error;
+  }
+
   if (existing?.id) {
     const { error } = await supabase.from("financial_transactions").update(payload).eq("id", existing.id);
-    if (error) {
-      if (error.code === "42703") {
-        const { error: fallbackError } = await supabase.from("financial_transactions").update(legacyPayload).eq("id", existing.id);
-        if (fallbackError) throw fallbackError;
-      } else {
-        throw error;
-      }
-    }
+    if (error) throw error;
   } else {
-    const { error } = await supabase.from("financial_transactions").insert(payload);
-    if (error) {
-      if (error.code === "42703") {
-        const { error: fallbackError } = await supabase.from("financial_transactions").insert(legacyPayload);
-        if (fallbackError) throw fallbackError;
-      } else {
-        throw error;
-      }
-    }
+    const { error } = await supabase.from("financial_transactions").upsert(payload, { onConflict: "linked_purchase_id" });
+    if (error) throw error;
   }
   revalidatePath("/finance");
   revalidatePath("/finance/transactions");
@@ -1047,10 +1039,12 @@ export async function createCashCollectionFinancialTransaction(supabase: NonNull
     signed_amount: Math.abs(amount),
     currency: "LYD",
     account_id: "snacky_lyd",
+    account_key: "snacky_lyd",
     transaction_effect: "income",
     source_account_id: null,
     destination_account_id: null,
     bucket: "Revenue",
+    category: "Revenue",
     final_bucket: "Revenue",
     review_status: "confirmed",
     needs_review: false,

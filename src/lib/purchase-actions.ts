@@ -473,6 +473,15 @@ async function requirePurchaseAccess() {
   return { profile, supabase };
 }
 
+function purchaseFinanceLinkFilter(purchaseId: string) {
+  return `related_purchase_id.eq.${purchaseId},linked_purchase_id.eq.${purchaseId},and(source_type.eq.purchase,source_id.eq.${purchaseId})`;
+}
+
+type LinkedFinanceRow = {
+  id: string;
+  [key: string]: unknown;
+};
+
 async function getDefaultStorageId(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>) {
   const { data: mainStorage, error: mainStorageError } = await supabase
     .from("storage_locations")
@@ -956,6 +965,51 @@ export async function cancelPurchase(fd: FormData) {
   if (purchase?.status === "received") redirect(`/purchases/${id}?error=Received%20purchases%20cannot%20be%20cancelled.`);
   if (purchase?.status === "voided") redirect(`/purchases/${id}?error=Voided%20purchases%20cannot%20be%20cancelled.`);
   const { data: after } = await supabase.from("purchase_orders").update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", id).neq("status", "received").select("*").single();
+  const { data: financeBefore, error: financeLoadError } = await supabase
+    .from("financial_transactions")
+    .select("*")
+    .eq("transaction_kind", "product_purchase")
+    .eq("transaction_status", "active")
+    .or(purchaseFinanceLinkFilter(id));
+  if (financeLoadError) {
+    console.error("[purchases] Failed to load linked finance transaction for cancel", financeLoadError);
+    fail(path, "Purchase was cancelled, but the linked financial transaction could not be checked.");
+  }
+
+  const linkedFinanceRows = (financeBefore ?? []) as LinkedFinanceRow[];
+  if (linkedFinanceRows.length) {
+    const now = new Date().toISOString();
+    const financeIds = linkedFinanceRows.map((row) => row.id);
+    const { data: financeAfter, error: financeError } = await supabase
+      .from("financial_transactions")
+      .update({
+        transaction_status: "voided",
+        voided_at: now,
+        voided_by: profile.team_member_id,
+        status_reason: reason,
+        updated_at: now,
+      })
+      .in("id", financeIds)
+      .select("*");
+    if (financeError) {
+      console.error("[purchases] Failed to void cancelled purchase financial transaction", financeError);
+      fail(path, "Purchase was cancelled, but the linked financial transaction could not be voided.");
+    }
+
+    for (const financeRow of financeAfter ?? []) {
+      await logActivity({
+        profile,
+        action: "void",
+        entityType: "financial_transaction",
+        entityId: financeRow.id,
+        entityLabel: "Purchase financial transaction",
+        beforeData: linkedFinanceRows.find((row) => row.id === financeRow.id),
+        afterData: financeRow,
+        metadata: { reason, linked_purchase_id: id },
+        summary: "Voided financial transaction linked to a cancelled purchase",
+      });
+    }
+  }
   await logActivity({
     profile,
     action: "cancel",
@@ -969,6 +1023,8 @@ export async function cancelPurchase(fd: FormData) {
   });
   revalidatePath("/purchases");
   revalidatePath(`/purchases/${id}`);
+  revalidatePath("/finance");
+  revalidatePath("/finance/transactions");
   redirect(`/purchases/${id}`);
 }
 
@@ -985,7 +1041,7 @@ export async function deleteDraftPurchase(fd: FormData) {
 
   const [{ count: movementCount, error: movementError }, { count: financeCount, error: financeError }] = await Promise.all([
     supabase.from("inventory_movements").select("id", { count: "exact", head: true }).eq("related_purchase_id", id),
-    supabase.from("financial_transactions").select("id", { count: "exact", head: true }).eq("related_purchase_id", id),
+    supabase.from("financial_transactions").select("id", { count: "exact", head: true }).eq("transaction_kind", "product_purchase").or(purchaseFinanceLinkFilter(id)),
   ]);
   if (movementError || financeError) {
     console.error("[purchases] Failed to verify draft delete safety", movementError ?? financeError);
@@ -1112,9 +1168,9 @@ export async function voidReceivedPurchase(fd: FormData) {
   const { data: financeBefore } = await supabase
     .from("financial_transactions")
     .select("*")
-    .eq("related_purchase_id", id)
     .eq("transaction_kind", "product_purchase")
-    .eq("transaction_status", "active");
+    .eq("transaction_status", "active")
+    .or(purchaseFinanceLinkFilter(id));
 
   if (financeBefore?.length) {
     const financeIds = financeBefore.map((row: any) => row.id);

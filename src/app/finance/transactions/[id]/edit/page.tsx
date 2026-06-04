@@ -106,10 +106,10 @@ export default async function EditFinanceTransactionPage({
                 accountId: row.account_id ?? "snacky_lyd",
                 sourceAccountId: row.source_account_id ?? "owner_lyd",
                 destinationAccountId: row.destination_account_id ?? "snacky_lyd",
-                category: row.final_bucket ?? row.transaction_type ?? "",
+                category: row.category ?? row.final_bucket ?? row.transaction_type ?? "",
                 amount: Number(row.amount ?? 0),
                 payerText: row.payer_text ?? null,
-                payeeText: row.payee_text ?? null,
+                payeeText: row.paid_to_text ?? row.payee_text ?? null,
                 counterpartyText: row.counterparty_text ?? null,
               }}
             />
