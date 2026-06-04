@@ -524,6 +524,7 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
     purchaseDateForLog = String(fd.get("purchase_date") || new Date().toISOString().slice(0, 10));
     const submitAction = String(fd.get("submit_action") || "draft");
     const paymentAccountId = parsePaymentAccountId(fd.get("payment_account_id"));
+    const paymentStatus = parsePaymentStatus(fd.get("payment_status"));
     lines = await resolvePurchaseLines({ supabase, profile, lines, supplierId, submitAction: submitAction === "received" ? "received" : "draft" });
     lines = await applySavedProductCostMemory(supabase, lines);
     linesForLog = lines;
@@ -547,7 +548,7 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
       p_order_date: purchaseDateForLog,
       p_receipt_number: String(fd.get("receipt_number") || "").trim() || null,
       p_payment_method: String(fd.get("payment_method") || "cash"),
-      p_payment_status: parsePaymentStatus(fd.get("payment_status")),
+      p_payment_status: paymentStatus,
       p_receipt_url: receiptUrl,
       p_receipt_file_name: receiptFileName,
       p_receipt_content_type: receiptContentType,
@@ -606,7 +607,7 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
     });
 
     let financeWarning = "";
-    if (submitAction === "received" && purchase.payment_status === "paid") {
+    if (paymentStatus === "paid") {
       try {
         await createPurchaseFinancialTransaction(supabase, profile, {
           ...purchase,
@@ -615,6 +616,7 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
           received_date: new Date().toISOString().slice(0, 10),
           receipt_url: receiptUrl,
           payment_method: String(fd.get("payment_method") || "cash"),
+          payment_status: paymentStatus,
           payment_account_id: paymentAccountId,
         }, Number(purchase.total_amount ?? totals.total_amount ?? 0));
       } catch (financeError) {
@@ -639,7 +641,7 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
     if (receiptUpload) params.set("receiptUpload", receiptUpload);
     return {
       ok: true,
-      message: submitAction === "received" ? `Purchase received and inventory updated.${financeWarning}` : "Purchase saved as draft.",
+      message: submitAction === "received" ? `Purchase received and inventory updated.${financeWarning}` : `Purchase saved as draft.${financeWarning}`,
       redirectTo: `/purchases/${purchase.id}?${params.toString()}`,
     };
   } catch (error) {
@@ -678,6 +680,7 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
     const supplierId = String(fd.get("supplier_id") || "") || null;
     const submitAction = String(fd.get("submit_action") || "draft");
     const paymentAccountId = parsePaymentAccountId(fd.get("payment_account_id"), "LYD");
+    const paymentStatus = parsePaymentStatus(fd.get("payment_status"));
     lines = await resolvePurchaseLines({ supabase, profile, lines, supplierId, submitAction: submitAction === "received" ? "received" : "draft" });
     lines = await applySavedProductCostMemory(supabase, lines);
     if (!lines.length) formError("Add at least one purchased item.");
@@ -701,21 +704,25 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
     const nextReceiptStoragePath = removeReceipt ? null : hasNewStoredReceipt ? receiptStoragePath : hasNewManualReceiptUrl ? null : existingReceiptStoragePath;
     const lineRows = buildLineRows(lines);
     const totals = buildTotals(fd, lineRows.reduce((sum, line) => sum + Number(line.line_total), 0));
+    const nextOrderDate = String(fd.get("purchase_date") || new Date().toISOString().slice(0, 10));
+    const nextReceiptNumber = String(fd.get("receipt_number") || "").trim() || null;
+    const nextPaymentMethod = String(fd.get("payment_method") || "cash");
+    const nextNotes = String(fd.get("notes") || "").trim() || null;
 
     const { error: updateError } = await supabase
       .from("purchase_orders")
       .update({
         supplier_id: supplierId,
-        order_date: String(fd.get("purchase_date") || new Date().toISOString().slice(0, 10)),
-        receipt_number: String(fd.get("receipt_number") || "").trim() || null,
-        payment_method: String(fd.get("payment_method") || "cash"),
-        payment_status: parsePaymentStatus(fd.get("payment_status")),
+        order_date: nextOrderDate,
+        receipt_number: nextReceiptNumber,
+        payment_method: nextPaymentMethod,
+        payment_status: paymentStatus,
         payment_account_id: paymentAccountId,
         receipt_url: nextReceiptUrl,
         receipt_file_name: nextReceiptFileName,
         receipt_content_type: nextReceiptContentType,
         receipt_storage_path: nextReceiptStoragePath,
-        notes: String(fd.get("notes") || "").trim() || null,
+        notes: nextNotes,
         ...totals,
         updated_at: new Date().toISOString(),
       })
@@ -752,6 +759,30 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
       summary: current.receipt_url !== nextReceiptUrl ? "Updated purchase receipt attachment" : "Updated draft purchase",
     });
 
+    let financeWarning = "";
+    if (paymentStatus === "paid" && submitAction !== "received") {
+      try {
+        await createPurchaseFinancialTransaction(supabase, profile, {
+          ...current,
+          id,
+          supplier_id: supplierId,
+          order_date: nextOrderDate,
+          receipt_number: nextReceiptNumber,
+          payment_method: nextPaymentMethod,
+          payment_status: paymentStatus,
+          payment_account_id: paymentAccountId,
+          receipt_url: nextReceiptUrl,
+          notes: nextNotes,
+        }, Number(totals.total_amount ?? current.total_amount ?? 0));
+      } catch (financeError) {
+        financeWarning = " Finance transaction was not updated; review finance manually.";
+        console.error("[purchases] Failed to update linked purchase finance transaction", {
+          purchase_id: id,
+          error: financeError,
+        });
+      }
+    }
+
     if (submitAction === "received") {
       await receivePurchaseById(id);
     }
@@ -765,7 +796,7 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
     if (receiptUpload) params.set("receiptUpload", receiptUpload);
     return {
       ok: true,
-      message: submitAction === "received" ? "Purchase received and inventory updated." : "Purchase saved as draft.",
+      message: submitAction === "received" ? "Purchase received and inventory updated." : `Purchase saved as draft.${financeWarning}`,
       redirectTo: `/purchases/${id}?${params.toString()}`,
     };
   } catch (error) {
@@ -984,8 +1015,10 @@ export async function cancelPurchase(fd: FormData) {
       .from("financial_transactions")
       .update({
         transaction_status: "voided",
+        is_void: true,
         voided_at: now,
         voided_by: profile.team_member_id,
+        void_reason: reason,
         status_reason: reason,
         updated_at: now,
       })
@@ -1178,8 +1211,10 @@ export async function voidReceivedPurchase(fd: FormData) {
       .from("financial_transactions")
       .update({
         transaction_status: "voided",
+        is_void: true,
         voided_at: now,
         voided_by: profile.team_member_id,
+        void_reason: reason,
         status_reason: reason,
         updated_at: now,
       })

@@ -78,6 +78,22 @@ function redirectTools(params: { success?: string; error?: string }) {
   redirect(`/admin/tools${search.size ? `?${search.toString()}` : ""}`);
 }
 
+function backfillRow(data: unknown) {
+  const row = Array.isArray(data) ? data[0] : data;
+  const result = row && typeof row === "object" ? (row as Record<string, unknown>) : {};
+  const errors = Array.isArray(result.errors) ? result.errors : [];
+  return {
+    purchasesChecked: Number(result.purchases_checked ?? 0),
+    transactionsCreated: Number(result.transactions_created ?? 0),
+    transactionsSkipped: Number(result.transactions_skipped ?? 0),
+    errors,
+  };
+}
+
+function formatBackfillSummary(label: string, row: ReturnType<typeof backfillRow>) {
+  return `${label}: checked ${row.purchasesChecked}, created ${row.transactionsCreated}, skipped ${row.transactionsSkipped}, errors ${row.errors.length}`;
+}
+
 async function requireAdmin(path = "/admin/tools") {
   const profile = await getCurrentProfile();
   if (!profile || !isOwnerAdminRole(profile)) redirect("/unauthorized");
@@ -484,6 +500,54 @@ export async function recalculateStorageBalances(formData: FormData) {
   } catch (error) {
     console.error("[admin-tools] Storage balance recalculation failed", { error });
     redirectTools({ error: `Storage balance check failed: ${errorMessage(error)}` });
+  }
+}
+
+export async function backfillMissingPurchaseTransactions(formData: FormData) {
+  const startDate = clean(formData.get("start_date")) || "2026-06-01";
+  const endDate = clean(formData.get("end_date")) || "2026-06-03";
+  const { profile, supabase } = await requireAdmin();
+
+  try {
+    const juneResult = await supabase.rpc("backfill_purchase_financial_transactions", {
+      p_start_date: startDate,
+      p_end_date: endDate,
+    });
+    if (juneResult.error) throw juneResult.error;
+
+    const allEndDate = new Date().toISOString().slice(0, 10);
+    const allResult = await supabase.rpc("backfill_purchase_financial_transactions", {
+      p_start_date: "1900-01-01",
+      p_end_date: allEndDate,
+    });
+    if (allResult.error) throw allResult.error;
+
+    const june = backfillRow(juneResult.data);
+    const all = backfillRow(allResult.data);
+
+    await logActivity({
+      profile,
+      action: "backfill_purchase_financial_transactions",
+      entityType: "finance",
+      entityLabel: "Purchase finance transaction backfill",
+      afterData: { june, all, start_date: startDate, end_date: endDate, all_end_date: allEndDate },
+      summary: "Backfilled missing purchase-linked finance transactions",
+    });
+
+    revalidatePath("/admin/tools");
+    revalidatePath("/finance");
+    revalidatePath("/finance/transactions");
+    revalidatePath("/purchases");
+    redirectTools({
+      success: `Purchase finance backfill complete. ${formatBackfillSummary(`${startDate} to ${endDate}`, june)}. ${formatBackfillSummary(`All non-draft purchases through ${allEndDate}`, all)}.`,
+    });
+  } catch (error) {
+    console.error("[admin-tools] Purchase finance backfill failed", {
+      start_date: startDate,
+      end_date: endDate,
+      error,
+    });
+    redirectTools({ error: `Purchase finance backfill failed: ${errorMessage(error)}. Confirm the latest finance migration has been applied.` });
   }
 }
 

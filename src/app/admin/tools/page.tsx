@@ -7,6 +7,7 @@ import { isOwnerAdminRole } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { reprocessVmsImportBatch, updateVmsImportBatchState } from "@/lib/vms-import-actions";
 import {
+  backfillMissingPurchaseTransactions,
   forceCompleteRouteWithAudit,
   recalculateDashboards,
   recalculateRouteInventoryLedger,
@@ -169,6 +170,16 @@ export default async function AdminToolsPage({
       </section>
 
       <div className="grid gap-4 xl:grid-cols-2">
+        <ToolCard title="Backfill Missing Purchase Transactions" description="Creates missing Products Restocking money-out ledger rows for purchase orders without duplicating existing linked transactions.">
+          <form action={backfillMissingPurchaseTransactions} className="space-y-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <input name="start_date" type="date" defaultValue="2026-06-01" className="field-input" />
+              <input name="end_date" type="date" defaultValue="2026-06-03" className="field-input" />
+            </div>
+            <FormSubmitButton pendingLabel="Backfilling purchases...">Backfill Missing Purchase Transactions</FormSubmitButton>
+          </form>
+        </ToolCard>
+
         <ToolCard title="Repair Stuck Route" description="Clears route completion error metadata and rebuilds route stock lines from inventory movements.">
           <form action={repairStuckRoute} className="space-y-3">
             <RouteSelect routes={routes} />

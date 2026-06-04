@@ -918,8 +918,10 @@ export async function updateFinancialTransactionStatus(formData: FormData) {
     status === "voided"
       ? {
           transaction_status: "voided",
+          is_void: true,
           voided_at: now,
           voided_by: profile?.team_member_id ?? null,
+          void_reason: statusReason,
           status_reason: statusReason,
           updated_at: now,
         }
@@ -1003,8 +1005,10 @@ export async function createPurchaseFinancialTransaction(supabase: NonNullable<R
       .from("financial_transactions")
       .update({
         transaction_status: "voided",
+        is_void: true,
         voided_at: new Date().toISOString(),
         voided_by: profile?.team_member_id ?? null,
+        void_reason: "Duplicate purchase finance transaction superseded by the linked transaction.",
         status_reason: "Duplicate purchase finance transaction superseded by the linked transaction.",
         updated_at: new Date().toISOString(),
       })
@@ -1049,6 +1053,9 @@ export async function createCashCollectionFinancialTransaction(supabase: NonNull
     review_status: "confirmed",
     needs_review: false,
     transaction_status: "active",
+    is_void: false,
+    voided_at: null,
+    void_reason: null,
     payment_method: "cash",
     related_cash_collection_id: cash.id,
     related_route_id: cash.route_id ?? null,
@@ -1074,8 +1081,10 @@ export async function createCashCollectionFinancialTransaction(supabase: NonNull
       .from("financial_transactions")
       .update({
         transaction_status: "voided",
+        is_void: true,
         voided_at: new Date().toISOString(),
         voided_by: profile?.team_member_id ?? null,
+        void_reason: "Duplicate cash collection transaction superseded by the active linked transaction.",
         status_reason: "Duplicate cash collection transaction superseded by the active linked transaction.",
         updated_at: new Date().toISOString(),
       })
@@ -1115,8 +1124,10 @@ export async function clearCashCollectionFinancialTransaction(
     .from("financial_transactions")
     .update({
       transaction_status: "voided",
+      is_void: true,
       voided_at: now,
       voided_by: profile?.team_member_id ?? null,
+      void_reason: reason,
       status_reason: reason,
       updated_at: now,
     })

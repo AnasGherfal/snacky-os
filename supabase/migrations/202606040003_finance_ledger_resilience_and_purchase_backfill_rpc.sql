@@ -1,14 +1,21 @@
 alter table public.financial_transactions
-  add column if not exists counterparty_text text,
-  add column if not exists paid_to_text text,
-  add column if not exists payee_text text,
-  add column if not exists payer_text text,
-  add column if not exists source_type text,
-  add column if not exists source_id uuid,
-  add column if not exists linked_purchase_id uuid references public.purchase_orders(id) on delete set null,
+  add column if not exists transaction_datetime timestamptz,
+  add column if not exists currency text,
   add column if not exists account_key text,
   add column if not exists category text,
-  add column if not exists transaction_datetime timestamptz;
+  add column if not exists counterparty_text text,
+  add column if not exists payer_text text,
+  add column if not exists paid_to_text text,
+  add column if not exists source_type text,
+  add column if not exists source_id uuid,
+  add column if not exists linked_purchase_id uuid,
+  add column if not exists is_void boolean,
+  add column if not exists void_reason text,
+  add column if not exists transaction_status text default 'active',
+  add column if not exists notes text,
+  add column if not exists location text,
+  add column if not exists updated_at timestamptz default now(),
+  add column if not exists created_by uuid references public.team_members(id) on delete set null;
 
 do $$
 begin
@@ -16,6 +23,7 @@ begin
     select 1
     from pg_constraint
     where conname = 'financial_transactions_linked_purchase_id_fkey'
+      and conrelid = 'public.financial_transactions'::regclass
   ) then
     alter table public.financial_transactions
       add constraint financial_transactions_linked_purchase_id_fkey
@@ -27,39 +35,57 @@ end $$;
 
 update public.financial_transactions
 set
-  paid_to_text = coalesce(nullif(trim(paid_to_text), ''), nullif(trim(payee_text), ''), case when direction = 'money_out' then nullif(trim(counterparty_text), '') end),
-  payee_text = coalesce(nullif(trim(payee_text), ''), nullif(trim(paid_to_text), ''), case when direction = 'money_out' then nullif(trim(counterparty_text), '') end),
-  payer_text = coalesce(nullif(trim(payer_text), ''), case when direction = 'money_in' then nullif(trim(counterparty_text), '') end),
+  currency = coalesce(nullif(trim(currency), ''), 'LYD'),
+  account_key = coalesce(nullif(trim(account_key), ''), nullif(trim(account_id), ''), nullif(trim(source_account_id), ''), 'snacky_lyd'),
+  category = coalesce(nullif(trim(category), ''), nullif(trim(final_bucket), ''), nullif(trim(transaction_type), ''), nullif(trim(bucket), ''), 'Uncategorized'),
+  transaction_datetime = coalesce(transaction_datetime, transaction_date::timestamptz),
+  transaction_status = coalesce(nullif(trim(transaction_status), ''), 'active'),
+  is_void = coalesce(is_void, transaction_status = 'voided' or voided_at is not null),
+  void_reason = coalesce(nullif(trim(void_reason), ''), nullif(trim(status_reason), '')),
   counterparty_text = coalesce(
     nullif(trim(counterparty_text), ''),
     case when direction = 'money_in' then nullif(trim(payer_text), '') end,
-    case when direction = 'money_out' then nullif(trim(paid_to_text), '') end,
-    case when direction = 'money_out' then nullif(trim(payee_text), '') end
+    case when direction = 'money_out' then nullif(trim(paid_to_text), '') end
   ),
-  account_key = coalesce(nullif(trim(account_key), ''), nullif(trim(account_id), ''), nullif(trim(source_account_id), '')),
-  category = coalesce(nullif(trim(category), ''), nullif(trim(final_bucket), ''), nullif(trim(transaction_type), '')),
-  transaction_datetime = coalesce(transaction_datetime, transaction_date::timestamptz)
-where counterparty_text is null
-   or paid_to_text is null
-   or payee_text is null
-   or payer_text is null
+  payer_text = coalesce(nullif(trim(payer_text), ''), case when direction = 'money_in' then nullif(trim(counterparty_text), '') end),
+  paid_to_text = coalesce(nullif(trim(paid_to_text), ''), case when direction = 'money_out' then nullif(trim(counterparty_text), '') end),
+  updated_at = coalesce(updated_at, now())
+where currency is null
+   or trim(coalesce(currency, '')) = ''
    or account_key is null
+   or trim(coalesce(account_key, '')) = ''
    or category is null
-   or transaction_datetime is null;
+   or trim(coalesce(category, '')) = ''
+   or transaction_datetime is null
+   or transaction_status is null
+   or trim(coalesce(transaction_status, '')) = ''
+   or is_void is null
+   or void_reason is null
+   or counterparty_text is null
+   or payer_text is null
+   or paid_to_text is null
+   or updated_at is null;
+
+alter table public.financial_transactions
+  alter column currency set default 'LYD',
+  alter column is_void set default false,
+  alter column is_void set not null,
+  alter column transaction_status set default 'active';
 
 update public.financial_transactions
 set
   linked_purchase_id = coalesce(linked_purchase_id, related_purchase_id, case when source_type = 'purchase' then source_id end),
-  source_type = case
-    when coalesce(linked_purchase_id, related_purchase_id, case when source_type = 'purchase' then source_id end) is not null then 'purchase'
-    else source_type
-  end,
+  related_purchase_id = coalesce(related_purchase_id, linked_purchase_id, case when source_type = 'purchase' then source_id end),
+  source_type = 'purchase',
   source_id = coalesce(source_id, related_purchase_id, linked_purchase_id),
+  direction = 'money_out',
+  transaction_kind = 'product_purchase',
+  transaction_type = coalesce(nullif(trim(transaction_type), ''), 'Products Restocking'),
+  category = 'Products Restocking',
+  final_bucket = coalesce(nullif(trim(final_bucket), ''), 'Products Restocking'),
   account_key = coalesce(nullif(trim(account_key), ''), nullif(trim(account_id), ''), 'snacky_lyd'),
-  category = coalesce(nullif(trim(category), ''), 'Products Restocking'),
-  paid_to_text = coalesce(nullif(trim(paid_to_text), ''), nullif(trim(payee_text), ''), nullif(trim(counterparty_text), '')),
-  payee_text = coalesce(nullif(trim(payee_text), ''), nullif(trim(paid_to_text), ''), nullif(trim(counterparty_text), '')),
-  counterparty_text = coalesce(nullif(trim(counterparty_text), ''), nullif(trim(paid_to_text), ''), nullif(trim(payee_text), ''))
+  transaction_datetime = coalesce(transaction_datetime, transaction_date::timestamptz),
+  updated_at = now()
 where transaction_kind = 'product_purchase'
   and coalesce(linked_purchase_id, related_purchase_id, case when source_type = 'purchase' then source_id end) is not null;
 
@@ -70,7 +96,7 @@ with linked_purchase_transactions as (
     row_number() over (
       partition by coalesce(linked_purchase_id, related_purchase_id, case when source_type = 'purchase' then source_id end)
       order by
-        case when coalesce(transaction_status, 'active') = 'active' then 0 else 1 end,
+        case when coalesce(transaction_status, 'active') = 'active' and coalesce(is_void, false) = false then 0 else 1 end,
         created_at,
         id
     ) as row_rank
@@ -86,7 +112,9 @@ duplicate_purchase_transactions as (
 update public.financial_transactions ft
 set
   transaction_status = case when coalesce(ft.transaction_status, 'active') = 'active' then 'voided' else ft.transaction_status end,
-  voided_at = case when coalesce(ft.transaction_status, 'active') = 'active' then coalesce(ft.voided_at, now()) else ft.voided_at end,
+  is_void = true,
+  voided_at = coalesce(ft.voided_at, now()),
+  void_reason = coalesce(ft.void_reason, 'Duplicate purchase finance transaction superseded by the linked transaction.'),
   status_reason = coalesce(ft.status_reason, 'Duplicate purchase finance transaction superseded by the linked transaction.'),
   linked_purchase_id = null,
   source_type = case when ft.source_type = 'purchase' then null else ft.source_type end,
@@ -107,6 +135,7 @@ begin
     select 1
     from pg_constraint
     where conname = 'financial_transactions_linked_purchase_id_key'
+      and conrelid = 'public.financial_transactions'::regclass
   ) then
     alter table public.financial_transactions
       add constraint financial_transactions_linked_purchase_id_key unique (linked_purchase_id);
@@ -133,7 +162,39 @@ on conflict (name) do update
 set type = excluded.type,
     is_active = true;
 
-create or replace function public.backfill_purchase_financial_transactions(p_since date default null)
+alter table public.financial_transactions enable row level security;
+
+grant select, insert, update on table public.financial_transactions to authenticated;
+
+drop policy if exists "financial_transactions_select_finance_roles" on public.financial_transactions;
+drop policy if exists "financial_transactions_insert_finance_roles" on public.financial_transactions;
+drop policy if exists "financial_transactions_update_finance_roles" on public.financial_transactions;
+
+create policy "financial_transactions_select_finance_roles"
+  on public.financial_transactions
+  for select
+  to authenticated
+  using (public.snacky_current_profile_has_any_role(array['owner', 'admin', 'supervisor', 'finance']));
+
+create policy "financial_transactions_insert_finance_roles"
+  on public.financial_transactions
+  for insert
+  to authenticated
+  with check (public.snacky_current_profile_has_any_role(array['owner', 'admin', 'supervisor', 'finance']));
+
+create policy "financial_transactions_update_finance_roles"
+  on public.financial_transactions
+  for update
+  to authenticated
+  using (public.snacky_current_profile_has_any_role(array['owner', 'admin', 'supervisor', 'finance']))
+  with check (public.snacky_current_profile_has_any_role(array['owner', 'admin', 'supervisor', 'finance']));
+
+drop function if exists public.backfill_purchase_financial_transactions(date);
+
+create or replace function public.backfill_purchase_financial_transactions(
+  p_start_date date default '2026-06-01',
+  p_end_date date default '2026-06-03'
+)
 returns table (
   purchases_checked integer,
   transactions_created integer,
@@ -146,6 +207,7 @@ set search_path = public, auth
 as $$
 declare
   v_purchase record;
+  v_purchase_date date;
   v_existing_id uuid;
   v_amount numeric;
   v_account_key text;
@@ -180,12 +242,17 @@ begin
     from public.purchase_orders po
     left join public.suppliers s on s.id = po.supplier_id
     where coalesce(po.status, '') not in ('draft', 'cancelled', 'voided')
-      and coalesce(po.payment_status, 'paid') in ('paid', 'confirmed', 'saved')
-      and (p_since is null or coalesce(po.order_date, po.created_at::date) >= p_since)
+      and (
+        coalesce(po.payment_status, 'paid') in ('paid', 'confirmed', 'saved')
+        or coalesce(po.status, '') in ('received', 'confirmed', 'saved', 'ordered')
+      )
+      and coalesce(po.order_date, po.created_at::date) >= coalesce(p_start_date, '1900-01-01'::date)
+      and coalesce(po.order_date, po.created_at::date) <= coalesce(p_end_date, current_date)
     order by coalesce(po.order_date, po.created_at::date), po.created_at, po.id
   loop
     v_checked := v_checked + 1;
     begin
+      v_purchase_date := coalesce(v_purchase.order_date, v_purchase.created_at::date);
       v_amount := round(greatest(coalesce(v_purchase.finance_total, 0), 0), 2);
       if v_amount <= 0 then
         v_skipped := v_skipped + 1;
@@ -215,7 +282,7 @@ begin
           or (ft.source_type = 'purchase' and ft.source_id = v_purchase.id)
         )
       order by
-        case when coalesce(ft.transaction_status, 'active') = 'active' then 0 else 1 end,
+        case when coalesce(ft.transaction_status, 'active') = 'active' and coalesce(ft.is_void, false) = false then 0 else 1 end,
         ft.created_at,
         ft.id
       limit 1;
@@ -223,8 +290,8 @@ begin
       if v_existing_id is not null then
         update public.financial_transactions
         set
-          transaction_date = coalesce(v_purchase.order_date, v_purchase.created_at::date),
-          transaction_datetime = coalesce(v_purchase.order_date, v_purchase.created_at::date)::timestamptz,
+          transaction_date = v_purchase_date,
+          transaction_datetime = v_purchase_date::timestamptz,
           direction = 'money_out',
           transaction_kind = 'product_purchase',
           transaction_type = 'Products Restocking',
@@ -244,10 +311,12 @@ begin
           review_status = 'confirmed',
           needs_review = false,
           transaction_status = 'active',
+          is_void = false,
+          voided_at = null,
+          void_reason = null,
           payment_method = v_purchase.payment_method,
           receipt_url = v_purchase.receipt_url,
           payer_text = null,
-          payee_text = nullif(trim(v_purchase.supplier_name), ''),
           paid_to_text = nullif(trim(v_purchase.supplier_name), ''),
           counterparty_text = nullif(trim(v_purchase.supplier_name), ''),
           linked_purchase_id = v_purchase.id,
@@ -280,10 +349,10 @@ begin
           review_status,
           needs_review,
           transaction_status,
+          is_void,
           payment_method,
           receipt_url,
           payer_text,
-          payee_text,
           paid_to_text,
           counterparty_text,
           linked_purchase_id,
@@ -294,8 +363,8 @@ begin
           updated_at
         )
         values (
-          coalesce(v_purchase.order_date, v_purchase.created_at::date),
-          coalesce(v_purchase.order_date, v_purchase.created_at::date)::timestamptz,
+          v_purchase_date,
+          v_purchase_date::timestamptz,
           'money_out',
           'product_purchase',
           'Products Restocking',
@@ -315,10 +384,10 @@ begin
           'confirmed',
           false,
           'active',
+          false,
           v_purchase.payment_method,
           v_purchase.receipt_url,
           null,
-          nullif(trim(v_purchase.supplier_name), ''),
           nullif(trim(v_purchase.supplier_name), ''),
           nullif(trim(v_purchase.supplier_name), ''),
           v_purchase.id,
@@ -332,6 +401,8 @@ begin
         set
           transaction_date = excluded.transaction_date,
           transaction_datetime = excluded.transaction_datetime,
+          direction = excluded.direction,
+          transaction_kind = excluded.transaction_kind,
           transaction_type = excluded.transaction_type,
           category = excluded.category,
           description = excluded.description,
@@ -342,14 +413,19 @@ begin
           account_id = excluded.account_id,
           account_key = excluded.account_key,
           transaction_effect = excluded.transaction_effect,
+          source_account_id = excluded.source_account_id,
+          destination_account_id = excluded.destination_account_id,
           bucket = excluded.bucket,
           final_bucket = excluded.final_bucket,
           review_status = excluded.review_status,
           needs_review = excluded.needs_review,
           transaction_status = excluded.transaction_status,
+          is_void = false,
+          voided_at = null,
+          void_reason = null,
           payment_method = excluded.payment_method,
           receipt_url = excluded.receipt_url,
-          payee_text = excluded.payee_text,
+          payer_text = excluded.payer_text,
           paid_to_text = excluded.paid_to_text,
           counterparty_text = excluded.counterparty_text,
           related_purchase_id = excluded.related_purchase_id,
@@ -363,6 +439,8 @@ begin
         v_errors := v_errors || jsonb_build_array(jsonb_build_object(
           'purchase_id',
           v_purchase.id,
+          'sqlstate',
+          sqlstate,
           'message',
           sqlerrm
         ));
@@ -373,12 +451,13 @@ begin
 end;
 $$;
 
-revoke all on function public.backfill_purchase_financial_transactions(date) from public;
-grant execute on function public.backfill_purchase_financial_transactions(date) to authenticated;
+revoke all on function public.backfill_purchase_financial_transactions(date, date) from public;
+grant execute on function public.backfill_purchase_financial_transactions(date, date) to authenticated;
 
 do $$
 begin
-  perform 1 from public.backfill_purchase_financial_transactions();
+  perform 1 from public.backfill_purchase_financial_transactions('2026-06-01'::date, '2026-06-03'::date);
+  perform 1 from public.backfill_purchase_financial_transactions('1900-01-01'::date, current_date);
 end $$;
 
 select pg_notify('pgrst', 'reload schema');
