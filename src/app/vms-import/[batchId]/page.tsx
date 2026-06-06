@@ -46,6 +46,9 @@ type ImportSummary = {
   unmappedProducts?: string[];
   unknownMachines?: string[];
   errors?: string[];
+  updatedTargets?: string[];
+  failedTargets?: string[];
+  resultMessage?: string;
 };
 
 function parseSummary(notes: string | null | undefined): ImportSummary | null {
@@ -59,6 +62,13 @@ function parseSummary(notes: string | null | undefined): ImportSummary | null {
 
 function reportLabel(reportType: string | null | undefined) {
   return vmsReportTypes.find((type) => type.value === reportType)?.label ?? reportType ?? "-";
+}
+
+function updatedFallbackForReport(reportType: string | null | undefined) {
+  if (reportType === "vms_order_details_weekly") return ["Sales dashboard", "Product sales", "Failed vend report"];
+  if (reportType === "sales") return ["Reconciliation totals"];
+  if (isStockReportType(reportType)) return ["Machine stock", "Recommended refill items"];
+  return [] as string[];
 }
 
 function dashboardUsageForReport(reportType: string | null | undefined) {
@@ -92,6 +102,10 @@ function dashboardUsageForReport(reportType: string | null | undefined) {
     ] as const;
   }
   return [["Not used until mapped", false]] as const;
+}
+
+function isUsableImportStatus(status: string | null | undefined) {
+  return ["imported", "imported_with_warnings", "partially_imported"].includes(String(status ?? ""));
 }
 
 function isStockReportType(reportType: string | null | undefined) {
@@ -252,7 +266,7 @@ export default async function VmsImportBatchDetailPage({
 
   const preferredBatch = await supabase
     .from("vms_import_batches")
-    .select("id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, uploaded_by, uploaded_at, status, is_active, deleted_at, deleted_by, delete_reason, disabled_at, disabled_by, disable_reason, source_usage, dashboard_usage, file_hash, storage_bucket, storage_path, original_file_name, detected_min_datetime, detected_max_datetime, total_successful_sales, successful_rows_count, failed_rows_count, refunded_rows_count, row_count, rows_found, rows_imported, rows_skipped, rows_skipped_duplicate, rows_needing_review, import_mode, report_start_date, report_end_date, error_count, errors, notes, column_mapping, last_reprocessed_at, reprocess_count")
+    .select("id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, uploaded_by, uploaded_at, status, is_active, deleted_at, deleted_by, delete_reason, disabled_at, disabled_by, disable_reason, source_usage, dashboard_usage, file_hash, storage_bucket, storage_path, original_file_name, detected_min_datetime, detected_max_datetime, total_successful_sales, successful_rows_count, failed_rows_count, refunded_rows_count, row_count, rows_found, rows_imported, rows_skipped, rows_skipped_duplicate, rows_needing_review, import_mode, report_start_date, report_end_date, error_count, errors, latest_error, notes, column_mapping, last_reprocessed_at, reprocess_count")
     .eq("id", batchId)
     .maybeSingle();
 
@@ -416,7 +430,7 @@ export default async function VmsImportBatchDetailPage({
             {rowList.length && canConfirmVmsImports(profile) ? (
               <form action={reprocessVmsImportBatch}>
                 <input type="hidden" name="batch_id" value={batch.id} />
-                <FormSubmitButton pendingLabel="Reprocessing VMS import...">Reprocess after mapping</FormSubmitButton>
+                <FormSubmitButton pendingLabel="Reprocessing VMS import...">Repair metadata / reprocess mappings</FormSubmitButton>
               </form>
             ) : null}
           </div>
@@ -424,7 +438,7 @@ export default async function VmsImportBatchDetailPage({
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
           <StatCard label="Total rows" value={summary?.totalRows ?? batch.row_count ?? rowList.length} />
           <StatCard label="Imported" value={summary?.importedRows ?? batch.rows_imported ?? importedRows.length} />
-          <StatCard label="Active in dashboards" value={batch.status === "imported" && batch.is_active !== false && !batch.deleted_at ? "Yes" : "No"} />
+          <StatCard label="Active in dashboards" value={isUsableImportStatus(batch.status) && batch.is_active !== false && !batch.deleted_at ? "Yes" : "No"} />
           <StatCard label="Duplicates skipped" value={summary?.rowsSkippedDuplicate ?? batch.rows_skipped_duplicate ?? 0} />
           <StatCard label="Needs mapping" value={summary?.needsProductMappingRows ?? needsMappingRows.length} />
           <StatCard label="Unknown machines" value={summary?.unknownMachineRows ?? unknownMachineRows.length} />
@@ -473,6 +487,34 @@ export default async function VmsImportBatchDetailPage({
             <StatCard label="Use VMS cost as product cost" value={summary?.updateCostFromVms ? "Yes" : "No"} />
           </div>
         ) : null}
+
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+            <div className="font-semibold">What was updated</div>
+            <ul className="mt-2 list-disc pl-5">
+              {(summary?.updatedTargets?.length ? summary.updatedTargets : updatedFallbackForReport(batch.report_type).filter(() => Number(batch.rows_imported ?? 0) > 0)).map((target) => <li key={target}>{target}</li>)}
+              {!(summary?.updatedTargets?.length || (Number(batch.rows_imported ?? 0) > 0 && updatedFallbackForReport(batch.report_type).length)) ? <li>No dashboard data updated</li> : null}
+            </ul>
+          </div>
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            <div className="font-semibold">What needs review</div>
+            <ul className="mt-2 list-disc pl-5">
+              <li>{batch.rows_skipped_duplicate ?? summary?.rowsSkippedDuplicate ?? 0} duplicate row(s) skipped</li>
+              <li>{batch.rows_needing_review ?? summary?.rowsNeedingReview ?? 0} row(s) needing review</li>
+            </ul>
+          </div>
+          <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900">
+            <div className="font-semibold">What failed</div>
+            {summary?.failedTargets?.length ? (
+              <ul className="mt-2 list-disc pl-5">{summary.failedTargets.map((target) => <li key={target}>{target}</li>)}</ul>
+            ) : batch.latest_error ? (
+              <p className="mt-2">{batch.latest_error}</p>
+            ) : (
+              <p className="mt-2">Nothing failed.</p>
+            )}
+          </div>
+        </div>
+        {summary?.resultMessage ? <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm font-medium text-slate-700">{summary.resultMessage}</div> : null}
       </section>
 
       <section className="surface-card mb-6">
@@ -587,8 +629,9 @@ export default async function VmsImportBatchDetailPage({
       {canConfirmVmsImports(profile) ? (
         <section className="surface-card mb-6">
           <h2 className="mb-4 text-lg font-semibold text-slate-900">Actions</h2>
+          <p className="mb-4 text-sm text-slate-500">Reprocess repairs mappings, recalculates counters, rebuilds dashboard usage, and refreshes metadata for this import.</p>
           <div className="grid gap-3 lg:grid-cols-3">
-            {batch.status === "imported" && batch.is_active !== false ? (
+            {isUsableImportStatus(batch.status) && batch.is_active !== false ? (
               <form action={updateVmsImportBatchState} className="space-y-3 rounded-lg border border-slate-200 p-3">
                 <input type="hidden" name="batch_id" value={batch.id} />
                 <input type="hidden" name="action" value="disable" />

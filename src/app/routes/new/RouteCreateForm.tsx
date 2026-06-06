@@ -35,6 +35,8 @@ type Recommendation = {
   available_storage_qty: number;
   final_qty_to_take: number | null;
   priority?: string | null;
+  source_file_name?: string | null;
+  source_uploaded_at?: string | null;
 };
 
 type ProductPickOption = {
@@ -913,7 +915,7 @@ export function RouteCreateForm({
       </FormSection>
 
       <FormSection title="Refill recommendation rows">
-        <p className="text-sm text-slate-500">Grouped by machine and product from the latest mapped VMS machine goods stock. Expand a row only when you need to review the underlying slots.</p>
+        <p className="text-sm text-slate-500">Grouped by machine and product from the latest mapped VMS machine goods stock. Source files are shown per slot so operators/admins can trace why an item is recommended.</p>
         {!recommendationGroups.length ? (
           <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
             No active refill recommendations found. You can still build the route manually above.
@@ -1107,6 +1109,7 @@ export function RouteCreateForm({
                                         <th className="px-3 py-2">Target</th>
                                         <th className="px-3 py-2">Recommended take</th>
                                         <th className="px-3 py-2">Priority</th>
+                                        <th className="px-3 py-2">Source file</th>
                                       </tr>
                                     </thead>
                                     <tbody>
@@ -1117,6 +1120,10 @@ export function RouteCreateForm({
                                           <td className="px-3 py-2">{formatRecommendationQty(row.capacity ?? row.par_qty)}</td>
                                           <td className="px-3 py-2 font-semibold">{recommendationQuantity(row)}</td>
                                           <td className="px-3 py-2">{row.priority ?? "-"}</td>
+                                          <td className="px-3 py-2">
+                                            <div>{row.source_file_name ?? "Unknown VMS file"}</div>
+                                            <div className="text-slate-500">{row.source_uploaded_at ? new Date(row.source_uploaded_at).toLocaleString() : "-"}</div>
+                                          </td>
                                         </tr>
                                       ))}
                                     </tbody>
