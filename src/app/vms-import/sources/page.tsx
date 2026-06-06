@@ -62,10 +62,14 @@ function reportLabel(reportType: string | null | undefined) {
   return vmsReportTypes.find((type) => type.value === reportType)?.label ?? reportType ?? "-";
 }
 
+function isUsableImportStatus(status: string | null | undefined) {
+  return ["imported", "imported_with_warnings", "partially_imported"].includes(String(status ?? ""));
+}
+
 function activeLabel(batch: VmsSourceRow) {
   if (batch.deleted_at) return "deleted";
   if (batch.status === "disabled" || batch.is_active === false) return "disabled";
-  if (batch.status === "imported") return "active";
+  if (isUsableImportStatus(batch.status)) return "active";
   return batch.status ?? "pending";
 }
 
@@ -88,9 +92,9 @@ function batchDateRange(batch: VmsSourceRow) {
 }
 
 function dashboardUsageForReport(reportType: string | null | undefined) {
-  if (reportType === "vms_order_details_weekly") return "Sales, products, machines, failed vends, refill signals";
-  if (reportType === "sales") return "Reconciliation only";
-  if (isStockReportType(reportType)) return "Inventory, refills, product mapping, machine mapping";
+  if (reportType === "vms_order_details_weekly") return "Sales dashboard, Product sales dashboard, Machine sales dashboard, Failed vend/refund report, Product velocity";
+  if (reportType === "sales") return "Reconciliation only, Period total check";
+  if (isStockReportType(reportType)) return "Recommended route refill items, Machine stock dashboard, Refill priority";
   return "Not used until mapped";
 }
 
@@ -123,7 +127,7 @@ function SourceActions({ batch, canManage }: { batch: VmsSourceRow; canManage: b
       {originalFileUrl ? <Link href={originalFileUrl} className="btn-secondary">Original File</Link> : null}
       {canManage ? (
         <>
-          {batch.status === "imported" && batch.is_active !== false && !batch.deleted_at ? (
+          {isUsableImportStatus(batch.status) && batch.is_active !== false && !batch.deleted_at ? (
             <form action={updateVmsImportBatchState} className="flex gap-2">
               <input type="hidden" name="batch_id" value={batch.id} />
               <input type="hidden" name="action" value="disable" />
@@ -139,7 +143,7 @@ function SourceActions({ batch, canManage }: { batch: VmsSourceRow; canManage: b
           )}
           <form action={reprocessVmsImportBatch}>
             <input type="hidden" name="batch_id" value={batch.id} />
-            <FormSubmitButton className="btn-secondary" pendingLabel="Reprocessing...">Reprocess</FormSubmitButton>
+            <FormSubmitButton className="btn-secondary" pendingLabel="Reprocessing...">Reprocess / repair</FormSubmitButton>
           </form>
           {!batch.deleted_at ? (
             <details className="rounded-lg border border-slate-200 bg-white px-3 py-2">
@@ -231,11 +235,11 @@ export default async function VmsDataSourcesPage({ searchParams }: { searchParam
             </div>
           </div>
 
-          <DataTable headers={["Status", "Active", "File", "Report type", "Date / snapshot", "Rows", "Dashboard usage", "Quality", "Uploaded", "Actions"]}>
+          <DataTable headers={["Active", "Status", "File", "Report type", "Date range / snapshot", "Rows", "Skipped dupes", "Needs review", "Used in dashboards/features", "Uploaded by", "Uploaded at", "Last error / warning", "Actions"]}>
             {batches.map((batch) => (
               <tr key={batch.id}>
-                <td><StatusBadge status={batch.status ?? "unknown"} /></td>
                 <td><StatusBadge status={activeLabel(batch)} /></td>
+                <td><StatusBadge status={batch.status ?? "unknown"} /></td>
                 <td className="max-w-xs">
                   <Link href={`/vms-import/${batch.id}`} className="link-secondary font-medium text-slate-900">{batch.original_file_name ?? batch.file_name ?? "-"}</Link>
                   <div className="mt-1 text-xs text-slate-500">{batch.sheet_name ?? "-"} {batch.file_type ? `- ${String(batch.file_type).toUpperCase()}` : ""}</div>
@@ -246,18 +250,17 @@ export default async function VmsDataSourcesPage({ searchParams }: { searchParam
                   <div>Found: {batch.rows_found ?? batch.row_count ?? 0}</div>
                   <div>Imported: {batch.rows_imported ?? 0}</div>
                 </td>
+                <td>{batch.rows_skipped_duplicate ?? 0}</td>
+                <td>{batch.rows_needing_review ?? 0}</td>
                 <td className="max-w-xs text-xs text-slate-600">{usageText(batch.dashboard_usage, dashboardUsageForReport(batch.report_type ?? batch.source_type))}</td>
-                <td className="text-sm">
-                  <div>Duplicates: {batch.rows_skipped_duplicate ?? 0}</div>
-                  <div>Review: {batch.rows_needing_review ?? 0}</div>
-                  <div>Failed: {batch.failed_rows_count ?? 0}</div>
-                  <div>Refunds: {batch.refunded_rows_count ?? 0}</div>
-                  {batch.latest_error ? <div className="mt-1 max-w-48 text-xs text-amber-700">{batch.latest_error}</div> : null}
-                </td>
+                <td className="text-xs text-slate-600">{batch.uploaded_by ?? batch.imported_by ?? "-"}</td>
                 <td className="text-sm">
                   <div>{formatDateTime(batch.uploaded_at ?? batch.imported_at)}</div>
                   {batch.last_reprocessed_at ? <div className="text-xs text-slate-500">Reprocessed {batch.reprocess_count ?? 0}x</div> : null}
-                  {batch.disable_reason || batch.delete_reason ? <div className="mt-1 max-w-48 text-xs text-amber-700">{batch.disable_reason || batch.delete_reason}</div> : null}
+                </td>
+                <td className="max-w-xs text-xs text-amber-700">
+                  {batch.latest_error || batch.disable_reason || batch.delete_reason || "-"}
+                  <div className="mt-1 text-slate-500">Failed: {batch.failed_rows_count ?? 0} · Refunds: {batch.refunded_rows_count ?? 0}</div>
                 </td>
                 <td><SourceActions batch={batch} canManage={canManage} /></td>
               </tr>

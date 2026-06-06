@@ -9,6 +9,7 @@ export type VmsDashboardBatch = {
   uploaded_at?: string | null;
   imported_at?: string | null;
   deleted_at?: string | null;
+  original_file_name?: string | null;
 };
 
 function dateOnly(date: Date) {
@@ -20,9 +21,15 @@ function addDays(value: string, days: number) {
   return dateOnly(new Date(Date.UTC(year, month - 1, day + days)));
 }
 
+export function isActiveImportedVmsBatch(batch: VmsDashboardBatch) {
+  return ["imported", "imported_with_warnings", "partially_imported"].includes(String(batch.status ?? ""))
+    && batch.is_active !== false
+    && !batch.deleted_at;
+}
+
 export function activeDetailedBatches(batches: VmsDashboardBatch[]) {
   return batches
-    .filter((batch) => batch.report_type === "vms_order_details_weekly" && batch.status === "imported" && batch.is_active !== false && !batch.deleted_at)
+    .filter((batch) => batch.report_type === "vms_order_details_weekly" && isActiveImportedVmsBatch(batch))
     .sort((a, b) => String(a.report_start_date ?? "").localeCompare(String(b.report_start_date ?? "")));
 }
 
@@ -44,4 +51,18 @@ export function vmsCoverageSummary(batches: VmsDashboardBatch[]) {
     end: ranges.at(-1)?.end ?? "",
     latest,
   };
+}
+
+export function sourceFileName(batch: VmsDashboardBatch | null | undefined) {
+  return batch?.original_file_name || batch?.file_name || "unknown file";
+}
+
+export function detailedSalesSourceMessage(batches: VmsDashboardBatch[], summaryFiles: VmsDashboardBatch[] = []) {
+  const coverage = vmsCoverageSummary(batches);
+  if (coverage.active.length) {
+    return `Using detailed sales transactions from ${coverage.active.length} active file(s)${coverage.start && coverage.end ? ` covering ${coverage.start} to ${coverage.end}` : ""}. Latest: ${sourceFileName(coverage.latest)}.`;
+  }
+  const activeSummary = summaryFiles.filter(isActiveImportedVmsBatch);
+  if (activeSummary.length) return "Using sales summary report for reconciliation only. Detailed sales transactions not imported yet.";
+  return "Detailed sales transactions not imported yet.";
 }

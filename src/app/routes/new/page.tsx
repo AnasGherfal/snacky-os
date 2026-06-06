@@ -45,6 +45,8 @@ type RecommendationRow = {
   available_storage_qty: number;
   final_qty_to_take: number | null;
   priority?: string | null;
+  source_file_name?: string | null;
+  source_uploaded_at?: string | null;
 };
 
 type StorageInventoryRow = {
@@ -141,7 +143,7 @@ export default async function NewRoutePage() {
     supabase.from("machines").select("id, name, machine_code").eq("status", "active").order("name"),
     supabase
       .from("refill_recommendations")
-      .select("recommendation_key, machine_slot_id, machine_id, machine_name, machine_code, slot_code, product_id, product_name, current_qty, capacity, par_qty, suggested_qty, available_storage_qty, final_qty_to_take, priority")
+      .select("recommendation_key, machine_slot_id, machine_id, machine_name, machine_code, slot_code, product_id, product_name, current_qty, capacity, par_qty, suggested_qty, available_storage_qty, final_qty_to_take, priority, source_file_name, source_uploaded_at")
       .order("machine_name"),
     supabase
       .from("current_inventory_by_location")

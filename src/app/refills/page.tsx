@@ -22,6 +22,8 @@ type RefillRecommendationRow = {
   available_storage_qty: number | null;
   priority: string | null;
   imported_at: string | null;
+  source_file_name?: string | null;
+  source_uploaded_at?: string | null;
 };
 
 export default async function RefillsPage({ searchParams }: { searchParams: Promise<SearchParamsRecord> }) {
@@ -33,7 +35,7 @@ export default async function RefillsPage({ searchParams }: { searchParams: Prom
     ? await Promise.all([
         supabase
           .from("refill_recommendations")
-          .select("machine_name, slot_code, product_name, current_qty, capacity, par_qty, suggested_qty, final_qty_to_take, available_storage_qty, priority, latest_vms_at, imported_at", { count: "exact" })
+          .select("machine_name, slot_code, product_name, current_qty, capacity, par_qty, suggested_qty, final_qty_to_take, available_storage_qty, priority, latest_vms_at, imported_at, source_file_name, source_uploaded_at", { count: "exact" })
           .order("suggested_qty", { ascending: false })
           .range(from, to),
         supabase
@@ -57,6 +59,7 @@ export default async function RefillsPage({ searchParams }: { searchParams: Prom
   const { data: recommendations, count: recommendationCount, error } = recommendationsResult;
   const recommendationRows = (recommendations ?? []) as RefillRecommendationRow[];
   const hasVmsStock = Boolean((stockCountResult.count ?? 0) > 0);
+  const latestRecommendationSource = recommendationRows.find((row) => row.source_file_name || row.source_uploaded_at);
   const historyUnavailable = historyResult.error?.code === "PGRST205";
   const historyRows = historyUnavailable ? [] : ((historyResult.data ?? []) as any[]);
 
@@ -74,6 +77,9 @@ export default async function RefillsPage({ searchParams }: { searchParams: Prom
             <div className="mb-3 flex flex-col gap-1">
               <h2 className="text-lg font-semibold text-slate-900">Refill recommendations</h2>
               <p className="text-sm text-slate-500">Generated from imported VMS machine goods stock and current storage availability.</p>
+              <div className="mt-2 rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700">
+                Using latest machine stock snapshot from {latestRecommendationSource?.source_file_name ?? "no active VMS stock file yet"}{latestRecommendationSource?.source_uploaded_at ? ` uploaded ${new Date(latestRecommendationSource.source_uploaded_at).toLocaleString("en-US")}` : ""}.
+              </div>
             </div>
             {!hasVmsStock ? (
               <EmptyState title="No VMS stock synced yet" body="Sync XY VMS Machine Goods to generate refill recommendations." />
@@ -81,7 +87,7 @@ export default async function RefillsPage({ searchParams }: { searchParams: Prom
               <EmptyState title="No refill recommendations yet" body="All synced VMS stock is either full, inactive, or waiting on product mapping review." />
             ) : (
               <>
-                <DataTable headers={["Machine", "VMS slot", "Product", "Current", "Capacity", "Need", "Take", "Storage", "Priority", "Latest import"]}>
+                <DataTable headers={["Machine", "VMS slot", "Product", "Current", "Capacity", "Need", "Take", "Storage", "Priority", "Source file", "Latest import"]}>
                   {recommendationRows.map((row, index) => (
                     <tr key={`${row.machine_name}-${row.slot_code}-${row.product_name}-${index}`}>
                       <td className="font-medium">{row.machine_name}</td>
@@ -93,6 +99,7 @@ export default async function RefillsPage({ searchParams }: { searchParams: Prom
                       <td className="font-semibold text-slate-900">{formatRecommendationQty(row.final_qty_to_take ?? row.suggested_qty)}</td>
                       <td>{row.available_storage_qty}</td>
                       <td><StatusBadge status={row.priority} /></td>
+                      <td>{row.source_file_name ?? "-"}</td>
                       <td>{row.imported_at ? new Date(row.imported_at).toLocaleString("en-US") : "-"}</td>
                     </tr>
                   ))}
