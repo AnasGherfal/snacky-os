@@ -8,14 +8,23 @@ export type ModuleTabGroup = {
 const financeTabs: ModuleTab[] = [
   { label: "Overview", href: "/finance", exact: true },
   { label: "Transactions", href: "/finance/transactions" },
-  { label: "Import Review", href: "/finance/import/review", match: ["/finance/import"] },
+  {
+    label: "Import Review",
+    href: "/finance/import/review",
+    match: ["/finance/import"],
+  },
   { label: "Cleanup", href: "/finance/cleanup" },
   { label: "Cash Collections", href: "/cash-collections" },
-  { label: "Purchases", href: "/purchases?module=finance", match: ["/purchases"] },
+  {
+    label: "Purchases",
+    href: "/purchases?module=finance",
+    match: ["/purchases"],
+  },
   { label: "Expenses", href: "/finance/expenses" },
   { label: "Rent", href: "/finance/rent" },
   { label: "Machine Investments", href: "/finance/machine-investments" },
   { label: "Reports", href: "/finance/reports" },
+  { label: "Health", href: "/admin/finance-health" },
 ];
 
 const inventoryTabs: ModuleTab[] = [
@@ -75,12 +84,19 @@ export function pathnameFromHref(href: string) {
   return href.split("?")[0]?.split("#")[0] || href;
 }
 
-export function getModuleTabGroupForPath(pathname: string, moduleParam?: string | null): ModuleTabGroup | null {
+export function getModuleTabGroupForPath(
+  pathname: string,
+  moduleParam?: string | null,
+): ModuleTabGroup | null {
   if (isPurchasesPath(pathname)) {
     return moduleParam === "finance" ? groups.finance : groups.inventory;
   }
 
-  if (matchesPrefix(pathname, "/finance") || matchesPrefix(pathname, "/cash-collections")) return groups.finance;
+  if (
+    matchesPrefix(pathname, "/finance") ||
+    matchesPrefix(pathname, "/cash-collections")
+  )
+    return groups.finance;
   if (
     matchesPrefix(pathname, "/inventory") ||
     matchesPrefix(pathname, "/restock-priority") ||
@@ -90,7 +106,11 @@ export function getModuleTabGroupForPath(pathname: string, moduleParam?: string 
   ) {
     return groups.inventory;
   }
-  if (matchesPrefix(pathname, "/machines") || matchesPrefix(pathname, "/machine-slots") || matchesPrefix(pathname, "/issues")) {
+  if (
+    matchesPrefix(pathname, "/machines") ||
+    matchesPrefix(pathname, "/machine-slots") ||
+    matchesPrefix(pathname, "/issues")
+  ) {
     return groups.machines;
   }
   if (
