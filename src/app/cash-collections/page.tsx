@@ -104,9 +104,8 @@ export default async function CashCollectionsPage({
   const { data: financeRows, error: financeError } = cashIds.length
     ? await supabase
         .from("financial_transactions")
-        .select("id, related_cash_collection_id, transaction_status")
-        .in("related_cash_collection_id", cashIds)
-        .eq("transaction_kind", "cash_collection")
+        .select("id, related_cash_collection_id, linked_cash_collection_id, source_type, source_id, transaction_status")
+        .or(`related_cash_collection_id.in.(${cashIds.join(",")}),linked_cash_collection_id.in.(${cashIds.join(",")}),and(source_type.eq.cash_collection,source_id.in.(${cashIds.join(",")}))`)
     : { data: [], error: null };
   if (financeError) {
     console.error("[cash] Failed to load linked finance rows", financeError);
@@ -116,7 +115,11 @@ export default async function CashCollectionsPage({
       </>
     );
   }
-  const financeByCashId = new Map((financeRows ?? []).map((row: any) => [row.related_cash_collection_id, row]));
+  const financeByCashId = new Map<string, any>();
+  for (const row of (financeRows ?? []) as any[]) {
+    const cashId = row.related_cash_collection_id ?? row.linked_cash_collection_id ?? (row.source_type === "cash_collection" ? row.source_id : null);
+    if (cashId) financeByCashId.set(cashId, row);
+  }
   const activeRows = rows.filter((row: any) => getCashCollectionStatus(row.review_status, row.variance) !== "voided");
   const totalExpected = activeRows.reduce((sum: number, row: any) => sum + Number(row.vms_expected_cash ?? 0), 0);
   const totalCounted = activeRows.reduce((sum: number, row: any) => sum + Number(row.actual_cash_collected ?? 0), 0);
