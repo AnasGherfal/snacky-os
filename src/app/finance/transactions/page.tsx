@@ -434,7 +434,7 @@ export default async function FinanceTransactionsPage({
     );
   }
   const statusFilter = params.status ?? "active";
-  const groupProductPurchases = params.group_product_purchases !== "off";
+  const groupProductPurchases = params.group_product_purchases === "on";
   const search = String(params.q ?? "").trim();
   const purchaseSearchResult = search
     ? await supabase
@@ -646,7 +646,7 @@ export default async function FinanceTransactionsPage({
           <select name="review" defaultValue={params.review ?? ""} className="field-input"><option value="">All review states</option><option value="needs_review">Needs review</option><option value="confirmed">Confirmed</option><option value="reviewed">Reviewed</option></select>
           <select name="direction" defaultValue={params.direction ?? ""} className="field-input"><option value="">All directions</option><option value="money_in">Money in</option><option value="money_out">Money out</option></select>
           <select name="kind" defaultValue={params.kind ?? ""} className="field-input"><option value="">All kinds</option><option value="spreadsheet_import">Spreadsheet import</option><option value="manual_money_in">Manual money in</option><option value="manual_money_out">Manual money out</option><option value="product_purchase">Product purchase</option><option value="cash_collection">Cash collection</option></select>
-          <select name="group_product_purchases" defaultValue={groupProductPurchases ? "on" : "off"} className="field-input"><option value="on">Group product purchases: On</option><option value="off">Group product purchases: Off</option></select>
+          <select name="group_product_purchases" defaultValue={groupProductPurchases ? "on" : "off"} className="field-input"><option value="off">Group product purchases: Off</option><option value="on">Group product purchases: On</option></select>
           <input name="date_from" type="date" defaultValue={params.date_from ?? ""} className="field-input" />
           <input name="date_to" type="date" defaultValue={params.date_to ?? ""} className="field-input" />
           <div className="flex gap-2"><button className="btn-primary">Filter</button><Link href="/finance/transactions" className="btn-secondary">Reset</Link></div>
