@@ -63,9 +63,10 @@ export default async function CashCollectionDetailPage({
       .single(),
     supabase
       .from("financial_transactions")
-      .select("id, transaction_status, signed_amount, transaction_date")
-      .eq("related_cash_collection_id", id)
-      .eq("transaction_kind", "cash_collection")
+      .select("id, transaction_status, signed_amount, transaction_date, related_cash_collection_id, linked_cash_collection_id, source_type, source_id")
+      .or(`related_cash_collection_id.eq.${id},linked_cash_collection_id.eq.${id},and(source_type.eq.cash_collection,source_id.eq.${id})`)
+      .order("transaction_date", { ascending: false })
+      .limit(1)
       .maybeSingle(),
   ]);
 
@@ -136,8 +137,8 @@ export default async function CashCollectionDetailPage({
               <DetailItem label="Cash bag">{collectionRow.cash_bag_id ?? "-"}</DetailItem>
               <DetailItem label="Counted by">{collectionRow.counted_by_member?.full_name ?? "-"}</DetailItem>
               <DetailItem label="Counted at">{formatDate(collectionRow.counted_at)}</DetailItem>
-              <DetailItem label="Finance transaction">
-                {finance?.id ? <Link href={`/finance/transactions/${finance.id}`} className="link-secondary">{finance.transaction_status ?? "active"}</Link> : "Not posted yet"}
+              <DetailItem label="Finance transaction status">
+                {finance?.id ? <Link href={`/finance/transactions/${finance.id}`} className="link-secondary">View finance transaction ({finance.transaction_status ?? "active"})</Link> : "Not posted yet"}
               </DetailItem>
             </dl>
             <div className="mt-6">

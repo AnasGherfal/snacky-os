@@ -83,9 +83,8 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
       .order("created_at", { ascending: false }),
     supabase
       .from("financial_transactions")
-      .select("id, amount, signed_amount, transaction_date, transaction_status, review_status, linked_purchase_id, source_type, source_id")
-      .eq("transaction_kind", "product_purchase")
-      .eq("related_purchase_id", id)
+      .select("id, amount, signed_amount, transaction_date, transaction_status, review_status, related_purchase_id, linked_purchase_id, source_type, source_id")
+      .or(`related_purchase_id.eq.${id},linked_purchase_id.eq.${id},and(source_type.eq.purchase,source_id.eq.${id})`)
       .order("transaction_date", { ascending: false }),
   ]);
   if (!purchase) notFound();
@@ -145,7 +144,7 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
             <div><div className="text-xs font-medium uppercase text-slate-500">Voided at</div><div>{purchaseRow.voided_at ? new Date(purchaseRow.voided_at).toLocaleString("en-US") : "-"}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Receipt</div>{receiptUrl ? <a className="link-secondary" href={receiptUrl} target="_blank" rel="noreferrer">Open receipt</a> : <span>-</span>}</div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Inventory movement</div><div>{hasReceiptMovements ? "Created" : "Not created"}</div></div>
-            <div><div className="text-xs font-medium uppercase text-slate-500">Finance transaction</div><div>{hasActiveFinance ? <Link href={`/finance/transactions/${activeFinanceTransaction.id}`} className="link-secondary">Created</Link> : "Not created"}</div></div>
+            <div><div className="text-xs font-medium uppercase text-slate-500">Finance transaction status</div><div>{hasActiveFinance ? <Link href={`/finance/transactions/${activeFinanceTransaction.id}`} className="link-secondary">View finance transaction</Link> : "Not posted yet"}</div></div>
           </div>
           {purchaseRow.notes ? <p className="mt-4 rounded-lg bg-slate-50 p-3 text-sm text-slate-600">{purchaseRow.notes}</p> : null}
           {purchaseRow.void_reason ? <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">Void reason: {purchaseRow.void_reason}</p> : null}

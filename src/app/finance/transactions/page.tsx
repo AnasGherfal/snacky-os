@@ -508,8 +508,12 @@ function applyFinanceTransactionFilters({
   level: "full" | "stable" | "minimal";
 }) {
   let nextQuery = query;
-  if (statusFilter !== "all" && level !== "minimal")
-    nextQuery = nextQuery.eq("transaction_status", statusFilter);
+  if (statusFilter !== "all" && level !== "minimal") {
+    nextQuery =
+      statusFilter === "active"
+        ? nextQuery.or("transaction_status.eq.active,transaction_status.is.null")
+        : nextQuery.eq("transaction_status", statusFilter);
+  }
   if (params.review === "needs_review")
     nextQuery = nextQuery.eq("needs_review", true);
   if (params.review === "confirmed")
