@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
 import { canEditFinancialTransactions, canViewFinancials } from "@/lib/authz";
-import { resolveCashCollectionTransactionDateTime } from "@/lib/cash-finance";
+import { buildCashCollectionFinanceTransactionPayload } from "@/lib/cash-finance";
 import { accountCurrency, financeAccountId, type FinanceAccountId, type FinanceTransactionEffect } from "@/lib/finance-balance";
 import { categoryTypeForDirection, type FinanceCategoryType } from "@/lib/finance-categories";
 import { buildPurchaseFinanceTransactionPayload } from "@/lib/purchase-finance-sync";
@@ -1027,54 +1027,53 @@ export async function createPurchaseFinancialTransaction(supabase: NonNullable<R
   revalidatePath("/finance/transactions");
 }
 
+async function loadCashCollectionFinanceContext(
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>,
+  cash: any,
+) {
+  if (!cash?.machine_id) return cash;
+  const { data, error } = await supabase
+    .from("machines")
+    .select("id, name, machine_code, location:locations(name)")
+    .eq("id", cash.machine_id)
+    .maybeSingle();
+  if (error) {
+    console.warn("[finance] Could not load machine context for cash collection finance transaction", error);
+    return cash;
+  }
+  const location = Array.isArray((data as any)?.location) ? (data as any).location[0] : (data as any)?.location;
+  return {
+    ...cash,
+    machine_name: (data as any)?.name ?? null,
+    machine_code: (data as any)?.machine_code ?? null,
+    location_name: location?.name ?? null,
+  };
+}
+
 export async function createCashCollectionFinancialTransaction(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>, profile: Awaited<ReturnType<typeof getCurrentProfile>>, cash: any) {
   if (!cash?.id) return;
-  const parsedAmount = Number(cash?.actual_cash_collected ?? 0);
+  const parsedAmount = Number(cash?.actual_cash_collected ?? cash?.counted_amount_lyd ?? 0);
   const amount = Number.isFinite(parsedAmount) ? Math.max(0, Math.round(parsedAmount * 100) / 100) : 0;
-  const cashTransactionDateTime = resolveCashCollectionTransactionDateTime(cash);
-  const payload = {
-    transaction_date: cashTransactionDateTime.transactionDate,
-    transaction_datetime: cashTransactionDateTime.transactionDatetime,
-    direction: "money_in",
-    transaction_kind: "cash_collection",
-    transaction_type: "Revenue",
-    description: cash.cash_bag_id ? `Cash collection ${cash.cash_bag_id}` : `Confirmed cash collection ${cash.id.slice(0, 8)}`,
+  const enrichedCash = await loadCashCollectionFinanceContext(supabase, cash);
+  const payload = buildCashCollectionFinanceTransactionPayload({
+    cash: enrichedCash,
     amount,
-    signed_amount: Math.abs(amount),
-    currency: "LYD",
-    account_id: "snacky_lyd",
-    account_key: "snacky_lyd",
-    transaction_effect: "income",
-    source_account_id: null,
-    destination_account_id: null,
-    bucket: "Revenue",
-    category: "Revenue",
-    final_bucket: "Revenue",
-    review_status: "confirmed",
-    needs_review: false,
-    transaction_status: "active",
-    is_void: false,
-    voided_at: null,
-    void_reason: null,
-    payment_method: "cash",
-    related_cash_collection_id: cash.id,
-    related_route_id: cash.route_id ?? null,
-    related_machine_id: cash.machine_id ?? null,
-    created_by: profile?.team_member_id ?? cash.operator_id ?? null,
-    updated_at: new Date().toISOString(),
-  };
+    createdBy: profile?.team_member_id ?? cash.operator_id ?? null,
+  });
+  const cashLinkFilter = `related_cash_collection_id.eq.${cash.id},linked_cash_collection_id.eq.${cash.id},and(source_type.eq.cash_collection,source_id.eq.${cash.id})`;
   const { data: existingRows, error: existingError } = await supabase
     .from("financial_transactions")
     .select("id, transaction_status, created_at")
     .eq("transaction_kind", "cash_collection")
-    .eq("related_cash_collection_id", cash.id)
+    .or(cashLinkFilter)
     .order("created_at", { ascending: true });
   if (existingError) throw existingError;
 
-  const existing = existingRows?.find((row: any) => (row.transaction_status ?? "active") === "active") ?? existingRows?.[0];
-  const duplicateActiveIds = (existingRows ?? [])
-    .filter((row: any) => row.id !== existing?.id && (row.transaction_status ?? "active") === "active")
-    .map((row: any) => row.id);
+  const linkedRows = (existingRows ?? []) as Array<{ id: string; transaction_status?: string | null }>;
+  const existing = linkedRows.find((row) => (row.transaction_status ?? "active") === "active") ?? linkedRows[0];
+  const duplicateActiveIds = linkedRows
+    .filter((row) => row.id !== existing?.id && (row.transaction_status ?? "active") === "active")
+    .map((row) => row.id);
 
   if (duplicateActiveIds.length) {
     const { error: duplicateError } = await supabase
@@ -1096,7 +1095,7 @@ export async function createCashCollectionFinancialTransaction(supabase: NonNull
     const { error } = await supabase.from("financial_transactions").update(payload).eq("id", existing.id);
     if (error) throw error;
   } else {
-    const { error } = await supabase.from("financial_transactions").insert(payload);
+    const { error } = await supabase.from("financial_transactions").upsert(payload, { onConflict: "linked_cash_collection_id" });
     if (error) throw error;
   }
   revalidatePath("/finance");
@@ -1109,11 +1108,12 @@ export async function clearCashCollectionFinancialTransaction(
   cashCollectionId: string,
   reason = "Cash count was cleared before finance confirmation.",
 ) {
+  const cashLinkFilter = `related_cash_collection_id.eq.${cashCollectionId},linked_cash_collection_id.eq.${cashCollectionId},and(source_type.eq.cash_collection,source_id.eq.${cashCollectionId})`;
   const { data: activeRows, error: activeError } = await supabase
     .from("financial_transactions")
     .select("*")
     .eq("transaction_kind", "cash_collection")
-    .eq("related_cash_collection_id", cashCollectionId)
+    .or(cashLinkFilter)
     .eq("transaction_status", "active");
   if (activeError) throw activeError;
   if (!activeRows?.length) return;

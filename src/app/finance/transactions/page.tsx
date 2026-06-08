@@ -58,6 +58,7 @@ const FINANCE_TRANSACTION_FULL_COLUMNS = [
   "source_type",
   "source_id",
   "related_cash_collection_id",
+  "linked_cash_collection_id",
   "related_route_id",
   "related_machine_id",
   "related_location_id",
@@ -99,6 +100,7 @@ const FINANCE_TRANSACTION_STABLE_COLUMNS = [
   "source_row",
   "related_purchase_id",
   "related_cash_collection_id",
+  "linked_cash_collection_id",
   "related_route_id",
   "related_machine_id",
   "related_location_id",
@@ -142,11 +144,11 @@ function paymentLabel(value: string | null | undefined) {
 }
 
 function sourceLabel(row: any) {
-  if (row.source_sheet) return `${row.source_sheet}:${row.source_row}`;
-  if (relatedPurchaseId(row)) return "purchase";
-  if (row.related_cash_collection_id) return "cash collection";
+  if (relatedPurchaseId(row) || row.source_type === "purchase") return "Purchase";
+  if (relatedCashCollectionId(row) || row.source_type === "cash_collection") return "Cash Collection";
+  if (row.source_type === "import" || row.source_sheet) return "Import";
   if (row.source_type) return String(row.source_type).replaceAll("_", " ");
-  return "manual";
+  return "Manual";
 }
 
 function isProductPurchaseRow(row: any) {
@@ -188,6 +190,10 @@ function relatedPurchaseId(row: any) {
   return row.related_purchase_id ?? row.linked_purchase_id ?? (row.source_type === "purchase" ? row.source_id : null);
 }
 
+function relatedCashCollectionId(row: any) {
+  return row.related_cash_collection_id ?? row.linked_cash_collection_id ?? (row.source_type === "cash_collection" ? row.source_id : null);
+}
+
 function purchaseFor(row: any, purchases: Map<string, any>) {
   const purchaseId = relatedPurchaseId(row);
   return purchaseId ? purchases.get(purchaseId) : null;
@@ -200,6 +206,14 @@ function normalizedTransactionStatus(row: any) {
 
 function accountKeyFor(row: any) {
   return row.account_key ?? row.account_id ?? row.source_account_id ?? "snacky_lyd";
+}
+
+function sourceHref(row: any) {
+  const purchaseId = relatedPurchaseId(row);
+  if (purchaseId) return `/purchases/${purchaseId}`;
+  const cashCollectionId = relatedCashCollectionId(row);
+  if (cashCollectionId) return `/cash-collections/${cashCollectionId}`;
+  return null;
 }
 
 function normalizeFinanceTransactionRow(row: any) {
@@ -242,7 +256,8 @@ function relatedLabel(row: any, maps: { purchases: Map<string, any>; routes: Map
   if (route) items.push(<Link key="route" href={`/routes/${route.id}`} className="link-secondary">Route {route.route_date}</Link>);
   if (machine) items.push(<Link key="machine" href={`/machines/${machine.id}/edit`} className="link-secondary">{machine.name ?? machine.machine_code}</Link>);
   if (location) items.push(<Link key="location" href={`/locations/${location.id}`} className="link-secondary">{location.name}</Link>);
-  if (row.related_cash_collection_id) items.push(<Link key="cash" href={`/cash-collections/${row.related_cash_collection_id}`} className="link-secondary">Cash collection</Link>);
+  const cashCollectionId = relatedCashCollectionId(row);
+  if (cashCollectionId) items.push(<Link key="cash" href={`/cash-collections/${cashCollectionId}`} className="link-secondary">Cash collection</Link>);
 
   return items.length ? <div className="flex flex-col gap-1">{items}</div> : <span className="text-slate-400">-</span>;
 }
@@ -715,14 +730,14 @@ export default async function FinanceTransactionsPage({
                 <td>
                   <div className="font-medium text-slate-900">{categoryLabel(row)}</div>
                   <div className="text-xs text-slate-500">{row.transaction_effect === "transfer" ? `${accountLabel(row.source_account_id)} -> ${accountLabel(row.destination_account_id)}` : accountLabel(accountKeyFor(row))}</div>
-                  <div className="text-xs text-slate-500">{sourceLabel(row)}</div>
+                  <div className="mt-1"><StatusBadge status={sourceLabel(row)} /></div>
                 </td>
                 <td className={`font-semibold ${Number(row.signed_amount ?? 0) < 0 ? "text-rose-700" : "text-emerald-700"}`}>{formatFinanceMoney(Number(row.signed_amount ?? 0), row.currency ?? "LYD")}</td>
                 <td className="max-w-md">{row.description ?? row.notes ?? "-"}</td>
                 <td>{paymentLabel(row.payment_method)}</td>
                 <td>{relatedLabel(row, maps)}</td>
                 <td><div className="flex flex-col gap-1"><StatusBadge status={normalizedTransactionStatus(row)} />{row.needs_review ? <StatusBadge status="needs_review" /> : null}</div></td>
-                <td><div className="flex flex-wrap gap-2"><Link href={`/finance/transactions/${row.id}`} className="btn-secondary">View</Link>{canEdit ? <Link href={`/finance/transactions/${row.id}/edit`} className="btn-secondary">{row.needs_review ? "Review" : "Edit"}</Link> : null}</div></td>
+                <td><div className="flex flex-wrap gap-2"><Link href={`/finance/transactions/${row.id}`} className="btn-secondary">View</Link>{sourceHref(row) ? <Link href={sourceHref(row) as string} className="btn-secondary">Open source</Link> : null}{canEdit ? <Link href={`/finance/transactions/${row.id}/edit`} className="btn-secondary">{row.needs_review ? "Review" : "Edit"}</Link> : null}</div></td>
               </tr>
             );
             })}

@@ -84,14 +84,16 @@ function backfillRow(data: unknown) {
   const errors = Array.isArray(result.errors) ? result.errors : [];
   return {
     purchasesChecked: Number(result.purchases_checked ?? 0),
-    transactionsCreated: Number(result.transactions_created ?? 0),
-    transactionsSkipped: Number(result.transactions_skipped ?? 0),
+    purchaseTransactionsCreated: Number(result.purchase_transactions_created ?? result.transactions_created ?? 0),
+    cashCollectionsChecked: Number(result.cash_collections_checked ?? 0),
+    cashCollectionTransactionsCreated: Number(result.cash_collection_transactions_created ?? 0),
+    skippedExisting: Number(result.skipped_existing ?? result.transactions_skipped ?? 0),
     errors,
   };
 }
 
 function formatBackfillSummary(label: string, row: ReturnType<typeof backfillRow>) {
-  return `${label}: checked ${row.purchasesChecked}, created ${row.transactionsCreated}, skipped ${row.transactionsSkipped}, errors ${row.errors.length}`;
+  return `${label}: purchases checked ${row.purchasesChecked}, purchase transactions created ${row.purchaseTransactionsCreated}, cash collections checked ${row.cashCollectionsChecked}, cash collection transactions created ${row.cashCollectionTransactionsCreated}, skipped existing ${row.skippedExisting}, errors ${row.errors.length}`;
 }
 
 async function requireAdmin(path = "/admin/tools") {
@@ -503,53 +505,40 @@ export async function recalculateStorageBalances(formData: FormData) {
   }
 }
 
-export async function backfillMissingPurchaseTransactions(formData: FormData) {
-  const startDate = clean(formData.get("start_date")) || "2026-06-01";
-  const endDate = clean(formData.get("end_date")) || "2026-06-03";
+export async function backfillMissingFinanceTransactions(formData: FormData) {
+  const reason = clean(formData.get("reason")) || "Backfill missing source-generated finance transactions.";
   const { profile, supabase } = await requireAdmin();
 
   try {
-    const juneResult = await supabase.rpc("backfill_purchase_financial_transactions", {
-      p_start_date: startDate,
-      p_end_date: endDate,
-    });
-    if (juneResult.error) throw juneResult.error;
+    const result = await supabase.rpc("backfill_missing_finance_transactions");
+    if (result.error) throw result.error;
 
-    const allEndDate = new Date().toISOString().slice(0, 10);
-    const allResult = await supabase.rpc("backfill_purchase_financial_transactions", {
-      p_start_date: "1900-01-01",
-      p_end_date: allEndDate,
-    });
-    if (allResult.error) throw allResult.error;
-
-    const june = backfillRow(juneResult.data);
-    const all = backfillRow(allResult.data);
+    const backfill = backfillRow(result.data);
 
     await logActivity({
       profile,
-      action: "backfill_purchase_financial_transactions",
+      action: "backfill_missing_finance_transactions",
       entityType: "finance",
-      entityLabel: "Purchase finance transaction backfill",
-      afterData: { june, all, start_date: startDate, end_date: endDate, all_end_date: allEndDate },
-      summary: "Backfilled missing purchase-linked finance transactions",
+      entityLabel: "Finance source transaction backfill",
+      afterData: { ...backfill, reason },
+      summary: "Backfilled missing purchase and cash collection finance transactions",
     });
 
     revalidatePath("/admin/tools");
     revalidatePath("/finance");
     revalidatePath("/finance/transactions");
     revalidatePath("/purchases");
+    revalidatePath("/cash-collections");
     redirectTools({
-      success: `Purchase finance backfill complete. ${formatBackfillSummary(`${startDate} to ${endDate}`, june)}. ${formatBackfillSummary(`All non-draft purchases through ${allEndDate}`, all)}.`,
+      success: `Finance transaction backfill complete. ${formatBackfillSummary("All current data", backfill)}.`,
     });
   } catch (error) {
-    console.error("[admin-tools] Purchase finance backfill failed", {
-      start_date: startDate,
-      end_date: endDate,
-      error,
-    });
-    redirectTools({ error: `Purchase finance backfill failed: ${errorMessage(error)}. Confirm the latest finance migration has been applied.` });
+    console.error("[admin-tools] Finance transaction backfill failed", { error });
+    redirectTools({ error: `Finance transaction backfill failed: ${errorMessage(error)}. Confirm the latest finance migration has been applied.` });
   }
 }
+
+export const backfillMissingPurchaseTransactions = backfillMissingFinanceTransactions;
 
 export async function recalculateDashboards(formData: FormData) {
   const reason = requireReason(formData);
