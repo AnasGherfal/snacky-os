@@ -28,6 +28,7 @@ type HealthReport = {
   purchases_missing_finance_transaction?: number;
   cash_collections_missing_finance_transaction?: number;
   failed_sync_count?: number;
+  source_types_in_overview?: string[];
   schema_columns?: Array<{
     column_name: string;
     data_type: string;
@@ -120,11 +121,19 @@ export default async function FinanceHealthPage() {
 
   const cards = [
     { label: "Transactions", value: report.transactions_count },
-    { label: "Purchases", value: report.purchases_count },
-    { label: "Cash collections", value: report.cash_collections_count },
+    { label: "Purchases total", value: report.purchases_count },
+    {
+      label: "Purchases with finance",
+      value: report.purchases_with_linked_finance_transaction,
+    },
     {
       label: "Purchases missing finance",
       value: report.purchases_missing_finance_transaction,
+    },
+    { label: "Cash collections total", value: report.cash_collections_count },
+    {
+      label: "Cash with finance",
+      value: report.cash_collections_with_linked_finance_transaction,
     },
     {
       label: "Cash missing finance",
@@ -137,11 +146,11 @@ export default async function FinanceHealthPage() {
   return (
     <>
       <PageHeader
-        title="Finance Health"
-        subtitle="Admin-only ledger health checks for schema drift, source linkage, and sync gaps. Finance feature work is frozen until this page and the ledger load cleanly."
+        title="Finance Sync Health"
+        subtitle="Admin-only sync diagnostics for purchase and cash-collection finance transaction creation. New money events should appear automatically without backfill or repair."
         breadcrumbs={[
           { label: "Admin", href: "/admin" },
-          { label: "Finance Health" },
+          { label: "Finance Sync Health" },
         ]}
         action={
           <SecondaryButton href="/finance/transactions">
@@ -182,6 +191,95 @@ export default async function FinanceHealthPage() {
             </div>
           </div>
         ))}
+      </section>
+
+      <section className="mb-6 grid gap-4 lg:grid-cols-2">
+        <div className="surface-card">
+          <h2 className="text-base font-semibold text-slate-900">
+            Purchases sync
+          </h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Eligible purchase records must have an active finance row linked by
+            source_type=&quot;purchase&quot;, source_id, related_purchase_id, or
+            linked_purchase_id.
+          </p>
+          <dl className="mt-4 grid gap-3 text-sm">
+            <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
+              <dt>Total purchases</dt>
+              <dd className="font-semibold text-slate-900">
+                {numberValue(report.purchases_count)}
+              </dd>
+            </div>
+            <div className="flex items-center justify-between rounded-lg bg-emerald-50 px-3 py-2 text-emerald-900">
+              <dt>Purchases with finance transaction</dt>
+              <dd className="font-semibold">
+                {numberValue(report.purchases_with_linked_finance_transaction)}
+              </dd>
+            </div>
+            <div className="flex items-center justify-between rounded-lg bg-rose-50 px-3 py-2 text-rose-900">
+              <dt>Purchases missing finance transaction</dt>
+              <dd className="font-semibold">
+                {numberValue(report.purchases_missing_finance_transaction)}
+              </dd>
+            </div>
+          </dl>
+        </div>
+
+        <div className="surface-card">
+          <h2 className="text-base font-semibold text-slate-900">
+            Cash collections sync
+          </h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Counted cash collections must have an active finance row linked by
+            source_type=&quot;cash_collection&quot;, source_id,
+            related_cash_collection_id, or linked_cash_collection_id.
+          </p>
+          <dl className="mt-4 grid gap-3 text-sm">
+            <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
+              <dt>Total collections</dt>
+              <dd className="font-semibold text-slate-900">
+                {numberValue(report.cash_collections_count)}
+              </dd>
+            </div>
+            <div className="flex items-center justify-between rounded-lg bg-emerald-50 px-3 py-2 text-emerald-900">
+              <dt>Collections with finance transaction</dt>
+              <dd className="font-semibold">
+                {numberValue(report.cash_collections_with_linked_finance_transaction)}
+              </dd>
+            </div>
+            <div className="flex items-center justify-between rounded-lg bg-rose-50 px-3 py-2 text-rose-900">
+              <dt>Collections missing finance transaction</dt>
+              <dd className="font-semibold">
+                {numberValue(report.cash_collections_missing_finance_transaction)}
+              </dd>
+            </div>
+          </dl>
+        </div>
+      </section>
+
+      <section className="mb-6 surface-card">
+        <h2 className="text-base font-semibold text-slate-900">
+          Overview source types
+        </h2>
+        <p className="mt-1 text-sm text-slate-500">
+          The transaction overview does not filter out auto-generated rows. It
+          includes purchase, cash_collection, manual, and import source types.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {(report.source_types_in_overview ?? [
+            "purchase",
+            "cash_collection",
+            "manual",
+            "import",
+          ]).map((sourceType) => (
+            <span
+              key={sourceType}
+              className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700"
+            >
+              {sourceType}
+            </span>
+          ))}
+        </div>
       </section>
 
       <section className="mb-6 surface-card">

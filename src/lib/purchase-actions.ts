@@ -607,30 +607,28 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
     });
 
     let financeWarning = "";
-    if (paymentStatus === "paid") {
-      try {
-        await createPurchaseFinancialTransaction(supabase, profile, {
-          ...purchase,
-          supplier_id: supplierId,
-          order_date: purchaseDateForLog,
-          received_date: new Date().toISOString().slice(0, 10),
-          receipt_url: receiptUrl,
-          payment_method: String(fd.get("payment_method") || "cash"),
-          payment_status: paymentStatus,
-          payment_account_id: paymentAccountId,
-        }, Number(purchase.total_amount ?? totals.total_amount ?? 0));
-      } catch (financeError) {
-        financeWarning = " Finance transaction was not created; review finance manually.";
-        logPurchaseSaveFailure({
-          step: "finance_transaction",
-          error: financeError,
-          profile,
-          purchaseDate: purchaseDateForLog,
-          supplierId,
-          lines,
-          receiptStatus: receiptStatusForLog,
-        });
-      }
+    try {
+      await createPurchaseFinancialTransaction(supabase, profile, {
+        ...purchase,
+        supplier_id: supplierId,
+        order_date: purchaseDateForLog,
+        received_date: new Date().toISOString().slice(0, 10),
+        receipt_url: receiptUrl,
+        payment_method: String(fd.get("payment_method") || "cash"),
+        payment_status: paymentStatus,
+        payment_account_id: paymentAccountId,
+      }, Number(purchase.total_amount ?? totals.total_amount ?? 0));
+    } catch (financeError) {
+      financeWarning = " Finance transaction was not created; review finance manually.";
+      logPurchaseSaveFailure({
+        step: "finance_transaction",
+        error: financeError,
+        profile,
+        purchaseDate: purchaseDateForLog,
+        supplierId,
+        lines,
+        receiptStatus: receiptStatusForLog,
+      });
     }
 
     revalidatePath("/purchases");
@@ -760,7 +758,7 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
     });
 
     let financeWarning = "";
-    if (paymentStatus === "paid" && submitAction !== "received") {
+    if (submitAction !== "received") {
       try {
         await createPurchaseFinancialTransaction(supabase, profile, {
           ...current,
@@ -895,9 +893,7 @@ async function receivePurchaseById(id: string) {
     .neq("status", "received");
   if (updateError) throw updateError;
 
-  if (purchase.payment_status === "paid") {
-    await createPurchaseFinancialTransaction(supabase, profile, { ...purchase, received_date: receivedDate }, purchaseTotal);
-  }
+  await createPurchaseFinancialTransaction(supabase, profile, { ...purchase, received_date: receivedDate }, purchaseTotal);
 
   await logActivity({
     profile,
