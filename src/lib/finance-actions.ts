@@ -710,6 +710,7 @@ export async function createManualFinancialTransaction(formData: FormData) {
     related_machine_id: optionalUuid(formData.get("related_machine_id")),
     related_location_id: optionalUuid(formData.get("related_location_id")),
     receipt_url: optionalText(formData.get("receipt_url")),
+    source_type: "manual",
     created_by: profile?.team_member_id ?? null,
   };
 
@@ -984,13 +985,18 @@ export async function createPurchaseFinancialTransaction(supabase: NonNullable<R
   if (!purchase?.id || !amount || amount <= 0) return;
 
   const ensureResult = await supabase.rpc("ensure_purchase_finance_transaction", { p_purchase_id: purchase.id });
-  if (!ensureResult.error) {
+  if (!ensureResult.error && ensureResult.data) {
     revalidatePath("/finance");
     revalidatePath("/finance/transactions");
     return;
   }
-  if (!isMissingFinanceEnsureRpc(ensureResult.error)) throw ensureResult.error;
-  console.warn("[finance] ensure_purchase_finance_transaction RPC is unavailable; falling back to app-side purchase finance sync", ensureResult.error);
+  if (ensureResult.error && !isMissingFinanceEnsureRpc(ensureResult.error)) throw ensureResult.error;
+  console.warn(
+    ensureResult.error
+      ? "[finance] ensure_purchase_finance_transaction RPC is unavailable; falling back to app-side purchase finance sync"
+      : "[finance] ensure_purchase_finance_transaction returned no transaction id; falling back to app-side purchase finance sync",
+    ensureResult.error ?? { purchase_id: purchase.id },
+  );
 
   const transactionDate = String(purchase.order_date ?? "").trim() || resolvePurchaseFinanceTransactionDate(purchase);
   const supplierName = await loadPurchaseSupplierName(supabase, purchase);
@@ -1069,13 +1075,18 @@ export async function createCashCollectionFinancialTransaction(supabase: NonNull
   if (!cash?.id) return;
 
   const ensureResult = await supabase.rpc("ensure_cash_collection_finance_transaction", { p_cash_collection_id: cash.id });
-  if (!ensureResult.error) {
+  if (!ensureResult.error && ensureResult.data) {
     revalidatePath("/finance");
     revalidatePath("/finance/transactions");
     return;
   }
-  if (!isMissingFinanceEnsureRpc(ensureResult.error)) throw ensureResult.error;
-  console.warn("[finance] ensure_cash_collection_finance_transaction RPC is unavailable; falling back to app-side cash finance sync", ensureResult.error);
+  if (ensureResult.error && !isMissingFinanceEnsureRpc(ensureResult.error)) throw ensureResult.error;
+  console.warn(
+    ensureResult.error
+      ? "[finance] ensure_cash_collection_finance_transaction RPC is unavailable; falling back to app-side cash finance sync"
+      : "[finance] ensure_cash_collection_finance_transaction returned no transaction id; falling back to app-side cash finance sync",
+    ensureResult.error ?? { cash_collection_id: cash.id },
+  );
 
   const parsedAmount = Number(cash?.actual_cash_collected ?? cash?.counted_amount_lyd ?? 0);
   const amount = Number.isFinite(parsedAmount) ? Math.max(0, Math.round(parsedAmount * 100) / 100) : 0;
