@@ -974,8 +974,23 @@ async function loadPurchaseSupplierName(
   return String(data?.name ?? "").trim() || null;
 }
 
+function isMissingFinanceEnsureRpc(error: unknown) {
+  const code = String((error as { code?: unknown } | null)?.code ?? "");
+  const message = String((error as { message?: unknown } | null)?.message ?? "").toLowerCase();
+  return code === "42883" || message.includes("function public.ensure_") || message.includes("could not find the function");
+}
+
 export async function createPurchaseFinancialTransaction(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>, profile: Awaited<ReturnType<typeof getCurrentProfile>>, purchase: any, amount: number) {
   if (!purchase?.id || !amount || amount <= 0) return;
+
+  const ensureResult = await supabase.rpc("ensure_purchase_finance_transaction", { p_purchase_id: purchase.id });
+  if (!ensureResult.error) {
+    revalidatePath("/finance");
+    revalidatePath("/finance/transactions");
+    return;
+  }
+  if (!isMissingFinanceEnsureRpc(ensureResult.error)) throw ensureResult.error;
+  console.warn("[finance] ensure_purchase_finance_transaction RPC is unavailable; falling back to app-side purchase finance sync", ensureResult.error);
 
   const transactionDate = String(purchase.order_date ?? "").trim() || resolvePurchaseFinanceTransactionDate(purchase);
   const supplierName = await loadPurchaseSupplierName(supabase, purchase);
@@ -1052,6 +1067,16 @@ async function loadCashCollectionFinanceContext(
 
 export async function createCashCollectionFinancialTransaction(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>, profile: Awaited<ReturnType<typeof getCurrentProfile>>, cash: any) {
   if (!cash?.id) return;
+
+  const ensureResult = await supabase.rpc("ensure_cash_collection_finance_transaction", { p_cash_collection_id: cash.id });
+  if (!ensureResult.error) {
+    revalidatePath("/finance");
+    revalidatePath("/finance/transactions");
+    return;
+  }
+  if (!isMissingFinanceEnsureRpc(ensureResult.error)) throw ensureResult.error;
+  console.warn("[finance] ensure_cash_collection_finance_transaction RPC is unavailable; falling back to app-side cash finance sync", ensureResult.error);
+
   const parsedAmount = Number(cash?.actual_cash_collected ?? cash?.counted_amount_lyd ?? 0);
   const amount = Number.isFinite(parsedAmount) ? Math.max(0, Math.round(parsedAmount * 100) / 100) : 0;
   const enrichedCash = await loadCashCollectionFinanceContext(supabase, cash);

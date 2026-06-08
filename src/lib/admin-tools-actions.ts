@@ -82,18 +82,23 @@ function backfillRow(data: unknown) {
   const row = Array.isArray(data) ? data[0] : data;
   const result = row && typeof row === "object" ? (row as Record<string, unknown>) : {};
   const errors = Array.isArray(result.errors) ? result.errors : [];
+  const purchaseTransactionsSkippedExisting = Number(result.purchase_transactions_skipped_existing ?? 0);
+  const cashCollectionTransactionsSkippedExisting = Number(result.cash_collection_transactions_skipped_existing ?? 0);
+  const skippedExisting = Number(result.skipped_existing ?? result.transactions_skipped ?? purchaseTransactionsSkippedExisting + cashCollectionTransactionsSkippedExisting);
   return {
     purchasesChecked: Number(result.purchases_checked ?? 0),
     purchaseTransactionsCreated: Number(result.purchase_transactions_created ?? result.transactions_created ?? 0),
+    purchaseTransactionsSkippedExisting,
     cashCollectionsChecked: Number(result.cash_collections_checked ?? 0),
     cashCollectionTransactionsCreated: Number(result.cash_collection_transactions_created ?? 0),
-    skippedExisting: Number(result.skipped_existing ?? result.transactions_skipped ?? 0),
+    cashCollectionTransactionsSkippedExisting,
+    skippedExisting,
     errors,
   };
 }
 
 function formatBackfillSummary(label: string, row: ReturnType<typeof backfillRow>) {
-  return `${label}: purchases checked ${row.purchasesChecked}, purchase transactions created ${row.purchaseTransactionsCreated}, cash collections checked ${row.cashCollectionsChecked}, cash collection transactions created ${row.cashCollectionTransactionsCreated}, skipped existing ${row.skippedExisting}, errors ${row.errors.length}`;
+  return `${label}: purchases checked ${row.purchasesChecked}, purchase transactions created ${row.purchaseTransactionsCreated}, purchase transactions skipped existing ${row.purchaseTransactionsSkippedExisting}, cash collections checked ${row.cashCollectionsChecked}, cash collection transactions created ${row.cashCollectionTransactionsCreated}, cash collection transactions skipped existing ${row.cashCollectionTransactionsSkippedExisting}, skipped existing total ${row.skippedExisting}, errors ${row.errors.length}`;
 }
 
 async function requireAdmin(path = "/admin/tools") {
