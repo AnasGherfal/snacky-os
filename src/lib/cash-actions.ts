@@ -289,8 +289,8 @@ export async function voidCashCollection(formData: FormData) {
   const { data: financeBefore } = await supabase
     .from("financial_transactions")
     .select("*")
-    .eq("related_cash_collection_id", id)
     .eq("transaction_kind", "cash_collection")
+    .or(`linked_cash_collection_id.eq.${id},and(source_type.eq.cash_collection,source_id.eq.${id})`)
     .eq("transaction_status", "active");
 
   if (financeBefore?.length) {
@@ -320,7 +320,7 @@ export async function voidCashCollection(formData: FormData) {
         entityLabel: "Cash collection financial transaction",
         beforeData: financeBefore.find((row: any) => row.id === financeRow.id),
         afterData: financeRow,
-        metadata: { reason, related_cash_collection_id: id },
+        metadata: { reason, linked_cash_collection_id: id },
         summary: "Voided financial transaction linked to a voided cash collection",
       });
     }
@@ -344,4 +344,35 @@ export async function voidCashCollection(formData: FormData) {
 
 export async function reviewCashCollection(formData: FormData) {
   return confirmCashCollectionCount(formData);
+}
+
+export async function createMissingCashFinanceLinks() {
+  const path = "/cash-collections";
+  const { profile, supabase } = await requireCashReviewAccess(path);
+  let successMessage = "Missing finance links created.";
+
+  try {
+    const result = await supabase.rpc("backfill_missing_finance_transactions");
+    if (result.error) throw result.error;
+    const row = Array.isArray(result.data) ? result.data[0] : result.data;
+    const cashCreated = Number(row?.cash_collection_transactions_created ?? row?.cash_collection_finance_transactions_synced ?? 0);
+    const purchaseCreated = Number(row?.purchase_transactions_created ?? row?.purchase_finance_transactions_synced ?? 0);
+    successMessage = `Created ${cashCreated} cash finance link(s) and ${purchaseCreated} purchase finance link(s).`;
+
+    await logActivity({
+      profile,
+      action: "create_missing_cash_finance_links",
+      entityType: "finance",
+      entityLabel: "Cash collection finance links",
+      afterData: row ?? result.data,
+      summary: "Created missing finance links from the cash collections page",
+    });
+
+    revalidateCashPaths();
+  } catch (error) {
+    console.error("[cash] Failed to create missing finance links", error);
+    fail(path, "Could not create missing finance links. Confirm the latest finance migration has been applied and your role can manage finance.");
+  }
+
+  redirect(`${path}?success=${encodeURIComponent(successMessage)}`);
 }

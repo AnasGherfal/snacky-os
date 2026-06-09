@@ -91,7 +91,6 @@ export function buildPurchaseFinanceTransactionPayload({
     paid_to_text: supplierName,
     counterparty_text: supplierName,
     linked_purchase_id: purchaseId,
-    related_purchase_id: purchaseId,
     source_type: "purchase",
     source_id: purchaseId,
     created_by: createdBy ?? null,

@@ -474,7 +474,7 @@ async function requirePurchaseAccess() {
 }
 
 function purchaseFinanceLinkFilter(purchaseId: string) {
-  return `related_purchase_id.eq.${purchaseId},linked_purchase_id.eq.${purchaseId},and(source_type.eq.purchase,source_id.eq.${purchaseId})`;
+  return `linked_purchase_id.eq.${purchaseId},and(source_type.eq.purchase,source_id.eq.${purchaseId})`;
 }
 
 type LinkedFinanceRow = {
