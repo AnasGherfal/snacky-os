@@ -95,6 +95,7 @@ export function buildCashCollectionFinanceTransactionPayload({
     paid_to_text: null,
     counterparty_text: "Cash customers",
     linked_cash_collection_id: cashId,
+    related_cash_collection_id: cashId,
     related_route_id: cash.route_id ?? null,
     related_machine_id: cash.machine_id ?? null,
     location,

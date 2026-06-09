@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Fragment } from "react";
@@ -19,6 +20,11 @@ import {
   isBalanceAffectingTransaction,
   signedAmount,
 } from "@/lib/finance-balance";
+import {
+  applyVisibleFinanceLedgerFilter,
+  financeCategoryLabel,
+  isFinanceRowVoided,
+} from "@/lib/finance-ledger";
 import {
   cleanSearchParams,
   getPagination,
@@ -114,6 +120,8 @@ const FINANCE_TRANSACTION_STABLE_COLUMNS = [
   "transaction_status",
   "review_status",
   "needs_review",
+  "is_void",
+  "voided_at",
   "source_sheet",
   "source_row",
   "related_purchase_id",
@@ -164,13 +172,7 @@ function canAccess(profile: Awaited<ReturnType<typeof getCurrentProfile>>) {
 }
 
 function categoryLabel(row: any) {
-  return (
-    row.category ??
-    row.final_bucket ??
-    row.transaction_type ??
-    row.bucket ??
-    String(row.transaction_kind ?? "transaction").replaceAll("_", " ")
-  );
+  return financeCategoryLabel(row);
 }
 
 function paymentLabel(value: string | null | undefined) {
@@ -252,8 +254,7 @@ function purchaseFor(row: any, purchases: Map<string, any>) {
 }
 
 function normalizedTransactionStatus(row: any) {
-  if (row.is_void || row.voided_at) return "voided";
-  return row.transaction_status ?? "active";
+  return isFinanceRowVoided(row) ? "voided" : "active";
 }
 
 function accountKeyFor(row: any) {
@@ -509,10 +510,13 @@ function applyFinanceTransactionFilters({
 }) {
   let nextQuery = query;
   if (statusFilter !== "all" && level !== "minimal") {
-    nextQuery =
-      statusFilter === "active"
-        ? nextQuery.or("transaction_status.eq.active,transaction_status.is.null")
-        : nextQuery.eq("transaction_status", statusFilter);
+    if (statusFilter === "active") {
+      nextQuery = applyVisibleFinanceLedgerFilter(nextQuery, level);
+    } else if (statusFilter === "voided") {
+      nextQuery = nextQuery.or("is_void.eq.true,voided_at.not.is.null");
+    } else {
+      nextQuery = nextQuery.eq("transaction_status", statusFilter);
+    }
   }
   if (params.review === "needs_review")
     nextQuery = nextQuery.eq("needs_review", true);

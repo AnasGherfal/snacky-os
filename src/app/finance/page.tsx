@@ -31,6 +31,8 @@ import {
 } from "@/lib/finance-import";
 import {
   FINANCE_TRANSACTIONS_TABLE,
+  applyVisibleFinanceLedgerFilter,
+  isVisibleFinanceLedgerRow,
   loadFinanceLedgerRows,
   supabaseErrorDetails,
 } from "@/lib/finance-ledger";
@@ -250,14 +252,12 @@ export default async function FinancePage({
       loadFinanceLedgerRows({
         label: "finance overview",
         buildQuery: (columns, level) => {
-          let query = supabase
+          const query = supabase
             .from(FINANCE_TRANSACTIONS_TABLE)
             .select(columns.join(", "))
             .order("transaction_date", { ascending: false })
             .limit(10000);
-          if (level !== "legacy")
-            query = query.eq("transaction_status", "active");
-          return query;
+          return applyVisibleFinanceLedgerFilter(query, level);
         },
       }),
     ]);
@@ -272,7 +272,7 @@ export default async function FinancePage({
 
   const settings = settingsResult.error ? null : (settingsResult.data as any);
   const rows = (transactionsResult.data as FinanceRow[]).filter(
-    (row) => row.transaction_date && row.transaction_status === "active",
+    (row) => row.transaction_date && isVisibleFinanceLedgerRow(row),
   );
   const currency = String(settings?.default_currency ?? "LYD");
   const cutoffDate = String(

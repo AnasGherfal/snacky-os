@@ -74,6 +74,8 @@ export const FINANCE_TRANSACTION_STABLE_COLUMNS = [
   "transaction_status",
   "review_status",
   "needs_review",
+  "is_void",
+  "voided_at",
   "source_sheet",
   "source_row",
   "related_purchase_id",
@@ -189,6 +191,32 @@ export function isFinancePermissionError(error: unknown) {
   );
 }
 
+export function isFinanceRowVoided(row: any) {
+  return Boolean(row?.is_void || row?.voided_at);
+}
+
+export function isVisibleFinanceLedgerRow(row: any) {
+  return !isFinanceRowVoided(row);
+}
+
+export function applyVisibleFinanceLedgerFilter(query: any, level: FinanceLedgerLevel) {
+  if (level === "legacy") return query;
+  return query.or("is_void.eq.false,is_void.is.null");
+}
+
+export function financeCategoryLabel(row: any) {
+  for (const value of [
+    row?.category,
+    row?.final_bucket,
+    row?.transaction_type,
+    row?.bucket,
+  ]) {
+    const label = String(value ?? "").trim();
+    if (label) return label;
+  }
+  return "Uncategorized";
+}
+
 export function normalizeFinanceLedgerRow(row: any) {
   const amount = Math.abs(Number(row.amount ?? row.signed_amount ?? 0));
   const direction = row.direction === "money_in" ? "money_in" : "money_out";
@@ -212,16 +240,9 @@ export function normalizeFinanceLedgerRow(row: any) {
       row.account_id ??
       row.source_account_id ??
       "snacky_lyd",
-    category:
-      row.category ??
-      row.final_bucket ??
-      row.transaction_type ??
-      row.bucket ??
-      null,
-    transaction_status:
-      row.is_void || row.voided_at
-        ? "voided"
-        : (row.transaction_status ?? "active"),
+    is_void: row.is_void ?? false,
+    category: financeCategoryLabel(row),
+    transaction_status: isFinanceRowVoided(row) ? "voided" : "active",
     import_status:
       row.import_status ?? (row.needs_review ? "needs_review" : "imported"),
     payment_method: row.payment_method ?? null,
