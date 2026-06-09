@@ -1007,7 +1007,7 @@ export async function createPurchaseFinancialTransaction(supabase: NonNullable<R
     supplierName,
     createdBy: profile?.team_member_id ?? null,
   });
-  const purchaseLinkFilter = `related_purchase_id.eq.${purchase.id},linked_purchase_id.eq.${purchase.id},and(source_type.eq.purchase,source_id.eq.${purchase.id})`;
+  const purchaseLinkFilter = `linked_purchase_id.eq.${purchase.id},and(source_type.eq.purchase,source_id.eq.${purchase.id})`;
   const { data: existingRows, error: existingError } = await supabase
     .from("financial_transactions")
     .select("id, transaction_status, created_at")
@@ -1096,7 +1096,7 @@ export async function createCashCollectionFinancialTransaction(supabase: NonNull
     amount,
     createdBy: profile?.team_member_id ?? cash.operator_id ?? null,
   });
-  const cashLinkFilter = `related_cash_collection_id.eq.${cash.id},linked_cash_collection_id.eq.${cash.id},and(source_type.eq.cash_collection,source_id.eq.${cash.id})`;
+  const cashLinkFilter = `linked_cash_collection_id.eq.${cash.id},and(source_type.eq.cash_collection,source_id.eq.${cash.id})`;
   const { data: existingRows, error: existingError } = await supabase
     .from("financial_transactions")
     .select("id, transaction_status, created_at")
@@ -1144,7 +1144,7 @@ export async function clearCashCollectionFinancialTransaction(
   cashCollectionId: string,
   reason = "Cash count was cleared before finance confirmation.",
 ) {
-  const cashLinkFilter = `related_cash_collection_id.eq.${cashCollectionId},linked_cash_collection_id.eq.${cashCollectionId},and(source_type.eq.cash_collection,source_id.eq.${cashCollectionId})`;
+  const cashLinkFilter = `linked_cash_collection_id.eq.${cashCollectionId},and(source_type.eq.cash_collection,source_id.eq.${cashCollectionId})`;
   const { data: activeRows, error: activeError } = await supabase
     .from("financial_transactions")
     .select("*")
@@ -1180,7 +1180,7 @@ export async function clearCashCollectionFinancialTransaction(
       entityLabel: "Cash collection financial transaction",
       beforeData: activeRows.find((row: any) => row.id === financeRow.id),
       afterData: financeRow,
-      metadata: { reason, related_cash_collection_id: cashCollectionId },
+      metadata: { reason, linked_cash_collection_id: cashCollectionId },
       summary: "Voided linked cash finance transaction after the counted amount was cleared",
     });
   }
