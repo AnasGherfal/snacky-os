@@ -5,7 +5,7 @@ import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } fr
 import { lyd } from "@/lib/format";
 import { restockCounts, type RestockPriorityItem } from "@/lib/restock-priority";
 import { loadRestockPriorityData, type RestockPriorityLoadResult } from "@/lib/restock-priority-data";
-import { detailedSalesSourceMessage, vmsCoverageSummary, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
+import { detailedSalesSourceMessage, stockSourceMessage, vmsCoverageSummary, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
 
 type SalesMonthlyRow = { machine_id: string | null; machine_name: string | null; sales_month: string | null; net_sales_amount: number | string | null; units_sold: number | string | null };
 type ProductMonthlyRow = { product_id: string | null; product_name: string | null; sales_month: string | null; net_sales_amount: number | string | null; units_sold: number | string | null };
@@ -95,16 +95,16 @@ async function safeDashboardQuery<T>({
 async function loadVmsBatches(supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>) {
   const withDeletedAt = await supabase
     .from("vms_import_batches")
-    .select("id, file_name, original_file_name, report_type, status, is_active, report_start_date, report_end_date, uploaded_at, imported_at, deleted_at")
-    .in("report_type", ["vms_order_details_weekly", "sales"])
+    .select("id, file_name, original_file_name, report_type, status, is_active, report_start_date, report_end_date, uploaded_at, imported_at, deleted_at, detected_min_datetime, detected_max_datetime")
+    .in("report_type", ["vms_order_details_weekly", "sales", "stock", "machine_stock_snapshot", "planogram"])
     .order("report_start_date", { ascending: true });
 
-  if (!withDeletedAt.error || !isMissingColumn(withDeletedAt.error, ["deleted_at"])) return withDeletedAt;
+  if (!withDeletedAt.error || !isMissingColumn(withDeletedAt.error, ["deleted_at", "detected_min_datetime", "detected_max_datetime"])) return withDeletedAt;
 
   return supabase
     .from("vms_import_batches")
     .select("id, file_name, original_file_name, report_type, status, is_active, report_start_date, report_end_date, uploaded_at, imported_at")
-    .in("report_type", ["vms_order_details_weekly", "sales"])
+    .in("report_type", ["vms_order_details_weekly", "sales", "stock", "machine_stock_snapshot", "planogram"])
     .order("report_start_date", { ascending: true });
 }
 
@@ -190,6 +190,7 @@ export default async function DashboardPage() {
   const vmsBatchRows = (data?.vmsBatchRows ?? []) as VmsDashboardBatch[];
   const coverage = vmsCoverageSummary(vmsBatchRows);
   const salesSourceMessage = detailedSalesSourceMessage(vmsBatchRows, vmsBatchRows.filter((batch) => batch.report_type === "sales"));
+  const refillSourceMessage = stockSourceMessage(vmsBatchRows);
   const hasVmsData = Boolean((data?.vmsBatchRows ?? []).length || salesMonthlyRows.length || productMonthlyRows.length || transactionStatusRows.length || refillRows.length);
   const totalNetSales = salesMonthlyRows.reduce((sum, row) => sum + Number(row.net_sales_amount ?? 0), 0);
   const totalUnitsSold = salesMonthlyRows.reduce((sum, row) => sum + Number(row.units_sold ?? 0), 0);
@@ -221,7 +222,7 @@ export default async function DashboardPage() {
             {!hasVmsData ? (
               <p className="mt-1 font-medium text-slate-700">No VMS data imported yet</p>
             ) : (
-              <p className="mt-1">{salesSourceMessage}</p>
+              <div className="mt-1 space-y-1"><p>{salesSourceMessage}</p><p>{refillSourceMessage}</p></div>
             )}
             {coverage.gaps.length ? (
               <p className="mt-2 font-medium text-amber-800">

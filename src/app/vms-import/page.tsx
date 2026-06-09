@@ -140,7 +140,7 @@ function isStockReportType(reportType: string | null | undefined) {
 }
 
 function activeLabel(batch: VmsBatchRow) {
-  return batch.status === "imported" && batch.is_active !== false && !batch.deleted_at ? "Yes" : "No";
+  return ["imported", "imported_with_warnings", "partially_imported"].includes(String(batch.status ?? "")) && batch.is_active !== false && !batch.deleted_at ? "Yes" : "No";
 }
 
 function batchDateRange(batch: VmsBatchRow) {
@@ -2108,21 +2108,29 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
               <WizardStateInputs step={5} {...baseState} mapping={selectedMapping} />
               <FormSubmitButton className="btn-secondary" pendingLabel="Returning to mapping...">Back to mapping</FormSubmitButton>
             </form>
-            <form className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_minmax(160px,auto)_minmax(160px,auto)_auto]">
+            <form className={selectedReportType === "sales" || selectedReportType === "vms_order_details_weekly" ? "grid gap-3 md:grid-cols-[minmax(220px,1fr)_minmax(160px,auto)_minmax(160px,auto)_auto]" : "grid gap-3 md:grid-cols-[minmax(260px,1fr)_auto]"}>
               <WizardStateInputs step={7} {...baseState} mapping={selectedMapping} includeImportOptions={false} />
               <input type="hidden" name="autoCreateProducts" value={optionValue(autoCreateProducts)} />
               <input type="hidden" name="updateCostFromVms" value={optionValue(updateCostFromVms)} />
-              <FormField label="Import mode">
-                <select name="importMode" defaultValue={importMode} className="field-input">
-                  {Object.entries(vmsImportModeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                </select>
-              </FormField>
-              <FormField label="Range start">
-                <input name="reportStartDate" type="date" defaultValue={reportStartDate} className="field-input" />
-              </FormField>
-              <FormField label="Range end">
-                <input name="reportEndDate" type="date" defaultValue={reportEndDate} className="field-input" />
-              </FormField>
+              {selectedReportType === "sales" || selectedReportType === "vms_order_details_weekly" ? (
+                <>
+                  <FormField label="Import mode">
+                    <select name="importMode" defaultValue={importMode} className="field-input">
+                      {Object.entries(vmsImportModeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                    </select>
+                  </FormField>
+                  <FormField label="Range start">
+                    <input name="reportStartDate" type="date" defaultValue={reportStartDate} className="field-input" />
+                  </FormField>
+                  <FormField label="Range end">
+                    <input name="reportEndDate" type="date" defaultValue={reportEndDate} className="field-input" />
+                  </FormField>
+                </>
+              ) : (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+                  Stock snapshots use the file snapshot timestamp and do not require a sales date range.
+                </div>
+              )}
               <FormSubmitButton className="btn-primary self-end" pendingLabel="Preparing confirmation...">Continue to Step 3</FormSubmitButton>
             </form>
           </div>

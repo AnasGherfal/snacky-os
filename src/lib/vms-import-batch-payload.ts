@@ -45,6 +45,7 @@ export const ALLOWED_VMS_IMPORT_BATCH_FIELDS = new Set([
   "disabled_by",
   "disable_reason",
   "latest_error",
+  "last_error",
   "parse_diagnostics",
   "created_at",
   "updated_at",
@@ -88,6 +89,7 @@ export const OPTIONAL_VMS_IMPORT_BATCH_METADATA_FIELDS = new Set([
   "disabled_by",
   "disable_reason",
   "latest_error",
+  "last_error",
   "parse_diagnostics",
 ]);
 
