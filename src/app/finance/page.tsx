@@ -11,7 +11,7 @@ import {
   SecondaryButton,
   StatusBadge,
 } from "@/components/ui";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canViewFinancials } from "@/lib/authz";
 import {
   computeFinanceBalancesFromCutoff,
@@ -36,7 +36,6 @@ import {
   loadFinanceLedgerRows,
   supabaseErrorDetails,
 } from "@/lib/finance-ledger";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
@@ -225,7 +224,7 @@ export default async function FinancePage({
 
   const params = await searchParams;
   const periodRange = resolvePeriod(params);
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) {
     return (
       <>

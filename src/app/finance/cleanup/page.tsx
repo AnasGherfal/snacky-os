@@ -1,10 +1,9 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { DataTable, EmptyState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canEditFinancialTransactions, canViewFinancials } from "@/lib/authz";
 import { accountCurrency, accountLabel, FINANCE_RECONCILIATION_CUTOFF_DATE, formatFinanceMoney } from "@/lib/finance-balance";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
@@ -114,7 +113,7 @@ export default async function FinanceCleanupPage() {
   const profile = await getCurrentProfile();
   if (!financeAllowed(profile)) redirect("/unauthorized");
   const canEdit = profile && canEditFinancialTransactions({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status });
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) {
     return <EmptyState title="Finance cleanup unavailable" body="Supabase is not configured." />;
   }

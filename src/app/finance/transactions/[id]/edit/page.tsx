@@ -4,13 +4,12 @@ import { FormSubmitButton } from "@/components/FormSubmitButton";
 import { LocalDraftForm } from "@/components/LocalDraft";
 import { ManualFinanceTransactionFields } from "@/components/ManualFinanceTransactionFields";
 import { FormField, FormPageLayout, FormSection, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canEditFinancialTransactions } from "@/lib/authz";
 import { DEFAULT_FINANCE_CATEGORIES, type FinanceCategoryOption } from "@/lib/finance-categories";
 import { updateFinancialTransaction } from "@/lib/finance-actions";
 import { formatFinanceMoney } from "@/lib/finance-balance";
 import { resolvePurchaseFinanceTransactionDate } from "@/lib/purchase-finance-date";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +36,7 @@ export default async function EditFinanceTransactionPage({
 
   const { id } = await params;
   const { error } = await searchParams;
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) notFound();
 
   const [{ data: transaction }, { data: purchases }, { data: machines }, { data: locations }, { data: routes }, categoriesResult] = await Promise.all([

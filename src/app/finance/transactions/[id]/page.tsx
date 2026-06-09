@@ -3,10 +3,9 @@ import { notFound, redirect } from "next/navigation";
 import type { ReactNode } from "react";
 import { FinanceTransactionStatusActions } from "@/components/FinanceTransactionStatusActions";
 import { PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canEditFinancialTransactions, canViewFinancials } from "@/lib/authz";
 import { accountLabel, FINANCE_RECONCILIATION_CUTOFF_DATE, formatFinanceMoney, isFinanceLedgerTransaction } from "@/lib/finance-balance";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
@@ -39,7 +38,7 @@ export default async function FinanceTransactionDetailPage({
 
   const { id } = await params;
   const flags = await searchParams;
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) notFound();
 
   const { data: transaction } = await supabase.from("financial_transactions").select("*").eq("id", id).maybeSingle();

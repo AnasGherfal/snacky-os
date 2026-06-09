@@ -1,12 +1,11 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { DataTable, EmptyState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canViewFinancials } from "@/lib/authz";
 import { accountLabel, formatFinanceMoney } from "@/lib/finance-balance";
 import { confirmFinanceImportRow, ignoreFinanceImportRow, importHistoricalFinanceTransactions, importUploadedFinanceTransactions } from "@/lib/finance-actions";
 import { classifyFinanceRows, readFinanceImportRows } from "@/lib/finance-import";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
@@ -153,7 +152,7 @@ export default async function FinanceImportPage({ searchParams }: { searchParams
   if (!profile || !canViewFinancials({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) redirect("/unauthorized");
 
   const params = await searchParams;
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   const sourceRows = await readFinanceImportRows().catch(() => []);
   const [latestBatchResult, existingResult] = supabase
     ? await Promise.all([
