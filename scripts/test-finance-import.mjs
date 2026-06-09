@@ -111,9 +111,10 @@ test("every non-empty transaction row is retained, even when required values are
   assert.equal(classified[0].importStatus, "needs_review");
   assert.equal(classified[0].record.name, "Anas");
   assert.equal(classified[0].record.transaction, "1800");
-  assert.equal(classified[1].importStatus, "needs_review");
-  assert.equal(classified[1].categoryForTransaction, null);
-  assert.ok(classified[1].reasons.includes("blank Transaction Type"));
+  assert.equal(classified[1].importStatus, "imported");
+  assert.equal(classified[1].categoryForTransaction, "Uncategorized");
+  assert.deepEqual(classified[1].reasons, []);
+  assert.equal(buildFinanceTransaction(classified[1], "user-1", "batch-1").category, "Uncategorized");
 });
 
 test("Name and Currency provide the suggested account without changing the original Name", () => {
