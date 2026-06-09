@@ -489,7 +489,7 @@ export function classifyFinanceRows(rows: ParsedFinanceRow[], existingRows: Exis
     const currencyResult = resolveCurrency(row.record);
     const accountResult = resolveAccount(row.record, currencyResult.currency);
     const category = resolveCategory(row.record);
-    const hadBlankCategory = !rawCategory(row.record);
+    const categoryForTransaction = category ?? "Uncategorized";
     const location = cleanValue(row.record.location ?? row.record.Location);
     const transactionEffect = inferTransactionEffect(category, direction);
     const amount = rawAmount.value;
@@ -503,10 +503,9 @@ export function classifyFinanceRows(rows: ParsedFinanceRow[], existingRows: Exis
     if (!accountResult.known) reasons.push("unknown Name");
     if (!currencyResult.known) reasons.push("unknown currency");
     if (!direction) reasons.push("missing Money Flow");
-    if (hadBlankCategory) reasons.push("blank Transaction Type");
 
     let importStatus: ImportStatus;
-    let shouldInsert = Boolean(transactionDate && amount !== null && direction && accountResult.known && currencyResult.known && category);
+    let shouldInsert = Boolean(transactionDate && amount !== null && direction && accountResult.known && currencyResult.known);
     if (hasSourceDuplicate) {
       importStatus = "confirmed";
       shouldInsert = false;
@@ -531,7 +530,7 @@ export function classifyFinanceRows(rows: ParsedFinanceRow[], existingRows: Exis
       signedAmount,
       direction,
       category: rawCategory(row.record),
-      categoryForTransaction: category,
+      categoryForTransaction,
       originalDescription,
       duplicateKey: null,
       currency: currencyResult.currency,
@@ -541,7 +540,7 @@ export function classifyFinanceRows(rows: ParsedFinanceRow[], existingRows: Exis
       destinationAccountId: null,
       reviewReason,
       reviewGroupKey: reasons.length ? reviewGroupForReason(firstReason) : null,
-      suggestedCategory: category,
+      suggestedCategory: categoryForTransaction,
       suggestedAccount: accountResult.accountId,
       suggestedCurrency: currencyResult.currency,
       suggestedMachine: null,
@@ -561,7 +560,7 @@ export function canInsertClassifiedRow(row: ClassifiedFinanceRow) {
 }
 
 export function forceConfirmClassifiedRow(row: ClassifiedFinanceRow): ClassifiedFinanceRow {
-  if (!row.transactionDate || !row.direction || row.amount === null || !row.suggestedCategory) return row;
+  if (!row.transactionDate || !row.direction || row.amount === null) return row;
   return {
     ...row,
     importStatus: "confirmed",
@@ -580,9 +579,10 @@ function transactionDateTimeFromDate(date: string) {
 }
 
 export function buildFinanceTransaction(row: ClassifiedFinanceRow, createdBy?: string | null, importBatchId?: string | null) {
-  if (!canInsertClassifiedRow(row) || !row.transactionDate || !row.direction || row.amount === null || row.signedAmount === null || !row.categoryForTransaction) {
+  if (!canInsertClassifiedRow(row) || !row.transactionDate || !row.direction || row.amount === null || row.signedAmount === null) {
     return null;
   }
+  const categoryForTransaction = row.categoryForTransaction ?? "Uncategorized";
   const sourceName = cleanValue(row.record.name ?? row.record.Name) || null;
 
   return {
@@ -590,7 +590,7 @@ export function buildFinanceTransaction(row: ClassifiedFinanceRow, createdBy?: s
     transaction_datetime: transactionDateTimeFromDate(row.transactionDate),
     direction: row.direction,
     transaction_kind: "spreadsheet_import",
-    transaction_type: row.categoryForTransaction,
+    transaction_type: categoryForTransaction,
     location: cleanValue(row.record.location ?? row.record.Location) || null,
     description: row.originalDescription || null,
     original_description: row.originalDescription || null,
@@ -608,8 +608,8 @@ export function buildFinanceTransaction(row: ClassifiedFinanceRow, createdBy?: s
     counterparty_text: sourceName,
     bucket: null,
     bucket_override: null,
-    category: row.categoryForTransaction,
-    final_bucket: row.categoryForTransaction,
+    category: categoryForTransaction,
+    final_bucket: categoryForTransaction,
     review_status: "confirmed",
     needs_review: false,
     transaction_status: "active",
