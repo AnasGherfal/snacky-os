@@ -80,7 +80,9 @@ function isStockReportType(reportType: string | null | undefined) {
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return "-";
-  return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(date);
 }
 
 function batchDateRange(batch: VmsSourceRow) {
@@ -115,6 +117,76 @@ function sourceErrorMessage(error: unknown) {
   if (!error || typeof error !== "object") return String(error ?? "Unknown VMS source error");
   const row = error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown };
   return [row.code, row.message, row.details, row.hint].map((value) => String(value ?? "")).filter(Boolean).join(" - ");
+}
+
+const preferredSourceSelect = "id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, uploaded_by, uploaded_at, status, is_active, deleted_at, delete_reason, disabled_at, disable_reason, source_usage, dashboard_usage, storage_bucket, storage_path, original_file_name, detected_min_datetime, detected_max_datetime, total_successful_sales, successful_rows_count, failed_rows_count, refunded_rows_count, row_count, rows_found, rows_imported, rows_skipped, report_start_date, report_end_date, rows_skipped_duplicate, rows_needing_review, latest_error, last_error, last_reprocessed_at, reprocess_count";
+const legacySourceSelect = "id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, uploaded_by, uploaded_at, status, row_count, rows_found, rows_imported, rows_skipped, latest_error, notes";
+
+function isMissingSourceSchemaError(error: unknown) {
+  const row = error && typeof error === "object" ? error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown } : null;
+  const text = [row?.code, row?.message, row?.details, row?.hint].map((value) => String(value ?? "")).join(" ").toLowerCase();
+  return text.includes("schema cache") || text.includes("column") || text.includes("does not exist") || row?.code === "42703" || row?.code === "PGRST204" || row?.code === "42P01" || row?.code === "PGRST205";
+}
+
+function logVmsDataSourcesLoadIssue({
+  queryName,
+  selectedColumns,
+  error,
+}: {
+  queryName: string;
+  selectedColumns: string;
+  error: unknown;
+}) {
+  const row = error && typeof error === "object" ? error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown } : null;
+  console.error("[vms-data-sources] Failed to load VMS data sources", {
+    queryName,
+    selectedColumns,
+    code: row?.code ?? null,
+    message: row?.message ?? String(error instanceof Error ? error.message : error ?? "Unknown error"),
+    details: row?.details ?? null,
+    hint: row?.hint ?? null,
+  });
+}
+
+async function loadVmsDataSources({
+  supabase,
+  from,
+  to,
+}: {
+  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>;
+  from: number;
+  to: number;
+}) {
+  try {
+    const result = await supabase
+      .from("vms_import_batches")
+      .select(preferredSourceSelect, { count: "exact" })
+      .order("uploaded_at", { ascending: false, nullsFirst: false })
+      .range(from, to);
+
+    if (!result.error) return { batches: (result.data ?? []) as VmsSourceRow[], batchCount: result.count ?? result.data?.length ?? 0, error: "" };
+    logVmsDataSourcesLoadIssue({ queryName: "vms_import_batches.sources", selectedColumns: preferredSourceSelect, error: result.error });
+    if (!isMissingSourceSchemaError(result.error)) return { batches: [], batchCount: 0, error: sourceErrorMessage(result.error) };
+  } catch (error) {
+    logVmsDataSourcesLoadIssue({ queryName: "vms_import_batches.sources", selectedColumns: preferredSourceSelect, error });
+    return { batches: [], batchCount: 0, error: sourceErrorMessage(error) };
+  }
+
+  try {
+    const fallback = await supabase
+      .from("vms_import_batches")
+      .select(legacySourceSelect, { count: "exact" })
+      .order("uploaded_at", { ascending: false, nullsFirst: false })
+      .range(from, to);
+    if (fallback.error) {
+      logVmsDataSourcesLoadIssue({ queryName: "vms_import_batches.sources_legacy", selectedColumns: legacySourceSelect, error: fallback.error });
+      return { batches: [], batchCount: 0, error: sourceErrorMessage(fallback.error) };
+    }
+    return { batches: (fallback.data ?? []) as VmsSourceRow[], batchCount: fallback.count ?? fallback.data?.length ?? 0, error: "Some VMS metadata columns are missing. Showing available import history." };
+  } catch (error) {
+    logVmsDataSourcesLoadIssue({ queryName: "vms_import_batches.sources_legacy", selectedColumns: legacySourceSelect, error });
+    return { batches: [], batchCount: 0, error: sourceErrorMessage(error) };
+  }
 }
 
 function SourceActions({ batch, canManage }: { batch: VmsSourceRow; canManage: boolean }) {
@@ -178,19 +250,10 @@ export default async function VmsDataSourcesPage({ searchParams }: { searchParam
   let loadError = "";
 
   if (supabase) {
-    const { data, error, count } = await supabase
-      .from("vms_import_batches")
-      .select("id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, uploaded_by, uploaded_at, status, is_active, deleted_at, delete_reason, disabled_at, disable_reason, source_usage, dashboard_usage, storage_bucket, storage_path, original_file_name, detected_min_datetime, detected_max_datetime, total_successful_sales, successful_rows_count, failed_rows_count, refunded_rows_count, row_count, rows_found, rows_imported, rows_skipped, report_start_date, report_end_date, rows_skipped_duplicate, rows_needing_review, latest_error, last_error, last_reprocessed_at, reprocess_count", { count: "exact" })
-      .order("uploaded_at", { ascending: false, nullsFirst: false })
-      .range(from, to);
-
-    if (error) {
-      console.error("[vms-data-sources] Failed to load vms_import_batches", { query: "vms_import_batches.select.sources", error });
-      loadError = sourceErrorMessage(error);
-    } else {
-      batches = (data ?? []) as VmsSourceRow[];
-      batchCount = count ?? batches.length;
-    }
+    const loadedSources = await loadVmsDataSources({ supabase, from, to });
+    batches = loadedSources.batches;
+    batchCount = loadedSources.batchCount;
+    loadError = loadedSources.error;
   }
 
   return (
