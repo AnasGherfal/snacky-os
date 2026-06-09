@@ -54,6 +54,7 @@ type VmsSourceRow = {
   failed_rows_count?: number | null;
   refunded_rows_count?: number | null;
   latest_error?: string | null;
+  last_error?: string | null;
   last_reprocessed_at?: string | null;
   reprocess_count?: number | null;
 };
@@ -179,7 +180,7 @@ export default async function VmsDataSourcesPage({ searchParams }: { searchParam
   if (supabase) {
     const { data, error, count } = await supabase
       .from("vms_import_batches")
-      .select("id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, uploaded_by, uploaded_at, status, is_active, deleted_at, delete_reason, disabled_at, disable_reason, source_usage, dashboard_usage, storage_bucket, storage_path, original_file_name, detected_min_datetime, detected_max_datetime, total_successful_sales, successful_rows_count, failed_rows_count, refunded_rows_count, row_count, rows_found, rows_imported, rows_skipped, rows_skipped_duplicate, rows_needing_review, latest_error, last_reprocessed_at, reprocess_count", { count: "exact" })
+      .select("id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, uploaded_by, uploaded_at, status, is_active, deleted_at, delete_reason, disabled_at, disable_reason, source_usage, dashboard_usage, storage_bucket, storage_path, original_file_name, detected_min_datetime, detected_max_datetime, total_successful_sales, successful_rows_count, failed_rows_count, refunded_rows_count, row_count, rows_found, rows_imported, rows_skipped, report_start_date, report_end_date, rows_skipped_duplicate, rows_needing_review, latest_error, last_error, last_reprocessed_at, reprocess_count", { count: "exact" })
       .order("uploaded_at", { ascending: false, nullsFirst: false })
       .range(from, to);
 
@@ -259,7 +260,7 @@ export default async function VmsDataSourcesPage({ searchParams }: { searchParam
                   {batch.last_reprocessed_at ? <div className="text-xs text-slate-500">Reprocessed {batch.reprocess_count ?? 0}x</div> : null}
                 </td>
                 <td className="max-w-xs text-xs text-amber-700">
-                  {batch.latest_error || batch.disable_reason || batch.delete_reason || "-"}
+                  {batch.latest_error || batch.last_error || batch.disable_reason || batch.delete_reason || "-"}
                   <div className="mt-1 text-slate-500">Failed: {batch.failed_rows_count ?? 0} · Refunds: {batch.refunded_rows_count ?? 0}</div>
                 </td>
                 <td><SourceActions batch={batch} canManage={canManage} /></td>

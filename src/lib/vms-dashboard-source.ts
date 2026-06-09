@@ -10,6 +10,8 @@ export type VmsDashboardBatch = {
   imported_at?: string | null;
   deleted_at?: string | null;
   original_file_name?: string | null;
+  detected_min_datetime?: string | null;
+  detected_max_datetime?: string | null;
 };
 
 function dateOnly(date: Date) {
@@ -65,4 +67,17 @@ export function detailedSalesSourceMessage(batches: VmsDashboardBatch[], summary
   const activeSummary = summaryFiles.filter(isActiveImportedVmsBatch);
   if (activeSummary.length) return "Using sales summary report for reconciliation only. Detailed sales transactions not imported yet.";
   return "Detailed sales transactions not imported yet.";
+}
+
+export function activeStockBatches(batches: VmsDashboardBatch[]) {
+  return batches
+    .filter((batch) => ["stock", "machine_stock_snapshot", "planogram"].includes(String(batch.report_type ?? "")) && isActiveImportedVmsBatch(batch))
+    .sort((a, b) => String(b.detected_max_datetime ?? b.detected_min_datetime ?? b.uploaded_at ?? b.imported_at ?? "").localeCompare(String(a.detected_max_datetime ?? a.detected_min_datetime ?? a.uploaded_at ?? a.imported_at ?? "")));
+}
+
+export function stockSourceMessage(batches: VmsDashboardBatch[]) {
+  const latest = activeStockBatches(batches)[0] ?? null;
+  if (!latest) return "Refill recommendations are using manual planogram/storage fallback until a stock snapshot is imported.";
+  const snapshot = latest.detected_max_datetime ?? latest.detected_min_datetime ?? latest.uploaded_at ?? latest.imported_at ?? "";
+  return `Refill recommendations are using stock snapshot file ${sourceFileName(latest)}${snapshot ? ` (${new Date(snapshot).toLocaleString("en-US")})` : ""}.`;
 }
