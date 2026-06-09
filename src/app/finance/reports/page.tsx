@@ -6,7 +6,7 @@ import {
   PageHeader,
   SecondaryButton,
 } from "@/components/ui";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canViewFinancials } from "@/lib/authz";
 import {
   formatFinanceMoney,
@@ -18,7 +18,6 @@ import {
   loadFinanceLedgerRows,
   supabaseErrorDetails,
 } from "@/lib/finance-ledger";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +35,7 @@ export default async function FinanceReportsPage() {
     })
   )
     redirect("/unauthorized");
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   const result = supabase
     ? await loadFinanceLedgerRows({
         label: "finance reports",

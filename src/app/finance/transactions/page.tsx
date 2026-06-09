@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import Link from "next/link";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { redirect } from "next/navigation";
 import { Fragment } from "react";
 import { PaginationControls } from "@/components/PaginationControls";
@@ -12,7 +13,7 @@ import {
   SecondaryButton,
   StatusBadge,
 } from "@/components/ui";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canEditFinancialTransactions, canViewFinancials } from "@/lib/authz";
 import {
   accountLabel,
@@ -31,7 +32,6 @@ import {
   SearchParamsRecord,
   supabaseLikePattern,
 } from "@/lib/pagination";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
@@ -379,7 +379,7 @@ function relatedLabel(
 }
 
 async function fetchByIds(
-  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>,
+  supabase: SupabaseClient,
   table: string,
   select: string,
   ids: string[],
@@ -465,7 +465,7 @@ async function financeLedgerDiagnostics({
   selectedColumns,
   error,
 }: {
-  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  supabase: SupabaseClient;
   profile: NonNullable<Awaited<ReturnType<typeof getCurrentProfile>>>;
   canEdit: boolean;
   selectedColumns: string[];
@@ -587,7 +587,7 @@ async function loadFinanceTransactions({
   columns,
   level,
 }: {
-  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  supabase: SupabaseClient;
   params: TransactionParams;
   statusFilter: string;
   search: string;
@@ -629,7 +629,7 @@ export default async function FinanceTransactionsPage({
   });
   const params = cleanSearchParams(await searchParams) as TransactionParams;
   const { page, pageSize, from, to } = getPagination(params);
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) {
     return (
       <>

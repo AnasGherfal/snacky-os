@@ -10,7 +10,7 @@ import {
   SecondaryButton,
   StatusBadge,
 } from "@/components/ui";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canViewFinancials } from "@/lib/authz";
 import {
   formatFinanceMoney,
@@ -29,7 +29,6 @@ import {
   getPagination,
   SearchParamsRecord,
 } from "@/lib/pagination";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export type FinanceFilteredPageConfig = {
   title: string;
@@ -82,7 +81,7 @@ export async function FilteredFinancePage(config: FinanceFilteredPageConfig) {
     redirect("/unauthorized");
   }
 
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) {
     return (
       <>
