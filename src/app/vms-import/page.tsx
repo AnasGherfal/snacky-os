@@ -404,6 +404,11 @@ const legacyBatchSelect = [
   "notes",
 ].join(", ");
 
+function isNextNavigationSignal(error: unknown) {
+  const digest = error && typeof error === "object" && "digest" in error ? String((error as { digest?: unknown }).digest ?? "") : "";
+  return digest.startsWith("NEXT_REDIRECT") || digest === "NEXT_NOT_FOUND";
+}
+
 function queryError(error: unknown): SupabaseQueryError | null {
   if (!error || typeof error !== "object") return null;
   return error as SupabaseQueryError;
@@ -498,11 +503,13 @@ function stringArrayValue(value: unknown) {
 
 async function loadVmsSchemaHealth(supabase: SupabaseServerClient): Promise<VmsSchemaHealth> {
   const health: VmsSchemaHealth = { checked: false, missingTables: [], missingColumns: [], errors: [] };
+  const queryName = "get_vms_schema_health.rpc";
 
   try {
     const result = await supabase.rpc("get_vms_schema_health");
     if (result.error) {
-      health.errors.push(loadIssueFromError("vms_schema_health.rpc", result.error));
+      console.error("[vms-import] Load query failed", { queryName, rpc: "get_vms_schema_health", error: result.error });
+      health.errors.push(loadIssueFromError(queryName, result.error));
       return health;
     }
 
@@ -517,7 +524,8 @@ async function loadVmsSchemaHealth(supabase: SupabaseServerClient): Promise<VmsS
     health.missingColumns = stringArrayValue(data?.missing_columns);
     return health;
   } catch (error) {
-    health.errors.push(loadIssueFromError("vms_schema_health.unexpected", error));
+    console.error("[vms-import] Load query failed", { queryName, rpc: "get_vms_schema_health", error });
+    health.errors.push(loadIssueFromError(queryName, error));
     return health;
   }
 }
@@ -716,6 +724,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
   try {
     return await VmsImportPageContent({ searchParams });
   } catch (error) {
+    if (isNextNavigationSignal(error)) throw error;
     const profile = await getCurrentProfile().catch(() => null);
     const effectivePermissions = profile ? getEffectivePermissions(profile) : [];
     const issue = loadIssueFromError("vms_import_page.unexpected_server_component_error", error);

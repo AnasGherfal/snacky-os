@@ -160,13 +160,16 @@ function userFacingLoadError(error: unknown, queryName?: string) {
   return "Snacky OS could not load this VMS import. Technical details are available in the server console.";
 }
 
-async function checkRequiredVmsTables(supabase: SupabaseServerClient) {
+async function checkRequiredVmsTables(supabase: SupabaseServerClient, batchId: string, currentUserId: string | null, effectivePermissions: string[]) {
   const results: { table: string; kind: string; requiredFor: string; exists: boolean; error?: string | null; code?: string | null; missingRelation?: string | null; missingColumn?: string | null }[] = [];
   for (const relation of VMS_IMPORT_PIPELINE_RELATIONS) {
+    const selectedColumns = "id";
+    const queryName = `${relation.name}.schema_check`;
     try {
-      const res = await supabase.from(relation.name).select("id", { head: true }).limit(1);
+      const res = await supabase.from(relation.name).select(selectedColumns, { head: true }).limit(1);
       if (res.error) {
-        const issue = extractVmsSchemaIssue(res.error, `${relation.name}.schema_check`);
+        logPostImportLoaderFailure({ queryName, selectedColumns, error: res.error, batchId, currentUserId, effectivePermissions });
+        const issue = extractVmsSchemaIssue(res.error, queryName);
         results.push({
           table: relation.name,
           kind: relation.kind,
@@ -181,24 +184,31 @@ async function checkRequiredVmsTables(supabase: SupabaseServerClient) {
         results.push({ table: relation.name, kind: relation.kind, requiredFor: relation.requiredFor, exists: true });
       }
     } catch (err) {
+      logPostImportLoaderFailure({ queryName, selectedColumns, error: err, batchId, currentUserId, effectivePermissions });
       results.push({ table: relation.name, kind: relation.kind, requiredFor: relation.requiredFor, exists: false, error: String(err instanceof Error ? err.message : err) });
     }
   }
   return results;
 }
 
-async function countBatchRows(supabase: SupabaseServerClient, table: string, batchId: string) {
+async function countBatchRows(supabase: SupabaseServerClient, table: string, batchId: string, currentUserId: string | null, effectivePermissions: string[]) {
+  const selectedColumns = "id";
+  const queryName = `${table}.count_for_batch`;
   try {
     const { count, error } = await supabase
       .from(table)
-      .select("id", { count: "exact", head: true })
+      .select(selectedColumns, { count: "exact", head: true })
       .eq("import_batch_id", batchId);
+    if (error) {
+      logPostImportLoaderFailure({ queryName, selectedColumns: `${selectedColumns}; filter: import_batch_id = ${batchId}`, error, batchId, currentUserId, effectivePermissions });
+    }
     return {
       count: error ? null : count ?? 0,
       error: error ? queryErrorMessage(error) : null,
       code: (error as VmsSupabaseError | null)?.code ?? null,
     };
   } catch (error) {
+    logPostImportLoaderFailure({ queryName, selectedColumns: `${selectedColumns}; filter: import_batch_id = ${batchId}`, error, batchId, currentUserId, effectivePermissions });
     return { count: null, error: queryErrorMessage(error), code: null };
   }
 }
@@ -445,12 +455,7 @@ async function VmsImportBatchDetailPageContent({
   }
 
   if (!batch) {
-    const { data: latestBatch } = await supabase
-      .from("vms_import_batches")
-      .select("id")
-      .order("imported_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const latestBatch = await loadLatestVmsImportBatch(supabase, batchId, profile?.id ?? null, effectivePermissions);
     const message = "This import batch no longer exists. Showing latest imports instead.";
     if (latestBatch?.id && latestBatch.id !== batchId) redirect(`/vms-import/${latestBatch.id}?error=${encodeURIComponent(message)}`);
     redirect(`/vms-import?error=${encodeURIComponent(message)}`);
@@ -477,7 +482,7 @@ async function VmsImportBatchDetailPageContent({
     : null;
 
   // Diagnostics: check presence of required VMS tables and counts related to this batch
-  const tableChecks = await checkRequiredVmsTables(supabase);
+  const tableChecks = await checkRequiredVmsTables(supabase, batch.id, profile?.id ?? null, effectivePermissions);
   const [
     previewRowsCount,
     importedRowsCount,
@@ -486,10 +491,10 @@ async function VmsImportBatchDetailPageContent({
     productMappingsCountResult,
     machineMappingsCountResult,
   ] = await Promise.all([
-    countBatchRows(supabase, "vms_import_preview_rows", batch.id),
-    countBatchRows(supabase, "vms_import_rows", batch.id),
-    countBatchRows(supabase, "vms_sales_raw", batch.id),
-    countBatchRows(supabase, "vms_transactions_raw", batch.id),
+    countBatchRows(supabase, "vms_import_preview_rows", batch.id, profile?.id ?? null, effectivePermissions),
+    countBatchRows(supabase, "vms_import_rows", batch.id, profile?.id ?? null, effectivePermissions),
+    countBatchRows(supabase, "vms_sales_raw", batch.id, profile?.id ?? null, effectivePermissions),
+    countBatchRows(supabase, "vms_transactions_raw", batch.id, profile?.id ?? null, effectivePermissions),
     safeCountAllRows(supabase, "vms_product_mappings", batch.id, profile?.id ?? null, effectivePermissions),
     safeCountAllRows(supabase, "vms_machine_mappings", batch.id, profile?.id ?? null, effectivePermissions),
   ]);
@@ -685,6 +690,17 @@ async function VmsImportBatchDetailPageContent({
         {latestDiagnosticError ? (
           <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             Latest load issue: {latestDiagnosticError}
+          </div>
+        ) : null}
+        {loadedImport.errors.length ? (
+          <div className="mb-4 space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <div className="font-semibold text-amber-950">Section-level loader errors</div>
+            {loadedImport.errors.map((issue) => (
+              <div key={issue.loader} className="rounded-md border border-amber-200 bg-white p-2 text-xs text-slate-700">
+                <div className="font-semibold text-slate-900">{issue.loader}</div>
+                <div>{issue.message}</div>
+              </div>
+            ))}
           </div>
         ) : null}
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
