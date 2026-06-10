@@ -1,8 +1,7 @@
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, MobileCardList, MobileField, MobileRecordCard, PageHeader, StatusBadge } from "@/components/ui";
-import { requireCurrentProfileForPath } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
@@ -139,7 +138,7 @@ function isMissingRecommendationMetadataError(error: SupabaseLikeError | null | 
   return error?.code === "42703" || error?.code === "PGRST204" || (message.includes("column") && message.includes("does not exist"));
 }
 
-async function loadRefillRecommendations(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>) {
+async function loadRefillRecommendations(supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>) {
   const enrichedResult = await supabase
     .from("refill_recommendations")
     .select(RECOMMENDATION_ENRICHED_SELECT, { count: "exact" })
@@ -154,7 +153,7 @@ async function loadRefillRecommendations(supabase: NonNullable<ReturnType<typeof
     .limit(1000);
 }
 
-async function attachRecommendationSources(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>, rows: RefillRecommendationRow[]) {
+async function attachRecommendationSources(supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>, rows: RefillRecommendationRow[]) {
   const batchIds = Array.from(new Set(rows.map((row) => row.import_batch_id).filter((id): id is string => Boolean(id))));
   if (!batchIds.length) return rows;
 
@@ -179,11 +178,11 @@ async function attachRecommendationSources(supabase: NonNullable<ReturnType<type
   });
 }
 
-export default async function RefillsPage({ searchParams }: { searchParams: Promise<SearchParamsRecord> }) {
+async function RefillsPageContent({ searchParams }: { searchParams: Promise<SearchParamsRecord> }) {
   const params = cleanSearchParams(await searchParams);
   const { page, pageSize, from, to } = getPagination(params);
   await requireCurrentProfileForPath("/refills");
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   const [recommendationsResult, stockCountResult, historyResult, historyCountResult, historyIssueCountResult] = supabase
     ? await Promise.all([
         loadRefillRecommendations(supabase),
@@ -338,4 +337,24 @@ export default async function RefillsPage({ searchParams }: { searchParams: Prom
       )}
     </>
   );
+}
+
+function isNextNavigationSignal(error: unknown) {
+  const digest = error && typeof error === "object" ? String((error as { digest?: unknown }).digest ?? "") : "";
+  return digest.startsWith("NEXT_REDIRECT") || digest.startsWith("NEXT_NOT_FOUND") || digest === "DYNAMIC_SERVER_USAGE";
+}
+
+export default async function RefillsPage(props: Parameters<typeof RefillsPageContent>[0]) {
+  try {
+    return await RefillsPageContent(props);
+  } catch (error) {
+    if (isNextNavigationSignal(error)) throw error;
+    console.error("[refills] Page-level render guard caught an unexpected error", error);
+    return (
+      <>
+        <PageHeader title="Refills" subtitle="System recommendations plus machine refill completion proofs from imported history and live operator work." />
+        <EmptyState title="Something did not load" body="Snacky OS recovered from a VMS data load error. Please retry after the latest import finishes; technical details are in the server logs." />
+      </>
+    );
+  }
 }

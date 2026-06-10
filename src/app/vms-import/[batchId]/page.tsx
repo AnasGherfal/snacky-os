@@ -123,6 +123,11 @@ function formatDateTime(value: string | null | undefined) {
   return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(date);
 }
 
+function isNextNavigationSignal(error: unknown) {
+  const digest = error && typeof error === "object" ? String((error as { digest?: unknown }).digest ?? "") : "";
+  return digest.startsWith("NEXT_REDIRECT") || digest.startsWith("NEXT_NOT_FOUND") || digest === "DYNAMIC_SERVER_USAGE";
+}
+
 function queryErrorMessage(error: unknown) {
   if (!error || typeof error !== "object") return String(error ?? "Unknown error");
   return String((error as { message?: unknown }).message ?? "Unknown error");
@@ -398,7 +403,7 @@ function RawData({ row }: { row: VmsImportRow }) {
   );
 }
 
-export default async function VmsImportBatchDetailPage({
+async function VmsImportBatchDetailPageContent({
   params,
   searchParams,
 }: {
@@ -870,4 +875,36 @@ export default async function VmsImportBatchDetailPage({
       </section>
     </>
   );
+}
+
+export default async function VmsImportBatchDetailPage(props: {
+  params: Promise<{ batchId: string }>;
+  searchParams: Promise<{ error?: string; success?: string }>;
+}) {
+  try {
+    return await VmsImportBatchDetailPageContent(props);
+  } catch (error) {
+    if (isNextNavigationSignal(error)) throw error;
+    const resolvedParams = await props.params.catch(() => ({ batchId: "unknown" }));
+    const profile = await getCurrentProfile().catch(() => null);
+    const effectivePermissions = profile ? getEffectivePermissions(profile) : [];
+    logPostImportLoaderFailure({
+      queryName: "vms_import_batch_detail.unexpected_server_component_error",
+      selectedColumns: preferredBatchDetailSelect,
+      error,
+      batchId: resolvedParams.batchId,
+      currentUserId: profile?.id ?? null,
+      effectivePermissions,
+    });
+    return (
+      <>
+        <PageHeader title="VMS Import Batch" subtitle="Review imported VMS rows and mapping issues." action={<SecondaryButton href="/vms-import">Back to VMS import</SecondaryButton>} />
+        <ErrorState
+          title="VMS import batch could not fully load"
+          body={userFacingLoadError(error, "vms_import_batch_detail.unexpected_server_component_error")}
+          action={<SecondaryButton href="/vms-import/sources">Open VMS data sources</SecondaryButton>}
+        />
+      </>
+    );
+  }
 }

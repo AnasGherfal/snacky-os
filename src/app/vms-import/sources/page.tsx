@@ -113,6 +113,11 @@ function usageText(value: unknown, fallback: string) {
   return String(value);
 }
 
+function isNextNavigationSignal(error: unknown) {
+  const digest = error && typeof error === "object" ? String((error as { digest?: unknown }).digest ?? "") : "";
+  return digest.startsWith("NEXT_REDIRECT") || digest.startsWith("NEXT_NOT_FOUND") || digest === "DYNAMIC_SERVER_USAGE";
+}
+
 function sourceErrorMessage(error: unknown) {
   if (!error || typeof error !== "object") return String(error ?? "Unknown VMS source error");
   const row = error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown };
@@ -235,7 +240,7 @@ function SourceActions({ batch, canManage }: { batch: VmsSourceRow; canManage: b
   );
 }
 
-export default async function VmsDataSourcesPage({ searchParams }: { searchParams: Promise<VmsSourceParams> }) {
+async function VmsDataSourcesPageContent({ searchParams }: { searchParams: Promise<VmsSourceParams> }) {
   const params = await searchParams;
   const profile = await getCurrentProfile();
   if (!profile || !canViewVmsImports(profile)) redirect("/unauthorized");
@@ -335,4 +340,29 @@ export default async function VmsDataSourcesPage({ searchParams }: { searchParam
       )}
     </>
   );
+}
+
+export default async function VmsDataSourcesPage(props: { searchParams: Promise<VmsSourceParams> }) {
+  try {
+    return await VmsDataSourcesPageContent(props);
+  } catch (error) {
+    if (isNextNavigationSignal(error)) throw error;
+    logVmsDataSourcesLoadIssue({
+      queryName: "vms_data_sources.unexpected_server_component_error",
+      selectedColumns: preferredSourceSelect,
+      error,
+    });
+    return (
+      <>
+        <PageHeader
+          title="VMS Data Sources"
+          subtitle="Trace every VMS file feeding dashboards, refills, inventory snapshots, and reconciliation."
+          action={<Link href="/vms-import" className="btn-primary">Import VMS File</Link>}
+        />
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          Could not load VMS data sources. {sourceErrorMessage(error)}
+        </div>
+      </>
+    );
+  }
 }
