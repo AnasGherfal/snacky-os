@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { FormSubmitButton } from "@/components/FormSubmitButton";
 import { LocalDraftForm } from "@/components/LocalDraft";
 import { PaginationControls } from "@/components/PaginationControls";
-import { DataTable, EmptyState, ErrorState, FormField, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
+import { DataTable, EmptyState, ErrorState, FormField, PageHeader, SectionCard, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canCreateVmsImports, canValidateVmsImports, canViewVmsImports, getEffectivePermissions, isOwnerAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
@@ -492,62 +492,29 @@ function logVmsImportLoadIssue({
   });
 }
 
-const expectedVmsTables = [
-  "vms_import_batches",
-  "vms_import_preview_rows",
-  "vms_product_mappings",
-  "vms_machine_mappings",
-  "vms_header_mappings",
-  "vms_sales_raw",
-  "vms_transactions_raw",
-  "vms_machine_stock_snapshots",
-];
-
-const expectedVmsImportBatchColumns = [
-  "file_hash",
-  "detected_min_datetime",
-  "detected_max_datetime",
-  "is_active",
-  "status",
-  "report_type",
-  "rows_found",
-  "rows_imported",
-  "parse_diagnostics",
-];
+function stringArrayValue(value: unknown) {
+  return Array.isArray(value) ? value.map((item) => String(item)).filter(Boolean) : [];
+}
 
 async function loadVmsSchemaHealth(supabase: SupabaseServerClient): Promise<VmsSchemaHealth> {
   const health: VmsSchemaHealth = { checked: false, missingTables: [], missingColumns: [], errors: [] };
+
   try {
-    const informationSchema = supabase.schema("information_schema");
-    const tablesResult = await informationSchema
-      .from("tables")
-      .select("table_name")
-      .eq("table_schema", "public")
-      .in("table_name", expectedVmsTables);
-    if (tablesResult.error) {
-      health.errors.push(loadIssueFromError("information_schema.tables.vms_health", tablesResult.error));
+    const result = await supabase.rpc("get_vms_schema_health");
+    if (result.error) {
+      health.errors.push(loadIssueFromError("vms_schema_health.rpc", result.error));
       return health;
     }
 
-    const foundTables = new Set((tablesResult.data ?? []).map((row) => String((row as { table_name?: unknown }).table_name)));
-    health.missingTables = expectedVmsTables.filter((table) => !foundTables.has(table));
+    const data = result.data as {
+      checked?: unknown;
+      missing_tables?: unknown;
+      missing_columns?: unknown;
+    } | null;
 
-    const columnsResult = await informationSchema
-      .from("columns")
-      .select("column_name")
-      .eq("table_schema", "public")
-      .eq("table_name", "vms_import_batches")
-      .in("column_name", expectedVmsImportBatchColumns);
-    if (columnsResult.error) {
-      health.errors.push(loadIssueFromError("information_schema.columns.vms_import_batches_health", columnsResult.error));
-      return health;
-    }
-
-    const foundColumns = new Set((columnsResult.data ?? []).map((row) => String((row as { column_name?: unknown }).column_name)));
-    health.missingColumns = expectedVmsImportBatchColumns
-      .filter((column) => !foundColumns.has(column))
-      .map((column) => `vms_import_batches.${column}`);
-    health.checked = true;
+    health.checked = data?.checked === true;
+    health.missingTables = stringArrayValue(data?.missing_tables);
+    health.missingColumns = stringArrayValue(data?.missing_columns);
     return health;
   } catch (error) {
     health.errors.push(loadIssueFromError("vms_schema_health.unexpected", error));
@@ -989,7 +956,7 @@ function VmsSchemaRepairPanel({ schemaHealth, canRepair }: { schemaHealth: VmsSc
         <div>
           <h2 className="text-base font-semibold text-amber-950">VMS import schema needs repair</h2>
           <p className="mt-1 text-sm text-amber-900">
-            Missing: {missing.length ? missing.join(", ") : "schema health check access"}. Run migration repair; upload and other available sections still work.
+            Missing: {missing.length ? missing.join(", ") : "schema status access"}. Run migration repair; upload and other available sections still work.
           </p>
         </div>
         {canRepair ? (
@@ -1409,7 +1376,18 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
     );
   }
 
-  const schemaHealth = await loadVmsSchemaHealth(supabase);
+  const schemaHealth = await (async () => {
+    try {
+      return await loadVmsSchemaHealth(supabase);
+    } catch (error) {
+      return {
+        checked: false,
+        missingTables: [],
+        missingColumns: [],
+        errors: [loadIssueFromError("vms_schema_health.loader", error)],
+      } satisfies VmsSchemaHealth;
+    }
+  })();
   pageIssues.push(...schemaHealth.errors);
 
   const selectedPreviewId = params.previewId ?? null;
