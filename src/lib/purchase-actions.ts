@@ -453,6 +453,116 @@ function logPurchaseSaveFailure({
   });
 }
 
+async function logPurchaseFinanceRepairNeeded({ profile, purchaseId, amount, error }: { profile: Awaited<ReturnType<typeof getCurrentProfile>>; purchaseId: string; amount: number; error: unknown }) {
+  const details = supabaseErrorDetails(error);
+  console.error("[purchases] Purchase saved but finance sync needs repair", {
+    purchase_id: purchaseId,
+    amount,
+    user_id: profile?.id ?? null,
+    user_roles: profile?.roles ?? [],
+    supabase_error: details,
+    original_error: error,
+  });
+  try {
+    await logActivity({
+      profile,
+      action: "finance_sync_needs_repair",
+      entityType: "purchase",
+      entityId: purchaseId,
+      entityLabel: purchaseId.slice(0, 8),
+      afterData: { purchase_id: purchaseId, amount, finance_sync_error: details },
+      summary: "Purchase saved, finance sync needs repair",
+    });
+  } catch (logError) {
+    console.warn("[purchases] Could not create finance sync repair activity log", logError);
+  }
+}
+
+async function syncPurchaseFinanceSafely({ supabase, profile, purchase, amount, warningText }: { supabase: SupabaseServer; profile: Awaited<ReturnType<typeof getCurrentProfile>>; purchase: any; amount: number; warningText: string }) {
+  try {
+    await createPurchaseFinancialTransaction(supabase, profile, purchase, amount);
+    return { ok: true as const, warning: "" };
+  } catch (financeError) {
+    await logPurchaseFinanceRepairNeeded({ profile, purchaseId: String(purchase?.id ?? ""), amount, error: financeError });
+    return { ok: false as const, warning: warningText };
+  }
+}
+
+async function createPurchaseWithLinesFallback({ supabase, profile, supplierId, purchaseDate, paymentStatus, paymentAccountId, fd, receiptUrl, receiptFileName, receiptContentType, receiptStoragePath, totals, lineRows, submitAction }: { supabase: SupabaseServer; profile: Awaited<ReturnType<typeof getCurrentProfile>>; supplierId: string | null; purchaseDate: string; paymentStatus: string; paymentAccountId: string; fd: FormData; receiptUrl: string | null; receiptFileName: string | null; receiptContentType: string | null; receiptStoragePath: string | null; totals: ReturnType<typeof buildTotals>; lineRows: ReturnType<typeof buildLineRows>; submitAction: string }) {
+  const basePurchaseRow = {
+    supplier_id: supplierId,
+    status: "draft",
+    order_date: purchaseDate,
+    receipt_number: String(fd.get("receipt_number") || "").trim() || null,
+    payment_method: String(fd.get("payment_method") || "cash"),
+    payment_status: paymentStatus,
+    payment_account_id: paymentAccountId,
+    receipt_url: receiptUrl,
+    receipt_file_name: receiptFileName,
+    receipt_content_type: receiptContentType,
+    receipt_storage_path: receiptStoragePath,
+    notes: String(fd.get("notes") || "").trim() || null,
+    ...totals,
+    created_by: profile?.team_member_id ?? null,
+  };
+
+  let insertError: unknown = null;
+  let purchase: any = null;
+  for (const row of [basePurchaseRow, { ...basePurchaseRow, receipt_file_name: undefined, receipt_content_type: undefined, receipt_storage_path: undefined }]) {
+    const cleaned = Object.fromEntries(Object.entries(row).filter(([, value]) => value !== undefined));
+    const result = await supabase.from("purchase_orders").insert(cleaned).select("*").single();
+    if (!result.error && result.data) {
+      purchase = result.data;
+      insertError = null;
+      break;
+    }
+    insertError = result.error;
+    const details = supabaseErrorDetails(result.error);
+    const text = `${details.code ?? ""} ${details.message ?? ""} ${details.details ?? ""}`.toLowerCase();
+    if (!text.includes("receipt_file") && !text.includes("schema cache") && details.code !== "PGRST204" && details.code !== "42703") break;
+  }
+  if (!purchase) throw insertError ?? new Error("Fallback purchase insert returned no row.");
+
+  const { error: linesError } = await supabase.from("purchase_order_lines").insert(lineRows.map((line) => ({ ...line, purchase_order_id: purchase.id })));
+  if (linesError) {
+    await supabase.from("purchase_orders").delete().eq("id", purchase.id);
+    throw linesError;
+  }
+
+  let movementCount = 0;
+  if (submitAction === "received") {
+    const storageId = await getDefaultStorageId(supabase);
+    if (!storageId) throw new Error("No active storage location found.");
+    const { data: savedLines, error: savedLinesError } = await supabase.from("purchase_order_lines").select("id, product_id, total_units, unit_cost, line_total, unit_cost_lyd, line_total_lyd").eq("purchase_order_id", purchase.id);
+    if (savedLinesError) throw savedLinesError;
+    const movements = ((savedLines ?? []) as any[]).filter((line) => Number(line.total_units ?? 0) > 0).map((line) => ({
+      product_id: line.product_id,
+      quantity: Number(line.total_units),
+      from_entity_type: "supplier",
+      from_entity_id: supplierId,
+      to_entity_type: "storage",
+      to_entity_id: storageId,
+      reason: "purchase_received",
+      related_purchase_id: purchase.id,
+      related_purchase_line_id: line.id,
+      unit_cost_lyd: Number(line.unit_cost_lyd ?? line.unit_cost ?? 0),
+      line_total_lyd: Number(line.line_total_lyd ?? line.line_total ?? 0),
+      created_by: profile?.team_member_id ?? null,
+      notes: "Purchase received",
+    }));
+    if (movements.length) {
+      const { error: movementError } = await supabase.from("inventory_movements").insert(movements);
+      if (movementError) throw movementError;
+      movementCount = movements.length;
+    }
+    const { data: receivedPurchase, error: receivedError } = await supabase.from("purchase_orders").update({ status: "received", received_at: new Date().toISOString(), received_date: new Date().toISOString().slice(0, 10), received_by: profile?.team_member_id ?? null, updated_at: new Date().toISOString() }).eq("id", purchase.id).select("*").single();
+    if (receivedError) throw receivedError;
+    purchase = receivedPurchase;
+  }
+
+  return { ...purchase, movement_count: movementCount };
+}
+
 function clean(value: FormDataEntryValue | null) {
   return String(value ?? "").trim();
 }
@@ -566,7 +676,7 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
 
     const { data: purchaseRows, error: purchaseError } = await supabase.rpc(PURCHASE_CREATE_RPC, rpcPayload);
 
-    const purchase = Array.isArray(purchaseRows) ? purchaseRows[0] : purchaseRows;
+    let purchase = Array.isArray(purchaseRows) ? purchaseRows[0] : purchaseRows;
     if (purchaseError || !purchase) {
       logPurchaseSaveFailure({
         step: "purchase_rpc_transaction",
@@ -579,7 +689,23 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
         rpcName: PURCHASE_CREATE_RPC,
         payloadKeys: Object.keys(rpcPayload),
       });
-      formError(PURCHASE_SAVE_ADMIN_MESSAGE);
+      try {
+        purchase = await createPurchaseWithLinesFallback({ supabase, profile, supplierId, purchaseDate: purchaseDateForLog, paymentStatus, paymentAccountId, fd, receiptUrl, receiptFileName, receiptContentType, receiptStoragePath, totals, lineRows, submitAction: submitAction === "received" ? "received" : "draft" });
+        console.warn("[purchases] Purchase RPC failed; fallback app-side purchase save succeeded", { rpc_name: PURCHASE_CREATE_RPC, purchase_id: purchase.id, line_count: lineRows.length, original_error: supabaseErrorDetails(purchaseError) });
+      } catch (fallbackError) {
+        logPurchaseSaveFailure({
+          step: "purchase_app_fallback_transaction",
+          error: fallbackError,
+          profile,
+          purchaseDate: purchaseDateForLog,
+          supplierId,
+          lines,
+          receiptStatus: receiptStatusForLog,
+          rpcName: PURCHASE_CREATE_RPC,
+          payloadKeys: Object.keys(rpcPayload),
+        });
+        formError(PURCHASE_SAVE_ADMIN_MESSAGE);
+      }
     }
 
     const { error: paymentAccountError } = await supabase
@@ -606,9 +732,10 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
       summary: `Created purchase with ${lineRows.length} line items`,
     });
 
-    let financeWarning = "";
-    try {
-      await createPurchaseFinancialTransaction(supabase, profile, {
+    const financeResult = await syncPurchaseFinanceSafely({
+      supabase,
+      profile,
+      purchase: {
         ...purchase,
         supplier_id: supplierId,
         order_date: purchaseDateForLog,
@@ -617,19 +744,11 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
         payment_method: String(fd.get("payment_method") || "cash"),
         payment_status: paymentStatus,
         payment_account_id: paymentAccountId,
-      }, Number(purchase.total_amount ?? totals.total_amount ?? 0));
-    } catch (financeError) {
-      financeWarning = " Finance transaction was not created; review finance manually.";
-      logPurchaseSaveFailure({
-        step: "finance_transaction",
-        error: financeError,
-        profile,
-        purchaseDate: purchaseDateForLog,
-        supplierId,
-        lines,
-        receiptStatus: receiptStatusForLog,
-      });
-    }
+      },
+      amount: Number(purchase.total_amount ?? totals.total_amount ?? 0),
+      warningText: " Purchase saved, finance sync needs repair.",
+    });
+    const financeWarning = financeResult.warning;
 
     revalidatePath("/purchases");
     revalidatePath("/inventory");
@@ -637,6 +756,7 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
     const receiptUpload = uploadError === "invalid_file" ? "invalid-file" : uploadUnavailable ? "storage-unavailable" : "";
     const params = new URLSearchParams({ purchaseSaved: submitAction === "received" ? "received" : "draft" });
     if (receiptUpload) params.set("receiptUpload", receiptUpload);
+    if (!financeResult.ok) params.set("financeSync", "needs-repair");
     return {
       ok: true,
       message: submitAction === "received" ? `Purchase received and inventory updated.${financeWarning}` : `Purchase saved as draft.${financeWarning}`,
@@ -758,9 +878,12 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
     });
 
     let financeWarning = "";
+    let financeNeedsRepair = false;
     if (submitAction !== "received") {
-      try {
-        await createPurchaseFinancialTransaction(supabase, profile, {
+      const financeResult = await syncPurchaseFinanceSafely({
+        supabase,
+        profile,
+        purchase: {
           ...current,
           id,
           supplier_id: supplierId,
@@ -771,14 +894,12 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
           payment_account_id: paymentAccountId,
           receipt_url: nextReceiptUrl,
           notes: nextNotes,
-        }, Number(totals.total_amount ?? current.total_amount ?? 0));
-      } catch (financeError) {
-        financeWarning = " Finance transaction was not updated; review finance manually.";
-        console.error("[purchases] Failed to update linked purchase finance transaction", {
-          purchase_id: id,
-          error: financeError,
-        });
-      }
+        },
+        amount: Number(totals.total_amount ?? current.total_amount ?? 0),
+        warningText: " Purchase saved, finance sync needs repair.",
+      });
+      financeWarning = financeResult.warning;
+      financeNeedsRepair = !financeResult.ok;
     }
 
     if (submitAction === "received") {
@@ -792,6 +913,7 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
     const receiptUpload = uploadError === "invalid_file" ? "invalid-file" : uploadUnavailable ? "storage-unavailable" : "";
     const params = new URLSearchParams({ purchaseSaved: submitAction === "received" ? "received" : "draft" });
     if (receiptUpload) params.set("receiptUpload", receiptUpload);
+    if (financeNeedsRepair) params.set("financeSync", "needs-repair");
     return {
       ok: true,
       message: submitAction === "received" ? "Purchase received and inventory updated." : `Purchase saved as draft.${financeWarning}`,
