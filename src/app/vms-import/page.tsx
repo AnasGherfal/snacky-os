@@ -815,16 +815,20 @@ function UploadCard() {
 }
 
 function RawRowsTable({ rows, limit = 20, headerRow }: { rows: string[][]; limit?: number; headerRow?: number }) {
+  const safeRows = Array.isArray(rows) ? rows : [];
   return (
     <div className="table-wrap">
       <table className="data-table">
         <tbody>
-          {rows.slice(0, limit).map((row, index) => (
-            <tr key={index} className={index === headerRow ? "bg-emerald-50" : ""}>
-              <td className="whitespace-nowrap font-semibold text-slate-700">Row {index + 1}{index === headerRow ? " header" : ""}</td>
-              {row.map((cell, cellIndex) => <td key={cellIndex} className="max-w-64">{cell || "-"}</td>)}
-            </tr>
-          ))}
+          {safeRows.slice(0, limit).map((row, index) => {
+            const safeRow = Array.isArray(row) ? row : [];
+            return (
+              <tr key={index} className={index === headerRow ? "bg-emerald-50" : ""}>
+                <td className="whitespace-nowrap font-semibold text-slate-700">Row {index + 1}{index === headerRow ? " header" : ""}</td>
+                {safeRow.map((cell, cellIndex) => <td key={cellIndex} className="max-w-64">{cell || "-"}</td>)}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -956,8 +960,12 @@ function InlineLoadIssue({ title, issue }: { title: string; issue?: VmsPageLoadI
 }
 
 function VmsSchemaRepairPanel({ schemaHealth, canRepair }: { schemaHealth: VmsSchemaHealth; canRepair: boolean }) {
-  const missing = [...schemaHealth.missingTables, ...schemaHealth.missingColumns];
-  if (!missing.length && !schemaHealth.errors.length) return null;
+  const safeHealth = schemaHealth ?? { checked: false, missingTables: [], missingColumns: [], errors: [] };
+  const missingTables = Array.isArray(safeHealth.missingTables) ? safeHealth.missingTables : [];
+  const missingColumns = Array.isArray(safeHealth.missingColumns) ? safeHealth.missingColumns : [];
+  const errors = Array.isArray(safeHealth.errors) ? safeHealth.errors : [];
+  const missing = [...missingTables, ...missingColumns];
+  if (!missing.length && !errors.length) return null;
 
   return (
     <section className="surface-card mb-6 border-amber-200 bg-amber-50">
@@ -983,7 +991,7 @@ function VmsSchemaRepairPanel({ schemaHealth, canRepair }: { schemaHealth: VmsSc
           </details>
         ) : null}
       </div>
-      {schemaHealth.errors.map((issue) => (
+      {errors.map((issue) => (
         <InlineLoadIssue key={issue.loader} title={issue.loader} issue={issue} />
       ))}
     </section>
@@ -999,13 +1007,15 @@ function AdminDiagnosticsPanel({
   currentUserId: string | null;
   effectivePermissions: string[];
 }) {
-  if (!issues.length) return null;
+  const safeIssues = Array.isArray(issues) ? issues : [];
+  const safePermissions = Array.isArray(effectivePermissions) ? effectivePermissions : [];
+  if (!safeIssues.length) return null;
   return (
     <section className="surface-card mb-6 border-amber-200 bg-white">
       <h2 className="text-lg font-semibold text-slate-900">VMS Error Diagnostics</h2>
       <p className="mt-1 text-sm text-slate-500">Admin/debug detail for failed VMS loaders. The page is using safe fallbacks instead of crashing.</p>
       <div className="mt-4 grid gap-3">
-        {issues.map((issue, index) => (
+        {safeIssues.map((issue, index) => (
           <div key={`${issue.loader}-${index}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
             <div className="font-semibold text-slate-900">{issue.loader}</div>
             <div className="mt-1 grid gap-1 text-xs text-slate-600 sm:grid-cols-2 xl:grid-cols-4">
@@ -1015,7 +1025,7 @@ function AdminDiagnosticsPanel({
               <div>Digest: {issue.digest ?? "-"}</div>
               <div>User: {currentUserId ?? "-"}</div>
               <div className="sm:col-span-2">Message: {issue.message}</div>
-              <div className="sm:col-span-2">Permissions: {effectivePermissions.join(", ") || "-"}</div>
+              <div className="sm:col-span-2">Permissions: {safePermissions.join(", ") || "-"}</div>
               {issue.details ? <div className="sm:col-span-2">Details: {issue.details}</div> : null}
               {issue.hint ? <div className="sm:col-span-2">Hint: {issue.hint}</div> : null}
             </div>
@@ -1514,7 +1524,8 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
     && String(other.report_start_date) <= String(batch.report_end_date)
   )));
 
-  const previewSheets = ((preview?.sheets ?? []) as PreviewSheet[]).filter((sheet) => sheet.rows?.length);
+  const previewSheetRows = Array.isArray(preview?.sheets) ? (preview.sheets as PreviewSheet[]) : [];
+  const previewSheets = previewSheetRows.filter((sheet) => Array.isArray(sheet.rows) && sheet.rows.length);
   const selectedSheet = previewSheets.find((sheet) => sheet.name === params.sheet) ?? previewSheets[0] ?? null;
   const detectedReportType = selectedSheet ? detectVmsReportTypeFromRows(selectedSheet.rows) : null;
   const previewReportType = preview?.report_type && preview.report_type !== "custom" ? parseReportType(preview.report_type) : null;
@@ -2199,7 +2210,7 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
           <div className="grid gap-2 sm:grid-cols-2">
             <div className="text-sm text-slate-700"><strong>File:</strong> {preview?.file_name ?? params.fileName ?? "-"}</div>
             <div className="text-sm text-slate-700"><strong>File size:</strong> {preview?.file_size_bytes ? String(preview.file_size_bytes) : (params.fileSize ?? "-")}</div>
-            <div className="text-sm text-slate-700"><strong>Rows detected:</strong> {params.rows ?? String(((preview?.sheets as PreviewSheet[] ?? []).reduce((s, sh) => s + (sh.rows?.length ?? 0), 0)) ?? 0)}</div>
+            <div className="text-sm text-slate-700"><strong>Rows detected:</strong> {params.rows ?? String(previewSheets.reduce((s, sh) => s + (Array.isArray(sh.rows) ? sh.rows.length : 0), 0))}</div>
             <div className="text-sm text-slate-700"><strong>Detected report type:</strong> {params.detected ?? (detectedReportType ?? "custom")}</div>
             <div className="text-sm text-slate-700 sm:col-span-2"><strong>Headers (sample):</strong> {(params.headers ? safeDecode(params.headers) : selectedRows.headers.slice(0, 20).join(", ")) || "-"}</div>
             <div className="text-sm text-slate-700"><strong>User id:</strong> {params.uid ?? profile?.id ?? "-"}</div>

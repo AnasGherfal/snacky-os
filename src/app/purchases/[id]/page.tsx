@@ -55,9 +55,9 @@ function ReceiptPreviewSection({ purchase }: { purchase: any }) {
 
 export const dynamic = "force-dynamic";
 
-export default async function PurchaseDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; receiptUpload?: string; module?: string; purchaseSaved?: string }> }) {
+export default async function PurchaseDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; receiptUpload?: string; module?: string; purchaseSaved?: string; financeSync?: string }> }) {
   const { id } = await params;
-  const { error = "", receiptUpload = "", module = "", purchaseSaved = "" } = await searchParams;
+  const { error = "", receiptUpload = "", module = "", purchaseSaved = "", financeSync = "" } = await searchParams;
   const moduleQuery = module === "finance" ? "?module=finance" : "";
   const profile = await requireCurrentProfileForPath(`/purchases/${id}`);
   const canManagePurchase = canManagePurchases(profile);
@@ -126,6 +126,7 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
       {purchaseSaved === "draft" ? <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">Purchase saved as draft.</div> : null}
       {purchaseSaved === "received" ? <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">Purchase received and inventory updated.</div> : null}
       {error ? <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{error}</div> : null}
+      {financeSync === "needs-repair" ? <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900">Purchase saved, finance sync needs repair. Use the finance repair action on this purchase when the finance schema is fixed.</div> : null}
       {receiptUploadMessage ? <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{receiptUploadMessage}</div> : null}
 
       <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
