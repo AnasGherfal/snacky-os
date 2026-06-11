@@ -44,6 +44,10 @@ export type PurchaseSubmitResult = {
   debugMessage?: string;
 };
 
+type PurchaseReceiveResult = {
+  financeWarning: boolean;
+};
+
 class PurchaseFormError extends Error {}
 
 const PURCHASE_CREATE_RPC = "snacky_create_purchase_with_lines";
@@ -506,6 +510,39 @@ async function getDefaultStorageId(supabase: NonNullable<ReturnType<typeof getSu
   return storage?.id ?? null;
 }
 
+function financeWarningParam(financeWarning: boolean) {
+  return financeWarning ? "manual-review" : "";
+}
+
+async function syncPurchaseFinanceBestEffort({
+  supabase,
+  profile,
+  purchase,
+  purchaseTotal,
+  context,
+}: {
+  supabase: SupabaseServer;
+  profile: Awaited<ReturnType<typeof getCurrentProfile>>;
+  purchase: Record<string, unknown>;
+  purchaseTotal: number;
+  context: string;
+}) {
+  try {
+    await createPurchaseFinancialTransaction(supabase, profile, purchase, purchaseTotal);
+    return false;
+  } catch (error) {
+    console.error("[purchases] Purchase finance sync failed", {
+      context,
+      purchase_id: purchase.id ?? null,
+      supplier_id: purchase.supplier_id ?? null,
+      payment_status: purchase.payment_status ?? null,
+      purchase_total: purchaseTotal,
+      error,
+    });
+    return true;
+  }
+}
+
 export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult> {
   let profileForLog: Awaited<ReturnType<typeof getCurrentProfile>> = null;
   let linesForLog: PurchaseLineInput[] = [];
@@ -606,10 +643,12 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
       summary: `Created purchase with ${lineRows.length} line items`,
     });
 
-    let financeWarning = "";
+    let financeWarning = false;
     if (paymentStatus === "paid") {
-      try {
-        await createPurchaseFinancialTransaction(supabase, profile, {
+      financeWarning = await syncPurchaseFinanceBestEffort({
+        supabase,
+        profile,
+        purchase: {
           ...purchase,
           supplier_id: supplierId,
           order_date: purchaseDateForLog,
@@ -618,12 +657,14 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
           payment_method: String(fd.get("payment_method") || "cash"),
           payment_status: paymentStatus,
           payment_account_id: paymentAccountId,
-        }, Number(purchase.total_amount ?? totals.total_amount ?? 0));
-      } catch (financeError) {
-        financeWarning = " Finance transaction was not created; review finance manually.";
+        },
+        purchaseTotal: Number(purchase.total_amount ?? totals.total_amount ?? 0),
+        context: "create_purchase",
+      });
+      if (financeWarning) {
         logPurchaseSaveFailure({
           step: "finance_transaction",
-          error: financeError,
+          error: new Error("Purchase save finance sync failed after purchase rows were committed."),
           profile,
           purchaseDate: purchaseDateForLog,
           supplierId,
@@ -639,9 +680,12 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
     const receiptUpload = uploadError === "invalid_file" ? "invalid-file" : uploadUnavailable ? "storage-unavailable" : "";
     const params = new URLSearchParams({ purchaseSaved: submitAction === "received" ? "received" : "draft" });
     if (receiptUpload) params.set("receiptUpload", receiptUpload);
+    if (financeWarning) params.set("financeWarning", financeWarningParam(financeWarning));
     return {
       ok: true,
-      message: submitAction === "received" ? `Purchase received and inventory updated.${financeWarning}` : `Purchase saved as draft.${financeWarning}`,
+      message: submitAction === "received"
+        ? `Purchase received and inventory updated.${financeWarning ? " Finance transaction was not created; review finance manually." : ""}`
+        : `Purchase saved as draft.${financeWarning ? " Finance transaction was not created; review finance manually." : ""}`,
       redirectTo: `/purchases/${purchase.id}?${params.toString()}`,
     };
   } catch (error) {
@@ -759,7 +803,7 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
       summary: current.receipt_url !== nextReceiptUrl ? "Updated purchase receipt attachment" : "Updated draft purchase",
     });
 
-    let financeWarning = "";
+    let financeWarning = false;
     if (paymentStatus === "paid" && submitAction !== "received") {
       try {
         await createPurchaseFinancialTransaction(supabase, profile, {
@@ -775,7 +819,7 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
           notes: nextNotes,
         }, Number(totals.total_amount ?? current.total_amount ?? 0));
       } catch (financeError) {
-        financeWarning = " Finance transaction was not updated; review finance manually.";
+        financeWarning = true;
         console.error("[purchases] Failed to update linked purchase finance transaction", {
           purchase_id: id,
           error: financeError,
@@ -784,7 +828,8 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
     }
 
     if (submitAction === "received") {
-      await receivePurchaseById(id);
+      const receiveResult = await receivePurchaseById(id);
+      financeWarning = financeWarning || receiveResult.financeWarning;
     }
 
     revalidatePath("/purchases");
@@ -794,9 +839,12 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
     const receiptUpload = uploadError === "invalid_file" ? "invalid-file" : uploadUnavailable ? "storage-unavailable" : "";
     const params = new URLSearchParams({ purchaseSaved: submitAction === "received" ? "received" : "draft" });
     if (receiptUpload) params.set("receiptUpload", receiptUpload);
+    if (financeWarning) params.set("financeWarning", financeWarningParam(financeWarning));
     return {
       ok: true,
-      message: submitAction === "received" ? "Purchase received and inventory updated." : `Purchase saved as draft.${financeWarning}`,
+      message: submitAction === "received"
+        ? `Purchase received and inventory updated.${financeWarning ? " Finance transaction was not created; review finance manually." : ""}`
+        : `Purchase saved as draft.${financeWarning ? " Finance transaction was not updated; review finance manually." : ""}`,
       redirectTo: `/purchases/${id}?${params.toString()}`,
     };
   } catch (error) {
@@ -804,17 +852,24 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
   }
 }
 
-async function receivePurchaseById(id: string) {
+async function receivePurchaseById(id: string): Promise<PurchaseReceiveResult> {
   const { profile, supabase } = await requirePurchaseAccess();
   const { data: purchase, error: purchaseError } = await supabase.from("purchase_orders").select("*").eq("id", id).single();
   if (purchaseError || !purchase) throw new Error("Purchase not found.");
   const purchaseTotal = Number(purchase.manual_total_lyd ?? purchase.total_amount ?? purchase.calculated_total_lyd ?? 0);
   const receivedDate = new Date().toISOString().slice(0, 10);
   if (purchase.status === "received") {
+    let financeWarning = false;
     if (purchase.payment_status === "paid") {
-      await createPurchaseFinancialTransaction(supabase, profile, { ...purchase, received_date: receivedDate }, purchaseTotal);
+      financeWarning = await syncPurchaseFinanceBestEffort({
+        supabase,
+        profile,
+        purchase: { ...purchase, received_date: receivedDate },
+        purchaseTotal,
+        context: "receive_purchase.already_received",
+      });
     }
-    return;
+    return { financeWarning };
   }
   if (purchase.status === "cancelled" || purchase.status === "voided") throw new Error("Cancelled or voided purchases cannot be received.");
 
@@ -895,8 +950,15 @@ async function receivePurchaseById(id: string) {
     .neq("status", "received");
   if (updateError) throw updateError;
 
+  let financeWarning = false;
   if (purchase.payment_status === "paid") {
-    await createPurchaseFinancialTransaction(supabase, profile, { ...purchase, received_date: receivedDate }, purchaseTotal);
+    financeWarning = await syncPurchaseFinanceBestEffort({
+      supabase,
+      profile,
+      purchase: { ...purchase, received_date: receivedDate },
+      purchaseTotal,
+      context: "receive_purchase",
+    });
   }
 
   await logActivity({
@@ -908,22 +970,26 @@ async function receivePurchaseById(id: string) {
     afterData: { movement_count: movementCount, status: "received", payment_status: purchase.payment_status },
     summary: `Received purchase into storage (${movementCount} inventory movements)`,
   });
+
+  return { financeWarning };
 }
 
 export async function receivePurchase(fd: FormData) {
   const id = String(fd.get("id") || "");
   if (!id) redirect("/purchases");
   try {
-    await receivePurchaseById(id);
+    const result = await receivePurchaseById(id);
+    const params = new URLSearchParams();
+    if (result.financeWarning) params.set("financeWarning", financeWarningParam(result.financeWarning));
+    const suffix = params.toString();
+    revalidatePath("/purchases");
+    revalidatePath(`/purchases/${id}`);
+    revalidatePath("/inventory");
+    redirect(`/purchases/${id}${suffix ? `?${suffix}` : ""}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not receive purchase.";
     redirect(`/purchases/${id}?error=${encodeURIComponent(message)}`);
   }
-
-  revalidatePath("/purchases");
-  revalidatePath(`/purchases/${id}`);
-  revalidatePath("/inventory");
-  redirect(`/purchases/${id}`);
 }
 
 export async function markPurchasePaid(fd: FormData) {

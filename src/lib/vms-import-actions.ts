@@ -43,7 +43,6 @@ import {
 import { buildProductLookupMap, resolveVmsProduct, vmsLookupKey, vmsProductDisplay } from "@/lib/vms-import-validation";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import {
-  VMS_IMPORT_REQUIRED_TABLES,
   extractVmsSchemaIssue,
   vmsSchemaIssueMessage,
 } from "@/lib/vms-schema-diagnostics";
@@ -102,6 +101,43 @@ type VmsRawRowPayload = {
   matched_product_id: string | null;
 };
 
+type VmsImportSchemaCheckStage = "preview" | "confirm";
+
+const VMS_IMPORT_PREVIEW_REQUIRED_TABLES = [
+  "vms_import_batches",
+  "vms_import_previews",
+  "vms_import_preview_rows",
+  "vms_product_mappings",
+  "vms_machine_mappings",
+  "vms_header_mappings",
+  "products",
+  "machines",
+];
+
+function requiredVmsImportTables(reportType: VmsReportType, stage: VmsImportSchemaCheckStage) {
+  const tables = new Set(VMS_IMPORT_PREVIEW_REQUIRED_TABLES);
+  if (stage === "confirm") tables.add("vms_import_rows");
+
+  if (stage === "confirm") {
+    if (reportType === "sales") {
+      tables.add("vms_sales_snapshots");
+      tables.add("vms_sales_raw");
+    }
+    if (reportType === "vms_order_details_weekly") {
+      tables.add("vms_transactions_raw");
+    }
+    if (reportType === "stock" || reportType === "machine_stock_snapshot") {
+      tables.add("vms_stock_snapshots");
+      tables.add("vms_machine_stock_snapshots");
+    }
+    if (reportType === "planogram") {
+      tables.add("machine_slots");
+    }
+  }
+
+  return [...tables];
+}
+
 function value(row: Record<string, string>, aliases: string[]) {
   for (const alias of aliases) {
     const found = row[alias] ?? row[normalizeHeader(alias)] ?? row[alias.toLowerCase()];
@@ -118,14 +154,20 @@ function booleanOption(input: FormDataEntryValue | string | null | undefined, de
   return defaultValue;
 }
 
-async function checkVmsRequiredTables(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>) {
+async function checkVmsRequiredTables(
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>,
+  reportType: VmsReportType,
+  stage: VmsImportSchemaCheckStage,
+) {
   const missing: string[] = [];
-  for (const table of VMS_IMPORT_REQUIRED_TABLES) {
+  for (const table of requiredVmsImportTables(reportType, stage)) {
     try {
       const res = await supabase.from(table).select("id", { head: true }).limit(1);
       if (res.error) {
         console.error("[vms-import] Required VMS relation check failed", {
           table,
+          reportType,
+          stage,
           code: res.error.code,
           message: res.error.message,
           details: res.error.details,
@@ -137,6 +179,8 @@ async function checkVmsRequiredTables(supabase: NonNullable<ReturnType<typeof ge
     } catch (err) {
       console.error("[vms-import] Required VMS relation check threw", {
         table,
+        reportType,
+        stage,
         error: err instanceof Error ? err.message : String(err),
       });
       missing.push(table);
@@ -145,11 +189,12 @@ async function checkVmsRequiredTables(supabase: NonNullable<ReturnType<typeof ge
   return missing;
 }
 
-function requiredTablesMessage(missingTables: string[]) {
+function requiredTablesMessage(missingTables: string[], reportType: VmsReportType, stage: VmsImportSchemaCheckStage) {
+  const action = stage === "preview" ? "preview" : "confirm";
   if (missingTables.length === 1) {
-    return `Missing required VMS import table: ${missingTables[0]}. Run the latest migration before importing.`;
+    return `Missing required VMS ${reportType} ${action} table: ${missingTables[0]}. Run the latest migration before importing.`;
   }
-  return `Missing required VMS import tables: ${missingTables.join(", ")}. Run the latest migration before importing.`;
+  return `Missing required VMS ${reportType} ${action} tables: ${missingTables.join(", ")}. Run the latest migration before importing.`;
 }
 
 function buildVmsImportStateRedirect(params: {
@@ -1246,10 +1291,10 @@ async function runVmsImport({
     };
     // Check required tables before attempting update
     {
-      const missingTables = await checkVmsRequiredTables(supabase);
+      const missingTables = await checkVmsRequiredTables(supabase, reportType, "confirm");
       if (missingTables.length) {
         console.error("[vms-import] Aborting confirm import: missing required vms tables", { missingTables, batchId: batch.id });
-        errorRedirect(requiredTablesMessage(missingTables));
+        errorRedirect(requiredTablesMessage(missingTables, reportType, "confirm"));
         return;
       }
     }
@@ -2625,7 +2670,7 @@ async function createPreviewImportBatch({
     return { id: null, error: { code: "NO_ROWS", message: "Parsed VMS file contains no rows; aborting preview batch creation." }, warning: null as string | null };
   }
   // Ensure required VMS import tables exist before creating a preview batch.
-  const missing = await checkVmsRequiredTables(supabase);
+  const missing = await checkVmsRequiredTables(supabase, reportType, "preview");
   if (missing.length) {
     console.error("[vms-import] Refusing to create preview batch: missing required vms tables", {
       queryName: "vms_import_batches.insert.rich_preview.validate",
@@ -2633,7 +2678,7 @@ async function createPreviewImportBatch({
       fileName: file?.name ?? null,
       currentUserId: profile?.id ?? profile?.team_member_id ?? null,
     });
-    return { id: null, error: { code: "MISSING_SCHEMA", message: requiredTablesMessage(missing) }, warning: null as string | null };
+    return { id: null, error: { code: "MISSING_SCHEMA", message: requiredTablesMessage(missing, reportType, "preview") }, warning: null as string | null };
   }
   const dateRange = detectPreviewImportDateRange(parsed, reportType);
   const basePayload = {

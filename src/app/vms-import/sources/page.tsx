@@ -10,6 +10,7 @@ import { cleanSearchParams, getPagination, type SearchParamsRecord } from "@/lib
 import { privateStorageObjectUrl } from "@/lib/storage-buckets";
 import { reprocessVmsImportBatch, updateVmsImportBatchState } from "@/lib/vms-import-actions";
 import { vmsReportTypes } from "@/lib/vms-parser";
+import { extractVmsSchemaIssue } from "@/lib/vms-schema-diagnostics";
 
 export const dynamic = "force-dynamic";
 
@@ -58,6 +59,64 @@ type VmsSourceRow = {
   reprocess_count?: number | null;
 };
 
+const preferredBatchSelect = [
+  "id",
+  "source_type",
+  "file_name",
+  "file_type",
+  "sheet_name",
+  "report_type",
+  "report_start_date",
+  "report_end_date",
+  "uploaded_by",
+  "uploaded_at",
+  "imported_by",
+  "imported_at",
+  "status",
+  "row_count",
+  "rows_found",
+  "rows_imported",
+  "rows_skipped",
+  "rows_skipped_duplicate",
+  "rows_needing_review",
+  "is_active",
+  "deleted_at",
+  "disabled_at",
+  "delete_reason",
+  "disable_reason",
+  "source_usage",
+  "dashboard_usage",
+  "storage_bucket",
+  "storage_path",
+  "original_file_name",
+  "detected_min_datetime",
+  "detected_max_datetime",
+  "total_successful_sales",
+  "successful_rows_count",
+  "failed_rows_count",
+  "refunded_rows_count",
+  "latest_error",
+  "last_reprocessed_at",
+  "reprocess_count",
+].join(", ");
+
+const legacyBatchSelect = [
+  "id",
+  "source_type",
+  "file_name",
+  "report_type",
+  "uploaded_by",
+  "uploaded_at",
+  "imported_by",
+  "imported_at",
+  "status",
+  "row_count",
+  "rows_found",
+  "rows_imported",
+  "error_count",
+  "notes",
+].join(", ");
+
 function reportLabel(reportType: string | null | undefined) {
   return vmsReportTypes.find((type) => type.value === reportType)?.label ?? reportType ?? "-";
 }
@@ -65,7 +124,7 @@ function reportLabel(reportType: string | null | undefined) {
 function activeLabel(batch: VmsSourceRow) {
   if (batch.deleted_at) return "deleted";
   if (batch.status === "disabled" || batch.is_active === false) return "disabled";
-  if (batch.status === "imported") return "active";
+  if (batch.status === "imported" || batch.status === "imported_with_warnings") return "active";
   return batch.status ?? "pending";
 }
 
@@ -123,7 +182,7 @@ function SourceActions({ batch, canManage }: { batch: VmsSourceRow; canManage: b
       {originalFileUrl ? <Link href={originalFileUrl} className="btn-secondary">Original File</Link> : null}
       {canManage ? (
         <>
-          {batch.status === "imported" && batch.is_active !== false && !batch.deleted_at ? (
+          {(batch.status === "imported" || batch.status === "imported_with_warnings") && batch.is_active !== false && !batch.deleted_at ? (
             <form action={updateVmsImportBatchState} className="flex gap-2">
               <input type="hidden" name="batch_id" value={batch.id} />
               <input type="hidden" name="action" value="disable" />
@@ -171,20 +230,42 @@ export default async function VmsDataSourcesPage({ searchParams }: { searchParam
   let batches: VmsSourceRow[] = [];
   let batchCount = 0;
   let loadError = "";
+  let schemaNotice = "";
 
   if (supabase) {
-    const { data, error, count } = await supabase
+    const preferred = await supabase
       .from("vms_import_batches")
-      .select("id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, uploaded_by, uploaded_at, status, is_active, deleted_at, delete_reason, disabled_at, disable_reason, source_usage, dashboard_usage, storage_bucket, storage_path, original_file_name, detected_min_datetime, detected_max_datetime, total_successful_sales, successful_rows_count, failed_rows_count, refunded_rows_count, row_count, rows_found, rows_imported, rows_skipped, rows_skipped_duplicate, rows_needing_review, latest_error, last_reprocessed_at, reprocess_count", { count: "exact" })
+      .select(preferredBatchSelect, { count: "exact" })
       .order("uploaded_at", { ascending: false, nullsFirst: false })
       .range(from, to);
 
-    if (error) {
-      console.error("[vms-data-sources] Failed to load vms_import_batches", { query: "vms_import_batches.select.sources", error });
-      loadError = sourceErrorMessage(error);
+    if (!preferred.error) {
+      batches = (preferred.data ?? []) as unknown as VmsSourceRow[];
+      batchCount = preferred.count ?? batches.length;
+    } else if (extractVmsSchemaIssue(preferred.error, "vms_import_batches.select.sources")) {
+      console.error("[vms-data-sources] Preferred VMS source query failed; trying legacy shape", {
+        query: "vms_import_batches.select.sources",
+        error: preferred.error,
+        schemaIssue: extractVmsSchemaIssue(preferred.error, "vms_import_batches.select.sources"),
+      });
+
+      const fallback = await supabase
+        .from("vms_import_batches")
+        .select(legacyBatchSelect, { count: "exact" })
+        .order("imported_at", { ascending: false, nullsFirst: false })
+        .range(from, to);
+
+      if (fallback.error) {
+        console.error("[vms-data-sources] Legacy VMS source query failed", { query: "vms_import_batches.select.sources.legacy", error: fallback.error });
+        loadError = sourceErrorMessage(fallback.error);
+      } else {
+        batches = (fallback.data ?? []) as unknown as VmsSourceRow[];
+        batchCount = fallback.count ?? batches.length;
+        schemaNotice = "VMS import database columns need the latest migration. Showing available legacy import data.";
+      }
     } else {
-      batches = (data ?? []) as VmsSourceRow[];
-      batchCount = count ?? batches.length;
+      console.error("[vms-data-sources] Failed to load vms_import_batches", { query: "vms_import_batches.select.sources", error: preferred.error });
+      loadError = sourceErrorMessage(preferred.error);
     }
   }
 
@@ -199,6 +280,11 @@ export default async function VmsDataSourcesPage({ searchParams }: { searchParam
       {params.error ? (
         <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900">
           {params.error}
+        </div>
+      ) : null}
+      {schemaNotice ? (
+        <div className="mb-5 rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+          {schemaNotice}
         </div>
       ) : null}
 
