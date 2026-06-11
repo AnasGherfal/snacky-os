@@ -485,6 +485,8 @@ with normalized as (
     vss.id,
     vss.import_batch_id,
     vib.imported_at as batch_imported_at,
+    vib.uploaded_at as batch_uploaded_at,
+    coalesce(vib.original_file_name, vib.file_name) as batch_file_name,
     vss.sync_run_id,
     vss.source_provider,
     vss.machine_id,
@@ -511,7 +513,7 @@ with normalized as (
     and (
       vss.import_batch_id is null
       or (
-        vib.status = 'imported'
+        vib.status in ('imported', 'imported_with_warnings', 'partially_imported')
         and vib.is_active = true
         and vib.deleted_at is null
       )
@@ -545,6 +547,8 @@ select
   stock_item_key,
   (array_agg(import_batch_id order by batch_imported_at desc nulls last, created_at desc, id desc))[1] as import_batch_id,
   max(batch_imported_at) as imported_at,
+  max(batch_uploaded_at) as source_uploaded_at,
+  (array_agg(batch_file_name order by batch_imported_at desc nulls last, created_at desc, id desc))[1] as source_file_name,
   (array_agg(sync_run_id order by created_at desc, id desc))[1] as sync_run_id,
   (array_agg(source_provider order by created_at desc, id desc))[1] as source_provider
 from latest
