@@ -12,6 +12,7 @@ import {
   recalculateDashboards,
   recalculateRouteInventoryLedger,
   recalculateStorageBalances,
+  rebuildRefillRecommendations,
   repairStuckRoute,
 } from "@/lib/admin-tools-actions";
 import { redirect } from "next/navigation";
@@ -239,6 +240,13 @@ export default async function AdminToolsPage({
           <form action={reprocessVmsImportBatch} className="space-y-3">
             <BatchSelect batches={batches} />
             <FormSubmitButton pendingLabel="Reprocessing import...">Reprocess import</FormSubmitButton>
+          </form>
+        </ToolCard>
+
+        <ToolCard title="Rebuild Refill Recommendations" description="Runs the latest stock snapshot recommendation diagnostics, then refreshes the route builder and refill pages without changing historical VMS rows.">
+          <form action={rebuildRefillRecommendations} className="space-y-3">
+            <ReasonInput placeholder="Why are refill recommendations being rebuilt?" />
+            <FormSubmitButton pendingLabel="Rebuilding refill recommendations...">Rebuild refill recommendations</FormSubmitButton>
           </form>
         </ToolCard>
 

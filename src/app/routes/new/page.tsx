@@ -304,7 +304,32 @@ export default async function NewRoutePage() {
   const today = new Date().toISOString().slice(0, 10);
   const productRows = (products ?? []) as ProductRow[];
   const activeProductIds = new Set(productRows.map((product) => product.id));
-  const activeRecommendations = ((recommendations ?? []) as RecommendationRow[]).filter((recommendation) => activeProductIds.has(recommendation.product_id));
+  const loadedRecommendations = (recommendations ?? []) as RecommendationRow[];
+  const activeRecommendations = loadedRecommendations.filter((recommendation) => activeProductIds.has(recommendation.product_id));
+  if (process.env.NODE_ENV !== "production") {
+    console.info("[routes:new] Recommendation query summary", {
+      source_view: "refill_recommendations",
+      query: {
+        select: ROUTE_RECOMMENDATION_SELECT,
+        order_by: "machine_name asc",
+      },
+      filters: {
+        active_products_only: true,
+        machine_filter: null,
+        location_filter: null,
+        storage_filter: false,
+        recommendation_status_filter: false,
+        route_date_filter: false,
+      },
+      counts: {
+        loaded: loadedRecommendations.length,
+        active_product_rows: activeRecommendations.length,
+        inactive_product_rows_filtered_out: Math.max(0, loadedRecommendations.length - activeRecommendations.length),
+        zero_storage_rows: activeRecommendations.filter((row) => unitQuantity(row.available_storage_qty) <= 0).length,
+        suggested_positive_rows: activeRecommendations.filter((row) => unitQuantity(row.suggested_qty) > 0).length,
+      },
+    });
+  }
   const storageByProduct = new Map<string, { product_id: string; product_name: string; quantity_on_hand: number }>();
   ((storageInventory ?? []) as StorageInventoryRow[]).forEach((row) => {
     const current = storageByProduct.get(row.product_id);

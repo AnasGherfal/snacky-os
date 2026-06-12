@@ -93,7 +93,7 @@ function groupRecommendationsByProduct(rows: RefillRecommendationRow[]) {
   rows.forEach((row, index) => {
     const productKey = row.product_id ?? row.product_name ?? `unknown-${index}`;
     const current = grouped.get(productKey);
-    const takeQty = unitQuantity(row.final_qty_to_take ?? row.suggested_qty);
+    const takeQty = unitQuantity(row.suggested_qty);
     const machineName = row.machine_name ?? "Unknown machine";
     const source = formatSource(row);
     const reason = recommendationReason(row);

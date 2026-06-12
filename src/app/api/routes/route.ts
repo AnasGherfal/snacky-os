@@ -160,7 +160,7 @@ async function insertRowsWithOptionalColumnFallback(
 }
 
 function recommendationQuantity(row: RecommendationRow) {
-  return planQuantity(row.final_qty_to_take ?? row.suggested_qty);
+  return planQuantity(row.suggested_qty);
 }
 
 function recommendationTarget(row: RecommendationRow) {
@@ -441,7 +441,8 @@ export async function POST(request: Request) {
     }, new Map<string, GroupedRecommendationRow>()).values(),
   ).map((group) => {
     const requestedFinalTake = requestedFinalTakeByGroup.get(group.group_key);
-    const finalTakeQty = requestedFinalTake === undefined ? group.recommended_take_qty : planQuantity(requestedFinalTake);
+    const defaultFinalTakeQty = Math.min(group.recommended_take_qty, group.available_storage_qty);
+    const finalTakeQty = requestedFinalTake === undefined ? defaultFinalTakeQty : planQuantity(requestedFinalTake);
     group.final_take_qty = finalTakeQty;
     group.final_qty_to_take = finalTakeQty;
     group.slot_allocations = allocateFinalTake(group.rows, finalTakeQty, adminOverride);
@@ -471,6 +472,7 @@ export async function POST(request: Request) {
     return jsonError("Enter planned quantities for capacity-missing VMS rows before creating a route.");
   }
   if (!stockByProduct.size) return jsonError("Planned machine refill quantities must be greater than zero.");
+  if (!selectedMachineIds.length) return jsonError("Choose at least one machine stop with a planned refill quantity greater than zero.");
 
   let availableUnitsByProduct = new Map<string, number>();
   if (!adminOverride) {

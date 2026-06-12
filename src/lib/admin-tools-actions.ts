@@ -101,6 +101,28 @@ function formatBackfillSummary(label: string, row: ReturnType<typeof backfillRow
   return `${label}: purchases checked ${row.purchasesChecked}, purchase transactions created ${row.purchaseTransactionsCreated}, purchase transactions skipped existing ${row.purchaseTransactionsSkippedExisting}, cash collections checked ${row.cashCollectionsChecked}, cash collection transactions created ${row.cashCollectionTransactionsCreated}, cash collection transactions skipped existing ${row.cashCollectionTransactionsSkippedExisting}, skipped existing total ${row.skippedExisting}, errors ${row.errors.length}`;
 }
 
+function refillRecommendationRefreshRow(data: unknown) {
+  const row = Array.isArray(data) ? data[0] : data;
+  const result = row && typeof row === "object" ? row as Record<string, unknown> : {};
+  return {
+    refreshedAt: String(result.refreshed_at ?? ""),
+    latestImportBatchId: String(result.latest_import_batch_id ?? ""),
+    latestFileName: String(result.latest_file_name ?? ""),
+    latestReportType: String(result.latest_report_type ?? ""),
+    latestStatus: String(result.latest_status ?? ""),
+    snapshotRows: Number(result.snapshot_rows ?? 0),
+    mappedProductRows: Number(result.mapped_product_rows ?? 0),
+    mappedMachineRows: Number(result.mapped_machine_rows ?? 0),
+    recommendationRows: Number(result.recommendation_rows ?? 0),
+    zeroStorageRecommendationRows: Number(result.zero_storage_recommendation_rows ?? 0),
+    warning: String(result.warning ?? ""),
+  };
+}
+
+function formatRefillRecommendationRefreshSummary(row: ReturnType<typeof refillRecommendationRefreshRow>) {
+  return `Latest import ${row.latestFileName || row.latestImportBatchId || "unknown"}: snapshot rows ${row.snapshotRows}, mapped products ${row.mappedProductRows}, mapped machines ${row.mappedMachineRows}, recommendation rows ${row.recommendationRows}, zero-storage recommendation rows ${row.zeroStorageRecommendationRows}`;
+}
+
 async function requireAdmin(path = "/admin/tools") {
   const profile = await getCurrentProfile();
   if (!profile || !isOwnerAdminRole(profile)) redirect("/unauthorized");
@@ -544,6 +566,38 @@ export async function backfillMissingFinanceTransactions(formData: FormData) {
 }
 
 export const backfillMissingPurchaseTransactions = backfillMissingFinanceTransactions;
+
+export async function rebuildRefillRecommendations(formData: FormData) {
+  const reason = requireReason(formData);
+  const { profile, supabase } = await requireAdmin();
+
+  try {
+    const result = await supabase.rpc("refresh_refill_recommendations_from_latest_stock_snapshot");
+    if (result.error) throw result.error;
+
+    const refresh = refillRecommendationRefreshRow(result.data);
+
+    revalidatePath("/admin/tools");
+    revalidatePath("/vms-import");
+    dashboardPaths();
+    await logActivity({
+      profile,
+      action: "rebuild_refill_recommendations",
+      entityType: "refill_recommendation",
+      entityLabel: refresh.latestFileName || refresh.latestImportBatchId || "Latest VMS stock snapshot",
+      afterData: { ...refresh, reason },
+      summary: "Rebuilt refill recommendation diagnostics from the latest active stock snapshot",
+    });
+
+    const warningSuffix = refresh.warning ? ` Warning: ${refresh.warning}` : "";
+    redirectTools({
+      success: `Refill recommendations refreshed. ${formatRefillRecommendationRefreshSummary(refresh)}.${warningSuffix}`,
+    });
+  } catch (error) {
+    console.error("[admin-tools] Refill recommendation rebuild failed", { error });
+    redirectTools({ error: `Refill recommendation rebuild failed: ${errorMessage(error)}. Confirm the latest VMS migration has been applied.` });
+  }
+}
 
 export async function recalculateDashboards(formData: FormData) {
   const reason = requireReason(formData);

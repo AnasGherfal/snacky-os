@@ -2387,12 +2387,20 @@ async function runVmsImport({
     summary: `${existingBatchId && recordReprocess ? "Reprocessed" : "Imported"} ${summary.importedRows} ${reportType} rows from VMS ${fileType.toUpperCase()}`,
   });
 
+  await refreshRefillRecommendationsAfterStockImport({
+    supabase,
+    batchId: batch.id,
+    reportType,
+    importedRows: summary.importedRows,
+  });
+
   revalidatePath("/vms-import");
   revalidatePath("/vms-mappings");
   revalidatePath("/products");
   revalidatePath("/machines");
   revalidatePath("/planograms");
   revalidatePath("/refills");
+  revalidatePath("/routes/new");
   revalidatePath("/dashboard");
   revalidatePath("/reports");
   revalidatePath("/sales");
@@ -3505,6 +3513,37 @@ async function hardDeleteBatchRows(
 ) {
   const { error } = await supabase.from(table).delete().eq("import_batch_id", batchId);
   if (error && !isMissingTableMutationError(error)) throw error;
+}
+
+async function refreshRefillRecommendationsAfterStockImport({
+  supabase,
+  batchId,
+  reportType,
+  importedRows,
+}: {
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  batchId: string;
+  reportType: VmsReportType;
+  importedRows: number;
+}) {
+  if (!isMachineStockReport(reportType) || importedRows <= 0) return;
+
+  const { data, error } = await supabase.rpc("refresh_refill_recommendations_from_latest_stock_snapshot");
+  if (error) {
+    console.warn("[vms-import] Refill recommendation refresh check failed after stock import", {
+      batchId,
+      reportType,
+      error,
+    });
+    return;
+  }
+
+  const result = Array.isArray(data) ? data[0] : data;
+  console.info("[vms-import] Refill recommendation refresh check completed", {
+    batchId,
+    reportType,
+    result,
+  });
 }
 
 function revalidateVmsDataSourcePaths(batchId?: string) {

@@ -79,7 +79,8 @@ type RecommendationGroup = {
   slotsCount: number;
   currentTotal: number;
   targetTotal: number;
-  takeTotal: number;
+  recommendedTotal: number;
+  defaultFinalTakeTotal: number;
   storageAvailable: number;
   priority: string;
 };
@@ -126,7 +127,7 @@ function highestPriority(current: string | null | undefined, next: string | null
 }
 
 function recommendationQuantity(row: Recommendation) {
-  return unitQuantity(row.final_qty_to_take ?? row.suggested_qty);
+  return unitQuantity(row.suggested_qty);
 }
 
 function recommendationTarget(row: Recommendation) {
@@ -305,7 +306,8 @@ export function RouteCreateForm({
         slotsCount: 0,
         currentTotal: 0,
         targetTotal: 0,
-        takeTotal: 0,
+        recommendedTotal: 0,
+        defaultFinalTakeTotal: 0,
         storageAvailable: unitQuantity(product?.availableQty ?? row.available_storage_qty),
         priority: "low",
       };
@@ -314,7 +316,7 @@ export function RouteCreateForm({
       current.rows.push(row);
       current.currentTotal += unitQuantity(row.current_qty);
       current.targetTotal += recommendationTarget(row);
-      current.takeTotal += recommendationQuantity(row);
+      current.recommendedTotal += recommendationQuantity(row);
       current.storageAvailable = unitQuantity(product?.availableQty ?? Math.max(current.storageAvailable, unitQuantity(row.available_storage_qty)));
       current.priority = highestPriority(current.priority, row.priority);
       groups.set(groupKey, current);
@@ -323,6 +325,7 @@ export function RouteCreateForm({
     return Array.from(groups.values())
       .map((group) => ({
         ...group,
+        defaultFinalTakeTotal: Math.min(group.recommendedTotal, unitQuantity(group.storageAvailable)),
         slotsCount: new Set(group.rows.map((row) => row.machine_slot_id ?? row.slot_code ?? row.recommendation_key)).size,
         rows: [...group.rows].sort((a, b) => String(a.slot_code ?? "").localeCompare(String(b.slot_code ?? ""))),
       }))
@@ -350,7 +353,7 @@ export function RouteCreateForm({
   const filteredRecommendationGroups = useMemo(() => {
     const productSearch = deferredRecommendationSearch.trim().toLowerCase();
     return recommendationGroups.filter((group) => {
-      if (!showNoRefillNeeded && group.takeTotal <= 0) return false;
+      if (!showNoRefillNeeded && group.recommendedTotal <= 0) return false;
       if (recommendationMachineFilter && group.machineId !== recommendationMachineFilter) return false;
       if (recommendationPriorityFilter && group.priority !== recommendationPriorityFilter) return false;
       if (productSearch && ![group.productName, group.machineName, group.machineCode].some((value) => value.toLowerCase().includes(productSearch))) return false;
@@ -378,7 +381,7 @@ export function RouteCreateForm({
   }, [adminOverride]);
 
   const finalTakeForGroup = useCallback(
-    (group: RecommendationGroup) => clampRecommendationFinalTake(group, finalTakeByRecommendationGroup[group.groupKey] ?? group.takeTotal),
+    (group: RecommendationGroup) => clampRecommendationFinalTake(group, finalTakeByRecommendationGroup[group.groupKey] ?? group.defaultFinalTakeTotal),
     [clampRecommendationFinalTake, finalTakeByRecommendationGroup],
   );
 
@@ -435,7 +438,7 @@ export function RouteCreateForm({
     return selectedRecommendationGroups.reduce(
       (summary, group) => {
         summary.selectedProductsCount += 1;
-        summary.totalRecommendedQty += group.takeTotal;
+        summary.totalRecommendedQty += group.recommendedTotal;
         summary.totalFinalTakeQty += finalTakeForGroup(group);
         return summary;
       },
@@ -463,7 +466,7 @@ export function RouteCreateForm({
 
   const toggleValue = (values: string[], value: string) => (values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
   const isRecommendationGroupSelected = (group: RecommendationGroup) => group.recommendationKeys.every((key) => recommendationKeys.includes(key));
-  const recommendationGroupSelectable = (group: RecommendationGroup) => group.takeTotal > 0;
+  const recommendationGroupSelectable = (group: RecommendationGroup) => group.recommendedTotal > 0;
   const setRecommendationFinalTake = (group: RecommendationGroup, value: number) => {
     setFinalTakeByRecommendationGroup((current) => ({
       ...current,
@@ -483,7 +486,7 @@ export function RouteCreateForm({
     } else {
       setFinalTakeByRecommendationGroup((finalTake) => ({
         ...finalTake,
-        [group.groupKey]: group.takeTotal,
+        [group.groupKey]: group.defaultFinalTakeTotal,
       }));
       setRecommendationKeys((current) => Array.from(new Set([...current, ...group.recommendationKeys])));
     }
@@ -494,7 +497,7 @@ export function RouteCreateForm({
     setFinalTakeByRecommendationGroup((current) => {
       const next = { ...current };
       selectableGroups.forEach((group) => {
-        if (next[group.groupKey] === undefined) next[group.groupKey] = group.takeTotal;
+        if (next[group.groupKey] === undefined) next[group.groupKey] = group.defaultFinalTakeTotal;
       });
       return next;
     });
@@ -598,7 +601,12 @@ export function RouteCreateForm({
   const validate = () => {
     if (!routeDate) return "Route date is required.";
     if (assignmentMode === "assigned" && !operatorId) return "Choose a route performer or leave this route unassigned.";
-    if (!plannedRouteStock.length) return "Choose products to take from storage for this route.";
+    if (!plannedRouteStock.length) {
+      if (selectedRecommendationGroups.some((group) => group.recommendedTotal > 0)) {
+        return "Selected recommendations still need stock, but the current final take is 0. Replenish storage, adjust final take, or use admin override.";
+      }
+      return "Choose products to take from storage for this route.";
+    }
     const stockIssues = validateStock();
     if (stockIssues.length) return stockErrorMessage(stockIssues);
     return "";
@@ -1032,12 +1040,14 @@ export function RouteCreateForm({
                       const expanded = expandedRecommendationGroups.includes(group.groupKey);
                       const selectable = recommendationGroupSelectable(group);
                       const finalTake = finalTakeForGroup(group);
-                      const finalExceedsStorage = finalTake > group.storageAvailable;
-                      const finalIsZero = selected && finalTake === 0;
-                      const finalHigherThanRecommended = selected && finalTake > group.takeTotal;
-                      const finalLowerThanRecommended = selected && finalTake > 0 && finalTake < group.takeTotal;
                       const stockIssue = selected ? stockErrorByProduct.get(group.productId) : undefined;
                       const storageAvailable = stockIssue?.available_qty ?? unitQuantity(group.storageAvailable);
+                      const finalExceedsStorage = finalTake > storageAvailable;
+                      const finalIsZero = selected && finalTake === 0;
+                      const finalHigherThanRecommended = selected && finalTake > group.recommendedTotal;
+                      const finalLowerThanRecommended = selected && finalTake > 0 && finalTake < group.recommendedTotal;
+                      const recommendationShortage = Math.max(0, group.recommendedTotal - storageAvailable);
+                      const noStorageAvailable = group.recommendedTotal > 0 && storageAvailable <= 0;
                       const showStockIssue = Boolean(stockIssue);
 
                       return (
@@ -1061,7 +1071,7 @@ export function RouteCreateForm({
                             <td className="px-3 py-2">{group.slotsCount}</td>
                             <td className="px-3 py-2">{group.currentTotal}</td>
                             <td className="px-3 py-2">{group.targetTotal}</td>
-                            <td className="px-3 py-2 font-semibold text-slate-900">{group.takeTotal}</td>
+                            <td className="px-3 py-2 font-semibold text-slate-900">{group.recommendedTotal}</td>
                             <td className="min-w-[260px] px-3 py-2">
                               <div className="flex flex-wrap items-center gap-2">
                                 <input
@@ -1075,14 +1085,16 @@ export function RouteCreateForm({
                                   disabled={saving || !selected}
                                   aria-label={`Final take for ${group.productName} at ${group.machineName}`}
                                 />
-                                <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, group.takeTotal)} disabled={saving || !selected}>Use recommended</button>
-                                <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, Math.ceil(group.takeTotal / 2))} disabled={saving || !selected}>Take half</button>
+                                <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, group.recommendedTotal)} disabled={saving || !selected}>Use recommended</button>
+                                <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, Math.ceil(group.recommendedTotal / 2))} disabled={saving || !selected}>Take half</button>
                                 <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, storageAvailable)} disabled={saving || !selected}>Take max available</button>
                                 <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, 0)} disabled={saving || !selected}>Clear</button>
                               </div>
                               {finalIsZero ? <div className="mt-1 text-xs font-medium text-amber-700">Final take is 0.</div> : null}
                               {finalHigherThanRecommended ? <div className="mt-1 text-xs font-medium text-amber-700">Final take is higher than recommended.</div> : null}
                               {finalLowerThanRecommended ? <div className="mt-1 text-xs text-slate-500">Taking less than recommended.</div> : null}
+                              {noStorageAvailable ? <div className="mt-1 text-xs font-medium text-amber-700">No storage stock is available yet. The recommendation stays visible so you can replenish stock or override it.</div> : null}
+                              {!noStorageAvailable && recommendationShortage > 0 ? <div className="mt-1 text-xs text-amber-700">Storage has {storageAvailable}; recommendation needs {group.recommendedTotal}. Short by {recommendationShortage}.</div> : null}
                               {stockIssue ? <div className="mt-1 text-xs font-medium text-rose-700">Selected {stockIssue.selected_qty}, available {stockIssue.available_qty}, shortage {stockIssue.shortage_qty}.</div> : null}
                             </td>
                             <td className={`px-3 py-2 ${(finalExceedsStorage || showStockIssue) && !adminOverride ? "font-semibold text-rose-700" : ""}`}>{storageAvailable}</td>
