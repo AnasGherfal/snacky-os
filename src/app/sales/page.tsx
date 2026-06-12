@@ -1,11 +1,12 @@
 import { BarList, KpiLoadWarning, KpiSection } from "@/components/KpiDashboard";
 import { DataTable, EmptyState, PageHeader } from "@/components/ui";
-import { requireCurrentProfileForPath } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
 import { formatInteger, groupSum } from "@/lib/kpi";
 import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
 import { vmsCoverageSummary, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+
+export const dynamic = "force-dynamic";
 
 function chronologicalSales(rows: { label: string; value: number }[]) {
   return [...rows].sort((a, b) => a.label.localeCompare(b.label));
@@ -38,9 +39,9 @@ type TransactionStatusRow = {
   needs_review_count: number | string | null;
 };
 
-export default async function SalesDashboardPage() {
+async function SalesDashboardPageContent() {
   await requireCurrentProfileForPath("/sales");
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   const [salesResult, statusResult, batchResult] = supabase
     ? await Promise.all([
       safeSupabaseQuery<SalesRow>({
@@ -182,4 +183,24 @@ export default async function SalesDashboardPage() {
       )}
     </>
   );
+}
+
+function isNextNavigationSignal(error: unknown) {
+  const digest = error && typeof error === "object" ? String((error as { digest?: unknown }).digest ?? "") : "";
+  return digest.startsWith("NEXT_REDIRECT") || digest.startsWith("NEXT_NOT_FOUND") || digest === "DYNAMIC_SERVER_USAGE";
+}
+
+export default async function SalesDashboardPage() {
+  try {
+    return await SalesDashboardPageContent();
+  } catch (error) {
+    if (isNextNavigationSignal(error)) throw error;
+    console.error("[sales] Page-level render guard caught an unexpected error", error);
+    return (
+      <>
+        <PageHeader title="Sales Dashboard" subtitle="Sales analytics from active detailed VMS Order Details files." />
+        <EmptyState title="Something did not load" body="Snacky OS recovered from a VMS data load error. Please retry after the latest import finishes; technical details are in the server logs." />
+      </>
+    );
+  }
 }

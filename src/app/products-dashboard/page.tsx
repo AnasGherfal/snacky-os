@@ -4,7 +4,7 @@ import { requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
 import { formatDays, formatInteger, formatLydOrDash, formatPctOrDash, groupCount, observedDayCount, salesAmount, soldQty } from "@/lib/kpi";
 import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
-import { vmsCoverageSummary, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
+import { detailedSalesSourceMessage, vmsCoverageSummary, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export default async function ProductsDashboardPage() {
@@ -30,7 +30,7 @@ export default async function ProductsDashboardPage() {
         }),
         safeSupabaseQuery<VmsDashboardBatch>({
           label: "products-dashboard.vms_import_batches",
-          promise: supabase.from("vms_import_batches").select("id, file_name, report_type, status, is_active, report_start_date, report_end_date, uploaded_at, imported_at, deleted_at").eq("report_type", "vms_order_details_weekly").order("report_start_date", { ascending: true }),
+          promise: supabase.from("vms_import_batches").select("id, file_name, original_file_name, report_type, status, is_active, report_start_date, report_end_date, uploaded_at, imported_at, deleted_at").eq("report_type", "vms_order_details_weekly").order("report_start_date", { ascending: true }),
         }),
       ])
     : [{ data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }];
@@ -42,7 +42,9 @@ export default async function ProductsDashboardPage() {
     period_end: row.sale_date,
   }));
   const products = (productsResult.data ?? []) as any[];
-  const coverage = vmsCoverageSummary((batchResult.data ?? []) as VmsDashboardBatch[]);
+  const batchRows = (batchResult.data ?? []) as VmsDashboardBatch[];
+  const coverage = vmsCoverageSummary(batchRows);
+  const salesSourceMessage = detailedSalesSourceMessage(batchRows);
   const inventory = (inventoryResult.data ?? []) as any[];
   const stockouts = groupCount(((stockResult.data ?? []) as any[]).filter((row) => Number(row.current_qty ?? 0) <= 0 && row.product_id), (row) => String(row.product_id));
   const observedDays = observedDayCount(sales);
@@ -103,6 +105,7 @@ export default async function ProductsDashboardPage() {
               <div><div className="font-semibold text-slate-900">Missing periods</div><div>{coverage.gaps.length}</div></div>
             </div>
             {!coverage.active.length ? <p className="mt-3 text-sm font-medium text-slate-700">No VMS data imported yet</p> : null}
+            <p className="mt-3 text-sm font-medium text-slate-700">{salesSourceMessage}</p>
             {coverage.gaps.length ? (
               <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">
                 Warning: selected period has missing VMS detailed data. Sales may be incomplete.

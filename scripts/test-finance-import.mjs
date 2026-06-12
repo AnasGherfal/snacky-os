@@ -111,9 +111,10 @@ test("every non-empty transaction row is retained, even when required values are
   assert.equal(classified[0].importStatus, "needs_review");
   assert.equal(classified[0].record.name, "Anas");
   assert.equal(classified[0].record.transaction, "1800");
-  assert.equal(classified[1].importStatus, "needs_review");
-  assert.equal(classified[1].categoryForTransaction, null);
-  assert.ok(classified[1].reasons.includes("blank Transaction Type"));
+  assert.equal(classified[1].importStatus, "imported");
+  assert.equal(classified[1].categoryForTransaction, "Uncategorized");
+  assert.deepEqual(classified[1].reasons, []);
+  assert.equal(buildFinanceTransaction(classified[1], "user-1", "batch-1").category, "Uncategorized");
 });
 
 test("Name and Currency provide the suggested account without changing the original Name", () => {
@@ -248,4 +249,36 @@ test("needs-review rows remain visible in staging and do not affect balances", (
   assert.equal(stage.raw_record.transaction_description, "buy dollars");
   assert.equal(buildFinanceTransaction(classified, "user-1", "batch-1"), null);
   assert.equal(isBalanceAffectingTransaction({ transaction_status: "active", import_status: "needs_review", signed_amount: -4680 }), false);
+});
+
+test("cash collection finance payload uses collection datetime and links source", async () => {
+  const { buildCashCollectionFinanceTransactionPayload } = await import("../src/lib/cash-finance.ts");
+  const payload = buildCashCollectionFinanceTransactionPayload({
+    cash: {
+      id: "33333333-3333-4333-8333-333333333333",
+      route_id: "44444444-4444-4444-8444-444444444444",
+      machine_id: "55555555-5555-4555-8555-555555555555",
+      operator_id: "66666666-6666-4666-8666-666666666666",
+      actual_cash_collected: 88.5,
+      collected_at: "2026-06-08T14:30:00.000Z",
+      cash_bag_id: "BAG-9",
+      machine_name: "HT Mall Machine",
+      location_name: "HT Mall",
+    },
+    amount: 88.5,
+    createdBy: "77777777-7777-4777-8777-777777777777",
+  });
+
+  assert.equal(payload.transaction_date, "2026-06-08");
+  assert.equal(payload.transaction_datetime, "2026-06-08T14:30:00.000Z");
+  assert.equal(payload.direction, "money_in");
+  assert.equal(payload.category, "Revenue");
+  assert.equal(payload.amount, 88.5);
+  assert.equal(payload.signed_amount, 88.5);
+  assert.equal(payload.account_key, "snacky_lyd");
+  assert.equal(payload.source_type, "cash_collection");
+  assert.equal(payload.source_id, "33333333-3333-4333-8333-333333333333");
+  assert.equal(payload.linked_cash_collection_id, "33333333-3333-4333-8333-333333333333");
+  assert.equal(payload.related_cash_collection_id, "33333333-3333-4333-8333-333333333333");
+  assert.equal(payload.description, "Cash collection from HT Mall Machine / HT Mall - Bag BAG-9");
 });

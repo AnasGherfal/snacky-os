@@ -1,11 +1,10 @@
 import { redirect } from "next/navigation";
 import { ManualFinanceTransactionFields } from "@/components/ManualFinanceTransactionFields";
 import { FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canEditFinancialTransactions } from "@/lib/authz";
 import { confirmFinanceImportRow } from "@/lib/finance-actions";
 import { DEFAULT_FINANCE_CATEGORIES, type FinanceCategoryOption } from "@/lib/finance-categories";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +31,7 @@ export default async function FinanceImportRowReviewPage({ params, searchParams 
 
   const { id } = await params;
   const query = await searchParams;
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) redirect("/finance/import/review?error=Supabase%20is%20not%20configured.");
 
   const [{ data: row, error }, categoriesResult] = await Promise.all([

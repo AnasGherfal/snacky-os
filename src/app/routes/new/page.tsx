@@ -19,6 +19,9 @@ function unitQuantity(value: unknown) {
   return Math.max(0, Math.floor(parsed));
 }
 
+const ROUTE_RECOMMENDATION_BASE_SELECT = "recommendation_key, machine_slot_id, machine_id, machine_name, machine_code, slot_code, product_id, product_name, current_qty, capacity, par_qty, suggested_qty, available_storage_qty, final_qty_to_take, priority";
+const ROUTE_RECOMMENDATION_SELECT = `${ROUTE_RECOMMENDATION_BASE_SELECT}, import_batch_id`;
+
 type ProductRow = {
   id: string;
   sku: string | null;
@@ -45,7 +48,68 @@ type RecommendationRow = {
   available_storage_qty: number;
   final_qty_to_take: number | null;
   priority?: string | null;
+  import_batch_id?: string | null;
+  source_file_name?: string | null;
+  source_uploaded_at?: string | null;
 };
+
+
+
+type SupabaseLikeError = { code?: string | null; message?: string | null; details?: string | null; hint?: string | null };
+
+function isMissingRecommendationMetadataError(error: SupabaseLikeError | null | undefined) {
+  const message = `${error?.message ?? ""} ${error?.details ?? ""} ${error?.hint ?? ""}`.toLowerCase();
+  return error?.code === "42703" || error?.code === "PGRST204" || (message.includes("column") && message.includes("does not exist"));
+}
+
+type VmsImportBatchSourceRow = {
+  id: string;
+  file_name: string | null;
+  original_file_name: string | null;
+  uploaded_at: string | null;
+};
+
+async function loadRouteRecommendations(supabase: Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>) {
+  if (!supabase) return { data: [], error: null };
+
+  const enrichedRecommendationResult = await supabase
+    .from("refill_recommendations")
+    .select(ROUTE_RECOMMENDATION_SELECT)
+    .order("machine_name");
+  const recommendationResult = enrichedRecommendationResult.error && isMissingRecommendationMetadataError(enrichedRecommendationResult.error)
+    ? await supabase
+        .from("refill_recommendations")
+        .select(ROUTE_RECOMMENDATION_BASE_SELECT)
+        .order("machine_name")
+    : enrichedRecommendationResult;
+  if (recommendationResult.error || !recommendationResult.data?.length) return recommendationResult;
+
+  const recommendationRows = recommendationResult.data as RecommendationRow[];
+  const batchIds = Array.from(new Set(recommendationRows.map((row) => row.import_batch_id).filter((id): id is string => Boolean(id))));
+  if (!batchIds.length) return recommendationResult;
+
+  const { data: batches, error: batchError } = await supabase
+    .from("vms_import_batches")
+    .select("id, file_name, original_file_name, uploaded_at")
+    .in("id", batchIds);
+  if (batchError) {
+    console.warn("[routes:new] Could not load VMS import source metadata; route recommendations will use Unknown source fallback.", batchError);
+    return recommendationResult;
+  }
+
+  const batchById = new Map(((batches ?? []) as VmsImportBatchSourceRow[]).map((batch) => [batch.id, batch]));
+  return {
+    ...recommendationResult,
+    data: recommendationRows.map((row) => {
+      const batch = row.import_batch_id ? batchById.get(row.import_batch_id) : null;
+      return {
+        ...row,
+        source_file_name: batch?.original_file_name ?? batch?.file_name ?? null,
+        source_uploaded_at: batch?.uploaded_at ?? null,
+      };
+    }),
+  };
+}
 
 type StorageInventoryRow = {
   product_id: string;
@@ -71,12 +135,13 @@ type RouteBuilderQueryIssue = {
   message: string;
 };
 
-function supabaseErrorPayload(error: any) {
+function supabaseErrorPayload(error: unknown) {
+  const payload = typeof error === "object" && error !== null ? error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown } : null;
   return {
-    code: error?.code ?? null,
-    message: error?.message ?? String(error ?? "Unknown Supabase error"),
-    details: error?.details ?? null,
-    hint: error?.hint ?? null,
+    code: typeof payload?.code === "string" ? payload.code : null,
+    message: typeof payload?.message === "string" ? payload.message : String(error ?? "Unknown Supabase error"),
+    details: typeof payload?.details === "string" ? payload.details : null,
+    hint: typeof payload?.hint === "string" ? payload.hint : null,
   };
 }
 
@@ -91,7 +156,7 @@ function logRouteBuilderQueryError({
   key: string;
   label: string;
   table: string;
-  error: any;
+  error: unknown;
   profile: Awaited<ReturnType<typeof getCurrentProfile>>;
   params: Record<string, unknown>;
 }) {
@@ -139,10 +204,7 @@ export default async function NewRoutePage() {
   ] = await Promise.all([
     supabase.from("team_members").select("id, full_name, role, roles").or("role.in.(owner,admin,supervisor,operator),roles.ov.{owner,admin,supervisor,operator}").eq("active", true).order("full_name"),
     supabase.from("machines").select("id, name, machine_code").eq("status", "active").order("name"),
-    supabase
-      .from("refill_recommendations")
-      .select("recommendation_key, machine_slot_id, machine_id, machine_name, machine_code, slot_code, product_id, product_name, current_qty, capacity, par_qty, suggested_qty, available_storage_qty, final_qty_to_take, priority")
-      .order("machine_name"),
+    loadRouteRecommendations(supabase),
     supabase
       .from("current_inventory_by_location")
       .select("product_id, product_name, quantity_on_hand")
@@ -182,7 +244,7 @@ export default async function NewRoutePage() {
           table: "refill_recommendations",
           error: recommendationsError,
           profile,
-          params: { order: "machine_name" },
+          params: { order: "machine_name", optional_source_metadata: "vms_import_batches" },
         })
       : null,
     storageError

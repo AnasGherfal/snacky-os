@@ -7,7 +7,7 @@ import { isOwnerAdminRole } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { reprocessVmsImportBatch, updateVmsImportBatchState } from "@/lib/vms-import-actions";
 import {
-  backfillMissingPurchaseTransactions,
+  backfillMissingFinanceTransactions,
   forceCompleteRouteWithAudit,
   recalculateDashboards,
   recalculateRouteInventoryLedger,
@@ -170,13 +170,10 @@ export default async function AdminToolsPage({
       </section>
 
       <div className="grid gap-4 xl:grid-cols-2">
-        <ToolCard title="Backfill Missing Purchase Transactions" description="Creates missing Products Restocking money-out ledger rows for purchase orders without duplicating existing linked transactions.">
-          <form action={backfillMissingPurchaseTransactions} className="space-y-3">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <input name="start_date" type="date" defaultValue="2026-06-01" className="field-input" />
-              <input name="end_date" type="date" defaultValue="2026-06-03" className="field-input" />
-            </div>
-            <FormSubmitButton pendingLabel="Backfilling purchases...">Backfill Missing Purchase Transactions</FormSubmitButton>
+        <ToolCard title="Backfill Missing Finance Transactions" description="Creates missing source-generated ledger rows for paid purchases and counted cash collections without duplicating existing linked transactions.">
+          <form action={backfillMissingFinanceTransactions} className="space-y-3">
+            <ReasonInput placeholder="Why are you repairing source-generated finance transactions?" />
+            <FormSubmitButton pendingLabel="Backfilling finance transactions...">Backfill Missing Finance Transactions</FormSubmitButton>
           </form>
         </ToolCard>
 

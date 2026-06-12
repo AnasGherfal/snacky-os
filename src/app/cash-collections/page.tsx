@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileRecordCard, PageHeader, PrimaryButton, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
+import { createMissingCashFinanceLinks } from "@/lib/cash-actions";
 import { canAccessPath, canViewFinancials } from "@/lib/authz";
 import { getCashCollectionStatus, isCriticalCashVariance, isLargeCashVariance } from "@/lib/cash-collections";
 import { lyd } from "@/lib/format";
@@ -35,6 +36,7 @@ export default async function CashCollectionsPage({
 }: {
   searchParams: Promise<{
     error?: string;
+    success?: string;
     status?: string;
     machine_id?: string;
     operator_id?: string;
@@ -104,20 +106,17 @@ export default async function CashCollectionsPage({
   const { data: financeRows, error: financeError } = cashIds.length
     ? await supabase
         .from("financial_transactions")
-        .select("id, related_cash_collection_id, transaction_status")
-        .in("related_cash_collection_id", cashIds)
-        .eq("transaction_kind", "cash_collection")
+        .select("id, linked_cash_collection_id, source_type, source_id, transaction_status")
+        .or(`linked_cash_collection_id.in.(${cashIds.join(",")}),and(source_type.eq.cash_collection,source_id.in.(${cashIds.join(",")}))`)
     : { data: [], error: null };
-  if (financeError) {
-    console.error("[cash] Failed to load linked finance rows", financeError);
-    return (
-      <>
-        <ErrorState title="Could not load cash finance links" body="Cash collections loaded, but linked finance transactions could not be read." action={<SecondaryButton href="/cash-collections">Retry</SecondaryButton>} />
-      </>
-    );
+  if (financeError) console.error("[cash] Failed to load linked finance rows", financeError);
+  const financeByCashId = new Map<string, any>();
+  for (const row of (financeRows ?? []) as any[]) {
+    const cashId = row.linked_cash_collection_id ?? (row.source_type === "cash_collection" ? row.source_id : null);
+    if (cashId) financeByCashId.set(cashId, row);
   }
-  const financeByCashId = new Map((financeRows ?? []).map((row: any) => [row.related_cash_collection_id, row]));
   const activeRows = rows.filter((row: any) => getCashCollectionStatus(row.review_status, row.variance) !== "voided");
+  const rowsMissingFinance = activeRows.filter((row: any) => row.actual_cash_collected !== null && row.actual_cash_collected !== undefined && !financeByCashId.has(row.id));
   const totalExpected = activeRows.reduce((sum: number, row: any) => sum + Number(row.vms_expected_cash ?? 0), 0);
   const totalCounted = activeRows.reduce((sum: number, row: any) => sum + Number(row.actual_cash_collected ?? 0), 0);
   const pendingCount = rows.filter((row: any) => row.review_status === "collected_pending_count").length;
@@ -131,6 +130,28 @@ export default async function CashCollectionsPage({
         action={canReviewMoney ? <PrimaryButton href="/cash-collections/new">New cash collection</PrimaryButton> : undefined}
       />
       {params.error ? <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{params.error}</div> : null}
+      {params.success ? <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">{params.success}</div> : null}
+      {financeError ? (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <div className="font-semibold">Could not read linked finance transactions.</div>
+          <p className="mt-1">Cash collections are still shown below. Rows that should have finance links are marked as Finance link missing until the DB policy/schema is repaired.</p>
+          {canReviewMoney ? (
+            <form action={createMissingCashFinanceLinks} className="mt-3">
+              <button className="btn-secondary px-3 py-2">Create missing finance links</button>
+            </form>
+          ) : null}
+        </div>
+      ) : rowsMissingFinance.length ? (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <div className="font-semibold">{rowsMissingFinance.length} cash collection finance link{rowsMissingFinance.length === 1 ? "" : "s"} missing on this page.</div>
+          <p className="mt-1">Snacky OS can create the missing purchase/cash finance links without blocking the cash collection list.</p>
+          {canReviewMoney ? (
+            <form action={createMissingCashFinanceLinks} className="mt-3">
+              <button className="btn-secondary px-3 py-2">Create missing finance links</button>
+            </form>
+          ) : null}
+        </div>
+      ) : null}
 
       <section className="surface-card mb-6">
         <form className="grid gap-3 md:grid-cols-3 xl:grid-cols-7">
@@ -193,7 +214,7 @@ export default async function CashCollectionsPage({
                     <MobileField label="Collected by">{collection.operator?.full_name ?? "Unassigned"}</MobileField>
                     <MobileField label="Route">{collection.route?.id ? <Link href={`/routes/${collection.route.id}`} className="link-secondary">{collection.route.route_date}</Link> : "-"}</MobileField>
                     <MobileField label="Finance">
-                      {finance?.id ? <Link href={`/finance/transactions/${finance.id}`} className="link-secondary">{finance.transaction_status ?? "posted"}</Link> : <span className="text-slate-500">Pending</span>}
+                      {finance?.id ? <Link href={`/finance/transactions/${finance.id}`} className="link-secondary">{finance.transaction_status ?? "posted"}</Link> : collection.actual_cash_collected !== null && collection.actual_cash_collected !== undefined ? <span className="font-medium text-amber-700">Finance link missing</span> : <span className="text-slate-500">Pending count</span>}
                     </MobileField>
                   </div>
                   <div className="mt-4 grid gap-2 sm:grid-cols-2">
@@ -228,7 +249,9 @@ export default async function CashCollectionsPage({
                     {finance?.id ? (
                       <Link href={`/finance/transactions/${finance.id}`} className="link-secondary">{finance.transaction_status ?? "posted"}</Link>
                     ) : (
-                      <span className="text-sm text-slate-500">Pending</span>
+                      <span className={collection.actual_cash_collected !== null && collection.actual_cash_collected !== undefined ? "text-sm font-medium text-amber-700" : "text-sm text-slate-500"}>
+                        {collection.actual_cash_collected !== null && collection.actual_cash_collected !== undefined ? "Finance link missing" : "Pending count"}
+                      </span>
                     )}
                   </td>
                   <td>

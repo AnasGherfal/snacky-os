@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { FormSubmitButton } from "@/components/FormSubmitButton";
 import { LocalDraftForm } from "@/components/LocalDraft";
 import { PaginationControls } from "@/components/PaginationControls";
-import { DataTable, EmptyState, ErrorState, FormField, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
+import { DataTable, EmptyState, ErrorState, FormField, PageHeader, SectionCard, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canCreateVmsImports, canValidateVmsImports, canViewVmsImports, getEffectivePermissions, isOwnerAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
@@ -140,7 +140,7 @@ function isStockReportType(reportType: string | null | undefined) {
 }
 
 function activeLabel(batch: VmsBatchRow) {
-  return batch.status === "imported" && batch.is_active !== false && !batch.deleted_at ? "Yes" : "No";
+  return ["imported", "imported_with_warnings", "partially_imported"].includes(String(batch.status ?? "")) && batch.is_active !== false && !batch.deleted_at ? "Yes" : "No";
 }
 
 function batchDateRange(batch: VmsBatchRow) {
@@ -404,6 +404,11 @@ const legacyBatchSelect = [
   "notes",
 ].join(", ");
 
+function isNextNavigationSignal(error: unknown) {
+  const digest = error && typeof error === "object" && "digest" in error ? String((error as { digest?: unknown }).digest ?? "") : "";
+  return digest.startsWith("NEXT_REDIRECT") || digest === "NEXT_NOT_FOUND";
+}
+
 function queryError(error: unknown): SupabaseQueryError | null {
   if (!error || typeof error !== "object") return null;
   return error as SupabaseQueryError;
@@ -492,65 +497,35 @@ function logVmsImportLoadIssue({
   });
 }
 
-const expectedVmsTables = [
-  "vms_import_batches",
-  "vms_import_preview_rows",
-  "vms_product_mappings",
-  "vms_machine_mappings",
-  "vms_header_mappings",
-  "vms_sales_raw",
-  "vms_transactions_raw",
-  "vms_machine_stock_snapshots",
-];
-
-const expectedVmsImportBatchColumns = [
-  "file_hash",
-  "detected_min_datetime",
-  "detected_max_datetime",
-  "is_active",
-  "status",
-  "report_type",
-  "rows_found",
-  "rows_imported",
-  "parse_diagnostics",
-];
+function stringArrayValue(value: unknown) {
+  return Array.isArray(value) ? value.map((item) => String(item)).filter(Boolean) : [];
+}
 
 async function loadVmsSchemaHealth(supabase: SupabaseServerClient): Promise<VmsSchemaHealth> {
   const health: VmsSchemaHealth = { checked: false, missingTables: [], missingColumns: [], errors: [] };
+  const queryName = "get_vms_schema_health.rpc";
+
   try {
-    const informationSchema = supabase.schema("information_schema");
-    const tablesResult = await informationSchema
-      .from("tables")
-      .select("table_name")
-      .eq("table_schema", "public")
-      .in("table_name", expectedVmsTables);
-    if (tablesResult.error) {
-      health.errors.push(loadIssueFromError("information_schema.tables.vms_health", tablesResult.error));
+    const result = await supabase.rpc("get_vms_schema_health");
+    if (result.error) {
+      console.error("[vms-import] Load query failed", { queryName, rpc: "get_vms_schema_health", error: result.error });
+      health.errors.push(loadIssueFromError(queryName, result.error));
       return health;
     }
 
-    const foundTables = new Set((tablesResult.data ?? []).map((row) => String((row as { table_name?: unknown }).table_name)));
-    health.missingTables = expectedVmsTables.filter((table) => !foundTables.has(table));
+    const data = result.data as {
+      checked?: unknown;
+      missing_tables?: unknown;
+      missing_columns?: unknown;
+    } | null;
 
-    const columnsResult = await informationSchema
-      .from("columns")
-      .select("column_name")
-      .eq("table_schema", "public")
-      .eq("table_name", "vms_import_batches")
-      .in("column_name", expectedVmsImportBatchColumns);
-    if (columnsResult.error) {
-      health.errors.push(loadIssueFromError("information_schema.columns.vms_import_batches_health", columnsResult.error));
-      return health;
-    }
-
-    const foundColumns = new Set((columnsResult.data ?? []).map((row) => String((row as { column_name?: unknown }).column_name)));
-    health.missingColumns = expectedVmsImportBatchColumns
-      .filter((column) => !foundColumns.has(column))
-      .map((column) => `vms_import_batches.${column}`);
-    health.checked = true;
+    health.checked = data?.checked === true;
+    health.missingTables = stringArrayValue(data?.missing_tables);
+    health.missingColumns = stringArrayValue(data?.missing_columns);
     return health;
   } catch (error) {
-    health.errors.push(loadIssueFromError("vms_schema_health.unexpected", error));
+    console.error("[vms-import] Load query failed", { queryName, rpc: "get_vms_schema_health", error });
+    health.errors.push(loadIssueFromError(queryName, error));
     return health;
   }
 }
@@ -749,6 +724,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
   try {
     return await VmsImportPageContent({ searchParams });
   } catch (error) {
+    if (isNextNavigationSignal(error)) throw error;
     const profile = await getCurrentProfile().catch(() => null);
     const effectivePermissions = profile ? getEffectivePermissions(profile) : [];
     const issue = loadIssueFromError("vms_import_page.unexpected_server_component_error", error);
@@ -839,16 +815,20 @@ function UploadCard() {
 }
 
 function RawRowsTable({ rows, limit = 20, headerRow }: { rows: string[][]; limit?: number; headerRow?: number }) {
+  const safeRows = Array.isArray(rows) ? rows : [];
   return (
     <div className="table-wrap">
       <table className="data-table">
         <tbody>
-          {rows.slice(0, limit).map((row, index) => (
-            <tr key={index} className={index === headerRow ? "bg-emerald-50" : ""}>
-              <td className="whitespace-nowrap font-semibold text-slate-700">Row {index + 1}{index === headerRow ? " header" : ""}</td>
-              {row.map((cell, cellIndex) => <td key={cellIndex} className="max-w-64">{cell || "-"}</td>)}
-            </tr>
-          ))}
+          {safeRows.slice(0, limit).map((row, index) => {
+            const safeRow = Array.isArray(row) ? row : [];
+            return (
+              <tr key={index} className={index === headerRow ? "bg-emerald-50" : ""}>
+                <td className="whitespace-nowrap font-semibold text-slate-700">Row {index + 1}{index === headerRow ? " header" : ""}</td>
+                {safeRow.map((cell, cellIndex) => <td key={cellIndex} className="max-w-64">{cell || "-"}</td>)}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -980,8 +960,12 @@ function InlineLoadIssue({ title, issue }: { title: string; issue?: VmsPageLoadI
 }
 
 function VmsSchemaRepairPanel({ schemaHealth, canRepair }: { schemaHealth: VmsSchemaHealth; canRepair: boolean }) {
-  const missing = [...schemaHealth.missingTables, ...schemaHealth.missingColumns];
-  if (!missing.length && !schemaHealth.errors.length) return null;
+  const safeHealth = schemaHealth ?? { checked: false, missingTables: [], missingColumns: [], errors: [] };
+  const missingTables = Array.isArray(safeHealth.missingTables) ? safeHealth.missingTables : [];
+  const missingColumns = Array.isArray(safeHealth.missingColumns) ? safeHealth.missingColumns : [];
+  const errors = Array.isArray(safeHealth.errors) ? safeHealth.errors : [];
+  const missing = [...missingTables, ...missingColumns];
+  if (!missing.length && !errors.length) return null;
 
   return (
     <section className="surface-card mb-6 border-amber-200 bg-amber-50">
@@ -989,7 +973,7 @@ function VmsSchemaRepairPanel({ schemaHealth, canRepair }: { schemaHealth: VmsSc
         <div>
           <h2 className="text-base font-semibold text-amber-950">VMS import schema needs repair</h2>
           <p className="mt-1 text-sm text-amber-900">
-            Missing: {missing.length ? missing.join(", ") : "schema health check access"}. Run migration repair; upload and other available sections still work.
+            Missing: {missing.length ? missing.join(", ") : "schema status access"}. Run migration repair; upload and other available sections still work.
           </p>
         </div>
         {canRepair ? (
@@ -1007,7 +991,7 @@ function VmsSchemaRepairPanel({ schemaHealth, canRepair }: { schemaHealth: VmsSc
           </details>
         ) : null}
       </div>
-      {schemaHealth.errors.map((issue) => (
+      {errors.map((issue) => (
         <InlineLoadIssue key={issue.loader} title={issue.loader} issue={issue} />
       ))}
     </section>
@@ -1023,13 +1007,15 @@ function AdminDiagnosticsPanel({
   currentUserId: string | null;
   effectivePermissions: string[];
 }) {
-  if (!issues.length) return null;
+  const safeIssues = Array.isArray(issues) ? issues : [];
+  const safePermissions = Array.isArray(effectivePermissions) ? effectivePermissions : [];
+  if (!safeIssues.length) return null;
   return (
     <section className="surface-card mb-6 border-amber-200 bg-white">
       <h2 className="text-lg font-semibold text-slate-900">VMS Error Diagnostics</h2>
       <p className="mt-1 text-sm text-slate-500">Admin/debug detail for failed VMS loaders. The page is using safe fallbacks instead of crashing.</p>
       <div className="mt-4 grid gap-3">
-        {issues.map((issue, index) => (
+        {safeIssues.map((issue, index) => (
           <div key={`${issue.loader}-${index}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
             <div className="font-semibold text-slate-900">{issue.loader}</div>
             <div className="mt-1 grid gap-1 text-xs text-slate-600 sm:grid-cols-2 xl:grid-cols-4">
@@ -1039,7 +1025,7 @@ function AdminDiagnosticsPanel({
               <div>Digest: {issue.digest ?? "-"}</div>
               <div>User: {currentUserId ?? "-"}</div>
               <div className="sm:col-span-2">Message: {issue.message}</div>
-              <div className="sm:col-span-2">Permissions: {effectivePermissions.join(", ") || "-"}</div>
+              <div className="sm:col-span-2">Permissions: {safePermissions.join(", ") || "-"}</div>
               {issue.details ? <div className="sm:col-span-2">Details: {issue.details}</div> : null}
               {issue.hint ? <div className="sm:col-span-2">Hint: {issue.hint}</div> : null}
             </div>
@@ -1409,7 +1395,18 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
     );
   }
 
-  const schemaHealth = await loadVmsSchemaHealth(supabase);
+  const schemaHealth = await (async () => {
+    try {
+      return await loadVmsSchemaHealth(supabase);
+    } catch (error) {
+      return {
+        checked: false,
+        missingTables: [],
+        missingColumns: [],
+        errors: [loadIssueFromError("vms_schema_health.loader", error)],
+      } satisfies VmsSchemaHealth;
+    }
+  })();
   pageIssues.push(...schemaHealth.errors);
 
   const selectedPreviewId = params.previewId ?? null;
@@ -1527,7 +1524,8 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
     && String(other.report_start_date) <= String(batch.report_end_date)
   )));
 
-  const previewSheets = ((preview?.sheets ?? []) as PreviewSheet[]).filter((sheet) => sheet.rows?.length);
+  const previewSheetRows = Array.isArray(preview?.sheets) ? (preview.sheets as PreviewSheet[]) : [];
+  const previewSheets = previewSheetRows.filter((sheet) => Array.isArray(sheet.rows) && sheet.rows.length);
   const selectedSheet = previewSheets.find((sheet) => sheet.name === params.sheet) ?? previewSheets[0] ?? null;
   const detectedReportType = selectedSheet ? detectVmsReportTypeFromRows(selectedSheet.rows) : null;
   const previewReportType = preview?.report_type && preview.report_type !== "custom" ? parseReportType(preview.report_type) : null;
@@ -2108,21 +2106,29 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
               <WizardStateInputs step={5} {...baseState} mapping={selectedMapping} />
               <FormSubmitButton className="btn-secondary" pendingLabel="Returning to mapping...">Back to mapping</FormSubmitButton>
             </form>
-            <form className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_minmax(160px,auto)_minmax(160px,auto)_auto]">
+            <form className={selectedReportType === "sales" || selectedReportType === "vms_order_details_weekly" ? "grid gap-3 md:grid-cols-[minmax(220px,1fr)_minmax(160px,auto)_minmax(160px,auto)_auto]" : "grid gap-3 md:grid-cols-[minmax(260px,1fr)_auto]"}>
               <WizardStateInputs step={7} {...baseState} mapping={selectedMapping} includeImportOptions={false} />
               <input type="hidden" name="autoCreateProducts" value={optionValue(autoCreateProducts)} />
               <input type="hidden" name="updateCostFromVms" value={optionValue(updateCostFromVms)} />
-              <FormField label="Import mode">
-                <select name="importMode" defaultValue={importMode} className="field-input">
-                  {Object.entries(vmsImportModeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                </select>
-              </FormField>
-              <FormField label="Range start">
-                <input name="reportStartDate" type="date" defaultValue={reportStartDate} className="field-input" />
-              </FormField>
-              <FormField label="Range end">
-                <input name="reportEndDate" type="date" defaultValue={reportEndDate} className="field-input" />
-              </FormField>
+              {selectedReportType === "sales" || selectedReportType === "vms_order_details_weekly" ? (
+                <>
+                  <FormField label="Import mode">
+                    <select name="importMode" defaultValue={importMode} className="field-input">
+                      {Object.entries(vmsImportModeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                    </select>
+                  </FormField>
+                  <FormField label="Range start">
+                    <input name="reportStartDate" type="date" defaultValue={reportStartDate} className="field-input" />
+                  </FormField>
+                  <FormField label="Range end">
+                    <input name="reportEndDate" type="date" defaultValue={reportEndDate} className="field-input" />
+                  </FormField>
+                </>
+              ) : (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+                  Stock snapshots use the file snapshot timestamp and do not require a sales date range.
+                </div>
+              )}
               <FormSubmitButton className="btn-primary self-end" pendingLabel="Preparing confirmation...">Continue to Step 3</FormSubmitButton>
             </form>
           </div>
@@ -2204,7 +2210,7 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
           <div className="grid gap-2 sm:grid-cols-2">
             <div className="text-sm text-slate-700"><strong>File:</strong> {preview?.file_name ?? params.fileName ?? "-"}</div>
             <div className="text-sm text-slate-700"><strong>File size:</strong> {preview?.file_size_bytes ? String(preview.file_size_bytes) : (params.fileSize ?? "-")}</div>
-            <div className="text-sm text-slate-700"><strong>Rows detected:</strong> {params.rows ?? String(((preview?.sheets as PreviewSheet[] ?? []).reduce((s, sh) => s + (sh.rows?.length ?? 0), 0)) ?? 0)}</div>
+            <div className="text-sm text-slate-700"><strong>Rows detected:</strong> {params.rows ?? String(previewSheets.reduce((s, sh) => s + (Array.isArray(sh.rows) ? sh.rows.length : 0), 0))}</div>
             <div className="text-sm text-slate-700"><strong>Detected report type:</strong> {params.detected ?? (detectedReportType ?? "custom")}</div>
             <div className="text-sm text-slate-700 sm:col-span-2"><strong>Headers (sample):</strong> {(params.headers ? safeDecode(params.headers) : selectedRows.headers.slice(0, 20).join(", ")) || "-"}</div>
             <div className="text-sm text-slate-700"><strong>User id:</strong> {params.uid ?? profile?.id ?? "-"}</div>

@@ -63,6 +63,9 @@ type ImportSummary = {
   skippedRows: number;
   rowsSkippedDuplicate: number;
   rowsNeedingReview: number;
+  updatedTargets: string[];
+  failedTargets: string[];
+  resultMessage: string;
   productsCreated: number;
   productsUpdated: number;
   mappingsCreated: number;
@@ -302,6 +305,65 @@ function vmsSourceUsage(reportType: VmsReportType) {
     excluded_dashboards: ["sales", "products", "machines", "finance"],
     explanation: "This file is not used by KPI dashboards until its report type and mappings are confirmed.",
   };
+}
+
+function importUpdatedTargets(reportType: VmsReportType, summary: ImportSummary) {
+  const targets = new Set<string>();
+  if ((reportType === "stock" || reportType === "machine_stock_snapshot" || reportType === "planogram") && summary.importedRows > 0) {
+    targets.add("Machine stock");
+    targets.add("Recommended refill items");
+  }
+  if (reportType === "vms_order_details_weekly" && summary.importedRows > 0) {
+    targets.add("Sales dashboard");
+    targets.add("Product sales");
+    targets.add("Failed vend report");
+  }
+  if (reportType === "sales" && summary.importedRows > 0) {
+    targets.add("Reconciliation totals");
+  }
+  if (reportType === "product_list" && (summary.productsCreated > 0 || summary.productsUpdated > 0 || summary.mappingsCreated > 0 || summary.mappingsUpdated > 0)) {
+    targets.add("Product mappings");
+  }
+  return [...targets];
+}
+
+function importFailedTargets(summary: ImportSummary) {
+  const text = summary.errors.join(" ").toLowerCase();
+  const targets = new Set<string>();
+  if (text.includes("stock")) targets.add("Machine stock");
+  if (text.includes("recommend")) targets.add("Recommended refill items");
+  if (text.includes("sales") || text.includes("transaction")) targets.add("Sales dashboard");
+  if (text.includes("product")) targets.add("Product sales");
+  if (text.includes("failed vend")) targets.add("Failed vend report");
+  if (text.includes("metadata") || text.includes("batch")) targets.add("Import metadata");
+  return [...targets];
+}
+
+function classifyImportResult(summary: ImportSummary, fatalImportError: boolean) {
+  const importedUsefulRows = summary.importedRows > 0;
+  const hasWarnings = summary.errors.length > 0 || summary.rowsNeedingReview > 0 || summary.rowsSkippedDuplicate > 0;
+  if (!importedUsefulRows && fatalImportError) {
+    return { status: "failed", active: false, message: summary.errors.join("; ").slice(0, 2000) || "VMS import failed before usable data was saved." };
+  }
+  if (importedUsefulRows && fatalImportError) {
+    return { status: "imported_with_warnings", active: true, message: "Usable VMS data was imported, but one or more import steps failed. Review the exact failed step and reprocess after fixing it." };
+  }
+  if (importedUsefulRows && hasWarnings) {
+    const firstTarget = summary.updatedTargets[0] ?? "VMS data";
+    return { status: "imported_with_warnings", active: true, message: `${firstTarget} imported. Some rows or metadata need review.` };
+  }
+  if (importedUsefulRows) return { status: "imported", active: true, message: "VMS import completed successfully." };
+  if (hasWarnings) return { status: "partially_imported", active: false, message: "No usable rows were imported. Review mappings, duplicates, and validation warnings." };
+  return { status: "failed", active: false, message: "No usable rows were imported." };
+}
+
+function importStepError(step: string, error: unknown) {
+  const supabaseError = supabaseMutationError(error);
+  const detail = [supabaseError?.code, supabaseError?.message, supabaseError?.details, supabaseError?.hint]
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean)
+    .join(" - ");
+  return detail ? `${step} failed: ${detail}` : `${step} failed.`;
 }
 
 function safeStorageFileName(fileName: string) {
@@ -1184,6 +1246,9 @@ async function runVmsImport({
     skippedRows: 0,
     rowsSkippedDuplicate: 0,
     rowsNeedingReview: 0,
+    updatedTargets: [],
+    failedTargets: [],
+    resultMessage: "",
     productsCreated: 0,
     productsUpdated: 0,
     mappingsCreated: 0,
@@ -1266,6 +1331,7 @@ async function runVmsImport({
       source_usage: vmsSourceUsage(reportType),
       dashboard_usage: vmsSourceUsage(reportType),
       latest_error: null,
+      last_error: null,
       import_mode: importMode,
       report_start_date: effectiveReportStartDate,
       report_end_date: effectiveReportEndDate,
@@ -1385,6 +1451,7 @@ async function runVmsImport({
       source_usage: vmsSourceUsage(reportType),
       dashboard_usage: vmsSourceUsage(reportType),
       latest_error: null,
+      last_error: null,
       rows_found: summary.rowsFound,
       file_hash: fileHash,
       storage_path: storagePath,
@@ -1996,7 +2063,7 @@ async function runVmsImport({
     const { error } = await supabase.from("vms_stock_snapshots").upsert(stockSnapshots, { onConflict: "import_batch_id,import_row_number" });
     if (error) {
       console.error("[vms-import] Stock snapshot upsert failed", error);
-      summary.errors.push("Stock snapshot save failed.");
+      summary.errors.push(importStepError("Stock snapshot save to vms_stock_snapshots", error));
       summary.skippedRows += stockSnapshots.length;
       summary.importedRows -= stockSnapshots.length;
     } else if (isReprocess) {
@@ -2022,8 +2089,7 @@ async function runVmsImport({
       .upsert(machineStockSnapshots, { onConflict: "import_batch_id,row_number" });
     if (error) {
       console.error("[vms-import] Machine stock snapshot audit upsert failed", error);
-      summary.errors.push("Machine stock snapshot audit save failed.");
-      fatalImportError = true;
+      summary.errors.push(importStepError("Machine stock audit save to vms_machine_stock_snapshots", error));
     }
   }
 
@@ -2032,7 +2098,7 @@ async function runVmsImport({
       const { error } = await supabase.from("vms_sales_snapshots").upsert(salesSnapshots, { onConflict: "import_batch_id,import_row_number" });
       if (error) {
         console.error("[vms-import] Sales snapshot reprocess upsert failed", error);
-        summary.errors.push("Sales snapshot save failed.");
+        summary.errors.push(importStepError("Sales summary snapshot save to vms_sales_snapshots", error));
         summary.skippedRows += salesSnapshots.length;
         summary.importedRows -= salesSnapshots.length;
         fatalImportError = true;
@@ -2061,7 +2127,7 @@ async function runVmsImport({
           errorMessage: error.message,
           error,
         });
-        summary.errors.push("Sales snapshot save failed.");
+        summary.errors.push(importStepError("Sales summary snapshot save to vms_sales_snapshots", error));
         summary.skippedRows += salesSnapshots.length;
         summary.importedRows -= salesSnapshots.length;
         fatalImportError = true;
@@ -2089,8 +2155,7 @@ async function runVmsImport({
       .upsert(salesRawRows, { onConflict: "duplicate_hash", ignoreDuplicates: true });
     if (error) {
       console.error("[vms-import] Sales raw row upsert failed", error);
-      summary.errors.push("Sales raw row save failed.");
-      fatalImportError = true;
+      summary.errors.push(importStepError("Sales raw audit save to vms_sales_raw", error));
     }
   }
 
@@ -2112,7 +2177,7 @@ async function runVmsImport({
         .in("duplicate_hash", chunk);
       if (error) {
         console.error("[vms-import] Transaction duplicate lookup failed", error);
-        summary.errors.push("Transaction duplicate lookup failed.");
+        summary.errors.push(importStepError("Detailed transaction duplicate lookup in vms_transactions_raw", error));
         fatalImportError = true;
         break;
       }
@@ -2136,11 +2201,11 @@ async function runVmsImport({
         const chunk = rowsToSave.slice(index, index + 500);
         const { error } = await supabase
           .from("vms_transactions_raw")
-          .upsert(chunk, { onConflict: "duplicate_hash" });
+          .upsert(chunk, { onConflict: "duplicate_hash", ignoreDuplicates: true });
         if (!error) continue;
 
         console.error("[vms-import] Transaction raw row upsert failed", error);
-        summary.errors.push("Transaction raw row save failed.");
+        summary.errors.push(importStepError("Detailed transaction save to vms_transactions_raw", error));
         fatalImportError = true;
         break;
       }
@@ -2151,7 +2216,7 @@ async function runVmsImport({
     const { error } = await supabase.from("machine_slots").upsert(planogramRows, { onConflict: "machine_id,slot_code" });
     if (error) {
       console.error("[vms-import] Planogram upsert failed", error);
-      summary.errors.push("Planogram upsert failed.");
+      summary.errors.push(importStepError("Planogram save to machine_slots", error));
       summary.skippedRows += planogramRows.length;
       summary.importedRows -= planogramRows.length;
     }
@@ -2161,15 +2226,15 @@ async function runVmsImport({
     const { error } = await supabase.from("vms_product_mappings").upsert([...latestMappingRowsById.values()], { onConflict: "id" });
     if (error) {
       console.error("[vms-import] VMS product mapping metadata update failed", error);
-      summary.errors.push("VMS product mapping metadata update failed.");
+      summary.errors.push(importStepError("VMS product mapping metadata update", error));
     }
   }
 
   if (finalRawRows.length) {
     const finalRawRowsResult = await upsertRawRows(supabase, finalRawRows);
     if (!finalRawRowsResult.ok) {
-      errorRedirect(vmsSchemaIssueMessage(finalRawRowsResult.error, "vms_import_rows.upsert") ?? "Could not update VMS imported row audit. Technical details are in the server console.");
-      return;
+      console.error("[vms-import] Imported row audit upsert failed", finalRawRowsResult.error);
+      summary.errors.push(vmsSchemaIssueMessage(finalRawRowsResult.error, "vms_import_rows.upsert") ?? "Imported row audit save failed.");
     }
   }
 
@@ -2184,23 +2249,28 @@ async function runVmsImport({
       const { error } = await supabase.from("products").update(payload).eq("id", productId);
       if (error) {
         console.error("[vms-import] Product price update failed", { productId, error });
-        summary.errors.push("Product price update failed.");
+        summary.errors.push(importStepError("Product VMS price update", error));
       }
     }
   }
 
   summary.rowsNeedingReview = summary.needsProductMappingRows + summary.unknownMachineRows + summary.invalidRows;
-  const status = fatalImportError ? "failed" : "imported";
+  summary.updatedTargets = importUpdatedTargets(reportType, summary);
+  summary.failedTargets = importFailedTargets(summary);
+  const importResult = classifyImportResult(summary, fatalImportError);
+  const status = importResult.status;
+  summary.resultMessage = importResult.message;
   const snapshotTimeValues = machineStockSnapshotTimes.map((date) => date.getTime()).filter(Number.isFinite);
   const stockDetectedMinDatetime = snapshotTimeValues.length ? new Date(Math.min(...snapshotTimeValues)).toISOString() : null;
   const stockDetectedMaxDatetime = snapshotTimeValues.length ? new Date(Math.max(...snapshotTimeValues)).toISOString() : null;
   const stockFallbackTimestamp = isMachineStockReport(reportType) ? new Date().toISOString() : null;
   const batchUpdate = {
     status,
-    is_active: status === "imported" && summary.importedRows > 0,
+    is_active: importResult.active,
     source_usage: vmsSourceUsage(reportType),
     dashboard_usage: vmsSourceUsage(reportType),
-    latest_error: fatalImportError ? summary.errors.join("; ").slice(0, 2000) : null,
+    latest_error: summary.errors.length ? summary.errors.join("; ").slice(0, 2000) : null,
+    last_error: summary.errors.length ? summary.errors.join("; ").slice(0, 2000) : null,
     rows_found: summary.rowsFound,
     rows_skipped: summary.skippedRows,
     report_start_date: effectiveReportStartDate,
@@ -2245,6 +2315,9 @@ async function runVmsImport({
       fileType,
       sheetName,
       status,
+      message: summary.resultMessage,
+      updatedTargets: summary.updatedTargets,
+      failedTargets: summary.failedTargets,
       importedRows: summary.importedRows,
       rowsFound: summary.rowsFound,
       rowsSkippedDuplicate: summary.rowsSkippedDuplicate,
@@ -2265,43 +2338,40 @@ async function runVmsImport({
       .update(payload)
       .eq("id", batch.id),
   });
-  if (finalUpdateResult.timedOut) {
-    const timeoutError = { code: "TIMEOUT", message: "VMS import final batch update took too long." };
+  const finalUpdateProblem = finalUpdateResult.timedOut
+    ? { code: "TIMEOUT", message: "VMS import final batch update took too long." }
+    : finalUpdateResult.error ?? finalUpdateResult.value?.error ?? null;
+  if (finalUpdateProblem) {
     logVmsBatchMutationFailure({
       queryName: "vms_import_batches.update.final",
-      error: timeoutError,
+      error: finalUpdateProblem,
       payload: finalUpdateResult.payload,
       profile,
       selectedImportBatchId: batch.id,
       currentStep: "confirm_import",
     });
-    errorRedirect(batchMutationErrorMessage(timeoutError));
-    return;
-  }
-  if (finalUpdateResult.error) {
-    logVmsBatchMutationFailure({
-      queryName: "vms_import_batches.update.final",
-      error: finalUpdateResult.error,
-      payload: finalUpdateResult.payload,
-      profile,
-      selectedImportBatchId: batch.id,
-      currentStep: "confirm_import",
-    });
-    errorRedirect(batchMutationErrorMessage(finalUpdateResult.error));
-    return;
-  }
-  const finalUpdateValue = finalUpdateResult.value ?? null;
-  if (finalUpdateValue?.error) {
-    logVmsBatchMutationFailure({
-      queryName: "vms_import_batches.update.final",
-      error: finalUpdateValue.error,
-      payload: finalUpdateResult.payload,
-      profile,
-      selectedImportBatchId: batch.id,
-      currentStep: "confirm_import",
-    });
-    errorRedirect(batchMutationErrorMessage(finalUpdateValue.error));
-    return;
+    if (summary.importedRows <= 0) {
+      errorRedirect(batchMutationErrorMessage(finalUpdateProblem));
+      return;
+    }
+    const metadataWarning = `Stock or sales data imported, but final metadata could not update: ${batchMutationErrorMessage(finalUpdateProblem)}`;
+    summary.errors.push(metadataWarning);
+    summary.failedTargets = Array.from(new Set([...summary.failedTargets, "Import metadata"]));
+    summary.resultMessage = "Stock data imported. Some metadata could not update.";
+    await supabase
+      .from("vms_import_batches")
+      .update({
+        status: "imported_with_warnings",
+        is_active: true,
+        latest_error: metadataWarning.slice(0, 2000),
+        last_error: metadataWarning.slice(0, 2000),
+        rows_found: summary.rowsFound,
+        rows_imported: summary.importedRows,
+        rows_skipped_duplicate: summary.rowsSkippedDuplicate,
+        rows_needing_review: summary.rowsNeedingReview,
+        notes: JSON.stringify({ ...summary, status: "imported_with_warnings" }),
+      })
+      .eq("id", batch.id);
   }
 
   await saveHeaderMappingMemory({ supabase, profile, reportType, headerNames, mapping: columnMapping });
@@ -2329,7 +2399,7 @@ async function runVmsImport({
   revalidatePath("/products-dashboard");
   revalidatePath("/machines-dashboard");
   revalidatePath("/inventory-dashboard");
-  redirect(`/vms-import/${batch.id}?success=${encodeURIComponent(existingBatchId && recordReprocess ? "VMS import reprocessed successfully." : "VMS import confirmed successfully.")}`);
+  redirect(`/vms-import/${batch.id}?success=${encodeURIComponent(summary.resultMessage || (existingBatchId && recordReprocess ? "VMS import reprocessed successfully." : "VMS import confirmed successfully."))}`);
 }
 
 type VmsPreviewSheetPayload = { name: string; rows: string[][] };

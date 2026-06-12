@@ -3,18 +3,17 @@ import { FormSubmitButton } from "@/components/FormSubmitButton";
 import { LocalDraftForm } from "@/components/LocalDraft";
 import { ManualFinanceTransactionFields } from "@/components/ManualFinanceTransactionFields";
 import { FormField, FormPageLayout, FormSection, PageHeader, SecondaryButton } from "@/components/ui";
-import { getCurrentProfile } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canEditFinancialTransactions } from "@/lib/authz";
 import { DEFAULT_FINANCE_CATEGORIES, type FinanceCategoryOption } from "@/lib/finance-categories";
 import { createManualFinancialTransaction } from "@/lib/finance-actions";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export default async function NewFinanceTransactionPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const profile = await getCurrentProfile();
   if (!profile || !canEditFinancialTransactions({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) redirect("/unauthorized");
   const { error } = await searchParams;
   const today = new Date().toISOString().slice(0, 10);
-  const supabase = getSupabaseServerClient();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   const [{ data: purchases }, { data: machines }, { data: locations }, { data: routes }, categoriesResult] = supabase
     ? await Promise.all([
         supabase.from("purchase_orders").select("id, receipt_number, order_date, status").order("order_date", { ascending: false }).limit(200),

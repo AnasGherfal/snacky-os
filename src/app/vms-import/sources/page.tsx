@@ -55,6 +55,7 @@ type VmsSourceRow = {
   failed_rows_count?: number | null;
   refunded_rows_count?: number | null;
   latest_error?: string | null;
+  last_error?: string | null;
   last_reprocessed_at?: string | null;
   reprocess_count?: number | null;
 };
@@ -121,10 +122,14 @@ function reportLabel(reportType: string | null | undefined) {
   return vmsReportTypes.find((type) => type.value === reportType)?.label ?? reportType ?? "-";
 }
 
+function isUsableImportStatus(status: string | null | undefined) {
+  return ["imported", "imported_with_warnings", "partially_imported"].includes(String(status ?? ""));
+}
+
 function activeLabel(batch: VmsSourceRow) {
   if (batch.deleted_at) return "deleted";
   if (batch.status === "disabled" || batch.is_active === false) return "disabled";
-  if (batch.status === "imported" || batch.status === "imported_with_warnings") return "active";
+  if (isUsableImportStatus(batch.status)) return "active";
   return batch.status ?? "pending";
 }
 
@@ -134,7 +139,9 @@ function isStockReportType(reportType: string | null | undefined) {
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return "-";
-  return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(date);
 }
 
 function batchDateRange(batch: VmsSourceRow) {
@@ -147,9 +154,9 @@ function batchDateRange(batch: VmsSourceRow) {
 }
 
 function dashboardUsageForReport(reportType: string | null | undefined) {
-  if (reportType === "vms_order_details_weekly") return "Sales, products, machines, failed vends, refill signals";
-  if (reportType === "sales") return "Reconciliation only";
-  if (isStockReportType(reportType)) return "Inventory, refills, product mapping, machine mapping";
+  if (reportType === "vms_order_details_weekly") return "Sales dashboard, Product sales dashboard, Machine sales dashboard, Failed vend/refund report, Product velocity";
+  if (reportType === "sales") return "Reconciliation only, Period total check";
+  if (isStockReportType(reportType)) return "Recommended route refill items, Machine stock dashboard, Refill priority";
   return "Not used until mapped";
 }
 
@@ -165,10 +172,85 @@ function usageText(value: unknown, fallback: string) {
   return String(value);
 }
 
+function isNextNavigationSignal(error: unknown) {
+  const digest = error && typeof error === "object" ? String((error as { digest?: unknown }).digest ?? "") : "";
+  return digest.startsWith("NEXT_REDIRECT") || digest.startsWith("NEXT_NOT_FOUND") || digest === "DYNAMIC_SERVER_USAGE";
+}
+
 function sourceErrorMessage(error: unknown) {
   if (!error || typeof error !== "object") return String(error ?? "Unknown VMS source error");
   const row = error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown };
   return [row.code, row.message, row.details, row.hint].map((value) => String(value ?? "")).filter(Boolean).join(" - ");
+}
+
+const preferredSourceSelect = "id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, uploaded_by, uploaded_at, status, is_active, deleted_at, delete_reason, disabled_at, disable_reason, source_usage, dashboard_usage, storage_bucket, storage_path, original_file_name, detected_min_datetime, detected_max_datetime, total_successful_sales, successful_rows_count, failed_rows_count, refunded_rows_count, row_count, rows_found, rows_imported, rows_skipped, report_start_date, report_end_date, rows_skipped_duplicate, rows_needing_review, latest_error, last_error, last_reprocessed_at, reprocess_count";
+const legacySourceSelect = "id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, uploaded_by, uploaded_at, status, row_count, rows_found, rows_imported, rows_skipped, latest_error, notes";
+
+function isMissingSourceSchemaError(error: unknown) {
+  const row = error && typeof error === "object" ? error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown } : null;
+  const text = [row?.code, row?.message, row?.details, row?.hint].map((value) => String(value ?? "")).join(" ").toLowerCase();
+  return text.includes("schema cache") || text.includes("column") || text.includes("does not exist") || row?.code === "42703" || row?.code === "PGRST204" || row?.code === "42P01" || row?.code === "PGRST205";
+}
+
+function logVmsDataSourcesLoadIssue({
+  queryName,
+  selectedColumns,
+  error,
+}: {
+  queryName: string;
+  selectedColumns: string;
+  error: unknown;
+}) {
+  const row = error && typeof error === "object" ? error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown } : null;
+  console.error("[vms-data-sources] Failed to load VMS data sources", {
+    queryName,
+    selectedColumns,
+    code: row?.code ?? null,
+    message: row?.message ?? String(error instanceof Error ? error.message : error ?? "Unknown error"),
+    details: row?.details ?? null,
+    hint: row?.hint ?? null,
+  });
+}
+
+async function loadVmsDataSources({
+  supabase,
+  from,
+  to,
+}: {
+  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>;
+  from: number;
+  to: number;
+}) {
+  try {
+    const result = await supabase
+      .from("vms_import_batches")
+      .select(preferredSourceSelect, { count: "exact" })
+      .order("uploaded_at", { ascending: false, nullsFirst: false })
+      .range(from, to);
+
+    if (!result.error) return { batches: (result.data ?? []) as VmsSourceRow[], batchCount: result.count ?? result.data?.length ?? 0, error: "" };
+    logVmsDataSourcesLoadIssue({ queryName: "vms_import_batches.sources", selectedColumns: preferredSourceSelect, error: result.error });
+    if (!isMissingSourceSchemaError(result.error)) return { batches: [], batchCount: 0, error: sourceErrorMessage(result.error) };
+  } catch (error) {
+    logVmsDataSourcesLoadIssue({ queryName: "vms_import_batches.sources", selectedColumns: preferredSourceSelect, error });
+    return { batches: [], batchCount: 0, error: sourceErrorMessage(error) };
+  }
+
+  try {
+    const fallback = await supabase
+      .from("vms_import_batches")
+      .select(legacySourceSelect, { count: "exact" })
+      .order("uploaded_at", { ascending: false, nullsFirst: false })
+      .range(from, to);
+    if (fallback.error) {
+      logVmsDataSourcesLoadIssue({ queryName: "vms_import_batches.sources_legacy", selectedColumns: legacySourceSelect, error: fallback.error });
+      return { batches: [], batchCount: 0, error: sourceErrorMessage(fallback.error) };
+    }
+    return { batches: (fallback.data ?? []) as VmsSourceRow[], batchCount: fallback.count ?? fallback.data?.length ?? 0, error: "Some VMS metadata columns are missing. Showing available import history." };
+  } catch (error) {
+    logVmsDataSourcesLoadIssue({ queryName: "vms_import_batches.sources_legacy", selectedColumns: legacySourceSelect, error });
+    return { batches: [], batchCount: 0, error: sourceErrorMessage(error) };
+  }
 }
 
 function SourceActions({ batch, canManage }: { batch: VmsSourceRow; canManage: boolean }) {
@@ -182,7 +264,7 @@ function SourceActions({ batch, canManage }: { batch: VmsSourceRow; canManage: b
       {originalFileUrl ? <Link href={originalFileUrl} className="btn-secondary">Original File</Link> : null}
       {canManage ? (
         <>
-          {(batch.status === "imported" || batch.status === "imported_with_warnings") && batch.is_active !== false && !batch.deleted_at ? (
+          {isUsableImportStatus(batch.status) && batch.is_active !== false && !batch.deleted_at ? (
             <form action={updateVmsImportBatchState} className="flex gap-2">
               <input type="hidden" name="batch_id" value={batch.id} />
               <input type="hidden" name="action" value="disable" />
@@ -198,7 +280,7 @@ function SourceActions({ batch, canManage }: { batch: VmsSourceRow; canManage: b
           )}
           <form action={reprocessVmsImportBatch}>
             <input type="hidden" name="batch_id" value={batch.id} />
-            <FormSubmitButton className="btn-secondary" pendingLabel="Reprocessing...">Reprocess</FormSubmitButton>
+            <FormSubmitButton className="btn-secondary" pendingLabel="Reprocessing...">Reprocess / repair</FormSubmitButton>
           </form>
           {!batch.deleted_at ? (
             <details className="rounded-lg border border-slate-200 bg-white px-3 py-2">
@@ -217,7 +299,7 @@ function SourceActions({ batch, canManage }: { batch: VmsSourceRow; canManage: b
   );
 }
 
-export default async function VmsDataSourcesPage({ searchParams }: { searchParams: Promise<VmsSourceParams> }) {
+async function VmsDataSourcesPageContent({ searchParams }: { searchParams: Promise<VmsSourceParams> }) {
   const params = await searchParams;
   const profile = await getCurrentProfile();
   if (!profile || !canViewVmsImports(profile)) redirect("/unauthorized");
@@ -317,11 +399,11 @@ export default async function VmsDataSourcesPage({ searchParams }: { searchParam
             </div>
           </div>
 
-          <DataTable headers={["Status", "Active", "File", "Report type", "Date / snapshot", "Rows", "Dashboard usage", "Quality", "Uploaded", "Actions"]}>
+          <DataTable headers={["Active", "Status", "File", "Report type", "Date range / snapshot", "Rows", "Skipped dupes", "Needs review", "Used in dashboards/features", "Uploaded by", "Uploaded at", "Last error / warning", "Actions"]}>
             {batches.map((batch) => (
               <tr key={batch.id}>
-                <td><StatusBadge status={batch.status ?? "unknown"} /></td>
                 <td><StatusBadge status={activeLabel(batch)} /></td>
+                <td><StatusBadge status={batch.status ?? "unknown"} /></td>
                 <td className="max-w-xs">
                   <Link href={`/vms-import/${batch.id}`} className="link-secondary font-medium text-slate-900">{batch.original_file_name ?? batch.file_name ?? "-"}</Link>
                   <div className="mt-1 text-xs text-slate-500">{batch.sheet_name ?? "-"} {batch.file_type ? `- ${String(batch.file_type).toUpperCase()}` : ""}</div>
@@ -332,18 +414,17 @@ export default async function VmsDataSourcesPage({ searchParams }: { searchParam
                   <div>Found: {batch.rows_found ?? batch.row_count ?? 0}</div>
                   <div>Imported: {batch.rows_imported ?? 0}</div>
                 </td>
+                <td>{batch.rows_skipped_duplicate ?? 0}</td>
+                <td>{batch.rows_needing_review ?? 0}</td>
                 <td className="max-w-xs text-xs text-slate-600">{usageText(batch.dashboard_usage, dashboardUsageForReport(batch.report_type ?? batch.source_type))}</td>
-                <td className="text-sm">
-                  <div>Duplicates: {batch.rows_skipped_duplicate ?? 0}</div>
-                  <div>Review: {batch.rows_needing_review ?? 0}</div>
-                  <div>Failed: {batch.failed_rows_count ?? 0}</div>
-                  <div>Refunds: {batch.refunded_rows_count ?? 0}</div>
-                  {batch.latest_error ? <div className="mt-1 max-w-48 text-xs text-amber-700">{batch.latest_error}</div> : null}
-                </td>
+                <td className="text-xs text-slate-600">{batch.uploaded_by ?? batch.imported_by ?? "-"}</td>
                 <td className="text-sm">
                   <div>{formatDateTime(batch.uploaded_at ?? batch.imported_at)}</div>
                   {batch.last_reprocessed_at ? <div className="text-xs text-slate-500">Reprocessed {batch.reprocess_count ?? 0}x</div> : null}
-                  {batch.disable_reason || batch.delete_reason ? <div className="mt-1 max-w-48 text-xs text-amber-700">{batch.disable_reason || batch.delete_reason}</div> : null}
+                </td>
+                <td className="max-w-xs text-xs text-amber-700">
+                  {batch.latest_error || batch.last_error || batch.disable_reason || batch.delete_reason || "-"}
+                  <div className="mt-1 text-slate-500">Failed: {batch.failed_rows_count ?? 0} · Refunds: {batch.refunded_rows_count ?? 0}</div>
                 </td>
                 <td><SourceActions batch={batch} canManage={canManage} /></td>
               </tr>
@@ -354,4 +435,29 @@ export default async function VmsDataSourcesPage({ searchParams }: { searchParam
       )}
     </>
   );
+}
+
+export default async function VmsDataSourcesPage(props: { searchParams: Promise<VmsSourceParams> }) {
+  try {
+    return await VmsDataSourcesPageContent(props);
+  } catch (error) {
+    if (isNextNavigationSignal(error)) throw error;
+    logVmsDataSourcesLoadIssue({
+      queryName: "vms_data_sources.unexpected_server_component_error",
+      selectedColumns: preferredSourceSelect,
+      error,
+    });
+    return (
+      <>
+        <PageHeader
+          title="VMS Data Sources"
+          subtitle="Trace every VMS file feeding dashboards, refills, inventory snapshots, and reconciliation."
+          action={<Link href="/vms-import" className="btn-primary">Import VMS File</Link>}
+        />
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          Could not load VMS data sources. {sourceErrorMessage(error)}
+        </div>
+      </>
+    );
+  }
 }
