@@ -12,6 +12,10 @@ export type VmsDashboardBatch = {
   original_file_name?: string | null;
   detected_min_datetime?: string | null;
   detected_max_datetime?: string | null;
+  row_count?: number | null;
+  rows_found?: number | null;
+  rows_imported?: number | null;
+  error_count?: number | null;
 };
 
 function dateOnly(date: Date) {
@@ -57,6 +61,35 @@ export function vmsCoverageSummary(batches: VmsDashboardBatch[]) {
 
 export function sourceFileName(batch: VmsDashboardBatch | null | undefined) {
   return batch?.original_file_name || batch?.file_name || "unknown file";
+}
+
+export function formatVmsDateTime(value: string | null | undefined) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString("en-US");
+}
+
+export function batchImportedRows(batch: VmsDashboardBatch | null | undefined) {
+  const parsed = Number(batch?.rows_imported ?? batch?.rows_found ?? batch?.row_count ?? 0);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.floor(parsed));
+}
+
+export function batchLastUpdatedAt(batch: VmsDashboardBatch | null | undefined) {
+  return batch?.imported_at ?? batch?.uploaded_at ?? batch?.detected_max_datetime ?? batch?.detected_min_datetime ?? null;
+}
+
+export function batchDateRangeLabel(batch: VmsDashboardBatch | null | undefined) {
+  if (!batch) return "-";
+  if (batch.report_start_date && batch.report_end_date) return `${batch.report_start_date} to ${batch.report_end_date}`;
+  if (batch.detected_min_datetime && batch.detected_max_datetime) {
+    const start = formatVmsDateTime(batch.detected_min_datetime);
+    const end = formatVmsDateTime(batch.detected_max_datetime);
+    return start === end ? start : `${start} to ${end}`;
+  }
+  if (batch.detected_max_datetime || batch.detected_min_datetime) return formatVmsDateTime(batch.detected_max_datetime ?? batch.detected_min_datetime);
+  return formatVmsDateTime(batch.imported_at ?? batch.uploaded_at);
 }
 
 export function detailedSalesSourceMessage(batches: VmsDashboardBatch[], summaryFiles: VmsDashboardBatch[] = []) {

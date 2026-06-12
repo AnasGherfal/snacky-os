@@ -1,10 +1,11 @@
 import { BarList, KpiLoadWarning, KpiSection } from "@/components/KpiDashboard";
+import { VmsDataSourceCard } from "@/components/VmsDataSourceCard";
 import { DataTable, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
 import { requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
 import { formatDays, formatInteger, formatLydOrDash, formatPctOrDash, groupCount, observedDayCount, salesAmount, soldQty } from "@/lib/kpi";
 import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
-import { detailedSalesSourceMessage, vmsCoverageSummary, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
+import { type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export default async function ProductsDashboardPage() {
@@ -30,7 +31,7 @@ export default async function ProductsDashboardPage() {
         }),
         safeSupabaseQuery<VmsDashboardBatch>({
           label: "products-dashboard.vms_import_batches",
-          promise: supabase.from("vms_import_batches").select("id, file_name, original_file_name, report_type, status, is_active, report_start_date, report_end_date, uploaded_at, imported_at, deleted_at").eq("report_type", "vms_order_details_weekly").order("report_start_date", { ascending: true }),
+          promise: supabase.from("vms_import_batches").select("id, file_name, original_file_name, report_type, status, is_active, report_start_date, report_end_date, uploaded_at, imported_at, deleted_at, detected_min_datetime, detected_max_datetime, row_count, rows_found, rows_imported, error_count").in("report_type", ["vms_order_details_weekly", "sales", "stock", "machine_stock_snapshot", "planogram"]).order("report_start_date", { ascending: true }),
         }),
       ])
     : [{ data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }];
@@ -42,9 +43,6 @@ export default async function ProductsDashboardPage() {
     period_end: row.sale_date,
   }));
   const products = (productsResult.data ?? []) as any[];
-  const batchRows = (batchResult.data ?? []) as VmsDashboardBatch[];
-  const coverage = vmsCoverageSummary(batchRows);
-  const salesSourceMessage = detailedSalesSourceMessage(batchRows);
   const inventory = (inventoryResult.data ?? []) as any[];
   const stockouts = groupCount(((stockResult.data ?? []) as any[]).filter((row) => Number(row.current_qty ?? 0) <= 0 && row.product_id), (row) => String(row.product_id));
   const observedDays = observedDayCount(sales);
@@ -96,22 +94,14 @@ export default async function ProductsDashboardPage() {
         <EmptyState title="Connect Supabase to activate product KPIs" body="Add environment variables and restart the app." />
       ) : (
         <div className="space-y-6">
-          <KpiSection title="Data Source" subtitle="Product sales are calculated from detailed VMS transaction rows where transaction_status = successful_sale. General summary files are reconciliation only.">
-            <KpiLoadWarning message={batchResult.error} />
-            <div className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
-              <div><div className="font-semibold text-slate-900">Active batches</div><div>{coverage.active.length}</div></div>
-              <div><div className="font-semibold text-slate-900">Date range covered</div><div>{coverage.start && coverage.end ? `${coverage.start} to ${coverage.end}` : "-"}</div></div>
-              <div><div className="font-semibold text-slate-900">Last upload</div><div>{coverage.latest?.file_name ?? "-"}</div></div>
-              <div><div className="font-semibold text-slate-900">Missing periods</div><div>{coverage.gaps.length}</div></div>
-            </div>
-            {!coverage.active.length ? <p className="mt-3 text-sm font-medium text-slate-700">No VMS data imported yet</p> : null}
-            <p className="mt-3 text-sm font-medium text-slate-700">{salesSourceMessage}</p>
-            {coverage.gaps.length ? (
-              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">
-                Warning: selected period has missing VMS detailed data. Sales may be incomplete.
-              </div>
-            ) : null}
-          </KpiSection>
+          <VmsDataSourceCard
+            batches={batchResult.data as VmsDashboardBatch[]}
+            error={batchResult.error}
+            title="Data Source"
+            subtitle="Product sales use detailed VMS transaction rows. Stockout and refill pressure signals come from the latest active stock snapshots."
+            showSales
+            showStock
+          />
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <KpiSection title="Units sold"><div className="text-3xl font-semibold">{formatInteger(totalUnits)}</div></KpiSection>
             <KpiSection title="Revenue"><div className="text-3xl font-semibold">{lyd(totalRevenue)}</div></KpiSection>

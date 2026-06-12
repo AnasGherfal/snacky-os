@@ -24,6 +24,12 @@ const adminLinks = [
       "Audit ledger schema drift, transaction counts, and purchase/cash finance sync gaps.",
   },
   {
+    title: "System Health",
+    href: "/admin/system-health",
+    description:
+      "See failed imports, finance sync gaps, stuck routes, missing product costs, and unmapped VMS records in one place.",
+  },
+  {
     title: "Team",
     href: "/team",
     description: "Users, roles, operator accounts, and access status.",

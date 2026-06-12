@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { StatCard } from "@/components/StatCard";
+import { VmsDataSourceCard } from "@/components/VmsDataSourceCard";
 import { DataTable, EmptyState, PageHeader, SectionCard } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
 import { restockCounts, type RestockPriorityItem } from "@/lib/restock-priority";
 import { loadRestockPriorityData, type RestockPriorityLoadResult } from "@/lib/restock-priority-data";
-import { detailedSalesSourceMessage, stockSourceMessage, vmsCoverageSummary, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
+import { type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
 
 type SalesMonthlyRow = { machine_id: string | null; machine_name: string | null; sales_month: string | null; net_sales_amount: number | string | null; units_sold: number | string | null };
 type ProductMonthlyRow = { product_id: string | null; product_name: string | null; sales_month: string | null; net_sales_amount: number | string | null; units_sold: number | string | null };
@@ -95,7 +96,7 @@ async function safeDashboardQuery<T>({
 async function loadVmsBatches(supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>) {
   const withDeletedAt = await supabase
     .from("vms_import_batches")
-    .select("id, file_name, original_file_name, report_type, status, is_active, report_start_date, report_end_date, uploaded_at, imported_at, deleted_at, detected_min_datetime, detected_max_datetime")
+    .select("id, file_name, original_file_name, report_type, status, is_active, report_start_date, report_end_date, uploaded_at, imported_at, deleted_at, detected_min_datetime, detected_max_datetime, row_count, rows_found, rows_imported, error_count")
     .in("report_type", ["vms_order_details_weekly", "sales", "stock", "machine_stock_snapshot", "planogram"])
     .order("report_start_date", { ascending: true });
 
@@ -103,7 +104,7 @@ async function loadVmsBatches(supabase: NonNullable<Awaited<ReturnType<typeof ge
 
   return supabase
     .from("vms_import_batches")
-    .select("id, file_name, original_file_name, report_type, status, is_active, report_start_date, report_end_date, uploaded_at, imported_at")
+    .select("id, file_name, original_file_name, report_type, status, is_active, report_start_date, report_end_date, uploaded_at, imported_at, row_count, rows_found, rows_imported, error_count")
     .in("report_type", ["vms_order_details_weekly", "sales", "stock", "machine_stock_snapshot", "planogram"])
     .order("report_start_date", { ascending: true });
 }
@@ -188,9 +189,6 @@ export default async function DashboardPage() {
   const restockWarnings = Object.values(data?.restockWarnings ?? {}).filter(Boolean);
   const errors = data?.errors ?? {};
   const vmsBatchRows = (data?.vmsBatchRows ?? []) as VmsDashboardBatch[];
-  const coverage = vmsCoverageSummary(vmsBatchRows);
-  const salesSourceMessage = detailedSalesSourceMessage(vmsBatchRows, vmsBatchRows.filter((batch) => batch.report_type === "sales"));
-  const refillSourceMessage = stockSourceMessage(vmsBatchRows);
   const hasVmsData = Boolean((data?.vmsBatchRows ?? []).length || salesMonthlyRows.length || productMonthlyRows.length || transactionStatusRows.length || refillRows.length);
   const totalNetSales = salesMonthlyRows.reduce((sum, row) => sum + Number(row.net_sales_amount ?? 0), 0);
   const totalUnitsSold = salesMonthlyRows.reduce((sum, row) => sum + Number(row.units_sold ?? 0), 0);
@@ -216,20 +214,14 @@ export default async function DashboardPage() {
         <EmptyState title="Connect Supabase to activate dashboard" body="Add environment variables and restart the app." />
       ) : (
         <>
-          <div className="mb-5 rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-700">
-            <div className="font-semibold text-slate-900">Data Source</div>
-            <SectionLoadError message={errors.vmsBatches} />
-            {!hasVmsData ? (
-              <p className="mt-1 font-medium text-slate-700">No VMS data imported yet</p>
-            ) : (
-              <div className="mt-1 space-y-1"><p>{salesSourceMessage}</p><p>{refillSourceMessage}</p></div>
-            )}
-            {coverage.gaps.length ? (
-              <p className="mt-2 font-medium text-amber-800">
-                Warning: selected period has missing VMS detailed data. Sales may be incomplete.
-              </p>
-            ) : null}
-          </div>
+          <VmsDataSourceCard
+            batches={vmsBatchRows}
+            error={errors.vmsBatches}
+            title="Data Source"
+            subtitle="Dashboard KPIs combine detailed VMS sales files with the latest active stock snapshots and current storage balances."
+            showSales
+            showStock
+          />
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <StatCard label="Total machines" value={data.machines} />
             <StatCard label="Net sales" value={lyd(totalNetSales)} />

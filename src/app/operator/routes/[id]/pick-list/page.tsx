@@ -149,6 +149,20 @@ function newExtraRow(): ExtraPickItem {
   return { id: crypto.randomUUID(), targetStopId: "", productId: "", quantity: 0, reason: "Customer demand", notes: "" };
 }
 
+function groupStopsByLocation<T extends { locationName: string }>(groups: T[]) {
+  const grouped = new Map<string, T[]>();
+  groups.forEach((group) => {
+    const key = group.locationName || "Unknown location";
+    grouped.set(key, [...(grouped.get(key) ?? []), group]);
+  });
+  return Array.from(grouped.entries())
+    .map(([locationName, locationGroups]) => ({
+      locationName,
+      groups: locationGroups.sort((a: any, b: any) => Number(a.stopOrder ?? 0) - Number(b.stopOrder ?? 0) || String(a.machineName ?? "").localeCompare(String(b.machineName ?? ""))),
+    }))
+    .sort((a, b) => a.locationName.localeCompare(b.locationName));
+}
+
 function comparablePickDraft(draft: PickListDraft) {
   return JSON.stringify({
     selectedStopIds: [...(draft.selectedStopIds ?? [])].sort(),
@@ -234,6 +248,8 @@ export default function PickListPage() {
     () => stopGroups.filter((group) => group.routeStopId && selectedStopIds.includes(group.routeStopId)),
     [selectedStopIds, stopGroups],
   );
+  const stopGroupsByLocation = useMemo(() => groupStopsByLocation(stopGroups), [stopGroups]);
+  const selectedStopGroupsByLocation = useMemo(() => groupStopsByLocation(selectedStopGroups), [selectedStopGroups]);
   const allStopItems = useMemo(() => selectedStopGroups.flatMap((group) => group.items), [selectedStopGroups]);
   const productById = useMemo(() => new Map(productOptions.map((product) => [product.id, product])), [productOptions]);
   const stopById = useMemo(() => new Map(selectedStopGroups.filter((group) => group.routeStopId).map((group) => [group.routeStopId as string, group])), [selectedStopGroups]);
@@ -709,20 +725,27 @@ export default function PickListPage() {
               </div>
             </div>
             <div className="grid gap-2 md:grid-cols-2">
-              {stopGroups.map((group) => {
-                const stopId = group.routeStopId ?? "";
-                const checked = Boolean(stopId && selectedStopIds.includes(stopId));
-                const planned = group.items.reduce((sum, item) => sum + item.requestedQty, 0);
-                return (
-                  <label key={stopId || group.machineId || group.machineName} className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm ${checked ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}>
-                    <input type="checkbox" checked={checked} onChange={() => stopId && toggleStopSelection(stopId)} className="mt-1" />
-                    <span className="min-w-0">
-                      <span className="block font-semibold text-slate-900">Stop {group.stopOrder || "-"} - {group.machineName}</span>
-                      <span className="block break-words text-slate-500">{group.locationName} - {planned} units planned</span>
-                    </span>
-                  </label>
-                );
-              })}
+              {stopGroupsByLocation.map((locationGroup) => (
+                <div key={locationGroup.locationName} className="space-y-2">
+                  <div className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{locationGroup.locationName}</div>
+                  <div className="space-y-2">
+                    {locationGroup.groups.map((group) => {
+                      const stopId = group.routeStopId ?? "";
+                      const checked = Boolean(stopId && selectedStopIds.includes(stopId));
+                      const planned = group.items.reduce((sum, item) => sum + item.requestedQty, 0);
+                      return (
+                        <label key={stopId || group.machineId || group.machineName} className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm ${checked ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}>
+                          <input type="checkbox" checked={checked} onChange={() => stopId && toggleStopSelection(stopId)} className="mt-1" />
+                          <span className="min-w-0">
+                            <span className="block font-semibold text-slate-900">Stop {group.stopOrder || "-"} - {group.machineName}</span>
+                            <span className="block break-words text-slate-500">{planned} units planned</span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           </section>
         ) : null}
@@ -745,103 +768,108 @@ export default function PickListPage() {
               </div>
             </div>
             <div className="space-y-4 p-4">
-              {selectedStopGroups.map((group) => {
-                const sortedItems = sortPickupProductRows(group.items);
-                const groupCheckedCount = group.items.filter((item) => item.isChecked).length;
-                const groupKey = group.routeStopId ?? group.machineId ?? `${group.machineName}-${group.stopOrder}`;
-                return (
-                  <article key={groupKey} className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
-                    <div className="flex flex-col gap-2 border-b border-slate-200 bg-white p-4 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="min-w-0">
-                        <h3 className="break-words text-base font-semibold text-slate-900">{group.machineName}</h3>
-                        <p className="mt-1 break-words text-sm text-slate-500">
-                          {group.locationName} - Stop {group.stopOrder || "-"}
-                        </p>
-                      </div>
-                      <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-900">
-                        Picked {groupCheckedCount} of {group.items.length}
-                      </div>
-                    </div>
-                    <div className="divide-y divide-slate-200">
-                      {sortedItems.map((item) => {
-                        const maxQty = maxForProduct(item.productId, item.confirmedQty, item.availableStorageQty);
-                        const saving = savingCheckedIds.has(item.routeStopItemId);
-                        const priorityGroup = pickupProductPriorityGroup(item.productName);
-                        return (
-                          <div
-                            key={item.routeStopItemId}
-                            role="button"
-                            tabIndex={locked ? -1 : 0}
-                            onClick={() => togglePickupItemChecked(item)}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter" || event.key === " ") {
-                                event.preventDefault();
-                                togglePickupItemChecked(item);
-                              }
-                            }}
-                            className={`cursor-pointer space-y-4 p-4 transition ${item.isChecked ? "bg-emerald-50" : "bg-white hover:bg-slate-50"} ${saving ? "opacity-70" : ""}`}
-                          >
-                            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_190px] md:items-start">
-                              <div className="flex min-w-0 gap-3">
-                                <input
-                                  type="checkbox"
-                                  checked={item.isChecked}
-                                  onChange={() => togglePickupItemChecked(item)}
-                                  onClick={(event) => event.stopPropagation()}
-                                  disabled={locked || submitting}
-                                  aria-label={`Mark ${item.productName} picked`}
-                                  className="mt-1 h-11 w-11 shrink-0 cursor-pointer rounded-lg border-2 border-slate-300 accent-emerald-600 disabled:cursor-not-allowed"
-                                />
-                                <div className="min-w-0">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <p className={`break-words font-semibold ${item.isChecked ? "text-emerald-950" : "text-slate-900"}`}>{item.productName}</p>
-                                    {priorityGroup < 3 ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">Priority</span> : null}
-                                    {saving ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Saving</span> : null}
-                                  </div>
-                                  <p className="mt-1 break-words text-xs text-slate-500">
-                                    SKU: {item.sku ?? "No SKU"} - Recommended: {item.requestedQty} - Route storage: {item.availableStorageQty}
-                                  </p>
-                                  <p className="mt-1 text-xs text-slate-500">{item.source === "manual_admin_assignment" ? "Manual assignment" : "Refill recommendation"}</p>
-                                </div>
-                              </div>
-                              <label className="block" onClick={(event) => event.stopPropagation()}>
-                                <span className="mb-1 block text-sm font-medium text-slate-800">Pickup qty</span>
-                                <QuantityStepper
-                                  value={item.confirmedQty}
-                                  max={maxQty}
-                                  onChange={(quantity) => updateStopItem(item.routeStopItemId, { confirmedQty: quantity })}
-                                  disabled={locked}
-                                  inputLabel={`${item.machineName} ${item.productName} pickup quantity`}
-                                />
-                                <span className="mt-1 block text-xs text-slate-500">Available for this row: {maxQty}</span>
-                              </label>
-                            </div>
-
-                            {item.confirmedQty !== item.requestedQty ? (
-                              <div className="grid gap-3 md:grid-cols-2" onClick={(event) => event.stopPropagation()}>
-                                <label className="block">
-                                  <span className="mb-1 block text-sm font-medium text-slate-800">Reason</span>
-                                  <select value={item.reason} onChange={(event) => updateStopItem(item.routeStopItemId, { reason: event.target.value })} className="field-input" disabled={locked}>
-                                    <option>Product not available in storage</option>
-                                    <option>Product not in operator bag</option>
-                                    <option>Product expired/damaged</option>
-                                    <option>Customer demand</option>
-                                    <option>Other</option>
-                                  </select>
-                                </label>
-                                <label className="block">
-                                  <span className="mb-1 block text-sm font-medium text-slate-800">Notes</span>
-                                  <input value={item.notes} onChange={(event) => updateStopItem(item.routeStopItemId, { notes: event.target.value })} className="field-input" placeholder="Explain the pickup change" disabled={locked} />
-                                </label>
-                              </div>
-                            ) : null}
+              {selectedStopGroupsByLocation.map((locationGroup) => (
+                <section key={locationGroup.locationName} className="space-y-3">
+                  <div className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{locationGroup.locationName}</div>
+                  {locationGroup.groups.map((group) => {
+                    const sortedItems = sortPickupProductRows(group.items);
+                    const groupCheckedCount = group.items.filter((item) => item.isChecked).length;
+                    const groupKey = group.routeStopId ?? group.machineId ?? `${group.machineName}-${group.stopOrder}`;
+                    return (
+                      <article key={groupKey} className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+                        <div className="flex flex-col gap-2 border-b border-slate-200 bg-white p-4 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="min-w-0">
+                            <h3 className="break-words text-base font-semibold text-slate-900">{group.machineName}</h3>
+                            <p className="mt-1 break-words text-sm text-slate-500">
+                              Stop {group.stopOrder || "-"}
+                            </p>
                           </div>
-                        );
-                      })}
-                    </div>
-                  </article>
-                );
-              })}
+                          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-900">
+                            Picked {groupCheckedCount} of {group.items.length}
+                          </div>
+                        </div>
+                        <div className="divide-y divide-slate-200">
+                          {sortedItems.map((item) => {
+                            const maxQty = maxForProduct(item.productId, item.confirmedQty, item.availableStorageQty);
+                            const saving = savingCheckedIds.has(item.routeStopItemId);
+                            const priorityGroup = pickupProductPriorityGroup(item.productName);
+                            return (
+                              <div
+                                key={item.routeStopItemId}
+                                role="button"
+                                tabIndex={locked ? -1 : 0}
+                                onClick={() => togglePickupItemChecked(item)}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter" || event.key === " ") {
+                                    event.preventDefault();
+                                    togglePickupItemChecked(item);
+                                  }
+                                }}
+                                className={`cursor-pointer space-y-4 p-4 transition ${item.isChecked ? "bg-emerald-50" : "bg-white hover:bg-slate-50"} ${saving ? "opacity-70" : ""}`}
+                              >
+                                <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_190px] md:items-start">
+                                  <div className="flex min-w-0 gap-3">
+                                    <input
+                                      type="checkbox"
+                                      checked={item.isChecked}
+                                      onChange={() => togglePickupItemChecked(item)}
+                                      onClick={(event) => event.stopPropagation()}
+                                      disabled={locked || submitting}
+                                      aria-label={`Mark ${item.productName} picked`}
+                                      className="mt-1 h-11 w-11 shrink-0 cursor-pointer rounded-lg border-2 border-slate-300 accent-emerald-600 disabled:cursor-not-allowed"
+                                    />
+                                    <div className="min-w-0">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <p className={`break-words font-semibold ${item.isChecked ? "text-emerald-950" : "text-slate-900"}`}>{item.productName}</p>
+                                        {priorityGroup < 3 ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">Priority</span> : null}
+                                        {saving ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Saving</span> : null}
+                                      </div>
+                                      <p className="mt-1 break-words text-xs text-slate-500">
+                                        SKU: {item.sku ?? "No SKU"} - Recommended: {item.requestedQty} - Route storage: {item.availableStorageQty}
+                                      </p>
+                                      <p className="mt-1 text-xs text-slate-500">{item.source === "manual_admin_assignment" ? "Manual assignment" : "Refill recommendation"}</p>
+                                    </div>
+                                  </div>
+                                  <label className="block" onClick={(event) => event.stopPropagation()}>
+                                    <span className="mb-1 block text-sm font-medium text-slate-800">Pickup qty</span>
+                                    <QuantityStepper
+                                      value={item.confirmedQty}
+                                      max={maxQty}
+                                      onChange={(quantity) => updateStopItem(item.routeStopItemId, { confirmedQty: quantity })}
+                                      disabled={locked}
+                                      inputLabel={`${item.machineName} ${item.productName} pickup quantity`}
+                                    />
+                                    <span className="mt-1 block text-xs text-slate-500">Available for this row: {maxQty}</span>
+                                  </label>
+                                </div>
+
+                                {item.confirmedQty !== item.requestedQty ? (
+                                  <div className="grid gap-3 md:grid-cols-2" onClick={(event) => event.stopPropagation()}>
+                                    <label className="block">
+                                      <span className="mb-1 block text-sm font-medium text-slate-800">Reason</span>
+                                      <select value={item.reason} onChange={(event) => updateStopItem(item.routeStopItemId, { reason: event.target.value })} className="field-input" disabled={locked}>
+                                        <option>Product not available in storage</option>
+                                        <option>Product not in operator bag</option>
+                                        <option>Product expired/damaged</option>
+                                        <option>Customer demand</option>
+                                        <option>Other</option>
+                                      </select>
+                                    </label>
+                                    <label className="block">
+                                      <span className="mb-1 block text-sm font-medium text-slate-800">Notes</span>
+                                      <input value={item.notes} onChange={(event) => updateStopItem(item.routeStopItemId, { notes: event.target.value })} className="field-input" placeholder="Explain the pickup change" disabled={locked} />
+                                    </label>
+                                  </div>
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </section>
+              ))}
             </div>
           </section>
         )}

@@ -1,10 +1,11 @@
 import { BarList, KpiLoadWarning, KpiSection } from "@/components/KpiDashboard";
+import { VmsDataSourceCard } from "@/components/VmsDataSourceCard";
 import { DataTable, EmptyState, PageHeader } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
 import { formatInteger, groupSum } from "@/lib/kpi";
 import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
-import { vmsCoverageSummary, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
+import { type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
 
 export const dynamic = "force-dynamic";
 
@@ -61,7 +62,7 @@ async function SalesDashboardPageContent() {
         label: "sales.vms_import_batches",
         promise: supabase
           .from("vms_import_batches")
-          .select("id, file_name, report_type, status, is_active, report_start_date, report_end_date, uploaded_at, imported_at, deleted_at")
+          .select("id, file_name, original_file_name, report_type, status, is_active, report_start_date, report_end_date, uploaded_at, imported_at, deleted_at, detected_min_datetime, detected_max_datetime, row_count, rows_found, rows_imported, error_count")
           .eq("report_type", "vms_order_details_weekly")
           .order("report_start_date", { ascending: true }),
       }),
@@ -70,7 +71,6 @@ async function SalesDashboardPageContent() {
 
   const sales = salesResult.data as SalesRow[];
   const statuses = statusResult.data as TransactionStatusRow[];
-  const coverage = vmsCoverageSummary(batchResult.data as VmsDashboardBatch[]);
   const totalSales = sales.reduce((sum, row) => sum + Number(row.net_sales_amount ?? row.gross_sales_amount ?? 0), 0);
   const totalUnits = sales.reduce((sum, row) => sum + Number(row.units_sold ?? 0), 0);
   const totalTransactions = sales.reduce((sum, row) => sum + Number(row.transaction_count ?? 0), 0);
@@ -105,21 +105,13 @@ async function SalesDashboardPageContent() {
         <EmptyState title="Connect Supabase to activate sales analytics" body="Add environment variables and restart the app." />
       ) : (
         <div className="space-y-6">
-          <KpiSection title="Data Source" subtitle="Sales dashboard is using detailed VMS Order Details transactions where transaction_status = successful_sale. General summary files are reconciliation only.">
-            <KpiLoadWarning message={batchResult.error} />
-            <div className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
-              <div><div className="font-semibold text-slate-900">Active batches</div><div>{coverage.active.length}</div></div>
-              <div><div className="font-semibold text-slate-900">Date range covered</div><div>{coverage.start && coverage.end ? `${coverage.start} to ${coverage.end}` : "-"}</div></div>
-              <div><div className="font-semibold text-slate-900">Last upload</div><div>{coverage.latest?.file_name ?? "-"}</div></div>
-              <div><div className="font-semibold text-slate-900">Missing periods</div><div>{coverage.gaps.length}</div></div>
-            </div>
-            {!coverage.active.length ? <p className="mt-3 text-sm font-medium text-slate-700">No VMS data imported yet</p> : null}
-            {coverage.gaps.length ? (
-              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">
-                Warning: selected period has missing VMS detailed data. Sales may be incomplete: {coverage.gaps.map((gap) => `${gap.start} to ${gap.end}`).join(", ")}.
-              </div>
-            ) : null}
-          </KpiSection>
+          <VmsDataSourceCard
+            batches={batchResult.data as VmsDashboardBatch[]}
+            error={batchResult.error}
+            title="Data Source"
+            subtitle="Sales dashboard uses detailed VMS Order Details rows where transaction_status = successful_sale. Summary files remain reconciliation only."
+            showSales
+          />
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <KpiSection title="Total sales"><div className="text-3xl font-semibold text-slate-900">{lyd(totalSales)}</div></KpiSection>
             <KpiSection title="Units sold"><div className="text-3xl font-semibold text-slate-900">{formatInteger(totalUnits)}</div></KpiSection>

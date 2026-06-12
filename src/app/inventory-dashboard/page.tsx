@@ -1,15 +1,17 @@
 import { BarList, KpiLoadWarning, KpiSection } from "@/components/KpiDashboard";
+import { VmsDataSourceCard } from "@/components/VmsDataSourceCard";
 import { DataTable, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
 import { requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
 import { LOW_STORAGE_QTY, formatInteger } from "@/lib/kpi";
 import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
+import { type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export default async function InventoryDashboardPage() {
   await requireCurrentProfileForPath("/inventory-dashboard");
   const supabase = getSupabaseServerClient();
-  const [inventoryResult, productsResult, reservedResult, recommendationsResult] = supabase
+  const [inventoryResult, productsResult, reservedResult, recommendationsResult, batchResult] = supabase
     ? await Promise.all([
         safeSupabaseQuery<any>({
           label: "inventory-dashboard.current_inventory_by_location",
@@ -30,8 +32,12 @@ export default async function InventoryDashboardPage() {
           label: "inventory-dashboard.refill_recommendations",
           promise: supabase.from("refill_recommendations").select("product_id, product_name, final_qty_to_take, suggested_qty, available_storage_qty, priority"),
         }),
+        safeSupabaseQuery<VmsDashboardBatch>({
+          label: "inventory-dashboard.vms_import_batches",
+          promise: supabase.from("vms_import_batches").select("id, file_name, original_file_name, report_type, status, is_active, report_start_date, report_end_date, uploaded_at, imported_at, deleted_at, detected_min_datetime, detected_max_datetime, row_count, rows_found, rows_imported, error_count").in("report_type", ["stock", "machine_stock_snapshot", "planogram"]).order("uploaded_at", { ascending: false }),
+        }),
       ])
-    : [{ data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }];
+    : [{ data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }];
 
   const inventory = (inventoryResult.data ?? []) as any[];
   const products = (productsResult.data ?? []) as any[];
@@ -95,6 +101,14 @@ export default async function InventoryDashboardPage() {
         <EmptyState title="Connect Supabase to activate inventory KPIs" body="Add environment variables and restart the app." />
       ) : (
         <div className="space-y-6">
+          <VmsDataSourceCard
+            batches={batchResult.data as VmsDashboardBatch[]}
+            error={batchResult.error}
+            title="Data Source"
+            subtitle="Inventory purchase suggestions and refill pressure come from the latest active machine stock snapshots plus current storage balances."
+            showSales={false}
+            showStock
+          />
           <KpiLoadWarning message={inventoryResult.error} />
           <KpiLoadWarning message={productsResult.error} />
           <KpiLoadWarning message={reservedResult.error} />

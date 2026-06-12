@@ -17,6 +17,7 @@ type Machine = {
   id: string;
   name: string;
   machine_code: string;
+  location_name?: string | null;
 };
 
 type Recommendation = {
@@ -72,6 +73,7 @@ type RecommendationGroup = {
   machineId: string;
   machineName: string;
   machineCode: string;
+  locationName: string | null;
   productId: string;
   productName: string;
   recommendationKeys: string[];
@@ -136,6 +138,20 @@ function recommendationTarget(row: Recommendation) {
 
 function formatRecommendationQty(value: number | null | undefined) {
   return value === null || value === undefined ? "Capacity missing" : value;
+}
+
+function locationLabel(value: string | null | undefined) {
+  return String(value ?? "").trim() || "No location";
+}
+
+function recommendationReasonSummary(group: RecommendationGroup) {
+  const reasons: string[] = [];
+  if (group.currentTotal <= 0) reasons.push("Machine is empty");
+  if (group.currentTotal > 0 && group.currentTotal < group.targetTotal) reasons.push(`Current ${group.currentTotal} is below target ${group.targetTotal}`);
+  if (group.rows.some((row) => String(row.priority ?? "").toLowerCase() === "critical")) reasons.push("At least one slot is critical");
+  if (group.rows.some((row) => String(row.priority ?? "").toLowerCase() === "high")) reasons.push("At least one slot is below minimum");
+  if (group.slotsCount > 1) reasons.push(`Spread across ${group.slotsCount} slots`);
+  return reasons.length ? reasons.slice(0, 2).join(" - ") : `Refill up to ${group.targetTotal} units`;
 }
 
 function unitQuantity(value: unknown) {
@@ -287,6 +303,7 @@ export function RouteCreateForm({
   });
 
   const productsById = useMemo(() => new Map(products.map((product) => [product.id, product])), [products]);
+  const machinesById = useMemo(() => new Map(machines.map((machine) => [machine.id, machine])), [machines]);
 
   const recommendationGroups = useMemo(() => {
     const groups = new Map<string, RecommendationGroup>();
@@ -294,11 +311,13 @@ export function RouteCreateForm({
     recommendations.forEach((row) => {
       const groupKey = `${row.machine_id}:${row.product_id}`;
       const product = productsById.get(row.product_id);
+      const machine = machinesById.get(row.machine_id);
       const current = groups.get(groupKey) ?? {
         groupKey,
         machineId: row.machine_id,
         machineName: row.machine_name,
         machineCode: row.machine_code,
+        locationName: machine?.location_name ?? null,
         productId: row.product_id,
         productName: row.product_name,
         recommendationKeys: [],
@@ -332,11 +351,13 @@ export function RouteCreateForm({
       .sort((a, b) => {
         const priorityDifference = priorityScore(b.priority) - priorityScore(a.priority);
         if (priorityDifference) return priorityDifference;
+        const locationDifference = locationLabel(a.locationName).localeCompare(locationLabel(b.locationName));
+        if (locationDifference) return locationDifference;
         const machineDifference = a.machineName.localeCompare(b.machineName);
         if (machineDifference) return machineDifference;
         return a.productName.localeCompare(b.productName);
       });
-  }, [productsById, recommendations]);
+  }, [machinesById, productsById, recommendations]);
 
   const machineFilterOptions = useMemo(() => {
     const seen = new Set<string>();
@@ -346,7 +367,7 @@ export function RouteCreateForm({
         seen.add(group.machineId);
         return true;
       })
-      .map((group) => ({ id: group.machineId, label: `${group.machineName} (${group.machineCode})` }))
+      .map((group) => ({ id: group.machineId, label: `${group.machineName} (${group.machineCode}) - ${locationLabel(group.locationName)}` }))
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [recommendationGroups]);
 
@@ -763,7 +784,7 @@ export function RouteCreateForm({
                 >
                   <option value="">Choose machine</option>
                   {machines.map((machine) => (
-                    <option key={machine.id} value={machine.id}>{machine.name} ({machine.machine_code})</option>
+                    <option key={machine.id} value={machine.id}>{machine.name} ({machine.machine_code}) - {locationLabel(machine.location_name)}</option>
                   ))}
                 </select>
               </FormField>
@@ -978,6 +999,9 @@ export function RouteCreateForm({
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              <button type="button" className="btn-secondary text-xs" onClick={() => selectRecommendationGroups(filteredRecommendationGroups)} disabled={saving}>
+                Add all recommended
+              </button>
               <button type="button" className="btn-secondary text-xs" onClick={() => selectRecommendationGroups(recommendationGroups.filter((group) => group.priority === "critical"))} disabled={saving}>
                 Select all critical
               </button>
@@ -1035,7 +1059,9 @@ export function RouteCreateForm({
                       </td>
                     </tr>
                   ) : (
-                    pagedRecommendationGroups.map((group) => {
+                    pagedRecommendationGroups.map((group, index) => {
+                      const previousGroup = index > 0 ? pagedRecommendationGroups[index - 1] : null;
+                      const showLocationHeader = !previousGroup || locationLabel(previousGroup.locationName) !== locationLabel(group.locationName);
                       const selected = isRecommendationGroupSelected(group);
                       const expanded = expandedRecommendationGroups.includes(group.groupKey);
                       const selectable = recommendationGroupSelectable(group);
@@ -1052,6 +1078,13 @@ export function RouteCreateForm({
 
                       return (
                         <Fragment key={group.groupKey}>
+                          {showLocationHeader ? (
+                            <tr className="border-t border-slate-200 bg-slate-100/80">
+                              <td colSpan={11} className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                                {locationLabel(group.locationName)}
+                              </td>
+                            </tr>
+                          ) : null}
                           <tr className={`border-t border-slate-200 ${stockIssue ? "bg-rose-50" : ""}`}>
                             <td className="px-3 py-2">
                               <input
@@ -1066,8 +1099,13 @@ export function RouteCreateForm({
                             <td className="px-3 py-2 font-medium">
                               <div>{group.machineName}</div>
                               <div className="text-xs font-normal text-slate-500">{group.machineCode}</div>
+                              <div className="text-xs font-normal text-slate-500">{locationLabel(group.locationName)}</div>
                             </td>
-                            <td className="px-3 py-2">{group.productName}</td>
+                            <td className="px-3 py-2">
+                              <div className="font-medium text-slate-900">{group.productName}</div>
+                              <div className="mt-1 text-xs text-slate-500">{recommendationReasonSummary(group)}</div>
+                              <div className="mt-1 text-xs text-slate-600">Storage {storageAvailable} / Recommended {group.recommendedTotal}</div>
+                            </td>
                             <td className="px-3 py-2">{group.slotsCount}</td>
                             <td className="px-3 py-2">{group.currentTotal}</td>
                             <td className="px-3 py-2">{group.targetTotal}</td>
@@ -1190,6 +1228,7 @@ export function RouteCreateForm({
                 />
                 <span>
                   {machine.name} <span className="text-slate-500">({machine.machine_code})</span>
+                  <span className="block text-xs text-slate-500">{locationLabel(machine.location_name)}</span>
                 </span>
               </label>
             ))}

@@ -32,6 +32,13 @@ type ProductRow = {
   image_url: string | null;
 };
 
+type MachineRow = {
+  id: string;
+  name: string;
+  machine_code: string;
+  location?: { name?: string | null } | { name?: string | null }[] | null;
+};
+
 type RecommendationRow = {
   recommendation_key: string;
   machine_slot_id: string | null;
@@ -203,7 +210,7 @@ export default async function NewRoutePage() {
     { data: recentMovements, error: movementsError },
   ] = await Promise.all([
     supabase.from("team_members").select("id, full_name, role, roles").or("role.in.(owner,admin,supervisor,operator),roles.ov.{owner,admin,supervisor,operator}").eq("active", true).order("full_name"),
-    supabase.from("machines").select("id, name, machine_code").eq("status", "active").order("name"),
+    supabase.from("machines").select("id, name, machine_code, location:locations(name)").eq("status", "active").order("name"),
     loadRouteRecommendations(supabase),
     supabase
       .from("current_inventory_by_location")
@@ -348,6 +355,15 @@ export default async function NewRoutePage() {
     .map((row) => ({ ...row, quantity_on_hand: Math.max(0, unitQuantity(row.quantity_on_hand) - unitQuantity(reservedByProduct.get(row.product_id))) }))
     .filter((row) => row.quantity_on_hand > 0);
   const availableByProduct = new Map(availableStorage.map((row) => [row.product_id, row.quantity_on_hand]));
+  const machineCatalog = ((machines ?? []) as MachineRow[]).map((machine) => {
+    const location = Array.isArray(machine.location) ? machine.location[0] : machine.location;
+    return {
+      id: machine.id,
+      name: machine.name,
+      machine_code: machine.machine_code,
+      location_name: location?.name ?? null,
+    };
+  });
   const productCatalog = productRows
     .map((product) => ({
       id: product.id,
@@ -368,7 +384,7 @@ export default async function NewRoutePage() {
         <PageHeader title="Create route" subtitle="Build a route with stops, refill recommendations, or a fast manual pick list from storage." />
         <RouteCreateForm
           operators={operators ?? []}
-          machines={machines ?? []}
+          machines={machineCatalog}
           recommendations={activeRecommendations}
           storageInventory={availableStorage}
           products={productCatalog}

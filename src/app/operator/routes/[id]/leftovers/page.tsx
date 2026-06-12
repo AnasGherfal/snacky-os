@@ -27,6 +27,14 @@ type LeftoversDraft = {
   leftoverQtys: Record<string, number>;
 };
 
+function suggestedLeftoverQuantities(items: LeftoverItem[], reconciliation: ReconciliationItem[]) {
+  const remainingByProduct = new Map(reconciliation.map((item) => [item.productId, Math.max(0, Number(item.remainingQty ?? 0))]));
+  return items.reduce<Record<string, number>>((totals, item) => {
+    totals[item.productId] = remainingByProduct.get(item.productId) ?? 0;
+    return totals;
+  }, {});
+}
+
 export default function LeftoversPage() {
   const router = useRouter();
   const params = useParams<{ id?: string | string[] }>();
@@ -67,13 +75,11 @@ export default function LeftoversPage() {
         const response = await fetch(`/api/operator/routes/${routeId}/picked-items`);
         if (!response.ok) throw new Error("Failed to fetch picked items");
         const data = await response.json();
-        setItems(data.items || []);
-        setReconciliation(data.reconciliation || []);
-        // Initialize with all quantities (operator will reduce if needed)
-        const initialQtys: Record<string, number> = {};
-        data.items?.forEach((item: LeftoverItem) => {
-          initialQtys[item.productId] = item.quantity;
-        });
+        const nextItems = data.items || [];
+        const nextReconciliation = data.reconciliation || [];
+        setItems(nextItems);
+        setReconciliation(nextReconciliation);
+        const initialQtys = suggestedLeftoverQuantities(nextItems, nextReconciliation);
         setLeftoverQtys(initialQtys);
         initialLeftoversDraftRef.current = JSON.stringify(initialQtys);
       } catch (err) {
@@ -135,6 +141,11 @@ export default function LeftoversPage() {
   }
 
   const totalLeftovers = Object.values(leftoverQtys).reduce((a, b) => a + b, 0);
+  const applyCalculatedRemaining = () => setLeftoverQtys(suggestedLeftoverQuantities(items, reconciliation));
+  const clearLeftovers = () => setLeftoverQtys(items.reduce<Record<string, number>>((totals, item) => {
+    totals[item.productId] = 0;
+    return totals;
+  }, {}));
 
   return (
     <>
@@ -210,7 +221,15 @@ export default function LeftoversPage() {
         ) : (
           <>
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-              <strong>Instructions:</strong> Enter the quantity of each item you're returning to storage. Leave blank or 0 for items you used completely.
+              <strong>Instructions:</strong> Enter the quantity of each item you're returning to storage. If you already returned everything, set the leftovers to 0 and Snacky OS will only block completion if it still calculates bag stock.
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button type="button" onClick={applyCalculatedRemaining} className="btn-secondary">
+                  Use calculated remaining
+                </button>
+                <button type="button" onClick={clearLeftovers} className="btn-secondary">
+                  Set all to 0
+                </button>
+              </div>
             </div>
 
             <div className="space-y-3">
