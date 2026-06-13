@@ -176,6 +176,19 @@ function stockMappings() {
   };
 }
 
+function machineStockSnapshotMappings() {
+  return {
+    machine_identifier: "Machine code",
+    machine_name: "Machine name",
+    point_name: "Point name",
+    product_identifier: "Product Number",
+    product_name: "Product name",
+    current_qty: "Inventory quantity",
+    out_of_stock_qty: "Out of stock quantity",
+    capacity: "Inventory capacity",
+  };
+}
+
 function salesMappings() {
   return {
     machine_identifier: "machine_id",
@@ -218,6 +231,23 @@ function buildStockCsv(machineIds, productIds) {
     `${machineIds[3]},Mixed Location Machine 01,B2,${productIds.chipsSalt},Salted Chips,1,10,2026-05-09`,
     `${machineIds[4]},School Machine 01,A1,${productIds.water},Water 500ml,0,12,2026-05-09`,
     `${machineIds[4]},School Machine 01,B1,${productIds.chipsHot},Hot Chips,2,10,2026-05-09`,
+  ].join("\n");
+}
+
+function buildMachineStockSnapshotCsv(machineIds, productIds) {
+  return [
+    "Machine code,Machine name,Point name,Product Number,Product name,Inventory quantity,Inventory capacity,Out of stock quantity",
+    `${machineIds[0]},Hospital Machine 01,Hospital,${productIds.water},Water 500ml,2,12,0`,
+    `${machineIds[0]},Hospital Machine 01,Hospital,${productIds.water},Water 500ml,6,12,0`,
+    `${machineIds[0]},Hospital Machine 01,Hospital,${productIds.pepsi},Pepsi Can 330ml,1,10,0`,
+    `${machineIds[0]},Hospital Machine 01,Hospital,${productIds.biscuit},Biscuit Pack,0,10,10`,
+    `${machineIds[1]},Mall Machine 01,Mall,${productIds.water},Water 500ml,5,12,0`,
+    `${machineIds[1]},Mall Machine 01,Mall,${productIds.chipsHot},Hot Chips,0,10,10`,
+    `${machineIds[1]},Mall Machine 01,Mall,${productIds.snickers},Snickers,3,8,0`,
+    `${machineIds[2]},Mall Machine 02,Mall,${productIds.energy},Energy Drink,2,8,0`,
+    `${machineIds[3]},Mixed Location Machine 01,Mixed Location,${productIds.chipsSalt},Salted Chips,1,10,0`,
+    `${machineIds[4]},School Machine 01,School,${productIds.water},Water 500ml,0,12,12`,
+    `${machineIds[4]},School Machine 01,School,${productIds.chipsHot},Hot Chips,2,10,0`,
   ].join("\n");
 }
 
@@ -310,12 +340,13 @@ async function uploadPreview({ cookie, fileName, fileType, reportType, contents 
 async function assertImportBatch(service, batchId, expectations) {
   const { data: batch, error: batchError } = await service
     .from("vms_import_batches")
-    .select("id, report_type, status, rows_imported, rows_found, rows_skipped_duplicate, latest_error")
+    .select("id, report_type, status, is_active, rows_imported, rows_found, rows_skipped_duplicate, latest_error")
     .eq("id", batchId)
     .single();
   assert.ifError(batchError);
   assert.equal(batch.report_type, expectations.reportType);
   assert.match(batch.status, /imported/, `Expected imported status for ${batchId}, got ${batch.status}`);
+  assert.equal(batch.is_active, true, `Expected ${batchId} to be active after confirm import`);
   assert.ok(Number(batch.rows_imported ?? 0) >= expectations.minImportedRows, `Expected rows_imported >= ${expectations.minImportedRows} for ${batchId}`);
   assert.equal(batch.latest_error, null, `Expected no fatal batch error for ${batchId}`);
 
@@ -327,6 +358,33 @@ async function assertImportBatch(service, batchId, expectations) {
     assert.ifError(error);
     assert.ok(Number(count ?? 0) >= minCount, `Expected ${table} count >= ${minCount} for batch ${batchId}`);
   }
+}
+
+async function assertBatchInactive(service, batchId) {
+  const { data: batch, error } = await service
+    .from("vms_import_batches")
+    .select("id, is_active, status")
+    .eq("id", batchId)
+    .single();
+  assert.ifError(error);
+  assert.equal(batch.is_active, false, `Expected ${batchId} to be inactive after a newer stock snapshot was confirmed`);
+  assert.match(String(batch.status ?? ""), /imported/, `Expected ${batchId} to remain imported while inactive`);
+}
+
+async function assertRouteSourcesForBatch(service, batchId, minimums) {
+  const { count: latestCount, error: latestError } = await service
+    .from("latest_vms_stock_by_slot")
+    .select("id", { count: "exact", head: true })
+    .eq("import_batch_id", batchId);
+  assert.ifError(latestError);
+  assert.ok(Number(latestCount ?? 0) >= minimums.latestStockRows, `Expected latest_vms_stock_by_slot count >= ${minimums.latestStockRows} for batch ${batchId}`);
+
+  const { count: recommendationCount, error: recommendationError } = await service
+    .from("refill_recommendations")
+    .select("recommendation_key", { count: "exact", head: true })
+    .eq("import_batch_id", batchId);
+  assert.ifError(recommendationError);
+  assert.ok(Number(recommendationCount ?? 0) >= minimums.recommendationRows, `Expected refill_recommendations count >= ${minimums.recommendationRows} for batch ${batchId}`);
 }
 
 async function seedReferenceData(service, ownerTeamMemberId, id) {
@@ -524,6 +582,34 @@ test("local VMS import flows upload, preview, confirm, and render without crashi
       tableMinimums: [["vms_stock_snapshots", 10], ["vms_machine_stock_snapshots", 10]],
     });
     await fetchHtml(stockDetailPath, owner.cookie);
+
+    const machineSnapshotPreviewPath = await uploadPreview({
+      cookie: owner.cookie,
+      fileName: `machine-stock-${id}.csv`,
+      fileType: "text/csv",
+      reportType: "machine_stock_snapshot",
+      contents: buildMachineStockSnapshotCsv(seeded.machineKeys, seeded.productKeys),
+    });
+    const machineSnapshotPreviewState = parseImportState(machineSnapshotPreviewPath);
+    created.previewIds.push(machineSnapshotPreviewState.previewId);
+    created.batchIds.push(machineSnapshotPreviewState.importBatchId);
+    const machineSnapshotDetailPath = await confirmImport({
+      cookie: owner.cookie,
+      previewPath: machineSnapshotPreviewPath,
+      mapping: machineStockSnapshotMappings(),
+    });
+    assert.match(machineSnapshotDetailPath, /^\/vms-import\/[0-9a-f-]+\?success=/);
+    await assertImportBatch(service, machineSnapshotPreviewState.importBatchId, {
+      reportType: "machine_stock_snapshot",
+      minImportedRows: 10,
+      tableMinimums: [["vms_stock_snapshots", 10], ["vms_machine_stock_snapshots", 10]],
+    });
+    await assertBatchInactive(service, stockPreviewState.importBatchId);
+    await assertRouteSourcesForBatch(service, machineSnapshotPreviewState.importBatchId, {
+      latestStockRows: 10,
+      recommendationRows: 1,
+    });
+    await fetchHtml(machineSnapshotDetailPath, owner.cookie);
 
     const salesPreviewPath = await uploadPreview({
       cookie: owner.cookie,

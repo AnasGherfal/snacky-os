@@ -1342,6 +1342,7 @@ async function runVmsImport({
       report_type: reportType,
       file_hash: fileHash,
       storage_path: storagePath,
+      updated_at: new Date().toISOString(),
       rows_found: rows.length,
       rows_imported: 0,
       rows_skipped_duplicate: 0,
@@ -1373,43 +1374,31 @@ async function runVmsImport({
       run: (payload) => supabase
         .from("vms_import_batches")
         .update(payload)
-        .eq("id", existingBatchRecordId),
+        .eq("id", existingBatchRecordId)
+        .select("id, status, is_active, rows_imported, imported_at, updated_at")
+        .maybeSingle(),
     });
-    if (updateResult.timedOut) {
-      const timeoutError = { code: "TIMEOUT", message: "VMS import batch update took too long." };
+    const confirmStartProblem = updateResult.timedOut
+      ? { code: "TIMEOUT", message: "VMS import batch update took too long." }
+      : updateResult.error
+        ?? updateResult.value?.error
+        ?? (!batchMutationReturnedRow(updateResult.value)
+          ? missingBatchMutationRowError({
+              queryName: "vms_import_batches.update.confirm_existing",
+              currentStep: "confirm_import",
+              selectedImportBatchId: existingBatchRecordId,
+            })
+          : null);
+    if (confirmStartProblem) {
       logVmsBatchMutationFailure({
         queryName: "vms_import_batches.update.confirm_existing",
-        error: timeoutError,
+        error: confirmStartProblem,
         payload: updateResult.payload,
         profile,
         selectedImportBatchId: existingBatchRecordId,
         currentStep: "confirm_import",
       });
-      errorRedirect(batchMutationErrorMessage(timeoutError));
-      return;
-    }
-    if (updateResult.error) {
-      logVmsBatchMutationFailure({
-        queryName: "vms_import_batches.update.confirm_existing",
-        error: updateResult.error,
-        payload: updateResult.payload,
-        profile,
-        selectedImportBatchId: existingBatchRecordId,
-        currentStep: "confirm_import",
-      });
-      errorRedirect(batchMutationErrorMessage(updateResult.error));
-      return;
-    }
-    if (updateResult.value?.error) {
-      logVmsBatchMutationFailure({
-        queryName: "vms_import_batches.update.confirm_existing",
-        error: updateResult.value.error,
-        payload: updateResult.payload,
-        profile,
-        selectedImportBatchId: existingBatchRecordId,
-        currentStep: "confirm_import",
-      });
-      errorRedirect(batchMutationErrorMessage(updateResult.value.error));
+      errorRedirect(batchMutationErrorMessage(confirmStartProblem));
       return;
     }
 
@@ -1453,6 +1442,7 @@ async function runVmsImport({
       dashboard_usage: vmsSourceUsage(reportType),
       latest_error: null,
       last_error: null,
+      updated_at: new Date().toISOString(),
       rows_found: summary.rowsFound,
       file_hash: fileHash,
       storage_path: storagePath,
@@ -1474,43 +1464,34 @@ async function runVmsImport({
       currentStep: "preview_only",
       selectedImportBatchId: batch.id,
       payload: batchUpdate,
-      run: (payload) => supabase.from("vms_import_batches").update(payload).eq("id", batch.id),
+      run: (payload) => supabase
+        .from("vms_import_batches")
+        .update(payload)
+        .eq("id", batch.id)
+        .select("id, status, is_active, rows_imported, updated_at")
+        .maybeSingle(),
     });
-    if (previewUpdateResult.timedOut) {
-      const timeoutError = { code: "TIMEOUT", message: "VMS import preview batch update took too long." };
+    const previewUpdateProblem = previewUpdateResult.timedOut
+      ? { code: "TIMEOUT", message: "VMS import preview batch update took too long." }
+      : previewUpdateResult.error
+        ?? previewUpdateResult.value?.error
+        ?? (!batchMutationReturnedRow(previewUpdateResult.value)
+          ? missingBatchMutationRowError({
+              queryName: "vms_import_batches.update.preview_only",
+              currentStep: "preview_only",
+              selectedImportBatchId: batch.id,
+            })
+          : null);
+    if (previewUpdateProblem) {
       logVmsBatchMutationFailure({
         queryName: "vms_import_batches.update.preview_only",
-        error: timeoutError,
+        error: previewUpdateProblem,
         payload: previewUpdateResult.payload,
         profile,
         selectedImportBatchId: batch.id,
         currentStep: "preview_only",
       });
-      errorRedirect(batchMutationErrorMessage(timeoutError));
-      return;
-    }
-    if (previewUpdateResult.error) {
-      logVmsBatchMutationFailure({
-        queryName: "vms_import_batches.update.preview_only",
-        error: previewUpdateResult.error,
-        payload: previewUpdateResult.payload,
-        profile,
-        selectedImportBatchId: batch.id,
-        currentStep: "preview_only",
-      });
-      errorRedirect(batchMutationErrorMessage(previewUpdateResult.error));
-      return;
-    }
-    if (previewUpdateResult.value?.error) {
-      logVmsBatchMutationFailure({
-        queryName: "vms_import_batches.update.preview_only",
-        error: previewUpdateResult.value.error,
-        payload: previewUpdateResult.payload,
-        profile,
-        selectedImportBatchId: batch.id,
-        currentStep: "preview_only",
-      });
-      errorRedirect(batchMutationErrorMessage(previewUpdateResult.value.error));
+      errorRedirect(batchMutationErrorMessage(previewUpdateProblem));
       return;
     }
     await saveHeaderMappingMemory({ supabase, profile, reportType, headerNames, mapping: columnMapping });
@@ -2265,17 +2246,21 @@ async function runVmsImport({
   const stockDetectedMinDatetime = snapshotTimeValues.length ? new Date(Math.min(...snapshotTimeValues)).toISOString() : null;
   const stockDetectedMaxDatetime = snapshotTimeValues.length ? new Date(Math.max(...snapshotTimeValues)).toISOString() : null;
   const stockFallbackTimestamp = isMachineStockReport(reportType) ? new Date().toISOString() : null;
-  const batchUpdate = {
-    status,
-    is_active: importResult.active,
-    source_usage: vmsSourceUsage(reportType),
-    dashboard_usage: vmsSourceUsage(reportType),
-    latest_error: summary.errors.length ? summary.errors.join("; ").slice(0, 2000) : null,
-    last_error: summary.errors.length ? summary.errors.join("; ").slice(0, 2000) : null,
-    rows_found: summary.rowsFound,
-    rows_skipped: summary.skippedRows,
-    report_start_date: effectiveReportStartDate,
-    report_end_date: effectiveReportEndDate,
+    const batchUpdate = {
+      status,
+      is_active: importResult.active,
+      imported_by: profile.team_member_id ?? profile.id ?? null,
+      imported_at: new Date().toISOString(),
+      source_usage: vmsSourceUsage(reportType),
+      dashboard_usage: vmsSourceUsage(reportType),
+      latest_error: summary.errors.length ? summary.errors.join("; ").slice(0, 2000) : null,
+      last_error: summary.errors.length ? summary.errors.join("; ").slice(0, 2000) : null,
+      updated_at: new Date().toISOString(),
+      rows_found: summary.rowsFound,
+      row_count: summary.rowsFound,
+      rows_skipped: summary.skippedRows,
+      report_start_date: effectiveReportStartDate,
+      report_end_date: effectiveReportEndDate,
     file_hash: fileHash,
     storage_path: storagePath,
     detected_min_datetime: isMachineStockReport(reportType)
@@ -2337,11 +2322,21 @@ async function runVmsImport({
     run: (payload) => supabase
       .from("vms_import_batches")
       .update(payload)
-      .eq("id", batch.id),
+      .eq("id", batch.id)
+      .select("id, status, is_active, rows_imported, imported_at, updated_at")
+      .maybeSingle(),
   });
   const finalUpdateProblem = finalUpdateResult.timedOut
     ? { code: "TIMEOUT", message: "VMS import final batch update took too long." }
-    : finalUpdateResult.error ?? finalUpdateResult.value?.error ?? null;
+    : finalUpdateResult.error
+      ?? finalUpdateResult.value?.error
+      ?? (!batchMutationReturnedRow(finalUpdateResult.value)
+        ? missingBatchMutationRowError({
+            queryName: "vms_import_batches.update.final",
+            currentStep: "confirm_import",
+            selectedImportBatchId: batch.id,
+          })
+        : null);
   if (finalUpdateProblem) {
     logVmsBatchMutationFailure({
       queryName: "vms_import_batches.update.final",
@@ -2366,9 +2361,13 @@ async function runVmsImport({
       payload: {
         status: "imported_with_warnings",
         is_active: true,
+        imported_by: profile.team_member_id ?? profile.id ?? null,
+        imported_at: new Date().toISOString(),
         latest_error: metadataWarning.slice(0, 2000),
         last_error: metadataWarning.slice(0, 2000),
+        updated_at: new Date().toISOString(),
         rows_found: summary.rowsFound,
+        row_count: summary.rowsFound,
         rows_imported: summary.importedRows,
         rows_skipped_duplicate: summary.rowsSkippedDuplicate,
         rows_needing_review: summary.rowsNeedingReview,
@@ -2377,7 +2376,9 @@ async function runVmsImport({
       run: (payload) => supabase
         .from("vms_import_batches")
         .update(payload)
-        .eq("id", batch.id),
+        .eq("id", batch.id)
+        .select("id, status, is_active, rows_imported, imported_at, updated_at")
+        .maybeSingle(),
     });
     if (metadataFallbackUpdate.timedOut || metadataFallbackUpdate.error || metadataFallbackUpdate.value?.error) {
       logVmsBatchMutationFailure({
@@ -2390,6 +2391,13 @@ async function runVmsImport({
       });
     }
   }
+
+  await deactivateOlderActiveStockBatches({
+    supabase,
+    currentBatchId: batch.id,
+    reportType,
+    updatedAt: new Date().toISOString(),
+  });
 
   await saveHeaderMappingMemory({ supabase, profile, reportType, headerNames, mapping: columnMapping });
 
@@ -2566,6 +2574,28 @@ type VmsBatchMutationResult<T> = {
   payload: Record<string, unknown>;
   droppedOptionalColumns: string[];
 };
+
+function missingBatchMutationRowError({
+  queryName,
+  currentStep,
+  selectedImportBatchId,
+}: {
+  queryName: string;
+  currentStep: string;
+  selectedImportBatchId?: string | null;
+}) {
+  return {
+    code: "NO_ROWS",
+    message: "VMS import batch update did not affect any rows.",
+    details: `query=${queryName}; step=${currentStep}; batch_id=${selectedImportBatchId ?? "unknown"}`,
+  };
+}
+
+function batchMutationReturnedRow<T>(value: VmsBatchMutationResponse<T> | undefined) {
+  const data = value?.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return false;
+  return typeof (data as { id?: unknown }).id === "string" && String((data as { id?: unknown }).id ?? "").trim().length > 0;
+}
 
 function removeMissingOptionalBatchColumn(payload: Record<string, unknown>, error: unknown) {
   const column = missingColumnName(error);
@@ -3562,6 +3592,61 @@ async function refreshRefillRecommendationsAfterStockImport({
     reportType,
     result,
   });
+}
+
+async function deactivateOlderActiveStockBatches({
+  supabase,
+  currentBatchId,
+  reportType,
+  updatedAt,
+}: {
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  currentBatchId: string;
+  reportType: VmsReportType;
+  updatedAt: string;
+}) {
+  if (!isMachineStockReport(reportType)) return;
+
+  const { data: activeBatches, error: activeBatchError } = await supabase
+    .from("vms_import_batches")
+    .select("id")
+    .in("report_type", ["stock", "machine_stock_snapshot"])
+    .in("status", ["imported", "imported_with_warnings", "partially_imported"])
+    .eq("is_active", true)
+    .is("deleted_at", null)
+    .neq("id", currentBatchId);
+
+  if (activeBatchError) {
+    console.warn("[vms-import] Could not load older active stock batches to deactivate", {
+      currentBatchId,
+      reportType,
+      error: activeBatchError,
+    });
+    return;
+  }
+
+  const staleBatchIds = ((activeBatches ?? []) as Array<{ id?: string | null }>)
+    .map((batch) => String(batch.id ?? "").trim())
+    .filter(Boolean);
+
+  if (!staleBatchIds.length) return;
+
+  const { error: deactivateError } = await supabase
+    .from("vms_import_batches")
+    .update({
+      is_active: false,
+      updated_at: updatedAt,
+    })
+    .in("id", staleBatchIds);
+
+  if (deactivateError) {
+    console.warn("[vms-import] Could not deactivate older stock batches after confirming latest snapshot", {
+      currentBatchId,
+      reportType,
+      staleBatchIds,
+      error: deactivateError,
+    });
+  }
 }
 
 function revalidateVmsDataSourcePaths(batchId?: string) {
