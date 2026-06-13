@@ -174,6 +174,7 @@ export function RouteCreateForm({
   products,
   recentProductIds,
   allowAdminOverride,
+  recommendationDebugHref,
   defaultRouteDate,
 }: {
   operators: Operator[];
@@ -183,6 +184,7 @@ export function RouteCreateForm({
   products: ProductPickOption[];
   recentProductIds: string[];
   allowAdminOverride: boolean;
+  recommendationDebugHref?: string;
   defaultRouteDate: string;
 }) {
   const router = useRouter();
@@ -466,6 +468,37 @@ export function RouteCreateForm({
       { selectedProductsCount: 0, totalRecommendedQty: 0, totalFinalTakeQty: 0 },
     );
   }, [selectedRecommendationGroups, finalTakeForGroup]);
+
+  const filteredRecommendationSummary = useMemo(() => {
+    const summary = filteredRecommendationGroups.reduce(
+      (current, group) => {
+        current.locationNames.add(locationLabel(group.locationName));
+        current.machineIds.add(group.machineId);
+        if (group.recommendedTotal > 0) current.refillGroups += 1;
+        const shortage = Math.max(0, group.recommendedTotal - unitQuantity(group.storageAvailable));
+        if (shortage > 0) {
+          current.shortageGroups += 1;
+          current.shortageUnits += shortage;
+        }
+        return current;
+      },
+      {
+        locationNames: new Set<string>(),
+        machineIds: new Set<string>(),
+        refillGroups: 0,
+        shortageGroups: 0,
+        shortageUnits: 0,
+      },
+    );
+
+    return {
+      locationCount: summary.locationNames.size,
+      machineCount: summary.machineIds.size,
+      refillGroups: summary.refillGroups,
+      shortageGroups: summary.shortageGroups,
+      shortageUnits: summary.shortageUnits,
+    };
+  }, [filteredRecommendationGroups]);
 
   const selectedStopCount = useMemo(() => {
     const recommendedMachines = selectedRecommendationGroups.map((group) => group.machineId);
@@ -947,7 +980,17 @@ export function RouteCreateForm({
         <p className="text-sm text-slate-500">Grouped by machine and product from the latest mapped VMS machine goods stock. Source files are shown per slot so operators/admins can trace why an item is recommended.</p>
         {!recommendationGroups.length ? (
           <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
-            No active refill recommendations found. You can still build the route manually above.
+            <div>No active refill recommendations found. You can still build the route manually above.</div>
+            <div className="mt-2">
+              Route recommendations only load from the latest active imported stock batch. Previewed or inactive VMS batches do not feed this section.
+            </div>
+            {recommendationDebugHref ? (
+              <div className="mt-4">
+                <Link href={recommendationDebugHref} className="btn-secondary">
+                  Open route recommendation debug
+                </Link>
+              </div>
+            ) : null}
           </div>
         ) : (
           <div className="space-y-4">
@@ -1028,13 +1071,176 @@ export function RouteCreateForm({
               </label>
             </div>
 
+            <div className="grid gap-3 md:grid-cols-4">
+              <div className="rounded-xl border border-slate-200 bg-white p-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Locations in view</div>
+                <div className="mt-2 text-2xl font-semibold text-slate-900">{filteredRecommendationSummary.locationCount}</div>
+                <div className="mt-1 text-sm text-slate-500">{filteredRecommendationSummary.machineCount} machines match these filters</div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-white p-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Refill groups</div>
+                <div className="mt-2 text-2xl font-semibold text-slate-900">{filteredRecommendationSummary.refillGroups}</div>
+                <div className="mt-1 text-sm text-slate-500">Grouped by machine and location</div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-white p-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Storage short</div>
+                <div className="mt-2 text-2xl font-semibold text-slate-900">{filteredRecommendationSummary.shortageUnits}</div>
+                <div className="mt-1 text-sm text-slate-500">{filteredRecommendationSummary.shortageGroups} product groups need extra storage stock</div>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-white p-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Selected final take</div>
+                <div className="mt-2 text-2xl font-semibold text-slate-900">{selectedRecommendationSummary.totalFinalTakeQty}</div>
+                <div className="mt-1 text-sm text-slate-500">{selectedRecommendationSummary.selectedProductsCount} products currently selected</div>
+              </div>
+            </div>
+
             <div className="grid gap-3 rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 md:grid-cols-3">
               <div>Selected products: <span className="font-semibold text-slate-900">{selectedRecommendationSummary.selectedProductsCount}</span></div>
               <div>Total recommended: <span className="font-semibold text-slate-900">{selectedRecommendationSummary.totalRecommendedQty}</span></div>
               <div>Total final take: <span className="font-semibold text-slate-900">{selectedRecommendationSummary.totalFinalTakeQty}</span></div>
             </div>
 
-            <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
+            <div className="space-y-3 md:hidden">
+              {!filteredRecommendationGroups.length ? (
+                <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
+                  No grouped recommendation rows match the current filters.
+                </div>
+              ) : (
+                pagedRecommendationGroups.map((group, index) => {
+                  const previousGroup = index > 0 ? pagedRecommendationGroups[index - 1] : null;
+                  const showLocationHeader = !previousGroup || locationLabel(previousGroup.locationName) !== locationLabel(group.locationName);
+                  const selected = isRecommendationGroupSelected(group);
+                  const expanded = expandedRecommendationGroups.includes(group.groupKey);
+                  const selectable = recommendationGroupSelectable(group);
+                  const finalTake = finalTakeForGroup(group);
+                  const stockIssue = selected ? stockErrorByProduct.get(group.productId) : undefined;
+                  const storageAvailable = stockIssue?.available_qty ?? unitQuantity(group.storageAvailable);
+                  const finalExceedsStorage = finalTake > storageAvailable;
+                  const finalIsZero = selected && finalTake === 0;
+                  const finalHigherThanRecommended = selected && finalTake > group.recommendedTotal;
+                  const finalLowerThanRecommended = selected && finalTake > 0 && finalTake < group.recommendedTotal;
+                  const recommendationShortage = Math.max(0, group.recommendedTotal - storageAvailable);
+                  const noStorageAvailable = group.recommendedTotal > 0 && storageAvailable <= 0;
+
+                  return (
+                    <Fragment key={group.groupKey}>
+                      {showLocationHeader ? (
+                        <div className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          {locationLabel(group.locationName)}
+                        </div>
+                      ) : null}
+                      <article className={`rounded-2xl border p-4 shadow-sm ${stockIssue ? "border-rose-200 bg-rose-50/70" : selected ? "border-emerald-300 bg-emerald-50/60" : "border-slate-200 bg-white"}`}>
+                        <div className="flex items-start gap-3">
+                          <input
+                            type="checkbox"
+                            checked={selected}
+                            onChange={() => toggleRecommendationGroup(group)}
+                            className="mt-1 h-5 w-5 shrink-0"
+                            disabled={saving || !selectable}
+                            title={!selectable ? "No refill quantity is needed for this grouped recommendation." : undefined}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="break-words text-base font-semibold text-slate-900">{group.productName}</h3>
+                              <span className={`rounded-full px-2 py-1 text-xs font-semibold ${group.priority === "critical" ? "bg-rose-100 text-rose-800" : group.priority === "high" ? "bg-amber-100 text-amber-900" : "bg-slate-100 text-slate-700"}`}>
+                                {group.priority}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-sm font-medium text-slate-700">{group.machineName}</p>
+                            <p className="mt-1 text-xs text-slate-500">{group.machineCode} - {locationLabel(group.locationName)}</p>
+                            <p className="mt-2 text-sm text-slate-600">{recommendationReasonSummary(group)}</p>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Current</div>
+                            <div className="mt-1 text-lg font-semibold text-slate-900">{group.currentTotal}</div>
+                          </div>
+                          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Capacity</div>
+                            <div className="mt-1 text-lg font-semibold text-slate-900">{group.targetTotal}</div>
+                          </div>
+                          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Suggested</div>
+                            <div className="mt-1 text-lg font-semibold text-slate-900">{group.recommendedTotal}</div>
+                          </div>
+                          <div className={`rounded-xl border p-3 ${storageAvailable <= 0 ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-slate-50"}`}>
+                            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Storage</div>
+                            <div className="mt-1 text-lg font-semibold text-slate-900">{storageAvailable}</div>
+                          </div>
+                        </div>
+
+                        <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Slots</div>
+                          <div className="mt-1 text-sm text-slate-700">{group.slotsCount} slot{group.slotsCount === 1 ? "" : "s"} in this machine/location group</div>
+                          <div className="mt-1 text-sm text-slate-700">Storage available {storageAvailable} vs recommended {group.recommendedTotal}</div>
+                        </div>
+
+                        <div className="mt-4 space-y-3">
+                          <label className="block">
+                            <span className="mb-1 block text-sm font-medium text-slate-800">Final take</span>
+                            <input
+                              type="number"
+                              min={0}
+                              max={adminOverride ? undefined : storageAvailable}
+                              step={1}
+                              value={finalTake}
+                              onChange={(event) => setRecommendationFinalTake(group, Number(event.target.value) || 0)}
+                              className={`field-input w-full ${(finalExceedsStorage || stockIssue) && !adminOverride ? "border-rose-300 bg-rose-50" : ""}`}
+                              disabled={saving || !selected}
+                              aria-label={`Final take for ${group.productName} at ${group.machineName}`}
+                            />
+                          </label>
+                          <div className="flex flex-wrap gap-2">
+                            <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => setRecommendationFinalTake(group, group.recommendedTotal)} disabled={saving || !selected}>Use recommended</button>
+                            <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => setRecommendationFinalTake(group, Math.ceil(group.recommendedTotal / 2))} disabled={saving || !selected}>Take half</button>
+                            <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => setRecommendationFinalTake(group, storageAvailable)} disabled={saving || !selected}>Take max available</button>
+                            <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => setRecommendationFinalTake(group, 0)} disabled={saving || !selected}>Clear</button>
+                          </div>
+                          {finalIsZero ? <div className="text-xs font-medium text-amber-700">Final take is 0.</div> : null}
+                          {finalHigherThanRecommended ? <div className="text-xs font-medium text-amber-700">Final take is higher than recommended.</div> : null}
+                          {finalLowerThanRecommended ? <div className="text-xs text-slate-500">Taking less than recommended.</div> : null}
+                          {noStorageAvailable ? <div className="text-xs font-medium text-amber-700">No storage stock is available yet. The recommendation stays visible so you can replenish stock or override it.</div> : null}
+                          {!noStorageAvailable && recommendationShortage > 0 ? <div className="text-xs text-amber-700">Storage has {storageAvailable}; recommendation needs {group.recommendedTotal}. Short by {recommendationShortage}.</div> : null}
+                          {stockIssue ? <div className="text-xs font-medium text-rose-700">Selected {stockIssue.selected_qty}, available {stockIssue.available_qty}, shortage {stockIssue.shortage_qty}.</div> : null}
+                        </div>
+
+                        <div className="mt-4 flex items-center justify-between gap-3">
+                          <button
+                            type="button"
+                            className="link-secondary"
+                            onClick={() => setExpandedRecommendationGroups((current) => toggleValue(current, group.groupKey))}
+                          >
+                            {expanded ? "Hide slot details" : "Show slot details"}
+                          </button>
+                        </div>
+
+                        {expanded ? (
+                          <div className="mt-4 space-y-2">
+                            {group.rows.map((row) => (
+                              <div key={row.recommendation_key} className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div>
+                                    <div className="font-medium text-slate-900">{row.slot_code || "VMS item"}</div>
+                                    <div className="mt-1 text-xs text-slate-500">Current {row.current_qty} / Target {formatRecommendationQty(row.capacity ?? row.par_qty)} / Suggested {recommendationQuantity(row)}</div>
+                                  </div>
+                                  <div className="text-xs font-medium text-slate-600">{row.priority ?? "-"}</div>
+                                </div>
+                                <div className="mt-2 text-xs text-slate-500">{row.source_file_name ?? "Unknown VMS file"}</div>
+                                <div className="mt-1 text-xs text-slate-500">{row.source_uploaded_at ? new Date(row.source_uploaded_at).toLocaleString() : "-"}</div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                      </article>
+                    </Fragment>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="hidden overflow-x-auto rounded-xl border bg-white shadow-sm md:block">
               <table className="min-w-full text-left text-sm">
                 <thead className="bg-slate-50 text-slate-600">
                   <tr>

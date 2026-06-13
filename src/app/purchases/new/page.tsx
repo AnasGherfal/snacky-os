@@ -8,8 +8,8 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
-export default async function NewPurchasePage({ searchParams }: { searchParams: Promise<{ error?: string; module?: string }> }) {
-  const { error = "", module = "" } = await searchParams;
+export default async function NewPurchasePage({ searchParams }: { searchParams: Promise<{ error?: string; module?: string; source?: string }> }) {
+  const { error = "", module = "", source = "" } = await searchParams;
   const moduleQuery = module === "finance" ? "?module=finance" : "";
   const profile = await getCurrentProfile();
   if (!profile || !canManagePurchases(profile)) redirect("/unauthorized");
@@ -144,7 +144,13 @@ export default async function NewPurchasePage({ searchParams }: { searchParams: 
             Product or supplier lists could not fully load. You can keep the draft on screen, retry the page, or continue once the lists appear.
           </div>
         ) : null}
-        <NewPurchaseWithReceiptScan action={createPurchase} suppliers={suppliers ?? []} products={productOptions} canAddProducts={canAddProducts(profile)} />
+        <NewPurchaseWithReceiptScan
+          action={createPurchase}
+          suppliers={suppliers ?? []}
+          products={productOptions}
+          canAddProducts={canAddProducts(profile)}
+          prefillSource={source || null}
+        />
       </FormPageLayout>
     </>
   );

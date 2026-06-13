@@ -1,7 +1,10 @@
 import { PaginationControls } from "@/components/PaginationControls";
+import { VmsDataSourceCard } from "@/components/VmsDataSourceCard";
 import { DataTable, EmptyState, MobileCardList, MobileField, MobileRecordCard, PageHeader, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
+import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
+import { queryVmsDashboardBatches, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
 
 export const dynamic = "force-dynamic";
 
@@ -183,7 +186,7 @@ async function RefillsPageContent({ searchParams }: { searchParams: Promise<Sear
   const { page, pageSize, from, to } = getPagination(params);
   await requireCurrentProfileForPath("/refills");
   const supabase = await getAuthenticatedSupabaseServerClient();
-  const [recommendationsResult, stockCountResult, historyResult, historyCountResult, historyIssueCountResult] = supabase
+  const [recommendationsResult, stockCountResult, historyResult, historyCountResult, historyIssueCountResult, batchResult] = supabase
     ? await Promise.all([
         loadRefillRecommendations(supabase),
         supabase
@@ -202,8 +205,16 @@ async function RefillsPageContent({ searchParams }: { searchParams: Promise<Sear
           .from("machine_refill_history")
           .select("id", { count: "exact", head: true })
           .eq("issues_found", true),
+        safeSupabaseQuery<VmsDashboardBatch>({
+          label: "refills.vms_import_batches",
+          promise: queryVmsDashboardBatches(supabase, {
+            reportTypes: ["stock", "machine_stock_snapshot", "planogram"],
+            orderBy: "uploaded_at",
+            ascending: false,
+          }),
+        }),
       ])
-    : [{ data: null, error: null, count: 0 }, { count: 0, error: null }, { data: null, error: null }, { count: 0, error: null }, { count: 0, error: null }];
+    : [{ data: null, error: null, count: 0 }, { count: 0, error: null }, { data: null, error: null }, { count: 0, error: null }, { count: 0, error: null }, { data: [], error: null, count: 0 }];
   const { data: recommendations, error } = recommendationsResult;
   const rawRecommendationRows = (recommendations ?? []) as RefillRecommendationRow[];
   const recommendationRows = supabase ? await attachRecommendationSources(supabase, rawRecommendationRows) : rawRecommendationRows;
@@ -223,6 +234,14 @@ async function RefillsPageContent({ searchParams }: { searchParams: Promise<Sear
         <EmptyState title="Connect Supabase to activate refills" body="Add environment variables and restart the app." />
       ) : (
         <div className="space-y-6">
+          <VmsDataSourceCard
+            batches={(batchResult.data ?? []) as VmsDashboardBatch[]}
+            error={batchResult.error}
+            title="Data Source"
+            subtitle="Refill recommendations read the latest active machine stock snapshot and planogram-style stock files. Imported rows stay visible even when storage is low."
+            showSales={false}
+            showStock
+          />
           <section>
             <div className="mb-3 flex flex-col gap-1">
               <h2 className="text-lg font-semibold text-slate-900">Recommended products</h2>

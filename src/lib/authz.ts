@@ -232,6 +232,14 @@ export function canEditFinancialTransactions(user: AuthUserContext | null | unde
   return hasPermission(user, "finance.edit");
 }
 
+export function canManagePayroll(input: RoleInput) {
+  return hasAnyRole(input, ["owner", "admin", "supervisor", "finance"]);
+}
+
+export function canApprovePayroll(input: RoleInput) {
+  return hasAnyRole(input, ["owner", "admin"]);
+}
+
 export function canManageStorageLocations(input: RoleInput) {
   return hasPermission(input, "storage.location.manage");
 }
@@ -338,6 +346,7 @@ export function canAccessPath(user: AuthUserContext | null | undefined, pathname
     return hasPermission(user, "finance.edit");
   }
   if (matchesPrefix(pathname, ["/finance", "/cash-collections"])) return hasPermission(user, "finance.view");
+  if (matchesPrefix(pathname, ["/payroll"])) return canManagePayroll(user);
 
   if (matchesPrefix(pathname, ["/team"])) return hasPermission(user, "team.manage");
   if (matchesPrefix(pathname, ["/activity"])) return hasPermission(user, "activity.view");

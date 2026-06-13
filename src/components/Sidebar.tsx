@@ -100,7 +100,7 @@ const financeItem: NavItem = {
   labelKey: "finance",
   href: "/finance",
   icon: Banknote,
-  activePrefixes: ["/finance", "/cash-collections"],
+  activePrefixes: ["/finance", "/cash-collections", "/payroll"],
 };
 const reportsItem: NavItem = {
   labelKey: "reports",

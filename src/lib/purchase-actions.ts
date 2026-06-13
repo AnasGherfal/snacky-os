@@ -769,28 +769,24 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
       summary: `Created purchase with ${lineRows.length} line items`,
     });
 
-    let financeWarning = "";
-    let financeNeedsRepair = false;
-    if (paymentStatus === "paid") {
-      const financeResult = await syncPurchaseFinanceSafely({
-        supabase,
-        profile,
-        purchase: {
-          ...purchase,
-          supplier_id: supplierId,
-          order_date: purchaseDateForLog,
-          received_date: new Date().toISOString().slice(0, 10),
-          receipt_url: receiptUrl,
-          payment_method: String(fd.get("payment_method") || "cash"),
-          payment_status: paymentStatus,
-          payment_account_id: paymentAccountId,
-        },
-        amount: Number(purchase.total_amount ?? totals.total_amount ?? 0),
-        warningText: " Finance transaction was not created; review finance manually.",
-      });
-      financeWarning = financeResult.warning;
-      financeNeedsRepair = !financeResult.ok;
-    }
+    const financeResult = await syncPurchaseFinanceSafely({
+      supabase,
+      profile,
+      purchase: {
+        ...purchase,
+        supplier_id: supplierId,
+        order_date: purchaseDateForLog,
+        received_date: new Date().toISOString().slice(0, 10),
+        receipt_url: receiptUrl,
+        payment_method: String(fd.get("payment_method") || "cash"),
+        payment_status: paymentStatus,
+        payment_account_id: paymentAccountId,
+      },
+      amount: Number(purchase.total_amount ?? totals.total_amount ?? 0),
+      warningText: " Finance transaction was not created; review finance manually.",
+    });
+    const financeWarning = financeResult.warning;
+    const financeNeedsRepair = !financeResult.ok;
 
     revalidatePath("/purchases");
     revalidatePath("/inventory");
@@ -922,7 +918,7 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
     let financeWarning = "";
     let financeNeedsRepair = false;
     let financeManualReview = false;
-    if (paymentStatus === "paid" && submitAction !== "received") {
+    if (submitAction !== "received") {
       const financeResult = await syncPurchaseFinanceSafely({
         supabase,
         profile,
@@ -977,16 +973,13 @@ async function receivePurchaseById(id: string): Promise<PurchaseReceiveResult> {
   const purchaseTotal = Number(purchase.manual_total_lyd ?? purchase.total_amount ?? purchase.calculated_total_lyd ?? 0);
   const receivedDate = new Date().toISOString().slice(0, 10);
   if (purchase.status === "received") {
-    let financeWarning = false;
-    if (purchase.payment_status === "paid") {
-      financeWarning = await syncPurchaseFinanceBestEffort({
-        supabase,
-        profile,
-        purchase: { ...purchase, received_date: receivedDate },
-        purchaseTotal,
-        context: "receive_purchase.already_received",
-      });
-    }
+    const financeWarning = await syncPurchaseFinanceBestEffort({
+      supabase,
+      profile,
+      purchase: { ...purchase, received_date: receivedDate },
+      purchaseTotal,
+      context: "receive_purchase.already_received",
+    });
     return { financeWarning };
   }
   if (purchase.status === "cancelled" || purchase.status === "voided") throw new Error("Cancelled or voided purchases cannot be received.");
@@ -1068,16 +1061,13 @@ async function receivePurchaseById(id: string): Promise<PurchaseReceiveResult> {
     .neq("status", "received");
   if (updateError) throw updateError;
 
-  let financeWarning = false;
-  if (purchase.payment_status === "paid") {
-    financeWarning = await syncPurchaseFinanceBestEffort({
-      supabase,
-      profile,
-      purchase: { ...purchase, received_date: receivedDate },
-      purchaseTotal,
-      context: "receive_purchase",
-    });
-  }
+  const financeWarning = await syncPurchaseFinanceBestEffort({
+    supabase,
+    profile,
+    purchase: { ...purchase, received_date: receivedDate },
+    purchaseTotal,
+    context: "receive_purchase",
+  });
 
   await logActivity({
     profile,
@@ -1256,16 +1246,38 @@ export async function deleteDraftPurchase(fd: FormData) {
   if (purchaseError || !purchase) fail("/purchases", "Purchase not found.");
   if (purchase.status !== "draft") fail(path, "Only draft purchases can be hard-deleted.");
 
-  const [{ count: movementCount, error: movementError }, { count: financeCount, error: financeError }] = await Promise.all([
+  const [{ count: movementCount, error: movementError }, { data: financeRows, error: financeError }] = await Promise.all([
     supabase.from("inventory_movements").select("id", { count: "exact", head: true }).eq("related_purchase_id", id),
-    supabase.from("financial_transactions").select("id", { count: "exact", head: true }).eq("transaction_kind", "product_purchase").or(purchaseFinanceLinkFilter(id)),
+    supabase.from("financial_transactions").select("*").eq("transaction_kind", "product_purchase").or(purchaseFinanceLinkFilter(id)),
   ]);
   if (movementError || financeError) {
     console.error("[purchases] Failed to verify draft delete safety", movementError ?? financeError);
     fail(path, "Could not verify purchase history.");
   }
-  if (Number(movementCount ?? 0) > 0 || Number(financeCount ?? 0) > 0) {
-    fail(path, "This purchase already has inventory or finance history. Void or cancel it instead.");
+  if (Number(movementCount ?? 0) > 0) {
+    fail(path, "This purchase already has inventory history. Void or cancel it instead.");
+  }
+
+  if ((financeRows ?? []).length) {
+    const financeIds = (financeRows ?? []).map((row: any) => row.id);
+    const { error: financeDeleteError } = await supabase.from("financial_transactions").delete().in("id", financeIds);
+    if (financeDeleteError) {
+      console.error("[purchases] Failed to remove draft purchase finance transactions", financeDeleteError);
+      fail(path, "Could not remove linked finance transactions for this draft purchase.");
+    }
+
+    for (const financeRow of financeRows ?? []) {
+      await logActivity({
+        profile,
+        action: "delete",
+        entityType: "financial_transaction",
+        entityId: financeRow.id,
+        entityLabel: "Draft purchase financial transaction",
+        beforeData: financeRow,
+        metadata: { reason, linked_purchase_id: id },
+        summary: "Deleted financial transaction linked to a hard-deleted draft purchase",
+      });
+    }
   }
 
   const { data: lines } = await supabase.from("purchase_order_lines").select("*").eq("purchase_order_id", id);
@@ -1288,7 +1300,7 @@ export async function deleteDraftPurchase(fd: FormData) {
     entityId: id,
     entityLabel: purchase.receipt_number ?? id.slice(0, 8),
     beforeData: { purchase, lines },
-    metadata: { reason },
+    metadata: { reason, deleted_finance_transaction_count: (financeRows ?? []).length },
     summary: "Hard-deleted draft purchase",
   });
 

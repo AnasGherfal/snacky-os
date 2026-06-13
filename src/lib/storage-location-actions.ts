@@ -11,6 +11,13 @@ function clean(value: FormDataEntryValue | null) {
   return String(value ?? "").trim();
 }
 
+function optionalNumber(value: FormDataEntryValue | null) {
+  const text = clean(value);
+  if (!text) return null;
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function fail(path: string, message: string): never {
   redirect(`${path}?error=${encodeURIComponent(message)}`);
 }
@@ -40,6 +47,8 @@ function buildPayload(formData: FormData) {
   const address = clean(formData.get("address")) || null;
   const locationType = normalizeStorageLocationType(formData.get("location_type"));
   const relatedOperatorId = clean(formData.get("related_operator_id")) || null;
+  const latitude = optionalNumber(formData.get("latitude"));
+  const longitude = optionalNumber(formData.get("longitude"));
   const active = clean(formData.get("active") || "true") !== "false";
 
   if (!name) throw new Error("Location name is required.");
@@ -52,6 +61,8 @@ function buildPayload(formData: FormData) {
     address,
     location_type: locationType,
     related_operator_id: locationType === "operator_bag" ? relatedOperatorId : null,
+    latitude,
+    longitude,
     active,
     updated_at: new Date().toISOString(),
   };
@@ -61,7 +72,7 @@ async function getStorageLocation(id: string): Promise<StorageLocationRow | null
   const supabase = await requireStorageLocationAccess(`/storage-locations/${id}`);
   const { data, error } = await supabase
     .from("storage_locations")
-    .select("id, name, address, active, location_type, related_operator_id, created_at, updated_at")
+    .select("id, name, address, active, location_type, related_operator_id, latitude, longitude, created_at, updated_at")
     .eq("id", id)
     .maybeSingle();
 

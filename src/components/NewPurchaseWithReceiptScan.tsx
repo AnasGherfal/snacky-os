@@ -55,11 +55,13 @@ export function NewPurchaseWithReceiptScan({
   suppliers,
   products,
   canAddProducts = false,
+  prefillSource,
 }: {
   action: (formData: FormData) => Promise<PurchaseSubmitResult>;
   suppliers: SupplierOption[];
   products: ProductOption[];
   canAddProducts?: boolean;
+  prefillSource?: string | null;
 }) {
   const [pendingScan, setPendingScan] = useState<ReceiptScanDraft | null>(null);
   const [appliedScan, setAppliedScan] = useState<ReceiptScanDraft | null>(null);
@@ -106,6 +108,7 @@ export function NewPurchaseWithReceiptScan({
         receiptScan={appliedScan}
         appliedScanKey={appliedScanKey}
         canAddProducts={canAddProducts}
+        prefillSource={prefillSource}
       />
 
       <FormSection title="Scan receipt with AI" description="Optional helper. It previews extracted fields first, then you choose whether to apply them to the manual form.">

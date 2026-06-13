@@ -4,6 +4,7 @@ import { RouteCompletionImages, type RouteCompletionStop } from "@/components/Ro
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canExecuteRoutes, isAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
+import { moneyLabel } from "@/lib/payroll";
 import { privateStorageObjectUrl, REFILL_PHOTO_BUCKET } from "@/lib/storage-buckets";
 import { ROUTE_CANCELED_STATUS, isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isPickupConfirmedStatus, isRouteStopDoneStatus, isTerminalRouteStatus, nextOperatorRouteHref, routeDisplayStatus } from "@/lib/route-workflow";
 import { RouteCreatedToast } from "@/app/routes/[id]/RouteCreatedToast";
@@ -174,7 +175,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     ...(fillLines ?? []).flatMap((line: any) => [line.assigned_product_id, line.product_id, line.substitute_product_id]),
     ...routePickListItems.flatMap((line: any) => [line.product_id, line.substituted_for_product_id]),
   ].filter(Boolean)));
-  const [{ data: machines }, { data: products }, { data: movements }, { data: cashCollections }, { data: issues }] = await Promise.all([
+  const [{ data: machines }, { data: products }, { data: movements }, { data: cashCollections }, { data: issues }, { data: routePayBreakdown, error: routePayError }] = await Promise.all([
     machineIds.length ? supabase.from("machines").select("id, name, machine_code").in("id", machineIds) : Promise.resolve({ data: [] }),
     productIds.length ? supabase.from("products").select("id, name").in("id", productIds) : Promise.resolve({ data: [] }),
     supabase
@@ -194,7 +195,9 @@ export default async function RouteDetailPage({ params, searchParams }: { params
           .in("machine_id", machineIds)
           .order("created_at", { ascending: false })
       : Promise.resolve({ data: [] }),
+    supabase.from("route_pay_breakdowns").select("id, total_pay_lyd, payroll_period_id, recalculated_at").eq("route_id", id).maybeSingle(),
   ]);
+  if (routePayError) console.error("[routes:detail] Failed to load route pay breakdown", { id, error: routePayError });
   const machineById = new Map((machines ?? []).map((machine: any) => [machine.id, machine]));
   const stopIds = routeStops.map((stop: any) => stop.id).filter(Boolean);
   let completionProofRows: any[] = [];
@@ -316,7 +319,15 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     { label: "Cash recorded", done: Boolean(cashCollections?.length), detail: `${cashCollections?.length ?? 0} cash records` },
     { label: "Leftovers returned", done: hasReturnMovements || isCompletedRouteStatus(routeRow.status), detail: hasReturnMovements ? "Operator bag returned to storage" : "Awaiting leftover return" },
     { label: "Completed", done: isCompletedRouteStatus(routeRow.status), detail: routeRow.completed_at ? new Date(routeRow.completed_at).toLocaleString("en-US") : "Not completed" },
-    { label: "Reviewed", done: routeRow.status === "reviewed", detail: routeRow.status === "reviewed" ? "Admin review complete" : "Pending admin review" },
+    {
+      label: "Payroll verified",
+      done: ["verified", "payroll_pending", "paid", "reviewed"].includes(String(routeRow.status ?? "")),
+      detail: ["verified", "payroll_pending", "paid"].includes(String(routeRow.status ?? ""))
+        ? "Ready for payroll"
+        : routeRow.status === "reviewed"
+          ? "Legacy reviewed route"
+          : "Pending payroll review",
+    },
   ];
   return (
     <>
@@ -401,6 +412,32 @@ export default async function RouteDetailPage({ params, searchParams }: { params
             </div>
           </SectionCard>
         </div>
+
+        <section className="surface-card p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold">Payroll</h2>
+              <p className="mt-1 text-sm text-slate-500">Saved route pay breakdown used for verification and monthly payroll periods.</p>
+            </div>
+            <SecondaryButton href={`/payroll/routes/${id}`}>Open route pay detail</SecondaryButton>
+          </div>
+          <div className="mt-4 grid gap-4 md:grid-cols-3">
+            <div>
+              <div className="text-sm text-slate-500">Route pay</div>
+              <div className="mt-1 text-xl font-semibold text-slate-900">{routePayBreakdown ? moneyLabel(routePayBreakdown.total_pay_lyd) : "Not calculated yet"}</div>
+            </div>
+            <div>
+              <div className="text-sm text-slate-500">Payroll period</div>
+              <div className="mt-1 font-medium text-slate-900">
+                {routePayBreakdown?.payroll_period_id ? <Link href={`/payroll/periods/${routePayBreakdown.payroll_period_id}`} className="link-secondary">Open linked period</Link> : "Not linked yet"}
+              </div>
+            </div>
+            <div>
+              <div className="text-sm text-slate-500">Last recalculated</div>
+              <div className="mt-1 font-medium text-slate-900">{routePayBreakdown?.recalculated_at ? new Date(routePayBreakdown.recalculated_at).toLocaleString("en-US") : "-"}</div>
+            </div>
+          </div>
+        </section>
 
         <section className="surface-card p-4">
           <h2 className="text-lg font-semibold">Route stops</h2>

@@ -78,6 +78,7 @@ export function buildPurchaseFinanceTransactionPayload({
     destination_account_id: null,
     bucket: "Inventory",
     final_bucket: restockingCategory,
+    import_status: "confirmed",
     review_status: "confirmed",
     needs_review: false,
     transaction_status: "active",

@@ -163,6 +163,18 @@ function groupStopsByLocation<T extends { locationName: string }>(groups: T[]) {
     .sort((a, b) => a.locationName.localeCompare(b.locationName));
 }
 
+function progressPercent(completed: number, total: number) {
+  if (total <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.round((completed / total) * 100)));
+}
+
+function pickupPriorityBadge(productName: string) {
+  const priorityGroup = pickupProductPriorityGroup(productName);
+  if (priorityGroup === 1) return { label: "Mr Crunch first", className: "bg-rose-100 text-rose-800" };
+  if (priorityGroup === 2) return { label: "Doritos second", className: "bg-amber-100 text-amber-900" };
+  return null;
+}
+
 function comparablePickDraft(draft: PickListDraft) {
   return JSON.stringify({
     selectedStopIds: [...(draft.selectedStopIds ?? [])].sort(),
@@ -300,6 +312,9 @@ export default function PickListPage() {
   const remainingUnitCount = Math.max(0, totalPickedUnits - checkedUnitCount);
   const assignedExtraCount = extras.filter((item) => item.productId && item.quantity > 0 && submittedRouteStopId(item.targetStopId)).length;
   const unassignedExtraCount = extras.filter((item) => item.productId && item.quantity > 0 && item.targetStopId === UNASSIGNED_EXTRA_TARGET).length;
+  const selectedLocationCount = selectedStopGroupsByLocation.length;
+  const checklistProgress = progressPercent(checkedItemCount, allStopItems.length);
+  const selectedStopProgress = progressPercent(selectedStopIds.length, stopGroups.length);
 
   const pickDraft = useMemo<PickListDraft>(() => ({
     selectedStopIds,
@@ -526,6 +541,17 @@ export default function PickListPage() {
     setSelectedStopIds((current) => current.includes(stopId) ? current.filter((id) => id !== stopId) : [...current, stopId]);
   };
 
+  const toggleLocationSelection = (stopIds: string[], shouldSelect: boolean) => {
+    setSelectedStopIds((current) => {
+      if (shouldSelect) {
+        const next = new Set(current);
+        stopIds.forEach((stopId) => next.add(stopId));
+        return Array.from(next);
+      }
+      return current.filter((stopId) => !stopIds.includes(stopId));
+    });
+  };
+
   const handlePreviewRefresh = async () => {
     setRefreshPreview({ loading: true, applying: false, comparisons: [], message: "", error: "" });
     setError("");
@@ -696,20 +722,30 @@ export default function PickListPage() {
             <div className="p-4">
               <p className="mb-1 text-xs text-slate-500">Checklist</p>
               <p className="text-2xl font-bold text-slate-900">Picked {checkedItemCount} of {allStopItems.length} items</p>
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
+                <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${checklistProgress}%` }} />
+              </div>
             </div>
           </SectionCard>
           <SectionCard>
             <div className="p-4">
-              <p className="mb-1 text-xs text-slate-500">Remaining</p>
-              <p className="text-2xl font-bold text-slate-900">{remainingItemCount}</p>
+              <p className="mb-1 text-xs text-slate-500">Selected stops</p>
+              <p className="text-2xl font-bold text-slate-900">{selectedStopIds.length} / {stopGroups.length}</p>
+              <p className="mt-2 text-xs text-slate-500">{selectedLocationCount} locations in this pickup batch</p>
             </div>
           </SectionCard>
           <SectionCard>
             <div className="p-4">
               <p className="mb-1 text-xs text-slate-500">Units left</p>
               <p className="text-2xl font-bold text-slate-900">{remainingUnitCount}</p>
+              <p className="mt-2 text-xs text-slate-500">{remainingItemCount} checklist rows still to pick</p>
             </div>
           </SectionCard>
+        </div>
+
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+          <div className="font-semibold">Pickup progress saves on this phone immediately.</div>
+          <div className="mt-1">If the backend is slow or offline, your checklist stays locally saved and sync can catch up later.</div>
         </div>
 
         {stopGroups.length ? (
@@ -724,10 +760,32 @@ export default function PickListPage() {
                 <button type="button" className="btn-secondary text-xs" onClick={() => setSelectedStopIds([])}>Clear</button>
               </div>
             </div>
+            <div className="mb-4 h-2 overflow-hidden rounded-full bg-slate-200">
+              <div className="h-full rounded-full bg-sky-500 transition-all" style={{ width: `${selectedStopProgress}%` }} />
+            </div>
             <div className="grid gap-2 md:grid-cols-2">
-              {stopGroupsByLocation.map((locationGroup) => (
+              {stopGroupsByLocation.map((locationGroup) => {
+                const locationStopIds = locationGroup.groups.map((group) => group.routeStopId).filter((stopId): stopId is string => Boolean(stopId));
+                const selectedCount = locationStopIds.filter((stopId) => selectedStopIds.includes(stopId)).length;
+                const selectionProgress = progressPercent(selectedCount, locationStopIds.length);
+                const allSelected = locationStopIds.length > 0 && selectedCount === locationStopIds.length;
+                return (
                 <div key={locationGroup.locationName} className="space-y-2">
-                  <div className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{locationGroup.locationName}</div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{locationGroup.locationName}</div>
+                        <div className="mt-1 text-sm font-medium text-slate-900">{selectedCount} of {locationStopIds.length} stops selected</div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => toggleLocationSelection(locationStopIds, true)} disabled={!locationStopIds.length || allSelected}>Select location</button>
+                        <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => toggleLocationSelection(locationStopIds, false)} disabled={!selectedCount}>Clear</button>
+                      </div>
+                    </div>
+                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
+                      <div className="h-full rounded-full bg-sky-500 transition-all" style={{ width: `${selectionProgress}%` }} />
+                    </div>
+                  </div>
                   <div className="space-y-2">
                     {locationGroup.groups.map((group) => {
                       const stopId = group.routeStopId ?? "";
@@ -735,7 +793,7 @@ export default function PickListPage() {
                       const planned = group.items.reduce((sum, item) => sum + item.requestedQty, 0);
                       return (
                         <label key={stopId || group.machineId || group.machineName} className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm ${checked ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}>
-                          <input type="checkbox" checked={checked} onChange={() => stopId && toggleStopSelection(stopId)} className="mt-1" />
+                          <input type="checkbox" checked={checked} onChange={() => stopId && toggleStopSelection(stopId)} className="mt-1 h-6 w-6 rounded accent-emerald-600" />
                           <span className="min-w-0">
                             <span className="block font-semibold text-slate-900">Stop {group.stopOrder || "-"} - {group.machineName}</span>
                             <span className="block break-words text-slate-500">{planned} units planned</span>
@@ -745,7 +803,8 @@ export default function PickListPage() {
                     })}
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         ) : null}
@@ -766,110 +825,135 @@ export default function PickListPage() {
                   Picked {checkedItemCount} of {allStopItems.length}
                 </div>
               </div>
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
+                <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${checklistProgress}%` }} />
+              </div>
             </div>
             <div className="space-y-4 p-4">
-              {selectedStopGroupsByLocation.map((locationGroup) => (
-                <section key={locationGroup.locationName} className="space-y-3">
-                  <div className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{locationGroup.locationName}</div>
-                  {locationGroup.groups.map((group) => {
-                    const sortedItems = sortPickupProductRows(group.items);
-                    const groupCheckedCount = group.items.filter((item) => item.isChecked).length;
-                    const groupKey = group.routeStopId ?? group.machineId ?? `${group.machineName}-${group.stopOrder}`;
-                    return (
-                      <article key={groupKey} className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
-                        <div className="flex flex-col gap-2 border-b border-slate-200 bg-white p-4 sm:flex-row sm:items-start sm:justify-between">
-                          <div className="min-w-0">
-                            <h3 className="break-words text-base font-semibold text-slate-900">{group.machineName}</h3>
-                            <p className="mt-1 break-words text-sm text-slate-500">
-                              Stop {group.stopOrder || "-"}
-                            </p>
-                          </div>
-                          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-900">
-                            Picked {groupCheckedCount} of {group.items.length}
-                          </div>
+              {selectedStopGroupsByLocation.map((locationGroup) => {
+                const locationItems = locationGroup.groups.flatMap((group) => group.items);
+                const locationCheckedCount = locationItems.filter((item) => item.isChecked).length;
+                const locationProgress = progressPercent(locationCheckedCount, locationItems.length);
+                return (
+                  <section key={locationGroup.locationName} className="space-y-3">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{locationGroup.locationName}</div>
+                          <div className="mt-1 text-sm font-medium text-slate-900">{locationCheckedCount} of {locationItems.length} products picked</div>
                         </div>
-                        <div className="divide-y divide-slate-200">
-                          {sortedItems.map((item) => {
-                            const maxQty = maxForProduct(item.productId, item.confirmedQty, item.availableStorageQty);
-                            const saving = savingCheckedIds.has(item.routeStopItemId);
-                            const priorityGroup = pickupProductPriorityGroup(item.productName);
-                            return (
-                              <div
-                                key={item.routeStopItemId}
-                                role="button"
-                                tabIndex={locked ? -1 : 0}
-                                onClick={() => togglePickupItemChecked(item)}
-                                onKeyDown={(event) => {
-                                  if (event.key === "Enter" || event.key === " ") {
-                                    event.preventDefault();
-                                    togglePickupItemChecked(item);
-                                  }
-                                }}
-                                className={`cursor-pointer space-y-4 p-4 transition ${item.isChecked ? "bg-emerald-50" : "bg-white hover:bg-slate-50"} ${saving ? "opacity-70" : ""}`}
-                              >
-                                <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_190px] md:items-start">
-                                  <div className="flex min-w-0 gap-3">
-                                    <input
-                                      type="checkbox"
-                                      checked={item.isChecked}
-                                      onChange={() => togglePickupItemChecked(item)}
-                                      onClick={(event) => event.stopPropagation()}
-                                      disabled={locked || submitting}
-                                      aria-label={`Mark ${item.productName} picked`}
-                                      className="mt-1 h-11 w-11 shrink-0 cursor-pointer rounded-lg border-2 border-slate-300 accent-emerald-600 disabled:cursor-not-allowed"
-                                    />
-                                    <div className="min-w-0">
-                                      <div className="flex flex-wrap items-center gap-2">
-                                        <p className={`break-words font-semibold ${item.isChecked ? "text-emerald-950" : "text-slate-900"}`}>{item.productName}</p>
-                                        {priorityGroup < 3 ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">Priority</span> : null}
-                                        {saving ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Saving</span> : null}
-                                      </div>
-                                      <p className="mt-1 break-words text-xs text-slate-500">
-                                        SKU: {item.sku ?? "No SKU"} - Recommended: {item.requestedQty} - Route storage: {item.availableStorageQty}
-                                      </p>
-                                      <p className="mt-1 text-xs text-slate-500">{item.source === "manual_admin_assignment" ? "Manual assignment" : "Refill recommendation"}</p>
-                                    </div>
-                                  </div>
-                                  <label className="block" onClick={(event) => event.stopPropagation()}>
-                                    <span className="mb-1 block text-sm font-medium text-slate-800">Pickup qty</span>
-                                    <QuantityStepper
-                                      value={item.confirmedQty}
-                                      max={maxQty}
-                                      onChange={(quantity) => updateStopItem(item.routeStopItemId, { confirmedQty: quantity })}
-                                      disabled={locked}
-                                      inputLabel={`${item.machineName} ${item.productName} pickup quantity`}
-                                    />
-                                    <span className="mt-1 block text-xs text-slate-500">Available for this row: {maxQty}</span>
-                                  </label>
-                                </div>
-
-                                {item.confirmedQty !== item.requestedQty ? (
-                                  <div className="grid gap-3 md:grid-cols-2" onClick={(event) => event.stopPropagation()}>
-                                    <label className="block">
-                                      <span className="mb-1 block text-sm font-medium text-slate-800">Reason</span>
-                                      <select value={item.reason} onChange={(event) => updateStopItem(item.routeStopItemId, { reason: event.target.value })} className="field-input" disabled={locked}>
-                                        <option>Product not available in storage</option>
-                                        <option>Product not in operator bag</option>
-                                        <option>Product expired/damaged</option>
-                                        <option>Customer demand</option>
-                                        <option>Other</option>
-                                      </select>
-                                    </label>
-                                    <label className="block">
-                                      <span className="mb-1 block text-sm font-medium text-slate-800">Notes</span>
-                                      <input value={item.notes} onChange={(event) => updateStopItem(item.routeStopItemId, { notes: event.target.value })} className="field-input" placeholder="Explain the pickup change" disabled={locked} />
-                                    </label>
-                                  </div>
-                                ) : null}
+                        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-900">
+                          {locationProgress}% complete
+                        </div>
+                      </div>
+                      <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
+                        <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${locationProgress}%` }} />
+                      </div>
+                    </div>
+                    {locationGroup.groups.map((group) => {
+                      const sortedItems = sortPickupProductRows(group.items);
+                      const groupCheckedCount = group.items.filter((item) => item.isChecked).length;
+                      const groupProgress = progressPercent(groupCheckedCount, group.items.length);
+                      const groupKey = group.routeStopId ?? group.machineId ?? `${group.machineName}-${group.stopOrder}`;
+                      return (
+                        <article key={groupKey} className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+                          <div className="flex flex-col gap-2 border-b border-slate-200 bg-white p-4 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="min-w-0">
+                              <h3 className="break-words text-base font-semibold text-slate-900">{group.machineName}</h3>
+                              <p className="mt-1 break-words text-sm text-slate-500">
+                                Stop {group.stopOrder || "-"}
+                              </p>
+                              <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
+                                <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${groupProgress}%` }} />
                               </div>
-                            );
-                          })}
-                        </div>
-                      </article>
-                    );
-                  })}
-                </section>
-              ))}
+                            </div>
+                            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-900">
+                              Picked {groupCheckedCount} of {group.items.length}
+                            </div>
+                          </div>
+                          <div className="divide-y divide-slate-200">
+                            {sortedItems.map((item) => {
+                              const maxQty = maxForProduct(item.productId, item.confirmedQty, item.availableStorageQty);
+                              const saving = savingCheckedIds.has(item.routeStopItemId);
+                              const priorityBadge = pickupPriorityBadge(item.productName);
+                              return (
+                                <div
+                                  key={item.routeStopItemId}
+                                  role="button"
+                                  tabIndex={locked ? -1 : 0}
+                                  onClick={() => togglePickupItemChecked(item)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter" || event.key === " ") {
+                                      event.preventDefault();
+                                      togglePickupItemChecked(item);
+                                    }
+                                  }}
+                                  className={`cursor-pointer space-y-4 p-4 transition ${item.isChecked ? "bg-emerald-50" : "bg-white hover:bg-slate-50"} ${saving ? "opacity-70" : ""}`}
+                                >
+                                  <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_190px] md:items-start">
+                                    <div className="flex min-w-0 gap-3">
+                                      <input
+                                        type="checkbox"
+                                        checked={item.isChecked}
+                                        onChange={() => togglePickupItemChecked(item)}
+                                        onClick={(event) => event.stopPropagation()}
+                                        disabled={locked || submitting}
+                                        aria-label={`Mark ${item.productName} picked`}
+                                        className="mt-1 h-11 w-11 shrink-0 cursor-pointer rounded-lg border-2 border-slate-300 accent-emerald-600 disabled:cursor-not-allowed"
+                                      />
+                                      <div className="min-w-0">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <p className={`break-words font-semibold ${item.isChecked ? "text-emerald-950" : "text-slate-900"}`}>{item.productName}</p>
+                                          {priorityBadge ? <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${priorityBadge.className}`}>{priorityBadge.label}</span> : null}
+                                          {saving ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Saving</span> : null}
+                                        </div>
+                                        <p className="mt-1 break-words text-xs text-slate-500">
+                                          SKU: {item.sku ?? "No SKU"} - Recommended: {item.requestedQty} - Route storage: {item.availableStorageQty}
+                                        </p>
+                                        <p className="mt-1 text-xs text-slate-500">{item.source === "manual_admin_assignment" ? "Manual assignment" : "Refill recommendation"}</p>
+                                      </div>
+                                    </div>
+                                    <label className="block" onClick={(event) => event.stopPropagation()}>
+                                      <span className="mb-1 block text-sm font-medium text-slate-800">Pickup qty</span>
+                                      <QuantityStepper
+                                        value={item.confirmedQty}
+                                        max={maxQty}
+                                        onChange={(quantity) => updateStopItem(item.routeStopItemId, { confirmedQty: quantity })}
+                                        disabled={locked}
+                                        inputLabel={`${item.machineName} ${item.productName} pickup quantity`}
+                                      />
+                                      <span className="mt-1 block text-xs text-slate-500">Available for this row: {maxQty}</span>
+                                    </label>
+                                  </div>
+
+                                  {item.confirmedQty !== item.requestedQty ? (
+                                    <div className="grid gap-3 md:grid-cols-2" onClick={(event) => event.stopPropagation()}>
+                                      <label className="block">
+                                        <span className="mb-1 block text-sm font-medium text-slate-800">Reason</span>
+                                        <select value={item.reason} onChange={(event) => updateStopItem(item.routeStopItemId, { reason: event.target.value })} className="field-input" disabled={locked}>
+                                          <option>Product not available in storage</option>
+                                          <option>Product not in operator bag</option>
+                                          <option>Product expired/damaged</option>
+                                          <option>Customer demand</option>
+                                          <option>Other</option>
+                                        </select>
+                                      </label>
+                                      <label className="block">
+                                        <span className="mb-1 block text-sm font-medium text-slate-800">Notes</span>
+                                        <input value={item.notes} onChange={(event) => updateStopItem(item.routeStopItemId, { notes: event.target.value })} className="field-input" placeholder="Explain the pickup change" disabled={locked} />
+                                      </label>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </section>
+                );
+              })}
             </div>
           </section>
         )}

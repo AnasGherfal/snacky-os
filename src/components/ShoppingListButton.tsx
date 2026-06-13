@@ -2,51 +2,31 @@
 
 import { ShoppingCart } from "lucide-react";
 import { useEffect, useState } from "react";
+import { readRestockShoppingList, toggleRestockShoppingListItem, type RestockShoppingListItem } from "@/lib/restock-shopping-list";
 
-type ShoppingListItem = {
-  productId: string;
-  name: string;
-  suggestedQty: number;
-};
-
-const storageKey = "snacky-restock-shopping-list";
-
-function readList(): ShoppingListItem[] {
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(storageKey) ?? "[]");
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeList(items: ShoppingListItem[]) {
-  window.localStorage.setItem(storageKey, JSON.stringify(items));
-}
-
-export function ShoppingListButton({ productId, name, suggestedQty }: ShoppingListItem) {
+export function ShoppingListButton({ productId, name, suggestedQty, priorityScore, status }: RestockShoppingListItem) {
   const [selected, setSelected] = useState(false);
+  const canAdd = Math.max(0, Math.floor(Number(suggestedQty ?? 0))) > 0;
 
   useEffect(() => {
-    setSelected(readList().some((item) => item.productId === productId));
+    setSelected(readRestockShoppingList().some((item) => item.productId === productId));
   }, [productId]);
 
   return (
     <button
       type="button"
       aria-pressed={selected}
-      className={`${selected ? "btn-primary" : "btn-secondary"} gap-2`}
+      className={`${selected ? "btn-primary" : "btn-secondary"} gap-2 disabled:cursor-not-allowed disabled:opacity-50`}
+      disabled={!canAdd}
       onClick={() => {
-        const list = readList();
-        const next = selected
-          ? list.filter((item) => item.productId !== productId)
-          : [...list.filter((item) => item.productId !== productId), { productId, name, suggestedQty }];
-        writeList(next);
-        setSelected(!selected);
+        if (!canAdd) return;
+        const next = toggleRestockShoppingListItem({ productId, name, suggestedQty, priorityScore, status });
+        setSelected(next.some((item) => item.productId === productId));
       }}
+      title={canAdd ? undefined : "This product does not have a suggested purchase quantity yet"}
     >
       <ShoppingCart className="h-4 w-4" />
-      {selected ? "Added" : "Add to shopping list"}
+      {canAdd ? (selected ? "Added" : "Add to shopping list") : "No buy qty yet"}
     </button>
   );
 }

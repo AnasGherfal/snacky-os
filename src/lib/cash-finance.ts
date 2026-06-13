@@ -83,6 +83,7 @@ export function buildCashCollectionFinanceTransactionPayload({
     destination_account_id: null,
     bucket: "Revenue",
     final_bucket: "Revenue",
+    import_status: "confirmed",
     review_status: "confirmed",
     needs_review: false,
     transaction_status: "active",

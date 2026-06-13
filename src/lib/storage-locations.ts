@@ -9,6 +9,8 @@ export type StorageLocationRow = {
   active: boolean;
   location_type: StorageLocationType | string | null;
   related_operator_id: string | null;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -117,4 +119,3 @@ export function summarizeStorageLocation(location: StorageLocationRow, inventory
     lastMovementAt,
   };
 }
-

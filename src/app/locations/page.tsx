@@ -18,7 +18,7 @@ export default async function LocationsPage({ searchParams }: { searchParams: Pr
 
   const { data, count, error } = await supabase
     .from("locations")
-    .select("id,name,location_type,rent_amount,status", { count: "exact" })
+    .select("id,name,location_type,distance_zone,access_difficulty,stop_multiplier,rent_amount,status", { count: "exact" })
     .order("name")
     .range(from, to);
   if (error) {
@@ -42,11 +42,14 @@ export default async function LocationsPage({ searchParams }: { searchParams: Pr
         <EmptyState title="No locations yet" body="Create site locations before linking machines, rent, and operating context." action={<PrimaryButton href="/locations/new">Add location</PrimaryButton>} />
       ) : (
         <>
-          <DataTable headers={["Name", "Type", "Rent", "Status", "Actions"]}>
+          <DataTable headers={["Name", "Type", "Distance", "Difficulty", "Multiplier", "Rent", "Status", "Actions"]}>
             {data.map((location: any) => (
               <tr key={location.id}>
                 <td className="font-medium text-slate-900">{location.name}</td>
                 <td>{location.location_type}</td>
+                <td>{String(location.distance_zone ?? "within_10_km").replaceAll("_", " ")}</td>
+                <td>{String(location.access_difficulty ?? "normal").replaceAll("_", " ")}</td>
+                <td>{Number(location.stop_multiplier ?? 1).toFixed(1)}</td>
                 <td>{Number(location.rent_amount || 0).toFixed(2)}</td>
                 <td><StatusBadge status={location.status} /></td>
                 <td><Link className="btn-secondary" href={`/locations/${location.id}`}>Edit</Link></td>

@@ -61,7 +61,7 @@ export default async function StorageLocationDetailPage({
     { data: allStorageLocations },
     { data: operators },
   ] = await Promise.all([
-    supabase.from("storage_locations").select("id, name, address, active, location_type, related_operator_id, created_at, updated_at").eq("id", id).maybeSingle(),
+    supabase.from("storage_locations").select("id, name, address, active, location_type, related_operator_id, latitude, longitude, created_at, updated_at").eq("id", id).maybeSingle(),
     supabase.from("current_inventory_by_location").select("product_id, product_name, location_type, location_id, location_name, quantity_on_hand"),
     supabase
       .from("inventory_movements")
@@ -137,6 +137,14 @@ export default async function StorageLocationDetailPage({
             <div>
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Current Units</div>
               <div className="mt-1 text-2xl font-semibold text-slate-900">{summary.totalUnits}</div>
+            </div>
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Latitude</div>
+              <div className="mt-1 text-sm font-medium text-slate-900">{typedLocation.latitude ?? "-"}</div>
+            </div>
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Longitude</div>
+              <div className="mt-1 text-sm font-medium text-slate-900">{typedLocation.longitude ?? "-"}</div>
             </div>
             <div className="sm:col-span-2">
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Address / Notes</div>

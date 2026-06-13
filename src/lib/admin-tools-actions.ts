@@ -71,11 +71,16 @@ function dashboardPaths() {
   revalidatePath("/routes/new");
 }
 
-function redirectTools(params: { success?: string; error?: string }) {
+function safeReturnTo(value: FormDataEntryValue | string | null | undefined) {
+  const path = String(value ?? "").trim();
+  return path.startsWith("/admin") ? path : "/admin/tools";
+}
+
+function redirectTools(params: { success?: string; error?: string }, returnTo = "/admin/tools") {
   const search = new URLSearchParams();
   if (params.success) search.set("success", params.success);
   if (params.error) search.set("error", params.error);
-  redirect(`/admin/tools${search.size ? `?${search.toString()}` : ""}`);
+  redirect(`${returnTo}${search.size ? `?${search.toString()}` : ""}`);
 }
 
 function backfillRow(data: unknown) {
@@ -131,15 +136,15 @@ async function requireAdmin(path = "/admin/tools") {
   return { profile, supabase };
 }
 
-function requireReason(formData: FormData) {
+function requireReason(formData: FormData, returnTo = "/admin/tools") {
   const reason = clean(formData.get("reason"));
-  if (!reason) redirectTools({ error: "Reason is required for admin recovery actions." });
+  if (!reason) redirectTools({ error: "Reason is required for admin recovery actions." }, returnTo);
   return reason;
 }
 
-function requireRouteId(formData: FormData) {
+function requireRouteId(formData: FormData, returnTo = "/admin/tools") {
   const routeId = clean(formData.get("route_id"));
-  if (!routeId) redirectTools({ error: "Route is required." });
+  if (!routeId) redirectTools({ error: "Route is required." }, returnTo);
   return routeId;
 }
 
@@ -382,9 +387,10 @@ async function updateRouteCompleted({
 }
 
 export async function recalculateRouteInventoryLedger(formData: FormData) {
-  const routeId = requireRouteId(formData);
-  const reason = requireReason(formData);
-  const { profile, supabase } = await requireAdmin();
+  const returnTo = safeReturnTo(formData.get("return_to"));
+  const routeId = requireRouteId(formData, returnTo);
+  const reason = requireReason(formData, returnTo);
+  const { profile, supabase } = await requireAdmin(returnTo);
 
   try {
     const result = await recalculateRouteInventoryLedgerRows({ supabase, routeId });
@@ -399,17 +405,18 @@ export async function recalculateRouteInventoryLedger(formData: FormData) {
       summary: `Recalculated ${result.rows.length} route stock line(s) from inventory movements`,
     });
     routeAdminPaths(routeId);
-    redirectTools({ success: `Route ledger recalculated from ${result.movementCount} inventory movement(s).` });
+    redirectTools({ success: `Route ledger recalculated from ${result.movementCount} inventory movement(s).` }, returnTo);
   } catch (error) {
     console.error("[admin-tools] Route ledger recalculation failed", { routeId, error });
-    redirectTools({ error: `Route ledger recalculation failed: ${errorMessage(error)}` });
+    redirectTools({ error: `Route ledger recalculation failed: ${errorMessage(error)}` }, returnTo);
   }
 }
 
 export async function repairStuckRoute(formData: FormData) {
-  const routeId = requireRouteId(formData);
-  const reason = requireReason(formData);
-  const { profile, supabase } = await requireAdmin();
+  const returnTo = safeReturnTo(formData.get("return_to"));
+  const routeId = requireRouteId(formData, returnTo);
+  const reason = requireReason(formData, returnTo);
+  const { profile, supabase } = await requireAdmin(returnTo);
 
   try {
     const result = await recalculateRouteInventoryLedgerRows({ supabase, routeId });
@@ -430,19 +437,20 @@ export async function repairStuckRoute(formData: FormData) {
       summary: "Repaired route ledger metadata and cleared completion error",
     });
     routeAdminPaths(routeId);
-    redirectTools({ success: "Route repair completed. The operator can retry the route workflow." });
+    redirectTools({ success: "Route repair completed. The operator can retry the route workflow." }, returnTo);
   } catch (error) {
     console.error("[admin-tools] Route repair failed", { routeId, error });
-    redirectTools({ error: `Route repair failed: ${errorMessage(error)}` });
+    redirectTools({ error: `Route repair failed: ${errorMessage(error)}` }, returnTo);
   }
 }
 
 export async function forceCompleteRouteWithAudit(formData: FormData) {
-  const routeId = requireRouteId(formData);
-  const reason = requireReason(formData);
+  const returnTo = safeReturnTo(formData.get("return_to"));
+  const routeId = requireRouteId(formData, returnTo);
+  const reason = requireReason(formData, returnTo);
   const confirmation = clean(formData.get("confirmation"));
-  if (confirmation !== "FORCE COMPLETE") redirectTools({ error: "Type FORCE COMPLETE to force-complete a route." });
-  const { profile, supabase } = await requireAdmin();
+  if (confirmation !== "FORCE COMPLETE") redirectTools({ error: "Type FORCE COMPLETE to force-complete a route." }, returnTo);
+  const { profile, supabase } = await requireAdmin(returnTo);
 
   try {
     const { data: route, error: routeError } = await supabase.from("routes").select("*").eq("id", routeId).maybeSingle();
@@ -496,16 +504,17 @@ export async function forceCompleteRouteWithAudit(formData: FormData) {
 
     routeAdminPaths(routeId);
     dashboardPaths();
-    redirectTools({ success: "Route force-completed with audit and ledger reconciliation." });
+    redirectTools({ success: "Route force-completed with audit and ledger reconciliation." }, returnTo);
   } catch (error) {
     console.error("[admin-tools] Force route completion failed", { routeId, error });
-    redirectTools({ error: `Force completion failed: ${errorMessage(error)}` });
+    redirectTools({ error: `Force completion failed: ${errorMessage(error)}` }, returnTo);
   }
 }
 
 export async function recalculateStorageBalances(formData: FormData) {
-  const reason = requireReason(formData);
-  const { profile, supabase } = await requireAdmin();
+  const returnTo = safeReturnTo(formData.get("return_to"));
+  const reason = requireReason(formData, returnTo);
+  const { profile, supabase } = await requireAdmin(returnTo);
 
   try {
     const [{ count, error }, { count: negativeCount, error: negativeError }] = await Promise.all([
@@ -525,16 +534,17 @@ export async function recalculateStorageBalances(formData: FormData) {
       metadata: { reason },
       summary: "Checked ledger-derived storage balances and refreshed inventory dashboards",
     });
-    redirectTools({ success: `Storage balances refreshed from the ledger. ${count ?? 0} balance row(s), ${negativeCount ?? 0} negative row(s).` });
+    redirectTools({ success: `Storage balances refreshed from the ledger. ${count ?? 0} balance row(s), ${negativeCount ?? 0} negative row(s).` }, returnTo);
   } catch (error) {
     console.error("[admin-tools] Storage balance recalculation failed", { error });
-    redirectTools({ error: `Storage balance check failed: ${errorMessage(error)}` });
+    redirectTools({ error: `Storage balance check failed: ${errorMessage(error)}` }, returnTo);
   }
 }
 
 export async function backfillMissingFinanceTransactions(formData: FormData) {
+  const returnTo = safeReturnTo(formData.get("return_to"));
   const reason = clean(formData.get("reason")) || "Backfill missing source-generated finance transactions.";
-  const { profile, supabase } = await requireAdmin();
+  const { profile, supabase } = await requireAdmin(returnTo);
 
   try {
     const result = await supabase.rpc("backfill_missing_finance_transactions");
@@ -558,18 +568,19 @@ export async function backfillMissingFinanceTransactions(formData: FormData) {
     revalidatePath("/cash-collections");
     redirectTools({
       success: `Finance transaction backfill complete. ${formatBackfillSummary("All current data", backfill)}.`,
-    });
+    }, returnTo);
   } catch (error) {
     console.error("[admin-tools] Finance transaction backfill failed", { error });
-    redirectTools({ error: `Finance transaction backfill failed: ${errorMessage(error)}. Confirm the latest finance migration has been applied.` });
+    redirectTools({ error: `Finance transaction backfill failed: ${errorMessage(error)}. Confirm the latest finance migration has been applied.` }, returnTo);
   }
 }
 
 export const backfillMissingPurchaseTransactions = backfillMissingFinanceTransactions;
 
 export async function rebuildRefillRecommendations(formData: FormData) {
-  const reason = requireReason(formData);
-  const { profile, supabase } = await requireAdmin();
+  const returnTo = safeReturnTo(formData.get("return_to"));
+  const reason = requireReason(formData, returnTo);
+  const { profile, supabase } = await requireAdmin(returnTo);
 
   try {
     const result = await supabase.rpc("refresh_refill_recommendations_from_latest_stock_snapshot");
@@ -592,16 +603,17 @@ export async function rebuildRefillRecommendations(formData: FormData) {
     const warningSuffix = refresh.warning ? ` Warning: ${refresh.warning}` : "";
     redirectTools({
       success: `Refill recommendations refreshed. ${formatRefillRecommendationRefreshSummary(refresh)}.${warningSuffix}`,
-    });
+    }, returnTo);
   } catch (error) {
     console.error("[admin-tools] Refill recommendation rebuild failed", { error });
-    redirectTools({ error: `Refill recommendation rebuild failed: ${errorMessage(error)}. Confirm the latest VMS migration has been applied.` });
+    redirectTools({ error: `Refill recommendation rebuild failed: ${errorMessage(error)}. Confirm the latest VMS migration has been applied.` }, returnTo);
   }
 }
 
 export async function recalculateDashboards(formData: FormData) {
-  const reason = requireReason(formData);
-  const { profile } = await requireAdmin();
+  const returnTo = safeReturnTo(formData.get("return_to"));
+  const reason = requireReason(formData, returnTo);
+  const { profile } = await requireAdmin(returnTo);
   dashboardPaths();
   await logActivity({
     profile,
@@ -610,5 +622,5 @@ export async function recalculateDashboards(formData: FormData) {
     metadata: { reason },
     summary: "Refreshed dashboard paths and KPI source pages",
   });
-  redirectTools({ success: "Dashboard paths refreshed." });
+  redirectTools({ success: "Dashboard paths refreshed." }, returnTo);
 }

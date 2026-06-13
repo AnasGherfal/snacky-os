@@ -7,6 +7,7 @@ export type ModuleTabGroup = {
 
 const financeTabs: ModuleTab[] = [
   { label: "Overview", href: "/finance", exact: true },
+  { label: "Payroll", href: "/payroll", match: ["/payroll"] },
   { label: "Transactions", href: "/finance/transactions" },
   {
     label: "Import Review",
@@ -94,7 +95,8 @@ export function getModuleTabGroupForPath(
 
   if (
     matchesPrefix(pathname, "/finance") ||
-    matchesPrefix(pathname, "/cash-collections")
+    matchesPrefix(pathname, "/cash-collections") ||
+    matchesPrefix(pathname, "/payroll")
   )
     return groups.finance;
   if (

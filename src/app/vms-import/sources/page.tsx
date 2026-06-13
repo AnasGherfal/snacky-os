@@ -11,6 +11,7 @@ import { privateStorageObjectUrl } from "@/lib/storage-buckets";
 import { reprocessVmsImportBatch, updateVmsImportBatchState } from "@/lib/vms-import-actions";
 import { vmsReportTypes } from "@/lib/vms-parser";
 import { extractVmsSchemaIssue } from "@/lib/vms-schema-diagnostics";
+import { batchUsageSummary } from "@/lib/vms-dashboard-source";
 
 export const dynamic = "force-dynamic";
 
@@ -153,23 +154,9 @@ function batchDateRange(batch: VmsSourceRow) {
   return "-";
 }
 
-function dashboardUsageForReport(reportType: string | null | undefined) {
-  if (reportType === "vms_order_details_weekly") return "Sales dashboard, Product sales dashboard, Machine sales dashboard, Failed vend/refund report, Product velocity";
-  if (reportType === "sales") return "Reconciliation only, Period total check";
-  if (isStockReportType(reportType)) return "Recommended route refill items, Machine stock dashboard, Refill priority";
-  return "Not used until mapped";
-}
-
-function usageText(value: unknown, fallback: string) {
-  if (!value) return fallback;
-  if (Array.isArray(value)) return value.map(String).join(", ") || fallback;
-  if (typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    const dashboards = Array.isArray(record.dashboards) ? record.dashboards.map(String).join(", ") : "";
-    const explanation = typeof record.explanation === "string" ? record.explanation : "";
-    return [dashboards, explanation].filter(Boolean).join(" - ") || fallback;
-  }
-  return String(value);
+function usageText(batch: VmsSourceRow) {
+  const usage = batchUsageSummary(batch);
+  return usage.length ? usage.join(", ") : "Not used until mapped";
 }
 
 function isNextNavigationSignal(error: unknown) {
@@ -364,6 +351,9 @@ async function VmsDataSourcesPageContent({ searchParams }: { searchParams: Promi
           {params.error}
         </div>
       ) : null}
+      <div className="mb-5 rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+        Detailed Order imports are append-only. Snacky keeps older detailed sales files active, skips duplicate transactions, and never replaces prior detailed sales coverage.
+      </div>
       {schemaNotice ? (
         <div className="mb-5 rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
           {schemaNotice}
@@ -416,7 +406,7 @@ async function VmsDataSourcesPageContent({ searchParams }: { searchParams: Promi
                 </td>
                 <td>{batch.rows_skipped_duplicate ?? 0}</td>
                 <td>{batch.rows_needing_review ?? 0}</td>
-                <td className="max-w-xs text-xs text-slate-600">{usageText(batch.dashboard_usage, dashboardUsageForReport(batch.report_type ?? batch.source_type))}</td>
+                <td className="max-w-xs text-xs text-slate-600">{usageText(batch)}</td>
                 <td className="text-xs text-slate-600">{batch.uploaded_by ?? batch.imported_by ?? "-"}</td>
                 <td className="text-sm">
                   <div>{formatDateTime(batch.uploaded_at ?? batch.imported_at)}</div>
@@ -424,7 +414,7 @@ async function VmsDataSourcesPageContent({ searchParams }: { searchParams: Promi
                 </td>
                 <td className="max-w-xs text-xs text-amber-700">
                   {batch.latest_error || batch.last_error || batch.disable_reason || batch.delete_reason || "-"}
-                  <div className="mt-1 text-slate-500">Failed: {batch.failed_rows_count ?? 0} · Refunds: {batch.refunded_rows_count ?? 0}</div>
+                  <div className="mt-1 text-slate-500">Failed: {batch.failed_rows_count ?? 0} | Refunds: {batch.refunded_rows_count ?? 0}</div>
                 </td>
                 <td><SourceActions batch={batch} canManage={canManage} /></td>
               </tr>

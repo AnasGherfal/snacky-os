@@ -4,8 +4,36 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge, SectionCard } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute } from "@/lib/authz";
-import { isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isRouteStopActiveStatus, isRouteStopDoneStatus, isRouteStopPendingStatus, nextOperatorRouteHref, routeDisplayStatus, ROUTE_STOP_COMPLETED_STATUS } from "@/lib/route-workflow";
+import { loadOperatorRoutePayPreviewMap, type OperatorRoutePreviewRow, type OperatorRoutePreviewStopRow } from "@/lib/payroll-server";
+import { moneyLabel } from "@/lib/payroll";
+import { isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isRouteStopActiveStatus, isRouteStopDoneStatus, isRouteStopPendingStatus, isTerminalRouteStatus, nextOperatorRouteHref, routeDisplayStatus, ROUTE_STOP_COMPLETED_STATUS } from "@/lib/route-workflow";
 import { skipStop } from "@/lib/operator-actions";
+
+type OperatorRouteDetailRow = OperatorRoutePreviewRow & {
+  started_at?: string | null;
+  completed_at?: string | null;
+};
+
+type OperatorRouteMachineRow = {
+  id: string;
+  name?: string | null;
+  machine_code?: string | null;
+};
+
+type OperatorRouteStockLineRow = {
+  id: string;
+  product_id?: string | null;
+  planned_qty?: number | string | null;
+  picked_qty?: number | string | null;
+  returned_qty?: number | string | null;
+  product?: { name?: string | null } | null;
+};
+
+type OperatorPayrollPeriodSummary = {
+  id: string;
+  net_total_lyd?: number | string | null;
+  status?: string | null;
+};
 
 export default async function OperatorRouteDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: routeId } = await params;
@@ -15,14 +43,14 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
 
   const { data: route, error: routeError } = await supabase
     .from("routes")
-    .select("id, route_date, status, operator_id, started_at, completed_at")
+    .select("id, route_date, status, operator_id, started_at, completed_at, storage_location_id, distance_km, distance_zone, distance_source, load_difficulty_pay_lyd")
     .eq("id", routeId)
     .maybeSingle();
 
   if (routeError) console.error("[operator:route] Failed to load route", { routeId, error: routeError });
   if (!route) notFound();
 
-  const routeRow: any = route;
+  const routeRow = route as OperatorRouteDetailRow;
   const canAccess = canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, routeRow.operator_id);
 
   const [{ data: operator }, { data: stops, error: stopsError }, { data: routeStock }] = await Promise.all([
@@ -54,16 +82,30 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
       </>
     );
   }
-  const routeStops = stops ?? [];
-  const machineIds = routeStops.map((stop: any) => stop.machine_id).filter(Boolean);
+
+  const currentMonthStart = (() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+  })();
+  const routeStops = (stops ?? []) as OperatorRoutePreviewStopRow[];
+  const machineIds = routeStops.map((stop) => stop.machine_id).filter(Boolean);
   const { data: machines } = machineIds.length
     ? await supabase.from("machines").select("id, name, machine_code").in("id", machineIds)
     : { data: [] };
-  const machineById = new Map((machines ?? []).map((machine: any) => [machine.id, machine]));
-  const doneStops = routeStops.filter((s: any) => isRouteStopDoneStatus(s.status)).length;
+  const machineById = new Map(((machines ?? []) as OperatorRouteMachineRow[]).map((machine) => [machine.id, machine]));
+  const doneStops = routeStops.filter((s) => isRouteStopDoneStatus(s.status)).length;
   const totalStops = routeStops.length;
-  const pickItems = routeStock ?? [];
-  const hasPickup = pickItems.some((item: any) => Number(item.picked_qty ?? 0) > 0);
+  const pickItems = (routeStock ?? []) as OperatorRouteStockLineRow[];
+  const currentPayrollPeriodResult = profile?.team_member_id
+    ? await supabase.from("payroll_periods").select("id, net_total_lyd, status").eq("operator_id", profile.team_member_id).eq("period_start", currentMonthStart).maybeSingle()
+    : { data: null };
+  const { previewByRouteId } = await loadOperatorRoutePayPreviewMap({
+    supabase,
+    routes: [{ ...routeRow, route_stops: routeStops }],
+    viewerTeamMemberId: profile?.team_member_id,
+  });
+  const payPreview = previewByRouteId.get(routeId);
+  const hasPickup = pickItems.some((item) => Number(item.picked_qty ?? 0) > 0);
   const continueHref = nextOperatorRouteHref({ routeId, status: routeRow.status, hasPickup, stops: routeStops, start: true });
   const primaryAction = continueHref
     ? {
@@ -84,7 +126,7 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
         />
 
         {/* Route Status Cards */}
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <SectionCard>
             <div className="p-4">
               <div className="text-sm text-slate-500 mb-1">Status</div>
@@ -96,6 +138,30 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
               <div className="text-sm text-slate-500 mb-1">Progress</div>
               <div className="font-semibold text-lg">
                 {doneStops}/{totalStops}
+              </div>
+            </div>
+          </SectionCard>
+          <SectionCard>
+            <div className="p-4">
+              <div className="mb-1 text-sm text-slate-500">{isTerminalRouteStatus(routeRow.status) ? "Completed route pay" : "Estimated route pay"}</div>
+              <div className="font-semibold text-lg text-slate-900">
+                {payPreview?.totalPay !== null && payPreview?.totalPay !== undefined ? moneyLabel(payPreview.totalPay) : "Unavailable"}
+              </div>
+              <div className="mt-1 text-xs text-slate-500">
+                {payPreview?.source === "saved"
+                  ? "This amount comes from the stored route pay breakdown."
+                  : "This amount updates from your current pay profile until admin verifies payroll."}
+              </div>
+            </div>
+          </SectionCard>
+          <SectionCard>
+            <div className="p-4">
+              <div className="mb-1 text-sm text-slate-500">Monthly earned total</div>
+              <div className="font-semibold text-lg text-slate-900">
+                {moneyLabel((currentPayrollPeriodResult.data as OperatorPayrollPeriodSummary | null)?.net_total_lyd ?? 0)}
+              </div>
+              <div className="mt-1 text-xs text-slate-500">
+                {currentPayrollPeriodResult.data ? `Current period status: ${(currentPayrollPeriodResult.data as OperatorPayrollPeriodSummary).status}` : "Current month payroll period has not been created yet."}
               </div>
             </div>
           </SectionCard>
@@ -118,14 +184,14 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
           <h2 className="text-lg font-semibold mb-4">Pick list</h2>
           {isAvailableRouteStatus(routeRow.status) ? (
             <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-              <strong>Ready to start?</strong> Click "{routeRow.operator_id ? "Start Route" : "Claim & Start"}" above to view your pick list and begin picking stock from storage.
+              <strong>Ready to start?</strong> Click {routeRow.operator_id ? "Start Route" : "Claim & Start"} above to view your pick list and begin picking stock from storage.
             </div>
           ) : null}
           {!pickItems.length ? (
             <EmptyState title="No pick list yet" body="This route has no products assigned to pick from storage." />
           ) : (
             <div className="mb-4 space-y-2">
-              {pickItems.map((item: any) => (
+              {pickItems.map((item) => (
                 <div key={item.id} className="flex flex-col gap-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
                   <span className="min-w-0 break-words font-medium text-slate-900">{item.product?.name ?? "Unknown product"}</span>
                   <span className="shrink-0 text-slate-600">{item.picked_qty || item.planned_qty} / {item.planned_qty} picked</span>
@@ -153,7 +219,10 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
             />
           ) : (
             <div className="divide-y divide-slate-200">
-              {routeStops.map((stop: any) => (
+              {routeStops.map((stop) => {
+                const machine = stop.machine_id ? machineById.get(stop.machine_id) ?? null : null;
+
+                return (
                 <div key={stop.id} className="p-4 md:p-6 hover:bg-slate-50 transition">
                   <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="flex min-w-0 items-start gap-3">
@@ -161,9 +230,9 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
                         {stop.stop_order}
                       </div>
                       <div className="min-w-0">
-                        <h3 className="break-words font-semibold text-slate-900">{machineById.get(stop.machine_id)?.name ?? "Unknown machine"}</h3>
+                        <h3 className="break-words font-semibold text-slate-900">{machine?.name ?? "Unknown machine"}</h3>
                         <p className="text-sm text-slate-500">
-                          Code: {machineById.get(stop.machine_id)?.machine_code ?? "-"}
+                          Code: {machine?.machine_code ?? "-"}
                         </p>
                       </div>
                     </div>
@@ -203,7 +272,8 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
                     </div>
                   ) : null}
                 </div>
-              ))}
+              );
+              })}
             </div>
           )}
         </section>

@@ -19,6 +19,7 @@ import {
   type VmsValidationResult,
 } from "@/lib/vms-import-validation";
 import {
+  VMS_IMPORT_MODES,
   createVmsSalesSourceRowKey,
   parseVmsImportMode,
   salesPeriodFromMappedRow,
@@ -1619,7 +1620,8 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
     }
   }
 
-  const importMode = parseVmsImportMode(params.importMode);
+  const requestedImportMode = parseVmsImportMode(params.importMode);
+  const importMode = selectedReportType === "vms_order_details_weekly" ? VMS_IMPORT_MODES.APPEND_NEW : requestedImportMode;
   const titleSalesReportPeriod = selectedSheet && selectedReportType === "sales"
     ? findSalesReportPeriod(selectedSheet.rows, selectedRows.headerRowIndex)
     : null;
@@ -2112,11 +2114,18 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
               <input type="hidden" name="updateCostFromVms" value={optionValue(updateCostFromVms)} />
               {selectedReportType === "sales" || selectedReportType === "vms_order_details_weekly" ? (
                 <>
-                  <FormField label="Import mode">
-                    <select name="importMode" defaultValue={importMode} className="field-input">
-                      {Object.entries(vmsImportModeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                    </select>
-                  </FormField>
+                  {selectedReportType === "sales" ? (
+                    <FormField label="Import mode">
+                      <select name="importMode" defaultValue={importMode} className="field-input">
+                        {Object.entries(vmsImportModeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                      </select>
+                    </FormField>
+                  ) : (
+                    <div className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+                      <input type="hidden" name="importMode" value={VMS_IMPORT_MODES.APPEND_NEW} />
+                      Detailed Order files always append new rows. Older detailed sales files stay active, and duplicate transactions are skipped automatically.
+                    </div>
+                  )}
                   <FormField label="Range start">
                     <input name="reportStartDate" type="date" defaultValue={reportStartDate} className="field-input" />
                   </FormField>

@@ -7,6 +7,7 @@ export type RestockFilter =
   | "low"
   | "fast"
   | "routes"
+  | "missing"
   | "machines"
   | "drinks"
   | "snacks"
@@ -95,6 +96,7 @@ export type RestockPriorityItem = {
   storageQty: number;
   minStorageQty: number;
   targetStorageQty: number;
+  effectiveTargetQty: number;
   reorderPoint: number;
   reorderQty: number;
   suggestedBuyQty: number;
@@ -104,6 +106,8 @@ export type RestockPriorityItem = {
   machinesNeedingCount: number;
   recommendedRefillQty: number;
   activeRouteNeedQty: number;
+  machineMissingCount: number;
+  machineLowCount: number;
   lastPurchaseCost: number | null;
   lastPurchasedDate: string | null;
   machineNames: string[];
@@ -162,6 +166,16 @@ function productIsDrink(product: Pick<RestockProductInput, "name" | "category" |
 function productIsSnack(product: Pick<RestockProductInput, "name" | "category" | "brand">) {
   const text = productText(product);
   return ["snack", "chips", "doritos", "biscuit", "chocolate", "galaxy", "snickers", "twix", "mr crunch"].some((word) => text.includes(word));
+}
+
+function priorityTieRank(item: Pick<RestockPriorityItem, "name" | "isFastSeller">) {
+  const text = String(item.name ?? "").toLowerCase();
+  if (text.includes("mr crunch")) return 0;
+  if (text.includes("doritos")) return 1;
+  if (text.includes("water") || text.includes("مياه")) return 2;
+  if (text.includes("pepsi")) return 3;
+  if (item.isFastSeller) return 4;
+  return 99;
 }
 
 function addName(map: Map<string, Set<string>>, productId: string, name: string | null | undefined) {
@@ -352,6 +366,7 @@ export function computeRestockPriority(input: RestockPriorityInput): RestockPrio
         storageQty,
         minStorageQty,
         targetStorageQty,
+        effectiveTargetQty: Math.max(0, Math.ceil(effectiveTarget)),
         reorderPoint,
         reorderQty,
         suggestedBuyQty: Math.max(0, Math.ceil(suggestedBuyQty)),
@@ -361,6 +376,8 @@ export function computeRestockPriority(input: RestockPriorityInput): RestockPrio
         machinesNeedingCount: machineNeedNames.length,
         recommendedRefillQty,
         activeRouteNeedQty: activeRouteNeedQtyValue,
+        machineMissingCount,
+        machineLowCount,
         lastPurchaseCost: Number.isFinite(lastPurchaseCost) ? lastPurchaseCost : null,
         lastPurchasedDate: product.last_purchase_date ?? null,
         machineNames,
@@ -378,8 +395,11 @@ export function computeRestockPriority(input: RestockPriorityInput): RestockPrio
       return (
         sectionRank[a.section] - sectionRank[b.section] ||
         statusRank[a.status] - statusRank[b.status] ||
+        priorityTieRank(a) - priorityTieRank(b) ||
+        Number(b.isFastSeller) - Number(a.isFastSeller) ||
+        b.machineMissingCount - a.machineMissingCount ||
+        b.recommendedRefillQty - a.recommendedRefillQty ||
         b.priorityScore - a.priorityScore ||
-        a.namePriorityRank - b.namePriorityRank ||
         a.name.localeCompare(b.name)
       );
     });
@@ -397,6 +417,7 @@ export function filterRestockItems(items: RestockPriorityItem[], filter: Restock
     if (filter === "low") return item.status === "low";
     if (filter === "fast") return item.isFastSeller;
     if (filter === "routes") return item.activeRouteNeedQty > 0 || item.recommendedRefillQty > 0;
+    if (filter === "missing") return item.machineMissingCount > 0;
     if (filter === "machines") return item.machinesNeedingCount > 0;
     if (filter === "drinks") return item.isDrink;
     if (filter === "snacks") return item.isSnack;
@@ -406,8 +427,12 @@ export function filterRestockItems(items: RestockPriorityItem[], filter: Restock
 
 export function restockCounts(items: RestockPriorityItem[]) {
   return {
+    buyNow: items.filter((item) => item.suggestedBuyQty > 0 || item.section === "critical" || item.machineMissingCount > 0).length,
     critical: items.filter((item) => item.section === "critical").length,
     low: items.filter((item) => item.status === "low").length,
+    fast: items.filter((item) => item.isFastSeller).length,
+    routes: items.filter((item) => item.activeRouteNeedQty > 0 || item.recommendedRefillQty > 0).length,
+    missing: items.filter((item) => item.machineMissingCount > 0).length,
     important: items.filter((item) => item.section === "important").length,
     normal: items.filter((item) => item.section === "normal").length,
   };

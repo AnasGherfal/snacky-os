@@ -272,7 +272,7 @@ function vmsSourceUsage(reportType: VmsReportType) {
       source_type: "detailed_order_transactions",
       main_sales_source: true,
       reconciliation_only: false,
-      dashboards: ["sales", "products", "machines", "failed_vends", "refills"],
+      dashboards: ["dashboard", "sales", "products", "machines", "restock", "failed_vends"],
       excluded_dashboards: ["finance"],
       explanation: "Detailed VMS order transactions are the primary sales and KPI source. Only successful_sale rows count as normal revenue.",
     };
@@ -292,8 +292,8 @@ function vmsSourceUsage(reportType: VmsReportType) {
       source_type: "machine_stock",
       main_sales_source: false,
       reconciliation_only: false,
-      dashboards: ["refills", "inventory", "machines"],
-      excluded_dashboards: ["sales", "products", "finance"],
+      dashboards: ["dashboard", "inventory", "products", "machines", "refills", "restock", "routes"],
+      excluded_dashboards: ["sales", "finance"],
       explanation: "Machine stock files feed stock/refill recommendations and do not count as sales revenue.",
     };
   }
@@ -1230,10 +1230,11 @@ async function runVmsImport({
   const orderDetailsRange = reportType === "vms_order_details_weekly" ? detectOrderDetailsDateRange(rows) : { start: "", end: "" };
   const effectiveReportStartDate = reportType === "vms_order_details_weekly" ? (reportStartDate || orderDetailsRange.start || null) : reportStartDate;
   const effectiveReportEndDate = reportType === "vms_order_details_weekly" ? (reportEndDate || orderDetailsRange.end || null) : reportEndDate;
+  const effectiveImportMode = reportType === "vms_order_details_weekly" ? VMS_IMPORT_MODES.APPEND_NEW : importMode;
 
   const summary: ImportSummary = {
     reportType,
-    importMode,
+    importMode: effectiveImportMode,
     fileName,
     fileType,
     sheetName,
@@ -1332,7 +1333,7 @@ async function runVmsImport({
       dashboard_usage: vmsSourceUsage(reportType),
       latest_error: null,
       last_error: null,
-      import_mode: importMode,
+      import_mode: effectiveImportMode,
       report_start_date: effectiveReportStartDate,
       report_end_date: effectiveReportEndDate,
       file_name: fileName,
@@ -1350,7 +1351,7 @@ async function runVmsImport({
         fileName,
         fileType,
         sheetName,
-        importMode,
+        importMode: effectiveImportMode,
         rowCount: rows.length,
         columnMapping,
       }),
@@ -1443,7 +1444,7 @@ async function runVmsImport({
     return;
   }
 
-  if (importMode === VMS_IMPORT_MODES.PREVIEW_ONLY) {
+  if (effectiveImportMode === VMS_IMPORT_MODES.PREVIEW_ONLY) {
     summary.skippedRows = rows.length;
     const batchUpdate = {
       status: "previewed",
@@ -1520,7 +1521,7 @@ async function runVmsImport({
       entityId: batch.id,
       entityLabel: `${reportType} ${fileType.toUpperCase()} ${fileName}`,
       afterData: summary,
-      metadata: { report_type: reportType, file_name: fileName, file_type: fileType, sheet_name: sheetName, import_mode: importMode },
+      metadata: { report_type: reportType, file_name: fileName, file_type: fileType, sheet_name: sheetName, import_mode: effectiveImportMode },
       summary: `Previewed ${summary.totalRows} ${reportType} rows from VMS ${fileType.toUpperCase()}`,
     });
     revalidatePath("/vms-import");
@@ -2112,7 +2113,7 @@ async function runVmsImport({
     } else {
       const { data: rpcResult, error } = await supabase.rpc("apply_vms_sales_snapshot_import", {
         p_batch_id: batch.id,
-        p_import_mode: importMode === VMS_IMPORT_MODES.REPLACE_RANGE ? "replace_range" : importMode,
+        p_import_mode: effectiveImportMode === VMS_IMPORT_MODES.REPLACE_RANGE ? "replace_range" : effectiveImportMode,
         p_report_start_date: effectiveReportStartDate,
         p_report_end_date: effectiveReportEndDate,
         p_sales_rows: salesSnapshots,
@@ -2120,7 +2121,7 @@ async function runVmsImport({
       if (error) {
         console.error("[vms-import] Sales snapshot transaction failed", {
           batchId: batch.id,
-          importMode,
+          importMode: effectiveImportMode,
           reportStartDate: effectiveReportStartDate,
           reportEndDate: effectiveReportEndDate,
           errorCode: error.code,
@@ -2358,9 +2359,11 @@ async function runVmsImport({
     summary.errors.push(metadataWarning);
     summary.failedTargets = Array.from(new Set([...summary.failedTargets, "Import metadata"]));
     summary.resultMessage = "Stock data imported. Some metadata could not update.";
-    await supabase
-      .from("vms_import_batches")
-      .update({
+    const metadataFallbackUpdate = await runVmsImportBatchMutationWithMetadataFallback({
+      queryName: "vms_import_batches.update.final_metadata_fallback",
+      currentStep: "confirm_import",
+      selectedImportBatchId: batch.id,
+      payload: {
         status: "imported_with_warnings",
         is_active: true,
         latest_error: metadataWarning.slice(0, 2000),
@@ -2370,8 +2373,22 @@ async function runVmsImport({
         rows_skipped_duplicate: summary.rowsSkippedDuplicate,
         rows_needing_review: summary.rowsNeedingReview,
         notes: JSON.stringify({ ...summary, status: "imported_with_warnings" }),
-      })
-      .eq("id", batch.id);
+      },
+      run: (payload) => supabase
+        .from("vms_import_batches")
+        .update(payload)
+        .eq("id", batch.id),
+    });
+    if (metadataFallbackUpdate.timedOut || metadataFallbackUpdate.error || metadataFallbackUpdate.value?.error) {
+      logVmsBatchMutationFailure({
+        queryName: "vms_import_batches.update.final_metadata_fallback",
+        error: metadataFallbackUpdate.error ?? metadataFallbackUpdate.value?.error ?? { code: "TIMEOUT", message: "VMS import metadata fallback update took too long." },
+        payload: metadataFallbackUpdate.payload,
+        profile,
+        selectedImportBatchId: batch.id,
+        currentStep: "confirm_import",
+      });
+    }
   }
 
   await saveHeaderMappingMemory({ supabase, profile, reportType, headerNames, mapping: columnMapping });
@@ -3332,6 +3349,7 @@ export async function completeVmsImport(formData: FormData) {
   const autoCreateMissingProducts = booleanOption(formData.get("auto_create_products"), true);
   const updateCostFromVms = booleanOption(formData.get("update_cost_from_vms"), false);
   const importMode = parseVmsImportMode(formData.get("import_mode"));
+  const effectiveImportMode = reportType === "vms_order_details_weekly" ? VMS_IMPORT_MODES.APPEND_NEW : importMode;
   const submittedReportStartDate = String(formData.get("report_start_date") || "").trim() || null;
   const submittedReportEndDate = String(formData.get("report_end_date") || "").trim() || null;
   const submittedImportBatchId = String(formData.get("import_batch_id") || formData.get("importBatchId") || "").trim() || undefined;
@@ -3459,7 +3477,7 @@ export async function completeVmsImport(formData: FormData) {
     existingBatchId: previewBatchId,
     recordReprocess: false,
     reportType,
-    importMode,
+    importMode: effectiveImportMode,
     fileName: preview.file_name,
     fileType: preview.file_type,
     sheetName: sheet.name,
@@ -3483,7 +3501,7 @@ export async function completeVmsImport(formData: FormData) {
       sheetName: sheet.name,
       reportType,
       headerRow: headerRowIndex,
-      importMode,
+      importMode: effectiveImportMode,
       reportStartDate: submittedReportStartDate ?? salesReportPeriod?.reportStartDate ?? null,
       reportEndDate: submittedReportEndDate ?? salesReportPeriod?.reportEndDate ?? null,
       mapping,

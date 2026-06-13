@@ -1,4 +1,6 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
+import type { ReactNode } from "react";
 import {
   DataTable,
   EmptyState,
@@ -8,12 +10,16 @@ import {
 } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
+import { loadFinanceHealthDiagnostics } from "@/lib/finance-health";
 import {
   FINANCE_TRANSACTION_FULL_COLUMNS,
   FINANCE_TRANSACTIONS_TABLE,
   supabaseErrorDetails,
 } from "@/lib/finance-ledger";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import {
+  getSupabaseAdminClient,
+  getSupabaseServerClient,
+} from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +33,10 @@ type HealthReport = {
   cash_collections_with_linked_finance_transaction?: number;
   purchases_missing_finance_transaction?: number;
   cash_collections_missing_finance_transaction?: number;
+  broken_link_count?: number;
+  balance_inconsistency_count?: number;
+  missing_category_count?: number;
+  ignored_source_count?: number;
   failed_sync_count?: number;
   source_types_in_overview?: string[];
   schema_columns?: Array<{
@@ -46,6 +56,15 @@ type HealthReport = {
 
 function numberValue(value: unknown) {
   return Number(value ?? 0).toLocaleString();
+}
+
+function moneyValue(value: number, currency = "LYD") {
+  return `${currency} ${value.toFixed(2)}`;
+}
+
+function textValue(value: unknown) {
+  const text = String(value ?? "").trim();
+  return text || "-";
 }
 
 async function countRows(
@@ -78,6 +97,10 @@ async function loadFallbackHealth(
       cash_collections_with_linked_finance_transaction: 0,
       purchases_missing_finance_transaction: purchases.count,
       cash_collections_missing_finance_transaction: cashCollections.count,
+      broken_link_count: 0,
+      balance_inconsistency_count: 0,
+      missing_category_count: 0,
+      ignored_source_count: 0,
       failed_sync_count: purchases.count + cashCollections.count,
       schema_columns: [],
       constraints: [],
@@ -89,11 +112,35 @@ async function loadFallbackHealth(
   };
 }
 
+function DiagnosticSection({
+  title,
+  description,
+  table,
+  emptyTitle,
+  emptyBody,
+}: {
+  title: string;
+  description: string;
+  table: ReactNode;
+  emptyTitle: string;
+  emptyBody: string;
+}) {
+  const hasRows = Boolean(table);
+  return (
+    <section className="mb-6">
+      <h2 className="mb-2 text-lg font-semibold text-slate-900">{title}</h2>
+      <p className="mb-3 text-sm text-slate-500">{description}</p>
+      {hasRows ? table : <EmptyState title={emptyTitle} body={emptyBody} />}
+    </section>
+  );
+}
+
 export default async function FinanceHealthPage() {
   const profile = await getCurrentProfile();
   if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
 
-  const supabase = getSupabaseServerClient();
+  const supabase =
+    getSupabaseAdminClient() ?? getSupabaseServerClient();
   if (!supabase) {
     return (
       <EmptyState
@@ -103,71 +150,94 @@ export default async function FinanceHealthPage() {
     );
   }
 
-  const healthResult = await supabase.rpc("finance_health_report");
-  const fallback = healthResult.error
-    ? await loadFallbackHealth(supabase)
-    : null;
+  const [healthResult, diagnostics] = await Promise.all([
+    supabase.rpc("finance_health_report"),
+    loadFinanceHealthDiagnostics(supabase),
+  ]);
+
+  const fallback = healthResult.error ? await loadFallbackHealth(supabase) : null;
   const report = (
     healthResult.error ? fallback?.report : healthResult.data
   ) as HealthReport;
   const rpcError = healthResult.error
     ? supabaseErrorDetails(healthResult.error)
     : null;
-  if (healthResult.error)
+  if (healthResult.error) {
     console.error(
       "[finance-health] finance_health_report RPC failed",
       rpcError,
     );
+  }
+
+  const diagnosticCount = {
+    missingPurchases:
+      report.purchases_missing_finance_transaction ??
+      diagnostics.purchasesMissingFinance.length,
+    missingCash:
+      report.cash_collections_missing_finance_transaction ??
+      diagnostics.cashCollectionsMissingFinance.length,
+    brokenLinks:
+      report.broken_link_count ?? diagnostics.brokenLinks.length,
+    balanceIssues:
+      report.balance_inconsistency_count ??
+      diagnostics.balanceInconsistencies.length,
+    missingCategories:
+      report.missing_category_count ?? diagnostics.missingCategories.length,
+    ignoredSource:
+      report.ignored_source_count ?? diagnostics.ignoredSourceRows.length,
+  };
 
   const cards = [
-    { label: "Transactions", value: report.transactions_count },
-    { label: "Purchases total", value: report.purchases_count },
-    {
-      label: "Purchases with finance",
-      value: report.purchases_with_linked_finance_transaction,
-    },
-    {
-      label: "Purchases missing finance",
-      value: report.purchases_missing_finance_transaction,
-    },
-    { label: "Cash collections total", value: report.cash_collections_count },
-    {
-      label: "Cash with finance",
-      value: report.cash_collections_with_linked_finance_transaction,
-    },
-    {
-      label: "Cash missing finance",
-      value: report.cash_collections_missing_finance_transaction,
-    },
-    { label: "Failed sync count", value: report.failed_sync_count },
+    { label: "Transactions", value: report.transactions_count, tone: "text-slate-900" },
+    { label: "Purchases missing finance", value: diagnosticCount.missingPurchases, tone: "text-rose-700" },
+    { label: "Cash missing finance", value: diagnosticCount.missingCash, tone: "text-rose-700" },
+    { label: "Broken links", value: diagnosticCount.brokenLinks, tone: "text-amber-700" },
+    { label: "Balance inconsistencies", value: diagnosticCount.balanceIssues, tone: "text-amber-700" },
+    { label: "Missing categories", value: diagnosticCount.missingCategories, tone: "text-sky-700" },
+    { label: "Ignored source rows", value: diagnosticCount.ignoredSource, tone: "text-violet-700" },
+    { label: "Failed sync count", value: report.failed_sync_count, tone: "text-rose-700" },
   ];
   const missingColumns = report.missing_columns ?? [];
 
   return (
     <>
       <PageHeader
-        title="Finance Sync Health"
-        subtitle="Admin-only sync diagnostics for purchase and cash-collection finance transaction creation. New money events should appear automatically without backfill or repair."
-        breadcrumbs={[
-          { label: "Admin", href: "/admin" },
-          { label: "Finance Sync Health" },
-        ]}
+        title="Finance Health"
+        subtitle="Finance is the source of truth. Every purchase and counted cash collection should land in financial_transactions with the right direction, amount, category, and live source link."
+        breadcrumbs={[{ label: "Admin", href: "/admin" }, { label: "Finance Health" }]}
         action={
-          <SecondaryButton href="/finance/transactions">
-            Open ledger
-          </SecondaryButton>
+          <div className="flex flex-wrap gap-2">
+            <SecondaryButton href="/finance">
+              Open finance
+            </SecondaryButton>
+            <SecondaryButton href="/finance/transactions">
+              Open ledger
+            </SecondaryButton>
+          </div>
         }
       />
 
       {rpcError ? (
         <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
           Finance health RPC is not installed yet. Showing fallback table counts
-          only. Supabase returned {String(rpcError.code ?? "an error")}:{" "}
+          plus direct diagnostics from the current ledger. Supabase returned{" "}
+          {String(rpcError.code ?? "an error")}:{" "}
           {String(rpcError.message ?? "Unknown database error")}.
         </div>
       ) : null}
 
-      <section className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      {diagnostics.errors.length ? (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+          <div className="font-semibold">Some finance diagnostics could not fully load</div>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            {diagnostics.errors.map((error) => (
+              <li key={error}>{error}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      <section className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <div className="surface-card">
           <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
             Schema status
@@ -186,7 +256,7 @@ export default async function FinanceHealthPage() {
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
               {card.label}
             </div>
-            <div className="mt-2 text-3xl font-semibold text-slate-900">
+            <div className={`mt-2 text-3xl font-semibold ${card.tone}`}>
               {numberValue(card.value)}
             </div>
           </div>
@@ -196,16 +266,15 @@ export default async function FinanceHealthPage() {
       <section className="mb-6 grid gap-4 lg:grid-cols-2">
         <div className="surface-card">
           <h2 className="text-base font-semibold text-slate-900">
-            Purchases sync
+            Purchase sync
           </h2>
           <p className="mt-1 text-sm text-slate-500">
-            Eligible purchase records must have an active finance row linked by
-            source_type=&quot;purchase&quot;, source_id, related_purchase_id, or
-            linked_purchase_id.
+            Non-voided purchases with value should always have one active
+            finance transaction linked by both source and purchase ids.
           </p>
           <dl className="mt-4 grid gap-3 text-sm">
             <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
-              <dt>Total purchases</dt>
+              <dt>Total purchases expected in finance</dt>
               <dd className="font-semibold text-slate-900">
                 {numberValue(report.purchases_count)}
               </dd>
@@ -219,7 +288,7 @@ export default async function FinanceHealthPage() {
             <div className="flex items-center justify-between rounded-lg bg-rose-50 px-3 py-2 text-rose-900">
               <dt>Purchases missing finance transaction</dt>
               <dd className="font-semibold">
-                {numberValue(report.purchases_missing_finance_transaction)}
+                {numberValue(diagnosticCount.missingPurchases)}
               </dd>
             </div>
           </dl>
@@ -227,43 +296,208 @@ export default async function FinanceHealthPage() {
 
         <div className="surface-card">
           <h2 className="text-base font-semibold text-slate-900">
-            Cash collections sync
+            Cash sync
           </h2>
           <p className="mt-1 text-sm text-slate-500">
-            Counted cash collections must have an active finance row linked by
-            source_type=&quot;cash_collection&quot;, source_id,
-            related_cash_collection_id, or linked_cash_collection_id.
+            Counted cash collections should always have one active money-in
+            finance transaction linked by both source and cash ids.
           </p>
           <dl className="mt-4 grid gap-3 text-sm">
             <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
-              <dt>Total collections</dt>
+              <dt>Total cash collections expected in finance</dt>
               <dd className="font-semibold text-slate-900">
                 {numberValue(report.cash_collections_count)}
               </dd>
             </div>
             <div className="flex items-center justify-between rounded-lg bg-emerald-50 px-3 py-2 text-emerald-900">
-              <dt>Collections with finance transaction</dt>
+              <dt>Cash with finance transaction</dt>
               <dd className="font-semibold">
                 {numberValue(report.cash_collections_with_linked_finance_transaction)}
               </dd>
             </div>
             <div className="flex items-center justify-between rounded-lg bg-rose-50 px-3 py-2 text-rose-900">
-              <dt>Collections missing finance transaction</dt>
+              <dt>Cash missing finance transaction</dt>
               <dd className="font-semibold">
-                {numberValue(report.cash_collections_missing_finance_transaction)}
+                {numberValue(diagnosticCount.missingCash)}
               </dd>
             </div>
           </dl>
         </div>
       </section>
 
+      <DiagnosticSection
+        title="Purchases Missing Finance Transactions"
+        description="Every valued purchase should have a linked money-out finance transaction."
+        emptyTitle="No purchase sync gaps"
+        emptyBody="Every purchase that should be represented in finance already has a linked finance row."
+        table={
+          diagnostics.purchasesMissingFinance.length ? (
+            <DataTable headers={["Purchase", "Date", "Supplier", "Status", "Amount"]}>
+              {diagnostics.purchasesMissingFinance.map((purchase) => (
+                <tr key={purchase.id}>
+                  <td>
+                    <Link href={`/purchases/${purchase.id}`} className="font-medium text-slate-900 hover:underline">
+                      {purchase.receiptNumber || purchase.id.slice(0, 8)}
+                    </Link>
+                  </td>
+                  <td>{textValue(purchase.orderDate)}</td>
+                  <td>{textValue(purchase.supplierName)}</td>
+                  <td>{textValue(`${purchase.status ?? "-"} / ${purchase.paymentStatus ?? "-"}`)}</td>
+                  <td>{moneyValue(purchase.amount)}</td>
+                </tr>
+              ))}
+            </DataTable>
+          ) : null
+        }
+      />
+
+      <DiagnosticSection
+        title="Cash Collections Missing Finance Transactions"
+        description="Every counted cash collection should have a linked money-in finance transaction."
+        emptyTitle="No cash sync gaps"
+        emptyBody="Every counted cash collection already has a linked finance row."
+        table={
+          diagnostics.cashCollectionsMissingFinance.length ? (
+            <DataTable headers={["Collection", "Collected", "Machine", "Review", "Amount"]}>
+              {diagnostics.cashCollectionsMissingFinance.map((cash) => (
+                <tr key={cash.id}>
+                  <td>
+                    <Link href={`/cash-collections/${cash.id}`} className="font-medium text-slate-900 hover:underline">
+                      {cash.cashBagId || cash.id.slice(0, 8)}
+                    </Link>
+                  </td>
+                  <td>{textValue(cash.collectedAt)}</td>
+                  <td>{textValue(cash.machineName)}</td>
+                  <td>{textValue(cash.reviewStatus)}</td>
+                  <td>{moneyValue(cash.actualCashCollected)}</td>
+                </tr>
+              ))}
+            </DataTable>
+          ) : null
+        }
+      />
+
+      <DiagnosticSection
+        title="Broken Source Links"
+        description="These finance rows no longer line up cleanly with their purchase or cash source record."
+        emptyTitle="No broken source links"
+        emptyBody="Every source-generated finance row still points to a valid purchase or cash collection."
+        table={
+          diagnostics.brokenLinks.length ? (
+            <DataTable headers={["Finance row", "Source", "Linked id", "Reason", "Date"]}>
+              {diagnostics.brokenLinks.map((issue) => (
+                <tr key={`${issue.financeTransactionId}-${issue.reason}`}>
+                  <td>
+                    <Link href={`/finance/transactions/${issue.financeTransactionId}`} className="font-medium text-slate-900 hover:underline">
+                      {issue.financeTransactionId.slice(0, 8)}
+                    </Link>
+                  </td>
+                  <td>{textValue(`${issue.sourceType} / ${issue.sourceId ?? "-"}`)}</td>
+                  <td>{textValue(issue.linkedId)}</td>
+                  <td className="max-w-xl break-words text-sm">{issue.reason}</td>
+                  <td>{textValue(issue.transactionDate)}</td>
+                </tr>
+              ))}
+            </DataTable>
+          ) : null
+        }
+      />
+
+      <DiagnosticSection
+        title="Balance Inconsistencies"
+        description="These linked rows disagree with their source record on direction, signed amount, transaction effect, or source amount."
+        emptyTitle="No balance inconsistencies"
+        emptyBody="Source-generated finance rows match their purchase and cash source amounts and directions."
+        table={
+          diagnostics.balanceInconsistencies.length ? (
+            <DataTable headers={["Source", "Finance row", "Source amount", "Finance amount", "Issue"]}>
+              {diagnostics.balanceInconsistencies.map((issue) => (
+                <tr key={`${issue.financeTransactionId}-${issue.sourceId}`}>
+                  <td>
+                    <div className="font-medium text-slate-900">{issue.label}</div>
+                    <div className="text-xs text-slate-500">{issue.sourceType} / {issue.sourceId.slice(0, 8)}</div>
+                  </td>
+                  <td>
+                    <Link href={`/finance/transactions/${issue.financeTransactionId}`} className="font-medium text-slate-900 hover:underline">
+                      {issue.financeTransactionId.slice(0, 8)}
+                    </Link>
+                    <div className="text-xs text-slate-500">
+                      {textValue(issue.direction)} / {textValue(issue.transactionEffect)}
+                    </div>
+                  </td>
+                  <td>{moneyValue(issue.sourceAmount)}</td>
+                  <td>
+                    <div>{moneyValue(issue.financeAmount)}</div>
+                    <div className="text-xs text-slate-500">Signed {issue.signedAmount.toFixed(2)}</div>
+                  </td>
+                  <td className="max-w-xl break-words text-sm">{issue.issue}</td>
+                </tr>
+              ))}
+            </DataTable>
+          ) : null
+        }
+      />
+
+      <DiagnosticSection
+        title="Missing Categories"
+        description='Any finance row without a category should fall back to "Uncategorized" instead of staying blank.'
+        emptyTitle="No category gaps"
+        emptyBody="Recent finance rows all have category, transaction type, and final bucket values."
+        table={
+          diagnostics.missingCategories.length ? (
+            <DataTable headers={["Finance row", "Source", "Category label", "Transaction type", "Final bucket"]}>
+              {diagnostics.missingCategories.map((issue) => (
+                <tr key={issue.financeTransactionId}>
+                  <td>
+                    <Link href={`/finance/transactions/${issue.financeTransactionId}`} className="font-medium text-slate-900 hover:underline">
+                      {issue.financeTransactionId.slice(0, 8)}
+                    </Link>
+                  </td>
+                  <td>{textValue(issue.sourceType)}</td>
+                  <td>{textValue(issue.category)}</td>
+                  <td>{textValue(issue.transactionType)}</td>
+                  <td>{textValue(issue.finalBucket)}</td>
+                </tr>
+              ))}
+            </DataTable>
+          ) : null
+        }
+      />
+
+      <DiagnosticSection
+        title="Ignored Source Rows"
+        description="Source-generated finance rows should never be hidden with ignored or skipped import statuses."
+        emptyTitle="No ignored source rows"
+        emptyBody="All purchase and cash source rows are visible in the finance ledger."
+        table={
+          diagnostics.ignoredSourceRows.length ? (
+            <DataTable headers={["Finance row", "Source", "Import status", "Description", "Date"]}>
+              {diagnostics.ignoredSourceRows.map((issue) => (
+                <tr key={issue.financeTransactionId}>
+                  <td>
+                    <Link href={`/finance/transactions/${issue.financeTransactionId}`} className="font-medium text-slate-900 hover:underline">
+                      {issue.financeTransactionId.slice(0, 8)}
+                    </Link>
+                  </td>
+                  <td>{textValue(`${issue.sourceType} / ${issue.sourceId ?? "-"}`)}</td>
+                  <td>{textValue(issue.importStatus)}</td>
+                  <td className="max-w-xl break-words text-sm">{textValue(issue.description)}</td>
+                  <td>{textValue(issue.transactionDate)}</td>
+                </tr>
+              ))}
+            </DataTable>
+          ) : null
+        }
+      />
+
       <section className="mb-6 surface-card">
         <h2 className="text-base font-semibold text-slate-900">
           Overview source types
         </h2>
         <p className="mt-1 text-sm text-slate-500">
-          The transaction overview does not filter out auto-generated rows. It
-          includes purchase, cash_collection, manual, and import source types.
+          The default finance overview should include purchase, cash_collection,
+          manual, and import rows without hiding source-generated money
+          movements.
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
           {(report.source_types_in_overview ?? [

@@ -10,6 +10,7 @@ import { FINANCE_ACCOUNTS } from "@/lib/finance-balance";
 import { latestKnownProductUnitCost, resolvePurchaseUnitCost } from "@/lib/purchase-cost-memory";
 import type { PurchaseSubmitResult } from "@/lib/purchase-actions";
 import type { ReceiptConfidenceLabel, ReceiptLineAction, ReceiptScanDraft } from "@/lib/receipt-scan-types";
+import { readRestockShoppingList, type RestockShoppingListItem } from "@/lib/restock-shopping-list";
 
 type SupplierOption = { id: string; name: string };
 type ProductOption = {
@@ -491,6 +492,23 @@ function ProductCombobox({
   );
 }
 
+function lineFromRestockSuggestion(item: RestockShoppingListItem, product: ProductOption | null | undefined): PurchaseLine {
+  const rememberedCost = latestKnownProductUnitCost(product);
+  return newLine({
+    productId: item.productId,
+    boxesQty: 0,
+    unitsPerBox: productUnitsPerBox(product),
+    looseUnitsQty: Math.max(0, Math.floor(Number(item.suggestedQty ?? 0))),
+    unitCost: rememberedCost ?? 0,
+    unitCostBlank: rememberedCost === null,
+    unitCostZeroConfirmed: false,
+    unitCostSource: rememberedCost === null ? "blank" : "product_memory",
+    lineTotal: 0,
+    pricingMode: "unit",
+    matchAction: "change",
+  });
+}
+
 function ReceiptPreviewBody({ preview, onOpen }: { preview: ReceiptPreviewState | null; onOpen: () => void }) {
   if (!preview) {
     return (
@@ -565,6 +583,7 @@ export function PurchaseForm({
   receiptScan,
   appliedScanKey = 0,
   canAddProducts = false,
+  prefillSource,
   submitLabel = "Save draft",
 }: {
   action: (formData: FormData) => Promise<PurchaseSubmitResult>;
@@ -575,6 +594,7 @@ export function PurchaseForm({
   receiptScan?: ReceiptScanDraft | null;
   appliedScanKey?: number;
   canAddProducts?: boolean;
+  prefillSource?: string | null;
   submitLabel?: string;
 }) {
   const router = useRouter();
@@ -582,6 +602,7 @@ export function PurchaseForm({
   const submittingRef = useRef(false);
   const submitMessageRef = useRef<HTMLDivElement | null>(null);
   const lastAppliedScanKey = useRef(0);
+  const restockPrefillAppliedRef = useRef(false);
   const receiptObjectUrlRef = useRef<string | null>(null);
   const [details, setDetails] = useState<PurchaseDetailsState>(() => detailsFromInitial(initialPurchase));
   const [lines, setLines] = useState<PurchaseLine[]>(() => initialLines?.length ? initialLines.map((line) => newLine(line)) : [newLine()]);
@@ -678,6 +699,50 @@ export function PurchaseForm({
     }, 0);
     return () => window.clearTimeout(timer);
   }, [appliedScanKey, receiptScan]);
+
+  useEffect(() => {
+    if (prefillSource !== "restock" || initialPurchase?.id || restockPrefillAppliedRef.current) return;
+
+    const timer = window.setTimeout(() => {
+      if (restockPrefillAppliedRef.current) return;
+      if (localDraft.pendingDraft) return;
+      if (hasPurchaseDraftContent(localPurchaseDraft)) return;
+
+      const restockItems = readRestockShoppingList();
+      if (!restockItems.length) {
+        restockPrefillAppliedRef.current = true;
+        return;
+      }
+
+      const prefilledEntries = restockItems
+        .map((item) => {
+          const product = productById.get(item.productId);
+          if (!product) return null;
+          const line = lineFromRestockSuggestion(item, product);
+          return { line, search: product.name };
+        })
+        .filter((entry): entry is { line: PurchaseLine; search: string } => Boolean(entry));
+
+      restockPrefillAppliedRef.current = true;
+
+      if (!prefilledEntries.length) {
+        setSubmitMessage({
+          type: "error",
+          text: "The saved restock list could not be loaded into this purchase because those products are no longer available in the active product list.",
+        });
+        return;
+      }
+
+      setLines(prefilledEntries.map((entry) => entry.line));
+      setSearchByLine(Object.fromEntries(prefilledEntries.map((entry) => [entry.line.id, entry.search])));
+      setSubmitMessage({
+        type: "success",
+        text: `Loaded ${prefilledEntries.length} restock item${prefilledEntries.length === 1 ? "" : "s"} into this purchase draft. Review supplier, quantities, and prices before receiving.`,
+      });
+    }, 120);
+
+    return () => window.clearTimeout(timer);
+  }, [initialPurchase?.id, localDraft.pendingDraft, localPurchaseDraft, prefillSource, productById]);
 
   useEffect(() => {
     if (submitMessage?.type === "error") {

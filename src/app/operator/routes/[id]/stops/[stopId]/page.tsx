@@ -516,6 +516,39 @@ export default function MachineStopPage() {
     });
     return hasShortage || missingReports.some((item) => item.productName.trim()) ? "partial" : "full";
   }, [filledQtys, missingReports, stopData, unavailableProducts]);
+  const stopExecutionSummary = useMemo(() => {
+    if (!stopData) {
+      return {
+        assignedUnits: 0,
+        filledUnits: 0,
+        shortageUnits: 0,
+        extraUnits: 0,
+        unavailableCount: 0,
+        missingReportCount: 0,
+        proofReady: false,
+      };
+    }
+
+    const assignedSummary = stopData.refillItems.reduce(
+      (summary, item) => {
+        const assignedQty = Number(item.assignedQty ?? item.parQty ?? 0);
+        const actualQty = Number(filledQtys[item.productId] ?? 0);
+        summary.assignedUnits += assignedQty;
+        summary.filledUnits += actualQty;
+        summary.shortageUnits += Math.max(0, assignedQty - actualQty);
+        if (unavailableProducts[item.productId]) summary.unavailableCount += 1;
+        return summary;
+      },
+      { assignedUnits: 0, filledUnits: 0, shortageUnits: 0, unavailableCount: 0 },
+    );
+
+    return {
+      ...assignedSummary,
+      extraUnits: extraProducts.reduce((sum, item) => sum + Math.max(0, Number(item.quantity ?? 0)), 0),
+      missingReportCount: missingReports.filter((item) => item.productName.trim()).length,
+      proofReady: Boolean(finalPhotoFile || stopData.hasCompletionPhoto),
+    };
+  }, [extraProducts, filledQtys, finalPhotoFile, missingReports, stopData, unavailableProducts]);
 
   useEffect(() => {
     const fetchStopData = async () => {
@@ -811,10 +844,28 @@ export default function MachineStopPage() {
           </div>
         )}
 
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <Metric label="Assigned units" value={stopExecutionSummary.assignedUnits} />
+          <Metric label="Filled now" value={stopExecutionSummary.filledUnits} />
+          <Metric label="Shortage to explain" value={stopExecutionSummary.shortageUnits} tone={stopExecutionSummary.shortageUnits > 0 ? "warn" : "neutral"} />
+          <Metric label="Extra units added" value={stopExecutionSummary.extraUnits} />
+          <Metric label="Proof photo" value={stopExecutionSummary.proofReady ? "Ready" : "Needed"} tone={stopExecutionSummary.proofReady ? "neutral" : "warn"} />
+        </section>
+
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+          Record what you actually filled, then finish the stop. Leftovers are handled later on the route leftovers screen, so you do not need to invent fake leftover numbers here.
+        </div>
+
         <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
           <div className="border-b border-slate-200 bg-slate-50 p-4 md:p-6">
             <h2 className="text-lg font-semibold">Assigned products</h2>
             <p className="mt-1 text-sm text-slate-500">Record actual quantities. Differences from the plan are tracked for review.</p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <Metric label="Unavailable lines" value={stopExecutionSummary.unavailableCount} tone={stopExecutionSummary.unavailableCount > 0 ? "warn" : "neutral"} />
+              <Metric label="Missing product reports" value={stopExecutionSummary.missingReportCount} tone={stopExecutionSummary.missingReportCount > 0 ? "warn" : "neutral"} />
+              <Metric label="Cash status" value={cashCollected ? "Collected" : "No cash"} />
+              <Metric label="Refill result" value={fillStatusPreview === "full" ? "Full refill" : "Partial refill"} tone={fillStatusPreview === "full" ? "neutral" : "warn"} />
+            </div>
           </div>
 
           {stopData.refillItems.length === 0 ? (
@@ -954,18 +1005,33 @@ export default function MachineStopPage() {
               {fillStatusPreview === "full" ? "Full refill" : "Partial refill"}
             </div>
           </div>
-          <input
-            type="file"
-            accept="image/*"
-            capture="environment"
-            onChange={(event) => {
-              const file = event.target.files?.[0] ?? null;
-              setFinalPhotoFile(file);
-              setFinalPhotoName(file?.name ?? "");
-            }}
-            className="field-input"
-          />
-          {finalPhotoName ? <p className="mt-2 text-sm text-slate-600">Selected: {finalPhotoName}</p> : <p className="mt-2 text-sm text-amber-700">Final photo is required before completion.</p>}
+          <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_260px]">
+            <div>
+              <input
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={(event) => {
+                  const file = event.target.files?.[0] ?? null;
+                  setFinalPhotoFile(file);
+                  setFinalPhotoName(file?.name ?? "");
+                }}
+                className="field-input"
+              />
+              {finalPhotoFile ? <p className="mt-2 text-sm text-slate-600">Selected: {finalPhotoFile.name}</p> : null}
+              {!finalPhotoFile && stopData.hasCompletionPhoto ? <p className="mt-2 text-sm text-slate-600">A completion photo is already saved for this stop. Add a new photo only if you want to replace it.</p> : null}
+              {!finalPhotoFile && !stopData.hasCompletionPhoto ? <p className="mt-2 text-sm text-amber-700">Final photo is required before completion.</p> : null}
+            </div>
+            <div className={stopExecutionSummary.proofReady ? "rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900" : "rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"}>
+              <div className="text-xs font-semibold uppercase tracking-wide">{stopExecutionSummary.proofReady ? "Photo ready" : "Photo still needed"}</div>
+              <div className="mt-2 font-semibold">
+                {finalPhotoFile ? "New proof photo will upload with this save." : stopData.hasCompletionPhoto ? "Existing proof photo is already attached." : "Take a completion photo before finishing this stop."}
+              </div>
+              <div className="mt-2 text-xs">
+                Completion photos stay visible later from the route details page.
+              </div>
+            </div>
+          </div>
         </section>
 
         <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
@@ -1003,7 +1069,7 @@ export default function MachineStopPage() {
         </div>
 
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-          <strong>Reminder:</strong> This page is for physical execution at the machine: actual filled quantities, shortage reasons, cash, issues, and the final photo after cleaning.
+          <strong>Reminder:</strong> This page is for physical execution at the machine: actual filled quantities, shortage reasons, cash, issues, and the final photo after cleaning. Leftovers are returned later from the dedicated leftovers screen.
         </div>
 
         {stopData.debug ? <DebugDetails debug={stopData.debug} /> : null}
@@ -1136,6 +1202,11 @@ function CashAndIssueSections({
               </button>
             </div>
             <p className="mt-2 text-xs text-slate-500">Operators only mark collection. Finance counts the envelope later.</p>
+          </div>
+          <div className={cashCollected ? "rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900" : "rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700"}>
+            {cashCollected
+              ? "Cash is marked as collected. If you have an envelope or bag ID, enter it below so Finance can reconcile it faster."
+              : "No cash collected at this stop. Leave the envelope field blank unless you are carrying a cash bag anyway."}
           </div>
           <label className="block">
             <span className="mb-1 block text-sm font-medium text-slate-800">Cash bag / envelope ID</span>

@@ -30,6 +30,12 @@ const adminLinks = [
       "See failed imports, finance sync gaps, stuck routes, missing product costs, and unmapped VMS records in one place.",
   },
   {
+    title: "Route Recommendation Debug",
+    href: "/admin/route-recommendation-debug",
+    description:
+      "Trace stock imports into latest stock rows, refill recommendations, and the exact rows visible on route creation.",
+  },
+  {
     title: "Team",
     href: "/team",
     description: "Users, roles, operator accounts, and access status.",

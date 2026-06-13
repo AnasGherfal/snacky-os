@@ -1,7 +1,10 @@
 import { ErrorState, FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
+import { VmsDataSourceCard } from "@/components/VmsDataSourceCard";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
 import { ROUTE_RESERVATION_STATUSES, isRouteReservationStatus } from "@/lib/route-workflow";
+import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
+import { queryVmsDashboardBatches, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
 import { RouteCreateForm } from "@/app/routes/new/RouteCreateForm";
 import { redirect } from "next/navigation";
 
@@ -208,6 +211,7 @@ export default async function NewRoutePage() {
     { data: reservedStock, error: reservedError },
     { data: products, error: productsError },
     { data: recentMovements, error: movementsError },
+    batchResult,
   ] = await Promise.all([
     supabase.from("team_members").select("id, full_name, role, roles").or("role.in.(owner,admin,supervisor,operator),roles.ov.{owner,admin,supervisor,operator}").eq("active", true).order("full_name"),
     supabase.from("machines").select("id, name, machine_code, location:locations(name)").eq("status", "active").order("name"),
@@ -222,6 +226,14 @@ export default async function NewRoutePage() {
       .select("product_id, planned_qty, picked_qty, routes!inner(status)"),
     supabase.from("products").select("id, sku, barcode, name, category, brand, image_url, active").eq("active", true).order("name"),
     supabase.from("inventory_movements").select("product_id, created_at").order("created_at", { ascending: false }).limit(80),
+    safeSupabaseQuery<VmsDashboardBatch>({
+      label: "routes.new.vms_import_batches",
+      promise: queryVmsDashboardBatches(supabase, {
+        reportTypes: ["stock", "machine_stock_snapshot", "planogram"],
+        orderBy: "uploaded_at",
+        ascending: false,
+      }),
+    }),
   ]);
   const queryIssues = [
     operatorsError
@@ -382,6 +394,14 @@ export default async function NewRoutePage() {
     <>
       <FormPageLayout>
         <PageHeader title="Create route" subtitle="Build a route with stops, refill recommendations, or a fast manual pick list from storage." />
+        <VmsDataSourceCard
+          batches={(batchResult.data ?? []) as VmsDashboardBatch[]}
+          error={batchResult.error}
+          title="Recommendation Source"
+          subtitle="Route suggestions come from the latest active stock snapshot and planogram-backed refill recommendations. Storage shortages warn the planner but do not hide items."
+          showSales={false}
+          showStock
+        />
         <RouteCreateForm
           operators={operators ?? []}
           machines={machineCatalog}
@@ -390,6 +410,7 @@ export default async function NewRoutePage() {
           products={productCatalog}
           recentProductIds={recentProductIds}
           allowAdminOverride={isOwnerAdminRole(profile)}
+          recommendationDebugHref={isOwnerAdminRole(profile) ? "/admin/route-recommendation-debug" : undefined}
           defaultRouteDate={today}
         />
       </FormPageLayout>

@@ -30,7 +30,7 @@ export default async function EditStorageLocationPage({
   }
 
   const [{ data: location, error: locationError }, { data: operators }] = await Promise.all([
-    supabase.from("storage_locations").select("id, name, address, active, location_type, related_operator_id, created_at, updated_at").eq("id", id).maybeSingle(),
+    supabase.from("storage_locations").select("id, name, address, active, location_type, related_operator_id, latitude, longitude, created_at, updated_at").eq("id", id).maybeSingle(),
     supabase
       .from("team_members")
       .select("id, full_name, email, role, roles")

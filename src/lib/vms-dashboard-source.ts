@@ -15,7 +15,90 @@ export type VmsDashboardBatch = {
   row_count?: number | null;
   rows_found?: number | null;
   rows_imported?: number | null;
+  rows_skipped_duplicate?: number | null;
+  rows_needing_review?: number | null;
   error_count?: number | null;
+  dashboard_usage?: unknown;
+  source_usage?: unknown;
+};
+
+type SupabaseLikeError = {
+  code?: unknown;
+  message?: unknown;
+  details?: unknown;
+  hint?: unknown;
+};
+
+type SupabaseLikeResult<T> = {
+  data?: T[] | null;
+  error?: SupabaseLikeError | null;
+  count?: number | null;
+};
+
+export type VmsDashboardUsageKey =
+  | "dashboard"
+  | "sales"
+  | "products"
+  | "machines"
+  | "inventory"
+  | "refills"
+  | "restock"
+  | "routes"
+  | "reconciliation"
+  | "failed_vends";
+
+export const vmsDashboardBatchSelect = [
+  "id",
+  "file_name",
+  "original_file_name",
+  "report_type",
+  "status",
+  "is_active",
+  "report_start_date",
+  "report_end_date",
+  "uploaded_at",
+  "imported_at",
+  "deleted_at",
+  "detected_min_datetime",
+  "detected_max_datetime",
+  "row_count",
+  "rows_found",
+  "rows_imported",
+  "rows_skipped_duplicate",
+  "rows_needing_review",
+  "error_count",
+  "dashboard_usage",
+  "source_usage",
+].join(", ");
+
+const legacyVmsDashboardBatchSelect = [
+  "id",
+  "file_name",
+  "original_file_name",
+  "report_type",
+  "status",
+  "is_active",
+  "report_start_date",
+  "report_end_date",
+  "uploaded_at",
+  "imported_at",
+  "row_count",
+  "rows_found",
+  "rows_imported",
+  "error_count",
+].join(", ");
+
+const dashboardUsageLabels: Record<VmsDashboardUsageKey | "routes", string> = {
+  dashboard: "Overview Dashboard",
+  sales: "Sales Dashboard",
+  products: "Product Dashboard",
+  machines: "Machine Dashboard",
+  inventory: "Inventory Dashboard",
+  refills: "Refill Recommendations",
+  restock: "Restock Priority",
+  reconciliation: "Reconciliation",
+  failed_vends: "Failed Vend / Refund Report",
+  routes: "Route Creation",
 };
 
 function dateOnly(date: Date) {
@@ -31,6 +114,74 @@ export function isActiveImportedVmsBatch(batch: VmsDashboardBatch) {
   return ["imported", "imported_with_warnings", "partially_imported"].includes(String(batch.status ?? ""))
     && batch.is_active !== false
     && !batch.deleted_at;
+}
+
+function isDashboardBatchSchemaError(error: unknown) {
+  const payload = error && typeof error === "object" ? error as SupabaseLikeError : null;
+  const text = [payload?.code, payload?.message, payload?.details, payload?.hint]
+    .map((value) => String(value ?? ""))
+    .join(" ")
+    .toLowerCase();
+  return payload?.code === "42703" || payload?.code === "PGRST204" || text.includes("column") || text.includes("schema cache");
+}
+
+export async function queryVmsDashboardBatches(
+  supabase: any,
+  {
+    reportTypes,
+    orderBy = "uploaded_at",
+    ascending = false,
+  }: {
+    reportTypes: string[];
+    orderBy?: string;
+    ascending?: boolean;
+  },
+) {
+  const preferred = await (supabase
+    .from("vms_import_batches")
+    .select(vmsDashboardBatchSelect)
+    .in("report_type", reportTypes)
+    .order(orderBy, { ascending, nullsFirst: false }) as Promise<SupabaseLikeResult<VmsDashboardBatch>>);
+
+  if (!preferred.error || !isDashboardBatchSchemaError(preferred.error)) return preferred;
+
+  return supabase
+    .from("vms_import_batches")
+    .select(legacyVmsDashboardBatchSelect)
+    .in("report_type", reportTypes)
+    .order(orderBy, { ascending, nullsFirst: false }) as Promise<SupabaseLikeResult<VmsDashboardBatch>>;
+}
+
+function fallbackDashboardUsageKeys(reportType: string | null | undefined): VmsDashboardUsageKey[] {
+  if (reportType === "vms_order_details_weekly") return ["dashboard", "sales", "products", "machines", "restock", "failed_vends"];
+  if (reportType === "sales") return ["reconciliation"];
+  if (["stock", "machine_stock_snapshot", "planogram"].includes(String(reportType ?? ""))) return ["dashboard", "inventory", "products", "machines", "refills", "restock", "routes"];
+  return [];
+}
+
+export function dashboardUsageKeys(value: unknown, reportType?: string | null) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => String(entry ?? "").trim()).filter(Boolean);
+  }
+  if (value && typeof value === "object") {
+    const record = value as { dashboards?: unknown };
+    if (Array.isArray(record.dashboards)) {
+      return record.dashboards.map((entry) => String(entry ?? "").trim()).filter(Boolean);
+    }
+  }
+  return fallbackDashboardUsageKeys(reportType);
+}
+
+function titleCaseUsageKey(key: string) {
+  return key
+    .split(/[_-]+/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+export function dashboardUsageNames(value: unknown, reportType?: string | null) {
+  return dashboardUsageKeys(value, reportType).map((key) => dashboardUsageLabels[key as keyof typeof dashboardUsageLabels] ?? titleCaseUsageKey(key));
 }
 
 export function activeDetailedBatches(batches: VmsDashboardBatch[]) {
@@ -113,4 +264,8 @@ export function stockSourceMessage(batches: VmsDashboardBatch[]) {
   if (!latest) return "Refill recommendations are using manual planogram/storage fallback until a stock snapshot is imported.";
   const snapshot = latest.detected_max_datetime ?? latest.detected_min_datetime ?? latest.uploaded_at ?? latest.imported_at ?? "";
   return `Refill recommendations are using stock snapshot file ${sourceFileName(latest)}${snapshot ? ` (${new Date(snapshot).toLocaleString("en-US")})` : ""}.`;
+}
+
+export function batchUsageSummary(batch: VmsDashboardBatch | null | undefined) {
+  return dashboardUsageNames(batch?.dashboard_usage, batch?.report_type);
 }

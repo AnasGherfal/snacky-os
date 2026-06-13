@@ -56,6 +56,14 @@ export function StorageLocationForm({
             <input value={(location?.active ?? true) ? "Active" : "Archived"} readOnly className="field-input bg-slate-50" />
           </FormField>
 
+          <FormField label="Latitude" hint="Optional for future distance calculation from storage to route stops.">
+            <input name="latitude" type="number" step="0.00000001" defaultValue={location?.latitude ?? ""} className="field-input" placeholder="32.8872" />
+          </FormField>
+
+          <FormField label="Longitude" hint="Optional for future route distance APIs and manual map checks.">
+            <input name="longitude" type="number" step="0.00000001" defaultValue={location?.longitude ?? ""} className="field-input" placeholder="13.1913" />
+          </FormField>
+
           <div className="md:col-span-2">
             <FormField label="Address or notes" hint="Optional physical address, shelf label, vehicle plate, or operational note.">
               <textarea name="address" rows={4} defaultValue={location?.address ?? ""} className="field-input" placeholder="Warehouse address, shelf note, or route bag description" />

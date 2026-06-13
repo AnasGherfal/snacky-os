@@ -43,7 +43,7 @@ export default async function StorageLocationsPage({ searchParams }: { searchPar
     await Promise.all([
       supabase
         .from("storage_locations")
-        .select("id, name, address, active, location_type, related_operator_id, created_at, updated_at", { count: "exact" })
+        .select("id, name, address, active, location_type, related_operator_id, latitude, longitude, created_at, updated_at", { count: "exact" })
         .order("name")
         .range(from, to),
       supabase.from("storage_locations").select("id", { count: "exact", head: true }).eq("active", true),
@@ -154,7 +154,7 @@ export default async function StorageLocationsPage({ searchParams }: { searchPar
         <EmptyState title="No storage locations yet" body="Add MAIN storage, operator bags, or temporary stock locations before creating inventory movements." />
       ) : (
         <>
-          <DataTable headers={["Location Name", "Type", "Status", "Current Products Count", "Current Total Units", "Last Movement Date", "Actions"]}>
+          <DataTable headers={["Location Name", "Type", "Status", "Coordinates", "Current Products Count", "Current Total Units", "Last Movement Date", "Actions"]}>
             {rows.map(({ location, operator, summary }) => {
               const canHardDelete = summary.movementCount === 0 && summary.totalUnits === 0;
               return (
@@ -167,6 +167,7 @@ export default async function StorageLocationsPage({ searchParams }: { searchPar
                   </td>
                   <td>{storageLocationTypeLabel(location.location_type)}</td>
                   <td><StatusBadge status={storageLocationStatusLabel(location.active)} /></td>
+                  <td>{location.latitude && location.longitude ? `${location.latitude}, ${location.longitude}` : "-"}</td>
                   <td>{summary.productCount}</td>
                   <td className="font-semibold text-slate-900">{summary.totalUnits}</td>
                   <td>{formatDate(summary.lastMovementAt)}</td>
