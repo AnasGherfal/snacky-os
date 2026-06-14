@@ -2658,6 +2658,24 @@ function batchMutationErrorMessage(error: unknown) {
   return "Could not save VMS import batch. Technical details are in the server console.";
 }
 
+function exactBatchMutationProblemText(error: unknown) {
+  if (!error) return "Unknown batch mutation error.";
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  const supabaseError = supabaseMutationError(error);
+  if (supabaseError) {
+    return [supabaseError.code, supabaseError.message, supabaseError.details, supabaseError.hint]
+      .map((value) => String(value ?? "").trim())
+      .filter(Boolean)
+      .join(" - ") || "Unknown Supabase batch mutation error.";
+  }
+  const record = error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown };
+  return [record.code, record.message, record.details, record.hint]
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean)
+    .join(" - ") || JSON.stringify(error);
+}
+
 type VmsBatchMutationResponse<T> = {
   data?: T | null;
   error?: unknown;
@@ -2686,6 +2704,18 @@ function missingBatchMutationRowError({
     details: `query=${queryName}; step=${currentStep}; batch_id=${selectedImportBatchId ?? "unknown"}`,
   };
 }
+
+type CoreActivatedStockBatch = {
+  id?: string | null;
+  status?: string | null;
+  is_active?: boolean | null;
+  rows_imported?: number | null;
+  report_type?: string | null;
+  latest_error?: string | null;
+  last_error?: string | null;
+  detected_min_datetime?: string | null;
+  detected_max_datetime?: string | null;
+};
 
 function batchMutationReturnedRow<T>(value: VmsBatchMutationResponse<T> | undefined) {
   const data = value?.data;
@@ -2760,6 +2790,109 @@ async function runVmsImportBatchMutationWithMetadataFallback<T>({
     error: { code: "MISSING_SCHEMA", message: "Too many optional VMS import batch metadata columns are missing." },
     payload: activePayload,
     droppedOptionalColumns,
+  };
+}
+
+async function activateStockBatchWithCoreMetadata({
+  supabase,
+  batchId,
+  reportType,
+  actorId,
+  status,
+  rowsFound,
+  rowCount,
+  rowsImported,
+  detectedMinDatetime,
+  detectedMaxDatetime,
+  latestError,
+  lastError,
+}: {
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  batchId: string;
+  reportType: VmsReportType;
+  actorId: string | null;
+  status: "imported" | "imported_with_warnings";
+  rowsFound: number;
+  rowCount: number;
+  rowsImported: number;
+  detectedMinDatetime: string | null;
+  detectedMaxDatetime: string | null;
+  latestError: string | null;
+  lastError: string | null;
+}) {
+  const now = new Date().toISOString();
+  const normalizedReportType = canonicalImportedReportType(reportType);
+  const corePayload = {
+    status,
+    is_active: true,
+    report_type: normalizedReportType,
+    imported_by: actorId,
+    imported_at: now,
+    updated_at: now,
+    rows_found: rowsFound,
+    row_count: rowCount,
+    rows_imported: rowsImported,
+    detected_min_datetime: detectedMinDatetime,
+    detected_max_datetime: detectedMaxDatetime,
+    latest_error: latestError,
+    last_error: lastError,
+  };
+
+  const updateResult = await withSoftTimeout(
+    supabase
+      .from("vms_import_batches")
+      .update(corePayload)
+      .eq("id", batchId),
+    VMS_SAVE_QUERY_TIMEOUT_MS,
+  );
+
+  if (updateResult.timedOut) {
+    return {
+      ok: false as const,
+      error: { code: "TIMEOUT", message: "Core stock batch activation timed out." },
+      payload: corePayload,
+      batch: null,
+    };
+  }
+
+  if ("error" in updateResult) {
+    return {
+      ok: false as const,
+      error: updateResult.error,
+      payload: corePayload,
+      batch: null,
+    };
+  }
+
+  if (updateResult.value?.error) {
+    return {
+      ok: false as const,
+      error: updateResult.value.error,
+      payload: corePayload,
+      batch: null,
+    };
+  }
+
+  const verificationResult = await supabase
+    .from("vms_import_batches")
+    .select("id, status, is_active, rows_imported, report_type, latest_error, last_error, detected_min_datetime, detected_max_datetime")
+    .eq("id", batchId)
+    .maybeSingle();
+
+  if (verificationResult.error) {
+    return {
+      ok: false as const,
+      error: verificationResult.error,
+      payload: corePayload,
+      batch: null,
+    };
+  }
+
+  return {
+    ok: true as const,
+    error: null,
+    payload: corePayload,
+    batch: (verificationResult.data ?? null) as CoreActivatedStockBatch | null,
   };
 }
 
@@ -3881,6 +4014,33 @@ async function ensureConfirmedStockImportBatchIsUsable({
       selectedImportBatchId: batchId,
       currentStep: "confirm_import",
     });
+
+    const fallbackWarning = `Activated stock snapshot with minimal metadata because post-confirm repair failed: ${exactBatchMutationProblemText(repairProblem)}`.slice(0, 2000);
+    const fallbackActivation = await activateStockBatchWithCoreMetadata({
+      supabase,
+      batchId,
+      reportType: normalizedReportType,
+      actorId: profile?.team_member_id ?? profile?.id ?? null,
+      status: "imported_with_warnings",
+      rowsFound: Math.max(summary.rowsFound, effectiveImportedRows),
+      rowCount: Math.max(summary.rowsFound, summary.totalRows, effectiveImportedRows),
+      rowsImported: effectiveImportedRows,
+      detectedMinDatetime: repairedDetectedMinDatetime,
+      detectedMaxDatetime: repairedDetectedMaxDatetime,
+      latestError: fallbackWarning,
+      lastError: fallbackWarning,
+    });
+
+    if (!fallbackActivation.ok) {
+      logVmsBatchMutationFailure({
+        queryName: "vms_import_batches.update.confirm_postcondition.minimal_activation",
+        error: fallbackActivation.error,
+        payload: fallbackActivation.payload,
+        profile,
+        selectedImportBatchId: batchId,
+        currentStep: "confirm_import",
+      });
+    }
   }
 }
 
@@ -4139,13 +4299,70 @@ async function finalizePreviewStockImportBatch({
       .from("vms_import_batches")
       .update(safePayload)
       .eq("id", batchId)
-      .select("*")
+      .select("id, status, is_active, rows_imported, report_type, latest_error, last_error, detected_min_datetime, detected_max_datetime")
       .maybeSingle(),
   });
   const finalizeError = finalizeResult.error ?? finalizeResult.value?.error ?? null;
   if (finalizeResult.timedOut || finalizeError) {
-    console.error("[vms-import] Preview finalize batch metadata update failed", { batchId, error: finalizeError ?? "timeout" });
-    redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Could not finalize this preview batch metadata. The saved stock rows were preserved.")}`);
+    const finalizeProblem = finalizeError ?? { code: "TIMEOUT", message: "Preview finalize batch metadata update timed out." };
+    console.error("[vms-import] Preview finalize batch metadata update failed", {
+      batchId,
+      error: finalizeProblem,
+      droppedOptionalColumns: finalizeResult.droppedOptionalColumns,
+      payload: finalizeResult.payload,
+    });
+
+    const fallbackWarning = `Activated stock snapshot with minimal metadata because preview finalize failed: ${exactBatchMutationProblemText(finalizeProblem)}`.slice(0, 2000);
+    const fallbackActivation = await activateStockBatchWithCoreMetadata({
+      supabase,
+      batchId,
+      reportType: finalizedReportType,
+      actorId,
+      status: "imported_with_warnings",
+      rowsFound: rowsFound || stockRowCount,
+      rowCount: Math.max(rowsFound, wholeNumberValue(batch.row_count), stockRowCount),
+      rowsImported: stockRowCount,
+      detectedMinDatetime,
+      detectedMaxDatetime,
+      latestError: fallbackWarning,
+      lastError: fallbackWarning,
+    });
+
+    if (!fallbackActivation.ok) {
+      console.error("[vms-import] Preview finalize minimal activation failed", {
+        batchId,
+        error: fallbackActivation.error,
+        payload: fallbackActivation.payload,
+      });
+      redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Could not finalize this preview batch metadata. The saved stock rows were preserved.")}`);
+    }
+
+    await deactivateOlderActiveStockBatches({
+      supabase,
+      currentBatchId: batchId,
+      reportType: finalizedReportType,
+      updatedAt: now,
+    });
+    await refreshRefillRecommendationsAfterStockImport({
+      supabase,
+      batchId,
+      reportType: finalizedReportType,
+      importedRows: stockRowCount,
+    });
+
+    await logActivity({
+      profile,
+      action: "update",
+      entityType: "vms_import",
+      entityId: batchId,
+      entityLabel: textValue(batch.file_name) || batchId,
+      beforeData: batch,
+      afterData: fallbackActivation.batch ?? fallbackActivation.payload,
+      summary: `Activated preview stock import with minimal metadata ${textValue(batch.file_name) || batchId}`,
+    });
+
+    revalidateVmsDataSourcePaths(batchId);
+    redirect(`/vms-import/${batchId}?success=${encodeURIComponent(`Activated ${stockRowCount} stock row(s) and rebuilt route recommendations with metadata warnings.`)}`);
   }
 
   await deactivateOlderActiveStockBatches({
