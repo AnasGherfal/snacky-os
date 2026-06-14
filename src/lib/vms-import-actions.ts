@@ -367,6 +367,43 @@ function importStepError(step: string, error: unknown) {
   return detail ? `${step} failed: ${detail}` : `${step} failed.`;
 }
 
+function summarizeVmsTransactionRawRowForLog(row: Record<string, unknown> | undefined) {
+  if (!row) return null;
+  return {
+    row_number: row.row_number ?? null,
+    order_number: row.order_number ?? null,
+    third_party_transaction_number: row.third_party_transaction_number ?? null,
+    third_party_order_no: row.third_party_order_no ?? null,
+    machine_code: row.machine_code ?? null,
+    machine_name: row.machine_name ?? null,
+    product_number: row.product_number ?? null,
+    vms_product_name: row.vms_product_name ?? null,
+    payment_amount: row.payment_amount ?? null,
+    payment_time: row.payment_time ?? null,
+    delivery_time: row.delivery_time ?? null,
+    refund_time: row.refund_time ?? null,
+    quantity: row.quantity ?? null,
+    transaction_status: row.transaction_status ?? null,
+    duplicate_hash: row.duplicate_hash ?? null,
+  };
+}
+
+function importStepErrorWithBatchContext({
+  step,
+  error,
+  batchId,
+  row,
+}: {
+  step: string;
+  error: unknown;
+  batchId: string;
+  row?: Record<string, unknown>;
+}) {
+  const base = importStepError(step, error);
+  const rowNumber = row?.row_number;
+  return `${base} [batch_id=${batchId}${rowNumber !== undefined && rowNumber !== null ? `, row_number=${rowNumber}` : ""}]`;
+}
+
 function safeStorageFileName(fileName: string) {
   return fileName
     .normalize("NFKD")
@@ -1952,8 +1989,6 @@ async function runVmsImport({
         third_party_transaction_number: orderDetailsValue(row, orderDetailsAliases.thirdPartyTransactionNumber) || null,
         third_party_order_no: orderDetailsValue(row, orderDetailsAliases.thirdPartyOrderNo) || null,
         payment_amount: paymentAmount,
-        amount_paid: paymentAmount,
-        gross_sales_lyd: grossSalesAmount > 0 ? grossSalesAmount : null,
         payment_time: paymentTime?.toISOString() ?? null,
         quantity,
         raw_row: originalRow,
@@ -2265,8 +2300,19 @@ async function runVmsImport({
         .select("duplicate_hash, import_batch_id")
         .in("duplicate_hash", chunk);
       if (error) {
-        console.error("[vms-import] Transaction duplicate lookup failed", error);
-        summary.errors.push(importStepError("Detailed transaction duplicate lookup in vms_transactions_raw", error));
+        console.error("[vms-import] Transaction duplicate lookup failed", {
+          batchId: batch.id,
+          reportType,
+          duplicateLookupChunkSize: chunk.length,
+          firstDuplicateHash: chunk[0] ?? null,
+          error,
+        });
+        summary.errors.push(importStepErrorWithBatchContext({
+          step: "Detailed transaction duplicate lookup in vms_transactions_raw",
+          error,
+          batchId: batch.id,
+          row: uniqueRows[index],
+        }));
         fatalImportError = true;
         break;
       }
@@ -2293,8 +2339,22 @@ async function runVmsImport({
           .upsert(chunk, { onConflict: "duplicate_hash", ignoreDuplicates: true });
         if (!error) continue;
 
-        console.error("[vms-import] Transaction raw row upsert failed", error);
-        summary.errors.push(importStepError("Detailed transaction save to vms_transactions_raw", error));
+        const sampleRow = chunk[0];
+        console.error("[vms-import] Transaction raw row upsert failed", {
+          batchId: batch.id,
+          reportType,
+          rowsAttemptedInChunk: chunk.length,
+          payloadColumns: Object.keys(sampleRow ?? {}).sort(),
+          sampleRow: summarizeVmsTransactionRawRowForLog(sampleRow),
+          schemaIssue: extractVmsSchemaIssue(error, "vms_transactions_raw.upsert"),
+          error,
+        });
+        summary.errors.push(importStepErrorWithBatchContext({
+          step: "Detailed transaction save to vms_transactions_raw",
+          error,
+          batchId: batch.id,
+          row: sampleRow,
+        }));
         fatalImportError = true;
         break;
       }
