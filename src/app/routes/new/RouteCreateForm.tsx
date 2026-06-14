@@ -21,6 +21,15 @@ type Machine = {
   location_name?: string | null;
 };
 
+type MachinePlanogramRow = {
+  id: string;
+  machine_id: string;
+  slot_code: string | null;
+  product_id: string | null;
+  par_qty: number | null;
+  min_qty: number | null;
+};
+
 type Recommendation = {
   recommendation_key: string;
   machine_slot_id: string | null;
@@ -168,6 +177,11 @@ function stockErrorMessage(issues: StockValidationIssue[]) {
   ].join("\n");
 }
 
+function productMatchesSearch(product: ProductPickOption, query: string) {
+  return [product.name, product.sku, product.barcode, product.category, product.brand]
+    .some((value) => String(value ?? "").toLowerCase().includes(query));
+}
+
 function diagnosticBadgeTone(reasonCode: RouteRecommendationMachineDiagnostic["reasonCode"]) {
   if (reasonCode === "healthy") return "bg-emerald-100 text-emerald-800";
   if (reasonCode === "current_stock_full") return "bg-slate-100 text-slate-700";
@@ -180,6 +194,7 @@ export function RouteCreateForm({
   machines,
   recommendations,
   diagnostics,
+  machinePlanogramRows,
   products,
   recentProductIds,
   allowAdminOverride,
@@ -190,6 +205,7 @@ export function RouteCreateForm({
   machines: Machine[];
   recommendations: Recommendation[];
   diagnostics: RouteRecommendationDiagnostics;
+  machinePlanogramRows: MachinePlanogramRow[];
   storageInventory: { product_id: string; product_name: string; quantity_on_hand: number }[];
   products: ProductPickOption[];
   recentProductIds: string[];
@@ -553,18 +569,164 @@ export function RouteCreateForm({
     return new Set([...machineIds, ...recommendedMachines]).size;
   }, [machineIds, selectedRecommendationGroups]);
 
-  const recentProducts = useMemo(() => {
-    const recent = recentProductIds.map((id) => productsById.get(id)).filter(Boolean) as ProductPickOption[];
-    return recent.length ? recent.slice(0, 8) : products.slice(0, 8);
-  }, [products, productsById, recentProductIds]);
+  const machinePlanogramRowsByMachine = useMemo(() => {
+    const rowsByMachine = new Map<string, MachinePlanogramRow[]>();
+    machinePlanogramRows.forEach((row) => {
+      const machineId = String(row.machine_id ?? "").trim();
+      if (!machineId) return;
+      rowsByMachine.set(machineId, [...(rowsByMachine.get(machineId) ?? []), row]);
+    });
+    return rowsByMachine;
+  }, [machinePlanogramRows]);
 
-  const searchResults = useMemo(() => {
-    const query = deferredSearch.trim().toLowerCase();
-    if (!query) return recentProducts;
-    return products
-      .filter((product) => [product.name, product.sku, product.barcode, product.category, product.brand].some((value) => String(value ?? "").toLowerCase().includes(query)))
-      .slice(0, 12);
-  }, [products, recentProducts, deferredSearch]);
+  const recommendationGroupsByMachine = useMemo(() => {
+    const groupsByMachine = new Map<string, RecommendationGroup[]>();
+    recommendationGroups.forEach((group) => {
+      groupsByMachine.set(group.machineId, [...(groupsByMachine.get(group.machineId) ?? []), group]);
+    });
+    return groupsByMachine;
+  }, [recommendationGroups]);
+
+  const manualItemsByMachine = useMemo(() => {
+    const itemsByMachine = new Map<string, ManualStopItem[]>();
+    manualStopItems.forEach((item) => {
+      itemsByMachine.set(item.machineId, [...(itemsByMachine.get(item.machineId) ?? []), item]);
+    });
+    return itemsByMachine;
+  }, [manualStopItems]);
+
+  const manualSectionMachineIds = useMemo(() => {
+    const visibleMachineIds = new Set<string>();
+    machineIds.forEach((machineId) => {
+      if (machineId) visibleMachineIds.add(machineId);
+    });
+    selectedRecommendationGroups.forEach((group) => {
+      if (group.machineId) visibleMachineIds.add(group.machineId);
+    });
+    manualStopItems.forEach((item) => {
+      if (item.machineId) visibleMachineIds.add(item.machineId);
+    });
+    if (manualMachineId) visibleMachineIds.add(manualMachineId);
+
+    return machines
+      .map((machine) => machine.id)
+      .filter((machineId) => visibleMachineIds.has(machineId));
+  }, [machineIds, machines, manualMachineId, manualStopItems, selectedRecommendationGroups]);
+
+  const selectedManualMachineId = manualMachineId || manualSectionMachineIds[0] || machineIds[0] || "";
+  const selectedManualMachine = selectedManualMachineId ? machinesById.get(selectedManualMachineId) ?? null : null;
+  const selectedManualPlanogramRows = useMemo(
+    () => (selectedManualMachineId ? (machinePlanogramRowsByMachine.get(selectedManualMachineId) ?? []) : []),
+    [machinePlanogramRowsByMachine, selectedManualMachineId],
+  );
+  const selectedManualRecommendationGroups = useMemo(
+    () => (selectedManualMachineId ? (recommendationGroupsByMachine.get(selectedManualMachineId) ?? []) : []),
+    [recommendationGroupsByMachine, selectedManualMachineId],
+  );
+  const selectedManualItems = useMemo(
+    () => (selectedManualMachineId ? (manualItemsByMachine.get(selectedManualMachineId) ?? []) : []),
+    [manualItemsByMachine, selectedManualMachineId],
+  );
+  const manualSearchQuery = deferredSearch.trim().toLowerCase();
+
+  const machineScopedProductCandidates = useMemo(() => {
+    const candidates = new Map<string, {
+      product: ProductPickOption;
+      selectedQty: number;
+      recommendedQty: number;
+      sourceKinds: Set<string>;
+      slotCodes: Set<string>;
+    }>();
+    const ensureCandidate = (productId: string) => {
+      const product = productsById.get(productId);
+      if (!product) return null;
+      const existing = candidates.get(productId);
+      if (existing) return existing;
+      const next = {
+        product,
+        selectedQty: 0,
+        recommendedQty: 0,
+        sourceKinds: new Set<string>(),
+        slotCodes: new Set<string>(),
+      };
+      candidates.set(productId, next);
+      return next;
+    };
+
+    selectedManualPlanogramRows.forEach((row) => {
+      const productId = String(row.product_id ?? "").trim();
+      if (!productId) return;
+      const candidate = ensureCandidate(productId);
+      if (!candidate) return;
+      candidate.sourceKinds.add("planogram");
+      const slotCode = String(row.slot_code ?? "").trim();
+      if (slotCode) candidate.slotCodes.add(slotCode);
+    });
+
+    selectedManualRecommendationGroups.forEach((group) => {
+      const candidate = ensureCandidate(group.productId);
+      if (!candidate) return;
+      candidate.sourceKinds.add("recommendation");
+      candidate.recommendedQty += group.recommendedTotal;
+      group.rows.forEach((row) => {
+        const slotCode = String(row.slot_code ?? "").trim();
+        if (slotCode) candidate.slotCodes.add(slotCode);
+      });
+    });
+
+    selectedManualItems.forEach((item) => {
+      const candidate = ensureCandidate(item.productId);
+      if (!candidate) return;
+      candidate.sourceKinds.add("selected");
+      candidate.selectedQty = item.quantity;
+    });
+
+    return Array.from(candidates.values())
+      .sort((a, b) => {
+        const selectedDifference = b.selectedQty - a.selectedQty;
+        if (selectedDifference) return selectedDifference;
+        const recommendationDifference = b.recommendedQty - a.recommendedQty;
+        if (recommendationDifference) return recommendationDifference;
+        const planogramDifference = Number(b.sourceKinds.has("planogram")) - Number(a.sourceKinds.has("planogram"));
+        if (planogramDifference) return planogramDifference;
+        return a.product.name.localeCompare(b.product.name);
+      });
+  }, [productsById, selectedManualItems, selectedManualPlanogramRows, selectedManualRecommendationGroups]);
+
+  const machineScopedProductIds = useMemo(
+    () => new Set(machineScopedProductCandidates.map((candidate) => candidate.product.id)),
+    [machineScopedProductCandidates],
+  );
+
+  const recentFallbackProducts = useMemo(
+    () => recentProductIds.map((id) => productsById.get(id)).filter(Boolean) as ProductPickOption[],
+    [productsById, recentProductIds],
+  );
+
+  const machineScopedSearchResults = useMemo(() => {
+    if (!manualSearchQuery) return machineScopedProductCandidates.slice(0, 12);
+    return machineScopedProductCandidates
+      .filter((candidate) => productMatchesSearch(candidate.product, manualSearchQuery))
+      .slice(0, 18);
+  }, [machineScopedProductCandidates, manualSearchQuery]);
+
+  const machineFallbackProducts = useMemo(() => {
+    const fallbackSource = products.filter((product) => {
+      if (machineScopedProductIds.has(product.id)) return false;
+      if (!adminOverride && product.availableQty <= 0 && product.storageQty <= 0) return false;
+      return true;
+    });
+    if (manualSearchQuery) {
+      return fallbackSource.filter((product) => productMatchesSearch(product, manualSearchQuery)).slice(0, 18);
+    }
+
+    const recent = recentFallbackProducts.filter((product) => !machineScopedProductIds.has(product.id));
+    const recentIds = new Set(recent.map((product) => product.id));
+    const remaining = fallbackSource
+      .filter((product) => !recentIds.has(product.id))
+      .sort((a, b) => b.availableQty - a.availableQty || a.name.localeCompare(b.name));
+    return [...recent, ...remaining].slice(0, 12);
+  }, [adminOverride, machineScopedProductIds, manualSearchQuery, products, recentFallbackProducts]);
 
   const toggleValue = (values: string[], value: string) => (values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
   const isRecommendationGroupSelected = (group: RecommendationGroup) => group.recommendationKeys.every((key) => recommendationKeys.includes(key));
@@ -610,8 +772,6 @@ export function RouteCreateForm({
     setFinalTakeByRecommendationGroup({});
   };
 
-  const selectedManualMachineId = manualMachineId || machineIds[0] || "";
-
   const setManualStopQty = (machineId: string, productId: string, quantity: number) => {
     if (!machineId) {
       setError("Choose a machine stop before adding manual refill items.");
@@ -647,7 +807,10 @@ export function RouteCreateForm({
     const query = barcode.trim().toLowerCase();
     if (!query) return;
 
-    const product = products.find((item) => String(item.barcode ?? "").toLowerCase() === query || String(item.sku ?? "").toLowerCase() === query);
+    const product = products.find((item) => (
+      String(item.barcode ?? "").toLowerCase() === query
+      || String(item.sku ?? "").toLowerCase() === query
+    ));
     if (!product) {
       setNotFoundQuery(barcode.trim());
       return;
@@ -664,6 +827,9 @@ export function RouteCreateForm({
       handleBarcodeSelect();
     }
   };
+
+  const showMissingProduct = Boolean(notFoundQuery)
+    || (Boolean(search.trim()) && selectedManualMachineId !== "" && machineScopedSearchResults.length === 0 && machineFallbackProducts.length === 0);
 
   const validateStock = () => {
     if (adminOverride) return [];
@@ -765,7 +931,14 @@ export function RouteCreateForm({
     }
   };
 
-  const showMissingProduct = Boolean(notFoundQuery) || (Boolean(search.trim()) && searchResults.length === 0);
+  const sortedManualStopItems = useMemo(
+    () => [...manualStopItems].sort((a, b) => {
+      const machineDifference = String(machinesById.get(a.machineId)?.name ?? "").localeCompare(String(machinesById.get(b.machineId)?.name ?? ""));
+      if (machineDifference) return machineDifference;
+      return String(productsById.get(a.productId)?.name ?? "").localeCompare(String(productsById.get(b.productId)?.name ?? ""));
+    }),
+    [machinesById, manualStopItems, productsById],
+  );
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
@@ -853,7 +1026,7 @@ export function RouteCreateForm({
         ) : (
           <div className="space-y-5">
             <div className="grid gap-3 lg:grid-cols-[1fr_280px]">
-              <FormField label="Machine stop for manual items" required>
+              <FormField label="Add or focus a machine stop" required>
                 <select
                   value={selectedManualMachineId}
                   onChange={(event) => {
@@ -869,76 +1042,193 @@ export function RouteCreateForm({
                   ))}
                 </select>
               </FormField>
-            </div>
-
-            <div className="grid gap-3 lg:grid-cols-[1fr_280px]">
-              <FormField label="Search products">
-                <input
-                  value={search}
-                  onChange={(event) => {
-                    setSearch(event.target.value);
-                    setNotFoundQuery("");
-                  }}
-                  placeholder="Search name, SKU, barcode, category, or brand"
-                  className="field-input"
-                  disabled={saving}
-                />
-              </FormField>
-              <FormField label="Barcode / SKU scan">
-                <div className="flex gap-2">
-                  <input value={barcode} onChange={(event) => setBarcode(event.target.value)} onKeyDown={handleBarcodeKey} placeholder="Scan or type barcode" className="field-input" disabled={saving} />
-                  <button type="button" onClick={handleBarcodeSelect} className="btn-secondary" disabled={saving}>
-                    Add
-                  </button>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                Manual stop sections: <span className="font-semibold text-slate-900">{manualSectionMachineIds.length}</span>
+                <div className="mt-1 text-xs text-slate-500">
+                  Each machine stop keeps its own product picker so Snacky OS does not mix products across machines.
                 </div>
-              </FormField>
+              </div>
             </div>
 
-            {showMissingProduct ? (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                <div className="font-semibold">Product not found</div>
-                <p className="mt-1">Check the barcode, SKU, or product name before adding it to master data.</p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Link className="btn-secondary" href="/products/new">
-                    Add product
-                  </Link>
-                  <Link className="btn-secondary" href={`/issues?missing_product=${encodeURIComponent(notFoundQuery || search.trim())}`}>
-                    Report missing product
-                  </Link>
+            {manualSectionMachineIds.length ? (
+              <div className="flex flex-wrap gap-2">
+                {manualSectionMachineIds.map((machineId) => {
+                  const machine = machinesById.get(machineId);
+                  if (!machine) return null;
+                  const selected = machineId === selectedManualMachineId;
+                  const machineManualCount = manualItemsByMachine.get(machineId)?.length ?? 0;
+                  const machineRecommendedCount = recommendationGroupsByMachine.get(machineId)?.length ?? 0;
+                  return (
+                    <button
+                      key={machineId}
+                      type="button"
+                      onClick={() => setManualMachineId(machineId)}
+                      className={`rounded-full border px-3 py-2 text-left text-sm transition ${selected ? "border-[var(--snacky-primary)] bg-emerald-50 text-slate-950" : "border-slate-200 bg-white text-slate-700 hover:border-slate-400"}`}
+                    >
+                      <div className="font-medium">{machine.name}</div>
+                      <div className="text-xs text-slate-500">{machine.machine_code} - Manual {machineManualCount} - Recommended {machineRecommendedCount}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
+                Choose a machine stop to load its manual picker. The product list will stay scoped to that machine only.
+              </div>
+            )}
+
+            {selectedManualMachine ? (
+              <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Machine stop</div>
+                    <div className="mt-1 text-lg font-semibold text-slate-900">{selectedManualMachine.name}</div>
+                    <div className="text-sm text-slate-500">{selectedManualMachine.machine_code} - {locationLabel(selectedManualMachine.location_name)}</div>
+                  </div>
+                  <div className="grid gap-2 text-sm text-slate-600 sm:grid-cols-3">
+                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                      <div className="text-xs uppercase tracking-wide text-slate-500">Planogram products</div>
+                      <div className="font-semibold text-slate-900">{selectedManualPlanogramRows.filter((row) => row.product_id).length}</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                      <div className="text-xs uppercase tracking-wide text-slate-500">Recommended products</div>
+                      <div className="font-semibold text-slate-900">{selectedManualRecommendationGroups.length}</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                      <div className="text-xs uppercase tracking-wide text-slate-500">Manual products</div>
+                      <div className="font-semibold text-slate-900">{selectedManualItems.length}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 lg:grid-cols-[1fr_280px]">
+                  <FormField label={`Search ${selectedManualMachine.name} products`}>
+                    <input
+                      value={search}
+                      onChange={(event) => {
+                        setSearch(event.target.value);
+                        setNotFoundQuery("");
+                      }}
+                      placeholder="Search name, SKU, barcode, category, or brand"
+                      className="field-input"
+                      disabled={saving}
+                    />
+                  </FormField>
+                  <FormField label={`Barcode / SKU scan for ${selectedManualMachine.name}`}>
+                    <div className="flex gap-2">
+                      <input value={barcode} onChange={(event) => setBarcode(event.target.value)} onKeyDown={handleBarcodeKey} placeholder="Scan or type barcode" className="field-input" disabled={saving} />
+                      <button type="button" onClick={handleBarcodeSelect} className="btn-secondary" disabled={saving}>
+                        Add
+                      </button>
+                    </div>
+                  </FormField>
+                </div>
+
+                {showMissingProduct ? (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                    <div className="font-semibold">Product not found for this machine picker</div>
+                    <p className="mt-1">Check the barcode, SKU, or product name before adding it to master data.</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Link className="btn-secondary" href="/products/new">
+                        Add product
+                      </Link>
+                      <Link className="btn-secondary" href={`/issues?missing_product=${encodeURIComponent(notFoundQuery || search.trim())}`}>
+                        Report missing product
+                      </Link>
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-800">Planogram and recommended products for this machine</div>
+                      <div className="text-xs text-slate-500">Snacky OS keeps this list scoped to {selectedManualMachine.name} only.</div>
+                    </div>
+                    <div className="text-xs text-slate-500">Enter adds scanned products instantly.</div>
+                  </div>
+                  {!machineScopedSearchResults.length ? (
+                    <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
+                      {manualSearchQuery
+                        ? "No planogram or recommended products matched the current search for this machine."
+                        : "This machine does not currently have planogram or recommended products. Use the fallback storage list below if needed."}
+                    </div>
+                  ) : (
+                    <div className="grid gap-2 md:grid-cols-2">
+                      {machineScopedSearchResults.map((candidate) => (
+                        <button
+                          key={candidate.product.id}
+                          type="button"
+                          onClick={() => addProductQty(candidate.product.id, 1)}
+                          className="rounded-lg border border-slate-200 bg-white p-3 text-left transition hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-50"
+                          disabled={saving || (!adminOverride && candidate.product.availableQty <= 0)}
+                        >
+                          <div className="flex gap-3">
+                            <ProductThumbnail imageUrl={candidate.product.imageUrl} name={candidate.product.name} size="md" />
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate font-medium text-slate-900">{candidate.product.name}</div>
+                              <div className="text-xs text-slate-500">
+                                {candidate.product.sku ?? "No SKU"} - {candidate.product.category ?? "Uncategorized"} {candidate.product.brand ? `- ${candidate.product.brand}` : ""}
+                              </div>
+                              <div className="mt-1 text-xs text-slate-600">
+                                Storage {candidate.product.storageQty} / Available {candidate.product.availableQty}
+                              </div>
+                              <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                                {candidate.sourceKinds.has("planogram") ? <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-700">Planogram</span> : null}
+                                {candidate.recommendedQty > 0 ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-800">Recommended {candidate.recommendedQty}</span> : null}
+                                {candidate.selectedQty > 0 ? <span className="rounded-full bg-amber-100 px-2 py-1 text-amber-900">Selected {candidate.selectedQty}</span> : null}
+                                {candidate.slotCodes.size ? (
+                                  <span className="rounded-full bg-sky-100 px-2 py-1 text-sky-800">
+                                    Slots {Array.from(candidate.slotCodes).slice(0, 3).join(", ")}{candidate.slotCodes.size > 3 ? ` +${candidate.slotCodes.size - 3}` : ""}
+                                  </span>
+                                ) : null}
+                              </div>
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-800">Other storage products</div>
+                    <div className="text-xs text-slate-500">Fallback catalog items not currently in this machine’s planogram or recommendation set.</div>
+                  </div>
+                  {!machineFallbackProducts.length ? (
+                    <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
+                      {manualSearchQuery ? "No fallback storage products matched the current search." : "No additional storage products are available right now."}
+                    </div>
+                  ) : (
+                    <div className="grid gap-2 md:grid-cols-2">
+                      {machineFallbackProducts.map((product) => (
+                        <button
+                          key={product.id}
+                          type="button"
+                          onClick={() => addProductQty(product.id, 1)}
+                          className="rounded-lg border border-dashed border-slate-200 bg-white p-3 text-left transition hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-50"
+                          disabled={saving || (!adminOverride && product.availableQty <= 0)}
+                        >
+                          <div className="flex gap-3">
+                            <ProductThumbnail imageUrl={product.imageUrl} name={product.name} size="md" />
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate font-medium text-slate-900">{product.name}</div>
+                              <div className="text-xs text-slate-500">
+                                {product.sku ?? "No SKU"} - {product.category ?? "Uncategorized"} {product.brand ? `- ${product.brand}` : ""}
+                              </div>
+                              <div className="mt-1 text-xs text-slate-600">
+                                Storage {product.storageQty} / Available {product.availableQty}
+                              </div>
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             ) : null}
-
-            <div>
-              <div className="mb-2 flex items-center justify-between gap-3">
-                <div className="text-sm font-semibold text-slate-800">{search.trim() ? "Search results" : "Recent / frequently used products"}</div>
-                <div className="text-xs text-slate-500">Enter adds scanned products instantly.</div>
-              </div>
-              <div className="grid gap-2 md:grid-cols-2">
-                {searchResults.map((product) => (
-                  <button
-                    key={product.id}
-                    type="button"
-                    onClick={() => addProductQty(product.id, 1)}
-                    className="rounded-lg border border-slate-200 bg-white p-3 text-left transition hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={saving || (!adminOverride && product.availableQty <= 0)}
-                  >
-                    <div className="flex gap-3">
-                      <ProductThumbnail imageUrl={product.imageUrl} name={product.name} size="md" />
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate font-medium text-slate-900">{product.name}</div>
-                        <div className="text-xs text-slate-500">
-                          {product.sku ?? "No SKU"} - {product.category ?? "Uncategorized"} {product.brand ? `- ${product.brand}` : ""}
-                        </div>
-                        <div className="mt-1 text-xs text-slate-600">
-                          Storage {product.storageQty} / Available {product.availableQty}
-                        </div>
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
 
             {allowAdminOverride ? (
               <label className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
@@ -962,16 +1252,16 @@ export function RouteCreateForm({
                   </tr>
                 </thead>
                 <tbody>
-                  {!manualStopItems.length ? (
+                  {!sortedManualStopItems.length ? (
                     <tr>
                       <td colSpan={5} className="px-3 py-8 text-center text-slate-500">
                         No manual machine refill items selected yet.
                       </td>
                     </tr>
                   ) : (
-                    manualStopItems.map((item) => {
+                    sortedManualStopItems.map((item) => {
                       const product = productsById.get(item.productId);
-                      const machine = machines.find((row) => row.id === item.machineId);
+                      const machine = machinesById.get(item.machineId);
                       const stockIssue = stockErrorByProduct.get(item.productId);
                       const available = stockIssue?.available_qty ?? unitQuantity(product?.availableQty);
                       const exceeds = Boolean(stockIssue) || unitQuantity(item.quantity) > available;
@@ -1054,6 +1344,19 @@ export function RouteCreateForm({
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Planogram rows</div>
               <div className="mt-2 text-2xl font-semibold text-slate-900">{diagnostics.planogramRowsFound}</div>
               <div className="mt-1 text-xs text-slate-500">{diagnostics.unmappedProductRows} unmapped audit rows in the diagnostic batch</div>
+            </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="rounded-xl border border-slate-200 bg-white p-3">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Diagnostic batch stock rows</div>
+              <div className="mt-2 text-2xl font-semibold text-slate-900">{diagnostics.diagnosticBatchStockRows}</div>
+              <div className="mt-1 text-xs text-slate-500">Rows currently saved in vms_stock_snapshots for the latest previewed or active stock batch.</div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-3">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Diagnostic batch audit rows</div>
+              <div className="mt-2 text-2xl font-semibold text-slate-900">{diagnostics.diagnosticBatchAuditRows}</div>
+              <div className="mt-1 text-xs text-slate-500">Rows currently saved in vms_machine_stock_snapshots for the same batch.</div>
             </div>
           </div>
 

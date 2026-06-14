@@ -401,6 +401,15 @@ export default async function NewRoutePage() {
   const machineSlotRows = (machineSlotsResult.data ?? []) as MachineSlotRow[];
   const latestActiveStockBatch = activeStockBatches(stockBatches)[0] ?? null;
   const diagnosticBatch = latestActiveStockBatch ?? stockBatches[0] ?? null;
+  const batchStockRowsResult = diagnosticBatch?.id
+    ? await safeSupabaseQuery<{ id: string }>({
+        label: "routes.new.vms_stock_snapshots",
+        promise: supabase
+          .from("vms_stock_snapshots")
+          .select("id", { count: "exact", head: true })
+          .eq("import_batch_id", diagnosticBatch.id),
+      })
+    : { data: [] as { id: string }[], count: 0, error: null as string | null };
   const batchAuditResult = diagnosticBatch?.id
     ? await safeSupabaseQuery<MachineStockAuditRow>({
         label: "routes.new.vms_machine_stock_snapshots",
@@ -526,9 +535,11 @@ export default async function NewRoutePage() {
       reasonCode = "no_positive_recommendations";
     }
     const latestRow = [...latestRows].sort((a, b) => String(b.imported_at ?? "").localeCompare(String(a.imported_at ?? "")))[0] ?? null;
+    const diagnosticBatchStockRows = Number(batchStockRowsResult.count ?? 0);
+    const diagnosticBatchAuditRows = batchAuditRows.length;
     const reasonMessageByCode: Record<RouteRecommendationDiagnosticReasonCode, string> = {
       healthy: "Route creation can use this machine's latest stock and recommendation rows.",
-      no_active_stock_snapshot: `No recommendations because there is no active imported stock snapshot. Latest stock batch is ${diagnosticBatch ? `${sourceFileName(diagnosticBatch)} (${String(diagnosticBatch.status ?? "unknown")})` : "missing"}.`,
+      no_active_stock_snapshot: `No recommendations because there is no active imported stock snapshot. Latest stock batch is ${diagnosticBatch ? `${sourceFileName(diagnosticBatch)} (${String(diagnosticBatch.status ?? "unknown")}, stock rows ${diagnosticBatchStockRows}, audit rows ${diagnosticBatchAuditRows})` : "missing"}.`,
       no_latest_stock_rows: "No recommendations because the active stock snapshot did not produce any latest stock rows for this machine.",
       machine_mapping_missing: "No recommendations because this machine does not have a VMS machine mapping yet.",
       machine_has_no_planogram: "No recommendations because this machine has no planogram rows in machine_slots.",
@@ -558,7 +569,9 @@ export default async function NewRoutePage() {
       reasonMessage: reasonMessageByCode[reasonCode],
     };
   });
-  const diagnosticsWarnings = [latestStockResult.error, machineSlotsResult.error, batchAuditResult.error].filter(Boolean);
+  const diagnosticBatchStockRows = Number(batchStockRowsResult.count ?? 0);
+  const diagnosticBatchAuditRows = batchAuditRows.length;
+  const diagnosticsWarnings = [latestStockResult.error, machineSlotsResult.error, batchStockRowsResult.error, batchAuditResult.error].filter(Boolean);
   const machineDiagnosticsWithIssues = machineDiagnostics.filter((machine) => machine.reasonCode !== "healthy");
   const summaryReasonCode: RouteRecommendationDiagnosticReasonCode =
     diagnosticsWarnings.length
@@ -587,7 +600,7 @@ export default async function NewRoutePage() {
         ? "Latest stock rows and refill recommendations are available for route creation."
         : machineDiagnosticsWithIssues.find((machine) => machine.reasonCode === summaryReasonCode)?.reasonMessage
           ?? (summaryReasonCode === "no_active_stock_snapshot"
-            ? `No recommendations because there is no active imported stock snapshot. Latest stock batch is ${diagnosticBatch ? `${sourceFileName(diagnosticBatch)} (${String(diagnosticBatch.status ?? "unknown")}, active ${diagnosticBatch.is_active === false ? "no" : "yes"})` : "missing"}.`
+            ? `No recommendations because there is no active imported stock snapshot. Latest stock batch is ${diagnosticBatch ? `${sourceFileName(diagnosticBatch)} (${String(diagnosticBatch.status ?? "unknown")}, active ${diagnosticBatch.is_active === false ? "no" : "yes"}, stock rows ${diagnosticBatchStockRows}, audit rows ${diagnosticBatchAuditRows})` : "missing"}.`
             : summaryReasonCode === "no_latest_stock_rows"
               ? "No recommendations because the active stock snapshot produced zero latest_vms_stock_by_slot rows."
               : summaryReasonCode === "all_products_inactive"
@@ -606,6 +619,8 @@ export default async function NewRoutePage() {
     diagnosticBatchFileName: diagnosticBatch ? sourceFileName(diagnosticBatch) : null,
     diagnosticBatchStatus: String(diagnosticBatch?.status ?? "") || null,
     diagnosticBatchIsActive: diagnosticBatch?.is_active ?? null,
+    diagnosticBatchStockRows,
+    diagnosticBatchAuditRows,
     latestStockRowsFound: latestStockRows.length,
     recommendationRowsFound: loadedRecommendations.length,
     recommendationsReturnedToFrontend: activeRecommendations.length,
@@ -622,6 +637,8 @@ export default async function NewRoutePage() {
     diagnostic_batch_id: diagnostics.diagnosticBatchId,
     diagnostic_batch_status: diagnostics.diagnosticBatchStatus,
     diagnostic_batch_is_active: diagnostics.diagnosticBatchIsActive,
+    diagnostic_batch_stock_rows: diagnostics.diagnosticBatchStockRows,
+    diagnostic_batch_audit_rows: diagnostics.diagnosticBatchAuditRows,
     latest_vms_stock_rows_found: diagnostics.latestStockRowsFound,
     planogram_rows_found: diagnostics.planogramRowsFound,
     refill_recommendation_rows_found: diagnostics.recommendationRowsFound,
@@ -663,6 +680,7 @@ export default async function NewRoutePage() {
           machines={machineCatalog}
           recommendations={activeRecommendations}
           diagnostics={diagnostics}
+          machinePlanogramRows={machineSlotRows}
           storageInventory={availableStorage}
           products={productCatalog}
           recentProductIds={recentProductIds}

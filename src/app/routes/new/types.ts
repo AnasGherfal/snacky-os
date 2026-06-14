@@ -41,6 +41,8 @@ export type RouteRecommendationDiagnostics = {
   diagnosticBatchFileName: string | null;
   diagnosticBatchStatus: string | null;
   diagnosticBatchIsActive: boolean | null;
+  diagnosticBatchStockRows: number;
+  diagnosticBatchAuditRows: number;
   latestStockRowsFound: number;
   recommendationRowsFound: number;
   recommendationsReturnedToFrontend: number;

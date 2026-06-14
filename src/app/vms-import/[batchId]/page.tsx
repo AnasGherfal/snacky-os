@@ -116,6 +116,10 @@ function isStockReportType(reportType: string | null | undefined) {
   return reportType === "stock" || reportType === "machine_stock_snapshot" || reportType === "planogram";
 }
 
+function isMachineStockSnapshotReportType(reportType: string | null | undefined) {
+  return reportType === "stock" || reportType === "machine_stock_snapshot";
+}
+
 function formatDateTime(value: string | null | undefined) {
   if (!value) return "-";
   const date = new Date(value);
@@ -486,6 +490,8 @@ async function VmsImportBatchDetailPageContent({
   const [
     previewRowsCount,
     importedRowsCount,
+    stockSnapshotRowsCount,
+    machineStockAuditRowsCount,
     salesRawCount,
     transactionsRawCount,
     productMappingsCountResult,
@@ -493,11 +499,21 @@ async function VmsImportBatchDetailPageContent({
   ] = await Promise.all([
     countBatchRows(supabase, "vms_import_preview_rows", batch.id, profile?.id ?? null, effectivePermissions),
     countBatchRows(supabase, "vms_import_rows", batch.id, profile?.id ?? null, effectivePermissions),
+    countBatchRows(supabase, "vms_stock_snapshots", batch.id, profile?.id ?? null, effectivePermissions),
+    countBatchRows(supabase, "vms_machine_stock_snapshots", batch.id, profile?.id ?? null, effectivePermissions),
     countBatchRows(supabase, "vms_sales_raw", batch.id, profile?.id ?? null, effectivePermissions),
     countBatchRows(supabase, "vms_transactions_raw", batch.id, profile?.id ?? null, effectivePermissions),
     safeCountAllRows(supabase, "vms_product_mappings", batch.id, profile?.id ?? null, effectivePermissions),
     safeCountAllRows(supabase, "vms_machine_mappings", batch.id, profile?.id ?? null, effectivePermissions),
   ]);
+  const canFinalizePreviewStockBatch = canConfirmVmsImports(profile)
+    && String(batch.status ?? "") === "previewed"
+    && isMachineStockSnapshotReportType(stringValue(batch.report_type));
+  const finalizeEvidenceCount = Math.max(
+    Number(stockSnapshotRowsCount.count ?? 0),
+    Number(machineStockAuditRowsCount.count ?? 0),
+    Number(importedRowsCount.count ?? 0),
+  );
   const mappingCountError = productMappingsCountResult.error ?? machineMappingsCountResult.error ?? null;
   const mappingCount = mappingCountError ? null : (productMappingsCountResult.count ?? 0) + (machineMappingsCountResult.count ?? 0);
 
@@ -552,6 +568,15 @@ async function VmsImportBatchDetailPageContent({
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge status={stringValue(batch.status)} />
             {needsMappingRows.length ? <Link href="/vms-mappings?status=needs_review" className="btn-secondary">Review product mappings</Link> : null}
+            {canFinalizePreviewStockBatch ? (
+              <form action={updateVmsImportBatchState}>
+                <input type="hidden" name="batch_id" value={String(batch.id)} />
+                <input type="hidden" name="action" value="finalize_import" />
+                <FormSubmitButton className="btn-primary" pendingLabel="Finalizing preview import..." disabled={finalizeEvidenceCount <= 0}>
+                  Finalize import
+                </FormSubmitButton>
+              </form>
+            ) : null}
             {rowList.length && canConfirmVmsImports(profile) ? (
               <form action={reprocessVmsImportBatch}>
                 <input type="hidden" name="batch_id" value={String(batch.id)} />
@@ -708,7 +733,7 @@ async function VmsImportBatchDetailPageContent({
           <StatCard label="File name" value={textValue(batch.file_name)} />
           <StatCard label="Report type" value={reportLabel(stringValue(batch.report_type) || stringValue(batch.source_type))} />
           <StatCard label="Status" value={textValue(batch.status)} />
-          <StatCard label="Active" value={stringValue(batch.status) === "imported" && batch.is_active !== false && !batch.deleted_at ? "Yes" : "No"} />
+          <StatCard label="Active" value={isUsableImportStatus(stringValue(batch.status)) && batch.is_active !== false && !batch.deleted_at ? "Yes" : "No"} />
           <StatCard label="Rows found" value={numberValue(batch.rows_found ?? batch.row_count)} />
           <StatCard label="Rows imported" value={numberValue(batch.rows_imported)} />
           <StatCard label="Created/uploaded" value={formatDateTime(stringValue(batch.uploaded_at) || stringValue(batch.imported_at))} />
@@ -726,6 +751,16 @@ async function VmsImportBatchDetailPageContent({
             <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Imported audit rows</div>
             <div className="mt-1 text-2xl font-semibold text-slate-900">{importedRowsCount.count === null ? "?" : importedRowsCount.count}</div>
             <div className="mt-1 text-xs text-slate-500">{importedRowsCount.error ?? "Rows saved in vms_import_rows"}</div>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Stock snapshot rows</div>
+            <div className="mt-1 text-2xl font-semibold text-slate-900">{stockSnapshotRowsCount.count === null ? "?" : stockSnapshotRowsCount.count}</div>
+            <div className="mt-1 text-xs text-slate-500">{stockSnapshotRowsCount.error ?? "Rows saved in vms_stock_snapshots"}</div>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Machine stock audit rows</div>
+            <div className="mt-1 text-2xl font-semibold text-slate-900">{machineStockAuditRowsCount.count === null ? "?" : machineStockAuditRowsCount.count}</div>
+            <div className="mt-1 text-xs text-slate-500">{machineStockAuditRowsCount.error ?? "Rows saved in vms_machine_stock_snapshots"}</div>
           </div>
           <div className="rounded-lg border border-slate-200 bg-white p-3">
             <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Raw sales rows</div>
@@ -766,7 +801,23 @@ async function VmsImportBatchDetailPageContent({
         <section className="surface-card mb-6">
           <h2 className="mb-4 text-lg font-semibold text-slate-900">Actions</h2>
           <p className="mb-4 text-sm text-slate-500">Reprocess repairs mappings, recalculates counters, rebuilds dashboard usage, and refreshes metadata for this import.</p>
-          <div className="grid gap-3 lg:grid-cols-3">
+          <div className="grid gap-3 lg:grid-cols-4">
+            {canFinalizePreviewStockBatch ? (
+              <form action={updateVmsImportBatchState} className="space-y-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                <input type="hidden" name="batch_id" value={String(batch.id)} />
+                <input type="hidden" name="action" value="finalize_import" />
+                <div className="text-sm font-semibold text-emerald-900">Finalize preview import</div>
+                <p className="text-xs text-emerald-900/80">
+                  Promotes saved stock rows into an active imported batch for <code>/routes/new</code>. No rows are deleted.
+                </p>
+                <div className="text-xs text-emerald-900/80">
+                  Evidence found: stock rows {stockSnapshotRowsCount.count ?? 0}, machine audit rows {machineStockAuditRowsCount.count ?? 0}, imported row audit rows {importedRowsCount.count ?? 0}
+                </div>
+                <FormSubmitButton className="btn-primary w-full" pendingLabel="Finalizing preview import..." disabled={finalizeEvidenceCount <= 0}>
+                  Finalize import
+                </FormSubmitButton>
+              </form>
+            ) : null}
             {isUsableImportStatus(stringValue(batch.status)) && batch.is_active !== false ? (
               <form action={updateVmsImportBatchState} className="space-y-3 rounded-lg border border-slate-200 p-3">
                 <input type="hidden" name="batch_id" value={String(batch.id)} />

@@ -2392,6 +2392,16 @@ async function runVmsImport({
     }
   }
 
+  await ensureConfirmedStockImportBatchIsUsable({
+    supabase,
+    profile,
+    batchId: batch.id,
+    reportType,
+    summary,
+    detectedMinDatetime: stockDetectedMinDatetime ?? stockFallbackTimestamp,
+    detectedMaxDatetime: stockDetectedMaxDatetime ?? stockFallbackTimestamp,
+  });
+
   await deactivateOlderActiveStockBatches({
     supabase,
     currentBatchId: batch.id,
@@ -3649,6 +3659,131 @@ async function deactivateOlderActiveStockBatches({
   }
 }
 
+async function ensureConfirmedStockImportBatchIsUsable({
+  supabase,
+  profile,
+  batchId,
+  reportType,
+  summary,
+  detectedMinDatetime,
+  detectedMaxDatetime,
+}: {
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  profile: Awaited<ReturnType<typeof getCurrentProfile>>;
+  batchId: string;
+  reportType: VmsReportType;
+  summary: ImportSummary;
+  detectedMinDatetime: string | null;
+  detectedMaxDatetime: string | null;
+}) {
+  if (!isMachineStockReport(reportType) || summary.importedRows <= 0) return;
+
+  const { data: currentBatch, error: currentBatchError } = await supabase
+    .from("vms_import_batches")
+    .select("id, status, is_active, rows_imported, detected_min_datetime, detected_max_datetime")
+    .eq("id", batchId)
+    .maybeSingle();
+
+  if (currentBatchError || !currentBatch?.id) {
+    console.warn("[vms-import] Could not verify final stock batch usability after confirm", {
+      batchId,
+      reportType,
+      error: currentBatchError,
+    });
+    return;
+  }
+
+  const currentStatus = String(currentBatch.status ?? "").trim();
+  const currentRowsImported = wholeNumberValue(currentBatch.rows_imported);
+  const usableStatus = currentStatus === "imported" || currentStatus === "imported_with_warnings" || currentStatus === "partially_imported";
+  const isUsable = usableStatus && currentBatch.is_active !== false && currentRowsImported > 0;
+  if (isUsable) return;
+
+  console.warn("[vms-import] Repairing stock batch metadata after confirm because the final state is not usable", {
+    batchId,
+    reportType,
+    currentStatus,
+    isActive: currentBatch.is_active ?? null,
+    currentRowsImported,
+    expectedRowsImported: summary.importedRows,
+  });
+
+  const now = new Date().toISOString();
+  const recoveredWarning = `Recovered stock import metadata after confirm because the batch was left in ${currentStatus || "an unusable"} state.`;
+  const nextErrors = summary.errors.includes(recoveredWarning) ? summary.errors : [...summary.errors, recoveredWarning];
+  const nextStatus = nextErrors.length || summary.rowsNeedingReview > 0 ? "imported_with_warnings" : "imported";
+  const repairedDetectedMinDatetime = detectedMinDatetime || textValue(currentBatch.detected_min_datetime) || now;
+  const repairedDetectedMaxDatetime = detectedMaxDatetime || textValue(currentBatch.detected_max_datetime) || repairedDetectedMinDatetime;
+  const repairPayload = {
+    status: nextStatus,
+    is_active: true,
+    imported_by: profile?.team_member_id ?? profile?.id ?? null,
+    imported_at: now,
+    updated_at: now,
+    source_usage: vmsSourceUsage(reportType),
+    dashboard_usage: vmsSourceUsage(reportType),
+    rows_found: Math.max(summary.rowsFound, summary.importedRows),
+    row_count: Math.max(summary.rowsFound, summary.totalRows, summary.importedRows),
+    rows_imported: summary.importedRows,
+    rows_skipped: summary.skippedRows,
+    rows_skipped_duplicate: summary.rowsSkippedDuplicate,
+    rows_needing_review: summary.rowsNeedingReview,
+    error_count: nextErrors.length,
+    errors: nextErrors,
+    latest_error: nextErrors.length ? nextErrors.join("; ").slice(0, 2000) : null,
+    last_error: nextErrors.length ? nextErrors.join("; ").slice(0, 2000) : null,
+    detected_min_datetime: repairedDetectedMinDatetime,
+    detected_max_datetime: repairedDetectedMaxDatetime,
+    notes: JSON.stringify({
+      ...summary,
+      status: nextStatus,
+      errors: nextErrors,
+      postconditionRepair: {
+        repaired_at: now,
+        previous_status: currentStatus || null,
+        previous_is_active: currentBatch.is_active ?? null,
+        previous_rows_imported: currentRowsImported,
+      },
+    }),
+  };
+
+  const repairResult = await runVmsImportBatchMutationWithMetadataFallback({
+    queryName: "vms_import_batches.update.confirm_postcondition",
+    currentStep: "confirm_import",
+    selectedImportBatchId: batchId,
+    payload: repairPayload,
+    run: (payload) => supabase
+      .from("vms_import_batches")
+      .update(payload)
+      .eq("id", batchId)
+      .select("id, status, is_active, rows_imported")
+      .maybeSingle(),
+  });
+
+  const repairProblem = repairResult.timedOut
+    ? { code: "TIMEOUT", message: "VMS import postcondition repair timed out." }
+    : repairResult.error
+      ?? repairResult.value?.error
+      ?? (!batchMutationReturnedRow(repairResult.value)
+        ? missingBatchMutationRowError({
+            queryName: "vms_import_batches.update.confirm_postcondition",
+            currentStep: "confirm_import",
+            selectedImportBatchId: batchId,
+          })
+        : null);
+
+  if (repairProblem) {
+    logVmsBatchMutationFailure({
+      queryName: "vms_import_batches.update.confirm_postcondition",
+      error: repairProblem,
+      payload: repairResult.payload,
+      profile,
+      selectedImportBatchId: batchId,
+      currentStep: "confirm_import",
+    });
+  }
+}
+
 function revalidateVmsDataSourcePaths(batchId?: string) {
   revalidatePath("/vms-import");
   if (batchId) revalidatePath(`/vms-import/${batchId}`);
@@ -3660,6 +3795,283 @@ function revalidateVmsDataSourcePaths(batchId?: string) {
   revalidatePath("/refills");
   revalidatePath("/routes/new");
   revalidatePath("/reports");
+}
+
+async function finalizePreviewStockImportBatch({
+  supabase,
+  profile,
+  batchId,
+  batch,
+}: {
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  profile: Awaited<ReturnType<typeof getCurrentProfile>>;
+  batchId: string;
+  batch: Record<string, unknown>;
+}) {
+  const reportType = parseReportType(textValue(batch.report_type) || null);
+  if (!reportType || !isMachineStockReport(reportType)) {
+    redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Only stock snapshot imports can be finalized from preview.")}`);
+  }
+
+  const actorId = profile?.team_member_id ?? profile?.id ?? null;
+  const now = new Date().toISOString();
+  const rowsFound = wholeNumberValue(batch.rows_found ?? batch.row_count);
+  const existingRowsImported = wholeNumberValue(batch.rows_imported);
+  const warningMessages: string[] = [];
+  let repairMode: "metadata_finalize" | "audit_backfill" | "reprocess" = "metadata_finalize";
+
+  const [
+    stockSnapshotRowsResult,
+    stockCountResult,
+    auditCountResult,
+    rawRowsCountResult,
+  ] = await Promise.all([
+    supabase
+      .from("vms_stock_snapshots")
+      .select("import_row_number, machine_id, product_id, captured_at, created_at")
+      .eq("import_batch_id", batchId)
+      .order("import_row_number", { ascending: true }),
+    supabase
+      .from("vms_stock_snapshots")
+      .select("id", { count: "exact", head: true })
+      .eq("import_batch_id", batchId),
+    supabase
+      .from("vms_machine_stock_snapshots")
+      .select("id", { count: "exact", head: true })
+      .eq("import_batch_id", batchId),
+    supabase
+      .from("vms_import_rows")
+      .select("id", { count: "exact", head: true })
+      .eq("import_batch_id", batchId),
+  ]);
+
+  if (stockSnapshotRowsResult.error) {
+    console.error("[vms-import] Preview finalize stock row lookup failed", { batchId, error: stockSnapshotRowsResult.error });
+    redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Could not inspect saved stock snapshot rows for this batch.")}`);
+  }
+  if (stockCountResult.error) {
+    console.error("[vms-import] Preview finalize stock row count failed", { batchId, error: stockCountResult.error });
+    redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Could not count saved stock snapshot rows for this batch.")}`);
+  }
+  if (auditCountResult.error) {
+    console.error("[vms-import] Preview finalize audit row count failed", { batchId, error: auditCountResult.error });
+    redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Could not count saved audit rows for this batch.")}`);
+  }
+  if (rawRowsCountResult.error) {
+    console.error("[vms-import] Preview finalize raw row count failed", { batchId, error: rawRowsCountResult.error });
+    redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Could not count saved raw rows for this batch.")}`);
+  }
+
+  let stockSnapshotRows = (stockSnapshotRowsResult.data ?? []) as Array<{
+    import_row_number?: number | null;
+    machine_id?: string | null;
+    product_id?: string | null;
+    captured_at?: string | null;
+    created_at?: string | null;
+  }>;
+  let stockRowCount = Number(stockCountResult.count ?? 0);
+  const auditRowCount = Number(auditCountResult.count ?? 0);
+  const rawRowCount = Number(rawRowsCountResult.count ?? 0);
+
+  if (stockRowCount <= 0 && rawRowCount > 0) {
+    repairMode = "reprocess";
+    await rerunSavedVmsImportBatch({
+      supabase,
+      profile,
+      batchId,
+      batch: {
+        id: batchId,
+        file_name: textValue(batch.file_name) || null,
+        file_type: textValue(batch.file_type) || null,
+        sheet_name: textValue(batch.sheet_name) || null,
+        report_type: textValue(batch.report_type) || null,
+        column_mapping: batch.column_mapping ?? {},
+        notes: textValue(batch.notes) || null,
+        original_file_name: textValue(batch.original_file_name) || null,
+        file_hash: textValue(batch.file_hash) || null,
+        storage_bucket: textValue(batch.storage_bucket) || null,
+        storage_path: textValue(batch.storage_path) || null,
+      },
+    });
+    return;
+  }
+
+  if (stockRowCount <= 0 && auditRowCount > 0) {
+    repairMode = "audit_backfill";
+    const auditRowsResult = await supabase
+      .from("vms_machine_stock_snapshots")
+      .select("row_number, machine_id, product_id, machine_code, vms_product_code, vms_product_name, inventory_quantity, inventory_capacity, point_name, raw_row, created_at")
+      .eq("import_batch_id", batchId)
+      .order("row_number", { ascending: true });
+
+    if (auditRowsResult.error) {
+      console.error("[vms-import] Preview finalize audit row load failed", { batchId, error: auditRowsResult.error });
+      redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Could not load audit rows needed to rebuild stock snapshots.")}`);
+    }
+
+    const fallbackCapturedAt = textValue(batch.detected_max_datetime)
+      || textValue(batch.detected_min_datetime)
+      || textValue(batch.imported_at)
+      || textValue(batch.created_at)
+      || now;
+
+    const backfillRows = ((auditRowsResult.data ?? []) as Array<Record<string, unknown>>)
+      .map((row) => {
+        const machineId = textValue(row.machine_id);
+        const currentQty = Number(row.inventory_quantity ?? null);
+        if (!machineId || !Number.isFinite(currentQty) || currentQty < 0) return null;
+        return {
+          import_batch_id: batchId,
+          import_row_number: wholeNumberValue(row.row_number),
+          import_row_status: "imported",
+          machine_id: machineId,
+          vms_machine_id: textValue(row.machine_code) || null,
+          slot_code: null,
+          vms_product_id: textValue(row.vms_product_code) || null,
+          vms_product_name: textValue(row.vms_product_name) || null,
+          product_id: textValue(row.product_id) || null,
+          current_qty: Math.floor(currentQty),
+          capacity: Number.isFinite(Number(row.inventory_capacity ?? null)) ? Number(row.inventory_capacity) : null,
+          captured_at: fallbackCapturedAt,
+          metadata: {
+            repair_path: "audit_backfill",
+            point_name: textValue(row.point_name) || null,
+            raw_row: row.raw_row ?? null,
+          },
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => Boolean(row));
+
+    if (!backfillRows.length) {
+      redirect(`/vms-import/${batchId}?error=${encodeURIComponent("This preview batch has audit rows, but none of them could be promoted into stock snapshot rows.")}`);
+    }
+
+    const { error: backfillError } = await supabase
+      .from("vms_stock_snapshots")
+      .upsert(backfillRows, { onConflict: "import_batch_id,import_row_number" });
+
+    if (backfillError) {
+      console.error("[vms-import] Preview finalize stock backfill failed", { batchId, error: backfillError });
+      redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Could not rebuild stock snapshot rows from the saved audit rows.")}`);
+    }
+
+    warningMessages.push("Rebuilt vms_stock_snapshots from saved audit rows because the preview batch had no finalized stock rows. Slot codes were unavailable in audit rows, so route matching falls back to product-level matching where needed.");
+    stockSnapshotRows = backfillRows.map((row) => ({
+      import_row_number: Number(row.import_row_number ?? 0),
+      machine_id: typeof row.machine_id === "string" ? row.machine_id : null,
+      product_id: typeof row.product_id === "string" ? row.product_id : null,
+      captured_at: typeof row.captured_at === "string" ? row.captured_at : null,
+      created_at: null,
+    }));
+    stockRowCount = backfillRows.length;
+  }
+
+  if (stockRowCount <= 0) {
+    redirect(`/vms-import/${batchId}?error=${encodeURIComponent("This preview batch does not have saved stock rows to finalize yet. Reprocess it or upload the file again.")}`);
+  }
+
+  if (existingRowsImported <= 0) {
+    warningMessages.push(`Recovered ${stockRowCount} saved stock snapshot row(s) from a preview batch whose metadata was never finalized.`);
+  }
+  if (rowsFound > 0 && stockRowCount < rowsFound) {
+    warningMessages.push(`Imported ${stockRowCount} usable stock row(s) out of ${rowsFound} parsed row(s). Review the skipped or unmapped rows if route coverage still looks incomplete.`);
+  }
+
+  const capturedAtValues = stockSnapshotRows
+    .flatMap((row) => [row.captured_at, row.created_at])
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean);
+  const detectedMinDatetime = capturedAtValues.length
+    ? [...capturedAtValues].sort((a, b) => a.localeCompare(b))[0]
+    : (textValue(batch.detected_min_datetime) || now);
+  const detectedMaxDatetime = capturedAtValues.length
+    ? [...capturedAtValues].sort((a, b) => b.localeCompare(a))[0]
+    : (textValue(batch.detected_max_datetime) || detectedMinDatetime);
+  const rowsNeedingReview = Math.max(wholeNumberValue(batch.rows_needing_review), rowsFound > 0 ? Math.max(0, rowsFound - stockRowCount) : 0);
+  const latestWarning = warningMessages.length ? warningMessages.join(" ") : null;
+  let previousNotes = objectRecord(null);
+  try {
+    previousNotes = objectRecord(textValue(batch.notes) ? JSON.parse(textValue(batch.notes)) : null);
+  } catch {
+    previousNotes = {};
+  }
+
+  const status = latestWarning || rowsNeedingReview > 0 ? "imported_with_warnings" : "imported";
+  const finalizePayload = {
+    status,
+    is_active: true,
+    imported_by: actorId,
+    imported_at: now,
+    updated_at: now,
+    source_usage: vmsSourceUsage(reportType),
+    dashboard_usage: vmsSourceUsage(reportType),
+    rows_found: rowsFound || stockRowCount,
+    row_count: Math.max(rowsFound, wholeNumberValue(batch.row_count), stockRowCount),
+    rows_imported: stockRowCount,
+    rows_needing_review: rowsNeedingReview,
+    error_count: latestWarning ? 1 : 0,
+    errors: latestWarning ? [latestWarning] : [],
+    latest_error: latestWarning,
+    last_error: latestWarning,
+    detected_min_datetime: detectedMinDatetime,
+    detected_max_datetime: detectedMaxDatetime,
+    notes: JSON.stringify({
+      ...previousNotes,
+      repair: {
+        finalized_at: now,
+        finalized_by: actorId,
+        repair_mode: repairMode,
+        stock_rows: stockRowCount,
+        audit_rows: auditRowCount,
+        raw_rows: rawRowCount,
+      },
+    }),
+  };
+
+  const finalizeResult = await runVmsImportBatchMutationWithMetadataFallback<Record<string, unknown>>({
+    queryName: "vms_import_batches.update.finalize_preview",
+    currentStep: "finalize_preview",
+    selectedImportBatchId: batchId,
+    payload: finalizePayload,
+    run: (safePayload) => supabase
+      .from("vms_import_batches")
+      .update(safePayload)
+      .eq("id", batchId)
+      .select("*")
+      .maybeSingle(),
+  });
+  const finalizeError = finalizeResult.error ?? finalizeResult.value?.error ?? null;
+  if (finalizeResult.timedOut || finalizeError) {
+    console.error("[vms-import] Preview finalize batch metadata update failed", { batchId, error: finalizeError ?? "timeout" });
+    redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Could not finalize this preview batch metadata. The saved stock rows were preserved.")}`);
+  }
+
+  await deactivateOlderActiveStockBatches({
+    supabase,
+    currentBatchId: batchId,
+    reportType,
+    updatedAt: now,
+  });
+  await refreshRefillRecommendationsAfterStockImport({
+    supabase,
+    batchId,
+    reportType,
+    importedRows: stockRowCount,
+  });
+
+  await logActivity({
+    profile,
+    action: "update",
+    entityType: "vms_import",
+    entityId: batchId,
+    entityLabel: textValue(batch.file_name) || batchId,
+    beforeData: batch,
+    afterData: finalizeResult.value?.data ?? finalizePayload,
+    summary: `Finalized preview stock import ${textValue(batch.file_name) || batchId}`,
+  });
+
+  revalidateVmsDataSourcePaths(batchId);
+  redirect(`/vms-import/${batchId}?success=${encodeURIComponent(`Finalized ${stockRowCount} stock row(s) and activated this batch for route recommendations.`)}`);
 }
 
 export async function updateVmsImportBatchState(formData: FormData) {
@@ -3686,6 +4098,7 @@ export async function updateVmsImportBatchState(formData: FormData) {
 
   const actorId = profile.team_member_id ?? profile.id ?? null;
   const now = new Date().toISOString();
+  const beforeReportType = parseReportType(textValue(beforeBatch.report_type) || null);
   let payload: Record<string, unknown> | null = null;
   let activitySummary = "";
 
@@ -3699,9 +4112,19 @@ export async function updateVmsImportBatchState(formData: FormData) {
       updated_at: now,
     };
     activitySummary = `Disabled VMS import ${beforeBatch.file_name ?? batchId}`;
+  } else if (action === "finalize_import") {
+    await finalizePreviewStockImportBatch({
+      supabase,
+      profile,
+      batchId,
+      batch: objectRecord(beforeBatch),
+    });
+    return;
   } else if (action === "enable" || action === "restore") {
     payload = {
-      status: "imported",
+      status: beforeReportType && isMachineStockReport(beforeReportType)
+        ? (String(beforeBatch.status ?? "").includes("warning") ? "imported_with_warnings" : "imported")
+        : "imported",
       is_active: true,
       disabled_at: null,
       disabled_by: null,
@@ -3789,6 +4212,22 @@ export async function updateVmsImportBatchState(formData: FormData) {
     summary: activitySummary,
   });
 
+  const restoredReportType = parseReportType(textValue(afterBatch?.report_type ?? beforeBatch.report_type) || null);
+  if ((action === "enable" || action === "restore") && restoredReportType && isMachineStockReport(restoredReportType)) {
+    await deactivateOlderActiveStockBatches({
+      supabase,
+      currentBatchId: batchId,
+      reportType: restoredReportType,
+      updatedAt: now,
+    });
+    await refreshRefillRecommendationsAfterStockImport({
+      supabase,
+      batchId,
+      reportType: restoredReportType,
+      importedRows: wholeNumberValue(afterBatch?.rows_imported ?? beforeBatch.rows_imported),
+    });
+  }
+
   revalidateVmsDataSourcePaths(batchId);
   redirect(`/vms-import/${batchId}`);
 }
@@ -3798,6 +4237,99 @@ function jsonRecord(value: unknown): Record<string, string> {
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, String(item ?? "")]),
   );
+}
+
+function objectRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function textValue(value: unknown) {
+  return typeof value === "string" ? value : "";
+}
+
+function wholeNumberValue(value: unknown) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;
+}
+
+type SavedVmsImportBatchRow = {
+  id: string;
+  file_name: string | null;
+  file_type: string | null;
+  sheet_name: string | null;
+  report_type: string | null;
+  column_mapping: unknown;
+  notes: string | null;
+  original_file_name: string | null;
+  file_hash: string | null;
+  storage_bucket: string | null;
+  storage_path: string | null;
+};
+
+async function rerunSavedVmsImportBatch({
+  supabase,
+  profile,
+  batchId,
+  batch,
+}: {
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  profile: Awaited<ReturnType<typeof getCurrentProfile>>;
+  batchId: string;
+  batch: SavedVmsImportBatchRow;
+}) {
+  const reportType = parseReportType(batch.report_type);
+  if (!reportType) redirect(`/vms-import/${batchId}?error=That%20batch%20does%20not%20have%20a%20valid%20report%20type.`);
+  type SavedImportRow = {
+    row_number?: number | null;
+    raw_data?: unknown;
+    normalized_data?: unknown;
+  };
+
+  const { data: rawRows, error: rawRowsError } = await supabase
+    .from("vms_import_rows")
+    .select("row_number, raw_data, normalized_data")
+    .eq("import_batch_id", batchId)
+    .order("row_number", { ascending: true });
+
+  if (rawRowsError) {
+    console.error("[vms-import:reprocess] Raw row lookup failed", rawRowsError);
+    redirect(`/vms-import/${batchId}?error=Could%20not%20load%20raw%20rows%20for%20that%20batch.`);
+  }
+
+  if (!rawRows?.length) {
+    redirect(`/vms-import/${batchId}?error=This%20batch%20does%20not%20have%20saved%20raw%20rows.%20Upload%20the%20file%20again%20once%20to%20enable%20reprocessing.`);
+  }
+
+  let previousSummary: Partial<ImportSummary> = {};
+  try {
+    previousSummary = batch.notes ? JSON.parse(String(batch.notes)) as Partial<ImportSummary> : {};
+  } catch {
+    previousSummary = {};
+  }
+
+  await runVmsImport({
+    supabase,
+    profile,
+    existingBatchId: batchId,
+    reportType,
+    fileName: batch.file_name ?? "VMS import",
+    fileType: batch.file_type ?? "csv",
+    sheetName: batch.sheet_name ?? "Sheet",
+    originalFileName: batch.original_file_name ?? batch.file_name ?? "VMS import",
+    fileHash: batch.file_hash ?? null,
+    storageBucket: batch.storage_bucket ?? null,
+    storagePath: batch.storage_path ?? null,
+    rows: (rawRows as SavedImportRow[]).map((row) => jsonRecord(row.normalized_data)),
+    originalRows: (rawRows as SavedImportRow[]).map((row) => jsonRecord(row.raw_data)),
+    columnMapping: jsonRecord(batch.column_mapping),
+    sourceRowNumbers: (rawRows as SavedImportRow[]).map((row) => Number(row.row_number)),
+    salesReportPeriod: previousSummary.salesReportPeriod ?? null,
+    reportStartDate: previousSummary.orderDetailsReportPeriod?.reportStartDate ?? previousSummary.salesReportPeriod?.reportStartDate ?? null,
+    reportEndDate: previousSummary.orderDetailsReportPeriod?.reportEndDate ?? previousSummary.salesReportPeriod?.reportEndDate ?? null,
+    autoCreateMissingProducts: previousSummary.autoCreateMissingProducts ?? true,
+    updateCostFromVms: previousSummary.updateCostFromVms ?? false,
+  });
 }
 
 export async function reprocessVmsImportBatch(formData: FormData) {
@@ -3820,50 +4352,10 @@ export async function reprocessVmsImportBatch(formData: FormData) {
     redirect("/vms-import?error=Could%20not%20find%20that%20VMS%20import%20batch.");
   }
 
-  const reportType = parseReportType(batch.report_type);
-  if (!reportType) redirect(`/vms-import/${batchId}?error=That%20batch%20does%20not%20have%20a%20valid%20report%20type.`);
-
-  const { data: rawRows, error: rawRowsError } = await supabase
-    .from("vms_import_rows")
-    .select("row_number, raw_data, normalized_data")
-    .eq("import_batch_id", batchId)
-    .order("row_number", { ascending: true });
-
-  if (rawRowsError) {
-    console.error("[vms-import:reprocess] Raw row lookup failed", rawRowsError);
-    redirect(`/vms-import/${batchId}?error=Could%20not%20load%20raw%20rows%20for%20that%20batch.`);
-  }
-
-  if (!rawRows?.length) {
-    redirect(`/vms-import/${batchId}?error=This%20batch%20does%20not%20have%20saved%20raw%20rows.%20Upload%20the%20file%20again%20once%20to%20enable%20reprocessing.`);
-  }
-  let previousSummary: Partial<ImportSummary> = {};
-  try {
-    previousSummary = batch.notes ? JSON.parse(String(batch.notes)) as Partial<ImportSummary> : {};
-  } catch {
-    previousSummary = {};
-  }
-
-  await runVmsImport({
+  await rerunSavedVmsImportBatch({
     supabase,
     profile,
-    existingBatchId: batchId,
-    reportType,
-    fileName: batch.file_name ?? "VMS import",
-    fileType: batch.file_type ?? "csv",
-    sheetName: batch.sheet_name ?? "Sheet",
-    originalFileName: batch.original_file_name ?? batch.file_name ?? "VMS import",
-    fileHash: batch.file_hash ?? null,
-    storageBucket: batch.storage_bucket ?? null,
-    storagePath: batch.storage_path ?? null,
-    rows: rawRows.map((row: any) => jsonRecord(row.normalized_data)),
-    originalRows: rawRows.map((row: any) => jsonRecord(row.raw_data)),
-    columnMapping: jsonRecord(batch.column_mapping),
-    sourceRowNumbers: rawRows.map((row: any) => Number(row.row_number)),
-    salesReportPeriod: previousSummary.salesReportPeriod ?? null,
-    reportStartDate: previousSummary.orderDetailsReportPeriod?.reportStartDate ?? previousSummary.salesReportPeriod?.reportStartDate ?? null,
-    reportEndDate: previousSummary.orderDetailsReportPeriod?.reportEndDate ?? previousSummary.salesReportPeriod?.reportEndDate ?? null,
-    autoCreateMissingProducts: previousSummary.autoCreateMissingProducts ?? true,
-    updateCostFromVms: previousSummary.updateCostFromVms ?? false,
+    batchId,
+    batch: batch as SavedVmsImportBatchRow,
   });
 }
