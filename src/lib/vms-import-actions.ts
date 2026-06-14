@@ -346,11 +346,11 @@ function classifyImportResult(summary: ImportSummary, fatalImportError: boolean)
     return { status: "failed", active: false, message: summary.errors.join("; ").slice(0, 2000) || "VMS import failed before usable data was saved." };
   }
   if (importedUsefulRows && fatalImportError) {
-    return { status: "imported_with_warnings", active: true, message: "Usable VMS data was imported, but one or more import steps failed. Review the exact failed step and reprocess after fixing it." };
+    return { status: "imported", active: true, message: "Usable VMS data was imported, but one or more import steps failed. Review the exact failed step and reprocess after fixing it." };
   }
   if (importedUsefulRows && hasWarnings) {
     const firstTarget = summary.updatedTargets[0] ?? "VMS data";
-    return { status: "imported_with_warnings", active: true, message: `${firstTarget} imported. Some rows or metadata need review.` };
+    return { status: "imported", active: true, message: `${firstTarget} imported. Some rows or metadata need review.` };
   }
   if (importedUsefulRows) return { status: "imported", active: true, message: "VMS import completed successfully." };
   if (hasWarnings) return { status: "partially_imported", active: false, message: "No usable rows were imported. Review mappings, duplicates, and validation warnings." };
@@ -548,7 +548,9 @@ function canonicalImportedReportType(reportType: VmsReportType): VmsReportType {
 }
 
 type PersistedStockSnapshotBatchSummary = {
-  rowCount: number;
+  stockRowCount: number;
+  auditRowCount: number;
+  importedRowCount: number;
   detectedMinDatetime: string | null;
   detectedMaxDatetime: string | null;
   error: unknown | null;
@@ -561,32 +563,39 @@ async function loadPersistedStockSnapshotBatchSummary({
   supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
   batchId: string;
 }): Promise<PersistedStockSnapshotBatchSummary> {
-  const { data, error } = await supabase
-    .from("vms_stock_snapshots")
-    .select("captured_at, created_at")
-    .eq("import_batch_id", batchId)
-    .eq("import_row_status", "imported");
+  const [stockRowsResult, auditCountResult] = await Promise.all([
+    supabase
+      .from("vms_stock_snapshots")
+      .select("captured_at, created_at")
+      .eq("import_batch_id", batchId)
+      .eq("import_row_status", "imported"),
+    supabase
+      .from("vms_machine_stock_snapshots")
+      .select("id", { count: "exact", head: true })
+      .eq("import_batch_id", batchId),
+  ]);
 
-  if (error) {
-    return {
-      rowCount: 0,
-      detectedMinDatetime: null,
-      detectedMaxDatetime: null,
-      error,
-    };
-  }
+  const stockRowsError = stockRowsResult.error;
+  const auditCountError = auditCountResult.error;
+  const stockRows = stockRowsError
+    ? []
+    : ((stockRowsResult.data ?? []) as Array<{ captured_at?: string | null; created_at?: string | null }>);
+  const stockRowCount = stockRows.length;
+  const auditRowCount = auditCountError ? 0 : Number(auditCountResult.count ?? 0);
 
-  const capturedValues = ((data ?? []) as Array<{ captured_at?: string | null; created_at?: string | null }>)
+  const capturedValues = stockRows
     .flatMap((row) => [row.captured_at, row.created_at])
     .map((value) => String(value ?? "").trim())
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b));
 
   return {
-    rowCount: Number(data?.length ?? 0),
+    stockRowCount,
+    auditRowCount,
+    importedRowCount: auditRowCount > 0 ? auditRowCount : stockRowCount,
     detectedMinDatetime: capturedValues[0] ?? null,
     detectedMaxDatetime: capturedValues.at(-1) ?? null,
-    error: null,
+    error: stockRowsError ?? auditCountError ?? null,
   };
 }
 
@@ -2305,8 +2314,8 @@ async function runVmsImport({
       error: persistedStockSummary.error,
     });
   }
-  const persistedStockRowCount = persistedStockSummary?.rowCount ?? 0;
-  const effectiveImportedRows = persistedStockRowCount > 0 ? persistedStockRowCount : summary.importedRows;
+  const persistedImportedRowCount = persistedStockSummary?.importedRowCount ?? 0;
+  const effectiveImportedRows = persistedImportedRowCount > 0 ? persistedImportedRowCount : summary.importedRows;
   const importedRowsFromPersistence = isMachineStockReport(reportType)
     && effectiveImportedRows > 0
     && summary.importedRows <= 0;
@@ -2316,9 +2325,8 @@ async function runVmsImport({
     summary.failedTargets = Array.from(new Set([...summary.failedTargets, "Import metadata"]));
     summary.resultMessage = "Stock snapshot rows were saved and auto-activated for route recommendations.";
   }
-  const finalHasWarnings = fatalImportError || summary.errors.length > 0 || summary.rowsNeedingReview > 0 || summary.rowsSkippedDuplicate > 0;
   const status = isMachineStockReport(reportType) && effectiveImportedRows > 0
-    ? (finalHasWarnings ? "imported_with_warnings" : "imported")
+    ? "imported"
     : importResult.status;
   const detectedMinDatetime = isMachineStockReport(reportType)
     ? (persistedStockSummary?.detectedMinDatetime ?? stockDetectedMinDatetime ?? stockFallbackTimestamp)
@@ -2326,7 +2334,9 @@ async function runVmsImport({
   const detectedMaxDatetime = isMachineStockReport(reportType)
     ? (persistedStockSummary?.detectedMaxDatetime ?? stockDetectedMaxDatetime ?? stockFallbackTimestamp)
     : (effectiveReportEndDate ? endOfDateIso(effectiveReportEndDate) : null);
-  const latestErrorText = summary.errors.length ? summary.errors.join("; ").slice(0, 2000) : null;
+  const latestErrorText = status === "imported"
+    ? null
+    : (summary.errors.length ? summary.errors.join("; ").slice(0, 2000) : null);
   const batchUpdate = {
     status,
     is_active: isMachineStockReport(reportType) ? effectiveImportedRows > 0 : importResult.active,
@@ -2440,15 +2450,15 @@ async function runVmsImport({
       currentStep: "confirm_import",
       selectedImportBatchId: batch.id,
       payload: {
-        status: "imported_with_warnings",
+        status: "imported",
         is_active: true,
         imported_by: profile.team_member_id ?? profile.id ?? null,
         imported_at: new Date().toISOString(),
         report_type: finalizedReportType,
         source_usage: vmsSourceUsage(finalizedReportType),
         dashboard_usage: vmsSourceUsage(finalizedReportType),
-        latest_error: metadataWarning.slice(0, 2000),
-        last_error: metadataWarning.slice(0, 2000),
+        latest_error: null,
+        last_error: null,
         updated_at: new Date().toISOString(),
         rows_found: summary.rowsFound,
         row_count: summary.rowsFound,
@@ -2457,7 +2467,13 @@ async function runVmsImport({
         rows_needing_review: summary.rowsNeedingReview,
         detected_min_datetime: detectedMinDatetime,
         detected_max_datetime: detectedMaxDatetime,
-        notes: JSON.stringify({ ...summary, reportType: finalizedReportType, importedRows: effectiveImportedRows, status: "imported_with_warnings" }),
+        notes: JSON.stringify({
+          ...summary,
+          reportType: finalizedReportType,
+          importedRows: effectiveImportedRows,
+          status: "imported",
+          metadata_warning: metadataWarning,
+        }),
       },
       run: (payload) => supabase
         .from("vms_import_batches")
@@ -2658,24 +2674,6 @@ function batchMutationErrorMessage(error: unknown) {
   return "Could not save VMS import batch. Technical details are in the server console.";
 }
 
-function exactBatchMutationProblemText(error: unknown) {
-  if (!error) return "Unknown batch mutation error.";
-  if (typeof error === "string") return error;
-  if (error instanceof Error) return error.message;
-  const supabaseError = supabaseMutationError(error);
-  if (supabaseError) {
-    return [supabaseError.code, supabaseError.message, supabaseError.details, supabaseError.hint]
-      .map((value) => String(value ?? "").trim())
-      .filter(Boolean)
-      .join(" - ") || "Unknown Supabase batch mutation error.";
-  }
-  const record = error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown };
-  return [record.code, record.message, record.details, record.hint]
-    .map((value) => String(value ?? "").trim())
-    .filter(Boolean)
-    .join(" - ") || JSON.stringify(error);
-}
-
 type VmsBatchMutationResponse<T> = {
   data?: T | null;
   error?: unknown;
@@ -2798,32 +2796,26 @@ async function activateStockBatchWithCoreMetadata({
   batchId,
   reportType,
   actorId,
-  status,
   rowsFound,
   rowCount,
   rowsImported,
   detectedMinDatetime,
   detectedMaxDatetime,
-  latestError,
-  lastError,
 }: {
   supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
   batchId: string;
   reportType: VmsReportType;
   actorId: string | null;
-  status: "imported" | "imported_with_warnings";
   rowsFound: number;
   rowCount: number;
   rowsImported: number;
   detectedMinDatetime: string | null;
   detectedMaxDatetime: string | null;
-  latestError: string | null;
-  lastError: string | null;
 }) {
   const now = new Date().toISOString();
   const normalizedReportType = canonicalImportedReportType(reportType);
   const corePayload = {
-    status,
+    status: "imported",
     is_active: true,
     report_type: normalizedReportType,
     imported_by: actorId,
@@ -2834,8 +2826,8 @@ async function activateStockBatchWithCoreMetadata({
     rows_imported: rowsImported,
     detected_min_datetime: detectedMinDatetime,
     detected_max_datetime: detectedMaxDatetime,
-    latest_error: latestError,
-    last_error: lastError,
+    latest_error: null,
+    last_error: null,
   };
 
   const updateResult = await withSoftTimeout(
@@ -3905,7 +3897,7 @@ async function ensureConfirmedStockImportBatchIsUsable({
       error: persistedStockSummary.error,
     });
   }
-  const effectiveImportedRows = persistedStockSummary.rowCount > 0 ? persistedStockSummary.rowCount : summary.importedRows;
+  const effectiveImportedRows = persistedStockSummary.importedRowCount > 0 ? persistedStockSummary.importedRowCount : summary.importedRows;
   if (effectiveImportedRows <= 0) return;
 
   const { data: currentBatch, error: currentBatchError } = await supabase
@@ -3925,7 +3917,7 @@ async function ensureConfirmedStockImportBatchIsUsable({
 
   const currentStatus = String(currentBatch.status ?? "").trim();
   const currentRowsImported = wholeNumberValue(currentBatch.rows_imported);
-  const usableStatus = currentStatus === "imported" || currentStatus === "imported_with_warnings" || currentStatus === "partially_imported";
+  const usableStatus = currentStatus === "imported";
   const isUsable = usableStatus && currentBatch.is_active !== false && currentRowsImported > 0;
   if (isUsable) return;
 
@@ -3941,12 +3933,11 @@ async function ensureConfirmedStockImportBatchIsUsable({
   const now = new Date().toISOString();
   const recoveredWarning = `Recovered stock import metadata after confirm because the batch was left in ${currentStatus || "an unusable"} state.`;
   const nextErrors = summary.errors.includes(recoveredWarning) ? summary.errors : [...summary.errors, recoveredWarning];
-  const nextStatus = nextErrors.length || summary.rowsNeedingReview > 0 ? "imported_with_warnings" : "imported";
   const normalizedReportType = canonicalImportedReportType(reportType);
   const repairedDetectedMinDatetime = persistedStockSummary.detectedMinDatetime || detectedMinDatetime || textValue(currentBatch.detected_min_datetime) || now;
   const repairedDetectedMaxDatetime = persistedStockSummary.detectedMaxDatetime || detectedMaxDatetime || textValue(currentBatch.detected_max_datetime) || repairedDetectedMinDatetime;
   const repairPayload = {
-    status: nextStatus,
+    status: "imported",
     is_active: true,
     imported_by: profile?.team_member_id ?? profile?.id ?? null,
     imported_at: now,
@@ -3962,13 +3953,13 @@ async function ensureConfirmedStockImportBatchIsUsable({
     rows_needing_review: summary.rowsNeedingReview,
     error_count: nextErrors.length,
     errors: nextErrors,
-    latest_error: nextErrors.length ? nextErrors.join("; ").slice(0, 2000) : null,
-    last_error: nextErrors.length ? nextErrors.join("; ").slice(0, 2000) : null,
+    latest_error: null,
+    last_error: null,
     detected_min_datetime: repairedDetectedMinDatetime,
     detected_max_datetime: repairedDetectedMaxDatetime,
     notes: JSON.stringify({
       ...summary,
-      status: nextStatus,
+      status: "imported",
       errors: nextErrors,
       postconditionRepair: {
         repaired_at: now,
@@ -4015,20 +4006,16 @@ async function ensureConfirmedStockImportBatchIsUsable({
       currentStep: "confirm_import",
     });
 
-    const fallbackWarning = `Activated stock snapshot with minimal metadata because post-confirm repair failed: ${exactBatchMutationProblemText(repairProblem)}`.slice(0, 2000);
     const fallbackActivation = await activateStockBatchWithCoreMetadata({
       supabase,
       batchId,
       reportType: normalizedReportType,
       actorId: profile?.team_member_id ?? profile?.id ?? null,
-      status: "imported_with_warnings",
       rowsFound: Math.max(summary.rowsFound, effectiveImportedRows),
       rowCount: Math.max(summary.rowsFound, summary.totalRows, effectiveImportedRows),
       rowsImported: effectiveImportedRows,
       detectedMinDatetime: repairedDetectedMinDatetime,
       detectedMaxDatetime: repairedDetectedMaxDatetime,
-      latestError: fallbackWarning,
-      lastError: fallbackWarning,
     });
 
     if (!fallbackActivation.ok) {
@@ -4249,7 +4236,6 @@ async function finalizePreviewStockImportBatch({
     ? [...capturedAtValues].sort((a, b) => b.localeCompare(a))[0]
     : (textValue(batch.detected_max_datetime) || detectedMinDatetime);
   const rowsNeedingReview = Math.max(wholeNumberValue(batch.rows_needing_review), rowsFound > 0 ? Math.max(0, rowsFound - stockRowCount) : 0);
-  const latestWarning = warningMessages.length ? warningMessages.join(" ") : null;
   let previousNotes = objectRecord(null);
   try {
     previousNotes = objectRecord(textValue(batch.notes) ? JSON.parse(textValue(batch.notes)) : null);
@@ -4257,7 +4243,8 @@ async function finalizePreviewStockImportBatch({
     previousNotes = {};
   }
 
-  const status = latestWarning || rowsNeedingReview > 0 ? "imported_with_warnings" : "imported";
+  const importedRowCount = auditRowCount > 0 ? auditRowCount : stockRowCount;
+  const status = "imported";
   const finalizePayload = {
     status,
     is_active: true,
@@ -4267,18 +4254,19 @@ async function finalizePreviewStockImportBatch({
     updated_at: now,
     source_usage: vmsSourceUsage(finalizedReportType),
     dashboard_usage: vmsSourceUsage(finalizedReportType),
-    rows_found: rowsFound || stockRowCount,
-    row_count: Math.max(rowsFound, wholeNumberValue(batch.row_count), stockRowCount),
-    rows_imported: stockRowCount,
+    rows_found: rowsFound || importedRowCount,
+    row_count: Math.max(rowsFound, wholeNumberValue(batch.row_count), importedRowCount),
+    rows_imported: importedRowCount,
     rows_needing_review: rowsNeedingReview,
-    error_count: latestWarning ? 1 : 0,
-    errors: latestWarning ? [latestWarning] : [],
-    latest_error: latestWarning,
-    last_error: latestWarning,
+    error_count: warningMessages.length,
+    errors: warningMessages,
+    latest_error: null,
+    last_error: null,
     detected_min_datetime: detectedMinDatetime,
     detected_max_datetime: detectedMaxDatetime,
     notes: JSON.stringify({
       ...previousNotes,
+      warnings: warningMessages,
       repair: {
         finalized_at: now,
         finalized_by: actorId,
@@ -4312,20 +4300,16 @@ async function finalizePreviewStockImportBatch({
       payload: finalizeResult.payload,
     });
 
-    const fallbackWarning = `Activated stock snapshot with minimal metadata because preview finalize failed: ${exactBatchMutationProblemText(finalizeProblem)}`.slice(0, 2000);
     const fallbackActivation = await activateStockBatchWithCoreMetadata({
       supabase,
       batchId,
       reportType: finalizedReportType,
       actorId,
-      status: "imported_with_warnings",
-      rowsFound: rowsFound || stockRowCount,
-      rowCount: Math.max(rowsFound, wholeNumberValue(batch.row_count), stockRowCount),
-      rowsImported: stockRowCount,
+      rowsFound: rowsFound || importedRowCount,
+      rowCount: Math.max(rowsFound, wholeNumberValue(batch.row_count), importedRowCount),
+      rowsImported: importedRowCount,
       detectedMinDatetime,
       detectedMaxDatetime,
-      latestError: fallbackWarning,
-      lastError: fallbackWarning,
     });
 
     if (!fallbackActivation.ok) {
@@ -4347,7 +4331,7 @@ async function finalizePreviewStockImportBatch({
       supabase,
       batchId,
       reportType: finalizedReportType,
-      importedRows: stockRowCount,
+      importedRows: importedRowCount,
     });
 
     await logActivity({
@@ -4362,7 +4346,7 @@ async function finalizePreviewStockImportBatch({
     });
 
     revalidateVmsDataSourcePaths(batchId);
-    redirect(`/vms-import/${batchId}?success=${encodeURIComponent(`Activated ${stockRowCount} stock row(s) and rebuilt route recommendations with metadata warnings.`)}`);
+    redirect(`/vms-import/${batchId}?success=${encodeURIComponent(`Activated ${importedRowCount} stock row(s) and rebuilt route recommendations.`)}`);
   }
 
   await deactivateOlderActiveStockBatches({
@@ -4375,7 +4359,7 @@ async function finalizePreviewStockImportBatch({
     supabase,
     batchId,
     reportType: finalizedReportType,
-    importedRows: stockRowCount,
+    importedRows: importedRowCount,
   });
 
   await logActivity({
@@ -4454,7 +4438,7 @@ export async function updateVmsImportBatchState(formData: FormData) {
     const restoredReportType = beforeReportType ? canonicalImportedReportType(beforeReportType) : null;
     payload = {
       status: beforeReportType && isMachineStockReport(beforeReportType)
-        ? (String(beforeBatch.status ?? "").includes("warning") ? "imported_with_warnings" : "imported")
+        ? "imported"
         : "imported",
       is_active: true,
       report_type: restoredReportType ?? beforeBatch.report_type ?? null,

@@ -197,8 +197,7 @@ function isMissingColumn(error: unknown, columns: string[]) {
 
 function isImportFailure(batch: ImportBatchRow) {
   const status = String(batch.status ?? "");
-  if (!SUCCESS_IMPORT_STATUSES.includes(status)) return true;
-  return Number(batch.error_count ?? 0) > 0 && status !== "imported_with_warnings";
+  return !SUCCESS_IMPORT_STATUSES.includes(status);
 }
 
 function statusText(value: string | null | undefined) {
@@ -694,7 +693,7 @@ export default async function SystemHealthPage({
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Failed imports</h2>
-            <p className="mt-1 text-sm text-slate-500">Imports should land as imported or imported_with_warnings. Reprocess any batch still stuck in an unhealthy state.</p>
+            <p className="mt-1 text-sm text-slate-500">Imports should land as imported. Review warning metadata on any batch that imported successfully but still needs attention.</p>
           </div>
           <SecondaryButton href="/vms-import/sources">Open VMS Data Sources</SecondaryButton>
         </div>

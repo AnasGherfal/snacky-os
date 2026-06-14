@@ -219,7 +219,7 @@ export default async function RouteRecommendationDebugPage() {
   if (!routeVisibleTotal && previewOnlyStockRowCount > 0) {
     diagnosisTone = "border-amber-200 bg-amber-50 text-amber-900";
     diagnosisTitle = "Preview-only stock rows are blocking route recommendations";
-    diagnosisBody = "Stock snapshot rows exist, but they belong to previewed or inactive batches. The route pipeline ignores those rows until the batch status is imported or imported_with_warnings and is_active is true.";
+    diagnosisBody = "Stock snapshot rows exist, but they belong to previewed or inactive batches. The route pipeline ignores those rows until the batch status is imported and is_active is true.";
   } else if (!routeSourceTotal && machineAuditTotal > 0) {
     diagnosisTone = "border-rose-200 bg-rose-50 text-rose-900";
     diagnosisTitle = "Audit rows exist, but the route source view is empty";

@@ -914,9 +914,9 @@ async function createStockImportBatch(context: SyncContext) {
 
 async function finishStockImportBatch(context: SyncContext, batchId: string, stats: SyncStats) {
   const importedAt = new Date().toISOString();
-  const status: "failed" | "imported" | "imported_with_warnings" =
+  const status: "failed" | "imported" =
     stats.rowsImported > 0
-      ? (stats.errors.length ? "imported_with_warnings" : "imported")
+      ? "imported"
       : (stats.errors.length ? "failed" : "imported");
   const shouldActivate = stats.rowsImported > 0;
   const { error } = await context.supabase
