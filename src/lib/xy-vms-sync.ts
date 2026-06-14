@@ -913,10 +913,18 @@ async function createStockImportBatch(context: SyncContext) {
 }
 
 async function finishStockImportBatch(context: SyncContext, batchId: string, stats: SyncStats) {
+  const importedAt = new Date().toISOString();
+  const status: "failed" | "imported" | "imported_with_warnings" =
+    stats.rowsImported > 0
+      ? (stats.errors.length ? "imported_with_warnings" : "imported")
+      : (stats.errors.length ? "failed" : "imported");
+  const shouldActivate = stats.rowsImported > 0;
   const { error } = await context.supabase
     .from("vms_import_batches")
     .update({
-      status: "imported",
+      status,
+      is_active: shouldActivate,
+      imported_at: importedAt,
       row_count: stats.rowCount,
       rows_imported: stats.rowsImported,
       rows_skipped: stats.rowsSkipped,
@@ -926,6 +934,33 @@ async function finishStockImportBatch(context: SyncContext, batchId: string, sta
     })
     .eq("id", batchId);
   if (error) throw new Error(`Could not finalize VMS API import batch: ${error.message}`);
+
+  if (!shouldActivate) return;
+
+  const { data: activeBatches, error: activeBatchError } = await context.supabase
+    .from("vms_import_batches")
+    .select("id")
+    .in("report_type", ["stock", "machine_stock_snapshot"])
+    .in("status", ["imported", "imported_with_warnings", "partially_imported"])
+    .eq("is_active", true)
+    .neq("id", batchId);
+  if (activeBatchError) {
+    console.warn("[xy-vms-sync] Could not load older active VMS stock batches", { batchId, error: activeBatchError });
+    return;
+  }
+
+  const staleBatchIds = ((activeBatches ?? []) as Array<{ id?: string | null }>)
+    .map((batch) => String(batch.id ?? "").trim())
+    .filter(Boolean);
+  if (!staleBatchIds.length) return;
+
+  const { error: deactivateError } = await context.supabase
+    .from("vms_import_batches")
+    .update({ is_active: false })
+    .in("id", staleBatchIds);
+  if (deactivateError) {
+    console.warn("[xy-vms-sync] Could not deactivate older active VMS stock batches", { batchId, staleBatchIds, error: deactivateError });
+  }
 }
 
 async function syncMachineGoodsWork(context: SyncContext) {

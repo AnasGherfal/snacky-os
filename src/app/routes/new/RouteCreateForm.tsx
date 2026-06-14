@@ -5,6 +5,7 @@ import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from 
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import type { RouteRecommendationDiagnostics, RouteRecommendationMachineDiagnostic } from "@/app/routes/new/types";
 import { FormField, FormSection, SecondaryButton } from "@/components/ui";
 
 type Operator = {
@@ -167,10 +168,18 @@ function stockErrorMessage(issues: StockValidationIssue[]) {
   ].join("\n");
 }
 
+function diagnosticBadgeTone(reasonCode: RouteRecommendationMachineDiagnostic["reasonCode"]) {
+  if (reasonCode === "healthy") return "bg-emerald-100 text-emerald-800";
+  if (reasonCode === "current_stock_full") return "bg-slate-100 text-slate-700";
+  if (reasonCode === "all_products_inactive") return "bg-amber-100 text-amber-900";
+  return "bg-rose-100 text-rose-800";
+}
+
 export function RouteCreateForm({
   operators,
   machines,
   recommendations,
+  diagnostics,
   products,
   recentProductIds,
   allowAdminOverride,
@@ -180,6 +189,7 @@ export function RouteCreateForm({
   operators: Operator[];
   machines: Machine[];
   recommendations: Recommendation[];
+  diagnostics: RouteRecommendationDiagnostics;
   storageInventory: { product_id: string; product_name: string; quantity_on_hand: number }[];
   products: ProductPickOption[];
   recentProductIds: string[];
@@ -372,6 +382,10 @@ export function RouteCreateForm({
       .map((group) => ({ id: group.machineId, label: `${group.machineName} (${group.machineCode}) - ${locationLabel(group.locationName)}` }))
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [recommendationGroups]);
+  const machineDiagnosticsById = useMemo(
+    () => new Map(diagnostics.machineDiagnostics.map((machine) => [machine.machineId, machine])),
+    [diagnostics.machineDiagnostics],
+  );
 
   const filteredRecommendationGroups = useMemo(() => {
     const productSearch = deferredRecommendationSearch.trim().toLowerCase();
@@ -383,6 +397,40 @@ export function RouteCreateForm({
       return true;
     });
   }, [deferredRecommendationSearch, recommendationGroups, recommendationMachineFilter, recommendationPriorityFilter, showNoRefillNeeded]);
+  const selectedDiagnosticMachines = useMemo(() => {
+    const selectedMachineIds = new Set<string>();
+    machineIds.forEach((machineId) => {
+      if (machineId) selectedMachineIds.add(machineId);
+    });
+    manualStopItems.forEach((item) => {
+      if (item.machineId) selectedMachineIds.add(item.machineId);
+    });
+    recommendationGroups
+      .filter((group) => group.recommendationKeys.every((key) => recommendationKeys.includes(key)))
+      .forEach((group) => selectedMachineIds.add(group.machineId));
+    if (recommendationMachineFilter) selectedMachineIds.add(recommendationMachineFilter);
+
+    const explicit = Array.from(selectedMachineIds)
+      .map((machineId) => machineDiagnosticsById.get(machineId))
+      .filter((machine): machine is RouteRecommendationMachineDiagnostic => Boolean(machine));
+    if (explicit.length) return explicit;
+
+    return diagnostics.machineDiagnostics
+      .filter((machine) => machine.reasonCode !== "healthy" || machine.latestStockRowsFound > 0 || machine.planogramRowsFound > 0)
+      .slice(0, 6);
+  }, [diagnostics.machineDiagnostics, machineDiagnosticsById, machineIds, manualStopItems, recommendationGroups, recommendationKeys, recommendationMachineFilter]);
+  const recommendationEmptyMessage = useMemo(() => {
+    if (!recommendationGroups.length) return diagnostics.summaryMessage;
+    if (filteredRecommendationGroups.length) return "";
+    if (recommendationMachineFilter) {
+      const machineDiagnostic = machineDiagnosticsById.get(recommendationMachineFilter);
+      if (machineDiagnostic) return machineDiagnostic.reasonMessage;
+    }
+    if (!showNoRefillNeeded && recommendationGroups.every((group) => group.recommendedTotal <= 0)) {
+      return "No recommendations because current stock is already full. Turn on \"Show rows with no refill needed\" to inspect the latest snapshot rows.";
+    }
+    return "No grouped recommendation rows match the current filters.";
+  }, [diagnostics.summaryMessage, filteredRecommendationGroups.length, machineDiagnosticsById, recommendationGroups, recommendationMachineFilter, showNoRefillNeeded]);
 
   const totalRecommendationPages = Math.max(1, Math.ceil(filteredRecommendationGroups.length / RECOMMENDATION_PAGE_SIZE));
   const visibleRecommendationPage = Math.min(recommendationPage, totalRecommendationPages);
@@ -976,21 +1024,106 @@ export function RouteCreateForm({
         )}
       </FormSection>
 
+      <FormSection title="Recommendation diagnostics">
+        <p className="text-sm text-slate-500">Snacky OS checks the active stock snapshot, latest stock rows, planogram rows, and recommendation output before this page renders. Use this panel to see why a machine is or is not producing refill rows.</p>
+        <div className="space-y-4">
+          <div className={`rounded-xl border p-4 text-sm ${diagnostics.summaryReasonCode === "healthy" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+            <div className="font-semibold">{diagnostics.summaryReasonLabel}</div>
+            <div className="mt-1">{diagnostics.summaryMessage}</div>
+            <div className="mt-2 text-xs">
+              Active batch: {diagnostics.activeStockBatchFileName ?? "None"}
+              {diagnostics.activeStockBatchImportedAt ? ` - ${new Date(diagnostics.activeStockBatchImportedAt).toLocaleString()}` : ""}
+            </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-xl border border-slate-200 bg-white p-3">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Latest stock rows</div>
+              <div className="mt-2 text-2xl font-semibold text-slate-900">{diagnostics.latestStockRowsFound}</div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-3">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Recommendation rows</div>
+              <div className="mt-2 text-2xl font-semibold text-slate-900">{diagnostics.recommendationRowsFound}</div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-3">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Returned to UI</div>
+              <div className="mt-2 text-2xl font-semibold text-slate-900">{diagnostics.recommendationsReturnedToFrontend}</div>
+              <div className="mt-1 text-xs text-slate-500">{diagnostics.inactiveProductRowsFilteredOut} inactive-product rows filtered out</div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-3">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Planogram rows</div>
+              <div className="mt-2 text-2xl font-semibold text-slate-900">{diagnostics.planogramRowsFound}</div>
+              <div className="mt-1 text-xs text-slate-500">{diagnostics.unmappedProductRows} unmapped audit rows in the diagnostic batch</div>
+            </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {selectedDiagnosticMachines.map((machine) => (
+              <article key={machine.machineId} className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="font-semibold text-slate-900">{machine.machineName}</div>
+                    <div className="mt-1 text-xs text-slate-500">{machine.machineCode} - {locationLabel(machine.locationName)}</div>
+                  </div>
+                  <span className={`rounded-full px-2 py-1 text-xs font-semibold ${diagnosticBadgeTone(machine.reasonCode)}`}>
+                    {machine.reasonLabel}
+                  </span>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Machine mapped</div>
+                    <div className="mt-1 font-semibold text-slate-900">{machine.machineMapped ? "Yes" : "No"}</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Latest stock rows</div>
+                    <div className="mt-1 font-semibold text-slate-900">{machine.latestStockRowsFound}</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Planogram rows</div>
+                    <div className="mt-1 font-semibold text-slate-900">{machine.planogramRowsFound}</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Recommendation rows</div>
+                    <div className="mt-1 font-semibold text-slate-900">{machine.recommendationRowsGenerated}</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Storage shortages</div>
+                    <div className="mt-1 font-semibold text-slate-900">{machine.storageShortages}</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Unmapped products</div>
+                    <div className="mt-1 font-semibold text-slate-900">{machine.unmappedProducts}</div>
+                  </div>
+                </div>
+                <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                  <div className="font-medium text-slate-900">Reason</div>
+                  <div className="mt-1">{machine.reasonMessage}</div>
+                </div>
+                <div className="mt-3 text-xs text-slate-500">
+                  Source file: {machine.sourceFileName ?? "Unknown"}
+                </div>
+                <div className="mt-1 text-xs text-slate-500">
+                  Snapshot time: {machine.snapshotTime ? new Date(machine.snapshotTime).toLocaleString() : "-"}
+                </div>
+              </article>
+            ))}
+          </div>
+          {recommendationDebugHref ? (
+            <div>
+              <Link href={recommendationDebugHref} className="btn-secondary">
+                Open route recommendation debug
+              </Link>
+            </div>
+          ) : null}
+        </div>
+      </FormSection>
+
       <FormSection title="Refill recommendation rows">
         <p className="text-sm text-slate-500">Grouped by machine and product from the latest mapped VMS machine goods stock. Source files are shown per slot so operators/admins can trace why an item is recommended.</p>
         {!recommendationGroups.length ? (
           <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
-            <div>No active refill recommendations found. You can still build the route manually above.</div>
-            <div className="mt-2">
-              Route recommendations only load from the latest active imported stock batch. Previewed or inactive VMS batches do not feed this section.
-            </div>
-            {recommendationDebugHref ? (
-              <div className="mt-4">
-                <Link href={recommendationDebugHref} className="btn-secondary">
-                  Open route recommendation debug
-                </Link>
-              </div>
-            ) : null}
+            <div>{recommendationEmptyMessage}</div>
+            <div className="mt-2">You can still build the route manually above.</div>
           </div>
         ) : (
           <div className="space-y-4">
@@ -1103,7 +1236,7 @@ export function RouteCreateForm({
             <div className="space-y-3 md:hidden">
               {!filteredRecommendationGroups.length ? (
                 <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
-                  No grouped recommendation rows match the current filters.
+                  {recommendationEmptyMessage}
                 </div>
               ) : (
                 pagedRecommendationGroups.map((group, index) => {
@@ -1261,7 +1394,7 @@ export function RouteCreateForm({
                   {!filteredRecommendationGroups.length ? (
                     <tr>
                       <td colSpan={11} className="px-3 py-8 text-center text-slate-500">
-                        No grouped recommendation rows match the current filters.
+                        {recommendationEmptyMessage}
                       </td>
                     </tr>
                   ) : (

@@ -53,6 +53,43 @@ function supabaseErrorSummary(error: unknown) {
   };
 }
 
+function stringOrNull(value: unknown) {
+  const text = String(value ?? "").trim();
+  return text || null;
+}
+
+function booleanValue(value: unknown, fallback = false) {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function normalizeChecklistSaveItem({
+  routeId,
+  routeStopItem,
+  savedItem,
+  isChecked,
+  localOnly = false,
+}: {
+  routeId: string;
+  routeStopItem: { id?: unknown; route_stop_id?: unknown; machine_id?: unknown; product_id?: unknown; planned_quantity?: unknown };
+  savedItem?: Record<string, unknown> | null;
+  isChecked: boolean;
+  localOnly?: boolean;
+}) {
+  return {
+    id: stringOrNull(savedItem?.id ?? routeStopItem.id) ?? String(routeStopItem.id ?? ""),
+    routeId,
+    routeStopItemId: stringOrNull(savedItem?.route_stop_item_id ?? savedItem?.id ?? routeStopItem.id) ?? String(routeStopItem.id ?? ""),
+    routeStopId: stringOrNull(savedItem?.route_stop_id ?? routeStopItem.route_stop_id),
+    machineId: stringOrNull(savedItem?.machine_id ?? routeStopItem.machine_id),
+    productId: stringOrNull(savedItem?.product_id ?? routeStopItem.product_id),
+    plannedQty: unitQuantity(savedItem?.planned_quantity ?? routeStopItem.planned_quantity),
+    isChecked: booleanValue(savedItem?.is_checked ?? savedItem?.isChecked, isChecked),
+    checkedAt: stringOrNull(savedItem?.checked_at),
+    checkedBy: stringOrNull(savedItem?.checked_by),
+    localOnly,
+  };
+}
+
 function unitQuantity(value: unknown) {
   const parsed = Number(value ?? 0);
   if (!Number.isFinite(parsed)) return 0;
@@ -606,11 +643,18 @@ export async function PATCH(
     const saveResult = await supabase.rpc("save_route_pickup_checklist_item", payload);
     if (saveResult.error) {
       if (isMissingRpc(saveResult.error, "save_route_pickup_checklist_item")) {
+        const responseItem = normalizeChecklistSaveItem({
+          routeId,
+          routeStopItem,
+          isChecked,
+          localOnly: true,
+        });
         console.warn("[operator:pick-list] Pickup checklist RPC missing; client localStorage state remains source of truth", {
           ...checklistSaveContext,
           supabase_error: supabaseErrorSummary(saveResult.error),
+          response_payload: responseItem,
         });
-        return NextResponse.json({ ok: true, localOnly: true, item: { id: routeStopItem.id, is_checked: isChecked } });
+        return NextResponse.json({ ok: true, localOnly: true, item: responseItem });
       }
       console.error("[operator:pick-list] Pickup checklist save query failed", {
         ...checklistSaveContext,
@@ -620,7 +664,18 @@ export async function PATCH(
     }
 
     const savedItem = Array.isArray(saveResult.data) ? saveResult.data[0] : saveResult.data;
-    return NextResponse.json({ ok: true, item: savedItem });
+    const responseItem = normalizeChecklistSaveItem({
+      routeId,
+      routeStopItem,
+      savedItem,
+      isChecked,
+    });
+    console.info("[operator:pick-list] Pickup checklist save succeeded", {
+      ...checklistSaveContext,
+      response_payload: responseItem,
+      raw_response_payload: savedItem ?? null,
+    });
+    return NextResponse.json({ ok: true, item: responseItem });
   } catch (error) {
     console.error("[operator:pick-list] Error saving checklist item", {
       ...checklistSaveContext,

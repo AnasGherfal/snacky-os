@@ -149,7 +149,7 @@ function newExtraRow(): ExtraPickItem {
   return { id: crypto.randomUUID(), targetStopId: "", productId: "", quantity: 0, reason: "Customer demand", notes: "" };
 }
 
-function groupStopsByLocation<T extends { locationName: string }>(groups: T[]) {
+function groupStopsByLocation<T extends { locationName: string; stopOrder?: number; machineName?: string }>(groups: T[]) {
   const grouped = new Map<string, T[]>();
   groups.forEach((group) => {
     const key = group.locationName || "Unknown location";
@@ -158,7 +158,7 @@ function groupStopsByLocation<T extends { locationName: string }>(groups: T[]) {
   return Array.from(grouped.entries())
     .map(([locationName, locationGroups]) => ({
       locationName,
-      groups: locationGroups.sort((a: any, b: any) => Number(a.stopOrder ?? 0) - Number(b.stopOrder ?? 0) || String(a.machineName ?? "").localeCompare(String(b.machineName ?? ""))),
+      groups: locationGroups.sort((a, b) => Number(a.stopOrder ?? 0) - Number(b.stopOrder ?? 0) || String(a.machineName ?? "").localeCompare(String(b.machineName ?? ""))),
     }))
     .sort((a, b) => a.locationName.localeCompare(b.locationName));
 }
@@ -249,6 +249,7 @@ export default function PickListPage() {
   const [submitting, setSubmitting] = useState(false);
   const [savingCheckedIds, setSavingCheckedIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState("");
+  const [checklistSyncError, setChecklistSyncError] = useState("");
   const [notice, setNotice] = useState("");
   const [refreshPreview, setRefreshPreview] = useState<RefreshPreviewState>({ loading: false, applying: false, comparisons: [], message: "", error: "" });
   const errorRef = useRef<HTMLDivElement | null>(null);
@@ -491,6 +492,7 @@ export default function PickListPage() {
     if (locked || submitting) return;
 
     const nextChecked = !item.isChecked;
+    setChecklistSyncError("");
     updateStopItem(item.routeStopItemId, { isChecked: nextChecked });
     saveLocalPickupItem(item.routeStopItemId, nextChecked);
     setSavingCheckedIds((current) => new Set(current).add(item.routeStopItemId));
@@ -507,18 +509,36 @@ export default function PickListPage() {
           notes: item.notes,
         }),
       });
+      const data = await response.json().catch(() => null);
       if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        console.warn("[operator:pick-list] Checklist backend sync failed; local state kept", {
+        const message = [data?.error, data?.details].filter(Boolean).join(" - ") || "Could not save checklist item. Local state was kept.";
+        setChecklistSyncError(message);
+        console.error("[operator:pick-list] Checklist backend sync failed; local state kept", {
           routeId,
           routeStopItemId: item.routeStopItemId,
           status: response.status,
           error: data?.error ?? null,
           details: data?.details ?? null,
+          response_payload: data ?? null,
+        });
+      } else {
+        const savedChecked = typeof data?.item?.isChecked === "boolean"
+          ? data.item.isChecked
+          : typeof data?.item?.is_checked === "boolean"
+            ? data.item.is_checked
+            : nextChecked;
+        updateStopItem(item.routeStopItemId, { isChecked: savedChecked });
+        setNotice(data?.localOnly ? "Saved locally. Server sync will catch up later." : "Saved.");
+        console.info("[operator:pick-list] Checklist backend sync succeeded", {
+          routeId,
+          routeStopItemId: item.routeStopItemId,
+          response_payload: data ?? null,
         });
       }
     } catch (err) {
-      console.warn("[operator:pick-list] Checklist backend sync unavailable; local state kept", {
+      const message = err instanceof Error ? err.message : "Could not save checklist item. Local state was kept.";
+      setChecklistSyncError(message);
+      console.error("[operator:pick-list] Checklist backend sync unavailable; local state kept", {
         routeId,
         routeStopItemId: item.routeStopItemId,
         error: err,
@@ -825,6 +845,7 @@ export default function PickListPage() {
                   Picked {checkedItemCount} of {allStopItems.length}
                 </div>
               </div>
+              {checklistSyncError ? <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Pickup checklist save issue: {checklistSyncError}</div> : null}
               <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
                 <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${checklistProgress}%` }} />
               </div>

@@ -4,8 +4,13 @@ import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/a
 import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
 import { ROUTE_RESERVATION_STATUSES, isRouteReservationStatus } from "@/lib/route-workflow";
 import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
-import { queryVmsDashboardBatches, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
+import { activeStockBatches, queryVmsDashboardBatches, sourceFileName, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
 import { RouteCreateForm } from "@/app/routes/new/RouteCreateForm";
+import type {
+  RouteRecommendationDiagnosticReasonCode,
+  RouteRecommendationDiagnostics,
+  RouteRecommendationMachineDiagnostic,
+} from "@/app/routes/new/types";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -39,6 +44,7 @@ type MachineRow = {
   id: string;
   name: string;
   machine_code: string;
+  vms_machine_id?: string | null;
   location?: { name?: string | null } | { name?: string | null }[] | null;
 };
 
@@ -63,6 +69,32 @@ type RecommendationRow = {
   source_uploaded_at?: string | null;
 };
 
+type MachineSlotRow = {
+  id: string;
+  machine_id: string;
+  slot_code: string | null;
+  product_id: string | null;
+  par_qty: number | null;
+  min_qty: number | null;
+};
+
+type LatestStockRow = {
+  id: string;
+  import_batch_id: string | null;
+  imported_at: string | null;
+  source_file_name: string | null;
+  machine_id: string | null;
+  slot_code: string | null;
+  product_id: string | null;
+  current_qty: number | null;
+  capacity: number | null;
+};
+
+type MachineStockAuditRow = {
+  machine_id: string | null;
+  product_id: string | null;
+};
+
 
 
 type SupabaseLikeError = { code?: string | null; message?: string | null; details?: string | null; hint?: string | null };
@@ -70,6 +102,35 @@ type SupabaseLikeError = { code?: string | null; message?: string | null; detail
 function isMissingRecommendationMetadataError(error: SupabaseLikeError | null | undefined) {
   const message = `${error?.message ?? ""} ${error?.details ?? ""} ${error?.hint ?? ""}`.toLowerCase();
   return error?.code === "42703" || error?.code === "PGRST204" || (message.includes("column") && message.includes("does not exist"));
+}
+
+function reasonLabel(code: RouteRecommendationDiagnosticReasonCode) {
+  switch (code) {
+    case "healthy":
+      return "Recommendations healthy";
+    case "no_active_stock_snapshot":
+      return "No active stock snapshot";
+    case "no_latest_stock_rows":
+      return "No latest stock rows";
+    case "machine_mapping_missing":
+      return "Machine mapping missing";
+    case "machine_has_no_planogram":
+      return "No planogram";
+    case "all_products_unmapped":
+      return "All products unmapped";
+    case "all_products_inactive":
+      return "All products inactive";
+    case "current_stock_full":
+      return "Current stock already full";
+    case "no_positive_recommendations":
+      return "No positive recommendations";
+    default:
+      return "Diagnostics incomplete";
+  }
+}
+
+function batchTimestamp(batch: VmsDashboardBatch | null) {
+  return batch?.detected_max_datetime ?? batch?.detected_min_datetime ?? batch?.imported_at ?? batch?.uploaded_at ?? null;
 }
 
 type VmsImportBatchSourceRow = {
@@ -212,9 +273,11 @@ export default async function NewRoutePage() {
     { data: products, error: productsError },
     { data: recentMovements, error: movementsError },
     batchResult,
+    latestStockResult,
+    machineSlotsResult,
   ] = await Promise.all([
     supabase.from("team_members").select("id, full_name, role, roles").or("role.in.(owner,admin,supervisor,operator),roles.ov.{owner,admin,supervisor,operator}").eq("active", true).order("full_name"),
-    supabase.from("machines").select("id, name, machine_code, location:locations(name)").eq("status", "active").order("name"),
+    supabase.from("machines").select("id, name, machine_code, vms_machine_id, location:locations(name)").eq("status", "active").order("name"),
     loadRouteRecommendations(supabase),
     supabase
       .from("current_inventory_by_location")
@@ -233,6 +296,18 @@ export default async function NewRoutePage() {
         orderBy: "uploaded_at",
         ascending: false,
       }),
+    }),
+    safeSupabaseQuery<LatestStockRow>({
+      label: "routes.new.latest_vms_stock_by_slot",
+      promise: supabase
+        .from("latest_vms_stock_by_slot")
+        .select("id, import_batch_id, imported_at, source_file_name, machine_id, slot_code, product_id, current_qty, capacity"),
+    }),
+    safeSupabaseQuery<MachineSlotRow>({
+      label: "routes.new.machine_slots",
+      promise: supabase
+        .from("machine_slots")
+        .select("id, machine_id, slot_code, product_id, par_qty, min_qty"),
     }),
   ]);
   const queryIssues = [
@@ -320,35 +395,27 @@ export default async function NewRoutePage() {
     );
   }
 
+  const stockBatches = ((batchResult.data ?? []) as VmsDashboardBatch[])
+    .filter((batch) => ["stock", "machine_stock_snapshot"].includes(String(batch.report_type ?? "")));
+  const latestStockRows = (latestStockResult.data ?? []) as LatestStockRow[];
+  const machineSlotRows = (machineSlotsResult.data ?? []) as MachineSlotRow[];
+  const latestActiveStockBatch = activeStockBatches(stockBatches)[0] ?? null;
+  const diagnosticBatch = latestActiveStockBatch ?? stockBatches[0] ?? null;
+  const batchAuditResult = diagnosticBatch?.id
+    ? await safeSupabaseQuery<MachineStockAuditRow>({
+        label: "routes.new.vms_machine_stock_snapshots",
+        promise: supabase
+          .from("vms_machine_stock_snapshots")
+          .select("machine_id, product_id")
+          .eq("import_batch_id", diagnosticBatch.id),
+      })
+    : { data: [] as MachineStockAuditRow[], count: 0, error: null as string | null };
+  const batchAuditRows = (batchAuditResult.data ?? []) as MachineStockAuditRow[];
   const today = new Date().toISOString().slice(0, 10);
   const productRows = (products ?? []) as ProductRow[];
   const activeProductIds = new Set(productRows.map((product) => product.id));
   const loadedRecommendations = (recommendations ?? []) as RecommendationRow[];
   const activeRecommendations = loadedRecommendations.filter((recommendation) => activeProductIds.has(recommendation.product_id));
-  if (process.env.NODE_ENV !== "production") {
-    console.info("[routes:new] Recommendation query summary", {
-      source_view: "refill_recommendations",
-      query: {
-        select: ROUTE_RECOMMENDATION_SELECT,
-        order_by: "machine_name asc",
-      },
-      filters: {
-        active_products_only: true,
-        machine_filter: null,
-        location_filter: null,
-        storage_filter: false,
-        recommendation_status_filter: false,
-        route_date_filter: false,
-      },
-      counts: {
-        loaded: loadedRecommendations.length,
-        active_product_rows: activeRecommendations.length,
-        inactive_product_rows_filtered_out: Math.max(0, loadedRecommendations.length - activeRecommendations.length),
-        zero_storage_rows: activeRecommendations.filter((row) => unitQuantity(row.available_storage_qty) <= 0).length,
-        suggested_positive_rows: activeRecommendations.filter((row) => unitQuantity(row.suggested_qty) > 0).length,
-      },
-    });
-  }
   const storageByProduct = new Map<string, { product_id: string; product_name: string; quantity_on_hand: number }>();
   ((storageInventory ?? []) as StorageInventoryRow[]).forEach((row) => {
     const current = storageByProduct.get(row.product_id);
@@ -367,7 +434,8 @@ export default async function NewRoutePage() {
     .map((row) => ({ ...row, quantity_on_hand: Math.max(0, unitQuantity(row.quantity_on_hand) - unitQuantity(reservedByProduct.get(row.product_id))) }))
     .filter((row) => row.quantity_on_hand > 0);
   const availableByProduct = new Map(availableStorage.map((row) => [row.product_id, row.quantity_on_hand]));
-  const machineCatalog = ((machines ?? []) as MachineRow[]).map((machine) => {
+  const machineRows = (machines ?? []) as MachineRow[];
+  const machineCatalog = machineRows.map((machine) => {
     const location = Array.isArray(machine.location) ? machine.location[0] : machine.location;
     return {
       id: machine.id,
@@ -375,6 +443,194 @@ export default async function NewRoutePage() {
       machine_code: machine.machine_code,
       location_name: location?.name ?? null,
     };
+  });
+  const latestStockByMachine = new Map<string, LatestStockRow[]>();
+  latestStockRows.forEach((row) => {
+    const machineId = String(row.machine_id ?? "").trim();
+    if (!machineId) return;
+    latestStockByMachine.set(machineId, [...(latestStockByMachine.get(machineId) ?? []), row]);
+  });
+  const machineSlotsByMachine = new Map<string, MachineSlotRow[]>();
+  machineSlotRows.forEach((row) => {
+    const machineId = String(row.machine_id ?? "").trim();
+    if (!machineId) return;
+    machineSlotsByMachine.set(machineId, [...(machineSlotsByMachine.get(machineId) ?? []), row]);
+  });
+  const auditRowsByMachine = new Map<string, MachineStockAuditRow[]>();
+  batchAuditRows.forEach((row) => {
+    const machineId = String(row.machine_id ?? "").trim();
+    if (!machineId) return;
+    auditRowsByMachine.set(machineId, [...(auditRowsByMachine.get(machineId) ?? []), row]);
+  });
+  const recommendationsByMachine = new Map<string, RecommendationRow[]>();
+  loadedRecommendations.forEach((row) => {
+    const machineId = String(row.machine_id ?? "").trim();
+    if (!machineId) return;
+    recommendationsByMachine.set(machineId, [...(recommendationsByMachine.get(machineId) ?? []), row]);
+  });
+  const activeRecommendationsByMachine = new Map<string, RecommendationRow[]>();
+  activeRecommendations.forEach((row) => {
+    const machineId = String(row.machine_id ?? "").trim();
+    if (!machineId) return;
+    activeRecommendationsByMachine.set(machineId, [...(activeRecommendationsByMachine.get(machineId) ?? []), row]);
+  });
+  const latestRowByExactSlot = new Map<string, LatestStockRow>();
+  const latestRowBySlot = new Map<string, LatestStockRow>();
+  latestStockRows.forEach((row) => {
+    const machineId = String(row.machine_id ?? "").trim();
+    const slotCode = String(row.slot_code ?? "").trim();
+    const productId = String(row.product_id ?? "").trim();
+    if (!machineId || !slotCode) return;
+    if (productId) latestRowByExactSlot.set(`${machineId}:${slotCode}:${productId}`, row);
+    if (!latestRowBySlot.has(`${machineId}:${slotCode}`)) latestRowBySlot.set(`${machineId}:${slotCode}`, row);
+  });
+  const machineDiagnostics: RouteRecommendationMachineDiagnostic[] = machineRows.map((machine) => {
+    const location = Array.isArray(machine.location) ? machine.location[0] : machine.location;
+    const latestRows = latestStockByMachine.get(machine.id) ?? [];
+    const planogramRows = machineSlotsByMachine.get(machine.id) ?? [];
+    const auditRows = auditRowsByMachine.get(machine.id) ?? [];
+    const allRecommendationRows = recommendationsByMachine.get(machine.id) ?? [];
+    const visibleRecommendationRows = activeRecommendationsByMachine.get(machine.id) ?? [];
+    const positiveSuggestedRows = visibleRecommendationRows.filter((row) => unitQuantity(row.suggested_qty) > 0).length;
+    const storageShortages = visibleRecommendationRows.filter((row) => unitQuantity(row.suggested_qty) > unitQuantity(row.available_storage_qty)).length;
+    const unmappedProducts = auditRows.filter((row) => !row.product_id).length;
+    const slotNeedsRefillCount = planogramRows.reduce((count, slot) => {
+      const machineId = String(slot.machine_id ?? "").trim();
+      const slotCode = String(slot.slot_code ?? "").trim();
+      const productId = String(slot.product_id ?? "").trim();
+      if (!machineId || !slotCode) return count;
+      const currentRow = (productId ? latestRowByExactSlot.get(`${machineId}:${slotCode}:${productId}`) : null) ?? latestRowBySlot.get(`${machineId}:${slotCode}`);
+      if (!currentRow) return count;
+      const targetQty = unitQuantity(slot.par_qty ?? slot.min_qty ?? currentRow.capacity);
+      if (!targetQty) return count;
+      return unitQuantity(currentRow.current_qty) < targetQty ? count + 1 : count;
+    }, 0);
+    let reasonCode: RouteRecommendationDiagnosticReasonCode = "healthy";
+    if (!latestActiveStockBatch) {
+      reasonCode = "no_active_stock_snapshot";
+    } else if (!machine.vms_machine_id) {
+      reasonCode = "machine_mapping_missing";
+    } else if (!planogramRows.length) {
+      reasonCode = "machine_has_no_planogram";
+    } else if (!latestRows.length && unmappedProducts > 0) {
+      reasonCode = "all_products_unmapped";
+    } else if (!latestRows.length) {
+      reasonCode = "no_latest_stock_rows";
+    } else if (allRecommendationRows.length > 0 && !visibleRecommendationRows.length) {
+      reasonCode = "all_products_inactive";
+    } else if (!positiveSuggestedRows && slotNeedsRefillCount === 0) {
+      reasonCode = "current_stock_full";
+    } else if (!positiveSuggestedRows && unmappedProducts > 0) {
+      reasonCode = "all_products_unmapped";
+    } else if (!positiveSuggestedRows) {
+      reasonCode = "no_positive_recommendations";
+    }
+    const latestRow = [...latestRows].sort((a, b) => String(b.imported_at ?? "").localeCompare(String(a.imported_at ?? "")))[0] ?? null;
+    const reasonMessageByCode: Record<RouteRecommendationDiagnosticReasonCode, string> = {
+      healthy: "Route creation can use this machine's latest stock and recommendation rows.",
+      no_active_stock_snapshot: `No recommendations because there is no active imported stock snapshot. Latest stock batch is ${diagnosticBatch ? `${sourceFileName(diagnosticBatch)} (${String(diagnosticBatch.status ?? "unknown")})` : "missing"}.`,
+      no_latest_stock_rows: "No recommendations because the active stock snapshot did not produce any latest stock rows for this machine.",
+      machine_mapping_missing: "No recommendations because this machine does not have a VMS machine mapping yet.",
+      machine_has_no_planogram: "No recommendations because this machine has no planogram rows in machine_slots.",
+      all_products_unmapped: "No recommendations because the latest stock snapshot rows for this machine still have unmapped products.",
+      all_products_inactive: "Recommendation rows exist, but every recommended product for this machine is inactive and filtered out before rendering.",
+      current_stock_full: "No recommendations because the current machine stock is already at or above the target quantities.",
+      no_positive_recommendations: "Latest stock rows exist, but they currently generate zero positive refill quantities for this machine.",
+      unknown: "Recommendation diagnostics are incomplete for this machine. Check the server logs for the failed query.",
+    };
+    return {
+      machineId: machine.id,
+      machineName: machine.name,
+      machineCode: machine.machine_code,
+      locationName: location?.name ?? null,
+      machineMapped: Boolean(machine.vms_machine_id),
+      latestStockRowsFound: latestRows.length,
+      planogramRowsFound: planogramRows.length,
+      recommendationRowsGenerated: allRecommendationRows.length,
+      routeVisibleRecommendationRows: visibleRecommendationRows.length,
+      positiveSuggestedRows,
+      storageShortages,
+      unmappedProducts,
+      sourceFileName: latestRow?.source_file_name ?? (diagnosticBatch ? sourceFileName(diagnosticBatch) : null),
+      snapshotTime: latestRow?.imported_at ?? batchTimestamp(diagnosticBatch),
+      reasonCode,
+      reasonLabel: reasonLabel(reasonCode),
+      reasonMessage: reasonMessageByCode[reasonCode],
+    };
+  });
+  const diagnosticsWarnings = [latestStockResult.error, machineSlotsResult.error, batchAuditResult.error].filter(Boolean);
+  const machineDiagnosticsWithIssues = machineDiagnostics.filter((machine) => machine.reasonCode !== "healthy");
+  const summaryReasonCode: RouteRecommendationDiagnosticReasonCode =
+    diagnosticsWarnings.length
+      ? "unknown"
+      : !latestActiveStockBatch
+        ? "no_active_stock_snapshot"
+        : latestStockRows.length === 0
+          ? "no_latest_stock_rows"
+          : loadedRecommendations.length > 0 && activeRecommendations.length === 0
+            ? "all_products_inactive"
+            : activeRecommendations.some((row) => unitQuantity(row.suggested_qty) > 0)
+              ? "healthy"
+              : machineDiagnosticsWithIssues.some((machine) => machine.reasonCode === "machine_has_no_planogram")
+                ? "machine_has_no_planogram"
+                : machineDiagnosticsWithIssues.some((machine) => machine.reasonCode === "all_products_unmapped")
+                  ? "all_products_unmapped"
+                  : machineDiagnosticsWithIssues.some((machine) => machine.reasonCode === "machine_mapping_missing")
+                    ? "machine_mapping_missing"
+                    : "current_stock_full";
+  const diagnostics: RouteRecommendationDiagnostics = {
+    summaryReasonCode,
+    summaryReasonLabel: reasonLabel(summaryReasonCode),
+    summaryMessage: diagnosticsWarnings.length
+      ? `Recommendation diagnostics are partially unavailable. ${diagnosticsWarnings.join(" ")}`
+      : summaryReasonCode === "healthy"
+        ? "Latest stock rows and refill recommendations are available for route creation."
+        : machineDiagnosticsWithIssues.find((machine) => machine.reasonCode === summaryReasonCode)?.reasonMessage
+          ?? (summaryReasonCode === "no_active_stock_snapshot"
+            ? `No recommendations because there is no active imported stock snapshot. Latest stock batch is ${diagnosticBatch ? `${sourceFileName(diagnosticBatch)} (${String(diagnosticBatch.status ?? "unknown")}, active ${diagnosticBatch.is_active === false ? "no" : "yes"})` : "missing"}.`
+            : summaryReasonCode === "no_latest_stock_rows"
+              ? "No recommendations because the active stock snapshot produced zero latest_vms_stock_by_slot rows."
+              : summaryReasonCode === "all_products_inactive"
+                ? "Recommendations were generated, but every product was filtered out because it is inactive."
+                : summaryReasonCode === "machine_has_no_planogram"
+                  ? "No recommendations because the relevant machines do not have planogram rows in machine_slots."
+                  : summaryReasonCode === "all_products_unmapped"
+                    ? "No recommendations because the latest stock snapshot rows are still unmapped to Snacky products."
+                    : summaryReasonCode === "machine_mapping_missing"
+                      ? "No recommendations because the relevant machines are missing VMS machine mappings."
+                      : "No recommendations because the current stock is already at or above target quantities."),
+    activeStockBatchId: latestActiveStockBatch?.id ?? null,
+    activeStockBatchFileName: latestActiveStockBatch ? sourceFileName(latestActiveStockBatch) : null,
+    activeStockBatchImportedAt: batchTimestamp(latestActiveStockBatch),
+    diagnosticBatchId: diagnosticBatch?.id ?? null,
+    diagnosticBatchFileName: diagnosticBatch ? sourceFileName(diagnosticBatch) : null,
+    diagnosticBatchStatus: String(diagnosticBatch?.status ?? "") || null,
+    diagnosticBatchIsActive: diagnosticBatch?.is_active ?? null,
+    latestStockRowsFound: latestStockRows.length,
+    recommendationRowsFound: loadedRecommendations.length,
+    recommendationsReturnedToFrontend: activeRecommendations.length,
+    inactiveProductRowsFilteredOut: Math.max(0, loadedRecommendations.length - activeRecommendations.length),
+    storageShortageRows: activeRecommendations.filter((row) => unitQuantity(row.suggested_qty) > unitQuantity(row.available_storage_qty)).length,
+    unmappedProductRows: batchAuditRows.filter((row) => !row.product_id).length,
+    planogramRowsFound: machineSlotRows.length,
+    previewBatchRowsDetected: stockBatches.some((batch) => String(batch.status ?? "") === "previewed"),
+    machineDiagnostics,
+  };
+  console.info("[routes:new] Recommendation diagnostics", {
+    source_view: "refill_recommendations",
+    active_stock_snapshot_batch_id: diagnostics.activeStockBatchId,
+    diagnostic_batch_id: diagnostics.diagnosticBatchId,
+    diagnostic_batch_status: diagnostics.diagnosticBatchStatus,
+    diagnostic_batch_is_active: diagnostics.diagnosticBatchIsActive,
+    latest_vms_stock_rows_found: diagnostics.latestStockRowsFound,
+    planogram_rows_found: diagnostics.planogramRowsFound,
+    refill_recommendation_rows_found: diagnostics.recommendationRowsFound,
+    recommendations_returned_to_frontend: diagnostics.recommendationsReturnedToFrontend,
+    filtered_out_inactive_products: diagnostics.inactiveProductRowsFilteredOut,
+    storage_shortage_rows: diagnostics.storageShortageRows,
+    unmapped_product_rows: diagnostics.unmappedProductRows,
+    summary_reason_code: diagnostics.summaryReasonCode,
+    preview_batch_rows_detected: diagnostics.previewBatchRowsDetected,
   });
   const productCatalog = productRows
     .map((product) => ({
@@ -406,6 +662,7 @@ export default async function NewRoutePage() {
           operators={operators ?? []}
           machines={machineCatalog}
           recommendations={activeRecommendations}
+          diagnostics={diagnostics}
           storageInventory={availableStorage}
           products={productCatalog}
           recentProductIds={recentProductIds}
