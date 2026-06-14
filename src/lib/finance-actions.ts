@@ -1111,16 +1111,16 @@ export async function createCashCollectionFinancialTransaction(supabase: NonNull
   const cashLinkFilter = `linked_cash_collection_id.eq.${cash.id},and(source_type.eq.cash_collection,source_id.eq.${cash.id})`;
   const { data: existingRows, error: existingError } = await financeSupabase
     .from("financial_transactions")
-    .select("id, transaction_status, created_at")
+    .select("id, transaction_status, is_void, created_at")
     .eq("transaction_kind", "cash_collection")
     .or(cashLinkFilter)
-    .order("created_at", { ascending: true });
+    .order("created_at", { ascending: false });
   if (existingError) throw existingError;
 
-  const linkedRows = (existingRows ?? []) as Array<{ id: string; transaction_status?: string | null }>;
-  const existing = linkedRows.find((row) => (row.transaction_status ?? "active") === "active") ?? linkedRows[0];
+  const linkedRows = (existingRows ?? []) as Array<{ id: string; transaction_status?: string | null; is_void?: boolean | null }>;
+  const existing = linkedRows.find((row) => (row.transaction_status ?? "active") === "active" && row.is_void !== true) ?? linkedRows[0];
   const duplicateActiveIds = linkedRows
-    .filter((row) => row.id !== existing?.id && (row.transaction_status ?? "active") === "active")
+    .filter((row) => row.id !== existing?.id && (row.transaction_status ?? "active") === "active" && row.is_void !== true)
     .map((row) => row.id);
 
   if (duplicateActiveIds.length) {
@@ -1131,8 +1131,8 @@ export async function createCashCollectionFinancialTransaction(supabase: NonNull
         is_void: true,
         voided_at: new Date().toISOString(),
         voided_by: profile?.team_member_id ?? null,
-        void_reason: "Duplicate cash collection transaction superseded by the active linked transaction.",
-        status_reason: "Duplicate cash collection transaction superseded by the active linked transaction.",
+        void_reason: "Duplicate cash collection finance sync",
+        status_reason: "Duplicate cash collection finance sync",
         updated_at: new Date().toISOString(),
       })
       .in("id", duplicateActiveIds);

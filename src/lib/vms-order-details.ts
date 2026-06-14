@@ -84,6 +84,18 @@ export function orderDetailsQuantity(row: Record<string, string>) {
   return quantity === null || quantity <= 0 ? 1 : Math.floor(quantity);
 }
 
+export function orderDetailsGrossSalesAmount(row: Record<string, string>) {
+  const paymentAmount = orderDetailsPaymentAmount(row);
+  if (paymentAmount !== null && paymentAmount > 0) return paymentAmount;
+
+  const unitPrice = orderDetailsNumber(orderDetailsValue(row, orderDetailsAliases.discountedPrice))
+    ?? orderDetailsNumber(orderDetailsValue(row, orderDetailsAliases.commodityPrice1))
+    ?? orderDetailsNumber(orderDetailsValue(row, orderDetailsAliases.commodityPrice2));
+  if (unitPrice === null) return null;
+
+  return Math.max(0, unitPrice) * Math.max(1, orderDetailsQuantity(row));
+}
+
 export function orderDetailsTransactionDate(row: Record<string, string>) {
   return orderDetailsDate(orderDetailsValue(row, orderDetailsAliases.paymentTime))
     ?? orderDetailsDate(orderDetailsValue(row, orderDetailsAliases.deliveryTime));
@@ -122,9 +134,12 @@ function shippingLooksSuccessful(shippingStatus: string) {
   const normalized = statusText(shippingStatus);
   const compact = compactStatus(shippingStatus);
   return normalized === "goods shipped"
+    || normalized === "completed"
     || compact === "goodsshipped"
     || compact === "shipped"
     || compact === "delivered"
+    || compact === "completed"
+    || compact === "complete"
     || compact === "success"
     || compact === "successful";
 }
@@ -192,6 +207,6 @@ export function createVmsOrderDetailsDuplicateHash(row: Record<string, string>) 
 export function orderDetailsSuccessfulSalesAmount(rows: Record<string, string>[]) {
   return rows.reduce((sum, row) => {
     if (orderDetailsTransactionStatus(row) !== "successful_sale") return sum;
-    return sum + Math.max(0, orderDetailsPaymentAmount(row) ?? 0);
+    return sum + Math.max(0, orderDetailsGrossSalesAmount(row) ?? 0);
   }, 0);
 }

@@ -2265,35 +2265,51 @@ export async function completeStop({
 
     const { data: existingCashCollection, error: existingCashError } = await supabase
       .from("cash_collections")
-      .select("id")
+      .select("id, actual_cash_collected, review_status")
       .eq("route_id", routeId)
       .eq("machine_id", machineId)
       .maybeSingle();
     if (existingCashError) throwActionError(existingCashError, "Could not verify the cash collection record.");
 
-    const cashPayload = {
-      route_id: routeId,
-      machine_id: machineId,
-      operator_id: route.operator_id,
-      vms_expected_cash: expectedCash,
-      review_status: cashCollected ? "collected_pending_count" : "pending_collection",
-      cash_bag_id: cashBagId?.trim() || null,
-      notes,
-    };
-    const { data: cashCollection, error: cashError } = existingCashCollection?.id
-      ? await supabase
-          .from("cash_collections")
-          .update(cashPayload)
-          .eq("id", existingCashCollection.id)
-          .select("id, route_id, machine_id, operator_id, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, collected_at")
-          .single()
-      : await supabase
-          .from("cash_collections")
-          .insert({ ...cashPayload, actual_cash_collected: null })
-          .select("id, route_id, machine_id, operator_id, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, collected_at")
-          .single();
+    let cashCollection: {
+      id: string;
+      route_id: string | null;
+      machine_id: string | null;
+      operator_id: string | null;
+      vms_expected_cash: number | null;
+      actual_cash_collected: number | null;
+      variance: number | null;
+      review_status: string | null;
+      cash_bag_id: string | null;
+      collected_at: string | null;
+    } | null = null;
 
-    if (cashError) throwActionError(cashError, "Could not create the cash collection record.");
+    if (cashCollected) {
+      const cashPayload = {
+        route_id: routeId,
+        machine_id: machineId,
+        operator_id: route.operator_id,
+        vms_expected_cash: expectedCash,
+        review_status: "collected_pending_count",
+        cash_bag_id: cashBagId?.trim() || null,
+        notes,
+      };
+      const { data, error: cashError } = existingCashCollection?.id
+        ? await supabase
+            .from("cash_collections")
+            .update(cashPayload)
+            .eq("id", existingCashCollection.id)
+            .select("id, route_id, machine_id, operator_id, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, collected_at")
+            .single()
+        : await supabase
+            .from("cash_collections")
+            .insert({ ...cashPayload, actual_cash_collected: null })
+            .select("id, route_id, machine_id, operator_id, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, collected_at")
+            .single();
+
+      if (cashError) throwActionError(cashError, "Could not create the cash collection record.");
+      cashCollection = data;
+    }
 
     let linkedIssueId: string | null = null;
     if (issue?.issueType && issue.description) {

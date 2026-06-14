@@ -422,7 +422,7 @@ export default function MachineStopPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState<StopLoadError | null>(null);
-  const [cashCollected, setCashCollected] = useState(true);
+  const [cashCollected, setCashCollected] = useState(false);
   const [cashBagId, setCashBagId] = useState("");
   const [notes, setNotes] = useState("");
   const [issueType, setIssueType] = useState("");
@@ -629,7 +629,7 @@ export default function MachineStopPage() {
           unavailableProducts: initialUnavailable,
           extraProducts: initialExtraProducts,
           missingReports: [],
-          cashCollected: true,
+          cashCollected: false,
           cashBagId: "",
           notes: "",
           issueType: "",

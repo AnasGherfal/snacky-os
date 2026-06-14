@@ -26,6 +26,7 @@ import {
   detectOrderDetailsDateRange,
   orderDetailsAliases,
   orderDetailsDate,
+  orderDetailsGrossSalesAmount,
   orderDetailsPaymentAmount,
   orderDetailsQuantity,
   orderDetailsTransactionStatus,
@@ -556,6 +557,13 @@ type PersistedStockSnapshotBatchSummary = {
   error: unknown | null;
 };
 
+type PersistedOrderDetailsBatchSummary = {
+  rowCount: number;
+  detectedMinDatetime: string | null;
+  detectedMaxDatetime: string | null;
+  error: unknown | null;
+};
+
 async function loadPersistedStockSnapshotBatchSummary({
   supabase,
   batchId,
@@ -596,6 +604,41 @@ async function loadPersistedStockSnapshotBatchSummary({
     detectedMinDatetime: capturedValues[0] ?? null,
     detectedMaxDatetime: capturedValues.at(-1) ?? null,
     error: stockRowsError ?? auditCountError ?? null,
+  };
+}
+
+async function loadPersistedOrderDetailsBatchSummary({
+  supabase,
+  batchId,
+}: {
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  batchId: string;
+}): Promise<PersistedOrderDetailsBatchSummary> {
+  const { data, error } = await supabase
+    .from("vms_transactions_raw")
+    .select("payment_time, delivery_time")
+    .eq("import_batch_id", batchId);
+
+  if (error) {
+    return {
+      rowCount: 0,
+      detectedMinDatetime: null,
+      detectedMaxDatetime: null,
+      error,
+    };
+  }
+
+  const capturedValues = ((data ?? []) as Array<{ payment_time?: string | null; delivery_time?: string | null }>)
+    .flatMap((row) => [row.payment_time, row.delivery_time])
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+
+  return {
+    rowCount: Number(data?.length ?? 0),
+    detectedMinDatetime: capturedValues[0] ?? null,
+    detectedMaxDatetime: capturedValues.at(-1) ?? null,
+    error: null,
   };
 }
 
@@ -1861,7 +1904,10 @@ async function runVmsImport({
 
     if (reportType === "vms_order_details_weekly") {
       const transactionStatus = orderDetailsTransactionStatus(row);
-      const paymentAmount = Math.max(0, orderDetailsPaymentAmount(row) ?? 0);
+      const rawPaymentAmount = orderDetailsPaymentAmount(row);
+      const paymentAmount = rawPaymentAmount === null ? null : Math.max(0, rawPaymentAmount);
+      const grossSalesAmount = Math.max(0, orderDetailsGrossSalesAmount(row) ?? 0);
+      const amountForSummary = paymentAmount ?? grossSalesAmount;
       const quantity = orderDetailsQuantity(row);
       const duplicateHash = createVmsOrderDetailsDuplicateHash(row);
       const paymentTime = orderDetailsDate(orderDetailsValue(row, orderDetailsAliases.paymentTime));
@@ -1870,13 +1916,13 @@ async function runVmsImport({
 
       if (transactionStatus === "successful_sale") {
         summary.successfulSalesRows = (summary.successfulSalesRows ?? 0) + 1;
-        summary.estimatedSuccessfulSales = (summary.estimatedSuccessfulSales ?? 0) + paymentAmount;
+        summary.estimatedSuccessfulSales = (summary.estimatedSuccessfulSales ?? 0) + amountForSummary;
       } else if (transactionStatus === "failed_vend") {
         summary.failedVendRows = (summary.failedVendRows ?? 0) + 1;
-        summary.failedVendAmount = (summary.failedVendAmount ?? 0) + paymentAmount;
+        summary.failedVendAmount = (summary.failedVendAmount ?? 0) + amountForSummary;
       } else if (transactionStatus === "refunded") {
         summary.refundedRows = (summary.refundedRows ?? 0) + 1;
-        summary.refundedAmount = (summary.refundedAmount ?? 0) + paymentAmount;
+        summary.refundedAmount = (summary.refundedAmount ?? 0) + amountForSummary;
       } else if (transactionStatus === "failed_payment") {
         summary.failedPaymentRows = (summary.failedPaymentRows ?? 0) + 1;
       } else {
@@ -1906,6 +1952,8 @@ async function runVmsImport({
         third_party_transaction_number: orderDetailsValue(row, orderDetailsAliases.thirdPartyTransactionNumber) || null,
         third_party_order_no: orderDetailsValue(row, orderDetailsAliases.thirdPartyOrderNo) || null,
         payment_amount: paymentAmount,
+        amount_paid: paymentAmount,
+        gross_sales_lyd: grossSalesAmount > 0 ? grossSalesAmount : null,
         payment_time: paymentTime?.toISOString() ?? null,
         quantity,
         raw_row: originalRow,
@@ -2210,8 +2258,8 @@ async function runVmsImport({
     const uniqueRows = [...rowsByHash.values()];
     const existingExternalDuplicateHashes = new Set<string>();
 
-    for (let index = 0; index < uniqueRows.length; index += 500) {
-      const chunk = uniqueRows.slice(index, index + 500).map((row) => String(row.duplicate_hash));
+    for (let index = 0; index < uniqueRows.length; index += VMS_TRANSACTION_DUPLICATE_LOOKUP_CHUNK_SIZE) {
+      const chunk = uniqueRows.slice(index, index + VMS_TRANSACTION_DUPLICATE_LOOKUP_CHUNK_SIZE).map((row) => String(row.duplicate_hash));
       const { data, error } = await supabase
         .from("vms_transactions_raw")
         .select("duplicate_hash, import_batch_id")
@@ -2238,8 +2286,8 @@ async function runVmsImport({
         summary.rowsSkippedDuplicate += duplicateRows;
       }
 
-      for (let index = 0; index < rowsToSave.length; index += 500) {
-        const chunk = rowsToSave.slice(index, index + 500);
+      for (let index = 0; index < rowsToSave.length; index += VMS_TRANSACTION_SAVE_CHUNK_SIZE) {
+        const chunk = rowsToSave.slice(index, index + VMS_TRANSACTION_SAVE_CHUNK_SIZE);
         const { error } = await supabase
           .from("vms_transactions_raw")
           .upsert(chunk, { onConflict: "duplicate_hash", ignoreDuplicates: true });
@@ -2307,6 +2355,9 @@ async function runVmsImport({
   const persistedStockSummary = isMachineStockReport(reportType)
     ? await loadPersistedStockSnapshotBatchSummary({ supabase, batchId: batch.id })
     : null;
+  const persistedOrderDetailsSummary = reportType === "vms_order_details_weekly"
+    ? await loadPersistedOrderDetailsBatchSummary({ supabase, batchId: batch.id })
+    : null;
   if (persistedStockSummary?.error) {
     console.warn("[vms-import] Could not verify persisted stock snapshot rows after confirm", {
       batchId: batch.id,
@@ -2314,8 +2365,24 @@ async function runVmsImport({
       error: persistedStockSummary.error,
     });
   }
+  if (persistedOrderDetailsSummary?.error) {
+    console.warn("[vms-import] Could not verify persisted detailed transaction rows after confirm", {
+      batchId: batch.id,
+      reportType,
+      error: persistedOrderDetailsSummary.error,
+    });
+  }
   const persistedImportedRowCount = persistedStockSummary?.importedRowCount ?? 0;
-  const effectiveImportedRows = persistedImportedRowCount > 0 ? persistedImportedRowCount : summary.importedRows;
+  const persistedOrderDetailsRowCount = persistedOrderDetailsSummary?.rowCount ?? 0;
+  const attemptedImportedRows = summary.importedRows;
+  const effectiveImportedRows = isMachineStockReport(reportType)
+    ? (persistedImportedRowCount > 0 ? persistedImportedRowCount : summary.importedRows)
+    : reportType === "vms_order_details_weekly"
+      ? persistedOrderDetailsRowCount
+      : summary.importedRows;
+  if (reportType === "vms_order_details_weekly") {
+    summary.importedRows = effectiveImportedRows;
+  }
   const importedRowsFromPersistence = isMachineStockReport(reportType)
     && effectiveImportedRows > 0
     && summary.importedRows <= 0;
@@ -2325,21 +2392,36 @@ async function runVmsImport({
     summary.failedTargets = Array.from(new Set([...summary.failedTargets, "Import metadata"]));
     summary.resultMessage = "Stock snapshot rows were saved and auto-activated for route recommendations.";
   }
+  const missingPersistedOrderDetailsRows = reportType === "vms_order_details_weekly"
+    && attemptedImportedRows > 0
+    && effectiveImportedRows <= 0;
+  if (missingPersistedOrderDetailsRows) {
+    const transactionSaveError = "Detailed VMS transaction rows were not saved to vms_transactions_raw. Reprocess this batch after the import fix is deployed.";
+    if (!summary.errors.includes(transactionSaveError)) summary.errors.push(transactionSaveError);
+    summary.failedTargets = Array.from(new Set([...summary.failedTargets, "Sales dashboard"]));
+    summary.resultMessage = transactionSaveError;
+  }
   const status = isMachineStockReport(reportType) && effectiveImportedRows > 0
     ? "imported"
-    : importResult.status;
+    : reportType === "vms_order_details_weekly" && effectiveImportedRows <= 0 && attemptedImportedRows > 0
+      ? "failed"
+      : importResult.status;
   const detectedMinDatetime = isMachineStockReport(reportType)
     ? (persistedStockSummary?.detectedMinDatetime ?? stockDetectedMinDatetime ?? stockFallbackTimestamp)
+    : reportType === "vms_order_details_weekly"
+      ? (persistedOrderDetailsSummary?.detectedMinDatetime ?? (effectiveReportStartDate ? startOfDateIso(effectiveReportStartDate) : null))
     : (effectiveReportStartDate ? startOfDateIso(effectiveReportStartDate) : null);
   const detectedMaxDatetime = isMachineStockReport(reportType)
     ? (persistedStockSummary?.detectedMaxDatetime ?? stockDetectedMaxDatetime ?? stockFallbackTimestamp)
+    : reportType === "vms_order_details_weekly"
+      ? (persistedOrderDetailsSummary?.detectedMaxDatetime ?? (effectiveReportEndDate ? endOfDateIso(effectiveReportEndDate) : null))
     : (effectiveReportEndDate ? endOfDateIso(effectiveReportEndDate) : null);
   const latestErrorText = status === "imported"
     ? null
     : (summary.errors.length ? summary.errors.join("; ").slice(0, 2000) : null);
   const batchUpdate = {
     status,
-    is_active: isMachineStockReport(reportType) ? effectiveImportedRows > 0 : importResult.active,
+    is_active: isMachineStockReport(reportType) || reportType === "vms_order_details_weekly" ? effectiveImportedRows > 0 : importResult.active,
     imported_by: profile.team_member_id ?? profile.id ?? null,
     imported_at: new Date().toISOString(),
     report_type: finalizedReportType,
@@ -2360,8 +2442,12 @@ async function runVmsImport({
     storage_path: storagePath,
     detected_min_datetime: detectedMinDatetime,
     detected_max_datetime: detectedMaxDatetime,
-    total_successful_sales: reportType === "sales" || reportType === "vms_order_details_weekly" ? summary.estimatedSuccessfulSales ?? 0 : 0,
-    successful_rows_count: reportType === "vms_order_details_weekly" ? summary.successfulSalesRows ?? 0 : reportType === "sales" ? effectiveImportedRows : 0,
+    total_successful_sales: reportType === "sales" || reportType === "vms_order_details_weekly"
+      ? (effectiveImportedRows > 0 ? summary.estimatedSuccessfulSales ?? 0 : 0)
+      : 0,
+    successful_rows_count: reportType === "vms_order_details_weekly"
+      ? (effectiveImportedRows > 0 ? summary.successfulSalesRows ?? 0 : 0)
+      : reportType === "sales" ? effectiveImportedRows : 0,
     failed_rows_count: (summary.failedVendRows ?? 0) + (summary.failedPaymentRows ?? 0) + (summary.needsReviewTransactionRows ?? 0),
     refunded_rows_count: summary.refundedRows ?? 0,
     rows_imported: effectiveImportedRows,
@@ -2441,10 +2527,10 @@ async function runVmsImport({
       errorRedirect(batchMutationErrorMessage(finalUpdateProblem));
       return;
     }
-    const metadataWarning = `Stock or sales data imported, but final metadata could not update: ${batchMutationErrorMessage(finalUpdateProblem)}`;
+    const metadataWarning = `Imported data was preserved, but final batch metadata could not update: ${batchMutationErrorMessage(finalUpdateProblem)}`;
     summary.errors.push(metadataWarning);
     summary.failedTargets = Array.from(new Set([...summary.failedTargets, "Import metadata"]));
-    summary.resultMessage = "Stock data imported. Some metadata could not update.";
+    summary.resultMessage = "Imported data was preserved. Some metadata could not update.";
     const metadataFallbackUpdate = await runVmsImportBatchMutationWithMetadataFallback({
       queryName: "vms_import_batches.update.final_metadata_fallback",
       currentStep: "confirm_import",
@@ -2552,6 +2638,8 @@ type VmsPreviewSheetPayload = { name: string; rows: string[][] };
 const VMS_ORIGINAL_FILE_UPLOAD_SOFT_TIMEOUT_MS = 8000;
 const VMS_PREVIEW_ROW_INSERT_LIMIT = 500;
 const VMS_SAVE_QUERY_TIMEOUT_MS = 30000;
+const VMS_TRANSACTION_DUPLICATE_LOOKUP_CHUNK_SIZE = 50;
+const VMS_TRANSACTION_SAVE_CHUNK_SIZE = 250;
 
 type SoftTimeoutResult<T> =
   | { timedOut: true }
