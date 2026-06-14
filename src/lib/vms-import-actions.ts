@@ -543,6 +543,53 @@ function isMachineStockReport(reportType: VmsReportType) {
   return reportType === "stock" || reportType === "machine_stock_snapshot";
 }
 
+function canonicalImportedReportType(reportType: VmsReportType): VmsReportType {
+  return isMachineStockReport(reportType) ? "machine_stock_snapshot" : reportType;
+}
+
+type PersistedStockSnapshotBatchSummary = {
+  rowCount: number;
+  detectedMinDatetime: string | null;
+  detectedMaxDatetime: string | null;
+  error: unknown | null;
+};
+
+async function loadPersistedStockSnapshotBatchSummary({
+  supabase,
+  batchId,
+}: {
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  batchId: string;
+}): Promise<PersistedStockSnapshotBatchSummary> {
+  const { data, error } = await supabase
+    .from("vms_stock_snapshots")
+    .select("captured_at, created_at")
+    .eq("import_batch_id", batchId)
+    .eq("import_row_status", "imported");
+
+  if (error) {
+    return {
+      rowCount: 0,
+      detectedMinDatetime: null,
+      detectedMaxDatetime: null,
+      error,
+    };
+  }
+
+  const capturedValues = ((data ?? []) as Array<{ captured_at?: string | null; created_at?: string | null }>)
+    .flatMap((row) => [row.captured_at, row.created_at])
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+
+  return {
+    rowCount: Number(data?.length ?? 0),
+    detectedMinDatetime: capturedValues[0] ?? null,
+    detectedMaxDatetime: capturedValues.at(-1) ?? null,
+    error: null,
+  };
+}
+
 function markInvalidRow(summary: ImportSummary, rowNumber: number, reason: string) {
   summary.invalidRows += 1;
   summary.skippedRows += 1;
@@ -1277,6 +1324,8 @@ async function runVmsImport({
 
   let batch: { id: string; reprocess_count?: number | null } | null = null;
 
+  const finalizedReportType = canonicalImportedReportType(reportType);
+
   if (existingBatchId) {
     const lookupResult = await withSoftTimeout(
       supabase
@@ -1329,8 +1378,8 @@ async function runVmsImport({
     const confirmStartPayload = {
       status: "previewed",
       is_active: false,
-      source_usage: vmsSourceUsage(reportType),
-      dashboard_usage: vmsSourceUsage(reportType),
+      source_usage: vmsSourceUsage(finalizedReportType),
+      dashboard_usage: vmsSourceUsage(finalizedReportType),
       latest_error: null,
       last_error: null,
       import_mode: effectiveImportMode,
@@ -1339,7 +1388,7 @@ async function runVmsImport({
       file_name: fileName,
       file_type: fileType,
       sheet_name: sheetName,
-      report_type: reportType,
+      report_type: finalizedReportType,
       file_hash: fileHash,
       storage_path: storagePath,
       updated_at: new Date().toISOString(),
@@ -1438,12 +1487,13 @@ async function runVmsImport({
     const batchUpdate = {
       status: "previewed",
       is_active: false,
-      source_usage: vmsSourceUsage(reportType),
-      dashboard_usage: vmsSourceUsage(reportType),
+      source_usage: vmsSourceUsage(finalizedReportType),
+      dashboard_usage: vmsSourceUsage(finalizedReportType),
       latest_error: null,
       last_error: null,
       updated_at: new Date().toISOString(),
       rows_found: summary.rowsFound,
+      report_type: finalizedReportType,
       file_hash: fileHash,
       storage_path: storagePath,
       rows_imported: 0,
@@ -2240,40 +2290,71 @@ async function runVmsImport({
   summary.updatedTargets = importUpdatedTargets(reportType, summary);
   summary.failedTargets = importFailedTargets(summary);
   const importResult = classifyImportResult(summary, fatalImportError);
-  const status = importResult.status;
   summary.resultMessage = importResult.message;
   const snapshotTimeValues = machineStockSnapshotTimes.map((date) => date.getTime()).filter(Number.isFinite);
   const stockDetectedMinDatetime = snapshotTimeValues.length ? new Date(Math.min(...snapshotTimeValues)).toISOString() : null;
   const stockDetectedMaxDatetime = snapshotTimeValues.length ? new Date(Math.max(...snapshotTimeValues)).toISOString() : null;
   const stockFallbackTimestamp = isMachineStockReport(reportType) ? new Date().toISOString() : null;
-    const batchUpdate = {
-      status,
-      is_active: importResult.active,
-      imported_by: profile.team_member_id ?? profile.id ?? null,
-      imported_at: new Date().toISOString(),
-      source_usage: vmsSourceUsage(reportType),
-      dashboard_usage: vmsSourceUsage(reportType),
-      latest_error: summary.errors.length ? summary.errors.join("; ").slice(0, 2000) : null,
-      last_error: summary.errors.length ? summary.errors.join("; ").slice(0, 2000) : null,
-      updated_at: new Date().toISOString(),
-      rows_found: summary.rowsFound,
-      row_count: summary.rowsFound,
-      rows_skipped: summary.skippedRows,
-      report_start_date: effectiveReportStartDate,
-      report_end_date: effectiveReportEndDate,
+  const persistedStockSummary = isMachineStockReport(reportType)
+    ? await loadPersistedStockSnapshotBatchSummary({ supabase, batchId: batch.id })
+    : null;
+  if (persistedStockSummary?.error) {
+    console.warn("[vms-import] Could not verify persisted stock snapshot rows after confirm", {
+      batchId: batch.id,
+      reportType,
+      error: persistedStockSummary.error,
+    });
+  }
+  const persistedStockRowCount = persistedStockSummary?.rowCount ?? 0;
+  const effectiveImportedRows = persistedStockRowCount > 0 ? persistedStockRowCount : summary.importedRows;
+  const importedRowsFromPersistence = isMachineStockReport(reportType)
+    && effectiveImportedRows > 0
+    && summary.importedRows <= 0;
+  if (importedRowsFromPersistence) {
+    const repairWarning = `Auto-repaired stock snapshot metadata because ${effectiveImportedRows} stock row(s) were already saved when the final confirm state was recalculated.`;
+    if (!summary.errors.includes(repairWarning)) summary.errors.push(repairWarning);
+    summary.failedTargets = Array.from(new Set([...summary.failedTargets, "Import metadata"]));
+    summary.resultMessage = "Stock snapshot rows were saved and auto-activated for route recommendations.";
+  }
+  const finalHasWarnings = fatalImportError || summary.errors.length > 0 || summary.rowsNeedingReview > 0 || summary.rowsSkippedDuplicate > 0;
+  const status = isMachineStockReport(reportType) && effectiveImportedRows > 0
+    ? (finalHasWarnings ? "imported_with_warnings" : "imported")
+    : importResult.status;
+  const detectedMinDatetime = isMachineStockReport(reportType)
+    ? (persistedStockSummary?.detectedMinDatetime ?? stockDetectedMinDatetime ?? stockFallbackTimestamp)
+    : (effectiveReportStartDate ? startOfDateIso(effectiveReportStartDate) : null);
+  const detectedMaxDatetime = isMachineStockReport(reportType)
+    ? (persistedStockSummary?.detectedMaxDatetime ?? stockDetectedMaxDatetime ?? stockFallbackTimestamp)
+    : (effectiveReportEndDate ? endOfDateIso(effectiveReportEndDate) : null);
+  const latestErrorText = summary.errors.length ? summary.errors.join("; ").slice(0, 2000) : null;
+  const batchUpdate = {
+    status,
+    is_active: isMachineStockReport(reportType) ? effectiveImportedRows > 0 : importResult.active,
+    imported_by: profile.team_member_id ?? profile.id ?? null,
+    imported_at: new Date().toISOString(),
+    report_type: finalizedReportType,
+    file_name: fileName,
+    file_type: fileType,
+    sheet_name: sheetName,
+    source_usage: vmsSourceUsage(finalizedReportType),
+    dashboard_usage: vmsSourceUsage(finalizedReportType),
+    latest_error: latestErrorText,
+    last_error: latestErrorText,
+    updated_at: new Date().toISOString(),
+    rows_found: summary.rowsFound,
+    row_count: summary.rowsFound,
+    rows_skipped: summary.skippedRows,
+    report_start_date: effectiveReportStartDate,
+    report_end_date: effectiveReportEndDate,
     file_hash: fileHash,
     storage_path: storagePath,
-    detected_min_datetime: isMachineStockReport(reportType)
-      ? (stockDetectedMinDatetime ?? stockFallbackTimestamp)
-      : (effectiveReportStartDate ? startOfDateIso(effectiveReportStartDate) : null),
-    detected_max_datetime: isMachineStockReport(reportType)
-      ? (stockDetectedMaxDatetime ?? stockFallbackTimestamp)
-      : (effectiveReportEndDate ? endOfDateIso(effectiveReportEndDate) : null),
+    detected_min_datetime: detectedMinDatetime,
+    detected_max_datetime: detectedMaxDatetime,
     total_successful_sales: reportType === "sales" || reportType === "vms_order_details_weekly" ? summary.estimatedSuccessfulSales ?? 0 : 0,
-    successful_rows_count: reportType === "vms_order_details_weekly" ? summary.successfulSalesRows ?? 0 : reportType === "sales" ? summary.importedRows : 0,
+    successful_rows_count: reportType === "vms_order_details_weekly" ? summary.successfulSalesRows ?? 0 : reportType === "sales" ? effectiveImportedRows : 0,
     failed_rows_count: (summary.failedVendRows ?? 0) + (summary.failedPaymentRows ?? 0) + (summary.needsReviewTransactionRows ?? 0),
     refunded_rows_count: summary.refundedRows ?? 0,
-    rows_imported: summary.importedRows,
+    rows_imported: effectiveImportedRows,
     rows_skipped_duplicate: summary.rowsSkippedDuplicate,
     rows_needing_review: summary.rowsNeedingReview,
     error_count: summary.errors.length,
@@ -2287,16 +2368,16 @@ async function runVmsImport({
       errors: summary.errors,
     },
     parse_diagnostics: {
-      reportType,
+      reportType: finalizedReportType,
       fileType,
       sheetName,
       headers: headerNames,
       rowsFound: summary.rowsFound,
-      importedRows: summary.importedRows,
+      importedRows: effectiveImportedRows,
       rowsNeedingReview: summary.rowsNeedingReview,
     },
     notes: JSON.stringify({
-      reportType,
+      reportType: finalizedReportType,
       fileName,
       fileType,
       sheetName,
@@ -2304,7 +2385,7 @@ async function runVmsImport({
       message: summary.resultMessage,
       updatedTargets: summary.updatedTargets,
       failedTargets: summary.failedTargets,
-      importedRows: summary.importedRows,
+      importedRows: effectiveImportedRows,
       rowsFound: summary.rowsFound,
       rowsSkippedDuplicate: summary.rowsSkippedDuplicate,
       rowsNeedingReview: summary.rowsNeedingReview,
@@ -2346,7 +2427,7 @@ async function runVmsImport({
       selectedImportBatchId: batch.id,
       currentStep: "confirm_import",
     });
-    if (summary.importedRows <= 0) {
+    if (effectiveImportedRows <= 0) {
       errorRedirect(batchMutationErrorMessage(finalUpdateProblem));
       return;
     }
@@ -2363,15 +2444,20 @@ async function runVmsImport({
         is_active: true,
         imported_by: profile.team_member_id ?? profile.id ?? null,
         imported_at: new Date().toISOString(),
+        report_type: finalizedReportType,
+        source_usage: vmsSourceUsage(finalizedReportType),
+        dashboard_usage: vmsSourceUsage(finalizedReportType),
         latest_error: metadataWarning.slice(0, 2000),
         last_error: metadataWarning.slice(0, 2000),
         updated_at: new Date().toISOString(),
         rows_found: summary.rowsFound,
         row_count: summary.rowsFound,
-        rows_imported: summary.importedRows,
+        rows_imported: effectiveImportedRows,
         rows_skipped_duplicate: summary.rowsSkippedDuplicate,
         rows_needing_review: summary.rowsNeedingReview,
-        notes: JSON.stringify({ ...summary, status: "imported_with_warnings" }),
+        detected_min_datetime: detectedMinDatetime,
+        detected_max_datetime: detectedMaxDatetime,
+        notes: JSON.stringify({ ...summary, reportType: finalizedReportType, importedRows: effectiveImportedRows, status: "imported_with_warnings" }),
       },
       run: (payload) => supabase
         .from("vms_import_batches")
@@ -3676,7 +3762,18 @@ async function ensureConfirmedStockImportBatchIsUsable({
   detectedMinDatetime: string | null;
   detectedMaxDatetime: string | null;
 }) {
-  if (!isMachineStockReport(reportType) || summary.importedRows <= 0) return;
+  if (!isMachineStockReport(reportType)) return;
+
+  const persistedStockSummary = await loadPersistedStockSnapshotBatchSummary({ supabase, batchId });
+  if (persistedStockSummary.error) {
+    console.warn("[vms-import] Could not count persisted stock rows during confirm postcondition check", {
+      batchId,
+      reportType,
+      error: persistedStockSummary.error,
+    });
+  }
+  const effectiveImportedRows = persistedStockSummary.rowCount > 0 ? persistedStockSummary.rowCount : summary.importedRows;
+  if (effectiveImportedRows <= 0) return;
 
   const { data: currentBatch, error: currentBatchError } = await supabase
     .from("vms_import_batches")
@@ -3705,26 +3802,28 @@ async function ensureConfirmedStockImportBatchIsUsable({
     currentStatus,
     isActive: currentBatch.is_active ?? null,
     currentRowsImported,
-    expectedRowsImported: summary.importedRows,
+    expectedRowsImported: effectiveImportedRows,
   });
 
   const now = new Date().toISOString();
   const recoveredWarning = `Recovered stock import metadata after confirm because the batch was left in ${currentStatus || "an unusable"} state.`;
   const nextErrors = summary.errors.includes(recoveredWarning) ? summary.errors : [...summary.errors, recoveredWarning];
   const nextStatus = nextErrors.length || summary.rowsNeedingReview > 0 ? "imported_with_warnings" : "imported";
-  const repairedDetectedMinDatetime = detectedMinDatetime || textValue(currentBatch.detected_min_datetime) || now;
-  const repairedDetectedMaxDatetime = detectedMaxDatetime || textValue(currentBatch.detected_max_datetime) || repairedDetectedMinDatetime;
+  const normalizedReportType = canonicalImportedReportType(reportType);
+  const repairedDetectedMinDatetime = persistedStockSummary.detectedMinDatetime || detectedMinDatetime || textValue(currentBatch.detected_min_datetime) || now;
+  const repairedDetectedMaxDatetime = persistedStockSummary.detectedMaxDatetime || detectedMaxDatetime || textValue(currentBatch.detected_max_datetime) || repairedDetectedMinDatetime;
   const repairPayload = {
     status: nextStatus,
     is_active: true,
     imported_by: profile?.team_member_id ?? profile?.id ?? null,
     imported_at: now,
+    report_type: normalizedReportType,
     updated_at: now,
-    source_usage: vmsSourceUsage(reportType),
-    dashboard_usage: vmsSourceUsage(reportType),
-    rows_found: Math.max(summary.rowsFound, summary.importedRows),
-    row_count: Math.max(summary.rowsFound, summary.totalRows, summary.importedRows),
-    rows_imported: summary.importedRows,
+    source_usage: vmsSourceUsage(normalizedReportType),
+    dashboard_usage: vmsSourceUsage(normalizedReportType),
+    rows_found: Math.max(summary.rowsFound, effectiveImportedRows),
+    row_count: Math.max(summary.rowsFound, summary.totalRows, effectiveImportedRows),
+    rows_imported: effectiveImportedRows,
     rows_skipped: summary.skippedRows,
     rows_skipped_duplicate: summary.rowsSkippedDuplicate,
     rows_needing_review: summary.rowsNeedingReview,
@@ -3743,6 +3842,7 @@ async function ensureConfirmedStockImportBatchIsUsable({
         previous_status: currentStatus || null,
         previous_is_active: currentBatch.is_active ?? null,
         previous_rows_imported: currentRowsImported,
+        recovered_rows_imported: effectiveImportedRows,
       },
     }),
   };
@@ -3815,6 +3915,7 @@ async function finalizePreviewStockImportBatch({
 
   const actorId = profile?.team_member_id ?? profile?.id ?? null;
   const now = new Date().toISOString();
+  const finalizedReportType = canonicalImportedReportType(reportType);
   const rowsFound = wholeNumberValue(batch.rows_found ?? batch.row_count);
   const existingRowsImported = wholeNumberValue(batch.rows_imported);
   const warningMessages: string[] = [];
@@ -4002,9 +4103,10 @@ async function finalizePreviewStockImportBatch({
     is_active: true,
     imported_by: actorId,
     imported_at: now,
+    report_type: finalizedReportType,
     updated_at: now,
-    source_usage: vmsSourceUsage(reportType),
-    dashboard_usage: vmsSourceUsage(reportType),
+    source_usage: vmsSourceUsage(finalizedReportType),
+    dashboard_usage: vmsSourceUsage(finalizedReportType),
     rows_found: rowsFound || stockRowCount,
     row_count: Math.max(rowsFound, wholeNumberValue(batch.row_count), stockRowCount),
     rows_imported: stockRowCount,
@@ -4049,13 +4151,13 @@ async function finalizePreviewStockImportBatch({
   await deactivateOlderActiveStockBatches({
     supabase,
     currentBatchId: batchId,
-    reportType,
+    reportType: finalizedReportType,
     updatedAt: now,
   });
   await refreshRefillRecommendationsAfterStockImport({
     supabase,
     batchId,
-    reportType,
+    reportType: finalizedReportType,
     importedRows: stockRowCount,
   });
 
@@ -4120,12 +4222,25 @@ export async function updateVmsImportBatchState(formData: FormData) {
       batch: objectRecord(beforeBatch),
     });
     return;
+  } else if ((action === "enable" || action === "restore")
+    && beforeReportType
+    && isMachineStockReport(beforeReportType)
+    && String(beforeBatch.status ?? "") === "previewed") {
+    await finalizePreviewStockImportBatch({
+      supabase,
+      profile,
+      batchId,
+      batch: objectRecord(beforeBatch),
+    });
+    return;
   } else if (action === "enable" || action === "restore") {
+    const restoredReportType = beforeReportType ? canonicalImportedReportType(beforeReportType) : null;
     payload = {
       status: beforeReportType && isMachineStockReport(beforeReportType)
         ? (String(beforeBatch.status ?? "").includes("warning") ? "imported_with_warnings" : "imported")
         : "imported",
       is_active: true,
+      report_type: restoredReportType ?? beforeBatch.report_type ?? null,
       disabled_at: null,
       disabled_by: null,
       disable_reason: null,

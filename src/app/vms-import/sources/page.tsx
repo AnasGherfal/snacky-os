@@ -138,6 +138,10 @@ function isStockReportType(reportType: string | null | undefined) {
   return reportType === "stock" || reportType === "machine_stock_snapshot" || reportType === "planogram";
 }
 
+function isMachineStockSnapshotImportType(reportType: string | null | undefined) {
+  return reportType === "stock" || reportType === "machine_stock_snapshot";
+}
+
 function formatDateTime(value: string | null | undefined) {
   if (!value) return "-";
   const date = new Date(value);
@@ -171,13 +175,6 @@ function sourceErrorMessage(error: unknown) {
 }
 
 const preferredSourceSelect = "id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, uploaded_by, uploaded_at, status, is_active, deleted_at, delete_reason, disabled_at, disable_reason, source_usage, dashboard_usage, storage_bucket, storage_path, original_file_name, detected_min_datetime, detected_max_datetime, total_successful_sales, successful_rows_count, failed_rows_count, refunded_rows_count, row_count, rows_found, rows_imported, rows_skipped, report_start_date, report_end_date, rows_skipped_duplicate, rows_needing_review, latest_error, last_error, last_reprocessed_at, reprocess_count";
-const legacySourceSelect = "id, source_type, file_name, file_type, sheet_name, report_type, imported_by, imported_at, uploaded_by, uploaded_at, status, row_count, rows_found, rows_imported, rows_skipped, latest_error, notes";
-
-function isMissingSourceSchemaError(error: unknown) {
-  const row = error && typeof error === "object" ? error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown } : null;
-  const text = [row?.code, row?.message, row?.details, row?.hint].map((value) => String(value ?? "")).join(" ").toLowerCase();
-  return text.includes("schema cache") || text.includes("column") || text.includes("does not exist") || row?.code === "42703" || row?.code === "PGRST204" || row?.code === "42P01" || row?.code === "PGRST205";
-}
 
 function logVmsDataSourcesLoadIssue({
   queryName,
@@ -199,51 +196,22 @@ function logVmsDataSourcesLoadIssue({
   });
 }
 
-async function loadVmsDataSources({
-  supabase,
-  from,
-  to,
+function SourceActions({
+  batch,
+  canManage,
+  stockSnapshotRowCount,
 }: {
-  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>;
-  from: number;
-  to: number;
+  batch: VmsSourceRow;
+  canManage: boolean;
+  stockSnapshotRowCount: number;
 }) {
-  try {
-    const result = await supabase
-      .from("vms_import_batches")
-      .select(preferredSourceSelect, { count: "exact" })
-      .order("uploaded_at", { ascending: false, nullsFirst: false })
-      .range(from, to);
-
-    if (!result.error) return { batches: (result.data ?? []) as VmsSourceRow[], batchCount: result.count ?? result.data?.length ?? 0, error: "" };
-    logVmsDataSourcesLoadIssue({ queryName: "vms_import_batches.sources", selectedColumns: preferredSourceSelect, error: result.error });
-    if (!isMissingSourceSchemaError(result.error)) return { batches: [], batchCount: 0, error: sourceErrorMessage(result.error) };
-  } catch (error) {
-    logVmsDataSourcesLoadIssue({ queryName: "vms_import_batches.sources", selectedColumns: preferredSourceSelect, error });
-    return { batches: [], batchCount: 0, error: sourceErrorMessage(error) };
-  }
-
-  try {
-    const fallback = await supabase
-      .from("vms_import_batches")
-      .select(legacySourceSelect, { count: "exact" })
-      .order("uploaded_at", { ascending: false, nullsFirst: false })
-      .range(from, to);
-    if (fallback.error) {
-      logVmsDataSourcesLoadIssue({ queryName: "vms_import_batches.sources_legacy", selectedColumns: legacySourceSelect, error: fallback.error });
-      return { batches: [], batchCount: 0, error: sourceErrorMessage(fallback.error) };
-    }
-    return { batches: (fallback.data ?? []) as VmsSourceRow[], batchCount: fallback.count ?? fallback.data?.length ?? 0, error: "Some VMS metadata columns are missing. Showing available import history." };
-  } catch (error) {
-    logVmsDataSourcesLoadIssue({ queryName: "vms_import_batches.sources_legacy", selectedColumns: legacySourceSelect, error });
-    return { batches: [], batchCount: 0, error: sourceErrorMessage(error) };
-  }
-}
-
-function SourceActions({ batch, canManage }: { batch: VmsSourceRow; canManage: boolean }) {
   const originalFileUrl = batch.storage_bucket && batch.storage_path
     ? privateStorageObjectUrl(String(batch.storage_bucket), String(batch.storage_path))
     : null;
+  const isPreviewStockBatch = isMachineStockSnapshotImportType(batch.report_type ?? batch.source_type)
+    && String(batch.status ?? "") === "previewed"
+    && !batch.deleted_at;
+  const canMarkImportedAndActivate = isPreviewStockBatch && stockSnapshotRowCount > 0;
 
   return (
     <div className="flex flex-wrap gap-2">
@@ -251,20 +219,26 @@ function SourceActions({ batch, canManage }: { batch: VmsSourceRow; canManage: b
       {originalFileUrl ? <Link href={originalFileUrl} className="btn-secondary">Original File</Link> : null}
       {canManage ? (
         <>
-          {isUsableImportStatus(batch.status) && batch.is_active !== false && !batch.deleted_at ? (
+          {canMarkImportedAndActivate ? (
+            <form action={updateVmsImportBatchState}>
+              <input type="hidden" name="batch_id" value={batch.id} />
+              <input type="hidden" name="action" value="finalize_import" />
+              <FormSubmitButton className="btn-primary" pendingLabel="Marking imported...">Mark imported and activate</FormSubmitButton>
+            </form>
+          ) : isUsableImportStatus(batch.status) && batch.is_active !== false && !batch.deleted_at ? (
             <form action={updateVmsImportBatchState} className="flex gap-2">
               <input type="hidden" name="batch_id" value={batch.id} />
               <input type="hidden" name="action" value="disable" />
               <input name="reason" placeholder="Reason" className="field-input h-9 w-40 text-xs" />
               <FormSubmitButton className="btn-secondary" pendingLabel="Disabling...">Disable</FormSubmitButton>
             </form>
-          ) : (
+          ) : !isPreviewStockBatch ? (
             <form action={updateVmsImportBatchState}>
               <input type="hidden" name="batch_id" value={batch.id} />
               <input type="hidden" name="action" value="restore" />
               <FormSubmitButton className="btn-secondary" pendingLabel="Restoring...">Restore</FormSubmitButton>
             </form>
-          )}
+          ) : null}
           <form action={reprocessVmsImportBatch}>
             <input type="hidden" name="batch_id" value={batch.id} />
             <FormSubmitButton className="btn-secondary" pendingLabel="Reprocessing...">Reprocess / repair</FormSubmitButton>
@@ -300,6 +274,7 @@ async function VmsDataSourcesPageContent({ searchParams }: { searchParams: Promi
   let batchCount = 0;
   let loadError = "";
   let schemaNotice = "";
+  const stockSnapshotRowsByBatchId = new Map<string, number>();
 
   if (supabase) {
     const preferred = await supabase
@@ -335,6 +310,31 @@ async function VmsDataSourcesPageContent({ searchParams }: { searchParams: Promi
     } else {
       console.error("[vms-data-sources] Failed to load vms_import_batches", { query: "vms_import_batches.select.sources", error: preferred.error });
       loadError = sourceErrorMessage(preferred.error);
+    }
+
+    const previewStockBatchIds = batches
+      .filter((batch) => isMachineStockSnapshotImportType(batch.report_type ?? batch.source_type) && String(batch.status ?? "") === "previewed")
+      .map((batch) => batch.id);
+    if (previewStockBatchIds.length) {
+      const stockRowsResult = await supabase
+        .from("vms_stock_snapshots")
+        .select("import_batch_id")
+        .in("import_batch_id", previewStockBatchIds)
+        .eq("import_row_status", "imported");
+
+      if (stockRowsResult.error) {
+        console.error("[vms-data-sources] Could not load stock snapshot counts for preview batches", {
+          query: "vms_stock_snapshots.preview_counts",
+          batchIds: previewStockBatchIds,
+          error: stockRowsResult.error,
+        });
+      } else {
+        ((stockRowsResult.data ?? []) as Array<{ import_batch_id?: string | null }>).forEach((row) => {
+          const batchId = String(row.import_batch_id ?? "").trim();
+          if (!batchId) return;
+          stockSnapshotRowsByBatchId.set(batchId, (stockSnapshotRowsByBatchId.get(batchId) ?? 0) + 1);
+        });
+      }
     }
   }
 
@@ -403,6 +403,9 @@ async function VmsDataSourcesPageContent({ searchParams }: { searchParams: Promi
                 <td className="text-sm">
                   <div>Found: {batch.rows_found ?? batch.row_count ?? 0}</div>
                   <div>Imported: {batch.rows_imported ?? 0}</div>
+                  {isMachineStockSnapshotImportType(batch.report_type ?? batch.source_type) && String(batch.status ?? "") === "previewed" && (stockSnapshotRowsByBatchId.get(batch.id) ?? 0) > 0 ? (
+                    <div className="text-xs text-emerald-700">Saved stock rows: {stockSnapshotRowsByBatchId.get(batch.id) ?? 0}</div>
+                  ) : null}
                 </td>
                 <td>{batch.rows_skipped_duplicate ?? 0}</td>
                 <td>{batch.rows_needing_review ?? 0}</td>
@@ -416,7 +419,7 @@ async function VmsDataSourcesPageContent({ searchParams }: { searchParams: Promi
                   {batch.latest_error || batch.last_error || batch.disable_reason || batch.delete_reason || "-"}
                   <div className="mt-1 text-slate-500">Failed: {batch.failed_rows_count ?? 0} | Refunds: {batch.refunded_rows_count ?? 0}</div>
                 </td>
-                <td><SourceActions batch={batch} canManage={canManage} /></td>
+                <td><SourceActions batch={batch} canManage={canManage} stockSnapshotRowCount={stockSnapshotRowsByBatchId.get(batch.id) ?? 0} /></td>
               </tr>
             ))}
           </DataTable>

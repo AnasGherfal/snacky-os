@@ -35,6 +35,10 @@ type SupabaseLikeResult<T> = {
   count?: number | null;
 };
 
+type DashboardBatchSupabaseClient = {
+  from: (table: string) => unknown;
+};
+
 export type VmsDashboardUsageKey =
   | "dashboard"
   | "sales"
@@ -126,7 +130,7 @@ function isDashboardBatchSchemaError(error: unknown) {
 }
 
 export async function queryVmsDashboardBatches(
-  supabase: any,
+  supabase: DashboardBatchSupabaseClient,
   {
     reportTypes,
     orderBy = "uploaded_at",
@@ -137,19 +141,38 @@ export async function queryVmsDashboardBatches(
     ascending?: boolean;
   },
 ) {
-  const preferred = await (supabase
-    .from("vms_import_batches")
+  const preferredQuery = supabase.from("vms_import_batches") as {
+    select: (columns: string) => {
+      in: (column: string, values: string[]) => {
+        order: (
+          column: string,
+          options: { ascending: boolean; nullsFirst: boolean },
+        ) => Promise<SupabaseLikeResult<VmsDashboardBatch>>;
+      };
+    };
+  };
+  const preferred = await preferredQuery
     .select(vmsDashboardBatchSelect)
     .in("report_type", reportTypes)
-    .order(orderBy, { ascending, nullsFirst: false }) as Promise<SupabaseLikeResult<VmsDashboardBatch>>);
+    .order(orderBy, { ascending, nullsFirst: false });
 
   if (!preferred.error || !isDashboardBatchSchemaError(preferred.error)) return preferred;
 
-  return supabase
-    .from("vms_import_batches")
+  const fallbackQuery = supabase.from("vms_import_batches") as {
+    select: (columns: string) => {
+      in: (column: string, values: string[]) => {
+        order: (
+          column: string,
+          options: { ascending: boolean; nullsFirst: boolean },
+        ) => Promise<SupabaseLikeResult<VmsDashboardBatch>>;
+      };
+    };
+  };
+
+  return fallbackQuery
     .select(legacyVmsDashboardBatchSelect)
     .in("report_type", reportTypes)
-    .order(orderBy, { ascending, nullsFirst: false }) as Promise<SupabaseLikeResult<VmsDashboardBatch>>;
+    .order(orderBy, { ascending, nullsFirst: false });
 }
 
 function fallbackDashboardUsageKeys(reportType: string | null | undefined): VmsDashboardUsageKey[] {
@@ -255,7 +278,7 @@ export function detailedSalesSourceMessage(batches: VmsDashboardBatch[], summary
 
 export function activeStockBatches(batches: VmsDashboardBatch[]) {
   return batches
-    .filter((batch) => ["stock", "machine_stock_snapshot", "planogram"].includes(String(batch.report_type ?? "")) && isActiveImportedVmsBatch(batch))
+    .filter((batch) => ["stock", "machine_stock_snapshot"].includes(String(batch.report_type ?? "")) && isActiveImportedVmsBatch(batch))
     .sort((a, b) => String(b.detected_max_datetime ?? b.detected_min_datetime ?? b.uploaded_at ?? b.imported_at ?? "").localeCompare(String(a.detected_max_datetime ?? a.detected_min_datetime ?? a.uploaded_at ?? a.imported_at ?? "")));
 }
 

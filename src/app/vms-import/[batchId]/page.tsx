@@ -572,8 +572,8 @@ async function VmsImportBatchDetailPageContent({
               <form action={updateVmsImportBatchState}>
                 <input type="hidden" name="batch_id" value={String(batch.id)} />
                 <input type="hidden" name="action" value="finalize_import" />
-                <FormSubmitButton className="btn-primary" pendingLabel="Finalizing preview import..." disabled={finalizeEvidenceCount <= 0}>
-                  Finalize import
+                <FormSubmitButton className="btn-primary" pendingLabel="Marking imported..." disabled={finalizeEvidenceCount <= 0}>
+                  Mark imported and activate
                 </FormSubmitButton>
               </form>
             ) : null}
@@ -806,15 +806,15 @@ async function VmsImportBatchDetailPageContent({
               <form action={updateVmsImportBatchState} className="space-y-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
                 <input type="hidden" name="batch_id" value={String(batch.id)} />
                 <input type="hidden" name="action" value="finalize_import" />
-                <div className="text-sm font-semibold text-emerald-900">Finalize preview import</div>
+                <div className="text-sm font-semibold text-emerald-900">Mark imported and activate</div>
                 <p className="text-xs text-emerald-900/80">
                   Promotes saved stock rows into an active imported batch for <code>/routes/new</code>. No rows are deleted.
                 </p>
                 <div className="text-xs text-emerald-900/80">
                   Evidence found: stock rows {stockSnapshotRowsCount.count ?? 0}, machine audit rows {machineStockAuditRowsCount.count ?? 0}, imported row audit rows {importedRowsCount.count ?? 0}
                 </div>
-                <FormSubmitButton className="btn-primary w-full" pendingLabel="Finalizing preview import..." disabled={finalizeEvidenceCount <= 0}>
-                  Finalize import
+                <FormSubmitButton className="btn-primary w-full" pendingLabel="Marking imported..." disabled={finalizeEvidenceCount <= 0}>
+                  Mark imported and activate
                 </FormSubmitButton>
               </form>
             ) : null}
@@ -826,7 +826,7 @@ async function VmsImportBatchDetailPageContent({
                 <input name="reason" className="field-input" placeholder="Reason" />
                 <FormSubmitButton className="btn-secondary w-full" pendingLabel="Disabling file...">Disable</FormSubmitButton>
               </form>
-            ) : (
+            ) : !canFinalizePreviewStockBatch ? (
               <form action={updateVmsImportBatchState} className="space-y-3 rounded-lg border border-slate-200 p-3">
                 <input type="hidden" name="batch_id" value={String(batch.id)} />
                 <input type="hidden" name="action" value={stringValue(batch.status) === "deleted" ? "restore" : "enable"} />
@@ -834,7 +834,7 @@ async function VmsImportBatchDetailPageContent({
                 <p className="text-xs text-slate-500">Restores active imported status and recalculates dashboard views.</p>
                 <FormSubmitButton className="btn-secondary w-full" pendingLabel="Restoring file...">Restore</FormSubmitButton>
               </form>
-            )}
+            ) : null}
             {stringValue(batch.status) !== "deleted" ? (
               <form action={updateVmsImportBatchState} className="space-y-3 rounded-lg border border-rose-200 bg-rose-50 p-3">
                 <input type="hidden" name="batch_id" value={String(batch.id)} />
