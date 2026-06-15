@@ -5,8 +5,9 @@ import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from 
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { RouteRecommendationDiagnostics, RouteRecommendationMachineDiagnostic } from "@/app/routes/new/types";
+import type { RouteRecommendationDiagnostics } from "@/app/routes/new/types";
 import { FormField, FormSection, SecondaryButton } from "@/components/ui";
+import { comparePickupProductRows } from "@/lib/route-pickup-checklist";
 
 type Operator = {
   id: string;
@@ -86,6 +87,7 @@ type RecommendationGroup = {
   locationName: string | null;
   productId: string;
   productName: string;
+  productCategory: string | null;
   recommendationKeys: string[];
   rows: Recommendation[];
   slotsCount: number;
@@ -94,6 +96,7 @@ type RecommendationGroup = {
   recommendedTotal: number;
   defaultFinalTakeTotal: number;
   storageAvailable: number;
+  storageKnown: boolean;
   priority: string;
 };
 
@@ -182,11 +185,14 @@ function productMatchesSearch(product: ProductPickOption, query: string) {
     .some((value) => String(value ?? "").toLowerCase().includes(query));
 }
 
-function diagnosticBadgeTone(reasonCode: RouteRecommendationMachineDiagnostic["reasonCode"]) {
-  if (reasonCode === "healthy") return "bg-emerald-100 text-emerald-800";
-  if (reasonCode === "current_stock_full") return "bg-slate-100 text-slate-700";
-  if (reasonCode === "all_products_inactive") return "bg-amber-100 text-amber-900";
-  return "bg-rose-100 text-rose-800";
+function hasKnownStorage(value: unknown) {
+  return value !== null && value !== undefined && Number.isFinite(Number(value));
+}
+
+function defaultRecommendationFinalTake(recommendedTotal: number, storageAvailable: number, storageKnown: boolean) {
+  if (!storageKnown) return recommendedTotal;
+  if (storageAvailable <= 0) return recommendedTotal;
+  return Math.min(recommendedTotal, storageAvailable);
 }
 
 export function RouteCreateForm({
@@ -198,7 +204,6 @@ export function RouteCreateForm({
   products,
   recentProductIds,
   allowAdminOverride,
-  recommendationDebugHref,
   defaultRouteDate,
 }: {
   operators: Operator[];
@@ -210,7 +215,6 @@ export function RouteCreateForm({
   products: ProductPickOption[];
   recentProductIds: string[];
   allowAdminOverride: boolean;
-  recommendationDebugHref?: string;
   defaultRouteDate: string;
 }) {
   const router = useRouter();
@@ -348,6 +352,7 @@ export function RouteCreateForm({
         locationName: machine?.location_name ?? null,
         productId: row.product_id,
         productName: row.product_name,
+        productCategory: product?.category ?? null,
         recommendationKeys: [],
         rows: [],
         slotsCount: 0,
@@ -356,6 +361,7 @@ export function RouteCreateForm({
         recommendedTotal: 0,
         defaultFinalTakeTotal: 0,
         storageAvailable: unitQuantity(product?.availableQty ?? row.available_storage_qty),
+        storageKnown: typeof product?.availableQty === "number" || hasKnownStorage(row.available_storage_qty),
         priority: "low",
       };
 
@@ -365,6 +371,7 @@ export function RouteCreateForm({
       current.targetTotal += recommendationTarget(row);
       current.recommendedTotal += recommendationQuantity(row);
       current.storageAvailable = unitQuantity(product?.availableQty ?? Math.max(current.storageAvailable, unitQuantity(row.available_storage_qty)));
+      current.storageKnown = current.storageKnown || typeof product?.availableQty === "number" || hasKnownStorage(row.available_storage_qty);
       current.priority = highestPriority(current.priority, row.priority);
       groups.set(groupKey, current);
     });
@@ -372,18 +379,21 @@ export function RouteCreateForm({
     return Array.from(groups.values())
       .map((group) => ({
         ...group,
-        defaultFinalTakeTotal: Math.min(group.recommendedTotal, unitQuantity(group.storageAvailable)),
+        defaultFinalTakeTotal: defaultRecommendationFinalTake(group.recommendedTotal, unitQuantity(group.storageAvailable), group.storageKnown),
         slotsCount: new Set(group.rows.map((row) => row.machine_slot_id ?? row.slot_code ?? row.recommendation_key)).size,
         rows: [...group.rows].sort((a, b) => String(a.slot_code ?? "").localeCompare(String(b.slot_code ?? ""))),
       }))
       .sort((a, b) => {
-        const priorityDifference = priorityScore(b.priority) - priorityScore(a.priority);
-        if (priorityDifference) return priorityDifference;
         const locationDifference = locationLabel(a.locationName).localeCompare(locationLabel(b.locationName));
         if (locationDifference) return locationDifference;
         const machineDifference = a.machineName.localeCompare(b.machineName);
         if (machineDifference) return machineDifference;
-        return a.productName.localeCompare(b.productName);
+        const productDifference = comparePickupProductRows(
+          { productName: a.productName, productCategory: a.productCategory },
+          { productName: b.productName, productCategory: b.productCategory },
+        );
+        if (productDifference) return productDifference;
+        return priorityScore(b.priority) - priorityScore(a.priority);
       });
   }, [machinesById, productsById, recommendations]);
 
@@ -413,28 +423,6 @@ export function RouteCreateForm({
       return true;
     });
   }, [deferredRecommendationSearch, recommendationGroups, recommendationMachineFilter, recommendationPriorityFilter, showNoRefillNeeded]);
-  const selectedDiagnosticMachines = useMemo(() => {
-    const selectedMachineIds = new Set<string>();
-    machineIds.forEach((machineId) => {
-      if (machineId) selectedMachineIds.add(machineId);
-    });
-    manualStopItems.forEach((item) => {
-      if (item.machineId) selectedMachineIds.add(item.machineId);
-    });
-    recommendationGroups
-      .filter((group) => group.recommendationKeys.every((key) => recommendationKeys.includes(key)))
-      .forEach((group) => selectedMachineIds.add(group.machineId));
-    if (recommendationMachineFilter) selectedMachineIds.add(recommendationMachineFilter);
-
-    const explicit = Array.from(selectedMachineIds)
-      .map((machineId) => machineDiagnosticsById.get(machineId))
-      .filter((machine): machine is RouteRecommendationMachineDiagnostic => Boolean(machine));
-    if (explicit.length) return explicit;
-
-    return diagnostics.machineDiagnostics
-      .filter((machine) => machine.reasonCode !== "healthy" || machine.latestStockRowsFound > 0 || machine.planogramRowsFound > 0)
-      .slice(0, 6);
-  }, [diagnostics.machineDiagnostics, machineDiagnosticsById, machineIds, manualStopItems, recommendationGroups, recommendationKeys, recommendationMachineFilter]);
   const recommendationEmptyMessage = useMemo(() => {
     if (!recommendationGroups.length) return diagnostics.summaryMessage;
     if (filteredRecommendationGroups.length) return "";
@@ -464,7 +452,9 @@ export function RouteCreateForm({
 
   const clampRecommendationFinalTake = useCallback((group: RecommendationGroup, value: number) => {
     const safeValue = unitQuantity(value);
-    return adminOverride ? safeValue : Math.min(safeValue, unitQuantity(group.storageAvailable));
+    if (adminOverride) return safeValue;
+    if (!group.storageKnown || unitQuantity(group.storageAvailable) <= 0) return safeValue;
+    return Math.min(safeValue, unitQuantity(group.storageAvailable));
   }, [adminOverride]);
 
   const finalTakeForGroup = useCallback(
@@ -689,7 +679,10 @@ export function RouteCreateForm({
         if (recommendationDifference) return recommendationDifference;
         const planogramDifference = Number(b.sourceKinds.has("planogram")) - Number(a.sourceKinds.has("planogram"));
         if (planogramDifference) return planogramDifference;
-        return a.product.name.localeCompare(b.product.name);
+        return comparePickupProductRows(
+          { productName: a.product.name, productCategory: a.product.category },
+          { productName: b.product.name, productCategory: b.product.category },
+        );
       });
   }, [productsById, selectedManualItems, selectedManualPlanogramRows, selectedManualRecommendationGroups]);
 
@@ -935,7 +928,16 @@ export function RouteCreateForm({
     () => [...manualStopItems].sort((a, b) => {
       const machineDifference = String(machinesById.get(a.machineId)?.name ?? "").localeCompare(String(machinesById.get(b.machineId)?.name ?? ""));
       if (machineDifference) return machineDifference;
-      return String(productsById.get(a.productId)?.name ?? "").localeCompare(String(productsById.get(b.productId)?.name ?? ""));
+      return comparePickupProductRows(
+        {
+          productName: String(productsById.get(a.productId)?.name ?? ""),
+          productCategory: productsById.get(a.productId)?.category ?? null,
+        },
+        {
+          productName: String(productsById.get(b.productId)?.name ?? ""),
+          productCategory: productsById.get(b.productId)?.category ?? null,
+        },
+      );
     }),
     [machinesById, manualStopItems, productsById],
   );
@@ -1314,115 +1316,8 @@ export function RouteCreateForm({
         )}
       </FormSection>
 
-      <FormSection title="Recommendation diagnostics">
-        <p className="text-sm text-slate-500">Snacky OS checks the active stock snapshot, latest stock rows, planogram rows, and recommendation output before this page renders. Use this panel to see why a machine is or is not producing refill rows.</p>
-        <div className="space-y-4">
-          <div className={`rounded-xl border p-4 text-sm ${diagnostics.summaryReasonCode === "healthy" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
-            <div className="font-semibold">{diagnostics.summaryReasonLabel}</div>
-            <div className="mt-1">{diagnostics.summaryMessage}</div>
-            <div className="mt-2 text-xs">
-              Active batch: {diagnostics.activeStockBatchFileName ?? "None"}
-              {diagnostics.activeStockBatchImportedAt ? ` - ${new Date(diagnostics.activeStockBatchImportedAt).toLocaleString()}` : ""}
-            </div>
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <div className="rounded-xl border border-slate-200 bg-white p-3">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Latest stock rows</div>
-              <div className="mt-2 text-2xl font-semibold text-slate-900">{diagnostics.latestStockRowsFound}</div>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-3">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Recommendation rows</div>
-              <div className="mt-2 text-2xl font-semibold text-slate-900">{diagnostics.recommendationRowsFound}</div>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-3">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Returned to UI</div>
-              <div className="mt-2 text-2xl font-semibold text-slate-900">{diagnostics.recommendationsReturnedToFrontend}</div>
-              <div className="mt-1 text-xs text-slate-500">{diagnostics.inactiveProductRowsFilteredOut} inactive-product rows filtered out</div>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-3">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Planogram rows</div>
-              <div className="mt-2 text-2xl font-semibold text-slate-900">{diagnostics.planogramRowsFound}</div>
-              <div className="mt-1 text-xs text-slate-500">{diagnostics.unmappedProductRows} unmapped audit rows in the diagnostic batch</div>
-            </div>
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-2">
-            <div className="rounded-xl border border-slate-200 bg-white p-3">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Diagnostic batch stock rows</div>
-              <div className="mt-2 text-2xl font-semibold text-slate-900">{diagnostics.diagnosticBatchStockRows}</div>
-              <div className="mt-1 text-xs text-slate-500">Rows currently saved in vms_stock_snapshots for the latest previewed or active stock batch.</div>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-3">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Diagnostic batch audit rows</div>
-              <div className="mt-2 text-2xl font-semibold text-slate-900">{diagnostics.diagnosticBatchAuditRows}</div>
-              <div className="mt-1 text-xs text-slate-500">Rows currently saved in vms_machine_stock_snapshots for the same batch.</div>
-            </div>
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {selectedDiagnosticMachines.map((machine) => (
-              <article key={machine.machineId} className="rounded-xl border border-slate-200 bg-white p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <div className="font-semibold text-slate-900">{machine.machineName}</div>
-                    <div className="mt-1 text-xs text-slate-500">{machine.machineCode} - {locationLabel(machine.locationName)}</div>
-                  </div>
-                  <span className={`rounded-full px-2 py-1 text-xs font-semibold ${diagnosticBadgeTone(machine.reasonCode)}`}>
-                    {machine.reasonLabel}
-                  </span>
-                </div>
-                <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Machine mapped</div>
-                    <div className="mt-1 font-semibold text-slate-900">{machine.machineMapped ? "Yes" : "No"}</div>
-                  </div>
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Latest stock rows</div>
-                    <div className="mt-1 font-semibold text-slate-900">{machine.latestStockRowsFound}</div>
-                  </div>
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Planogram rows</div>
-                    <div className="mt-1 font-semibold text-slate-900">{machine.planogramRowsFound}</div>
-                  </div>
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Recommendation rows</div>
-                    <div className="mt-1 font-semibold text-slate-900">{machine.recommendationRowsGenerated}</div>
-                  </div>
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Storage shortages</div>
-                    <div className="mt-1 font-semibold text-slate-900">{machine.storageShortages}</div>
-                  </div>
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Unmapped products</div>
-                    <div className="mt-1 font-semibold text-slate-900">{machine.unmappedProducts}</div>
-                  </div>
-                </div>
-                <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-                  <div className="font-medium text-slate-900">Reason</div>
-                  <div className="mt-1">{machine.reasonMessage}</div>
-                </div>
-                <div className="mt-3 text-xs text-slate-500">
-                  Source file: {machine.sourceFileName ?? "Unknown"}
-                </div>
-                <div className="mt-1 text-xs text-slate-500">
-                  Snapshot time: {machine.snapshotTime ? new Date(machine.snapshotTime).toLocaleString() : "-"}
-                </div>
-              </article>
-            ))}
-          </div>
-          {recommendationDebugHref ? (
-            <div>
-              <Link href={recommendationDebugHref} className="btn-secondary">
-                Open route recommendation debug
-              </Link>
-            </div>
-          ) : null}
-        </div>
-      </FormSection>
-
       <FormSection title="Refill recommendation rows">
-        <p className="text-sm text-slate-500">Grouped by machine and product from the latest mapped VMS machine goods stock. Source files are shown per slot so operators/admins can trace why an item is recommended.</p>
+        <p className="text-sm text-slate-500">Grouped by machine and product so you can review what each stop needs and adjust the final take when storage is short.</p>
         {!recommendationGroups.length ? (
           <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
             <div>{recommendationEmptyMessage}</div>
@@ -1550,13 +1445,15 @@ export function RouteCreateForm({
                   const selectable = recommendationGroupSelectable(group);
                   const finalTake = finalTakeForGroup(group);
                   const stockIssue = selected ? stockErrorByProduct.get(group.productId) : undefined;
+                  const storageKnown = Boolean(stockIssue) || group.storageKnown;
                   const storageAvailable = stockIssue?.available_qty ?? unitQuantity(group.storageAvailable);
-                  const finalExceedsStorage = finalTake > storageAvailable;
+                  const finalExceedsStorage = storageKnown && storageAvailable > 0 && finalTake > storageAvailable;
                   const finalIsZero = selected && finalTake === 0;
                   const finalHigherThanRecommended = selected && finalTake > group.recommendedTotal;
                   const finalLowerThanRecommended = selected && finalTake > 0 && finalTake < group.recommendedTotal;
-                  const recommendationShortage = Math.max(0, group.recommendedTotal - storageAvailable);
-                  const noStorageAvailable = group.recommendedTotal > 0 && storageAvailable <= 0;
+                  const recommendationShortage = storageKnown ? Math.max(0, group.recommendedTotal - storageAvailable) : 0;
+                  const noStorageAvailable = storageKnown && group.recommendedTotal > 0 && storageAvailable <= 0;
+                  const storageUnknown = !storageKnown;
 
                   return (
                     <Fragment key={group.groupKey}>
@@ -1601,16 +1498,18 @@ export function RouteCreateForm({
                             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Suggested</div>
                             <div className="mt-1 text-lg font-semibold text-slate-900">{group.recommendedTotal}</div>
                           </div>
-                          <div className={`rounded-xl border p-3 ${storageAvailable <= 0 ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-slate-50"}`}>
+                          <div className={`rounded-xl border p-3 ${storageKnown && storageAvailable <= 0 ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-slate-50"}`}>
                             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Storage</div>
-                            <div className="mt-1 text-lg font-semibold text-slate-900">{storageAvailable}</div>
+                            <div className="mt-1 text-lg font-semibold text-slate-900">{storageUnknown ? "Unknown" : storageAvailable}</div>
                           </div>
                         </div>
 
                         <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
                           <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Slots</div>
                           <div className="mt-1 text-sm text-slate-700">{group.slotsCount} slot{group.slotsCount === 1 ? "" : "s"} in this machine/location group</div>
-                          <div className="mt-1 text-sm text-slate-700">Storage available {storageAvailable} vs recommended {group.recommendedTotal}</div>
+                          <div className="mt-1 text-sm text-slate-700">
+                            {storageUnknown ? `Storage is unknown. Needed quantity stays at ${group.recommendedTotal} until stock is confirmed.` : `Storage available ${storageAvailable} vs recommended ${group.recommendedTotal}`}
+                          </div>
                         </div>
 
                         <div className="mt-4 space-y-3">
@@ -1619,7 +1518,7 @@ export function RouteCreateForm({
                             <input
                               type="number"
                               min={0}
-                              max={adminOverride ? undefined : storageAvailable}
+                              max={adminOverride || !storageKnown || storageAvailable <= 0 ? undefined : storageAvailable}
                               step={1}
                               value={finalTake}
                               onChange={(event) => setRecommendationFinalTake(group, Number(event.target.value) || 0)}
@@ -1631,13 +1530,14 @@ export function RouteCreateForm({
                           <div className="flex flex-wrap gap-2">
                             <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => setRecommendationFinalTake(group, group.recommendedTotal)} disabled={saving || !selected}>Use recommended</button>
                             <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => setRecommendationFinalTake(group, Math.ceil(group.recommendedTotal / 2))} disabled={saving || !selected}>Take half</button>
-                            <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => setRecommendationFinalTake(group, storageAvailable)} disabled={saving || !selected}>Take max available</button>
+                            <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => setRecommendationFinalTake(group, storageAvailable)} disabled={saving || !selected || !storageKnown}>Take max available</button>
                             <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => setRecommendationFinalTake(group, 0)} disabled={saving || !selected}>Clear</button>
                           </div>
                           {finalIsZero ? <div className="text-xs font-medium text-amber-700">Final take is 0.</div> : null}
                           {finalHigherThanRecommended ? <div className="text-xs font-medium text-amber-700">Final take is higher than recommended.</div> : null}
                           {finalLowerThanRecommended ? <div className="text-xs text-slate-500">Taking less than recommended.</div> : null}
-                          {noStorageAvailable ? <div className="text-xs font-medium text-amber-700">No storage stock is available yet. The recommendation stays visible so you can replenish stock or override it.</div> : null}
+                          {storageUnknown ? <div className="text-xs font-medium text-amber-700">Storage is unknown, so Snacky OS is keeping the full needed quantity visible.</div> : null}
+                          {noStorageAvailable ? <div className="text-xs font-medium text-amber-700">Storage is currently 0, but this machine still needs {group.recommendedTotal}. Replenish storage or override it after verifying stock.</div> : null}
                           {!noStorageAvailable && recommendationShortage > 0 ? <div className="text-xs text-amber-700">Storage has {storageAvailable}; recommendation needs {group.recommendedTotal}. Short by {recommendationShortage}.</div> : null}
                           {stockIssue ? <div className="text-xs font-medium text-rose-700">Selected {stockIssue.selected_qty}, available {stockIssue.available_qty}, shortage {stockIssue.shortage_qty}.</div> : null}
                         </div>
@@ -1663,8 +1563,6 @@ export function RouteCreateForm({
                                   </div>
                                   <div className="text-xs font-medium text-slate-600">{row.priority ?? "-"}</div>
                                 </div>
-                                <div className="mt-2 text-xs text-slate-500">{row.source_file_name ?? "Unknown VMS file"}</div>
-                                <div className="mt-1 text-xs text-slate-500">{row.source_uploaded_at ? new Date(row.source_uploaded_at).toLocaleString() : "-"}</div>
                               </div>
                             ))}
                           </div>
@@ -1709,13 +1607,15 @@ export function RouteCreateForm({
                       const selectable = recommendationGroupSelectable(group);
                       const finalTake = finalTakeForGroup(group);
                       const stockIssue = selected ? stockErrorByProduct.get(group.productId) : undefined;
+                      const storageKnown = Boolean(stockIssue) || group.storageKnown;
                       const storageAvailable = stockIssue?.available_qty ?? unitQuantity(group.storageAvailable);
-                      const finalExceedsStorage = finalTake > storageAvailable;
+                      const finalExceedsStorage = storageKnown && storageAvailable > 0 && finalTake > storageAvailable;
                       const finalIsZero = selected && finalTake === 0;
                       const finalHigherThanRecommended = selected && finalTake > group.recommendedTotal;
                       const finalLowerThanRecommended = selected && finalTake > 0 && finalTake < group.recommendedTotal;
-                      const recommendationShortage = Math.max(0, group.recommendedTotal - storageAvailable);
-                      const noStorageAvailable = group.recommendedTotal > 0 && storageAvailable <= 0;
+                      const recommendationShortage = storageKnown ? Math.max(0, group.recommendedTotal - storageAvailable) : 0;
+                      const noStorageAvailable = storageKnown && group.recommendedTotal > 0 && storageAvailable <= 0;
+                      const storageUnknown = !storageKnown;
                       const showStockIssue = Boolean(stockIssue);
 
                       return (
@@ -1746,7 +1646,7 @@ export function RouteCreateForm({
                             <td className="px-3 py-2">
                               <div className="font-medium text-slate-900">{group.productName}</div>
                               <div className="mt-1 text-xs text-slate-500">{recommendationReasonSummary(group)}</div>
-                              <div className="mt-1 text-xs text-slate-600">Storage {storageAvailable} / Recommended {group.recommendedTotal}</div>
+                              <div className="mt-1 text-xs text-slate-600">{storageUnknown ? `Storage unknown / Needed ${group.recommendedTotal}` : `Storage ${storageAvailable} / Recommended ${group.recommendedTotal}`}</div>
                             </td>
                             <td className="px-3 py-2">{group.slotsCount}</td>
                             <td className="px-3 py-2">{group.currentTotal}</td>
@@ -1757,7 +1657,7 @@ export function RouteCreateForm({
                                 <input
                                   type="number"
                                   min={0}
-                                  max={adminOverride ? undefined : storageAvailable}
+                                  max={adminOverride || !storageKnown || storageAvailable <= 0 ? undefined : storageAvailable}
                                   step={1}
                                   value={finalTake}
                                   onChange={(event) => setRecommendationFinalTake(group, Number(event.target.value) || 0)}
@@ -1767,17 +1667,18 @@ export function RouteCreateForm({
                                 />
                                 <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, group.recommendedTotal)} disabled={saving || !selected}>Use recommended</button>
                                 <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, Math.ceil(group.recommendedTotal / 2))} disabled={saving || !selected}>Take half</button>
-                                <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, storageAvailable)} disabled={saving || !selected}>Take max available</button>
+                                <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, storageAvailable)} disabled={saving || !selected || !storageKnown}>Take max available</button>
                                 <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, 0)} disabled={saving || !selected}>Clear</button>
                               </div>
                               {finalIsZero ? <div className="mt-1 text-xs font-medium text-amber-700">Final take is 0.</div> : null}
                               {finalHigherThanRecommended ? <div className="mt-1 text-xs font-medium text-amber-700">Final take is higher than recommended.</div> : null}
                               {finalLowerThanRecommended ? <div className="mt-1 text-xs text-slate-500">Taking less than recommended.</div> : null}
-                              {noStorageAvailable ? <div className="mt-1 text-xs font-medium text-amber-700">No storage stock is available yet. The recommendation stays visible so you can replenish stock or override it.</div> : null}
+                              {storageUnknown ? <div className="mt-1 text-xs font-medium text-amber-700">Storage is unknown, so Snacky OS is keeping the full needed quantity visible.</div> : null}
+                              {noStorageAvailable ? <div className="mt-1 text-xs font-medium text-amber-700">Storage is currently 0, but this machine still needs {group.recommendedTotal}. Replenish storage or override it after verifying stock.</div> : null}
                               {!noStorageAvailable && recommendationShortage > 0 ? <div className="mt-1 text-xs text-amber-700">Storage has {storageAvailable}; recommendation needs {group.recommendedTotal}. Short by {recommendationShortage}.</div> : null}
                               {stockIssue ? <div className="mt-1 text-xs font-medium text-rose-700">Selected {stockIssue.selected_qty}, available {stockIssue.available_qty}, shortage {stockIssue.shortage_qty}.</div> : null}
                             </td>
-                            <td className={`px-3 py-2 ${(finalExceedsStorage || showStockIssue) && !adminOverride ? "font-semibold text-rose-700" : ""}`}>{storageAvailable}</td>
+                            <td className={`px-3 py-2 ${(finalExceedsStorage || showStockIssue) && !adminOverride ? "font-semibold text-rose-700" : ""}`}>{storageUnknown ? "Unknown" : storageAvailable}</td>
                             <td className="px-3 py-2">{group.priority}</td>
                             <td className="px-3 py-2">
                               <button
@@ -1801,7 +1702,6 @@ export function RouteCreateForm({
                                         <th className="px-3 py-2">Target</th>
                                         <th className="px-3 py-2">Recommended take</th>
                                         <th className="px-3 py-2">Priority</th>
-                                        <th className="px-3 py-2">Source file</th>
                                       </tr>
                                     </thead>
                                     <tbody>
@@ -1812,10 +1712,6 @@ export function RouteCreateForm({
                                           <td className="px-3 py-2">{formatRecommendationQty(row.capacity ?? row.par_qty)}</td>
                                           <td className="px-3 py-2 font-semibold">{recommendationQuantity(row)}</td>
                                           <td className="px-3 py-2">{row.priority ?? "-"}</td>
-                                          <td className="px-3 py-2">
-                                            <div>{row.source_file_name ?? "Unknown VMS file"}</div>
-                                            <div className="text-slate-500">{row.source_uploaded_at ? new Date(row.source_uploaded_at).toLocaleString() : "-"}</div>
-                                          </td>
                                         </tr>
                                       ))}
                                     </tbody>

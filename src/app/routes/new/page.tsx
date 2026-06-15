@@ -1,5 +1,4 @@
 import { ErrorState, FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
-import { VmsDataSourceCard } from "@/components/VmsDataSourceCard";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
 import { ROUTE_RESERVATION_STATUSES, isRouteReservationStatus } from "@/lib/route-workflow";
@@ -667,14 +666,6 @@ export default async function NewRoutePage() {
     <>
       <FormPageLayout>
         <PageHeader title="Create route" subtitle="Build a route with stops, refill recommendations, or a fast manual pick list from storage." />
-        <VmsDataSourceCard
-          batches={(batchResult.data ?? []) as VmsDashboardBatch[]}
-          error={batchResult.error}
-          title="Recommendation Source"
-          subtitle="Route suggestions come from the latest active stock snapshot and planogram-backed refill recommendations. Storage shortages warn the planner but do not hide items."
-          showSales={false}
-          showStock
-        />
         <RouteCreateForm
           operators={operators ?? []}
           machines={machineCatalog}
@@ -685,7 +676,6 @@ export default async function NewRoutePage() {
           products={productCatalog}
           recentProductIds={recentProductIds}
           allowAdminOverride={isOwnerAdminRole(profile)}
-          recommendationDebugHref={isOwnerAdminRole(profile) ? "/admin/route-recommendation-debug" : undefined}
           defaultRouteDate={today}
         />
       </FormPageLayout>

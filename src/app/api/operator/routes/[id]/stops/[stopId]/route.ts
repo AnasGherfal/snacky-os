@@ -2,6 +2,7 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { NextResponse } from "next/server";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute, getEffectivePermissions } from "@/lib/authz";
+import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 import { completeStop } from "@/lib/operator-actions";
 import { ROUTE_STOP_PENDING_STATUS } from "@/lib/route-workflow";
 
@@ -158,6 +159,7 @@ export async function GET(
   const accessToken = await getAuthAccessToken();
   const supabase = getSupabaseServerClient(accessToken);
   const profile = await getCurrentProfile();
+  const routeAccessProfile = await buildOperatorRouteAccessContext(supabase, profile);
 
   if (!supabase) {
     return NextResponse.json({ error: "Database not available" }, { status: 500 });
@@ -216,7 +218,7 @@ export async function GET(
       );
     }
 
-    if (!canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, route.operator_id)) {
+    if (!canAccessOperatorRoute(routeAccessProfile, route.operator_id)) {
       return NextResponse.json(
         {
           error: "This route is not assigned to you.",

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentProfile } from "@/lib/auth";
 import { AppRole, canAccessOperatorRoute, canViewVmsImports, hasAnyRole, isOperatorRole, isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
+import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 import {
   ISSUE_PHOTO_BUCKET,
@@ -27,6 +28,7 @@ async function canReadRoutePhoto(bucket: string, objectPath: string) {
 
   const supabase = getSupabaseServerClient();
   if (!supabase) return false;
+  const routeAccessProfile = await buildOperatorRouteAccessContext(supabase, profile);
 
   const { data: route } = await supabase
     .from("routes")
@@ -34,17 +36,7 @@ async function canReadRoutePhoto(bucket: string, objectPath: string) {
     .eq("id", routeId)
     .maybeSingle();
 
-  return canAccessOperatorRoute(
-    {
-      id: profile.id,
-      role: profile.role,
-      roles: profile.roles,
-      canAddProducts: profile.can_add_products,
-      teamMemberId: profile.team_member_id,
-      activeStatus: profile.active_status,
-    },
-    route?.operator_id,
-  );
+  return canAccessOperatorRoute(routeAccessProfile, route?.operator_id);
 }
 
 async function canReadPrivateObject(bucket: string, objectPath: string) {

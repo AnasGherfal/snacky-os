@@ -4,8 +4,10 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge, SectionCard } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute } from "@/lib/authz";
+import { buildOperatorRouteAccessContext, loadAccessibleOperatorIds, preferredOperatorViewerId } from "@/lib/operator-route-access";
 import { loadOperatorRoutePayPreviewMap, type OperatorRoutePreviewRow, type OperatorRoutePreviewStopRow } from "@/lib/payroll-server";
 import { moneyLabel } from "@/lib/payroll";
+import { sortPickupProductRows } from "@/lib/route-pickup-checklist";
 import { isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isRouteStopActiveStatus, isRouteStopDoneStatus, isRouteStopPendingStatus, isTerminalRouteStatus, nextOperatorRouteHref, routeDisplayStatus, ROUTE_STOP_COMPLETED_STATUS } from "@/lib/route-workflow";
 import { skipStop } from "@/lib/operator-actions";
 
@@ -26,7 +28,7 @@ type OperatorRouteStockLineRow = {
   planned_qty?: number | string | null;
   picked_qty?: number | string | null;
   returned_qty?: number | string | null;
-  product?: { name?: string | null } | null;
+  product?: { name?: string | null; category?: string | null } | null;
 };
 
 type OperatorPayrollPeriodSummary = {
@@ -35,11 +37,21 @@ type OperatorPayrollPeriodSummary = {
   status?: string | null;
 };
 
-export default async function OperatorRouteDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function OperatorRouteDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ success?: string; error?: string }>;
+}) {
   const { id: routeId } = await params;
+  const { success, error } = await searchParams;
   const supabase = await getAuthenticatedSupabaseServerClient();
   const profile = await getCurrentProfile();
   if (!supabase) notFound();
+  const routeAccessProfile = await buildOperatorRouteAccessContext(supabase, profile);
+  const accessibleOperatorIds = await loadAccessibleOperatorIds(supabase, profile);
+  const currentViewerOperatorId = preferredOperatorViewerId(profile, accessibleOperatorIds);
 
   const { data: route, error: routeError } = await supabase
     .from("routes")
@@ -51,7 +63,7 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
   if (!route) notFound();
 
   const routeRow = route as OperatorRouteDetailRow;
-  const canAccess = canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, routeRow.operator_id);
+  const canAccess = canAccessOperatorRoute(routeAccessProfile, routeRow.operator_id);
 
   const [{ data: operator }, { data: stops, error: stopsError }, { data: routeStock }] = await Promise.all([
     routeRow.operator_id
@@ -64,7 +76,7 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
       .order("stop_order", { ascending: true }),
     supabase
       .from("route_stock_lines")
-      .select("id, product_id, planned_qty, picked_qty, returned_qty, product:products(name)")
+      .select("id, product_id, planned_qty, picked_qty, returned_qty, product:products(name, category)")
       .eq("route_id", routeId),
   ]);
   if (stopsError) console.error("[operator:route] Failed to load stops", { routeId, error: stopsError });
@@ -75,7 +87,7 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
         <ErrorState
           title="Route unavailable"
           body={process.env.NODE_ENV === "development"
-            ? `This route is assigned to ${routeRow.operator_id}. You are matched to team member ${profile?.team_member_id ?? "none"} for auth user ${profile?.id ?? "none"}.`
+            ? `This route is assigned to ${routeRow.operator_id}. Linked operator ids for auth user ${profile?.id ?? "none"} are ${accessibleOperatorIds.join(", ") || "none"}.`
             : "This route is not assigned to you."}
           action={<SecondaryButton href="/operator/routes">Back to routes</SecondaryButton>}
         />
@@ -96,16 +108,23 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
   const doneStops = routeStops.filter((s) => isRouteStopDoneStatus(s.status)).length;
   const totalStops = routeStops.length;
   const pickItems = (routeStock ?? []) as OperatorRouteStockLineRow[];
-  const currentPayrollPeriodResult = profile?.team_member_id
-    ? await supabase.from("payroll_periods").select("id, net_total_lyd, status").eq("operator_id", profile.team_member_id).eq("period_start", currentMonthStart).maybeSingle()
+  const currentPayrollPeriodResult = currentViewerOperatorId
+    ? await supabase.from("payroll_periods").select("id, net_total_lyd, status").eq("operator_id", currentViewerOperatorId).eq("period_start", currentMonthStart).maybeSingle()
     : { data: null };
   const { previewByRouteId } = await loadOperatorRoutePayPreviewMap({
     supabase,
     routes: [{ ...routeRow, route_stops: routeStops }],
-    viewerTeamMemberId: profile?.team_member_id,
+    viewerTeamMemberId: currentViewerOperatorId,
   });
   const payPreview = previewByRouteId.get(routeId);
   const hasPickup = pickItems.some((item) => Number(item.picked_qty ?? 0) > 0);
+  const sortedPickItems = sortPickupProductRows(
+    pickItems.map((item) => ({
+      ...item,
+      productName: item.product?.name ?? "Unknown product",
+      productCategory: item.product?.category ?? null,
+    })),
+  );
   const continueHref = nextOperatorRouteHref({ routeId, status: routeRow.status, hasPickup, stops: routeStops, start: true });
   const primaryAction = continueHref
     ? {
@@ -124,6 +143,8 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
           subtitle={`${operator?.full_name ?? "Available to claim"} - ${totalStops} machine stops`}
           action={<SecondaryButton href="/operator/routes">Back to routes</SecondaryButton>}
         />
+        {success ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900">{success}</div> : null}
+        {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{error}</div> : null}
 
         {/* Route Status Cards */}
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -191,7 +212,7 @@ export default async function OperatorRouteDetailPage({ params }: { params: Prom
             <EmptyState title="No pick list yet" body="This route has no products assigned to pick from storage." />
           ) : (
             <div className="mb-4 space-y-2">
-              {pickItems.map((item) => (
+              {sortedPickItems.map((item) => (
                 <div key={item.id} className="flex flex-col gap-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
                   <span className="min-w-0 break-words font-medium text-slate-900">{item.product?.name ?? "Unknown product"}</span>
                   <span className="shrink-0 text-slate-600">{item.picked_qty || item.planned_qty} / {item.planned_qty} picked</span>

@@ -115,7 +115,11 @@ export default function LeftoversPage() {
       if (!completionResult.success) throw new Error(completionResult.error);
 
       localDraft.clearDraft();
-      router.push("/operator/routes");
+      const completionWarning = "warning" in completionResult ? completionResult.warning : null;
+      const successMessage = completionWarning
+        ? `Route completed. ${completionWarning}`
+        : "Route completed successfully.";
+      router.push(`${routeHref}?success=${encodeURIComponent(successMessage)}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to complete route");
       setSubmitting(false);
@@ -221,7 +225,7 @@ export default function LeftoversPage() {
         ) : (
           <>
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-              <strong>Instructions:</strong> Enter the quantity of each item you're returning to storage. If you already returned everything, set the leftovers to 0 and Snacky OS will only block completion if it still calculates bag stock.
+              <strong>Instructions:</strong> Enter the quantity of each item you are returning to storage. If you already returned everything, set the leftovers to 0 and Snacky OS will still let you complete the route while showing any remaining bag-stock warning for review.
               <div className="mt-3 flex flex-wrap gap-2">
                 <button type="button" onClick={applyCalculatedRemaining} className="btn-secondary">
                   Use calculated remaining
@@ -281,7 +285,7 @@ export default function LeftoversPage() {
             </div>
 
             <div className="rounded-lg bg-amber-50 border border-amber-200 p-4 text-sm text-amber-800">
-              <strong>Important:</strong> Make sure you've returned all leftover stock to storage and confirmed it with your supervisor before completing your route.
+              <strong>Important:</strong> Make sure you have returned all leftover stock to storage and confirmed it with your supervisor before completing your route.
             </div>
           </>
         )}

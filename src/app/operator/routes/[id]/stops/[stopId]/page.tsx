@@ -786,7 +786,10 @@ export default function MachineStopPage() {
 
       localDraft.clearDraft();
       clientSubmissionIdRef.current = newClientId();
-      router.push(routeHref);
+      const stopSuccessMessage = stopData.stopStatus === ROUTE_STOP_COMPLETED_STATUS
+        ? "Stop changes saved successfully."
+        : "Stop completed successfully.";
+      router.push(`${routeHref}?success=${encodeURIComponent(stopSuccessMessage)}`);
     } catch (err) {
       console.warn("[operator:stop-mobile] Stop completion failed", {
         route_id: routeId,

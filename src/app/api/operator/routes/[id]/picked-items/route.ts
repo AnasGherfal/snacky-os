@@ -2,6 +2,7 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { NextResponse } from "next/server";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute } from "@/lib/authz";
+import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 
 function errorMessage(error: unknown) {
   if (error instanceof Error && error.message) return error.message;
@@ -19,12 +20,6 @@ function movementQuantity(value: unknown) {
   return Math.max(0, Math.floor(parsed));
 }
 
-function machineFillDelta(movement: any) {
-  const qty = movementQuantity(movement?.quantity);
-  if (movement?.reason === "manual_correction" && movement?.from_entity_type === "machine" && movement?.to_entity_type === "operator_bag") return -qty;
-  return qty;
-}
-
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -33,6 +28,7 @@ export async function GET(
   const accessToken = await getAuthAccessToken();
   const supabase = getSupabaseServerClient(accessToken);
   const profile = await getCurrentProfile();
+  const routeAccessProfile = await buildOperatorRouteAccessContext(supabase, profile);
 
   if (!supabase) {
     return NextResponse.json({ error: "Database not available" }, { status: 500 });
@@ -41,7 +37,7 @@ export async function GET(
   try {
     const { data: route, error: routeError } = await supabase.from("routes").select("id, operator_id").eq("id", routeId).maybeSingle();
     if (routeError) throw routeError;
-    if (!route || !canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, route.operator_id)) {
+    if (!route || !canAccessOperatorRoute(routeAccessProfile, route.operator_id)) {
       return NextResponse.json({ error: "Route not available" }, { status: 403 });
     }
 

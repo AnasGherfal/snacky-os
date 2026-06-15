@@ -2,6 +2,7 @@ import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-
 import { NextResponse } from "next/server";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute } from "@/lib/authz";
+import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 import { isTerminalRouteStatus, ROUTE_STOP_PENDING_STATUS } from "@/lib/route-workflow";
 
 function isMissingTable(error: any, tableName: string) {
@@ -113,6 +114,7 @@ export async function GET(
   const accessToken = await getAuthAccessToken();
   const supabase = getSupabaseServerClient(accessToken);
   const profile = await getCurrentProfile();
+  const routeAccessProfile = await buildOperatorRouteAccessContext(supabase, profile);
 
   if (!supabase) {
     return NextResponse.json({ error: "Database not available" }, { status: 500 });
@@ -128,7 +130,7 @@ export async function GET(
     if (!route) {
       return NextResponse.json({ error: "Route not found" }, { status: 404 });
     }
-    if (!canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, route.operator_id)) {
+    if (!canAccessOperatorRoute(routeAccessProfile, route.operator_id)) {
       return NextResponse.json({ error: "This route is not assigned to you" }, { status: 403 });
     }
     const readClient = getSupabaseAdminClient() ?? supabase;
@@ -163,7 +165,7 @@ export async function GET(
         checked_at,
         checked_by,
         source,
-        product:products(id, name, sku)`
+        product:products(id, name, sku, category)`
       )
       .eq("route_id", routeId);
 
@@ -178,7 +180,7 @@ export async function GET(
           product_id,
           planned_quantity,
           source,
-          product:products(id, name, sku)`
+          product:products(id, name, sku, category)`
         )
         .eq("route_id", routeId);
       stopItems = fallback.data;
@@ -385,6 +387,7 @@ export async function GET(
         product_id: productId,
         product_name: (product as any)?.name || "Unknown Product",
         sku: (product as any)?.sku ?? null,
+        category: (product as any)?.category ?? null,
         planned_qty: plannedQty,
         picked_qty: savedPick ? savedPick.quantity : null,
         is_checked: Boolean(line.is_checked ?? savedPick?.isChecked ?? false),
@@ -400,6 +403,7 @@ export async function GET(
         product_id: productId,
         product_name: (product as any)?.name || "Unknown Product",
         sku: (product as any)?.sku ?? null,
+        category: (product as any)?.category ?? null,
         planned_qty: 0,
         picked_qty: 0,
         has_picked_qty: false,
@@ -550,6 +554,7 @@ export async function PATCH(
   const accessToken = await getAuthAccessToken();
   const supabase = getSupabaseServerClient(accessToken);
   const profile = await getCurrentProfile();
+  const routeAccessProfile = await buildOperatorRouteAccessContext(supabase, profile);
   let checklistSaveContext: Record<string, unknown> = {
     table_name: "route_stop_items",
     row_id: null,
@@ -589,7 +594,7 @@ export async function PATCH(
       .maybeSingle();
     if (routeError) throw routeError;
     if (!route) return NextResponse.json({ error: "Route not found" }, { status: 404 });
-    if (!canAccessOperatorRoute(profile ? { id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null, route.operator_id)) {
+    if (!canAccessOperatorRoute(routeAccessProfile, route.operator_id)) {
       return NextResponse.json({ error: "This route is not assigned to you" }, { status: 403 });
     }
     if (isTerminalRouteStatus(route.status)) {

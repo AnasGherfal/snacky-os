@@ -19,6 +19,7 @@ interface PickStopItem {
   machineId: string | null;
   productId: string;
   productName: string;
+  productCategory: string | null;
   sku: string | null;
   requestedQty: number;
   availableStorageQty: number;
@@ -62,6 +63,7 @@ interface ExtraPickItem {
 interface RouteTotal {
   productId: string;
   productName: string;
+  productCategory?: string | null;
   sku: string | null;
   plannedQty: number;
   confirmedQty: number;
@@ -80,6 +82,7 @@ type PickListApiStopItem = {
   machine_id?: unknown;
   product_id?: unknown;
   product_name?: unknown;
+  category?: unknown;
   sku?: unknown;
   planned_qty?: unknown;
   available_storage_qty?: unknown;
@@ -280,6 +283,7 @@ export default function PickListPage() {
       const current = totals.get(item.productId) ?? {
         productId: item.productId,
         productName: item.productName,
+        productCategory: item.productCategory,
         sku: item.sku,
         plannedQty: 0,
         confirmedQty: 0,
@@ -296,6 +300,7 @@ export default function PickListPage() {
       const current = totals.get(item.productId) ?? {
         productId: item.productId,
         productName: product?.name ?? "Unknown product",
+        productCategory: product?.category ?? null,
         sku: product?.sku ?? null,
         plannedQty: 0,
         confirmedQty: 0,
@@ -388,19 +393,20 @@ export default function PickListPage() {
         stopOrder: Number(group.stop_order ?? 0),
         stopStatus: optionalText(group.stop_status) ?? ROUTE_STOP_PENDING_STATUS,
         items: (Array.isArray(group.items) ? (group.items as PickListApiStopItem[]) : []).map((item) => {
-          const routeStopItemId = String(item.route_stop_item_id ?? "");
-          const requestedQty = Number(item.planned_qty ?? 0);
-          const availableStorageQty = Number(item.available_storage_qty ?? 0);
-          const hasSavedPickQty = item.picked_qty !== null && item.picked_qty !== undefined;
-          return {
+        const routeStopItemId = String(item.route_stop_item_id ?? "");
+        const requestedQty = Number(item.planned_qty ?? 0);
+        const availableStorageQty = Number(item.available_storage_qty ?? 0);
+        const hasSavedPickQty = item.picked_qty !== null && item.picked_qty !== undefined;
+        return {
             routeStopItemId,
             routeStopId: item.route_stop_id ? String(item.route_stop_id) : group.route_stop_id ? String(group.route_stop_id) : null,
-            machineId: item.machine_id ? String(item.machine_id) : group.machine_id ? String(group.machine_id) : null,
-            productId: String(item.product_id ?? ""),
-            productName: textOrFallback(item.product_name, "Unknown product"),
-            sku: optionalText(item.sku),
-            requestedQty,
-            availableStorageQty,
+          machineId: item.machine_id ? String(item.machine_id) : group.machine_id ? String(group.machine_id) : null,
+          productId: String(item.product_id ?? ""),
+          productName: textOrFallback(item.product_name, "Unknown product"),
+          productCategory: optionalText(item.category),
+          sku: optionalText(item.sku),
+          requestedQty,
+          availableStorageQty,
             confirmedQty: hasSavedPickQty ? Number(item.picked_qty ?? 0) : Math.min(requestedQty, availableStorageQty),
             reason: optionalText(item.reason) ?? "Product not available in storage",
             notes: optionalText(item.notes) ?? "",
@@ -663,7 +669,10 @@ export default function PickListPage() {
         throw new Error(result.error || "Could not save added product");
       }
       localDraft.clearDraft();
-      router.push(routeHref);
+      const successMessage = selectedStopIds.length === 1
+        ? "Pickup batch saved for 1 stop."
+        : `Pickup batch saved for ${selectedStopIds.length} stops.`;
+      router.push(`${routeHref}?success=${encodeURIComponent(successMessage)}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to confirm pick list");
       setSubmitting(false);

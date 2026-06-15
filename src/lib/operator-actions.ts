@@ -8,6 +8,7 @@ import { actionFailure, actionSuccess, type ActionResult } from "@/lib/action-re
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute, canExecuteRoutes, getEffectivePermissions } from "@/lib/authz";
+import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 import {
   ROUTE_COMPLETED_STATUS,
   ROUTE_IN_PROGRESS_STATUS,
@@ -144,17 +145,6 @@ function isMissingOptionalPickupChecklistColumn(error: unknown) {
   ) && ["is_checked", "checked_at", "checked_by"].some((column) => text.includes(column));
 }
 
-
-function profileContext(profile: NonNullable<Awaited<ReturnType<typeof getCurrentProfile>>>) {
-  return {
-    id: profile.id,
-    role: profile.role,
-    roles: profile.roles,
-    canAddProducts: profile.can_add_products,
-    teamMemberId: profile.team_member_id,
-    activeStatus: profile.active_status,
-  };
-}
 
 function revalidateRouteWorkflow(routeId: string) {
   revalidatePath("/operator");
@@ -296,6 +286,7 @@ export async function uploadRefillProofPhoto(formData: FormData) {
   if (!supabase) throw new Error("No Supabase client");
 
   const profile = await getCurrentProfile();
+  const routeAccessProfile = await buildOperatorRouteAccessContext(supabase, profile);
   const { data: route, error: routeError } = await supabase
     .from("routes")
     .select("id, operator_id")
@@ -304,7 +295,7 @@ export async function uploadRefillProofPhoto(formData: FormData) {
 
   if (routeError) throwActionError(routeError, "Could not load this route for the refill photo.");
   if (!route) throw new Error("Route not found");
-  if (!canAccessOperatorRoute(profile ? profileContext(profile) : null, route.operator_id)) {
+  if (!canAccessOperatorRoute(routeAccessProfile, route.operator_id)) {
     throw new Error("You are not authorized to upload a photo for this route.");
   }
 
@@ -367,6 +358,7 @@ export async function startRoute(routeId: string) {
   const profile = await getCurrentProfile();
   if (!profile || !canExecuteRoutes(profile)) throw new Error("You are not authorized to start routes.");
   if (!profile.team_member_id) throw new Error("Your account is not linked to a team member, so it cannot claim a route.");
+  const routeAccessProfile = await buildOperatorRouteAccessContext(supabase, profile);
   const { data: route, error: routeError } = await supabase
     .from("routes")
     .select("id, route_date, operator_id, status, started_at")
@@ -375,7 +367,7 @@ export async function startRoute(routeId: string) {
 
   if (routeError) throwActionError(routeError, "Could not load this route.");
   if (!route) throw new Error("Route not found");
-  if (!canAccessOperatorRoute(profileContext(profile), route.operator_id)) {
+  if (!canAccessOperatorRoute(routeAccessProfile, route.operator_id)) {
     throw new Error("You are not authorized to start this route");
   }
   if (!isAvailableRouteStatus(route.status) && !isActiveRouteStatus(route.status)) {
@@ -452,6 +444,7 @@ export async function confirmPickList(
   try {
     const profile = await getCurrentProfile();
     logProfile = profile;
+    const routeAccessProfile = await buildOperatorRouteAccessContext(supabase, profile);
     const { data: route, error: routeError } = await supabase
       .from("routes")
       .select("id, operator_id, status")
@@ -465,7 +458,7 @@ export async function confirmPickList(
     if (!profile) {
       throw new Error("You must be signed in to pick stock for this route");
     }
-    if (!canAccessOperatorRoute(profileContext(profile), route.operator_id)) {
+    if (!canAccessOperatorRoute(routeAccessProfile, route.operator_id)) {
       throw new Error("You are not authorized to pick stock for this route");
     }
     if (isTerminalRouteStatus(route.status)) {
@@ -1574,10 +1567,11 @@ async function requireOperatorRouteAccess(routeId: string) {
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) throw new Error("No Supabase client");
   const profile = await getCurrentProfile();
+  const routeAccessProfile = await buildOperatorRouteAccessContext(supabase, profile);
   const { data: route, error: routeError } = await supabase.from("routes").select("id, operator_id, status").eq("id", routeId).maybeSingle();
   if (routeError) throwActionError(routeError, "Could not load this route.");
   if (!route) throw new Error("Route not found");
-  if (!canAccessOperatorRoute(profile ? profileContext(profile) : null, route.operator_id)) {
+  if (!canAccessOperatorRoute(routeAccessProfile, route.operator_id)) {
     throw new Error("You are not authorized to update this route.");
   }
   if (isTerminalRouteStatus(route.status)) throw new Error("Completed or cancelled routes cannot be edited.");
@@ -1940,6 +1934,7 @@ export async function completeStop({
   try {
     const profile = await getCurrentProfile();
     logProfile = profile;
+    const routeAccessProfile = await buildOperatorRouteAccessContext(supabase, profile);
     const completedAt = new Date().toISOString();
     const hasNewCompletionPhoto = Boolean(
       completionPhotoUrl?.trim() ||
@@ -1966,7 +1961,7 @@ export async function completeStop({
     if (routeError) throwActionError(routeError, "Could not load this route.");
     if (!route) throw new Error("Route not found");
     logRoute = route;
-    if (!canAccessOperatorRoute(profile ? profileContext(profile) : null, route.operator_id)) {
+    if (!canAccessOperatorRoute(routeAccessProfile, route.operator_id)) {
       throw new Error("You are not authorized to complete this stop");
     }
     if (isTerminalRouteStatus(route.status)) {
@@ -2519,6 +2514,7 @@ export async function recordLeftovers({
 
   try {
     const profile = await getCurrentProfile();
+    const routeAccessProfile = await buildOperatorRouteAccessContext(supabase, profile);
     // Get route to find operator
     const { data: route, error: routeError } = await supabase
       .from("routes")
@@ -2529,7 +2525,7 @@ export async function recordLeftovers({
     if (routeError) throwActionError(routeError, "Could not load this route.");
     if (!route) throw new Error("Route not found");
     if (isCompletedRouteStatus(route.status)) return actionSuccess({ routeId, alreadyCompleted: true });
-    if (!canAccessOperatorRoute(profile ? profileContext(profile) : null, route.operator_id)) {
+    if (!canAccessOperatorRoute(routeAccessProfile, route.operator_id)) {
       throw new Error("You are not authorized to return leftovers for this route");
     }
     // Get storage location
@@ -2719,6 +2715,7 @@ export async function completeRoute(routeId: string) {
   try {
     const profile = await getCurrentProfile();
     logProfile = profile;
+    const routeAccessProfile = await buildOperatorRouteAccessContext(supabase, profile);
     const { data: route, error: routeError } = await supabase
       .from("routes")
       .select("id, operator_id, status, completed_at")
@@ -2727,7 +2724,7 @@ export async function completeRoute(routeId: string) {
     if (routeError) throwActionError(routeError, "Could not load this route.");
     if (!route) throw new Error("Route not found");
     logRoute = route;
-    if (!canAccessOperatorRoute(profile ? profileContext(profile) : null, route.operator_id)) {
+    if (!canAccessOperatorRoute(routeAccessProfile, route.operator_id)) {
       throw new Error("You are not authorized to complete this route");
     }
     if (isCompletedRouteStatus(route.status)) {
@@ -2789,14 +2786,22 @@ export async function completeRoute(routeId: string) {
       }
     }
 
+    let completionWarning: string | null = null;
     if (remainingBagStock.length) {
       const productIds = remainingBagStock.map((item) => item.productId);
       const { data: products } = productIds.length
         ? await supabase.from("products").select("id, name").in("id", productIds)
         : { data: [] };
       const productById = new Map((products ?? []).map((product: any) => [String(product.id), product.name ?? "Unknown product"]));
-      const lines = remainingBagStock.map((item) => `- ${productById.get(item.productId) ?? "Unknown product"}: ${item.quantity}`).join("\n");
-      throw new Error(`Calculated remaining operator bag inventory detected:\n${lines}`);
+      completionWarning = `Calculated remaining operator bag inventory: ${remainingBagStock.map((item) => `${productById.get(item.productId) ?? "Unknown product"} ${item.quantity}`).join(", ")}. Review leftovers and stock reconciliation.`;
+      console.warn("[operator:complete-route] Completing route with calculated remaining operator bag stock", {
+        route_id: routeId,
+        remaining_bag_stock: remainingBagStock.map((item) => ({
+          product_id: item.productId,
+          product_name: productById.get(item.productId) ?? "Unknown product",
+          quantity: item.quantity,
+        })),
+      });
     }
 
     const completedAt = new Date().toISOString();
@@ -2838,7 +2843,7 @@ export async function completeRoute(routeId: string) {
       summary: route.completed_at ? "Confirmed already completed route" : "Completed route",
     });
     revalidateRouteWorkflow(routeId);
-    return actionSuccess({ routeId, completedAt });
+    return actionSuccess({ routeId, completedAt, warning: completionWarning });
   } catch (error) {
     const publicError = routeCompletionPublicError(error);
     console.error("[operator:complete-route] Error completing route", {

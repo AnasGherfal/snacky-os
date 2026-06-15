@@ -56,6 +56,7 @@ export type AuthUserContext = {
   roles?: AppRole[] | null;
   canAddProducts?: boolean | null;
   teamMemberId?: string | null;
+  linkedTeamMemberIds?: string[] | null;
   activeStatus?: "active" | "inactive";
 };
 
@@ -280,7 +281,14 @@ export function canAccessOperatorRoute(user: AuthUserContext | null | undefined,
   if (!user) return false;
   if (canManageOperations(user)) return true;
   if (!routeOperatorId) return canExecuteRoutes(user);
-  return isOperatorRole(user) && Boolean(user.teamMemberId) && user.teamMemberId === routeOperatorId;
+  const accessibleOperatorIds = Array.from(
+    new Set(
+      [user.teamMemberId, ...(user.linkedTeamMemberIds ?? [])]
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean),
+    ),
+  );
+  return isOperatorRole(user) && accessibleOperatorIds.includes(String(routeOperatorId));
 }
 
 export function getDefaultPathForRole(input: RoleInput) {

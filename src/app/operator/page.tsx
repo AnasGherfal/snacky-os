@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
-import { canExecuteRoutes } from "@/lib/authz";
+import { canExecuteRoutes, canManageOperations } from "@/lib/authz";
+import { loadAccessibleOperatorIds, preferredOperatorViewerId } from "@/lib/operator-route-access";
 import { loadOperatorRoutePayPreviewMap, type OperatorRoutePreviewRow, type OperatorRoutePreviewStopRow } from "@/lib/payroll-server";
 import { moneyLabel } from "@/lib/payroll";
 import { isOperatorVisibleRouteStatus, isRouteStopDoneStatus, isTerminalRouteStatus, routeDisplayStatus } from "@/lib/route-workflow";
@@ -38,22 +39,31 @@ export default async function OperatorPage() {
     );
   }
 
+  const canManageAllRoutes = canManageOperations(profile);
+  const accessibleOperatorIds = await loadAccessibleOperatorIds(supabase, profile);
+  const currentViewerOperatorId = preferredOperatorViewerId(profile, accessibleOperatorIds);
   const routeSelect = "id, route_date, status, operator_id, storage_location_id, distance_km, distance_zone, distance_source, load_difficulty_pay_lyd, route_stops(id, status, stop_order, machine_id)";
   const [assignedResult, availableResult, currentPayrollPeriodResult] = await Promise.all([
-    profile.team_member_id
+    canManageAllRoutes
       ? supabase
         .from("routes")
         .select(routeSelect)
-        .eq("operator_id", profile.team_member_id)
+        .not("operator_id", "is", null)
         .order("route_date", { ascending: false })
+      : accessibleOperatorIds.length
+        ? supabase
+          .from("routes")
+          .select(routeSelect)
+          .in("operator_id", accessibleOperatorIds)
+          .order("route_date", { ascending: false })
       : Promise.resolve({ data: [], error: null }),
     supabase
       .from("routes")
       .select(routeSelect)
       .is("operator_id", null)
       .order("route_date", { ascending: true }),
-    profile.team_member_id
-      ? supabase.from("payroll_periods").select("id, net_total_lyd, status").eq("operator_id", profile.team_member_id).eq("period_start", currentMonthStart).maybeSingle()
+    currentViewerOperatorId
+      ? supabase.from("payroll_periods").select("id, net_total_lyd, status").eq("operator_id", currentViewerOperatorId).eq("period_start", currentMonthStart).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
   ]);
   const routesError = assignedResult.error ?? availableResult.error;
@@ -72,7 +82,7 @@ export default async function OperatorPage() {
   const { previewByRouteId } = await loadOperatorRoutePayPreviewMap({
     supabase,
     routes: previewRoutes,
-    viewerTeamMemberId: profile.team_member_id,
+    viewerTeamMemberId: currentViewerOperatorId,
   });
 
   if (routesError) {
