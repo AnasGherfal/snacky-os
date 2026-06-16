@@ -60,7 +60,14 @@ export default async function OperatorRouteDetailPage({
     .maybeSingle();
 
   if (routeError) console.error("[operator:route] Failed to load route", { routeId, error: routeError });
-  if (!route) notFound();
+  if (!route) {
+    console.error("[operator:route] Route detail returned no row", {
+      routeId,
+      authUserId: profile?.id ?? null,
+      linkedOperatorIds: accessibleOperatorIds,
+    });
+    notFound();
+  }
 
   const routeRow = route as OperatorRouteDetailRow;
   const canAccess = canAccessOperatorRoute(routeAccessProfile, routeRow.operator_id);

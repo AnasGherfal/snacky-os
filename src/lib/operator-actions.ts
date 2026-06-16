@@ -145,6 +145,9 @@ function isMissingOptionalPickupChecklistColumn(error: unknown) {
   ) && ["is_checked", "checked_at", "checked_by"].some((column) => text.includes(column));
 }
 
+function operatorRouteDetailPath(routeId: string) {
+  return `/operator/routes/${routeId}`;
+}
 
 function revalidateRouteWorkflow(routeId: string) {
   revalidatePath("/operator");
@@ -1202,6 +1205,17 @@ export async function confirmPickList(
       summary: batchMode
         ? `Confirmed pickup batch for ${selectedStopIds.length} stops with ${movements.length} inventory movement rows`
         : `Confirmed pick list with ${movements.length} inventory movement rows`,
+    });
+
+    console.info("[operator:pick-list] Pickup confirmed", {
+      action: "confirm_pick_list",
+      route_id: routeId,
+      user_id: profile?.id ?? null,
+      route_status_before: route.status ?? null,
+      route_status_after: nextRouteStatus,
+      selected_stop_ids: selectedStopIds,
+      pickup_batch_id: pickupBatchId,
+      redirect_path: operatorRouteDetailPath(routeId),
     });
 
     revalidateRouteWorkflow(routeId);
@@ -2465,6 +2479,19 @@ export async function completeStop({
       });
     }
 
+    console.info("[operator:complete-stop] Stop saved", {
+      action: "complete_stop",
+      route_id: routeId,
+      stop_id: stopId,
+      machine_id: machineId,
+      user_id: profile?.id ?? null,
+      route_status_before: route.status ?? null,
+      route_status_after: nextFillingStatus,
+      stop_status_before: stop.status ?? null,
+      stop_status_after: ROUTE_STOP_COMPLETED_STATUS,
+      redirect_path: operatorRouteDetailPath(routeId),
+    });
+
     revalidateRouteWorkflow(routeId);
     return actionSuccess({ expectedCash, routeId, stopId });
   } catch (error) {
@@ -2728,6 +2755,14 @@ export async function completeRoute(routeId: string) {
       throw new Error("You are not authorized to complete this route");
     }
     if (isCompletedRouteStatus(route.status)) {
+      console.info("[operator:complete-route] Route already completed", {
+        action: "complete_route",
+        route_id: routeId,
+        user_id: profile?.id ?? null,
+        route_status_before: route.status ?? null,
+        route_status_after: route.status ?? null,
+        redirect_path: operatorRouteDetailPath(routeId),
+      });
       revalidateRouteWorkflow(routeId);
       return actionSuccess({ routeId, alreadyCompleted: true });
     }
@@ -2841,6 +2876,15 @@ export async function completeRoute(routeId: string) {
         inventory_movement_count_checked: logMovementCount,
       },
       summary: route.completed_at ? "Confirmed already completed route" : "Completed route",
+    });
+    console.info("[operator:complete-route] Route completed", {
+      action: "complete_route",
+      route_id: routeId,
+      user_id: profile?.id ?? null,
+      route_status_before: route.status ?? null,
+      route_status_after: ROUTE_COMPLETED_STATUS,
+      stop_count: logStopCount,
+      redirect_path: operatorRouteDetailPath(routeId),
     });
     revalidateRouteWorkflow(routeId);
     return actionSuccess({ routeId, completedAt, warning: completionWarning });

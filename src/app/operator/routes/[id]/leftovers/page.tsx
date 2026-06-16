@@ -119,6 +119,11 @@ export default function LeftoversPage() {
       const successMessage = completionWarning
         ? `Route completed. ${completionWarning}`
         : "Route completed successfully.";
+      console.info("[operator:route-nav] Redirecting after route completion", {
+        action: "complete_route",
+        routeId,
+        redirectPath: `${routeHref}?success=${encodeURIComponent(successMessage)}`,
+      });
       router.push(`${routeHref}?success=${encodeURIComponent(successMessage)}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to complete route");

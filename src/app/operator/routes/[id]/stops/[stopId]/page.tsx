@@ -789,6 +789,13 @@ export default function MachineStopPage() {
       const stopSuccessMessage = stopData.stopStatus === ROUTE_STOP_COMPLETED_STATUS
         ? "Stop changes saved successfully."
         : "Stop completed successfully.";
+      console.info("[operator:route-nav] Redirecting after stop save", {
+        action: stopData.stopStatus === ROUTE_STOP_COMPLETED_STATUS ? "save_stop_machine" : "complete_stop",
+        routeId,
+        stopId,
+        machineId: stopData.machineId,
+        redirectPath: `${routeHref}?success=${encodeURIComponent(stopSuccessMessage)}`,
+      });
       router.push(`${routeHref}?success=${encodeURIComponent(stopSuccessMessage)}`);
     } catch (err) {
       console.warn("[operator:stop-mobile] Stop completion failed", {

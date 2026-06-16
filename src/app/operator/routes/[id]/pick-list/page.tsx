@@ -672,6 +672,11 @@ export default function PickListPage() {
       const successMessage = selectedStopIds.length === 1
         ? "Pickup batch saved for 1 stop."
         : `Pickup batch saved for ${selectedStopIds.length} stops.`;
+      console.info("[operator:route-nav] Redirecting after pickup confirmation", {
+        action: "confirm_pick_list",
+        routeId,
+        redirectPath: `${routeHref}?success=${encodeURIComponent(successMessage)}`,
+      });
       router.push(`${routeHref}?success=${encodeURIComponent(successMessage)}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to confirm pick list");
