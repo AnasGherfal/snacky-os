@@ -3,13 +3,18 @@ import "server-only";
 import { getAuthAccessToken } from "@/lib/auth";
 import {
   calculateRoutePay,
-  dateOnly,
   ensureOperatorPayProfile,
   ensureRoutePayRules,
   isWithinPeriod,
-  monthEnd,
+  locationPayrollDistanceKm,
   moneyLabel,
-  routePayEligibleStatus,
+  operatorPayProfileBaseMonthlySalary,
+  operatorPayProfileBonus,
+  operatorPayProfileDeduction,
+  operatorPayProfileFuelAllowancePerKm,
+  operatorPayProfilePayPerKm,
+  operatorPayProfilePayPerRoute,
+  operatorPayProfilePayPerStop,
   toMoney,
   type OperatorPayProfileRow,
   type PayrollAdjustmentRow,
@@ -21,6 +26,7 @@ import {
   type RouteStopPayInput,
   type StorageLocationSummary,
 } from "@/lib/payroll";
+import { isCompletedRouteStatus } from "@/lib/route-workflow";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 
 type PayrollServerClient = NonNullable<ReturnType<typeof getSupabaseServerClient>>;
@@ -99,7 +105,96 @@ type PayrollPeriodRouteRow = {
   id: string;
   route_date: string | null;
   status: string | null;
+  completed_at?: string | null;
   paid_at?: string | null;
+};
+
+type PayrollPeriodStopRow = {
+  id: string;
+  route_id: string;
+  stop_order?: number | null;
+  status?: string | null;
+  machine_id?: string | null;
+  completed_at?: string | null;
+};
+
+type PayrollPeriodMachineRow = {
+  id: string;
+  name?: string | null;
+  machine_code?: string | null;
+  location_id?: string | null;
+};
+
+type PayrollPeriodLocationRow = {
+  id: string;
+  name?: string | null;
+  payroll_storage_location_id?: string | null;
+  distance_from_storage_km?: number | string | null;
+  use_round_trip_distance?: boolean | null;
+  payroll_distance_notes?: string | null;
+};
+
+export type PayrollPeriodIncludedStop = {
+  stopId: string;
+  routeId: string;
+  routeDate: string | null;
+  routeStatus: string | null;
+  stopOrder: number;
+  completedAt: string | null;
+  machineId: string | null;
+  machineName: string;
+  machineCode: string | null;
+  locationId: string | null;
+  locationName: string | null;
+  payrollDistanceKm: number;
+  distanceMissing: boolean;
+};
+
+export type PayrollPeriodIncludedRoute = {
+  routeId: string;
+  routeDate: string | null;
+  routeStatus: string | null;
+  completedAt: string | null;
+  completedStopsCount: number;
+  totalPayrollDistanceKm: number;
+  missingDistanceStopCount: number;
+};
+
+export type PayrollDistanceWarning = {
+  routeId: string;
+  stopId: string;
+  machineName: string;
+  locationName: string | null;
+  reason: string;
+};
+
+export type PayrollPeriodSummary = {
+  operator: { id: string; full_name?: string | null } | null;
+  payProfile: OperatorPayProfileRow;
+  periodStart: string;
+  periodEnd: string;
+  includedRouteIds: string[];
+  includedRoutes: PayrollPeriodIncludedRoute[];
+  includedStops: PayrollPeriodIncludedStop[];
+  missingDistanceWarnings: PayrollDistanceWarning[];
+  completedRoutesCount: number;
+  completedStopsCount: number;
+  totalPayrollDistanceKm: number;
+  baseSalaryAmount: number;
+  routePayAmount: number;
+  stopPayAmount: number;
+  distancePayAmount: number;
+  fuelAllowanceAmount: number;
+  profileBonusAmount: number;
+  profileDeductionAmount: number;
+  adjustmentBonusAmount: number;
+  adjustmentDeductionAmount: number;
+  bonusAmount: number;
+  deductionAmount: number;
+  grossPay: number;
+  netPay: number;
+  summaryLabel: string;
+  calculationSnapshot: Record<string, unknown>;
 };
 
 type RouteStopRow = {
@@ -135,12 +230,6 @@ type RouteBreakdownPreviewRow = {
   total_pay_lyd?: number | string | null;
   approval_required?: boolean | null;
   payroll_period_id?: string | null;
-};
-
-type RouteExtraAggregateRow = {
-  route_id?: string | null;
-  extra_type?: string | null;
-  amount_lyd?: number | string | null;
 };
 
 export async function getPayrollServerClient() {
@@ -413,20 +502,20 @@ export async function buildPayrollPeriodSummary({
   supabase,
   operatorId,
   periodStart,
+  periodEnd,
   existingPeriodId = null,
 }: {
   supabase: PayrollServerClient;
   operatorId: string;
   periodStart: string;
+  periodEnd: string;
   existingPeriodId?: string | null;
-}) {
+}): Promise<PayrollPeriodSummary | null> {
   const payProfile = await ensureOperatorPayProfile(supabase as any, operatorId);
   if (!payProfile) return null;
 
-  const periodEnd = dateOnly(monthEnd(periodStart));
-  const [{ data: routeRows }, { data: breakdownRows }, { data: adjustments }, { data: operator }] = await Promise.all([
-    supabase.from("routes").select("id, route_date, status, paid_at").eq("operator_id", operatorId),
-    supabase.from("route_pay_breakdowns").select("*").eq("operator_id", operatorId),
+  const [{ data: routeRows }, { data: adjustments }, { data: operator }] = await Promise.all([
+    supabase.from("routes").select("id, route_date, status, completed_at, paid_at").eq("operator_id", operatorId),
     existingPeriodId
       ? supabase.from("payroll_adjustments").select("*").eq("payroll_period_id", existingPeriodId).order("created_at", { ascending: true })
       : Promise.resolve({ data: [] }),
@@ -434,32 +523,46 @@ export async function buildPayrollPeriodSummary({
   ]);
 
   const typedRouteRows = (routeRows ?? []) as PayrollPeriodRouteRow[];
-  const routeById = new Map<string, PayrollPeriodRouteRow>(typedRouteRows.map((route) => [route.id, route]));
-  const eligibleBreakdowns = ((breakdownRows ?? []) as RoutePayBreakdownRow[])
-    .filter((row) => {
-      const route = routeById.get(row.route_id);
-      if (!route || !isWithinPeriod(route.route_date, periodStart, periodEnd)) return false;
-      const status = String(route.status ?? "");
-      return routePayEligibleStatus(status) || (existingPeriodId && row.payroll_period_id === existingPeriodId);
+  const completedRoutes = typedRouteRows
+    .filter((route) => {
+      if (!isCompletedRouteStatus(route.status)) return false;
+      return isWithinPeriod(route.completed_at ?? route.route_date, periodStart, periodEnd);
     })
-    .sort((a, b) => String(routeById.get(a.route_id)?.route_date ?? "").localeCompare(String(routeById.get(b.route_id)?.route_date ?? "")));
+    .sort((a, b) => String(a.completed_at ?? a.route_date ?? "").localeCompare(String(b.completed_at ?? b.route_date ?? "")));
 
-  const routeIds = eligibleBreakdowns.map((row) => row.route_id);
-  const { data: extraRows } = routeIds.length
-    ? await supabase
-        .from("route_pay_extra_items")
-        .select("route_id, extra_type, amount_lyd")
-        .in("route_id", routeIds)
+  const routeById = new Map<string, PayrollPeriodRouteRow>(completedRoutes.map((route) => [route.id, route]));
+  const routeIds = completedRoutes.map((route) => route.id);
+  const { data: stopRows } = routeIds.length
+    ? await supabase.from("route_stops").select("id, route_id, stop_order, status, machine_id, completed_at").in("route_id", routeIds).order("stop_order", { ascending: true })
     : { data: [] };
 
-  const breakdownExtraTotals = (extraRows ?? []).reduce(
-    (totals: Record<string, number>, row: RouteExtraAggregateRow) => {
-      const key = String(row.extra_type ?? "");
-      totals[key] = toMoney((totals[key] ?? 0) + toMoney(row.amount_lyd));
-      return totals;
-    },
-    {},
-  );
+  const completedStops = ((stopRows ?? []) as PayrollPeriodStopRow[])
+    .filter((stop) => {
+      if (String(stop.status ?? "") !== "completed") return false;
+      const route = routeById.get(stop.route_id);
+      return Boolean(route) && isWithinPeriod(stop.completed_at ?? route?.completed_at ?? route?.route_date, periodStart, periodEnd);
+    })
+    .sort((a, b) => {
+      const routeDateA = String(routeById.get(a.route_id)?.completed_at ?? routeById.get(a.route_id)?.route_date ?? "");
+      const routeDateB = String(routeById.get(b.route_id)?.completed_at ?? routeById.get(b.route_id)?.route_date ?? "");
+      if (routeDateA !== routeDateB) return routeDateA.localeCompare(routeDateB);
+      return Number(a.stop_order ?? 0) - Number(b.stop_order ?? 0);
+    });
+
+  const machineIds = Array.from(new Set(completedStops.map((stop) => stop.machine_id).filter(Boolean)));
+  const { data: machineRows } = machineIds.length
+    ? await supabase.from("machines").select("id, name, machine_code, location_id").in("id", machineIds)
+    : { data: [] };
+  const machines = (machineRows ?? []) as PayrollPeriodMachineRow[];
+  const machineById = new Map(machines.map((machine) => [machine.id, machine]));
+  const locationIds = Array.from(new Set(machines.map((machine) => machine.location_id).filter(Boolean)));
+  const { data: locationRows } = locationIds.length
+    ? await supabase
+        .from("locations")
+        .select("id, name, payroll_storage_location_id, distance_from_storage_km, use_round_trip_distance, payroll_distance_notes")
+        .in("id", locationIds)
+    : { data: [] };
+  const locationById = new Map(((locationRows ?? []) as PayrollPeriodLocationRow[]).map((location) => [location.id, location]));
 
   const bonusTotal = ((adjustments ?? []) as PayrollAdjustmentRow[])
     .filter((row) => row.adjustment_type === "bonus")
@@ -467,31 +570,151 @@ export async function buildPayrollPeriodSummary({
   const deductionTotal = ((adjustments ?? []) as PayrollAdjustmentRow[])
     .filter((row) => row.adjustment_type === "deduction")
     .reduce((sum, row) => sum + toMoney(row.amount_lyd), 0);
-  const routePayTotal = eligibleBreakdowns.reduce((sum, row) => sum + toMoney(row.total_pay_lyd), 0);
-  const baseSalary = toMoney(payProfile.base_salary_lyd);
-  const carAllowance = toMoney(payProfile.car_allowance_lyd);
-  const phoneAllowance = toMoney(payProfile.phone_allowance_lyd);
-  const grossTotal = toMoney(baseSalary + carAllowance + phoneAllowance + routePayTotal + bonusTotal);
-  const netTotal = toMoney(grossTotal - deductionTotal);
+
+  const includedStops: PayrollPeriodIncludedStop[] = [];
+  const missingDistanceWarnings: PayrollDistanceWarning[] = [];
+  const routeDistanceTotals = new Map<string, { completedStopsCount: number; totalPayrollDistanceKm: number; missingDistanceStopCount: number }>();
+
+  for (const stop of completedStops) {
+    const route = routeById.get(stop.route_id);
+    const machine = stop.machine_id ? machineById.get(stop.machine_id) : null;
+    const location = machine?.location_id ? locationById.get(machine.location_id) : null;
+    const payrollDistanceKm = location ? locationPayrollDistanceKm(location) : null;
+    const distanceMissing = payrollDistanceKm === null;
+    const normalizedDistanceKm = toMoney(payrollDistanceKm ?? 0);
+
+    includedStops.push({
+      stopId: stop.id,
+      routeId: stop.route_id,
+      routeDate: route?.route_date ?? null,
+      routeStatus: route?.status ?? null,
+      stopOrder: Number(stop.stop_order ?? 0),
+      completedAt: stop.completed_at ?? route?.completed_at ?? null,
+      machineId: stop.machine_id ?? null,
+      machineName: machine?.name ?? "Unknown machine",
+      machineCode: machine?.machine_code ?? null,
+      locationId: machine?.location_id ?? null,
+      locationName: location?.name ?? null,
+      payrollDistanceKm: normalizedDistanceKm,
+      distanceMissing,
+    });
+
+    const routeTotals = routeDistanceTotals.get(stop.route_id) ?? {
+      completedStopsCount: 0,
+      totalPayrollDistanceKm: 0,
+      missingDistanceStopCount: 0,
+    };
+    routeTotals.completedStopsCount += 1;
+    routeTotals.totalPayrollDistanceKm = toMoney(routeTotals.totalPayrollDistanceKm + normalizedDistanceKm);
+    routeTotals.missingDistanceStopCount += distanceMissing ? 1 : 0;
+    routeDistanceTotals.set(stop.route_id, routeTotals);
+
+    if (distanceMissing) {
+      missingDistanceWarnings.push({
+        routeId: stop.route_id,
+        stopId: stop.id,
+        machineName: machine?.name ?? "Unknown machine",
+        locationName: location?.name ?? null,
+        reason: location
+          ? "This location does not have a payroll distance yet."
+          : "This machine is not mapped to a location with payroll distance settings.",
+      });
+    }
+  }
+
+  const includedRoutes: PayrollPeriodIncludedRoute[] = completedRoutes.map((route) => {
+    const totals = routeDistanceTotals.get(route.id) ?? {
+      completedStopsCount: 0,
+      totalPayrollDistanceKm: 0,
+      missingDistanceStopCount: 0,
+    };
+    return {
+      routeId: route.id,
+      routeDate: route.route_date ?? null,
+      routeStatus: route.status ?? null,
+      completedAt: route.completed_at ?? null,
+      completedStopsCount: totals.completedStopsCount,
+      totalPayrollDistanceKm: toMoney(totals.totalPayrollDistanceKm),
+      missingDistanceStopCount: totals.missingDistanceStopCount,
+    };
+  });
+
+  const completedRoutesCount = includedRoutes.length;
+  const completedStopsCount = includedStops.length;
+  const totalPayrollDistanceKm = toMoney(includedStops.reduce((sum, stop) => sum + stop.payrollDistanceKm, 0));
+  const baseSalaryAmount = operatorPayProfileBaseMonthlySalary(payProfile);
+  const routePayAmount = toMoney(completedRoutesCount * operatorPayProfilePayPerRoute(payProfile));
+  const stopPayAmount = toMoney(completedStopsCount * operatorPayProfilePayPerStop(payProfile));
+  const distancePayAmount = toMoney(totalPayrollDistanceKm * operatorPayProfilePayPerKm(payProfile));
+  const fuelAllowanceAmount = toMoney(totalPayrollDistanceKm * operatorPayProfileFuelAllowancePerKm(payProfile));
+  const profileBonusAmount = operatorPayProfileBonus(payProfile);
+  const profileDeductionAmount = operatorPayProfileDeduction(payProfile);
+  const adjustmentBonusAmount = toMoney(bonusTotal);
+  const adjustmentDeductionAmount = toMoney(deductionTotal);
+  const bonusAmount = toMoney(profileBonusAmount + adjustmentBonusAmount);
+  const deductionAmount = toMoney(profileDeductionAmount + adjustmentDeductionAmount);
+  const grossPay = toMoney(baseSalaryAmount + routePayAmount + stopPayAmount + distancePayAmount + fuelAllowanceAmount + bonusAmount);
+  const netPay = toMoney(grossPay - deductionAmount);
+
+  const calculationSnapshot = {
+    period_start: periodStart,
+    period_end: periodEnd,
+    operator_id: operatorId,
+    rates: {
+      base_monthly_salary_lyd: baseSalaryAmount,
+      pay_per_route_lyd: operatorPayProfilePayPerRoute(payProfile),
+      pay_per_stop_lyd: operatorPayProfilePayPerStop(payProfile),
+      pay_per_km_lyd: operatorPayProfilePayPerKm(payProfile),
+      fuel_allowance_per_km_lyd: operatorPayProfileFuelAllowancePerKm(payProfile),
+      bonus_lyd: profileBonusAmount,
+      deduction_lyd: profileDeductionAmount,
+    },
+    totals: {
+      completed_routes_count: completedRoutesCount,
+      completed_stops_count: completedStopsCount,
+      total_payroll_distance_km: totalPayrollDistanceKm,
+      base_salary_amount_lyd: baseSalaryAmount,
+      route_pay_amount_lyd: routePayAmount,
+      stop_pay_amount_lyd: stopPayAmount,
+      distance_pay_amount_lyd: distancePayAmount,
+      fuel_allowance_amount_lyd: fuelAllowanceAmount,
+      bonus_amount_lyd: bonusAmount,
+      deduction_amount_lyd: deductionAmount,
+      gross_pay_lyd: grossPay,
+      net_pay_lyd: netPay,
+      missing_distance_stop_count: missingDistanceWarnings.length,
+    },
+    included_routes: includedRoutes,
+    included_stops: includedStops,
+    missing_distance_warnings: missingDistanceWarnings,
+  } satisfies Record<string, unknown>;
 
   return {
     operator: operator ?? null,
     payProfile,
     periodStart,
     periodEnd,
-    includedRouteIds: routeIds,
-    eligibleBreakdowns,
-    routePayTotal,
-    buyingTripTotal: toMoney(breakdownExtraTotals.buying_trip_extra ?? 0),
-    emergencyTotal: toMoney(breakdownExtraTotals.emergency_extra ?? 0),
-    bonusTotal: toMoney(bonusTotal),
-    deductionTotal: toMoney(deductionTotal),
-    baseSalary,
-    carAllowance,
-    phoneAllowance,
-    grossTotal,
-    netTotal,
-    routeCount: eligibleBreakdowns.length,
-    summaryLabel: `${operator?.full_name ?? "Operator"} - ${periodStart} to ${periodEnd} - ${moneyLabel(netTotal)}`,
+    includedRouteIds: includedRoutes.map((route) => route.routeId),
+    includedRoutes,
+    includedStops,
+    missingDistanceWarnings,
+    completedRoutesCount,
+    completedStopsCount,
+    totalPayrollDistanceKm,
+    baseSalaryAmount,
+    routePayAmount,
+    stopPayAmount,
+    distancePayAmount,
+    fuelAllowanceAmount,
+    profileBonusAmount,
+    profileDeductionAmount,
+    adjustmentBonusAmount,
+    adjustmentDeductionAmount,
+    bonusAmount,
+    deductionAmount,
+    grossPay,
+    netPay,
+    summaryLabel: `${operator?.full_name ?? "Operator"} - ${periodStart} to ${periodEnd} - ${moneyLabel(netPay)}`,
+    calculationSnapshot,
   };
 }

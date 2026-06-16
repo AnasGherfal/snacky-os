@@ -11,8 +11,10 @@ import {
   loadRoutePayData,
 } from "@/lib/payroll-server";
 import {
+  defaultOperatorPayProfileValues,
   ensureRoutePayRules,
   moneyLabel,
+  normalizeOperatorRoleLevel,
   resolveRoutePayExtraAmount,
   toMoney,
   type PayrollPeriodRow,
@@ -51,8 +53,30 @@ function periodStartFromInput(value: string | null | undefined) {
   return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
 }
 
+function dateInputFromValue(value: string | null | undefined) {
+  const text = String(value ?? "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
+}
+
 function fail(path: string, message: string): never {
   redirect(`${path}?error=${encodeURIComponent(message)}`);
+}
+
+function errorField(error: unknown, key: string) {
+  if (!error || typeof error !== "object") return null;
+  return (error as Record<string, unknown>)[key] ?? null;
+}
+
+function errorText(error: unknown) {
+  return ["code", "message", "details", "hint"]
+    .map((key) => String(errorField(error, key) ?? ""))
+    .join(" ")
+    .toLowerCase();
+}
+
+function isMissingColumnError(error: unknown) {
+  const text = errorText(error);
+  return text.includes("column") && text.includes("does not exist");
 }
 
 async function requirePayrollAccess(path: string, approvalOnly = false) {
@@ -158,18 +182,21 @@ async function refreshPayrollPeriodRecord({
   actorTeamMemberId,
   operatorId,
   periodStart,
+  periodEnd,
   existingPeriod,
 }: {
   supabase: PayrollServerClient;
   actorTeamMemberId: string | null;
   operatorId: string;
   periodStart: string;
+  periodEnd: string;
   existingPeriod?: MutablePayrollPeriodRow | null;
 }) {
   const summary = await buildPayrollPeriodSummary({
     supabase,
     operatorId,
     periodStart,
+    periodEnd,
     existingPeriodId: existingPeriod?.id ?? null,
   });
   if (!summary) throw new Error("This operator needs a pay profile before payroll can be calculated.");
@@ -182,17 +209,27 @@ async function refreshPayrollPeriodRecord({
     period_start: summary.periodStart,
     period_end: summary.periodEnd,
     status: existingPeriod?.status === "disputed" ? "disputed" : "calculated",
-    base_salary_lyd: summary.baseSalary,
-    car_allowance_lyd: summary.carAllowance,
-    phone_allowance_lyd: summary.phoneAllowance,
-    route_pay_total_lyd: summary.routePayTotal,
-    buying_trip_total_lyd: summary.buyingTripTotal,
-    emergency_total_lyd: summary.emergencyTotal,
-    bonus_total_lyd: summary.bonusTotal,
-    deduction_total_lyd: summary.deductionTotal,
-    gross_total_lyd: summary.grossTotal,
-    net_total_lyd: summary.netTotal,
-    route_count: summary.routeCount,
+    base_salary_lyd: summary.baseSalaryAmount,
+    base_salary_amount_lyd: summary.baseSalaryAmount,
+    car_allowance_lyd: 0,
+    phone_allowance_lyd: 0,
+    route_pay_total_lyd: toMoney(summary.routePayAmount + summary.stopPayAmount + summary.distancePayAmount + summary.fuelAllowanceAmount),
+    route_pay_amount_lyd: summary.routePayAmount,
+    stop_pay_amount_lyd: summary.stopPayAmount,
+    distance_pay_amount_lyd: summary.distancePayAmount,
+    fuel_allowance_amount_lyd: summary.fuelAllowanceAmount,
+    buying_trip_total_lyd: 0,
+    emergency_total_lyd: 0,
+    bonus_total_lyd: summary.bonusAmount,
+    deduction_total_lyd: summary.deductionAmount,
+    gross_total_lyd: summary.grossPay,
+    net_total_lyd: summary.netPay,
+    route_count: summary.completedRoutesCount,
+    completed_routes_count: summary.completedRoutesCount,
+    completed_stops_count: summary.completedStopsCount,
+    total_payroll_distance_km: summary.totalPayrollDistanceKm,
+    missing_distance_stop_count: summary.missingDistanceWarnings.length,
+    calculation_snapshot: summary.calculationSnapshot,
     updated_by: actorTeamMemberId,
     updated_at: now,
     created_by: existingPeriod?.created_by ?? actorTeamMemberId,
@@ -213,44 +250,6 @@ async function refreshPayrollPeriodRecord({
   const { data: savedPeriod, error: periodError } = savePeriodResult;
   if (periodError) throw periodError;
 
-  const currentBreakdownRows = await supabase.from("route_pay_breakdowns").select("route_id").eq("payroll_period_id", savedPeriod.id);
-  if (currentBreakdownRows.error) throw currentBreakdownRows.error;
-
-  const includedRouteIds = summary.includedRouteIds;
-  if (includedRouteIds.length) {
-    const attachBreakdowns = await supabase
-      .from("route_pay_breakdowns")
-      .update({ payroll_period_id: savedPeriod.id, updated_at: now })
-      .in("route_id", includedRouteIds);
-    if (attachBreakdowns.error) throw attachBreakdowns.error;
-
-    const payrollPendingRoutes = await supabase
-      .from("routes")
-      .update({ status: "payroll_pending" })
-      .in("id", includedRouteIds)
-      .eq("status", "verified");
-    if (payrollPendingRoutes.error) throw payrollPendingRoutes.error;
-  }
-
-  const staleRouteIds = ((currentBreakdownRows.data ?? []) as Array<{ route_id: string }>)
-    .map((row) => row.route_id)
-    .filter((routeId) => !includedRouteIds.includes(routeId));
-
-  if (staleRouteIds.length) {
-    const clearBreakdowns = await supabase
-      .from("route_pay_breakdowns")
-      .update({ payroll_period_id: null, updated_at: now })
-      .in("route_id", staleRouteIds);
-    if (clearBreakdowns.error) throw clearBreakdowns.error;
-
-    const restoreRoutes = await supabase
-      .from("routes")
-      .update({ status: "verified" })
-      .in("id", staleRouteIds)
-      .eq("status", "payroll_pending");
-    if (restoreRoutes.error) throw restoreRoutes.error;
-  }
-
   return { period: savedPeriod, summary };
 }
 
@@ -267,7 +266,9 @@ function buildPayrollFinancePayload({
 }) {
   const amount = toMoney(period.net_total_lyd);
   const date = paidAt.slice(0, 10);
-  const notes = `Payroll ${period.period_start} to ${period.period_end} - ${period.route_count ?? 0} routes`;
+  const routeCount = period.completed_routes_count ?? period.route_count ?? 0;
+  const stopCount = period.completed_stops_count ?? 0;
+  const notes = `Payroll ${period.period_start} to ${period.period_end} - ${routeCount} routes, ${stopCount} stops`;
   return {
     transaction_date: date,
     transaction_datetime: paidAt,
@@ -299,12 +300,13 @@ function buildPayrollFinancePayload({
     payee_text: operatorName,
     paid_to_text: operatorName,
     counterparty_text: operatorName,
-    source_type: "payroll_period",
+    source_type: "payroll",
     source_id: period.id,
     created_by: createdBy,
     metadata: {
       payroll_period_id: period.id,
-      route_count: period.route_count ?? 0,
+      route_count: routeCount,
+      stop_count: stopCount,
       period_start: period.period_start,
       period_end: period.period_end,
     },
@@ -318,30 +320,113 @@ export async function saveOperatorPayProfile(formData: FormData) {
   if (!teamMemberId) fail("/payroll/profiles", "Choose a team member.");
   const { profile, supabase } = await requirePayrollAccess(path);
 
-  const roleLevel = clean(formData.get("role_level")) || "junior_operator";
+  const beforeResult = await supabase.from("operator_pay_profiles").select("*").eq("team_member_id", teamMemberId).maybeSingle();
+  const existingProfile = (beforeResult.data ?? null) as Record<string, unknown> | null;
+  const roleLevel = normalizeOperatorRoleLevel(clean(formData.get("role_level")) || String(existingProfile?.role_level ?? "junior_operator"));
+  const defaults = defaultOperatorPayProfileValues(roleLevel);
+  const activeFrom = dateInputFromValue(clean(formData.get("active_from")))
+    || dateInputFromValue(String(existingProfile?.active_from ?? defaults.active_from ?? ""))
+    || new Date().toISOString().slice(0, 10);
+  const activeTo = dateInputFromValue(clean(formData.get("active_to"))) || null;
+  const baseMonthlySalary = requiredMoney(formData.get("base_monthly_salary_lyd"), toMoney(existingProfile?.base_monthly_salary_lyd ?? existingProfile?.base_salary_lyd ?? defaults.base_monthly_salary_lyd ?? defaults.base_salary_lyd));
+  const payPerRoute = requiredMoney(formData.get("pay_per_route_lyd"), toMoney(existingProfile?.pay_per_route_lyd ?? existingProfile?.default_route_base_lyd ?? defaults.pay_per_route_lyd ?? defaults.default_route_base_lyd));
+  const payPerStop = requiredMoney(formData.get("pay_per_stop_lyd"), toMoney(existingProfile?.pay_per_stop_lyd ?? existingProfile?.default_stop_rate_lyd ?? defaults.pay_per_stop_lyd ?? defaults.default_stop_rate_lyd));
+  const payPerKm = requiredMoney(formData.get("pay_per_km_lyd"), toMoney(existingProfile?.pay_per_km_lyd ?? existingProfile?.default_km_rate_lyd ?? defaults.pay_per_km_lyd ?? defaults.default_km_rate_lyd));
+  const fuelAllowancePerKm = requiredMoney(formData.get("fuel_allowance_per_km_lyd"), toMoney(existingProfile?.fuel_allowance_per_km_lyd ?? defaults.fuel_allowance_per_km_lyd));
+  const bonus = requiredMoney(formData.get("bonus_lyd"), toMoney(existingProfile?.bonus_lyd ?? defaults.bonus_lyd));
+  const deduction = requiredMoney(formData.get("deduction_lyd"), toMoney(existingProfile?.deduction_lyd ?? defaults.deduction_lyd));
+  const isActive = clean(formData.get("is_active")) !== "false";
+  const notes = clean(formData.get("notes")) || null;
+  const now = new Date().toISOString();
+
   const payload = {
     team_member_id: teamMemberId,
     role_level: roleLevel,
-    base_salary_lyd: requiredMoney(formData.get("base_salary_lyd")),
-    car_allowance_lyd: requiredMoney(formData.get("car_allowance_lyd")),
-    phone_allowance_lyd: requiredMoney(formData.get("phone_allowance_lyd")),
-    default_route_base_lyd: requiredMoney(formData.get("default_route_base_lyd")),
-    default_stop_rate_lyd: requiredMoney(formData.get("default_stop_rate_lyd")),
-    default_km_rate_lyd: requiredMoney(formData.get("default_km_rate_lyd")),
-    can_collect_cash: clean(formData.get("can_collect_cash")) === "yes",
-    can_buy_stock: clean(formData.get("can_buy_stock")) === "yes",
-    active: clean(formData.get("active")) !== "false",
-    notes: clean(formData.get("notes")) || null,
-    updated_at: new Date().toISOString(),
+    base_salary_lyd: baseMonthlySalary,
+    base_monthly_salary_lyd: baseMonthlySalary,
+    car_allowance_lyd: toMoney(existingProfile?.car_allowance_lyd ?? defaults.car_allowance_lyd),
+    phone_allowance_lyd: toMoney(existingProfile?.phone_allowance_lyd ?? defaults.phone_allowance_lyd),
+    default_route_base_lyd: payPerRoute,
+    pay_per_route_lyd: payPerRoute,
+    default_stop_rate_lyd: payPerStop,
+    pay_per_stop_lyd: payPerStop,
+    default_km_rate_lyd: payPerKm,
+    pay_per_km_lyd: payPerKm,
+    fuel_allowance_per_km_lyd: fuelAllowancePerKm,
+    bonus_lyd: bonus,
+    deduction_lyd: deduction,
+    can_collect_cash: Boolean(existingProfile?.can_collect_cash ?? defaults.can_collect_cash),
+    can_buy_stock: Boolean(existingProfile?.can_buy_stock ?? defaults.can_buy_stock),
+    active: isActive,
+    active_from: activeFrom,
+    active_to: activeTo,
+    is_active: isActive,
+    notes,
+    updated_at: now,
   };
 
-  const beforeResult = await supabase.from("operator_pay_profiles").select("*").eq("team_member_id", teamMemberId).maybeSingle();
-  const { data: after, error } = await supabase
+  const legacyPayload = {
+    team_member_id: teamMemberId,
+    role_level: roleLevel,
+    base_salary_lyd: baseMonthlySalary,
+    car_allowance_lyd: toMoney(existingProfile?.car_allowance_lyd ?? defaults.car_allowance_lyd),
+    phone_allowance_lyd: toMoney(existingProfile?.phone_allowance_lyd ?? defaults.phone_allowance_lyd),
+    default_route_base_lyd: payPerRoute,
+    default_stop_rate_lyd: payPerStop,
+    default_km_rate_lyd: payPerKm,
+    can_collect_cash: Boolean(existingProfile?.can_collect_cash ?? defaults.can_collect_cash),
+    can_buy_stock: Boolean(existingProfile?.can_buy_stock ?? defaults.can_buy_stock),
+    active: isActive,
+    notes,
+    updated_at: now,
+  };
+
+  let saveResult = await supabase
     .from("operator_pay_profiles")
     .upsert(payload, { onConflict: "team_member_id" })
     .select("*")
     .single();
-  if (error || !after) fail(path, "Could not save the operator pay profile.");
+
+  if (saveResult.error && isMissingColumnError(saveResult.error)) {
+    console.warn("[payroll] saveOperatorPayProfile retrying with legacy payload", {
+      current_user_id: profile.id,
+      current_user_role: profile.role,
+      current_user_roles: profile.roles,
+      current_team_member_id: profile.team_member_id,
+      selected_operator_id: teamMemberId,
+      missing_column_error_code: errorField(saveResult.error, "code"),
+      missing_column_error_message: errorField(saveResult.error, "message"),
+    });
+
+    saveResult = await supabase
+      .from("operator_pay_profiles")
+      .upsert(legacyPayload, { onConflict: "team_member_id" })
+      .select("*")
+      .single();
+  }
+
+  const { data: after, error } = saveResult;
+  if (error || !after) {
+    console.error("[payroll] Could not save operator pay profile", {
+      current_user_id: profile.id,
+      current_user_role: profile.role,
+      current_user_roles: profile.roles,
+      current_team_member_id: profile.team_member_id,
+      selected_operator_id: teamMemberId,
+      action_path: path,
+      payload,
+      legacy_payload: legacyPayload,
+      existing_profile_found: Boolean(existingProfile),
+      prefetch_error_code: errorField(beforeResult.error, "code"),
+      prefetch_error_message: errorField(beforeResult.error, "message"),
+      supabase_error_code: errorField(error, "code"),
+      supabase_error_message: errorField(error, "message"),
+      supabase_error_details: errorField(error, "details"),
+      supabase_error_hint: errorField(error, "hint"),
+      supabase_error_constraint: errorField(error, "constraint"),
+    });
+    fail(path, "Could not save the operator pay profile.");
+  }
 
   const { data: member } = await supabase.from("team_members").select("id, full_name").eq("id", teamMemberId).maybeSingle();
   await logActivity({
@@ -627,9 +712,12 @@ export async function markRoutePayDisputed(formData: FormData) {
 export async function refreshPayrollPeriod(formData: FormData) {
   const operatorId = clean(formData.get("operator_id"));
   const periodStart = periodStartFromInput(clean(formData.get("period_start")));
+  const periodEnd = dateInputFromValue(clean(formData.get("period_end")));
   const path = clean(formData.get("return_path")) || "/payroll/periods";
   if (!operatorId) fail(path, "Choose an operator.");
-  if (!periodStart) fail(path, "Choose a payroll month.");
+  if (!periodStart) fail(path, "Choose a payroll start date.");
+  if (!periodEnd) fail(path, "Choose a payroll end date.");
+  if (periodEnd < periodStart) fail(path, "Payroll end date must be on or after the start date.");
 
   const { profile, supabase } = await requirePayrollAccess(path);
   const existingPeriod = await supabase
@@ -644,6 +732,7 @@ export async function refreshPayrollPeriod(formData: FormData) {
     actorTeamMemberId: profile.team_member_id,
     operatorId,
     periodStart,
+    periodEnd,
     existingPeriod: existingPeriod.data ?? null,
   });
 
@@ -699,6 +788,7 @@ export async function savePayrollAdjustment(formData: FormData) {
     actorTeamMemberId: profile.team_member_id,
     operatorId: period.operator_id,
     periodStart: period.period_start,
+    periodEnd: period.period_end,
     existingPeriod: period,
   });
 
@@ -737,6 +827,7 @@ export async function deletePayrollAdjustment(formData: FormData) {
     actorTeamMemberId: profile.team_member_id,
     operatorId: period.operator_id,
     periodStart: period.period_start,
+    periodEnd: period.period_end,
     existingPeriod: period,
   });
 
@@ -770,6 +861,7 @@ export async function markPayrollPeriodPaid(formData: FormData) {
     actorTeamMemberId: profile.team_member_id,
     operatorId: period.operator_id,
     periodStart: period.period_start,
+    periodEnd: period.period_end,
     existingPeriod: period,
   });
 
@@ -811,12 +903,6 @@ export async function markPayrollPeriodPaid(formData: FormData) {
       .update({ status: "paid", paid_at: paidAt })
       .in("id", routeIds);
     if (routeUpdate.error) fail(path, "Payroll was marked paid, but linked routes could not be updated.");
-
-    const breakdownUpdate = await supabase
-      .from("route_pay_breakdowns")
-      .update({ locked_at: paidAt, locked_by: profile.team_member_id, updated_at: paidAt })
-      .in("route_id", routeIds);
-    if (breakdownUpdate.error) fail(path, "Payroll was marked paid, but route pay breakdowns could not be locked.");
   }
 
   await logActivity({
@@ -827,7 +913,7 @@ export async function markPayrollPeriodPaid(formData: FormData) {
     entityLabel: `${operatorName} payroll`,
     beforeData: period,
     afterData: periodUpdate.data,
-    metadata: { finance_transaction_id: financeResult.data.id, route_count: refreshed.summary.routeCount },
+    metadata: { finance_transaction_id: financeResult.data.id, route_count: refreshed.summary.completedRoutesCount, stop_count: refreshed.summary.completedStopsCount },
     summary: `Marked payroll period paid for ${operatorName}`,
   });
 

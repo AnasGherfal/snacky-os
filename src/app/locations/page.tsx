@@ -2,7 +2,13 @@ import Link from "next/link";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient } from "@/lib/auth";
+import { locationPayrollDistanceKm } from "@/lib/payroll";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
+
+type StorageLocationRow = {
+  id: string;
+  name?: string | null;
+};
 
 export default async function LocationsPage({ searchParams }: { searchParams: Promise<SearchParamsRecord> }) {
   const params = cleanSearchParams(await searchParams);
@@ -16,11 +22,15 @@ export default async function LocationsPage({ searchParams }: { searchParams: Pr
     );
   }
 
-  const { data, count, error } = await supabase
-    .from("locations")
-    .select("id,name,location_type,distance_zone,access_difficulty,stop_multiplier,rent_amount,status", { count: "exact" })
-    .order("name")
-    .range(from, to);
+  const [{ data, count, error }, { data: storageLocations }] = await Promise.all([
+    supabase
+      .from("locations")
+      .select("*", { count: "exact" })
+      .order("name")
+      .range(from, to),
+    supabase.from("storage_locations").select("id, name").eq("active", true).order("name"),
+  ]);
+
   if (error) {
     console.error("[locations] Failed to load locations", error);
     return (
@@ -30,31 +40,39 @@ export default async function LocationsPage({ searchParams }: { searchParams: Pr
     );
   }
 
+  const storageById = new Map(((storageLocations ?? []) as StorageLocationRow[]).map((location) => [location.id, location.name ?? "Unknown storage"]));
+
   return (
     <>
       <PageHeader
         title="Locations"
-        subtitle="Manage customer sites, venue records, rent context, and machine installation locations."
+        subtitle="Manage customer sites and the payroll distance that completed stops will use for route salary calculation."
         breadcrumbs={[{ label: "Machines", href: "/machines" }, { label: "Locations" }]}
         action={<PrimaryButton href="/locations/new">Add location</PrimaryButton>}
       />
       {!data?.length ? (
-        <EmptyState title="No locations yet" body="Create site locations before linking machines, rent, and operating context." action={<PrimaryButton href="/locations/new">Add location</PrimaryButton>} />
+        <EmptyState title="No locations yet" body="Create site locations before linking machines, rent, and payroll distance settings." action={<PrimaryButton href="/locations/new">Add location</PrimaryButton>} />
       ) : (
         <>
-          <DataTable headers={["Name", "Type", "Distance", "Difficulty", "Multiplier", "Rent", "Status", "Actions"]}>
-            {data.map((location: any) => (
-              <tr key={location.id}>
-                <td className="font-medium text-slate-900">{location.name}</td>
-                <td>{location.location_type}</td>
-                <td>{String(location.distance_zone ?? "within_10_km").replaceAll("_", " ")}</td>
-                <td>{String(location.access_difficulty ?? "normal").replaceAll("_", " ")}</td>
-                <td>{Number(location.stop_multiplier ?? 1).toFixed(1)}</td>
-                <td>{Number(location.rent_amount || 0).toFixed(2)}</td>
-                <td><StatusBadge status={location.status} /></td>
-                <td><Link className="btn-secondary" href={`/locations/${location.id}`}>Edit</Link></td>
-              </tr>
-            ))}
+          <DataTable headers={["Name", "Type", "Payroll km", "Round trip", "Storage", "Status", "Actions"]}>
+            {data.map((location: any) => {
+              const payrollKm = locationPayrollDistanceKm(location);
+              const storageName = location.payroll_storage_location_id ? storageById.get(String(location.payroll_storage_location_id)) ?? "Unknown storage" : "-";
+              return (
+                <tr key={location.id}>
+                  <td className="font-medium text-slate-900">
+                    <div>{location.name}</div>
+                    {payrollKm === null ? <div className="text-xs text-amber-700">Missing payroll distance</div> : null}
+                  </td>
+                  <td>{location.location_type}</td>
+                  <td>{payrollKm === null ? "-" : `${payrollKm.toFixed(2)} km`}</td>
+                  <td>{location.use_round_trip_distance ? "Yes" : "No"}</td>
+                  <td>{storageName}</td>
+                  <td><StatusBadge status={location.status} /></td>
+                  <td><Link className="btn-secondary" href={`/locations/${location.id}`}>Edit</Link></td>
+                </tr>
+              );
+            })}
           </DataTable>
           <PaginationControls basePath="/locations" searchParams={params} page={page} pageSize={pageSize} totalCount={count ?? 0} itemLabel="locations" />
         </>

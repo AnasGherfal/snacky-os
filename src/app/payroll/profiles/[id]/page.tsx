@@ -1,8 +1,19 @@
 import { redirect } from "next/navigation";
-import { FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton, ErrorState } from "@/components/ui";
+import { ErrorState, FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canManagePayroll, normalizeRoles } from "@/lib/authz";
-import { defaultOperatorPayProfileValues, inferredRoleLevelFromTeamMember, normalizeOperatorRoleLevel } from "@/lib/payroll";
+import {
+  defaultOperatorPayProfileValues,
+  inferredRoleLevelFromTeamMember,
+  normalizeOperatorRoleLevel,
+  operatorPayProfileBaseMonthlySalary,
+  operatorPayProfileBonus,
+  operatorPayProfileDeduction,
+  operatorPayProfileFuelAllowancePerKm,
+  operatorPayProfilePayPerKm,
+  operatorPayProfilePayPerRoute,
+  operatorPayProfilePayPerStop,
+} from "@/lib/payroll";
 import { saveOperatorPayProfile } from "@/lib/payroll-actions";
 import { getPayrollServerClient } from "@/lib/payroll-server";
 
@@ -29,23 +40,31 @@ export default async function OperatorPayProfileDetailPage({
     );
   }
 
-  const [{ data: member }, { data: payProfile }] = await Promise.all([
+  const [{ data: member, error: memberError }, { data: payProfile, error: payProfileError }] = await Promise.all([
     supabase.from("team_members").select("id, full_name, role, roles, active, active_status").eq("id", id).maybeSingle(),
     supabase.from("operator_pay_profiles").select("*").eq("team_member_id", id).maybeSingle(),
   ]);
+
+  if (memberError || payProfileError) {
+    console.error("[payroll:profile-detail] Failed to load payroll profile detail", { memberError, payProfileError, teamMemberId: id });
+  }
 
   if (!member) redirect("/payroll/profiles?error=Team%20member%20not%20found.");
 
   const defaultRoleLevel = normalizeOperatorRoleLevel(payProfile?.role_level ?? inferredRoleLevelFromTeamMember(member));
   const defaults = defaultOperatorPayProfileValues(defaultRoleLevel);
   const roles = normalizeRoles(member.roles, member.role);
+  const today = new Date().toISOString().slice(0, 10);
+  const activeFrom = payProfile?.active_from ?? defaults.active_from ?? today;
+  const activeTo = payProfile?.active_to ?? "";
+  const isActive = payProfile?.is_active ?? payProfile?.active ?? (member.active_status === "inactive" ? false : member.active !== false);
 
   return (
     <>
       <FormPageLayout>
         <PageHeader
           title={member.full_name}
-          subtitle={`Payroll profile for ${member.full_name}. Selected roles: ${roles.join(", ")}.`}
+          subtitle={`Payroll profile for ${member.full_name}. Roles: ${roles.join(", ")}.`}
           breadcrumbs={[{ label: "Payroll", href: "/payroll" }, { label: "Profiles", href: "/payroll/profiles" }, { label: member.full_name }]}
           action={<SecondaryButton href="/payroll/profiles">Back to profiles</SecondaryButton>}
         />
@@ -53,65 +72,117 @@ export default async function OperatorPayProfileDetailPage({
         {query.error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{query.error}</div> : null}
         {query.saved ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900">Payroll profile saved.</div> : null}
 
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+          <div className="font-medium text-slate-900">Payroll formula</div>
+          <div className="mt-1">
+            Base salary + completed route pay + completed stop pay + distance pay + fuel allowance + bonuses - deductions
+          </div>
+        </div>
+
         <form action={saveOperatorPayProfile} className="space-y-6">
           <input type="hidden" name="team_member_id" value={member.id} />
-          <input type="hidden" name="active" value={String(payProfile?.active ?? (member.active_status === "inactive" ? false : member.active !== false))} />
+          <input type="hidden" name="role_level" value={defaultRoleLevel} />
 
-          <FormSection title="Role level and monthly salary" description="Base salary and allowances are paid once per payroll month before verified route totals are added.">
-            <div className="grid gap-4 md:grid-cols-2">
-              <FormField label="Role level" required>
-                <select name="role_level" defaultValue={defaultRoleLevel} className="field-input">
-                  <option value="junior_operator">Junior operator</option>
-                  <option value="senior_operator">Senior operator</option>
-                  <option value="backup_operator">Backup operator</option>
+          <FormSection title="Pay rates" description="These rates are used directly when Snacky calculates payroll from completed routes and completed stops.">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <FormField label="Base monthly salary LYD" required>
+                <input
+                  name="base_monthly_salary_lyd"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  defaultValue={payProfile ? operatorPayProfileBaseMonthlySalary(payProfile) : defaults.base_monthly_salary_lyd ?? defaults.base_salary_lyd ?? 0}
+                  className="field-input"
+                />
+              </FormField>
+              <FormField label="Pay per route LYD" required>
+                <input
+                  name="pay_per_route_lyd"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  defaultValue={payProfile ? operatorPayProfilePayPerRoute(payProfile) : defaults.pay_per_route_lyd ?? defaults.default_route_base_lyd ?? 0}
+                  className="field-input"
+                />
+              </FormField>
+              <FormField label="Pay per stop LYD" required>
+                <input
+                  name="pay_per_stop_lyd"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  defaultValue={payProfile ? operatorPayProfilePayPerStop(payProfile) : defaults.pay_per_stop_lyd ?? defaults.default_stop_rate_lyd ?? 0}
+                  className="field-input"
+                />
+              </FormField>
+              <FormField label="Pay per km LYD" required>
+                <input
+                  name="pay_per_km_lyd"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  defaultValue={payProfile ? operatorPayProfilePayPerKm(payProfile) : defaults.pay_per_km_lyd ?? defaults.default_km_rate_lyd ?? 0}
+                  className="field-input"
+                />
+              </FormField>
+              <FormField label="Fuel allowance per km LYD">
+                <input
+                  name="fuel_allowance_per_km_lyd"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  defaultValue={payProfile ? operatorPayProfileFuelAllowancePerKm(payProfile) : defaults.fuel_allowance_per_km_lyd ?? 0}
+                  className="field-input"
+                />
+              </FormField>
+              <FormField label="Bonus LYD">
+                <input
+                  name="bonus_lyd"
+                  type="number"
+                  step="0.01"
+                  defaultValue={payProfile ? operatorPayProfileBonus(payProfile) : defaults.bonus_lyd ?? 0}
+                  className="field-input"
+                />
+              </FormField>
+              <FormField label="Deduction LYD">
+                <input
+                  name="deduction_lyd"
+                  type="number"
+                  step="0.01"
+                  defaultValue={payProfile ? operatorPayProfileDeduction(payProfile) : defaults.deduction_lyd ?? 0}
+                  className="field-input"
+                />
+              </FormField>
+            </div>
+          </FormSection>
+
+          <FormSection title="Active dates" description="Use the active window to show when this pay profile applies. Snacky keeps one profile row per operator and refreshes it in place.">
+            <div className="grid gap-4 md:grid-cols-3">
+              <FormField label="Active from" required>
+                <input name="active_from" type="date" defaultValue={activeFrom} className="field-input" />
+              </FormField>
+              <FormField label="Active to">
+                <input name="active_to" type="date" defaultValue={activeTo} className="field-input" />
+              </FormField>
+              <FormField label="Status" required>
+                <select name="is_active" defaultValue={String(isActive)} className="field-input">
+                  <option value="true">Active</option>
+                  <option value="false">Inactive</option>
                 </select>
               </FormField>
-              <FormField label="Base salary LYD" required>
-                <input name="base_salary_lyd" type="number" min="0" step="0.01" defaultValue={payProfile?.base_salary_lyd ?? defaults.base_salary_lyd} className="field-input" />
-              </FormField>
-              <FormField label="Car allowance LYD" required>
-                <input name="car_allowance_lyd" type="number" min="0" step="0.01" defaultValue={payProfile?.car_allowance_lyd ?? defaults.car_allowance_lyd} className="field-input" />
-              </FormField>
-              <FormField label="Phone allowance LYD" required>
-                <input name="phone_allowance_lyd" type="number" min="0" step="0.01" defaultValue={payProfile?.phone_allowance_lyd ?? defaults.phone_allowance_lyd} className="field-input" />
-              </FormField>
             </div>
           </FormSection>
 
-          <FormSection title="Per-route defaults" description="These values feed the route pay engine before route-specific extras, distance, and manual adjustments are applied.">
-            <div className="grid gap-4 md:grid-cols-3">
-              <FormField label="Route base LYD" required>
-                <input name="default_route_base_lyd" type="number" min="0" step="0.01" defaultValue={payProfile?.default_route_base_lyd ?? defaults.default_route_base_lyd} className="field-input" />
-              </FormField>
-              <FormField label="Stop rate LYD" required>
-                <input name="default_stop_rate_lyd" type="number" min="0" step="0.01" defaultValue={payProfile?.default_stop_rate_lyd ?? defaults.default_stop_rate_lyd} className="field-input" />
-              </FormField>
-              <FormField label="KM rate LYD" required hint="Saved now so km-rate distance pay can be switched on later.">
-                <input name="default_km_rate_lyd" type="number" min="0" step="0.01" defaultValue={payProfile?.default_km_rate_lyd ?? defaults.default_km_rate_lyd} className="field-input" />
-              </FormField>
-            </div>
-          </FormSection>
-
-          <FormSection title="Permissions and notes" description="These flags do not grant app access. They only tell the payroll engine whether route extras like cash collection or buying trips are valid for this operator.">
-            <div className="space-y-3">
-              <label className="flex items-start gap-3 rounded-lg border border-slate-200 bg-white p-4">
-                <input name="can_collect_cash" type="checkbox" value="yes" defaultChecked={Boolean(payProfile?.can_collect_cash ?? defaults.can_collect_cash)} className="mt-1" />
-                <span>
-                  <span className="block font-semibold text-slate-900">can_collect_cash</span>
-                  <span className="text-sm text-slate-500">Allows automatic or manual cash collection extras to count in payroll.</span>
-                </span>
-              </label>
-              <label className="flex items-start gap-3 rounded-lg border border-slate-200 bg-white p-4">
-                <input name="can_buy_stock" type="checkbox" value="yes" defaultChecked={Boolean(payProfile?.can_buy_stock ?? defaults.can_buy_stock)} className="mt-1" />
-                <span>
-                  <span className="block font-semibold text-slate-900">can_buy_stock</span>
-                  <span className="text-sm text-slate-500">Allows buying trip extras to count without a manual override exception.</span>
-                </span>
-              </label>
-              <FormField label="Notes">
-                <textarea name="notes" rows={4} defaultValue={payProfile?.notes ?? defaults.notes ?? ""} className="field-input" placeholder="Optional payroll note, contract detail, or internal reminder." />
-              </FormField>
-            </div>
+          <FormSection title="Notes" description="Keep contract notes, payroll reminders, or context that explains this operator’s rates.">
+            <FormField label="Notes">
+              <textarea
+                name="notes"
+                rows={4}
+                defaultValue={payProfile?.notes ?? defaults.notes ?? ""}
+                className="field-input"
+                placeholder="Optional payroll note, contract detail, or internal reminder."
+              />
+            </FormField>
           </FormSection>
 
           <div className="flex flex-col gap-3 sm:flex-row">

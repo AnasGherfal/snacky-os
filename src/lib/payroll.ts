@@ -28,14 +28,24 @@ export type OperatorPayProfileRow = {
   team_member_id: string;
   role_level: OperatorRoleLevel;
   base_salary_lyd: number | string | null;
+  base_monthly_salary_lyd?: number | string | null;
   car_allowance_lyd: number | string | null;
   phone_allowance_lyd: number | string | null;
   default_route_base_lyd: number | string | null;
+  pay_per_route_lyd?: number | string | null;
   default_stop_rate_lyd: number | string | null;
+  pay_per_stop_lyd?: number | string | null;
   default_km_rate_lyd: number | string | null;
+  pay_per_km_lyd?: number | string | null;
+  fuel_allowance_per_km_lyd?: number | string | null;
+  bonus_lyd?: number | string | null;
+  deduction_lyd?: number | string | null;
   can_collect_cash: boolean | null;
   can_buy_stock: boolean | null;
   active: boolean | null;
+  active_from?: string | null;
+  active_to?: string | null;
+  is_active?: boolean | null;
   notes?: string | null;
 };
 
@@ -109,9 +119,14 @@ export type PayrollPeriodRow = {
   period_end: string;
   status: PayrollPeriodStatus | string;
   base_salary_lyd: number | string | null;
+  base_salary_amount_lyd?: number | string | null;
   car_allowance_lyd: number | string | null;
   phone_allowance_lyd: number | string | null;
   route_pay_total_lyd: number | string | null;
+  route_pay_amount_lyd?: number | string | null;
+  stop_pay_amount_lyd?: number | string | null;
+  distance_pay_amount_lyd?: number | string | null;
+  fuel_allowance_amount_lyd?: number | string | null;
   buying_trip_total_lyd: number | string | null;
   emergency_total_lyd: number | string | null;
   bonus_total_lyd: number | string | null;
@@ -119,6 +134,11 @@ export type PayrollPeriodRow = {
   gross_total_lyd: number | string | null;
   net_total_lyd: number | string | null;
   route_count: number | null;
+  completed_routes_count?: number | null;
+  completed_stops_count?: number | null;
+  total_payroll_distance_km?: number | string | null;
+  missing_distance_stop_count?: number | null;
+  calculation_snapshot?: Record<string, unknown> | null;
   notes?: string | null;
   paid_at?: string | null;
   finance_transaction_id?: string | null;
@@ -303,40 +323,70 @@ const roleLevelDefaults: Record<OperatorRoleLevel, Omit<OperatorPayProfileRow, "
   senior_operator: {
     role_level: "senior_operator",
     base_salary_lyd: 1300,
+    base_monthly_salary_lyd: 1300,
     car_allowance_lyd: 400,
     phone_allowance_lyd: 50,
     default_route_base_lyd: 30,
+    pay_per_route_lyd: 30,
     default_stop_rate_lyd: 30,
+    pay_per_stop_lyd: 30,
     default_km_rate_lyd: 0.5,
+    pay_per_km_lyd: 0.5,
+    fuel_allowance_per_km_lyd: 0,
+    bonus_lyd: 0,
+    deduction_lyd: 0,
     can_collect_cash: true,
     can_buy_stock: true,
     active: true,
+    active_from: new Date().toISOString().slice(0, 10),
+    active_to: null,
+    is_active: true,
     notes: "Snacky senior / trusted operator default profile.",
   },
   junior_operator: {
     role_level: "junior_operator",
     base_salary_lyd: 900,
+    base_monthly_salary_lyd: 900,
     car_allowance_lyd: 250,
     phone_allowance_lyd: 0,
     default_route_base_lyd: 20,
+    pay_per_route_lyd: 20,
     default_stop_rate_lyd: 25,
+    pay_per_stop_lyd: 25,
     default_km_rate_lyd: 0.4,
+    pay_per_km_lyd: 0.4,
+    fuel_allowance_per_km_lyd: 0,
+    bonus_lyd: 0,
+    deduction_lyd: 0,
     can_collect_cash: false,
     can_buy_stock: false,
     active: true,
+    active_from: new Date().toISOString().slice(0, 10),
+    active_to: null,
+    is_active: true,
     notes: "Snacky junior operator default profile.",
   },
   backup_operator: {
     role_level: "backup_operator",
     base_salary_lyd: 0,
+    base_monthly_salary_lyd: 0,
     car_allowance_lyd: 0,
     phone_allowance_lyd: 0,
     default_route_base_lyd: 20,
+    pay_per_route_lyd: 20,
     default_stop_rate_lyd: 25,
+    pay_per_stop_lyd: 25,
     default_km_rate_lyd: 0.4,
+    pay_per_km_lyd: 0.4,
+    fuel_allowance_per_km_lyd: 0,
+    bonus_lyd: 0,
+    deduction_lyd: 0,
     can_collect_cash: false,
     can_buy_stock: false,
     active: true,
+    active_from: new Date().toISOString().slice(0, 10),
+    active_to: null,
+    is_active: true,
     notes: "Snacky backup operator default profile.",
   },
 };
@@ -368,6 +418,48 @@ export function toMoney(value: unknown) {
 
 export function moneyLabel(value: unknown) {
   return `${toMoney(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} LYD`;
+}
+
+export function operatorPayProfileBaseMonthlySalary(profile: Pick<OperatorPayProfileRow, "base_monthly_salary_lyd" | "base_salary_lyd">) {
+  return toMoney(profile.base_monthly_salary_lyd ?? profile.base_salary_lyd);
+}
+
+export function operatorPayProfilePayPerRoute(profile: Pick<OperatorPayProfileRow, "pay_per_route_lyd" | "default_route_base_lyd">) {
+  return toMoney(profile.pay_per_route_lyd ?? profile.default_route_base_lyd);
+}
+
+export function operatorPayProfilePayPerStop(profile: Pick<OperatorPayProfileRow, "pay_per_stop_lyd" | "default_stop_rate_lyd">) {
+  return toMoney(profile.pay_per_stop_lyd ?? profile.default_stop_rate_lyd);
+}
+
+export function operatorPayProfilePayPerKm(profile: Pick<OperatorPayProfileRow, "pay_per_km_lyd" | "default_km_rate_lyd">) {
+  return toMoney(profile.pay_per_km_lyd ?? profile.default_km_rate_lyd);
+}
+
+export function operatorPayProfileFuelAllowancePerKm(profile: Pick<OperatorPayProfileRow, "fuel_allowance_per_km_lyd">) {
+  return toMoney(profile.fuel_allowance_per_km_lyd);
+}
+
+export function operatorPayProfileBonus(profile: Pick<OperatorPayProfileRow, "bonus_lyd">) {
+  return toMoney(profile.bonus_lyd);
+}
+
+export function operatorPayProfileDeduction(profile: Pick<OperatorPayProfileRow, "deduction_lyd">) {
+  return toMoney(profile.deduction_lyd);
+}
+
+export function operatorPayProfileIsActive(profile: Pick<OperatorPayProfileRow, "is_active" | "active">) {
+  return Boolean(profile.is_active ?? profile.active ?? true);
+}
+
+export function locationPayrollDistanceKm(location: {
+  distance_from_storage_km?: number | string | null;
+  use_round_trip_distance?: boolean | null;
+}) {
+  const baseDistance = location.distance_from_storage_km;
+  if (baseDistance === null || baseDistance === undefined || baseDistance === "") return null;
+  const normalizedDistance = toMoney(baseDistance);
+  return toMoney(normalizedDistance * (location.use_round_trip_distance ? 2 : 1));
 }
 
 export function routeDistanceZoneLabel(zone: RouteDistanceZone | string | null | undefined) {
@@ -562,20 +654,31 @@ export async function ensureOperatorPayProfile(supabase: OperatorPayProfileStore
 
   const roleLevel = inferredRoleLevelFromTeamMember(memberResult.data);
   const defaults = defaultOperatorPayProfileValues(roleLevel);
+  const activeFrom = new Date().toISOString().slice(0, 10);
   const inserted = await supabase
     .from("operator_pay_profiles")
     .insert({
       team_member_id: teamMemberId,
       role_level: roleLevel,
       base_salary_lyd: defaults.base_salary_lyd,
+      base_monthly_salary_lyd: defaults.base_monthly_salary_lyd ?? defaults.base_salary_lyd,
       car_allowance_lyd: defaults.car_allowance_lyd,
       phone_allowance_lyd: defaults.phone_allowance_lyd,
       default_route_base_lyd: defaults.default_route_base_lyd,
+      pay_per_route_lyd: defaults.pay_per_route_lyd ?? defaults.default_route_base_lyd,
       default_stop_rate_lyd: defaults.default_stop_rate_lyd,
+      pay_per_stop_lyd: defaults.pay_per_stop_lyd ?? defaults.default_stop_rate_lyd,
       default_km_rate_lyd: defaults.default_km_rate_lyd,
+      pay_per_km_lyd: defaults.pay_per_km_lyd ?? defaults.default_km_rate_lyd,
+      fuel_allowance_per_km_lyd: defaults.fuel_allowance_per_km_lyd ?? 0,
+      bonus_lyd: defaults.bonus_lyd ?? 0,
+      deduction_lyd: defaults.deduction_lyd ?? 0,
       can_collect_cash: defaults.can_collect_cash,
       can_buy_stock: defaults.can_buy_stock,
       active: memberResult.data.active_status ? memberResult.data.active_status === "active" : memberResult.data.active !== false,
+      active_from: activeFrom,
+      active_to: null,
+      is_active: memberResult.data.active_status ? memberResult.data.active_status === "active" : memberResult.data.active !== false,
       notes: defaults.notes,
       updated_at: new Date().toISOString(),
     })
@@ -608,16 +711,16 @@ export function calculateRoutePay(input: RoutePayCalculationInput): RoutePayCalc
       return {
         ...stop,
         normalizedMultiplier,
-        stopPay: toMoney(profile.default_stop_rate_lyd) * normalizedMultiplier,
+        stopPay: operatorPayProfilePayPerStop(profile) * normalizedMultiplier,
       };
     });
 
-  const routeBasePay = toMoney(profile.default_route_base_lyd);
+  const routeBasePay = operatorPayProfilePayPerRoute(profile);
   const stopPay = toMoney(stopLines.reduce((sum, stop) => sum + stop.stopPay, 0));
   const distancePayByZone = distancePayForZone(resolvedDistance.distanceZone, rules);
   const distancePayByKm = resolvedDistance.distanceKm === null
     ? 0
-    : toMoney(resolvedDistance.distanceKm * toMoney(profile.default_km_rate_lyd));
+    : toMoney(resolvedDistance.distanceKm * operatorPayProfilePayPerKm(profile));
   const distancePay = String(rules.distance_pay_mode ?? "zone") === "km_rate" && resolvedDistance.distanceKm !== null
     ? distancePayByKm
     : distancePayByZone;
@@ -672,12 +775,15 @@ export function calculateRoutePay(input: RoutePayCalculationInput): RoutePayCalc
       : null,
     profile_snapshot: {
       role_level: profile.role_level,
-      base_salary_lyd: toMoney(profile.base_salary_lyd),
+      base_salary_lyd: operatorPayProfileBaseMonthlySalary(profile),
       car_allowance_lyd: toMoney(profile.car_allowance_lyd),
       phone_allowance_lyd: toMoney(profile.phone_allowance_lyd),
       default_route_base_lyd: routeBasePay,
-      default_stop_rate_lyd: toMoney(profile.default_stop_rate_lyd),
-      default_km_rate_lyd: toMoney(profile.default_km_rate_lyd),
+      default_stop_rate_lyd: operatorPayProfilePayPerStop(profile),
+      default_km_rate_lyd: operatorPayProfilePayPerKm(profile),
+      fuel_allowance_per_km_lyd: operatorPayProfileFuelAllowancePerKm(profile),
+      bonus_lyd: operatorPayProfileBonus(profile),
+      deduction_lyd: operatorPayProfileDeduction(profile),
       can_collect_cash: Boolean(profile.can_collect_cash),
       can_buy_stock: Boolean(profile.can_buy_stock),
     },

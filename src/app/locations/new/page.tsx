@@ -25,14 +25,39 @@ async function createLocation(formData: FormData) {
     distance_zone: String(formData.get("distance_zone") || "within_10_km"),
     access_difficulty: String(formData.get("access_difficulty") || "normal"),
     stop_multiplier: Number(formData.get("stop_multiplier") || 1),
+    payroll_storage_location_id: String(formData.get("payroll_storage_location_id") || "").trim() || null,
+    distance_from_storage_km: optionalNumber(formData.get("distance_from_storage_km")),
+    use_round_trip_distance: String(formData.get("use_round_trip_distance") || "") === "yes",
+    payroll_distance_notes: String(formData.get("payroll_distance_notes") || "").trim() || null,
   };
   if (!payload.name) return;
-  await supabase.from("locations").insert(payload);
+  let insertResult = await supabase.from("locations").insert(payload);
+  if (insertResult.error) {
+    const errorText = [insertResult.error.code, insertResult.error.message, insertResult.error.details].map((value) => String(value ?? "")).join(" ").toLowerCase();
+    if (errorText.includes("column") && errorText.includes("does not exist")) {
+      insertResult = await supabase.from("locations").insert({
+        name: payload.name,
+        location_type: payload.location_type,
+        rent_amount: payload.rent_amount,
+        status: payload.status,
+        latitude: payload.latitude,
+        longitude: payload.longitude,
+        distance_zone: payload.distance_zone,
+        access_difficulty: payload.access_difficulty,
+        stop_multiplier: payload.stop_multiplier,
+      });
+    }
+  }
   revalidatePath("/locations");
   redirect("/locations");
 }
 
-export default function NewLocationPage() {
+export default async function NewLocationPage() {
+  const supabase = await getAuthenticatedSupabaseServerClient();
+  const { data: storageLocations } = supabase
+    ? await supabase.from("storage_locations").select("id, name").eq("active", true).order("name")
+    : { data: [] };
+
   return (
     <>
       <FormPageLayout>
@@ -86,6 +111,31 @@ export default function NewLocationPage() {
               </FormField>
               <FormField label="Stop multiplier" hint="Used by route pay as stop_rate x stop_multiplier.">
                 <input type="number" step="0.1" min="0.1" name="stop_multiplier" className="field-input" placeholder="1.0" defaultValue="1" />
+              </FormField>
+            </div>
+          </FormSection>
+          <FormSection title="Payroll distance" description="Manual km entry is enough for now. Snacky will use this distance for completed stop pay calculations.">
+            <div className="grid gap-4 md:grid-cols-2">
+              <FormField label="Storage location">
+                <select name="payroll_storage_location_id" className="field-input" defaultValue="">
+                  <option value="">No storage selected</option>
+                  {(storageLocations ?? []).map((storageLocation: any) => (
+                    <option key={storageLocation.id} value={storageLocation.id}>{storageLocation.name}</option>
+                  ))}
+                </select>
+              </FormField>
+              <FormField label="Distance from storage km">
+                <input type="number" step="0.01" min="0" name="distance_from_storage_km" className="field-input" placeholder="12.5" />
+              </FormField>
+              <label className="flex items-start gap-3 rounded-lg border border-slate-200 bg-white p-4 md:col-span-2">
+                <input name="use_round_trip_distance" type="checkbox" value="yes" className="mt-1" />
+                <span>
+                  <span className="block font-semibold text-slate-900">Use round trip distance</span>
+                  <span className="text-sm text-slate-500">If enabled, Snacky will multiply the one-way distance by 2 when payroll is calculated.</span>
+                </span>
+              </label>
+              <FormField label="Payroll distance notes">
+                <textarea name="payroll_distance_notes" rows={4} className="field-input" placeholder="Optional note about route direction or why this distance was chosen." />
               </FormField>
             </div>
           </FormSection>

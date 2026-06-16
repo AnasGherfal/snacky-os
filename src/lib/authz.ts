@@ -234,7 +234,7 @@ export function canEditFinancialTransactions(user: AuthUserContext | null | unde
 }
 
 export function canManagePayroll(input: RoleInput) {
-  return hasAnyRole(input, ["owner", "admin", "supervisor", "finance"]);
+  return hasAnyRole(input, ["owner", "admin"]);
 }
 
 export function canApprovePayroll(input: RoleInput) {
