@@ -94,7 +94,7 @@ const machinesItem: NavItem = {
   labelKey: "machinesGroup",
   href: "/machines",
   icon: Boxes,
-  activePrefixes: ["/machines", "/machine-slots", "/issues"],
+  activePrefixes: ["/machines", "/locations", "/locations-pipeline", "/machine-slots", "/issues"],
 };
 const financeItem: NavItem = {
   labelKey: "finance",

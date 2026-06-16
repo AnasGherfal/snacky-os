@@ -26,6 +26,7 @@ export const en = {
     machinesGroup: "Machines",
     machines: "Machines",
     locations: "Locations",
+    locationsPipeline: "Locations Pipeline",
     machinePlanograms: "Machine Planograms",
     planograms: "Planograms",
     inventory: "Inventory",

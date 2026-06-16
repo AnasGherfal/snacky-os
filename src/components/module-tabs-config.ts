@@ -40,6 +40,8 @@ const inventoryTabs: ModuleTab[] = [
 
 const machinesTabs: ModuleTab[] = [
   { label: "Machines", href: "/machines", exact: true },
+  { label: "Locations", href: "/locations" },
+  { label: "Pipeline", href: "/locations-pipeline", match: ["/locations-pipeline"] },
   { label: "Planograms", href: "/machine-slots" },
   { label: "Status", href: "/machines/status" },
   { label: "Issues", href: "/issues" },
@@ -110,6 +112,8 @@ export function getModuleTabGroupForPath(
   }
   if (
     matchesPrefix(pathname, "/machines") ||
+    matchesPrefix(pathname, "/locations") ||
+    matchesPrefix(pathname, "/locations-pipeline") ||
     matchesPrefix(pathname, "/machine-slots") ||
     matchesPrefix(pathname, "/issues")
   ) {

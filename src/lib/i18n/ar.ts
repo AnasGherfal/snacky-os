@@ -13,6 +13,7 @@ export const ar = {
     admin: "Admin",
     account: "Account",
     machinesGroup: "Machines",
+    locationsPipeline: "المواقع المحتملة",
     planograms: "Planograms",
     storage: "Storage",
     storageLocations: "Storage Locations",

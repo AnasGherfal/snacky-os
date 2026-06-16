@@ -33,6 +33,7 @@ export const appPermissions = [
   "suppliers.manage",
   "machines.view",
   "machines.manage",
+  "locations.pipeline.manage",
   "finance.view",
   "finance.edit",
   "reports.view",
@@ -98,6 +99,7 @@ const rolePermissions = {
     "purchases.receive",
     "machines.view",
     "machines.manage",
+    "locations.pipeline.manage",
     "finance.view",
     "finance.edit",
     "vms.import",
@@ -245,6 +247,10 @@ export function canManageStorageLocations(input: RoleInput) {
   return hasPermission(input, "storage.location.manage");
 }
 
+export function canManageLocationPipeline(input: RoleInput) {
+  return hasPermission(input, "locations.pipeline.manage");
+}
+
 export function canManagePurchases(input: RoleInput) {
   return hasPermission(input, "purchases.create") || hasPermission(input, "purchases.receive");
 }
@@ -344,6 +350,7 @@ export function canAccessPath(user: AuthUserContext | null | undefined, pathname
   if (matchesPrefix(pathname, ["/routes", "/refills"])) return hasPermission(user, "routes.view") || hasPermission(user, "refills.view");
   if (matchesPrefix(pathname, ["/operator"])) return hasPermission(user, "assigned_routes.view") || hasPermission(user, "refills.view");
 
+  if (matchesPrefix(pathname, ["/locations-pipeline"])) return canManageLocationPipeline(user);
   if (matchesPrefix(pathname, ["/machines", "/machine-slots", "/locations"])) return hasPermission(user, "machines.view");
   if (matchesPrefix(pathname, ["/issues"])) return hasPermission(user, "issues.view");
 
