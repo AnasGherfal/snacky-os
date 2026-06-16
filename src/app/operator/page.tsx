@@ -42,7 +42,7 @@ export default async function OperatorPage() {
   const canManageAllRoutes = canManageOperations(profile);
   const accessibleOperatorIds = await loadAccessibleOperatorIds(supabase, profile);
   const currentViewerOperatorId = preferredOperatorViewerId(profile, accessibleOperatorIds);
-  const routeSelect = "id, route_date, status, operator_id, storage_location_id, distance_km, distance_zone, distance_source, load_difficulty_pay_lyd, route_stops(id, status, stop_order, machine_id)";
+  const routeSelect = "id, route_date, status, operator_id, route_stops(id, status, stop_order, machine_id)";
   const [assignedResult, availableResult, currentPayrollPeriodResult] = await Promise.all([
     canManageAllRoutes
       ? supabase

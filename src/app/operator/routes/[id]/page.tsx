@@ -1,15 +1,16 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge, SectionCard } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
-import { canAccessOperatorRoute } from "@/lib/authz";
+import { canAccessOperatorRoute, canExecuteRoutes } from "@/lib/authz";
 import { buildOperatorRouteAccessContext, loadAccessibleOperatorIds, preferredOperatorViewerId } from "@/lib/operator-route-access";
 import { loadOperatorRoutePayPreviewMap, type OperatorRoutePreviewRow, type OperatorRoutePreviewStopRow } from "@/lib/payroll-server";
 import { moneyLabel } from "@/lib/payroll";
 import { sortPickupProductRows } from "@/lib/route-pickup-checklist";
 import { isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isRouteStopActiveStatus, isRouteStopDoneStatus, isRouteStopPendingStatus, isTerminalRouteStatus, nextOperatorRouteHref, routeDisplayStatus, ROUTE_STOP_COMPLETED_STATUS } from "@/lib/route-workflow";
 import { skipStop } from "@/lib/operator-actions";
+import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 
 type OperatorRouteDetailRow = OperatorRoutePreviewRow & {
   started_at?: string | null;
@@ -37,6 +38,30 @@ type OperatorPayrollPeriodSummary = {
   status?: string | null;
 };
 
+const OPERATOR_ROUTE_BASE_SELECT = "id, route_date, status, operator_id, started_at, completed_at, created_at, notes";
+
+function errorSummary(error: unknown) {
+  if (!error || typeof error !== "object") return null;
+  const row = error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown };
+  return {
+    code: row.code ?? null,
+    message: row.message ?? null,
+    details: row.details ?? null,
+    hint: row.hint ?? null,
+  };
+}
+
+async function readOperatorRouteBaseById(
+  client: NonNullable<ReturnType<typeof getSupabaseServerClient>>,
+  routeId: string,
+) {
+  return client
+    .from("routes")
+    .select(OPERATOR_ROUTE_BASE_SELECT)
+    .eq("id", routeId)
+    .maybeSingle();
+}
+
 export default async function OperatorRouteDetailPage({
   params,
   searchParams,
@@ -48,40 +73,112 @@ export default async function OperatorRouteDetailPage({
   const { success, error } = await searchParams;
   const supabase = await getAuthenticatedSupabaseServerClient();
   const profile = await getCurrentProfile();
-  if (!supabase) notFound();
+  if (!profile || !canExecuteRoutes(profile)) redirect("/unauthorized");
+  if (!supabase) {
+    return (
+      <>
+        <ErrorState
+          title="Route unavailable"
+          body="Snacky OS could not connect to the database to load this route."
+          action={<SecondaryButton href="/operator/routes">Back to routes</SecondaryButton>}
+        />
+      </>
+    );
+  }
+
+  const routeDiagnosticClient = getSupabaseAdminClient() ?? supabase;
   const routeAccessProfile = await buildOperatorRouteAccessContext(supabase, profile);
   const accessibleOperatorIds = await loadAccessibleOperatorIds(supabase, profile);
   const currentViewerOperatorId = preferredOperatorViewerId(profile, accessibleOperatorIds);
 
-  const { data: route, error: routeError } = await supabase
-    .from("routes")
-    .select("id, route_date, status, operator_id, started_at, completed_at, storage_location_id, distance_km, distance_zone, distance_source, load_difficulty_pay_lyd")
-    .eq("id", routeId)
-    .maybeSingle();
+  const [baseRouteResult, visibleRouteResult] = await Promise.all([
+    readOperatorRouteBaseById(routeDiagnosticClient, routeId),
+    readOperatorRouteBaseById(supabase, routeId),
+  ]);
+  const baseRoute = baseRouteResult.data;
+  const visibleRoute = visibleRouteResult.data;
+  const baseRouteError = baseRouteResult.error;
+  const visibleRouteError = visibleRouteResult.error;
 
-  if (routeError) console.error("[operator:route] Failed to load route", { routeId, error: routeError });
+  if (baseRouteError) {
+    console.error("[operator:route] Base route read failed", {
+      route_id: routeId,
+      current_user_id: profile.id,
+      current_user_role: profile.role,
+      current_user_roles: profile.roles,
+      operator_profile_id: profile.team_member_id ?? null,
+      linked_operator_ids: accessibleOperatorIds,
+      exact_reason_page_would_not_found: "base_route_query_failed",
+      base_route_found: Boolean(baseRoute),
+      permission_filtered_route_found: Boolean(visibleRoute),
+      base_route_error: errorSummary(baseRouteError),
+    });
+  }
+
+  if (visibleRouteError) {
+    console.error("[operator:route] Permission-filtered route read failed", {
+      route_id: routeId,
+      current_user_id: profile.id,
+      current_user_role: profile.role,
+      current_user_roles: profile.roles,
+      operator_profile_id: profile.team_member_id ?? null,
+      linked_operator_ids: accessibleOperatorIds,
+      exact_reason_page_would_not_found: "permission_filtered_query_failed",
+      base_route_found: Boolean(baseRoute),
+      permission_filtered_route_found: Boolean(visibleRoute),
+      permission_filtered_route_error: errorSummary(visibleRouteError),
+    });
+  }
+
+  const route = (visibleRoute ?? baseRoute) as OperatorRouteDetailRow | null;
   if (!route) {
-    console.error("[operator:route] Route detail returned no row", {
-      routeId,
-      authUserId: profile?.id ?? null,
-      linkedOperatorIds: accessibleOperatorIds,
+    console.error("[operator:route] Route detail returned no base row", {
+      route_id: routeId,
+      current_user_id: profile.id,
+      current_user_role: profile.role,
+      current_user_roles: profile.roles,
+      operator_profile_id: profile.team_member_id ?? null,
+      linked_operator_ids: accessibleOperatorIds,
+      base_route_found: false,
+      permission_filtered_route_found: false,
+      exact_reason_page_would_not_found: baseRouteError ? "base_route_query_failed" : "route_missing",
+      base_route_error: errorSummary(baseRouteError),
+      permission_filtered_route_error: errorSummary(visibleRouteError),
     });
     notFound();
   }
 
   const routeRow = route as OperatorRouteDetailRow;
   const canAccess = canAccessOperatorRoute(routeAccessProfile, routeRow.operator_id);
+  const routeReadClient = visibleRoute ? supabase : routeDiagnosticClient;
+
+  if (!visibleRoute && baseRoute) {
+    console.warn("[operator:route] Using base route read after permission-filtered query returned no row", {
+      route_id: routeId,
+      current_user_id: profile.id,
+      current_user_role: profile.role,
+      current_user_roles: profile.roles,
+      operator_profile_id: profile.team_member_id ?? null,
+      linked_operator_ids: accessibleOperatorIds,
+      route_status: routeRow.status ?? null,
+      assigned_operator_id: routeRow.operator_id ?? null,
+      base_route_found: true,
+      permission_filtered_route_found: false,
+      exact_reason_page_would_not_found: visibleRouteError ? "permission_filtered_query_failed" : "permission_filtered_query_returned_no_row",
+      permission_filtered_route_error: errorSummary(visibleRouteError),
+    });
+  }
 
   const [{ data: operator }, { data: stops, error: stopsError }, { data: routeStock }] = await Promise.all([
     routeRow.operator_id
-      ? supabase.from("team_members").select("id, full_name").eq("id", routeRow.operator_id).maybeSingle()
+      ? routeReadClient.from("team_members").select("id, full_name").eq("id", routeRow.operator_id).maybeSingle()
       : Promise.resolve({ data: null }),
-    supabase
+    routeReadClient
       .from("route_stops")
       .select("id, stop_order, status, machine_id")
       .eq("route_id", routeId)
       .order("stop_order", { ascending: true }),
-    supabase
+    routeReadClient
       .from("route_stock_lines")
       .select("id, product_id, planned_qty, picked_qty, returned_qty, product:products(name, category)")
       .eq("route_id", routeId),
@@ -89,6 +186,19 @@ export default async function OperatorRouteDetailPage({
   if (stopsError) console.error("[operator:route] Failed to load stops", { routeId, error: stopsError });
 
   if (!canAccess) {
+    console.error("[operator:route] Route access denied by app permission check", {
+      route_id: routeId,
+      current_user_id: profile.id,
+      current_user_role: profile.role,
+      current_user_roles: profile.roles,
+      operator_profile_id: profile.team_member_id ?? null,
+      linked_operator_ids: accessibleOperatorIds,
+      route_status: routeRow.status ?? null,
+      assigned_operator_id: routeRow.operator_id ?? null,
+      base_route_found: Boolean(baseRoute),
+      permission_filtered_route_found: Boolean(visibleRoute),
+      exact_reason_page_would_not_found: "app_permission_check_denied",
+    });
     return (
       <>
         <ErrorState
@@ -109,17 +219,17 @@ export default async function OperatorRouteDetailPage({
   const routeStops = (stops ?? []) as OperatorRoutePreviewStopRow[];
   const machineIds = routeStops.map((stop) => stop.machine_id).filter(Boolean);
   const { data: machines } = machineIds.length
-    ? await supabase.from("machines").select("id, name, machine_code").in("id", machineIds)
+    ? await routeReadClient.from("machines").select("id, name, machine_code").in("id", machineIds)
     : { data: [] };
   const machineById = new Map(((machines ?? []) as OperatorRouteMachineRow[]).map((machine) => [machine.id, machine]));
   const doneStops = routeStops.filter((s) => isRouteStopDoneStatus(s.status)).length;
   const totalStops = routeStops.length;
   const pickItems = (routeStock ?? []) as OperatorRouteStockLineRow[];
   const currentPayrollPeriodResult = currentViewerOperatorId
-    ? await supabase.from("payroll_periods").select("id, net_total_lyd, status").eq("operator_id", currentViewerOperatorId).eq("period_start", currentMonthStart).maybeSingle()
+    ? await routeReadClient.from("payroll_periods").select("id, net_total_lyd, status").eq("operator_id", currentViewerOperatorId).eq("period_start", currentMonthStart).maybeSingle()
     : { data: null };
   const { previewByRouteId } = await loadOperatorRoutePayPreviewMap({
-    supabase,
+    supabase: routeReadClient,
     routes: [{ ...routeRow, route_stops: routeStops }],
     viewerTeamMemberId: currentViewerOperatorId,
   });

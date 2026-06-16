@@ -86,7 +86,7 @@ export default async function OperatorRoutesPage() {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
   })();
 
-  const routeSelect = "id, route_date, status, operator_id, storage_location_id, distance_km, distance_zone, distance_source, load_difficulty_pay_lyd, route_stops(id, status, stop_order, machine_id)";
+  const routeSelect = "id, route_date, status, operator_id, route_stops(id, status, stop_order, machine_id)";
 
   const assignedQuery = canManageAllRoutes
     ? supabase.from("routes").select(routeSelect).not("operator_id", "is", null).order("route_date", { ascending: false })
