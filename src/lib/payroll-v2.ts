@@ -13,6 +13,12 @@ import { isCompletedRouteStatus } from "@/lib/route-workflow";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 
 type PayrollServerClient = NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+type ProfileLike = {
+  id?: string | null;
+  role?: string | null;
+  roles?: string[] | null;
+  team_member_id?: string | null;
+};
 
 export type OperatorPayProfileVersionRow = {
   id: string;
@@ -206,6 +212,108 @@ export type PayrollRunPreview = {
   calculationSnapshot: Record<string, unknown>;
 };
 
+export type PayrollQueryIssue = {
+  table: string;
+  step: string;
+  error: unknown;
+  resultEmpty?: boolean | null;
+};
+
+function errorTextValue(value: unknown) {
+  return typeof value === "string" ? value : "";
+}
+
+function extractMissingRelation(message: string) {
+  const relationMatch = message.match(/relation ["']?(?:public\.)?([a-z0-9_]+)["']? does not exist/i);
+  if (relationMatch) return relationMatch[1] ?? null;
+
+  const tableMatch = message.match(/table ["']?(?:public\.)?([a-z0-9_]+)["']?/i);
+  return tableMatch?.[1] ?? null;
+}
+
+function extractMissingColumn(message: string) {
+  const columnMatch = message.match(/column ["']?([a-z0-9_]+)["']?/i);
+  return columnMatch?.[1] ?? null;
+}
+
+export function payrollErrorPayload(error: unknown) {
+  const payload = typeof error === "object" && error !== null ? error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown } : null;
+  const message = errorTextValue(payload?.message) || String(error ?? "Unknown Supabase error");
+  const details = errorTextValue(payload?.details);
+  const hint = errorTextValue(payload?.hint);
+  const combined = [message, details, hint].filter(Boolean).join(" ");
+  const lowerCombined = combined.toLowerCase();
+
+  return {
+    code: typeof payload?.code === "string" ? payload.code : null,
+    message,
+    details: details || null,
+    hint: hint || null,
+    missing_relation: extractMissingRelation(combined),
+    missing_column: extractMissingColumn(combined),
+    possible_rls_blocked:
+      payload?.code === "42501"
+      || lowerCombined.includes("permission denied")
+      || lowerCombined.includes("row-level security"),
+  };
+}
+
+export function logPayrollQueryIssue({
+  module,
+  profile,
+  table,
+  step,
+  error,
+  resultEmpty = null,
+}: {
+  module: string;
+  profile: ProfileLike | null | undefined;
+  table: string;
+  step: string;
+  error: unknown;
+  resultEmpty?: boolean | null;
+}) {
+  console.error(`[${module}] Payroll query failed`, {
+    table,
+    query_step: step,
+    current_user_id: profile?.id ?? null,
+    current_user_role: profile?.role ?? null,
+    current_user_roles: profile?.roles ?? [],
+    current_team_member_id: profile?.team_member_id ?? null,
+    result_empty: resultEmpty,
+    supabase_error: payrollErrorPayload(error),
+  });
+}
+
+export function buildPayrollLoadFailureBody({
+  noun,
+  issues,
+  defaultBody,
+}: {
+  noun: string;
+  issues: PayrollQueryIssue[];
+  defaultBody: string;
+}) {
+  const missingRelations = Array.from(new Set(issues.map((issue) => payrollErrorPayload(issue.error).missing_relation).filter(Boolean))) as string[];
+  if (missingRelations.length) {
+    const label = missingRelations.map((table) => `public.${table}`).join(", ");
+    const verb = missingRelations.length === 1 ? "is" : "are";
+    return `Snacky OS could not load ${noun} because required database table${missingRelations.length === 1 ? "" : "s"} ${label} ${verb} missing. Run migration 202606170002_emergency_stabilization_location_leads_payroll.sql.`;
+  }
+
+  const missingColumns = Array.from(new Set(issues.map((issue) => payrollErrorPayload(issue.error).missing_column).filter(Boolean))) as string[];
+  if (missingColumns.length) {
+    return `Snacky OS could not load ${noun} because required database column${missingColumns.length === 1 ? "" : "s"} ${missingColumns.join(", ")} ${missingColumns.length === 1 ? "is" : "are"} missing. Run migration 202606170002_emergency_stabilization_location_leads_payroll.sql.`;
+  }
+
+  const rlsBlocked = issues.some((issue) => payrollErrorPayload(issue.error).possible_rls_blocked);
+  if (rlsBlocked) {
+    return `Snacky OS could not load ${noun} because database permissions blocked one of the required queries.`;
+  }
+
+  return defaultBody;
+}
+
 function parseDateOnly(value: string | null | undefined) {
   const text = String(value ?? "").slice(0, 10);
   return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : null;
@@ -290,6 +398,17 @@ export async function loadEffectiveOperatorPayProfileVersion(
     .order("is_active", { ascending: false })
     .order("active_from", { ascending: false })
     .order("updated_at", { ascending: false });
+  if (versionQuery.error) {
+    console.error("[payroll-v2] Failed to load effective operator pay profile version", {
+      table: "operator_pay_profile_versions",
+      query_step: "load_effective_operator_pay_profile_version",
+      operator_id: operatorId,
+      effective_date: effectiveDate,
+      result_empty: false,
+      supabase_error: payrollErrorPayload(versionQuery.error),
+    });
+    return null;
+  }
   const version = ((versionQuery.data ?? []) as OperatorPayProfileVersionRow[])[0] ?? null;
   if (!version) return null;
 
@@ -314,7 +433,7 @@ export async function loadCurrentOperatorPayProfileLegacyShape(
   return resolved?.legacy ?? null;
 }
 
-export async function listOperatorPayProfileVersions(supabase: PayrollServerClient, operatorIds?: string[]) {
+export async function listOperatorPayProfileVersionsResult(supabase: PayrollServerClient, operatorIds?: string[]) {
   let query = supabase
     .from("operator_pay_profile_versions")
     .select("*")
@@ -322,8 +441,26 @@ export async function listOperatorPayProfileVersions(supabase: PayrollServerClie
     .order("active_from", { ascending: false })
     .order("updated_at", { ascending: false });
   if (operatorIds?.length) query = query.in("operator_id", operatorIds);
-  const { data } = await query;
-  return (data ?? []) as OperatorPayProfileVersionRow[];
+  const { data, error } = await query;
+  return {
+    data: (data ?? []) as OperatorPayProfileVersionRow[],
+    error: error ?? null,
+  };
+}
+
+export async function listOperatorPayProfileVersions(supabase: PayrollServerClient, operatorIds?: string[]) {
+  const result = await listOperatorPayProfileVersionsResult(supabase, operatorIds);
+  if (result.error) {
+    console.error("[payroll-v2] Failed to list operator pay profile versions", {
+      table: "operator_pay_profile_versions",
+      query_step: "list_operator_pay_profile_versions",
+      operator_ids: operatorIds ?? [],
+      result_empty: false,
+      supabase_error: payrollErrorPayload(result.error),
+    });
+    return [] as OperatorPayProfileVersionRow[];
+  }
+  return result.data;
 }
 
 export async function buildPayrollRunPreview({

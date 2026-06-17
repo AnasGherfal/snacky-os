@@ -4,7 +4,7 @@ import { getCurrentProfile } from "@/lib/auth";
 import { canManagePayroll } from "@/lib/authz";
 import { locationPayrollDistanceKm } from "@/lib/payroll";
 import { saveLocationPayrollDistance } from "@/lib/payroll-v2-actions";
-import { getPayrollV2ServerClient } from "@/lib/payroll-v2";
+import { buildPayrollLoadFailureBody, getPayrollV2ServerClient, logPayrollQueryIssue, type PayrollQueryIssue } from "@/lib/payroll-v2";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +18,16 @@ type MachineSummaryRow = {
 type StorageLocationRow = {
   id: string;
   name?: string | null;
+};
+
+type PayrollDistanceLocationRow = {
+  id: string;
+  name?: string | null;
+  payroll_storage_location_id?: string | null;
+  distance_from_storage_km?: number | string | null;
+  use_round_trip_distance?: boolean | null;
+  payroll_distance_notes?: string | null;
+  status?: string | null;
 };
 
 export default async function PayrollDistancesPage({
@@ -38,26 +48,53 @@ export default async function PayrollDistancesPage({
     );
   }
 
-  const [{ data: locations, error: locationsError }, { data: machines, error: machinesError }, { data: storageLocations, error: storageError }] = await Promise.all([
+  const [locationsResult, machinesResult, storageLocationsResult] = await Promise.all([
     supabase.from("locations").select("*").eq("status", "active").order("name"),
     supabase.from("machines").select("id, name, machine_code, location_id").order("name"),
     supabase.from("storage_locations").select("id, name").eq("active", true).order("name"),
   ]);
 
-  if (locationsError || machinesError || storageError) {
-    console.error("[payroll:distances] Failed to load payroll distance page", { locationsError, machinesError, storageError });
+  const locations = locationsResult.data ?? [];
+  const machines = machinesResult.data ?? [];
+  const storageLocations = storageLocationsResult.data ?? [];
+  const issues: PayrollQueryIssue[] = [
+    { table: "locations", step: "load_active_locations_for_payroll_distance", error: locationsResult.error, resultEmpty: !locationsResult.error && locations.length === 0 },
+    { table: "machines", step: "load_machine_lookup_for_payroll_distance", error: machinesResult.error, resultEmpty: !machinesResult.error && machines.length === 0 },
+    {
+      table: "storage_locations",
+      step: "load_storage_locations_for_payroll_distance",
+      error: storageLocationsResult.error,
+      resultEmpty: !storageLocationsResult.error && storageLocations.length === 0,
+    },
+  ].filter((issue) => Boolean(issue.error));
+
+  if (issues.length) {
+    issues.forEach((issue) =>
+      logPayrollQueryIssue({
+        module: "payroll:distances",
+        profile,
+        table: issue.table,
+        step: issue.step,
+        error: issue.error,
+        resultEmpty: issue.resultEmpty,
+      }),
+    );
     return (
       <>
         <ErrorState
           title="Could not load payroll distance"
-          body="Snacky OS could not load active locations and storage distance setup."
+          body={buildPayrollLoadFailureBody({
+            noun: "payroll distance setup",
+            issues,
+            defaultBody: "Snacky OS could not load active locations and storage distance setup.",
+          })}
           action={<SecondaryButton href="/payroll">Back to payroll</SecondaryButton>}
         />
       </>
     );
   }
 
-  const machinesByLocationId = ((machines ?? []) as MachineSummaryRow[]).reduce((map, machine) => {
+  const machinesByLocationId = (machines as MachineSummaryRow[]).reduce((map, machine) => {
     const key = String(machine.location_id ?? "");
     if (!key) return map;
     const rows = map.get(key) ?? [];
@@ -65,6 +102,7 @@ export default async function PayrollDistancesPage({
     map.set(key, rows);
     return map;
   }, new Map<string, MachineSummaryRow[]>());
+  const configuredDistanceCount = (locations as PayrollDistanceLocationRow[]).filter((location) => locationPayrollDistanceKm(location) !== null).length;
 
   return (
     <>
@@ -77,12 +115,17 @@ export default async function PayrollDistancesPage({
 
       {params.error ? <div className="mb-5 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{params.error}</div> : null}
       {params.saved ? <div className="mb-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900">Location payroll distance saved.</div> : null}
+      {!locations.length ? null : configuredDistanceCount === 0 ? (
+        <div className="mb-5">
+          <EmptyState title="No location distances configured yet" body="Save the first active location distance below so payroll can start using km and fuel allowance." />
+        </div>
+      ) : null}
 
-      {!locations?.length ? (
+      {!locations.length ? (
         <EmptyState title="No active locations" body="Active locations will appear here once Snacky has machine sites to configure." />
       ) : (
         <div className="grid gap-4">
-          {locations.map((location: any) => {
+          {(locations as PayrollDistanceLocationRow[]).map((location) => {
             const machineList = machinesByLocationId.get(String(location.id)) ?? [];
             const payrollKm = locationPayrollDistanceKm(location);
             return (
@@ -112,7 +155,7 @@ export default async function PayrollDistancesPage({
                   <FormField label="Storage location">
                     <select name="payroll_storage_location_id" defaultValue={location.payroll_storage_location_id ?? ""} className="field-input">
                       <option value="">No storage selected</option>
-                      {(storageLocations ?? []).map((storageLocation: StorageLocationRow) => (
+                      {storageLocations.map((storageLocation: StorageLocationRow) => (
                         <option key={storageLocation.id} value={storageLocation.id}>{storageLocation.name}</option>
                       ))}
                     </select>

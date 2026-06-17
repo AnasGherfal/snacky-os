@@ -4,7 +4,7 @@ import { getCurrentProfile } from "@/lib/auth";
 import { canManagePayroll, normalizeRoles } from "@/lib/authz";
 import { defaultOperatorPayProfileValues, inferredRoleLevelFromTeamMember, moneyLabel, normalizeOperatorRoleLevel } from "@/lib/payroll";
 import { saveOperatorPayProfileVersion } from "@/lib/payroll-v2-actions";
-import { getPayrollV2ServerClient, listOperatorPayProfileVersions } from "@/lib/payroll-v2";
+import { buildPayrollLoadFailureBody, getPayrollV2ServerClient, listOperatorPayProfileVersionsResult, logPayrollQueryIssue, type PayrollQueryIssue } from "@/lib/payroll-v2";
 
 export const dynamic = "force-dynamic";
 
@@ -29,14 +29,49 @@ export default async function OperatorPayProfileDetailPage({
     );
   }
 
-  const [{ data: member, error: memberError }, payProfiles] = await Promise.all([
+  const [memberResult, payProfilesResult] = await Promise.all([
     supabase.from("team_members").select("id, full_name, role, roles, active, active_status").eq("id", id).maybeSingle(),
-    listOperatorPayProfileVersions(supabase, [id]),
+    listOperatorPayProfileVersionsResult(supabase, [id]),
   ]);
 
-  if (memberError) {
-    console.error("[payroll:profile-detail] Failed to load payroll profile detail", { memberError, teamMemberId: id });
+  const issues: PayrollQueryIssue[] = [
+    { table: "team_members", step: "load_payroll_profile_member", error: memberResult.error, resultEmpty: !memberResult.error && !memberResult.data },
+    {
+      table: "operator_pay_profile_versions",
+      step: "load_payroll_profile_history",
+      error: payProfilesResult.error,
+      resultEmpty: !payProfilesResult.error && payProfilesResult.data.length === 0,
+    },
+  ].filter((issue) => Boolean(issue.error));
+
+  if (issues.length) {
+    issues.forEach((issue) =>
+      logPayrollQueryIssue({
+        module: "payroll:profile-detail",
+        profile,
+        table: issue.table,
+        step: issue.step,
+        error: issue.error,
+        resultEmpty: issue.resultEmpty,
+      }),
+    );
+    return (
+      <>
+        <ErrorState
+          title="Could not load payroll profile"
+          body={buildPayrollLoadFailureBody({
+            noun: "this payroll profile",
+            issues,
+            defaultBody: "Snacky OS could not load this payroll profile right now.",
+          })}
+          action={<SecondaryButton href="/payroll/profiles">Back to profiles</SecondaryButton>}
+        />
+      </>
+    );
   }
+
+  const member = memberResult.data;
+  const payProfiles = payProfilesResult.data;
   if (!member) redirect("/payroll/profiles?error=Team%20member%20not%20found.");
 
   const currentProfile = payProfiles.find((row) => Boolean(row.is_active)) ?? payProfiles[0] ?? null;

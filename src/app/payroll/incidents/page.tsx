@@ -6,7 +6,7 @@ import { getCurrentProfile } from "@/lib/auth";
 import { canManagePayroll } from "@/lib/authz";
 import { moneyLabel } from "@/lib/payroll";
 import { approveOperatorIncident, cancelOperatorIncident, createOperatorIncident } from "@/lib/payroll-v2-actions";
-import { getPayrollV2ServerClient, type OperatorIncidentRow } from "@/lib/payroll-v2";
+import { buildPayrollLoadFailureBody, getPayrollV2ServerClient, logPayrollQueryIssue, type OperatorIncidentRow, type PayrollQueryIssue } from "@/lib/payroll-v2";
 
 export const dynamic = "force-dynamic";
 
@@ -72,7 +72,7 @@ export default async function PayrollIncidentsPage({
     );
   }
 
-  const [{ data: operators, error: operatorsError }, { data: incidents, error: incidentsError }, { data: routes }, { data: machines }, { data: locations }] = await Promise.all([
+  const [operatorsResult, incidentsResult, routesResult, machinesResult, locationsResult] = await Promise.all([
     supabase
       .from("team_members")
       .select("id, full_name, role, roles")
@@ -84,23 +84,49 @@ export default async function PayrollIncidentsPage({
     supabase.from("locations").select("id, name").order("name"),
   ]);
 
-  if (operatorsError || incidentsError) {
-    console.error("[payroll:incidents] Failed to load incidents page", { operatorsError, incidentsError });
+  const operators = operatorsResult.data ?? [];
+  const incidents = incidentsResult.data ?? [];
+  const routes = routesResult.data ?? [];
+  const machines = machinesResult.data ?? [];
+  const locations = locationsResult.data ?? [];
+  const issues: PayrollQueryIssue[] = [
+    { table: "team_members", step: "load_operator_incident_members", error: operatorsResult.error, resultEmpty: !operatorsResult.error && operators.length === 0 },
+    { table: "operator_incidents", step: "load_operator_incidents", error: incidentsResult.error, resultEmpty: !incidentsResult.error && incidents.length === 0 },
+    { table: "routes", step: "load_operator_incident_routes", error: routesResult.error, resultEmpty: !routesResult.error && routes.length === 0 },
+    { table: "machines", step: "load_operator_incident_machines", error: machinesResult.error, resultEmpty: !machinesResult.error && machines.length === 0 },
+    { table: "locations", step: "load_operator_incident_locations", error: locationsResult.error, resultEmpty: !locationsResult.error && locations.length === 0 },
+  ].filter((issue) => Boolean(issue.error));
+
+  if (issues.length) {
+    issues.forEach((issue) =>
+      logPayrollQueryIssue({
+        module: "payroll:incidents",
+        profile,
+        table: issue.table,
+        step: issue.step,
+        error: issue.error,
+        resultEmpty: issue.resultEmpty,
+      }),
+    );
     return (
       <>
         <ErrorState
           title="Could not load operator incidents"
-          body="Snacky OS could not load operator incident deductions."
+          body={buildPayrollLoadFailureBody({
+            noun: "operator incidents",
+            issues,
+            defaultBody: "Snacky OS could not load operator incident deductions.",
+          })}
           action={<SecondaryButton href="/payroll">Back to payroll</SecondaryButton>}
         />
       </>
     );
   }
 
-  const operatorById = new Map(((operators ?? []) as TeamMemberRow[]).map((row) => [row.id, row.full_name ?? "Operator"]));
-  const routeById = new Map(((routes ?? []) as RouteRow[]).map((row) => [row.id, row.route_date ?? row.id.slice(0, 8)]));
-  const machineById = new Map(((machines ?? []) as MachineRow[]).map((row) => [row.id, `${row.name ?? "Unknown machine"}${row.machine_code ? ` (${row.machine_code})` : ""}`]));
-  const locationById = new Map(((locations ?? []) as LocationRow[]).map((row) => [row.id, row.name ?? "Unknown location"]));
+  const operatorById = new Map((operators as TeamMemberRow[]).map((row) => [row.id, row.full_name ?? "Operator"]));
+  const routeById = new Map((routes as RouteRow[]).map((row) => [row.id, row.route_date ?? row.id.slice(0, 8)]));
+  const machineById = new Map((machines as MachineRow[]).map((row) => [row.id, `${row.name ?? "Unknown machine"}${row.machine_code ? ` (${row.machine_code})` : ""}`]));
+  const locationById = new Map((locations as LocationRow[]).map((row) => [row.id, row.name ?? "Unknown location"]));
   const today = new Date().toISOString().slice(0, 10);
 
   return (
@@ -121,7 +147,7 @@ export default async function PayrollIncidentsPage({
             <FormField label="Operator" required>
               <select name="operator_id" className="field-input" defaultValue="">
                 <option value="">Choose operator</option>
-                {((operators ?? []) as TeamMemberRow[]).map((operator) => (
+                {(operators as TeamMemberRow[]).map((operator) => (
                   <option key={operator.id} value={operator.id}>{operator.full_name}</option>
                 ))}
               </select>
@@ -149,7 +175,7 @@ export default async function PayrollIncidentsPage({
             <FormField label="Route (optional)">
               <select name="route_id" defaultValue="" className="field-input">
                 <option value="">No route link</option>
-                {((routes ?? []) as RouteRow[]).map((route) => (
+                {(routes as RouteRow[]).map((route) => (
                   <option key={route.id} value={route.id}>{route.route_date ?? route.id}</option>
                 ))}
               </select>
@@ -160,7 +186,7 @@ export default async function PayrollIncidentsPage({
             <FormField label="Machine (optional)">
               <select name="machine_id" defaultValue="" className="field-input">
                 <option value="">No machine link</option>
-                {((machines ?? []) as MachineRow[]).map((machine) => (
+                {(machines as MachineRow[]).map((machine) => (
                   <option key={machine.id} value={machine.id}>{machine.name}{machine.machine_code ? ` (${machine.machine_code})` : ""}</option>
                 ))}
               </select>
@@ -168,7 +194,7 @@ export default async function PayrollIncidentsPage({
             <FormField label="Location (optional)">
               <select name="location_id" defaultValue="" className="field-input">
                 <option value="">No location link</option>
-                {((locations ?? []) as LocationRow[]).map((location) => (
+                {(locations as LocationRow[]).map((location) => (
                   <option key={location.id} value={location.id}>{location.name}</option>
                 ))}
               </select>
@@ -193,11 +219,11 @@ export default async function PayrollIncidentsPage({
         </FormSection>
 
         <FormSection title="Incidents list" description="Only approved incidents can flow into payroll. Once a run picks them up, they move to applied to payroll.">
-          {!incidents?.length ? (
+          {!incidents.length ? (
             <EmptyState title="No incidents yet" body="Create an incident above when an operator issue should be reviewed for deduction." />
           ) : (
             <DataTable headers={["Date", "Operator", "Issue", "Severity", "Deduction", "Status", "Links", "Action"]}>
-              {((incidents ?? []) as OperatorIncidentRow[]).map((incident) => (
+              {(incidents as OperatorIncidentRow[]).map((incident) => (
                 <tr key={incident.id}>
                   <td>{incident.incident_date ?? "-"}</td>
                   <td className="font-medium text-slate-900">{operatorById.get(incident.operator_id) ?? "Operator"}</td>

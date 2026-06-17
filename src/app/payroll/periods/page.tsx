@@ -5,7 +5,7 @@ import { getCurrentProfile } from "@/lib/auth";
 import { canManagePayroll } from "@/lib/authz";
 import { moneyLabel } from "@/lib/payroll";
 import { savePayrollRun } from "@/lib/payroll-v2-actions";
-import { buildPayrollRunPreview, getPayrollV2ServerClient, listOperatorPayProfileVersions, type PayrollRunRow } from "@/lib/payroll-v2";
+import { buildPayrollLoadFailureBody, buildPayrollRunPreview, getPayrollV2ServerClient, listOperatorPayProfileVersionsResult, logPayrollQueryIssue, type PayrollQueryIssue, type PayrollRunRow } from "@/lib/payroll-v2";
 
 export const dynamic = "force-dynamic";
 
@@ -49,23 +49,50 @@ export default async function PayrollRunsPage({
   }
 
   const defaults = defaultRange();
-  const [{ data: runs, error: runsError }, { data: members, error: membersError }, payProfiles] = await Promise.all([
+  const [runsResult, membersResult, payProfilesResult] = await Promise.all([
     supabase.from("payroll_runs").select("*").order("period_start", { ascending: false }).limit(20),
     supabase
       .from("team_members")
       .select("id, full_name, role, roles")
       .or("role.in.(owner,admin,supervisor,operator),roles.ov.{owner,admin,supervisor,operator}")
       .order("full_name"),
-    listOperatorPayProfileVersions(supabase),
+    listOperatorPayProfileVersionsResult(supabase),
   ]);
 
-  if (runsError || membersError) {
-    console.error("[payroll:runs] Failed to load payroll runs page", { runsError, membersError });
+  const runs = runsResult.data ?? [];
+  const members = membersResult.data ?? [];
+  const payProfiles = payProfilesResult.data ?? [];
+  const issues: PayrollQueryIssue[] = [
+    { table: "payroll_runs", step: "load_payroll_runs", error: runsResult.error, resultEmpty: !runsResult.error && runs.length === 0 },
+    { table: "team_members", step: "load_payroll_run_members", error: membersResult.error, resultEmpty: !membersResult.error && members.length === 0 },
+    {
+      table: "operator_pay_profile_versions",
+      step: "load_payroll_run_pay_profiles",
+      error: payProfilesResult.error,
+      resultEmpty: !payProfilesResult.error && payProfiles.length === 0,
+    },
+  ].filter((issue) => Boolean(issue.error));
+
+  if (issues.length) {
+    issues.forEach((issue) =>
+      logPayrollQueryIssue({
+        module: "payroll:runs",
+        profile,
+        table: issue.table,
+        step: issue.step,
+        error: issue.error,
+        resultEmpty: issue.resultEmpty,
+      }),
+    );
     return (
       <>
         <ErrorState
           title="Could not load payroll runs"
-          body="Snacky OS could not load payroll run data."
+          body={buildPayrollLoadFailureBody({
+            noun: "payroll runs",
+            issues,
+            defaultBody: "Snacky OS could not load payroll run data.",
+          })}
           action={<SecondaryButton href="/payroll">Back to payroll</SecondaryButton>}
         />
       </>
@@ -73,7 +100,7 @@ export default async function PayrollRunsPage({
   }
 
   const activeProfileOperatorIds = new Set(payProfiles.filter((row) => row.is_active).map((row) => row.operator_id));
-  const operators = ((members ?? []) as PayrollTeamMemberRow[]).filter((member) => activeProfileOperatorIds.has(member.id));
+  const operators = (members as PayrollTeamMemberRow[]).filter((member) => activeProfileOperatorIds.has(member.id));
   const selectedOperatorId = operators.some((member) => member.id === params.operator_id)
     ? String(params.operator_id)
     : operators[0]?.id ?? "";
@@ -99,7 +126,7 @@ export default async function PayrollRunsPage({
       })
     : null;
 
-  const recentRuns = (runs ?? []) as PayrollRunRow[];
+  const recentRuns = runs as PayrollRunRow[];
   const memberNameById = new Map(operators.map((member) => [member.id, member.full_name ?? "Operator"]));
 
   return (

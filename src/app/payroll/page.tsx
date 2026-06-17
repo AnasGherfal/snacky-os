@@ -4,7 +4,7 @@ import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, Secondary
 import { getCurrentProfile } from "@/lib/auth";
 import { canManagePayroll } from "@/lib/authz";
 import { locationPayrollDistanceKm, moneyLabel } from "@/lib/payroll";
-import { getPayrollV2ServerClient, type PayrollRunRow } from "@/lib/payroll-v2";
+import { buildPayrollLoadFailureBody, getPayrollV2ServerClient, logPayrollQueryIssue, type PayrollQueryIssue, type PayrollRunRow } from "@/lib/payroll-v2";
 
 export const dynamic = "force-dynamic";
 
@@ -38,10 +38,10 @@ export default async function PayrollOverviewPage({
 
   const monthStart = currentMonthStart();
   const [
-    { data: payProfiles, error: payProfilesError },
-    { data: payrollRuns, error: payrollRunsError },
-    { data: locations, error: locationsError },
-    { data: incidents, error: incidentsError },
+    payProfilesResult,
+    payrollRunsResult,
+    locationsResult,
+    incidentsResult,
     { data: teamMembers },
     { count: completedRouteCount },
   ] = await Promise.all([
@@ -53,29 +53,48 @@ export default async function PayrollOverviewPage({
     supabase.from("routes").select("id", { count: "exact", head: true }).gte("completed_at", `${monthStart}T00:00:00`).in("status", ["completed", "reviewed", "verified", "payroll_pending", "paid", "disputed"]),
   ]);
 
-  if (payProfilesError || payrollRunsError || locationsError || incidentsError) {
-    console.error("[payroll:overview] Failed to load payroll overview", {
-      payProfilesError,
-      payrollRunsError,
-      locationsError,
-      incidentsError,
-    });
+  const payProfiles = payProfilesResult.data ?? [];
+  const payrollRuns = payrollRunsResult.data ?? [];
+  const locations = locationsResult.data ?? [];
+  const incidents = incidentsResult.data ?? [];
+  const issues: PayrollQueryIssue[] = [
+    { table: "operator_pay_profile_versions", step: "load_active_pay_profiles", error: payProfilesResult.error, resultEmpty: !payProfilesResult.error && payProfiles.length === 0 },
+    { table: "payroll_runs", step: "load_recent_payroll_runs", error: payrollRunsResult.error, resultEmpty: !payrollRunsResult.error && payrollRuns.length === 0 },
+    { table: "locations", step: "load_active_locations", error: locationsResult.error, resultEmpty: !locationsResult.error && locations.length === 0 },
+    { table: "operator_incidents", step: "load_pending_incidents", error: incidentsResult.error, resultEmpty: !incidentsResult.error && incidents.length === 0 },
+  ].filter((issue) => Boolean(issue.error));
+
+  if (issues.length) {
+    issues.forEach((issue) =>
+      logPayrollQueryIssue({
+        module: "payroll:overview",
+        profile,
+        table: issue.table,
+        step: issue.step,
+        error: issue.error,
+        resultEmpty: issue.resultEmpty,
+      }),
+    );
     return (
       <>
         <ErrorState
           title="Could not load payroll overview"
-          body="Snacky OS could not load payroll setup data. Apply the latest payroll migration if this is a new environment."
+          body={buildPayrollLoadFailureBody({
+            noun: "payroll overview",
+            issues,
+            defaultBody: "Snacky OS could not load payroll setup data right now.",
+          })}
           action={<SecondaryButton href="/dashboard">Back to dashboard</SecondaryButton>}
         />
       </>
     );
   }
 
-  const activeLocations = (locations ?? []) as Array<Record<string, unknown>>;
+  const activeLocations = locations as Array<Record<string, unknown>>;
   const missingDistanceLocations = activeLocations.filter((location) => locationPayrollDistanceKm(location) === null);
   const distanceConfiguredCount = activeLocations.filter((location) => locationPayrollDistanceKm(location) !== null).length;
-  const recentRuns = (payrollRuns ?? []) as PayrollRunRow[];
-  const pendingIncidentCount = ((incidents ?? []) as Array<{ status?: string | null }>).filter((incident) => incident.status === "pending").length;
+  const recentRuns = payrollRuns as PayrollRunRow[];
+  const pendingIncidentCount = (incidents as Array<{ status?: string | null }>).filter((incident) => incident.status === "pending").length;
   const scheduledNetTotal = recentRuns
     .filter((run) => run.period_start === monthStart)
     .reduce((sum, run) => sum + Number(run.net_pay_lyd ?? 0), 0);
@@ -143,6 +162,16 @@ export default async function PayrollOverviewPage({
           </Link>
         ))}
       </section>
+
+      {!payProfiles.length ? (
+        <section className="mb-6">
+          <EmptyState
+            title="No operator pay profiles yet"
+            body="Create the first pay profile before building payroll runs."
+            action={<PrimaryButton href="/payroll/profiles">Create first pay profile</PrimaryButton>}
+          />
+        </section>
+      ) : null}
 
       <section className="surface-card mb-6">
         <div className="mb-4 flex items-center justify-between gap-3">

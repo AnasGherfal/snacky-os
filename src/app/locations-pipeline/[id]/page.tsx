@@ -3,7 +3,7 @@ import { LocationPipelineForm } from "@/components/LocationPipelineForm";
 import { EmptyState, ErrorState, FormPageLayout, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { convertLocationPipelineLead, updateLocationPipelineLead } from "@/lib/location-pipeline-actions";
 import { LocationPipelineLeadRow, buildLocationPipelineAddressSummary, locationPipelinePlaceTypeLabel } from "@/lib/location-pipeline";
-import { loadLocationPipelineContactUsers, logLocationPipelineError, requireLocationPipelineAccess } from "@/lib/location-pipeline-server";
+import { loadLocationPipelineContactUsers, locationPipelineLoadFailureBody, logLocationPipelineError, requireLocationPipelineAccess } from "@/lib/location-pipeline-server";
 
 function notice(message: string, tone: "success" | "error") {
   const styles =
@@ -35,10 +35,18 @@ export default async function LocationPipelineLeadDetailPage({
       profile,
       error: leadResult.error,
       extra: {
+        query_step: "load_location_pipeline_lead_detail",
         lead_id: id,
+        result_empty: false,
       },
     });
-    return <ErrorState title="Could not load location lead" body="Snacky OS could not load this potential location right now." action={<SecondaryButton href="/locations-pipeline">Back to pipeline</SecondaryButton>} />;
+    return (
+      <ErrorState
+        title="Could not load location lead"
+        body={locationPipelineLoadFailureBody(leadResult.error, "this location lead")}
+        action={<SecondaryButton href="/locations-pipeline">Back to pipeline</SecondaryButton>}
+      />
+    );
   }
 
   const lead = leadResult.data;

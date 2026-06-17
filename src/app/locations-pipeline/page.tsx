@@ -3,7 +3,7 @@ import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileRecordCard, PageHeader, PrimaryButton, SearchInput, SecondaryButton, StatusBadge } from "@/components/ui";
 import { convertLocationPipelineLead } from "@/lib/location-pipeline-actions";
 import { LocationPipelineLeadRow, buildLocationPipelineAddressSummary, locationPipelinePlaceTypeLabel, locationPipelinePlaceTypes, locationPipelineStatusLabel, locationPipelineStatuses } from "@/lib/location-pipeline";
-import { loadLocationPipelineContactUsers, logLocationPipelineError, requireLocationPipelineAccess } from "@/lib/location-pipeline-server";
+import { loadLocationPipelineContactUsers, locationPipelineLoadFailureBody, logLocationPipelineError, requireLocationPipelineAccess } from "@/lib/location-pipeline-server";
 import { cleanSearchParams, getPagination, SearchParamsRecord, supabaseLikePattern } from "@/lib/pagination";
 
 type PipelineSearchParams = SearchParamsRecord & {
@@ -63,15 +63,23 @@ export default async function LocationsPipelinePage({ searchParams }: { searchPa
       profile,
       error,
       extra: {
+        query_step: "load_location_pipeline_leads",
         query_table: "location_pipeline_leads",
         search_query: q || null,
         status_filter: status || null,
         place_type_filter: placeType || null,
         page,
         page_size: pageSize,
+        result_empty: false,
       },
     });
-    return <ErrorState title="Could not load location leads" body="Snacky OS could not load potential location leads right now." action={<SecondaryButton href="/locations-pipeline">Retry</SecondaryButton>} />;
+    return (
+      <ErrorState
+        title="Could not load location leads"
+        body={locationPipelineLoadFailureBody(error)}
+        action={<SecondaryButton href="/locations-pipeline">Retry</SecondaryButton>}
+      />
+    );
   }
 
   const rows = (data ?? []) as LocationPipelineLeadRow[];
@@ -129,9 +137,9 @@ export default async function LocationsPipelinePage({ searchParams }: { searchPa
 
         {!rows.length ? (
           <EmptyState
-            title="No potential locations found"
-            body={q || status || placeType ? "Try changing the search or filters, or add a new location lead." : "Start tracking potential expansion sites before a machine is placed there."}
-            action={<PrimaryButton href="/locations-pipeline/new">Add location lead</PrimaryButton>}
+            title={q || status || placeType ? "No location leads matched your filters" : "No location leads yet"}
+            body={q || status || placeType ? "Try changing the search or filters, or add a new location lead." : "Start tracking potential expansion sites before they become active machine locations."}
+            action={<PrimaryButton href="/locations-pipeline/new">{q || status || placeType ? "Add location lead" : "Add first location lead"}</PrimaryButton>}
           />
         ) : (
           <>

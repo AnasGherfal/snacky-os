@@ -4,7 +4,7 @@ import { EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, Sta
 import { getCurrentProfile } from "@/lib/auth";
 import { canManagePayroll, normalizeRoles } from "@/lib/authz";
 import { moneyLabel } from "@/lib/payroll";
-import { getPayrollV2ServerClient, listOperatorPayProfileVersions, type OperatorPayProfileVersionRow } from "@/lib/payroll-v2";
+import { buildPayrollLoadFailureBody, getPayrollV2ServerClient, listOperatorPayProfileVersionsResult, logPayrollQueryIssue, type OperatorPayProfileVersionRow, type PayrollQueryIssue } from "@/lib/payroll-v2";
 
 export const dynamic = "force-dynamic";
 
@@ -39,22 +39,47 @@ export default async function OperatorPayProfilesPage({
     );
   }
 
-  const [{ data: members, error: membersError }, payProfiles] = await Promise.all([
+  const [membersResult, payProfilesResult] = await Promise.all([
     supabase
       .from("team_members")
       .select("id, full_name, role, roles, active, active_status")
       .or("role.in.(owner,admin,supervisor,operator),roles.ov.{owner,admin,supervisor,operator}")
       .order("full_name"),
-    listOperatorPayProfileVersions(supabase),
+    listOperatorPayProfileVersionsResult(supabase),
   ]);
 
-  if (membersError) {
-    console.error("[payroll:profiles] Failed to load payroll profiles", { membersError });
+  const members = membersResult.data ?? [];
+  const payProfiles = payProfilesResult.data ?? [];
+  const issues: PayrollQueryIssue[] = [
+    { table: "team_members", step: "load_payroll_profile_members", error: membersResult.error, resultEmpty: !membersResult.error && members.length === 0 },
+    {
+      table: "operator_pay_profile_versions",
+      step: "load_payroll_profile_versions",
+      error: payProfilesResult.error,
+      resultEmpty: !payProfilesResult.error && payProfiles.length === 0,
+    },
+  ].filter((issue) => Boolean(issue.error));
+
+  if (issues.length) {
+    issues.forEach((issue) =>
+      logPayrollQueryIssue({
+        module: "payroll:profiles",
+        profile,
+        table: issue.table,
+        step: issue.step,
+        error: issue.error,
+        resultEmpty: issue.resultEmpty,
+      }),
+    );
     return (
       <>
         <ErrorState
           title="Could not load payroll profiles"
-          body="Snacky OS could not load operator pay profile settings."
+          body={buildPayrollLoadFailureBody({
+            noun: "payroll profiles",
+            issues,
+            defaultBody: "Snacky OS could not load operator pay profile settings.",
+          })}
           action={<SecondaryButton href="/payroll">Back to payroll</SecondaryButton>}
         />
       </>
@@ -68,7 +93,7 @@ export default async function OperatorPayProfilesPage({
     return map;
   }, new Map<string, OperatorPayProfileVersionRow[]>());
 
-  const rows = ((members ?? []) as PayrollProfileTeamMemberRow[]).map((member) => {
+  const rows = (members as PayrollProfileTeamMemberRow[]).map((member) => {
     const operatorProfiles = profilesByOperatorId.get(member.id) ?? [];
     const payProfile = activeProfileForOperator(operatorProfiles);
     return {
@@ -89,6 +114,15 @@ export default async function OperatorPayProfilesPage({
 
       {params.error ? <div className="mb-5 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{params.error}</div> : null}
       {params.saved ? <div className="mb-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900">Operator pay profile saved.</div> : null}
+      {!payProfiles.length && rows.length ? (
+        <div className="mb-5">
+          <EmptyState
+            title="No operator pay profiles yet"
+            body="Choose an operator below to create the first pay profile."
+            action={<PrimaryButton href={`/payroll/profiles/${rows[0]?.member.id}`}>Create first pay profile</PrimaryButton>}
+          />
+        </div>
+      ) : null}
 
       {!rows.length ? (
         <EmptyState title="No route performers found" body="Create at least one active operator before configuring payroll." />
