@@ -1,20 +1,15 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { DataTable, EmptyState, ErrorState, FormField, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
+import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canManagePayroll } from "@/lib/authz";
-import { moneyLabel, type PayrollAdjustmentRow, type PayrollPeriodRow } from "@/lib/payroll";
-import { deletePayrollAdjustment, markPayrollPeriodPaid, refreshPayrollPeriod, savePayrollAdjustment } from "@/lib/payroll-actions";
-import { buildPayrollPeriodSummary, getPayrollServerClient } from "@/lib/payroll-server";
+import { moneyLabel } from "@/lib/payroll";
+import { markPayrollRunPaid, savePayrollRun } from "@/lib/payroll-v2-actions";
+import { buildPayrollRunPreview, getPayrollV2ServerClient, type PayrollRunRow } from "@/lib/payroll-v2";
 
 export const dynamic = "force-dynamic";
 
-type PayrollPeriodDetailRow = PayrollPeriodRow & {
-  finance_transaction_id?: string | null;
-};
-
-export default async function PayrollPeriodDetailPage({
+export default async function PayrollRunDetailPage({
   params,
   searchParams,
 }: {
@@ -26,55 +21,52 @@ export default async function PayrollPeriodDetailPage({
 
   const { id } = await params;
   const query = await searchParams;
-  const supabase = await getPayrollServerClient();
+  const supabase = await getPayrollV2ServerClient();
   if (!supabase) {
     return (
       <>
-        <ErrorState title="Payroll period unavailable" body="Supabase is not configured, so Snacky OS cannot load this payroll run." />
+        <ErrorState title="Payroll run unavailable" body="Supabase is not configured, so Snacky OS cannot load this payroll run." />
       </>
     );
   }
 
-  const { data: period } = await supabase.from("payroll_periods").select("*").eq("id", id).maybeSingle();
-  if (!period) redirect("/payroll/periods?error=Payroll%20run%20not%20found.");
-  const periodRow = period as PayrollPeriodDetailRow;
+  const { data: run } = await supabase.from("payroll_runs").select("*").eq("id", id).maybeSingle();
+  if (!run) redirect("/payroll/periods?error=Payroll%20run%20not%20found.");
+  const runRow = run as PayrollRunRow;
 
-  const [{ data: operator }, { data: adjustments }, summary] = await Promise.all([
-    supabase.from("team_members").select("id, full_name").eq("id", periodRow.operator_id).maybeSingle(),
-    supabase.from("payroll_adjustments").select("*").eq("payroll_period_id", id).order("created_at", { ascending: true }),
-    buildPayrollPeriodSummary({
+  const [{ data: operator }, preview] = await Promise.all([
+    supabase.from("team_members").select("id, full_name").eq("id", runRow.operator_id).maybeSingle(),
+    buildPayrollRunPreview({
       supabase,
-      operatorId: periodRow.operator_id,
-      periodStart: periodRow.period_start,
-      periodEnd: periodRow.period_end,
-      existingPeriodId: id,
+      operatorId: runRow.operator_id,
+      periodStart: runRow.period_start,
+      periodEnd: runRow.period_end,
+      existingRunId: id,
     }),
   ]);
-
-  const preview = summary ?? null;
 
   return (
     <>
       <PageHeader
         title={`${operator?.full_name ?? "Operator"} payroll`}
-        subtitle={`Payroll run ${periodRow.period_start} to ${periodRow.period_end}.`}
-        breadcrumbs={[{ label: "Payroll", href: "/payroll" }, { label: "Payroll run", href: "/payroll/periods" }, { label: operator?.full_name ?? "Operator" }]}
+        subtitle={`Payroll run ${runRow.period_start} to ${runRow.period_end}.`}
+        breadcrumbs={[{ label: "Payroll", href: "/payroll" }, { label: "Payroll runs", href: "/payroll/periods" }, { label: operator?.full_name ?? "Operator" }]}
         action={
           <div className="flex flex-wrap gap-2">
-            <SecondaryButton href={`/payroll/periods?operator_id=${periodRow.operator_id}&period_start=${periodRow.period_start}&period_end=${periodRow.period_end}`}>Back to preview</SecondaryButton>
-            {periodRow.status !== "paid" ? (
-              <form action={refreshPayrollPeriod}>
-                <input type="hidden" name="operator_id" value={periodRow.operator_id} />
-                <input type="hidden" name="period_start" value={periodRow.period_start} />
-                <input type="hidden" name="period_end" value={periodRow.period_end} />
+            <SecondaryButton href={`/payroll/periods?operator_id=${runRow.operator_id}&period_start=${runRow.period_start}&period_end=${runRow.period_end}`}>Back to preview</SecondaryButton>
+            {runRow.status !== "paid" ? (
+              <form action={savePayrollRun}>
+                <input type="hidden" name="operator_id" value={runRow.operator_id} />
+                <input type="hidden" name="period_start" value={runRow.period_start} />
+                <input type="hidden" name="period_end" value={runRow.period_end} />
                 <input type="hidden" name="return_path" value={`/payroll/periods/${id}`} />
-                <button className="btn-secondary">Refresh payroll</button>
+                <button className="btn-secondary">Refresh payroll run</button>
               </form>
             ) : null}
-            {periodRow.status !== "paid" ? (
-              <form action={markPayrollPeriodPaid}>
-                <input type="hidden" name="payroll_period_id" value={id} />
-                <button className="btn-primary">Mark paid</button>
+            {runRow.status !== "paid" ? (
+              <form action={markPayrollRunPaid}>
+                <input type="hidden" name="payroll_run_id" value={id} />
+                <PrimaryButton>Mark paid</PrimaryButton>
               </form>
             ) : null}
           </div>
@@ -88,103 +80,69 @@ export default async function PayrollPeriodDetailPage({
       <div className="mb-6 grid gap-4 md:grid-cols-5">
         <div className="surface-card">
           <div className="text-sm text-slate-500">Status</div>
-          <div className="mt-2"><StatusBadge status={periodRow.status} /></div>
+          <div className="mt-2"><StatusBadge status={runRow.status} /></div>
         </div>
         <div className="surface-card">
           <div className="text-sm text-slate-500">Completed routes</div>
-          <div className="mt-2 text-3xl font-semibold text-slate-900">{periodRow.completed_routes_count ?? periodRow.route_count ?? 0}</div>
+          <div className="mt-2 text-3xl font-semibold text-slate-900">{runRow.completed_routes_count ?? 0}</div>
         </div>
         <div className="surface-card">
           <div className="text-sm text-slate-500">Completed stops</div>
-          <div className="mt-2 text-3xl font-semibold text-slate-900">{periodRow.completed_stops_count ?? 0}</div>
+          <div className="mt-2 text-3xl font-semibold text-slate-900">{runRow.completed_stops_count ?? 0}</div>
         </div>
         <div className="surface-card">
           <div className="text-sm text-slate-500">Payroll km</div>
-          <div className="mt-2 text-3xl font-semibold text-slate-900">{Number(periodRow.total_payroll_distance_km ?? 0).toFixed(2)}</div>
+          <div className="mt-2 text-3xl font-semibold text-slate-900">{Number(runRow.total_payroll_distance_km ?? 0).toFixed(2)}</div>
         </div>
         <div className="surface-card">
           <div className="text-sm text-slate-500">Net pay</div>
-          <div className="mt-2 text-3xl font-semibold text-slate-900">{moneyLabel(periodRow.net_total_lyd)}</div>
+          <div className="mt-2 text-3xl font-semibold text-slate-900">{moneyLabel(runRow.net_pay_lyd ?? 0)}</div>
         </div>
       </div>
 
       <section className="surface-card mb-6">
         <h2 className="text-lg font-semibold text-slate-900">Payroll totals</h2>
         <div className="mt-4 grid gap-4 md:grid-cols-3">
-          <div><div className="text-sm text-slate-500">Base salary</div><div className="mt-1 font-semibold text-slate-900">{moneyLabel(periodRow.base_salary_amount_lyd ?? periodRow.base_salary_lyd)}</div></div>
-          <div><div className="text-sm text-slate-500">Route pay</div><div className="mt-1 font-semibold text-slate-900">{moneyLabel(periodRow.route_pay_amount_lyd ?? 0)}</div></div>
-          <div><div className="text-sm text-slate-500">Stop pay</div><div className="mt-1 font-semibold text-slate-900">{moneyLabel(periodRow.stop_pay_amount_lyd ?? 0)}</div></div>
-          <div><div className="text-sm text-slate-500">Distance pay</div><div className="mt-1 font-semibold text-slate-900">{moneyLabel(periodRow.distance_pay_amount_lyd ?? 0)}</div></div>
-          <div><div className="text-sm text-slate-500">Fuel allowance</div><div className="mt-1 font-semibold text-slate-900">{moneyLabel(periodRow.fuel_allowance_amount_lyd ?? 0)}</div></div>
-          <div><div className="text-sm text-slate-500">Bonuses</div><div className="mt-1 font-semibold text-slate-900">{moneyLabel(periodRow.bonus_total_lyd ?? 0)}</div></div>
-          <div><div className="text-sm text-slate-500">Deductions</div><div className="mt-1 font-semibold text-slate-900">{moneyLabel(periodRow.deduction_total_lyd ?? 0)}</div></div>
-          <div><div className="text-sm text-slate-500">Gross pay</div><div className="mt-1 font-semibold text-slate-900">{moneyLabel(periodRow.gross_total_lyd ?? 0)}</div></div>
-          <div><div className="text-sm text-slate-500">Paid at</div><div className="mt-1 font-semibold text-slate-900">{periodRow.paid_at ? new Date(periodRow.paid_at).toLocaleString("en-US") : "-"}</div></div>
+          <div><div className="text-sm text-slate-500">Base salary</div><div className="mt-1 font-semibold text-slate-900">{moneyLabel(runRow.base_salary_amount_lyd ?? 0)}</div></div>
+          <div><div className="text-sm text-slate-500">Route pay</div><div className="mt-1 font-semibold text-slate-900">{moneyLabel(runRow.route_pay_amount_lyd ?? 0)}</div></div>
+          <div><div className="text-sm text-slate-500">Stop pay</div><div className="mt-1 font-semibold text-slate-900">{moneyLabel(runRow.stop_pay_amount_lyd ?? 0)}</div></div>
+          <div><div className="text-sm text-slate-500">Distance pay</div><div className="mt-1 font-semibold text-slate-900">{moneyLabel(runRow.distance_pay_amount_lyd ?? 0)}</div></div>
+          <div><div className="text-sm text-slate-500">Fuel allowance</div><div className="mt-1 font-semibold text-slate-900">{moneyLabel(runRow.fuel_allowance_amount_lyd ?? 0)}</div></div>
+          <div><div className="text-sm text-slate-500">Bonuses</div><div className="mt-1 font-semibold text-slate-900">{moneyLabel(runRow.bonus_amount_lyd ?? 0)}</div></div>
+          <div><div className="text-sm text-slate-500">Deductions</div><div className="mt-1 font-semibold text-slate-900">{moneyLabel(runRow.deduction_amount_lyd ?? 0)}</div></div>
+          <div><div className="text-sm text-slate-500">Gross pay</div><div className="mt-1 font-semibold text-slate-900">{moneyLabel(runRow.gross_pay_lyd ?? 0)}</div></div>
+          <div><div className="text-sm text-slate-500">Paid at</div><div className="mt-1 font-semibold text-slate-900">{runRow.paid_at ? new Date(runRow.paid_at).toLocaleString("en-US") : "-"}</div></div>
         </div>
-        {periodRow.finance_transaction_id ? (
+        {runRow.finance_transaction_id ? (
           <div className="mt-4">
-            <Link href={`/finance/transactions/${periodRow.finance_transaction_id}`} className="link-secondary">Open linked finance transaction</Link>
+            <Link href={`/finance/transactions/${runRow.finance_transaction_id}`} className="link-secondary">Open linked finance transaction</Link>
           </div>
         ) : null}
       </section>
 
       <section className="surface-card mb-6">
-        <div className="mb-4">
-          <h2 className="text-lg font-semibold text-slate-900">Period adjustments</h2>
-          <p className="mt-1 text-sm text-slate-500">Bonuses and deductions require a reason so payroll stays auditable.</p>
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Incident deductions applied</h2>
+            <p className="mt-1 text-sm text-slate-500">Approved incidents become locked to this run when the run is created or refreshed.</p>
+          </div>
+          <SecondaryButton href="/payroll/incidents">Open incidents</SecondaryButton>
         </div>
-        {periodRow.status !== "paid" ? (
-          <form action={savePayrollAdjustment} className="mb-5 grid gap-4 md:grid-cols-5 md:items-end">
-            <input type="hidden" name="payroll_period_id" value={id} />
-            <FormField label="Type" required>
-              <select name="adjustment_type" className="field-input" defaultValue="bonus">
-                <option value="bonus">Bonus</option>
-                <option value="deduction">Deduction</option>
-              </select>
-            </FormField>
-            <FormField label="Label" required>
-              <input name="label" className="field-input" placeholder="Performance bonus" />
-            </FormField>
-            <FormField label="Amount LYD" required>
-              <input name="amount_lyd" type="number" min="0.01" step="0.01" className="field-input" placeholder="50" />
-            </FormField>
-            <div className="md:col-span-2">
-              <FormField label="Reason" required>
-                <input name="reason" className="field-input" placeholder="Why was this adjustment added?" />
-              </FormField>
-            </div>
-            <button className="btn-primary md:col-span-5">Add adjustment</button>
-          </form>
+        {!preview?.includedIncidents.length ? (
+          <EmptyState title="No incident deductions applied" body="This run was created without any approved deductions in the selected period." />
         ) : (
-          <div className="mb-5 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">Paid payroll runs are locked. Add all bonuses or deductions before marking the run paid.</div>
-        )}
-
-        {!adjustments?.length ? (
-          <EmptyState title="No adjustments added" body="Use adjustments only when a bonus or deduction should be audited outside the standard payroll formula." />
-        ) : (
-          <DataTable headers={["Type", "Label", "Amount", "Reason", "Action"]}>
-            {((adjustments ?? []) as PayrollAdjustmentRow[]).map((adjustment) => (
-              <tr key={adjustment.id}>
-                <td><StatusBadge status={adjustment.adjustment_type} /></td>
-                <td>{adjustment.label}</td>
-                <td>{moneyLabel(adjustment.amount_lyd)}</td>
-                <td>{adjustment.reason}</td>
+          <DataTable headers={["Date", "Issue", "Severity", "Machine / Location", "Deduction", "Route"]}>
+            {preview.includedIncidents.map((incident) => (
+              <tr key={incident.incidentId}>
+                <td>{incident.incidentDate ?? "-"}</td>
                 <td>
-                  {periodRow.status !== "paid" ? (
-                    <ConfirmDialog
-                      action={deletePayrollAdjustment}
-                      triggerLabel="Delete"
-                      title="Delete payroll adjustment?"
-                      description="This will remove the adjustment and refresh the payroll totals for the run."
-                      confirmLabel="Delete adjustment"
-                      buttonClassName="btn-danger"
-                      confirmButtonClassName="btn-danger"
-                      hiddenFields={[{ name: "payroll_period_id", value: id }, { name: "adjustment_id", value: adjustment.id }]}
-                    />
-                  ) : (
-                    <span className="text-sm text-slate-400">Locked</span>
-                  )}
+                  <div className="font-medium text-slate-900">{incident.description}</div>
+                  <div className="text-xs text-slate-500">{incident.mistakeType.replaceAll("_", " ")}</div>
                 </td>
+                <td><StatusBadge status={incident.severity} /></td>
+                <td>{incident.machineName}{incident.locationName ? ` - ${incident.locationName}` : ""}</td>
+                <td>{moneyLabel(incident.deductionAmountLyd)}</td>
+                <td>{incident.routeId ? <Link href={`/routes/${incident.routeId}`} className="link-secondary">Open route</Link> : "-"}</td>
               </tr>
             ))}
           </DataTable>
@@ -194,7 +152,7 @@ export default async function PayrollPeriodDetailPage({
       <section className="surface-card mb-6">
         <div className="mb-4">
           <h2 className="text-lg font-semibold text-slate-900">Included routes</h2>
-          <p className="mt-1 text-sm text-slate-500">Completed routes count for per-route pay. Completed stops under each route count for stop pay and distance.</p>
+          <p className="mt-1 text-sm text-slate-500">Completed routes count for route pay. Completed stops under them count for stop pay and distance.</p>
         </div>
         {!preview?.includedRoutes.length ? (
           <EmptyState title="No routes included in this payroll run" body="Refresh the run if completed work should be included." />
@@ -214,10 +172,36 @@ export default async function PayrollPeriodDetailPage({
         )}
       </section>
 
-      <section className="surface-card">
+      <section className="surface-card mb-6">
         <div className="mb-4">
-          <h2 className="text-lg font-semibold text-slate-900">Missing distance warnings</h2>
-          <p className="mt-1 text-sm text-slate-500">These stops stayed in the run with 0 km until their location payroll distance is configured.</p>
+          <h2 className="text-lg font-semibold text-slate-900">Included completed stops</h2>
+          <p className="mt-1 text-sm text-slate-500">Stops with missing distance stay in the run with 0 km until their location payroll distance is configured.</p>
+        </div>
+        {!preview?.includedStops.length ? (
+          <EmptyState title="No completed stops in this payroll run" body="Refresh the run if completed stop work should be included." />
+        ) : (
+          <DataTable headers={["Machine", "Route date", "Stop", "Location", "Payroll km", "Action"]}>
+            {preview.includedStops.map((stop) => (
+              <tr key={stop.stopId}>
+                <td className="font-medium text-slate-900">{stop.machineName}</td>
+                <td>{stop.routeDate ?? "-"}</td>
+                <td>{stop.stopOrder}</td>
+                <td>{stop.locationName ?? "Unknown location"}</td>
+                <td>{stop.distanceMissing ? "Missing" : `${stop.payrollDistanceKm.toFixed(2)} km`}</td>
+                <td><Link href={`/routes/${stop.routeId}`} className="link-secondary">Open route</Link></td>
+              </tr>
+            ))}
+          </DataTable>
+        )}
+      </section>
+
+      <section className="surface-card">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Missing distance warnings</h2>
+            <p className="mt-1 text-sm text-slate-500">These stops stayed in the run with 0 km until their location payroll distance is configured.</p>
+          </div>
+          <SecondaryButton href="/payroll/distances">Open distance setup</SecondaryButton>
         </div>
         {!preview?.missingDistanceWarnings.length ? (
           <EmptyState title="No missing distance warnings" body="All included stops have payroll distance configured." />

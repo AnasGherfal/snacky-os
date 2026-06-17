@@ -3,7 +3,6 @@ import "server-only";
 import { getAuthAccessToken } from "@/lib/auth";
 import {
   calculateRoutePay,
-  ensureOperatorPayProfile,
   ensureRoutePayRules,
   isWithinPeriod,
   locationPayrollDistanceKm,
@@ -26,6 +25,7 @@ import {
   type RouteStopPayInput,
   type StorageLocationSummary,
 } from "@/lib/payroll";
+import { loadCurrentOperatorPayProfileLegacyShape } from "@/lib/payroll-v2";
 import { isCompletedRouteStatus } from "@/lib/route-workflow";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -36,6 +36,7 @@ type LoadedRouteRow = {
   route_date?: string | null;
   operator_id?: string | null;
   status?: string | null;
+  completed_at?: string | null;
   storage_location_id?: string | null;
   distance_km?: number | string | null;
   distance_zone?: string | null;
@@ -278,7 +279,7 @@ export async function loadOperatorRoutePayPreviewMap({
   const machineIds = Array.from(new Set(routeStops.map((stop) => stop.machine_id).filter(Boolean)));
 
   const payRules = await ensureRoutePayRules(supabase as any);
-  const payProfile = viewerTeamMemberId ? await ensureOperatorPayProfile(supabase as any, viewerTeamMemberId) : null;
+  const payProfile = viewerTeamMemberId ? await loadCurrentOperatorPayProfileLegacyShape(supabase, viewerTeamMemberId) : null;
   const [breakdownResult, cashCollectionResult, machinesResult] = await Promise.all([
     routeIds.length
       ? supabase
@@ -411,7 +412,7 @@ export async function loadRoutePayData(routeId: string, overrides?: RoutePayCalc
 
   const { data: route } = await supabase
     .from("routes")
-    .select("id, route_date, operator_id, status, storage_location_id, distance_km, distance_zone, distance_source, load_difficulty_pay_lyd, verified_at, verified_by, paid_at, notes")
+    .select("id, route_date, operator_id, status, completed_at, storage_location_id, distance_km, distance_zone, distance_source, load_difficulty_pay_lyd, verified_at, verified_by, paid_at, notes")
     .eq("id", routeId)
     .maybeSingle();
   if (!route) return null;
@@ -466,7 +467,7 @@ export async function loadRoutePayData(routeId: string, overrides?: RoutePayCalc
   });
 
   const payRules = await ensureRoutePayRules(supabase as any);
-  const payProfile = route.operator_id ? await ensureOperatorPayProfile(supabase as any, String(route.operator_id)) : null;
+  const payProfile = route.operator_id ? await loadCurrentOperatorPayProfileLegacyShape(supabase, String(route.operator_id), route.completed_at ?? route.route_date ?? null) : null;
   const selectedStorageLocation = chooseStorageLocation((storageLocations ?? []) as StorageLocationSummary[], route.storage_location_id ?? null);
   const calculation = payProfile
     ? calculateRoutePay({
@@ -511,7 +512,7 @@ export async function buildPayrollPeriodSummary({
   periodEnd: string;
   existingPeriodId?: string | null;
 }): Promise<PayrollPeriodSummary | null> {
-  const payProfile = await ensureOperatorPayProfile(supabase as any, operatorId);
+  const payProfile = await loadCurrentOperatorPayProfileLegacyShape(supabase, operatorId, periodEnd);
   if (!payProfile) return null;
 
   const [{ data: routeRows }, { data: adjustments }, { data: operator }] = await Promise.all([

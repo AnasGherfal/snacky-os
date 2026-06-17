@@ -1,21 +1,10 @@
 import { redirect } from "next/navigation";
-import { ErrorState, FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
+import { DataTable, ErrorState, FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { canManagePayroll, normalizeRoles } from "@/lib/authz";
-import {
-  defaultOperatorPayProfileValues,
-  inferredRoleLevelFromTeamMember,
-  normalizeOperatorRoleLevel,
-  operatorPayProfileBaseMonthlySalary,
-  operatorPayProfileBonus,
-  operatorPayProfileDeduction,
-  operatorPayProfileFuelAllowancePerKm,
-  operatorPayProfilePayPerKm,
-  operatorPayProfilePayPerRoute,
-  operatorPayProfilePayPerStop,
-} from "@/lib/payroll";
-import { saveOperatorPayProfile } from "@/lib/payroll-actions";
-import { getPayrollServerClient } from "@/lib/payroll-server";
+import { defaultOperatorPayProfileValues, inferredRoleLevelFromTeamMember, moneyLabel, normalizeOperatorRoleLevel } from "@/lib/payroll";
+import { saveOperatorPayProfileVersion } from "@/lib/payroll-v2-actions";
+import { getPayrollV2ServerClient, listOperatorPayProfileVersions } from "@/lib/payroll-v2";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +20,7 @@ export default async function OperatorPayProfileDetailPage({
 
   const { id } = await params;
   const query = await searchParams;
-  const supabase = await getPayrollServerClient();
+  const supabase = await getPayrollV2ServerClient();
   if (!supabase) {
     return (
       <>
@@ -40,24 +29,21 @@ export default async function OperatorPayProfileDetailPage({
     );
   }
 
-  const [{ data: member, error: memberError }, { data: payProfile, error: payProfileError }] = await Promise.all([
+  const [{ data: member, error: memberError }, payProfiles] = await Promise.all([
     supabase.from("team_members").select("id, full_name, role, roles, active, active_status").eq("id", id).maybeSingle(),
-    supabase.from("operator_pay_profiles").select("*").eq("team_member_id", id).maybeSingle(),
+    listOperatorPayProfileVersions(supabase, [id]),
   ]);
 
-  if (memberError || payProfileError) {
-    console.error("[payroll:profile-detail] Failed to load payroll profile detail", { memberError, payProfileError, teamMemberId: id });
+  if (memberError) {
+    console.error("[payroll:profile-detail] Failed to load payroll profile detail", { memberError, teamMemberId: id });
   }
-
   if (!member) redirect("/payroll/profiles?error=Team%20member%20not%20found.");
 
-  const defaultRoleLevel = normalizeOperatorRoleLevel(payProfile?.role_level ?? inferredRoleLevelFromTeamMember(member));
+  const currentProfile = payProfiles.find((row) => Boolean(row.is_active)) ?? payProfiles[0] ?? null;
+  const defaultRoleLevel = normalizeOperatorRoleLevel(inferredRoleLevelFromTeamMember(member));
   const defaults = defaultOperatorPayProfileValues(defaultRoleLevel);
   const roles = normalizeRoles(member.roles, member.role);
   const today = new Date().toISOString().slice(0, 10);
-  const activeFrom = payProfile?.active_from ?? defaults.active_from ?? today;
-  const activeTo = payProfile?.active_to ?? "";
-  const isActive = payProfile?.is_active ?? payProfile?.active ?? (member.active_status === "inactive" ? false : member.active !== false);
 
   return (
     <>
@@ -73,17 +59,17 @@ export default async function OperatorPayProfileDetailPage({
         {query.saved ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900">Payroll profile saved.</div> : null}
 
         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-          <div className="font-medium text-slate-900">Payroll formula</div>
+          <div className="font-medium text-slate-900">How versioning works</div>
           <div className="mt-1">
-            Base salary + completed route pay + completed stop pay + distance pay + fuel allowance + bonuses - deductions
+            Keep the effective since date simple. If you save a later effective date, Snacky closes the current active profile and creates a new version automatically.
           </div>
         </div>
 
-        <form action={saveOperatorPayProfile} className="space-y-6">
-          <input type="hidden" name="team_member_id" value={member.id} />
-          <input type="hidden" name="role_level" value={defaultRoleLevel} />
+        <form action={saveOperatorPayProfileVersion} className="space-y-6">
+          <input type="hidden" name="operator_id" value={member.id} />
+          <input type="hidden" name="profile_id" value={currentProfile?.id ?? ""} />
 
-          <FormSection title="Pay rates" description="These rates are used directly when Snacky calculates payroll from completed routes and completed stops.">
+          <FormSection title="Current pay rules" description="Only the recurring pay rules belong here. Incident deductions are handled separately on the incidents page.">
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               <FormField label="Base monthly salary LYD" required>
                 <input
@@ -91,7 +77,7 @@ export default async function OperatorPayProfileDetailPage({
                   type="number"
                   min="0"
                   step="0.01"
-                  defaultValue={payProfile ? operatorPayProfileBaseMonthlySalary(payProfile) : defaults.base_monthly_salary_lyd ?? defaults.base_salary_lyd ?? 0}
+                  defaultValue={currentProfile?.base_monthly_salary_lyd ?? defaults.base_monthly_salary_lyd ?? defaults.base_salary_lyd ?? 0}
                   className="field-input"
                 />
               </FormField>
@@ -101,7 +87,7 @@ export default async function OperatorPayProfileDetailPage({
                   type="number"
                   min="0"
                   step="0.01"
-                  defaultValue={payProfile ? operatorPayProfilePayPerRoute(payProfile) : defaults.pay_per_route_lyd ?? defaults.default_route_base_lyd ?? 0}
+                  defaultValue={currentProfile?.pay_per_route_lyd ?? defaults.pay_per_route_lyd ?? defaults.default_route_base_lyd ?? 0}
                   className="field-input"
                 />
               </FormField>
@@ -111,7 +97,7 @@ export default async function OperatorPayProfileDetailPage({
                   type="number"
                   min="0"
                   step="0.01"
-                  defaultValue={payProfile ? operatorPayProfilePayPerStop(payProfile) : defaults.pay_per_stop_lyd ?? defaults.default_stop_rate_lyd ?? 0}
+                  defaultValue={currentProfile?.pay_per_stop_lyd ?? defaults.pay_per_stop_lyd ?? defaults.default_stop_rate_lyd ?? 0}
                   className="field-input"
                 />
               </FormField>
@@ -121,7 +107,7 @@ export default async function OperatorPayProfileDetailPage({
                   type="number"
                   min="0"
                   step="0.01"
-                  defaultValue={payProfile ? operatorPayProfilePayPerKm(payProfile) : defaults.pay_per_km_lyd ?? defaults.default_km_rate_lyd ?? 0}
+                  defaultValue={currentProfile?.pay_per_km_lyd ?? defaults.pay_per_km_lyd ?? defaults.default_km_rate_lyd ?? 0}
                   className="field-input"
                 />
               </FormField>
@@ -131,54 +117,36 @@ export default async function OperatorPayProfileDetailPage({
                   type="number"
                   min="0"
                   step="0.01"
-                  defaultValue={payProfile ? operatorPayProfileFuelAllowancePerKm(payProfile) : defaults.fuel_allowance_per_km_lyd ?? 0}
-                  className="field-input"
-                />
-              </FormField>
-              <FormField label="Bonus LYD">
-                <input
-                  name="bonus_lyd"
-                  type="number"
-                  step="0.01"
-                  defaultValue={payProfile ? operatorPayProfileBonus(payProfile) : defaults.bonus_lyd ?? 0}
-                  className="field-input"
-                />
-              </FormField>
-              <FormField label="Deduction LYD">
-                <input
-                  name="deduction_lyd"
-                  type="number"
-                  step="0.01"
-                  defaultValue={payProfile ? operatorPayProfileDeduction(payProfile) : defaults.deduction_lyd ?? 0}
+                  defaultValue={currentProfile?.fuel_allowance_per_km_lyd ?? defaults.fuel_allowance_per_km_lyd ?? 0}
                   className="field-input"
                 />
               </FormField>
             </div>
           </FormSection>
 
-          <FormSection title="Active dates" description="Use the active window to show when this pay profile applies. Snacky keeps one profile row per operator and refreshes it in place.">
+          <FormSection title="Active profile" description="Use the toggle for the live profile. Effective since stays available as a quiet advanced field so historical payroll stays stable.">
             <div className="grid gap-4 md:grid-cols-3">
-              <FormField label="Active from" required>
-                <input name="active_from" type="date" defaultValue={activeFrom} className="field-input" />
-              </FormField>
-              <FormField label="Active to">
-                <input name="active_to" type="date" defaultValue={activeTo} className="field-input" />
-              </FormField>
-              <FormField label="Status" required>
-                <select name="is_active" defaultValue={String(isActive)} className="field-input">
-                  <option value="true">Active</option>
-                  <option value="false">Inactive</option>
+              <FormField label="Active profile" required>
+                <select name="is_active" defaultValue={String(currentProfile?.is_active ?? true)} className="field-input">
+                  <option value="true">ON</option>
+                  <option value="false">OFF</option>
                 </select>
               </FormField>
+              <FormField label="Effective since" required hint="Defaults to today for the first profile. Set a later date to replace the current version cleanly.">
+                <input name="active_from" type="date" defaultValue={currentProfile?.active_from ?? today} className="field-input" />
+              </FormField>
+              <FormField label="Active until" hint="Usually leave this empty while the profile is active.">
+                <input name="active_to" type="date" defaultValue={currentProfile?.active_to ?? ""} className="field-input" />
+              </FormField>
             </div>
           </FormSection>
 
-          <FormSection title="Notes" description="Keep contract notes, payroll reminders, or context that explains this operator’s rates.">
+          <FormSection title="Notes" description="Use notes for contract context or reminders. This does not affect payroll math.">
             <FormField label="Notes">
               <textarea
                 name="notes"
                 rows={4}
-                defaultValue={payProfile?.notes ?? defaults.notes ?? ""}
+                defaultValue={currentProfile?.notes ?? defaults.notes ?? ""}
                 className="field-input"
                 placeholder="Optional payroll note, contract detail, or internal reminder."
               />
@@ -190,6 +158,24 @@ export default async function OperatorPayProfileDetailPage({
             <SecondaryButton href="/payroll/profiles">Cancel</SecondaryButton>
           </div>
         </form>
+
+        <FormSection title="Profile history" description="Older versions stay visible so past payroll can be audited against the rates that were active at the time.">
+          {!payProfiles.length ? (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">No pay profile history yet.</div>
+          ) : (
+            <DataTable headers={["Effective window", "Status", "Base salary", "Route / Stop / KM", "Fuel allowance"]}>
+              {payProfiles.map((row) => (
+                <tr key={row.id}>
+                  <td>{row.active_from ?? "-"}{row.active_to ? ` to ${row.active_to}` : " to now"}</td>
+                  <td><StatusBadge status={row.is_active ? "active" : "inactive"} /></td>
+                  <td>{moneyLabel(row.base_monthly_salary_lyd ?? 0)}</td>
+                  <td>{`${moneyLabel(row.pay_per_route_lyd ?? 0)} / ${moneyLabel(row.pay_per_stop_lyd ?? 0)} / ${moneyLabel(row.pay_per_km_lyd ?? 0)}`}</td>
+                  <td>{moneyLabel(row.fuel_allowance_per_km_lyd ?? 0)}</td>
+                </tr>
+              ))}
+            </DataTable>
+          )}
+        </FormSection>
       </FormPageLayout>
     </>
   );

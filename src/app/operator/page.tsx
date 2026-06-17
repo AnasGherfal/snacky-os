@@ -9,9 +9,9 @@ import { isOperatorVisibleRouteStatus, isRouteStopDoneStatus, isTerminalRouteSta
 
 export const dynamic = "force-dynamic";
 
-type OperatorPayrollPeriodSummary = {
+type OperatorPayrollRunSummary = {
   id: string;
-  net_total_lyd?: number | string | null;
+  net_pay_lyd?: number | string | null;
   status?: string | null;
 };
 
@@ -43,7 +43,7 @@ export default async function OperatorPage() {
   const accessibleOperatorIds = await loadAccessibleOperatorIds(supabase, profile);
   const currentViewerOperatorId = preferredOperatorViewerId(profile, accessibleOperatorIds);
   const routeSelect = "id, route_date, status, operator_id, route_stops(id, status, stop_order, machine_id)";
-  const [assignedResult, availableResult, currentPayrollPeriodResult] = await Promise.all([
+  const [assignedResult, availableResult, currentPayrollRunResult] = await Promise.all([
     canManageAllRoutes
       ? supabase
         .from("routes")
@@ -63,7 +63,7 @@ export default async function OperatorPage() {
       .is("operator_id", null)
       .order("route_date", { ascending: true }),
     currentViewerOperatorId
-      ? supabase.from("payroll_periods").select("id, net_total_lyd, status").eq("operator_id", currentViewerOperatorId).eq("period_start", currentMonthStart).maybeSingle()
+      ? supabase.from("payroll_runs").select("id, net_pay_lyd, status").eq("operator_id", currentViewerOperatorId).eq("period_start", currentMonthStart).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
   ]);
   const routesError = assignedResult.error ?? availableResult.error;
@@ -106,11 +106,11 @@ export default async function OperatorPage() {
         <SectionCard>
           <div className="p-4">
             <h2 className="text-base font-semibold text-slate-900">Monthly earned total</h2>
-            <div className="mt-3 text-3xl font-semibold text-slate-900">
-              {moneyLabel((currentPayrollPeriodResult.data as OperatorPayrollPeriodSummary | null)?.net_total_lyd ?? 0)}
+              <div className="mt-3 text-3xl font-semibold text-slate-900">
+              {moneyLabel((currentPayrollRunResult.data as OperatorPayrollRunSummary | null)?.net_pay_lyd ?? 0)}
             </div>
             <div className="mt-2 text-sm text-slate-500">
-              {currentPayrollPeriodResult.data ? `Current period status: ${(currentPayrollPeriodResult.data as OperatorPayrollPeriodSummary).status}` : "Current month payroll period has not been created yet."}
+              {currentPayrollRunResult.data ? `Current period status: ${(currentPayrollRunResult.data as OperatorPayrollRunSummary).status}` : "Current month payroll run has not been created yet."}
             </div>
           </div>
         </SectionCard>

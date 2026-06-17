@@ -32,9 +32,9 @@ type OperatorRouteStockLineRow = {
   product?: { name?: string | null; category?: string | null } | null;
 };
 
-type OperatorPayrollPeriodSummary = {
+type OperatorPayrollRunSummary = {
   id: string;
-  net_total_lyd?: number | string | null;
+  net_pay_lyd?: number | string | null;
   status?: string | null;
 };
 
@@ -225,8 +225,8 @@ export default async function OperatorRouteDetailPage({
   const doneStops = routeStops.filter((s) => isRouteStopDoneStatus(s.status)).length;
   const totalStops = routeStops.length;
   const pickItems = (routeStock ?? []) as OperatorRouteStockLineRow[];
-  const currentPayrollPeriodResult = currentViewerOperatorId
-    ? await routeReadClient.from("payroll_periods").select("id, net_total_lyd, status").eq("operator_id", currentViewerOperatorId).eq("period_start", currentMonthStart).maybeSingle()
+  const currentPayrollRunResult = currentViewerOperatorId
+    ? await routeReadClient.from("payroll_runs").select("id, net_pay_lyd, status").eq("operator_id", currentViewerOperatorId).eq("period_start", currentMonthStart).maybeSingle()
     : { data: null };
   const { previewByRouteId } = await loadOperatorRoutePayPreviewMap({
     supabase: routeReadClient,
@@ -294,15 +294,15 @@ export default async function OperatorRouteDetailPage({
           </SectionCard>
           <SectionCard>
             <div className="p-4">
-              <div className="mb-1 text-sm text-slate-500">Monthly earned total</div>
-              <div className="font-semibold text-lg text-slate-900">
-                {moneyLabel((currentPayrollPeriodResult.data as OperatorPayrollPeriodSummary | null)?.net_total_lyd ?? 0)}
+                <div className="mb-1 text-sm text-slate-500">Monthly earned total</div>
+                <div className="font-semibold text-lg text-slate-900">
+                {moneyLabel((currentPayrollRunResult.data as OperatorPayrollRunSummary | null)?.net_pay_lyd ?? 0)}
+                </div>
+                <div className="mt-1 text-xs text-slate-500">
+                {currentPayrollRunResult.data ? `Current period status: ${(currentPayrollRunResult.data as OperatorPayrollRunSummary).status}` : "Current month payroll run has not been created yet."}
+                </div>
               </div>
-              <div className="mt-1 text-xs text-slate-500">
-                {currentPayrollPeriodResult.data ? `Current period status: ${(currentPayrollPeriodResult.data as OperatorPayrollPeriodSummary).status}` : "Current month payroll period has not been created yet."}
-              </div>
-            </div>
-          </SectionCard>
+            </SectionCard>
           <SectionCard>
             <div className="p-4">
               <div className="text-sm text-slate-500 mb-1">Action</div>
