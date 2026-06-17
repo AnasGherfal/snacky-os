@@ -11,8 +11,34 @@ type StorageLocationRow = {
   name?: string | null;
 };
 
-export default async function LocationsPage({ searchParams }: { searchParams: Promise<SearchParamsRecord> }) {
-  const params = cleanSearchParams(await searchParams);
+type LocationListRow = {
+  id: string;
+  name?: string | null;
+  site_name?: string | null;
+  area?: string | null;
+  city?: string | null;
+  location_type?: string | null;
+  payroll_storage_location_id?: string | null;
+  use_round_trip_distance?: boolean | null;
+  status?: string | null;
+  distance_from_storage_km?: number | string | null;
+};
+
+type LocationsSearchParams = SearchParamsRecord & {
+  success?: string;
+  error?: string;
+};
+
+function notice(message: string, tone: "success" | "error") {
+  const styles =
+    tone === "success"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+      : "border-rose-200 bg-rose-50 text-rose-800";
+  return <div className={`mb-5 rounded-lg border p-4 text-sm font-medium ${styles}`}>{message}</div>;
+}
+
+export default async function LocationsPage({ searchParams }: { searchParams: Promise<LocationsSearchParams> }) {
+  const params = cleanSearchParams(await searchParams) as LocationsSearchParams;
   const { page, pageSize, from, to } = getPagination(params);
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) {
@@ -52,11 +78,17 @@ export default async function LocationsPage({ searchParams }: { searchParams: Pr
         action={<PrimaryButton href="/locations/new">Add location</PrimaryButton>}
       />
       {!data?.length ? (
-        <EmptyState title="No locations yet" body="Create site locations before linking machines, rent, and payroll distance settings." action={<PrimaryButton href="/locations/new">Add location</PrimaryButton>} />
+        <>
+          {params.success ? notice(String(params.success), "success") : null}
+          {params.error ? notice(String(params.error), "error") : null}
+          <EmptyState title="No locations yet" body="Create site locations before linking machines, rent, and payroll distance settings." action={<PrimaryButton href="/locations/new">Add location</PrimaryButton>} />
+        </>
       ) : (
         <>
+          {params.success ? notice(String(params.success), "success") : null}
+          {params.error ? notice(String(params.error), "error") : null}
           <DataTable headers={["Site", "Area / Type", "Payroll km", "Round trip", "Storage", "Status", "Actions"]}>
-            {data.map((location: any) => {
+            {(data as LocationListRow[]).map((location) => {
               const payrollKm = locationPayrollDistanceKm(location);
               const storageName = location.payroll_storage_location_id ? storageById.get(String(location.payroll_storage_location_id)) ?? "Unknown storage" : "-";
               return (
