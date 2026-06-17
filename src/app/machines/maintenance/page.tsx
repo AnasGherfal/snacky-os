@@ -1,6 +1,7 @@
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient } from "@/lib/auth";
+import { formatMachineDisplayName, formatSiteLabel } from "@/lib/machine-site-display";
 import { cleanSearchParams, getPagination, SearchParamsRecord, supabaseLikePattern } from "@/lib/pagination";
 
 export const dynamic = "force-dynamic";
@@ -20,9 +21,9 @@ export default async function MachineMaintenancePage({ searchParams }: { searchP
   const [{ data: machines, count: machineCount, error: machinesError }, { data: maintenanceIssues, count: issueCount, error: issuesError }] = await Promise.all([
     supabase
       .from("machines")
-      .select("id, machine_code, name, status, locations(name)", { count: "exact" })
+      .select("*, locations(*)", { count: "exact" })
       .eq("status", "maintenance")
-      .order("name")
+      .order("machine_code")
       .range(from, to),
     supabase
       .from("issues")
@@ -59,12 +60,12 @@ export default async function MachineMaintenancePage({ searchParams }: { searchP
           <EmptyState title="No machines in maintenance" body="Machines marked maintenance will appear here." />
         ) : (
           <>
-            <DataTable headers={["Code", "Name", "Location", "Status"]}>
+            <DataTable headers={["Code", "Machine", "Site", "Status"]}>
               {machines.map((machine: any) => (
                 <tr key={machine.id}>
                   <td>{machine.machine_code}</td>
-                  <td className="font-medium text-slate-900">{machine.name}</td>
-                  <td>{machine.locations?.name ?? "-"}</td>
+                  <td className="font-medium text-slate-900">{formatMachineDisplayName(machine, { includeArea: false })}</td>
+                  <td>{formatSiteLabel(machine.locations, { includeArea: true, fallback: "-" })}</td>
                   <td><StatusBadge status={machine.status} /></td>
                 </tr>
               ))}

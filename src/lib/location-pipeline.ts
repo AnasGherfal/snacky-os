@@ -37,6 +37,7 @@ export type LocationPipelineLeadRow = {
   rejection_reason: string | null;
   converted_location_id: string | null;
   converted_at: string | null;
+  is_archived: boolean | null;
   archived_at: string | null;
   created_at: string;
   updated_at: string;

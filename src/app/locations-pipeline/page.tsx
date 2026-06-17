@@ -3,7 +3,7 @@ import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileRecordCard, PageHeader, PrimaryButton, SearchInput, SecondaryButton, StatusBadge } from "@/components/ui";
 import { convertLocationPipelineLead } from "@/lib/location-pipeline-actions";
 import { LocationPipelineLeadRow, buildLocationPipelineAddressSummary, locationPipelinePlaceTypeLabel, locationPipelinePlaceTypes, locationPipelineStatusLabel, locationPipelineStatuses } from "@/lib/location-pipeline";
-import { loadLocationPipelineContactUsers, requireLocationPipelineAccess } from "@/lib/location-pipeline-server";
+import { loadLocationPipelineContactUsers, logLocationPipelineError, requireLocationPipelineAccess } from "@/lib/location-pipeline-server";
 import { cleanSearchParams, getPagination, SearchParamsRecord, supabaseLikePattern } from "@/lib/pagination";
 
 type PipelineSearchParams = SearchParamsRecord & {
@@ -25,7 +25,7 @@ function notice(message: string, tone: "success" | "error") {
 export default async function LocationsPipelinePage({ searchParams }: { searchParams: Promise<PipelineSearchParams> }) {
   const params = cleanSearchParams(await searchParams) as PipelineSearchParams;
   const { page, pageSize, from, to } = getPagination(params);
-  const { supabase } = await requireLocationPipelineAccess("/locations-pipeline");
+  const { profile, supabase } = await requireLocationPipelineAccess("/locations-pipeline");
 
   const q = String(params.q ?? "").trim();
   const status = String(params.status ?? "").trim();
@@ -57,7 +57,20 @@ export default async function LocationsPipelinePage({ searchParams }: { searchPa
   ]);
 
   if (error) {
-    console.error("[locations-pipeline] Failed to load leads", error);
+    logLocationPipelineError({
+      action: "Failed to load leads",
+      table: "location_pipeline_leads",
+      profile,
+      error,
+      extra: {
+        query_table: "location_pipeline_leads",
+        search_query: q || null,
+        status_filter: status || null,
+        place_type_filter: placeType || null,
+        page,
+        page_size: pageSize,
+      },
+    });
     return <ErrorState title="Could not load location leads" body="Snacky OS could not load potential location leads right now." action={<SecondaryButton href="/locations-pipeline">Retry</SecondaryButton>} />;
   }
 
@@ -124,7 +137,7 @@ export default async function LocationsPipelinePage({ searchParams }: { searchPa
           <>
             <MobileCardList>
               {rows.map((lead) => {
-                const canConvert = lead.status === "accepted" && !lead.converted_location_id;
+                const canConvert = lead.status === "accepted" && !lead.converted_location_id && !lead.is_archived && !lead.archived_at;
                 const address = buildLocationPipelineAddressSummary(lead) ?? "No address yet";
                 return (
                   <MobileRecordCard key={lead.id}>
@@ -167,7 +180,7 @@ export default async function LocationsPipelinePage({ searchParams }: { searchPa
 
             <DataTable className="hidden md:block" headers={["Place", "Type", "Area", "Contact", "Status", "Next follow-up", "Actions"]}>
               {rows.map((lead) => {
-                const canConvert = lead.status === "accepted" && !lead.converted_location_id;
+                const canConvert = lead.status === "accepted" && !lead.converted_location_id && !lead.is_archived && !lead.archived_at;
                 return (
                   <tr key={lead.id}>
                     <td className="font-medium text-slate-900">

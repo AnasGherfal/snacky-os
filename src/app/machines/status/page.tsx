@@ -2,6 +2,7 @@ import Link from "next/link";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient } from "@/lib/auth";
+import { formatMachineDisplayName, formatSiteLabel } from "@/lib/machine-site-display";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 
 export const dynamic = "force-dynamic";
@@ -22,10 +23,10 @@ export default async function MachineStatusPage({ searchParams }: { searchParams
 
   const [{ data, count, error }, statusCountsResults] = await Promise.all([
     supabase
-    .from("machines")
-      .select("id, machine_code, name, status, machine_type, locations(name)", { count: "exact" })
+      .from("machines")
+      .select("*, locations(*)", { count: "exact" })
     .order("status")
-      .order("name")
+      .order("machine_code")
       .range(from, to),
     Promise.all(machineStatuses.map((status) => supabase.from("machines").select("id", { count: "exact", head: true }).eq("status", status))),
   ]);
@@ -66,13 +67,13 @@ export default async function MachineStatusPage({ searchParams }: { searchParams
         <EmptyState title="No machines yet" body="Create machines before tracking machine status." />
       ) : (
         <>
-          <DataTable headers={["Code", "Name", "Type", "Location", "Status", "Actions"]}>
+          <DataTable headers={["Code", "Machine", "Type", "Site", "Status", "Actions"]}>
             {rows.map((machine: any) => (
               <tr key={machine.id}>
                 <td>{machine.machine_code}</td>
-                <td className="font-medium text-slate-900">{machine.name}</td>
+                <td className="font-medium text-slate-900">{formatMachineDisplayName(machine, { includeArea: false })}</td>
                 <td>{machine.machine_type}</td>
-                <td>{machine.locations?.name ?? "-"}</td>
+                <td>{formatSiteLabel(machine.locations, { includeArea: true, fallback: "-" })}</td>
                 <td><StatusBadge status={machine.status} /></td>
                 <td><Link href={`/machines/${machine.id}/edit`} className="btn-secondary">Edit</Link></td>
               </tr>

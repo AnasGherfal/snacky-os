@@ -3,7 +3,7 @@ import { LocationPipelineForm } from "@/components/LocationPipelineForm";
 import { EmptyState, ErrorState, FormPageLayout, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { convertLocationPipelineLead, updateLocationPipelineLead } from "@/lib/location-pipeline-actions";
 import { LocationPipelineLeadRow, buildLocationPipelineAddressSummary, locationPipelinePlaceTypeLabel } from "@/lib/location-pipeline";
-import { loadLocationPipelineContactUsers, requireLocationPipelineAccess } from "@/lib/location-pipeline-server";
+import { loadLocationPipelineContactUsers, logLocationPipelineError, requireLocationPipelineAccess } from "@/lib/location-pipeline-server";
 
 function notice(message: string, tone: "success" | "error") {
   const styles =
@@ -29,7 +29,15 @@ export default async function LocationPipelineLeadDetailPage({
   ]);
 
   if (leadResult.error) {
-    console.error("[locations-pipeline] Failed to load lead", { id, error: leadResult.error });
+    logLocationPipelineError({
+      action: "Failed to load lead",
+      table: "location_pipeline_leads",
+      profile,
+      error: leadResult.error,
+      extra: {
+        lead_id: id,
+      },
+    });
     return <ErrorState title="Could not load location lead" body="Snacky OS could not load this potential location right now." action={<SecondaryButton href="/locations-pipeline">Back to pipeline</SecondaryButton>} />;
   }
 
@@ -49,7 +57,7 @@ export default async function LocationPipelineLeadDetailPage({
     profile.team_member_id && !contactUsers.some((user) => user.id === profile.team_member_id)
       ? [{ id: profile.team_member_id, full_name: profile.full_name, role: profile.role }, ...contactUsers]
       : contactUsers;
-  const canConvert = typedLead.status === "accepted" && !typedLead.converted_location_id && !typedLead.archived_at;
+  const canConvert = typedLead.status === "accepted" && !typedLead.converted_location_id && !typedLead.archived_at && !typedLead.is_archived;
 
   return (
     <FormPageLayout>

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient } from "@/lib/auth";
+import { formatSiteLabel } from "@/lib/machine-site-display";
 import { locationPayrollDistanceKm } from "@/lib/payroll";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 
@@ -54,17 +55,18 @@ export default async function LocationsPage({ searchParams }: { searchParams: Pr
         <EmptyState title="No locations yet" body="Create site locations before linking machines, rent, and payroll distance settings." action={<PrimaryButton href="/locations/new">Add location</PrimaryButton>} />
       ) : (
         <>
-          <DataTable headers={["Name", "Type", "Payroll km", "Round trip", "Storage", "Status", "Actions"]}>
+          <DataTable headers={["Site", "Area / Type", "Payroll km", "Round trip", "Storage", "Status", "Actions"]}>
             {data.map((location: any) => {
               const payrollKm = locationPayrollDistanceKm(location);
               const storageName = location.payroll_storage_location_id ? storageById.get(String(location.payroll_storage_location_id)) ?? "Unknown storage" : "-";
               return (
                 <tr key={location.id}>
                   <td className="font-medium text-slate-900">
-                    <div>{location.name}</div>
+                    <div>{formatSiteLabel(location, { includeArea: true, fallback: location.name ?? "Unknown site" })}</div>
+                    <div className="text-xs text-slate-500">{location.location_type}</div>
                     {payrollKm === null ? <div className="text-xs text-amber-700">Missing payroll distance</div> : null}
                   </td>
-                  <td>{location.location_type}</td>
+                  <td>{location.area ?? location.location_type}</td>
                   <td>{payrollKm === null ? "-" : `${payrollKm.toFixed(2)} km`}</td>
                   <td>{location.use_round_trip_distance ? "Yes" : "No"}</td>
                   <td>{storageName}</td>

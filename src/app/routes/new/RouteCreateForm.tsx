@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { RouteRecommendationDiagnostics } from "@/app/routes/new/types";
 import { FormField, FormSection, SecondaryButton } from "@/components/ui";
+import { machineBaseLabel } from "@/lib/machine-site-display";
 import { comparePickupProductRows } from "@/lib/route-pickup-checklist";
 
 type Operator = {
@@ -18,6 +19,7 @@ type Operator = {
 type Machine = {
   id: string;
   name: string;
+  display_name?: string | null;
   machine_code: string;
   location_name?: string | null;
 };
@@ -155,6 +157,11 @@ function formatRecommendationQty(value: number | null | undefined) {
 
 function locationLabel(value: string | null | undefined) {
   return String(value ?? "").trim() || "No location";
+}
+
+function machineLabel(machine: Machine | null | undefined) {
+  if (!machine) return "Unknown machine";
+  return String(machine.display_name ?? machineBaseLabel(machine)).trim() || machine.machine_code || "Unknown machine";
 }
 
 function recommendationReasonSummary(group: RecommendationGroup) {
@@ -405,7 +412,7 @@ export function RouteCreateForm({
         seen.add(group.machineId);
         return true;
       })
-      .map((group) => ({ id: group.machineId, label: `${group.machineName} (${group.machineCode}) - ${locationLabel(group.locationName)}` }))
+      .map((group) => ({ id: group.machineId, label: `${group.machineName} - ${locationLabel(group.locationName)}` }))
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [recommendationGroups]);
   const machineDiagnosticsById = useMemo(
@@ -926,7 +933,7 @@ export function RouteCreateForm({
 
   const sortedManualStopItems = useMemo(
     () => [...manualStopItems].sort((a, b) => {
-      const machineDifference = String(machinesById.get(a.machineId)?.name ?? "").localeCompare(String(machinesById.get(b.machineId)?.name ?? ""));
+        const machineDifference = machineLabel(machinesById.get(a.machineId)).localeCompare(machineLabel(machinesById.get(b.machineId)));
       if (machineDifference) return machineDifference;
       return comparePickupProductRows(
         {
@@ -1040,7 +1047,7 @@ export function RouteCreateForm({
                 >
                   <option value="">Choose machine</option>
                   {machines.map((machine) => (
-                    <option key={machine.id} value={machine.id}>{machine.name} ({machine.machine_code}) - {locationLabel(machine.location_name)}</option>
+                    <option key={machine.id} value={machine.id}>{machineLabel(machine)} - {locationLabel(machine.location_name)}</option>
                   ))}
                 </select>
               </FormField>
@@ -1067,7 +1074,7 @@ export function RouteCreateForm({
                       onClick={() => setManualMachineId(machineId)}
                       className={`rounded-full border px-3 py-2 text-left text-sm transition ${selected ? "border-[var(--snacky-primary)] bg-emerald-50 text-slate-950" : "border-slate-200 bg-white text-slate-700 hover:border-slate-400"}`}
                     >
-                      <div className="font-medium">{machine.name}</div>
+                      <div className="font-medium">{machineLabel(machine)}</div>
                       <div className="text-xs text-slate-500">{machine.machine_code} - Manual {machineManualCount} - Recommended {machineRecommendedCount}</div>
                     </button>
                   );
@@ -1084,7 +1091,7 @@ export function RouteCreateForm({
                 <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
                   <div>
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Machine stop</div>
-                    <div className="mt-1 text-lg font-semibold text-slate-900">{selectedManualMachine.name}</div>
+                    <div className="mt-1 text-lg font-semibold text-slate-900">{machineLabel(selectedManualMachine)}</div>
                     <div className="text-sm text-slate-500">{selectedManualMachine.machine_code} - {locationLabel(selectedManualMachine.location_name)}</div>
                   </div>
                   <div className="grid gap-2 text-sm text-slate-600 sm:grid-cols-3">
@@ -1104,7 +1111,7 @@ export function RouteCreateForm({
                 </div>
 
                 <div className="grid gap-3 lg:grid-cols-[1fr_280px]">
-                  <FormField label={`Search ${selectedManualMachine.name} products`}>
+                  <FormField label={`Search ${machineLabel(selectedManualMachine)} products`}>
                     <input
                       value={search}
                       onChange={(event) => {
@@ -1116,7 +1123,7 @@ export function RouteCreateForm({
                       disabled={saving}
                     />
                   </FormField>
-                  <FormField label={`Barcode / SKU scan for ${selectedManualMachine.name}`}>
+                  <FormField label={`Barcode / SKU scan for ${machineLabel(selectedManualMachine)}`}>
                     <div className="flex gap-2">
                       <input value={barcode} onChange={(event) => setBarcode(event.target.value)} onKeyDown={handleBarcodeKey} placeholder="Scan or type barcode" className="field-input" disabled={saving} />
                       <button type="button" onClick={handleBarcodeSelect} className="btn-secondary" disabled={saving}>
@@ -1145,7 +1152,7 @@ export function RouteCreateForm({
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <div className="text-sm font-semibold text-slate-800">Planogram and recommended products for this machine</div>
-                      <div className="text-xs text-slate-500">Snacky OS keeps this list scoped to {selectedManualMachine.name} only.</div>
+                      <div className="text-xs text-slate-500">Snacky OS keeps this list scoped to {machineLabel(selectedManualMachine)} only.</div>
                     </div>
                     <div className="text-xs text-slate-500">Enter adds scanned products instantly.</div>
                   </div>
@@ -1765,7 +1772,7 @@ export function RouteCreateForm({
                   disabled={saving}
                 />
                 <span>
-                  {machine.name} <span className="text-slate-500">({machine.machine_code})</span>
+                  {machineLabel(machine)} <span className="text-slate-500">({machine.machine_code})</span>
                   <span className="block text-xs text-slate-500">{locationLabel(machine.location_name)}</span>
                 </span>
               </label>

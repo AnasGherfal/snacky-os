@@ -1,7 +1,8 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { LocationPipelineLeadRow, buildLocationPipelineAddressSummary, buildLocationPipelineNotesForLocation, normalizeLocationPipelinePlaceType, normalizeLocationPipelineStatus } from "@/lib/location-pipeline";
-import { requireLocationPipelineAccess } from "@/lib/location-pipeline-server";
+import { buildLocationLegacyPayload, buildLocationMinimalPayload, buildLocationPayload } from "@/lib/location-records";
+import { logLocationPipelineError, requireLocationPipelineAccess } from "@/lib/location-pipeline-server";
 
 function optionalText(value: FormDataEntryValue | null) {
   const text = String(value ?? "").trim();
@@ -27,6 +28,11 @@ function optionalDate(value: FormDataEntryValue | null) {
   if (!text) return null;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) throw new Error(`Invalid date: ${text}`);
   return text;
+}
+
+function isMissingColumnError(error: { code?: string | null; message?: string | null; details?: string | null; hint?: string | null } | null | undefined) {
+  const message = `${error?.message ?? ""} ${error?.details ?? ""} ${error?.hint ?? ""}`.toLowerCase();
+  return error?.code === "42703" || error?.code === "PGRST204" || (message.includes("column") && message.includes("does not exist"));
 }
 
 function withMessage(pathname: string, key: "success" | "error", message: string) {
@@ -117,7 +123,15 @@ export async function createLocationPipelineLead(formData: FormData) {
     .single();
 
   if (error || !data?.id) {
-    console.error("[locations-pipeline] Failed to create lead", { error, payload });
+    logLocationPipelineError({
+      action: "Failed to create lead",
+      table: "location_pipeline_leads",
+      profile,
+      error,
+      extra: {
+        insert_payload: payload,
+      },
+    });
     fail(returnPath, "Could not create this location lead.");
   }
 
@@ -146,7 +160,15 @@ export async function updateLocationPipelineLead(formData: FormData) {
     .maybeSingle();
 
   if (existingError || !existing) {
-    console.error("[locations-pipeline] Failed to load lead before update", { id, error: existingError });
+    logLocationPipelineError({
+      action: "Failed to load lead before update",
+      table: "location_pipeline_leads",
+      profile,
+      error: existingError,
+      extra: {
+        lead_id: id,
+      },
+    });
     fail(returnPath, "This location lead could not be loaded for saving.");
   }
 
@@ -160,7 +182,16 @@ export async function updateLocationPipelineLead(formData: FormData) {
     .eq("id", id);
 
   if (error) {
-    console.error("[locations-pipeline] Failed to update lead", { id, error, payload });
+    logLocationPipelineError({
+      action: "Failed to update lead",
+      table: "location_pipeline_leads",
+      profile,
+      error,
+      extra: {
+        lead_id: id,
+        update_payload: payload,
+      },
+    });
     fail(returnPath, "Could not save this location lead.");
   }
 
@@ -184,11 +215,19 @@ export async function convertLocationPipelineLead(formData: FormData) {
     .maybeSingle<LocationPipelineLeadRow>();
 
   if (leadError || !lead) {
-    console.error("[locations-pipeline] Failed to load lead for conversion", { id, error: leadError });
+    logLocationPipelineError({
+      action: "Failed to load lead for conversion",
+      table: "location_pipeline_leads",
+      profile,
+      error: leadError,
+      extra: {
+        lead_id: id,
+      },
+    });
     fail(returnPath, "This location lead could not be loaded for conversion.");
   }
 
-  if (lead.archived_at) {
+  if (lead.is_archived || lead.archived_at) {
     fail(returnPath, "Archived leads cannot be converted.");
   }
 
@@ -203,33 +242,60 @@ export async function convertLocationPipelineLead(formData: FormData) {
 
   const address = buildLocationPipelineAddressSummary(lead);
   const notes = buildLocationPipelineNotesForLocation(lead);
-  const locationPayload = {
-    name: lead.place_name,
+  const locationDraft = {
+    site_name: lead.place_name,
+    area: lead.area,
+    city: lead.city,
+    address_text: lead.address_text ?? address,
+    google_maps_url: lead.google_maps_url,
+    contact_person_name: lead.contact_person_name,
+    contact_person_phone: lead.contact_phone ?? lead.contact_whatsapp ?? null,
+    source_location_lead_id: lead.id,
     location_type: normalizeLocationPipelinePlaceType(lead.place_type),
-    address,
-    contact_name: lead.contact_person_name,
-    contact_phone: lead.contact_phone ?? lead.contact_whatsapp ?? null,
-    rent_amount: lead.rent_expectation ?? 0,
+    rent_amount: Number(lead.rent_expectation ?? 0) || 0,
     status: "active",
     notes,
-    updated_at: new Date().toISOString(),
   };
 
-  const { data: createdLocation, error: createLocationError } = await supabase
+  let createLocationResult = await supabase
     .from("locations")
-    .insert(locationPayload)
+    .insert({ ...buildLocationPayload(locationDraft), updated_at: new Date().toISOString() })
     .select("id")
     .single();
+  if (createLocationResult.error && isMissingColumnError(createLocationResult.error)) {
+    createLocationResult = await supabase
+      .from("locations")
+      .insert({ ...buildLocationLegacyPayload(locationDraft), updated_at: new Date().toISOString() })
+      .select("id")
+      .single();
+  }
+  if (createLocationResult.error && isMissingColumnError(createLocationResult.error)) {
+    createLocationResult = await supabase
+      .from("locations")
+      .insert({ ...buildLocationMinimalPayload(locationDraft), updated_at: new Date().toISOString() })
+      .select("id")
+      .single();
+  }
+
+  const { data: createdLocation, error: createLocationError } = createLocationResult;
 
   if (createLocationError || !createdLocation?.id) {
-    console.error("[locations-pipeline] Failed to create active location", { leadId: id, error: createLocationError, locationPayload });
+    logLocationPipelineError({
+      action: "Failed to create active location",
+      table: "locations",
+      profile,
+      error: createLocationError,
+      extra: {
+        lead_id: id,
+        insert_payload: locationDraft,
+      },
+    });
     fail(returnPath, "Could not convert this lead into an active location.");
   }
 
   const { error: updateLeadError } = await supabase
     .from("location_pipeline_leads")
     .update({
-      status: "machine_placed",
       converted_location_id: createdLocation.id,
       converted_at: new Date().toISOString(),
       converted_by_user_id: profile.team_member_id ?? null,
@@ -238,10 +304,15 @@ export async function convertLocationPipelineLead(formData: FormData) {
     .eq("id", id);
 
   if (updateLeadError) {
-    console.error("[locations-pipeline] Active location created but lead link failed", {
-      leadId: id,
-      createdLocationId: createdLocation.id,
+    logLocationPipelineError({
+      action: "Active location created but lead link failed",
+      table: "location_pipeline_leads",
+      profile,
       error: updateLeadError,
+      extra: {
+        lead_id: id,
+        created_location_id: createdLocation.id,
+      },
     });
     fail(returnPath, "The active location was created, but this lead could not be linked afterward.");
   }

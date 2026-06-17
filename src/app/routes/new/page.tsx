@@ -5,6 +5,7 @@ import { ROUTE_RESERVATION_STATUSES, isRouteReservationStatus } from "@/lib/rout
 import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
 import { activeStockBatches, queryVmsDashboardBatches, sourceFileName, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
 import { RouteCreateForm } from "@/app/routes/new/RouteCreateForm";
+import { formatSiteLabel, machineBaseLabel } from "@/lib/machine-site-display";
 import type {
   RouteRecommendationDiagnosticReasonCode,
   RouteRecommendationDiagnostics,
@@ -43,8 +44,9 @@ type MachineRow = {
   id: string;
   name: string;
   machine_code: string;
+  machine_display_name?: string | null;
   vms_machine_id?: string | null;
-  location?: { name?: string | null } | { name?: string | null }[] | null;
+  location?: Record<string, unknown> | Record<string, unknown>[] | null;
 };
 
 type RecommendationRow = {
@@ -276,7 +278,7 @@ export default async function NewRoutePage() {
     machineSlotsResult,
   ] = await Promise.all([
     supabase.from("team_members").select("id, full_name, role, roles").or("role.in.(owner,admin,supervisor,operator),roles.ov.{owner,admin,supervisor,operator}").eq("active", true).order("full_name"),
-    supabase.from("machines").select("id, name, machine_code, vms_machine_id, location:locations(name)").eq("status", "active").order("name"),
+    supabase.from("machines").select("*, location:locations(*)").eq("status", "active").order("machine_code"),
     loadRouteRecommendations(supabase),
     supabase
       .from("current_inventory_by_location")
@@ -448,8 +450,9 @@ export default async function NewRoutePage() {
     return {
       id: machine.id,
       name: machine.name,
+      display_name: machineBaseLabel(machine),
       machine_code: machine.machine_code,
-      location_name: location?.name ?? null,
+      location_name: formatSiteLabel(location ?? null, { includeArea: true }),
     };
   });
   const latestStockByMachine = new Map<string, LatestStockRow[]>();
@@ -550,9 +553,9 @@ export default async function NewRoutePage() {
     };
     return {
       machineId: machine.id,
-      machineName: machine.name,
+      machineName: machineBaseLabel(machine),
       machineCode: machine.machine_code,
-      locationName: location?.name ?? null,
+      locationName: formatSiteLabel(location ?? null, { includeArea: true }),
       machineMapped: Boolean(machine.vms_machine_id),
       latestStockRowsFound: latestRows.length,
       planogramRowsFound: planogramRows.length,
