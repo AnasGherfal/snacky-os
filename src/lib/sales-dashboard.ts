@@ -99,6 +99,8 @@ export type SalesFileContribution = {
   salesAmountInRange: number;
   status: string;
   successfulRowsInRange: number;
+  timestampCoverageEnd: string | null;
+  timestampCoverageStart: string | null;
   uploadedAt: string | null;
 };
 
@@ -480,7 +482,7 @@ function classifyContribution({
       included: false,
       reason: metadataOverlapsSelectedRange
         ? "Summary sales file is available for this period, but dashboard totals only use detailed Order Details rows."
-        : "Summary sales file is reconciliation-only and outside the selected date range.",
+        : "Summary sales file is reconciliation-only and outside the selected business-date range.",
       status: "summary_file_only",
     };
   }
@@ -497,7 +499,7 @@ function classifyContribution({
     return {
       included: false,
       reason: rowsInRange > 0
-        ? `This detailed sales batch has ${rowsInRange.toLocaleString("en-US")} row(s) inside the selected range, but the batch is inactive so the dashboard excludes it.`
+        ? `This detailed sales batch has ${rowsInRange.toLocaleString("en-US")} row(s) inside the selected business-date range, but the batch is inactive so the dashboard excludes it.`
         : "This detailed sales batch is inactive, so it is excluded from dashboard totals.",
       status: "inactive_batch",
     };
@@ -517,7 +519,7 @@ function classifyContribution({
     return {
       included: false,
       reason: rowsInRange > 0
-        ? `This batch has ${rowsInRange.toLocaleString("en-US")} row(s) inside the selected range, but it is still preview-only or unfinished so those rows are blocked from dashboard totals.`
+        ? `This batch has ${rowsInRange.toLocaleString("en-US")} row(s) inside the selected business-date range, but it is still preview-only or unfinished so those rows are blocked from dashboard totals.`
         : "This batch is preview-only or unfinished, so it cannot contribute to dashboard totals yet.",
       status: "preview_only",
     };
@@ -535,8 +537,8 @@ function classifyContribution({
     return {
       included: true,
       reason: duplicateRows > 0
-        ? `Contributing ${successfulRowsInRange.toLocaleString("en-US")} successful sale row(s) inside the selected range. ${duplicateRows.toLocaleString("en-US")} duplicate row(s) were skipped during import.`
-        : `Contributing ${successfulRowsInRange.toLocaleString("en-US")} successful sale row(s) inside the selected range.`,
+        ? `Contributing ${successfulRowsInRange.toLocaleString("en-US")} successful sale row(s) inside the selected business-date range. ${duplicateRows.toLocaleString("en-US")} duplicate row(s) were skipped during import.`
+        : `Contributing ${successfulRowsInRange.toLocaleString("en-US")} successful sale row(s) inside the selected business-date range.`,
       status: "included",
     };
   }
@@ -562,7 +564,7 @@ function classifyContribution({
   if (actualCoverage.start && actualCoverage.end && !overlapsSelectedRange) {
     return {
       included: false,
-      reason: `Actual transaction dates for this file are ${actualCoverage.start} to ${actualCoverage.end}, which falls outside the selected range ${range.start} to ${range.end}.`,
+      reason: `Business dates for this file are ${actualCoverage.start} to ${actualCoverage.end}, which falls outside the selected business-date range ${range.start} to ${range.end}.`,
       status: "outside_selected_date_range",
     };
   }
@@ -570,7 +572,7 @@ function classifyContribution({
   if (rowsInRange > 0 && rowsExcludedByStatus > 0) {
     return {
       included: false,
-      reason: `This file has ${rowsInRange.toLocaleString("en-US")} detailed row(s) inside the selected range, but all of them are excluded from sales totals because their statuses are failed vend, refunded, failed payment, or needs review.`,
+      reason: `This file has ${rowsInRange.toLocaleString("en-US")} detailed row(s) inside the selected business-date range, but all of them are excluded from sales totals because their statuses are failed vend, refunded, failed payment, or needs review.`,
       status: "rows_excluded_by_status",
     };
   }
@@ -579,7 +581,7 @@ function classifyContribution({
     return {
       included: false,
       reason: reconciliation?.rawMissingDatetimeRowsTotal
-        ? `Detailed rows were saved for this file, but ${reconciliation.rawMissingDatetimeRowsTotal.toLocaleString("en-US")} row(s) are missing usable transaction datetime values, so the dashboard cannot place them inside a date range.`
+        ? `Detailed rows were saved for this file, but ${reconciliation.rawMissingDatetimeRowsTotal.toLocaleString("en-US")} row(s) are missing usable transaction datetime values, so the dashboard cannot place them inside a business-date range.`
         : "Detailed rows were saved for this file, but the dashboard could not derive a usable transaction date range from them.",
       status: "missing_transaction_datetime",
     };
@@ -595,7 +597,7 @@ function classifyContribution({
 
   return {
     included: false,
-    reason: "The file is active, but it contributes 0 detailed rows inside the selected date range.",
+    reason: "The file is active, but it contributes 0 detailed rows inside the selected business-date range.",
     status: "no_detailed_rows",
   };
 }
@@ -654,6 +656,8 @@ export function buildSalesFileContributions({
         salesAmountInRange: reconciliation?.rangeSuccessfulSalesAmount ?? 0,
         status: classification.status,
         successfulRowsInRange: reconciliation?.rangeSuccessfulRows ?? 0,
+        timestampCoverageEnd: reconciliation?.rawMaxTransactionAt ?? null,
+        timestampCoverageStart: reconciliation?.rawMinTransactionAt ?? null,
         uploadedAt: batch.uploaded_at ?? batch.imported_at ?? null,
       } satisfies SalesFileContribution;
     })

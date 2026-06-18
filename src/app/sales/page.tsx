@@ -342,7 +342,7 @@ async function SalesDashboardPageContent({
     <>
       <PageHeader
         title="Sales Dashboard"
-        subtitle="Detailed VMS Order Details drive Snacky sales KPIs. Use the date filters below to control exactly which detailed rows, files, and missing periods are counted."
+        subtitle="Detailed VMS Order Details drive Snacky sales KPIs. Date filters use business date, while transaction timestamps stay available for audit and hour-level analysis."
       />
 
       <div className="space-y-6">
@@ -359,7 +359,7 @@ async function SalesDashboardPageContent({
           <div className="grid gap-4 xl:grid-cols-3">
             <form className="rounded-xl border border-slate-200 bg-slate-50 p-4">
               <div className="text-sm font-semibold text-slate-900">Specific month</div>
-              <p className="mt-1 text-sm text-slate-500">Filter KPIs and file contributions to one calendar month.</p>
+              <p className="mt-1 text-sm text-slate-500">Filter KPIs and file contributions to one business-date calendar month.</p>
               <div className="mt-3 flex flex-col gap-3 sm:flex-row">
                 <input type="hidden" name="range" value="month" />
                 <input name="month" type="month" defaultValue={selectedRange.monthValue} className="field-input" />
@@ -369,7 +369,7 @@ async function SalesDashboardPageContent({
 
             <form className="rounded-xl border border-slate-200 bg-slate-50 p-4">
               <div className="text-sm font-semibold text-slate-900">Specific date</div>
-              <p className="mt-1 text-sm text-slate-500">Inspect a single vending day without carrying older totals forward.</p>
+              <p className="mt-1 text-sm text-slate-500">Inspect one business day without carrying older totals forward.</p>
               <div className="mt-3 flex flex-col gap-3 sm:flex-row">
                 <input type="hidden" name="range" value="date" />
                 <input name="date" type="date" defaultValue={selectedRange.dateValue} className="field-input" />
@@ -379,7 +379,7 @@ async function SalesDashboardPageContent({
 
             <form className="rounded-xl border border-slate-200 bg-slate-50 p-4">
               <div className="text-sm font-semibold text-slate-900">Custom range</div>
-              <p className="mt-1 text-sm text-slate-500">Use an exact start and end date for investigations or partial-period review.</p>
+              <p className="mt-1 text-sm text-slate-500">Use an exact business-date start and end for investigations or partial-period review.</p>
               <div className="mt-3 grid gap-3 sm:grid-cols-3">
                 <input type="hidden" name="range" value="custom" />
                 <input name="date_from" type="date" defaultValue={selectedRange.dateFromValue} className="field-input" />
@@ -391,14 +391,14 @@ async function SalesDashboardPageContent({
 
           <div className="rounded-xl border border-slate-200 bg-white p-4">
             <div className="text-sm font-semibold text-slate-900">Selected range</div>
-            <div className="mt-1 text-lg font-semibold text-slate-900">Showing sales from {selectedRangeLabel}</div>
+            <div className="mt-1 text-lg font-semibold text-slate-900">Showing sales for business dates {selectedRangeLabel}</div>
             <p className="mt-1 text-sm text-slate-500">{selectedRange.helperText}</p>
           </div>
         </section>
 
         <KpiSection
           title="Data Source Summary"
-          subtitle="Sales dashboard totals use detailed VMS Order Details rows where transaction_status = successful_sale. Summary sales files remain reconciliation-only and are shown below for clarity, not for totals."
+          subtitle="Sales dashboard totals use detailed VMS Order Details rows where transaction_status = successful_sale. Business date controls day, month, and range totals; timestamps remain separate for audit."
         >
           <KpiLoadWarning message={batchResult.error} />
           <KpiLoadWarning message={fullReconciliationResult.error} />
@@ -462,7 +462,7 @@ async function SalesDashboardPageContent({
                 headers={[
                   "File name",
                   "Uploaded at",
-                  "Actual transaction coverage",
+                  "Business date coverage",
                   "Imported raw rows total",
                   "Rows inside selected filter",
                   "Successful sale rows in filter",
@@ -490,7 +490,12 @@ async function SalesDashboardPageContent({
                     <td className="text-sm">
                       <div>{row.actualCoverageLabel}</div>
                       {row.metadataCoverageLabel !== "-" && row.metadataCoverageLabel !== row.actualCoverageLabel ? (
-                        <div className="mt-1 text-xs text-slate-500">Batch metadata: {row.metadataCoverageLabel}</div>
+                        <div className="mt-1 text-xs text-slate-500">Expected report range: {row.metadataCoverageLabel}</div>
+                      ) : null}
+                      {row.timestampCoverageStart || row.timestampCoverageEnd ? (
+                        <div className="mt-1 text-xs text-slate-500">
+                          Timestamp range: {formatVmsDateTime(row.timestampCoverageStart)} to {formatVmsDateTime(row.timestampCoverageEnd)}
+                        </div>
                       ) : null}
                     </td>
                     <td className="text-sm">

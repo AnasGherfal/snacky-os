@@ -23,6 +23,7 @@ import {
 } from "@/lib/vms-parser";
 import {
   createVmsOrderDetailsDuplicateHash,
+  orderDetailsBusinessDate,
   detectOrderDetailsDateRange,
   orderDetailsAliases,
   orderDetailsDate,
@@ -598,6 +599,8 @@ type PersistedOrderDetailsBatchSummary = {
   rowCount: number;
   detectedMinDatetime: string | null;
   detectedMaxDatetime: string | null;
+  businessDateStart: string | null;
+  businessDateEnd: string | null;
   error: unknown | null;
 };
 
@@ -651,30 +654,50 @@ async function loadPersistedOrderDetailsBatchSummary({
   supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
   batchId: string;
 }): Promise<PersistedOrderDetailsBatchSummary> {
-  const { data, error } = await supabase
+  const preferred = await supabase
     .from("vms_transactions_raw")
-    .select("payment_time, delivery_time")
+    .select("business_date, payment_time, delivery_time")
     .eq("import_batch_id", batchId);
+  const fallbackToLegacySelect = preferred.error && (
+    String((preferred.error as { code?: unknown }).code ?? "") === "42703"
+    || String((preferred.error as { code?: unknown }).code ?? "") === "PGRST204"
+    || /business_date|column|schema cache/i.test(String((preferred.error as { message?: unknown }).message ?? ""))
+  );
+  const result = fallbackToLegacySelect
+    ? await supabase
+      .from("vms_transactions_raw")
+      .select("payment_time, delivery_time")
+      .eq("import_batch_id", batchId)
+    : preferred;
 
-  if (error) {
+  if (result.error) {
     return {
       rowCount: 0,
       detectedMinDatetime: null,
       detectedMaxDatetime: null,
-      error,
+      businessDateStart: null,
+      businessDateEnd: null,
+      error: result.error,
     };
   }
 
-  const capturedValues = ((data ?? []) as Array<{ payment_time?: string | null; delivery_time?: string | null }>)
+  const rows = (result.data ?? []) as Array<{ business_date?: string | null; payment_time?: string | null; delivery_time?: string | null }>;
+  const capturedValues = rows
     .flatMap((row) => [row.payment_time, row.delivery_time])
     .map((value) => String(value ?? "").trim())
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b));
+  const businessDates = rows
+    .map((row) => String(row.business_date ?? "").trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
 
   return {
-    rowCount: Number(data?.length ?? 0),
+    rowCount: Number(rows.length ?? 0),
     detectedMinDatetime: capturedValues[0] ?? null,
     detectedMaxDatetime: capturedValues.at(-1) ?? null,
+    businessDateStart: businessDates[0] ?? null,
+    businessDateEnd: businessDates.at(-1) ?? null,
     error: null,
   };
 }
@@ -1947,6 +1970,7 @@ async function runVmsImport({
       const amountForSummary = paymentAmount ?? grossSalesAmount;
       const quantity = orderDetailsQuantity(row);
       const duplicateHash = createVmsOrderDetailsDuplicateHash(row);
+      const businessDate = orderDetailsBusinessDate(row);
       const paymentTime = orderDetailsDate(orderDetailsValue(row, orderDetailsAliases.paymentTime));
       const deliveryTime = orderDetailsDate(orderDetailsValue(row, orderDetailsAliases.deliveryTime));
       const refundTime = orderDetailsDate(orderDetailsValue(row, orderDetailsAliases.refundTime));
@@ -1990,6 +2014,7 @@ async function runVmsImport({
         third_party_order_no: orderDetailsValue(row, orderDetailsAliases.thirdPartyOrderNo) || null,
         payment_amount: paymentAmount,
         payment_time: paymentTime?.toISOString() ?? null,
+        business_date: businessDate,
         quantity,
         raw_row: originalRow,
         normalized_row: row,
@@ -2434,6 +2459,8 @@ async function runVmsImport({
   }
   const persistedImportedRowCount = persistedStockSummary?.importedRowCount ?? 0;
   const persistedOrderDetailsRowCount = persistedOrderDetailsSummary?.rowCount ?? 0;
+  const persistedOrderDetailsBusinessDateStart = persistedOrderDetailsSummary?.businessDateStart ?? null;
+  const persistedOrderDetailsBusinessDateEnd = persistedOrderDetailsSummary?.businessDateEnd ?? null;
   const attemptedImportedRows = summary.importedRows;
   const effectiveImportedRows = isMachineStockReport(reportType)
     ? (persistedImportedRowCount > 0 ? persistedImportedRowCount : summary.importedRows)
@@ -2479,6 +2506,12 @@ async function runVmsImport({
   const latestErrorText = status === "imported"
     ? null
     : (summary.errors.length ? summary.errors.join("; ").slice(0, 2000) : null);
+  const finalizedReportStartDate = reportType === "vms_order_details_weekly"
+    ? (persistedOrderDetailsBusinessDateStart ?? effectiveReportStartDate)
+    : effectiveReportStartDate;
+  const finalizedReportEndDate = reportType === "vms_order_details_weekly"
+    ? (persistedOrderDetailsBusinessDateEnd ?? effectiveReportEndDate)
+    : effectiveReportEndDate;
   const batchUpdate = {
     status,
     is_active: isMachineStockReport(reportType) || reportType === "vms_order_details_weekly" ? effectiveImportedRows > 0 : importResult.active,
@@ -2496,8 +2529,8 @@ async function runVmsImport({
     rows_found: summary.rowsFound,
     row_count: summary.rowsFound,
     rows_skipped: summary.skippedRows,
-    report_start_date: effectiveReportStartDate,
-    report_end_date: effectiveReportEndDate,
+    report_start_date: finalizedReportStartDate,
+    report_end_date: finalizedReportEndDate,
     file_hash: fileHash,
     storage_path: storagePath,
     detected_min_datetime: detectedMinDatetime,

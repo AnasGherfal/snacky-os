@@ -11,6 +11,18 @@ export type VmsOrderTransactionStatus =
   | "needs_review";
 
 export const orderDetailsAliases = {
+  businessDate: [
+    "business_date",
+    "sale_date",
+    "sales_date",
+    "report_date",
+    "transaction_date",
+    "settlement_date",
+    "Date",
+    "Sale date",
+    "Sale Date",
+    "Transaction Date",
+  ],
   merchantId: ["merchant_id", "Merchant ID"],
   merchantName: ["merchant_name", "Merchant Name"],
   machineCode: ["machine_identifier", "machine_code", "Machine code", "Machine Code"],
@@ -75,6 +87,47 @@ export function orderDetailsDateOnly(date: Date) {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
 }
 
+function validDateOnly(year: number, month: number, day: number) {
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return false;
+  if (year < 1900 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) return false;
+  const candidate = new Date(Date.UTC(year, month - 1, day));
+  return candidate.getUTCFullYear() === year && candidate.getUTCMonth() === month - 1 && candidate.getUTCDate() === day;
+}
+
+function toDateOnly(year: number, month: number, day: number) {
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+export function orderDetailsDateText(input: string) {
+  const raw = String(input ?? "").trim();
+  if (!raw) return null;
+
+  const isoLike = raw.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b/);
+  if (isoLike) {
+    const year = Number(isoLike[1]);
+    const month = Number(isoLike[2]);
+    const day = Number(isoLike[3]);
+    return validDateOnly(year, month, day) ? toDateOnly(year, month, day) : null;
+  }
+
+  const dayFirst = raw.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})\b/);
+  if (dayFirst) {
+    const day = Number(dayFirst[1]);
+    const month = Number(dayFirst[2]);
+    const year = Number(dayFirst[3]);
+    return validDateOnly(year, month, day) ? toDateOnly(year, month, day) : null;
+  }
+
+  const serial = Number(raw);
+  if (Number.isFinite(serial) && serial > 25000 && serial < 80000) {
+    const date = orderDetailsDate(raw);
+    return date ? orderDetailsDateOnly(date) : null;
+  }
+
+  const parsed = orderDetailsDate(raw);
+  return parsed ? orderDetailsDateOnly(parsed) : null;
+}
+
 export function orderDetailsPaymentAmount(row: Record<string, string>) {
   return orderDetailsNumber(orderDetailsValue(row, orderDetailsAliases.paymentAmount));
 }
@@ -101,15 +154,29 @@ export function orderDetailsTransactionDate(row: Record<string, string>) {
     ?? orderDetailsDate(orderDetailsValue(row, orderDetailsAliases.deliveryTime));
 }
 
+export function orderDetailsBusinessDate(row: Record<string, string>) {
+  const explicitBusinessDate = orderDetailsDateText(orderDetailsValue(row, orderDetailsAliases.businessDate));
+  if (explicitBusinessDate) return explicitBusinessDate;
+
+  const paymentDate = orderDetailsDateText(orderDetailsValue(row, orderDetailsAliases.paymentTime));
+  if (paymentDate) return paymentDate;
+
+  const deliveryDate = orderDetailsDateText(orderDetailsValue(row, orderDetailsAliases.deliveryTime));
+  if (deliveryDate) return deliveryDate;
+
+  const transactionDate = orderDetailsTransactionDate(row);
+  return transactionDate ? orderDetailsDateOnly(transactionDate) : null;
+}
+
 export function detectOrderDetailsDateRange(rows: Record<string, string>[]) {
   const dates = rows
-    .map(orderDetailsTransactionDate)
-    .filter((date): date is Date => Boolean(date))
-    .sort((a, b) => a.getTime() - b.getTime());
+    .map(orderDetailsBusinessDate)
+    .filter((date): date is string => Boolean(date))
+    .sort((a, b) => a.localeCompare(b));
   if (!dates.length) return { start: "", end: "" };
   return {
-    start: orderDetailsDateOnly(dates[0]),
-    end: orderDetailsDateOnly(dates[dates.length - 1]),
+    start: dates[0],
+    end: dates[dates.length - 1],
   };
 }
 
