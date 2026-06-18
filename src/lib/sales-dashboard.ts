@@ -37,25 +37,68 @@ export type SalesDateRange = {
   dateToValue: string;
 };
 
-export type SalesBatchMetric = {
-  latestTransactionAt: string | null;
-  rows: number;
-  salesAmount: number;
+export type SalesBatchReconciliation = {
+  batchId: string;
+  sourceFileName: string;
+  batchStatus: string | null;
+  isActive: boolean | null;
+  deletedAt: string | null;
+  uploadedAt: string | null;
+  importedAt: string | null;
+  metadataReportStartDate: string | null;
+  metadataReportEndDate: string | null;
+  metadataDetectedMinDateTime: string | null;
+  metadataDetectedMaxDateTime: string | null;
+  metadataImportedRowsTotal: number;
+  metadataRowsFoundTotal: number;
+  metadataDuplicateRowsTotal: number;
+  rawRowCountTotal: number;
+  rawSuccessfulRowsTotal: number;
+  rawFailedVendRowsTotal: number;
+  rawRefundedRowsTotal: number;
+  rawFailedPaymentRowsTotal: number;
+  rawNeedsReviewRowsTotal: number;
+  rawMissingDatetimeRowsTotal: number;
+  rawMissingAmountRowsTotal: number;
+  rawSuccessfulSalesAmountTotal: number;
+  rawFailedVendAmountTotal: number;
+  rawRefundedAmountTotal: number;
+  rawUnitsSoldTotal: number;
+  rawMinTransactionAt: string | null;
+  rawMaxTransactionAt: string | null;
+  rawMinSaleDate: string | null;
+  rawMaxSaleDate: string | null;
+  rangeRowCount: number;
+  rangeSuccessfulRows: number;
+  rangeFailedVendRows: number;
+  rangeRefundedRows: number;
+  rangeFailedPaymentRows: number;
+  rangeNeedsReviewRows: number;
+  rangeSuccessfulSalesAmount: number;
+  rangeFailedVendAmount: number;
+  rangeRefundedAmount: number;
+  rangeUnitsSold: number;
+  rangeTransactionCount: number;
+  rangeMinTransactionAt: string | null;
+  rangeMaxTransactionAt: string | null;
 };
 
 export type SalesFileContribution = {
   batch: VmsDashboardBatch;
-  coverageEnd: string | null;
-  coverageLabel: string;
-  coverageStart: string | null;
+  actualCoverageEnd: string | null;
+  actualCoverageLabel: string;
+  actualCoverageStart: string | null;
   fileName: string;
   importedRowsTotal: number;
   included: boolean;
+  isActive: boolean;
   latestTransactionAt: string | null;
+  metadataCoverageLabel: string;
   reason: string;
   rowsInRange: number;
   salesAmountInRange: number;
   status: string;
+  successfulRowsInRange: number;
   uploadedAt: string | null;
 };
 
@@ -139,6 +182,12 @@ function dateOnlyFromTimestamp(value: string | null | undefined) {
   return Number.isNaN(parsed.getTime()) ? null : formatLocalDate(parsed);
 }
 
+function integerValue(value: number | string | null | undefined) {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.floor(parsed));
+}
+
 function normalizeBounds(start: string, end: string) {
   return start <= end ? { start, end } : { start: end, end: start };
 }
@@ -174,6 +223,10 @@ function activeDetailedSalesBatches(batches: VmsDashboardBatch[]) {
   return batches.filter((batch) => batch.report_type === "vms_order_details_weekly" && isActiveImportedVmsBatch(batch));
 }
 
+function coverageLabel(start: string | null | undefined, end: string | null | undefined) {
+  return start && end ? `${start} to ${end}` : "-";
+}
+
 export function batchCoverageDates(batch: VmsDashboardBatch) {
   const reportStart = parseIsoDate(batch.report_start_date);
   const reportEnd = parseIsoDate(batch.report_end_date);
@@ -182,6 +235,12 @@ export function batchCoverageDates(batch: VmsDashboardBatch) {
   const start = reportStart ?? detectedStart ?? reportEnd ?? detectedEnd;
   const end = reportEnd ?? detectedEnd ?? reportStart ?? detectedStart;
 
+  return start && end ? normalizeBounds(start, end) : { start, end };
+}
+
+function reconciliationCoverageDates(reconciliation: SalesBatchReconciliation | null | undefined) {
+  const start = parseIsoDate(reconciliation?.rawMinSaleDate);
+  const end = parseIsoDate(reconciliation?.rawMaxSaleDate);
   return start && end ? normalizeBounds(start, end) : { start, end };
 }
 
@@ -196,6 +255,34 @@ export function rangesOverlap(left: DateRangeBounds, right: DateRangeBounds) {
 
 export function formatSalesRangeLabel(range: Pick<SalesDateRange, "start" | "end">) {
   return `${range.start} to ${range.end}`;
+}
+
+export function salesBatchReconciliationById(rows: SalesBatchReconciliation[]) {
+  return new Map(rows.map((row) => [row.batchId, row]));
+}
+
+export function applySalesBatchCoverage(
+  batches: VmsDashboardBatch[],
+  reconciliationByBatchId: Map<string, SalesBatchReconciliation>,
+) {
+  return batches.map((batch) => {
+    if (batch.report_type !== "vms_order_details_weekly") return batch;
+    const reconciliation = reconciliationByBatchId.get(batch.id);
+    if (!reconciliation) return batch;
+    return {
+      ...batch,
+      report_start_date: reconciliation.rawMinSaleDate,
+      report_end_date: reconciliation.rawMaxSaleDate,
+      detected_min_datetime: reconciliation.rawMinTransactionAt,
+      detected_max_datetime: reconciliation.rawMaxTransactionAt,
+      row_count: reconciliation.rawRowCountTotal,
+      rows_found: reconciliation.rawRowCountTotal,
+      rows_imported: reconciliation.rawRowCountTotal,
+      successful_rows_count: reconciliation.rawSuccessfulRowsTotal,
+      failed_rows_count: reconciliation.rawFailedVendRowsTotal + reconciliation.rawFailedPaymentRowsTotal + reconciliation.rawNeedsReviewRowsTotal,
+      refunded_rows_count: reconciliation.rawRefundedRowsTotal,
+    } satisfies VmsDashboardBatch;
+  });
 }
 
 function latestCurrentMonthCoverage(batches: VmsDashboardBatch[], monthStart: string, monthEnd: string) {
@@ -362,29 +449,36 @@ function looksLikeMissingColumnError(value: string) {
 
 function classifyContribution({
   batch,
-  coverage,
-  metric,
+  metadataCoverage,
+  reconciliation,
   range,
 }: {
   batch: VmsDashboardBatch;
-  coverage: ReturnType<typeof batchCoverageDates>;
-  metric: SalesBatchMetric;
+  metadataCoverage: ReturnType<typeof batchCoverageDates>;
+  reconciliation: SalesBatchReconciliation | null;
   range: SalesDateRange;
 }) {
   const reportType = String(batch.report_type ?? "");
   const rawStatus = String(batch.status ?? "").toLowerCase();
-  const importedRows = batchImportedRows(batch);
-  const duplicateRows = Number(batch.rows_skipped_duplicate ?? 0);
-  const successfulRows = Number(batch.successful_rows_count ?? 0);
+  const importedRows = reconciliation?.rawRowCountTotal ?? batchImportedRows(batch);
+  const duplicateRows = reconciliation?.metadataDuplicateRowsTotal ?? integerValue(batch.rows_skipped_duplicate);
+  const successfulRows = reconciliation?.rawSuccessfulRowsTotal ?? integerValue(batch.successful_rows_count);
   const latestError = `${String(batch.latest_error ?? "")} ${String(batch.last_error ?? "")}`.trim().toLowerCase();
-  const overlapsSelectedRange = coverage.start && coverage.end
-    ? rangesOverlap({ start: coverage.start, end: coverage.end }, { start: range.start, end: range.end })
+  const actualCoverage = reconciliationCoverageDates(reconciliation);
+  const overlapsSelectedRange = actualCoverage.start && actualCoverage.end
+    ? rangesOverlap({ start: actualCoverage.start, end: actualCoverage.end }, { start: range.start, end: range.end })
     : false;
+  const metadataOverlapsSelectedRange = metadataCoverage.start && metadataCoverage.end
+    ? rangesOverlap({ start: metadataCoverage.start, end: metadataCoverage.end }, { start: range.start, end: range.end })
+    : false;
+  const rowsInRange = reconciliation?.rangeRowCount ?? 0;
+  const successfulRowsInRange = reconciliation?.rangeSuccessfulRows ?? 0;
+  const rowsExcludedByStatus = rowsInRange - successfulRowsInRange;
 
   if (reportType === "sales") {
     return {
       included: false,
-      reason: overlapsSelectedRange
+      reason: metadataOverlapsSelectedRange
         ? "Summary sales file is available for this period, but dashboard totals only use detailed Order Details rows."
         : "Summary sales file is reconciliation-only and outside the selected date range.",
       status: "summary_file_only",
@@ -402,7 +496,9 @@ function classifyContribution({
   if (batch.deleted_at || batch.is_active === false || rawStatus === "disabled" || rawStatus === "deleted") {
     return {
       included: false,
-      reason: "This detailed sales batch is inactive, so it is excluded from dashboard totals.",
+      reason: rowsInRange > 0
+        ? `This detailed sales batch has ${rowsInRange.toLocaleString("en-US")} row(s) inside the selected range, but the batch is inactive so the dashboard excludes it.`
+        : "This detailed sales batch is inactive, so it is excluded from dashboard totals.",
       status: "inactive_batch",
     };
   }
@@ -420,7 +516,9 @@ function classifyContribution({
   if (rawStatus === "previewed" || rawStatus === "draft" || rawStatus === "cancelled" || rawStatus === "canceled") {
     return {
       included: false,
-      reason: "This batch is preview-only or unfinished, so it cannot contribute to dashboard totals yet.",
+      reason: rowsInRange > 0
+        ? `This batch has ${rowsInRange.toLocaleString("en-US")} row(s) inside the selected range, but it is still preview-only or unfinished so those rows are blocked from dashboard totals.`
+        : "This batch is preview-only or unfinished, so it cannot contribute to dashboard totals yet.",
       status: "preview_only",
     };
   }
@@ -433,12 +531,12 @@ function classifyContribution({
     };
   }
 
-  if (metric.rows > 0) {
+  if (successfulRowsInRange > 0) {
     return {
       included: true,
       reason: duplicateRows > 0
-        ? `Contributing ${metric.rows.toLocaleString("en-US")} detailed row(s) inside the selected range. ${duplicateRows.toLocaleString("en-US")} duplicate row(s) were skipped during import.`
-        : `Contributing ${metric.rows.toLocaleString("en-US")} detailed row(s) inside the selected range.`,
+        ? `Contributing ${successfulRowsInRange.toLocaleString("en-US")} successful sale row(s) inside the selected range. ${duplicateRows.toLocaleString("en-US")} duplicate row(s) were skipped during import.`
+        : `Contributing ${successfulRowsInRange.toLocaleString("en-US")} successful sale row(s) inside the selected range.`,
       status: "included",
     };
   }
@@ -451,11 +549,39 @@ function classifyContribution({
     };
   }
 
-  if (coverage.start && coverage.end && !overlapsSelectedRange) {
+  if (importedRows <= 0 && (batchImportedRows(batch) > 0 || integerValue(batch.rows_found) > 0)) {
     return {
       included: false,
-      reason: "Active detailed file, but 0 rows fall inside the selected date range.",
+      reason: metadataCoverage.start && metadataCoverage.end
+        ? `Batch metadata says this file covers ${metadataCoverage.start} to ${metadataCoverage.end}, but 0 detailed transaction rows were actually saved in vms_transactions_raw.`
+        : "Batch metadata shows imported rows, but 0 detailed transaction rows were actually saved in vms_transactions_raw.",
+      status: "metadata_without_raw_rows",
+    };
+  }
+
+  if (actualCoverage.start && actualCoverage.end && !overlapsSelectedRange) {
+    return {
+      included: false,
+      reason: `Actual transaction dates for this file are ${actualCoverage.start} to ${actualCoverage.end}, which falls outside the selected range ${range.start} to ${range.end}.`,
       status: "outside_selected_date_range",
+    };
+  }
+
+  if (rowsInRange > 0 && rowsExcludedByStatus > 0) {
+    return {
+      included: false,
+      reason: `This file has ${rowsInRange.toLocaleString("en-US")} detailed row(s) inside the selected range, but all of them are excluded from sales totals because their statuses are failed vend, refunded, failed payment, or needs review.`,
+      status: "rows_excluded_by_status",
+    };
+  }
+
+  if (importedRows > 0 && !actualCoverage.start && !actualCoverage.end) {
+    return {
+      included: false,
+      reason: reconciliation?.rawMissingDatetimeRowsTotal
+        ? `Detailed rows were saved for this file, but ${reconciliation.rawMissingDatetimeRowsTotal.toLocaleString("en-US")} row(s) are missing usable transaction datetime values, so the dashboard cannot place them inside a date range.`
+        : "Detailed rows were saved for this file, but the dashboard could not derive a usable transaction date range from them.",
+      status: "missing_transaction_datetime",
     };
   }
 
@@ -477,43 +603,57 @@ function classifyContribution({
 function contributionSortRank(row: SalesFileContribution) {
   if (row.included) return 0;
   if (row.status === "outside_selected_date_range") return 1;
-  if (row.status === "summary_file_only") return 2;
-  if (row.status === "preview_only") return 3;
-  if (row.status === "failed_import" || row.status === "missing_required_columns") return 4;
-  if (row.status === "inactive_batch") return 5;
-  if (row.status === "duplicate_rows_ignored") return 6;
-  if (row.status === "no_detailed_rows") return 7;
-  return 8;
+  if (row.status === "rows_excluded_by_status") return 2;
+  if (row.status === "metadata_without_raw_rows") return 3;
+  if (row.status === "missing_transaction_datetime") return 4;
+  if (row.status === "summary_file_only") return 5;
+  if (row.status === "preview_only") return 6;
+  if (row.status === "failed_import" || row.status === "missing_required_columns") return 7;
+  if (row.status === "inactive_batch") return 8;
+  if (row.status === "duplicate_rows_ignored") return 9;
+  if (row.status === "no_detailed_rows") return 10;
+  return 11;
 }
 
 export function buildSalesFileContributions({
   batches,
-  metricsByBatchId,
+  reconciliationByBatchId,
   range,
 }: {
   batches: VmsDashboardBatch[];
-  metricsByBatchId: Map<string, SalesBatchMetric>;
+  reconciliationByBatchId: Map<string, SalesBatchReconciliation>;
   range: SalesDateRange;
 }) {
   return batches
     .map((batch) => {
-      const coverage = batchCoverageDates(batch);
-      const metric = metricsByBatchId.get(batch.id) ?? { latestTransactionAt: null, rows: 0, salesAmount: 0 };
-      const classification = classifyContribution({ batch, coverage, metric, range });
+      const metadataCoverage = batchCoverageDates(batch);
+      const reconciliation = reconciliationByBatchId.get(batch.id) ?? null;
+      const actualCoverage = reconciliationCoverageDates(reconciliation);
+      const classification = classifyContribution({ batch, metadataCoverage, reconciliation, range });
+      const importedRowsTotal = batch.report_type === "vms_order_details_weekly"
+        ? reconciliation?.rawRowCountTotal ?? batchImportedRows(batch)
+        : batchImportedRows(batch);
 
       return {
         batch,
-        coverageEnd: coverage.end,
-        coverageLabel: coverage.start && coverage.end ? `${coverage.start} to ${coverage.end}` : "-",
-        coverageStart: coverage.start,
+        actualCoverageEnd: actualCoverage.end,
+        actualCoverageLabel: coverageLabel(actualCoverage.start, actualCoverage.end),
+        actualCoverageStart: actualCoverage.start,
         fileName: sourceFileName(batch),
-        importedRowsTotal: batchImportedRows(batch),
+        importedRowsTotal,
         included: classification.included,
-        latestTransactionAt: metric.latestTransactionAt,
+        isActive: Boolean(batch.is_active) && !batch.deleted_at && rawStatus(batch) !== "disabled" && rawStatus(batch) !== "deleted",
+        latestTransactionAt: reconciliation?.rangeMaxTransactionAt
+          ?? reconciliation?.rawMaxTransactionAt
+          ?? batch.detected_max_datetime
+          ?? batch.imported_at
+          ?? null,
+        metadataCoverageLabel: coverageLabel(metadataCoverage.start, metadataCoverage.end),
         reason: classification.reason,
-        rowsInRange: metric.rows,
-        salesAmountInRange: metric.salesAmount,
+        rowsInRange: reconciliation?.rangeRowCount ?? 0,
+        salesAmountInRange: reconciliation?.rangeSuccessfulSalesAmount ?? 0,
         status: classification.status,
+        successfulRowsInRange: reconciliation?.rangeSuccessfulRows ?? 0,
         uploadedAt: batch.uploaded_at ?? batch.imported_at ?? null,
       } satisfies SalesFileContribution;
     })
@@ -522,4 +662,8 @@ export function buildSalesFileContributions({
       if (rank !== 0) return rank;
       return String(right.uploadedAt ?? "").localeCompare(String(left.uploadedAt ?? ""));
     });
+}
+
+function rawStatus(batch: VmsDashboardBatch) {
+  return String(batch.status ?? "").toLowerCase();
 }

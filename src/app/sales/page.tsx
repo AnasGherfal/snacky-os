@@ -3,19 +3,25 @@ import type { ReactNode } from "react";
 import { BarList, KpiLoadWarning, KpiSection } from "@/components/KpiDashboard";
 import { DataTable, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
+import { isOwnerAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { formatInteger, groupSum } from "@/lib/kpi";
 import { cleanSearchParams, type SearchParamsRecord } from "@/lib/pagination";
 import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
 import {
+  applySalesBatchCoverage,
+  batchCoverageDates,
   buildSalesFileContributions,
   formatSalesRangeLabel,
   rangesOverlap,
   resolveSalesDashboardRange,
+  salesBatchReconciliationById,
+  type SalesBatchReconciliation,
   type SalesDashboardSearchParams,
 } from "@/lib/sales-dashboard";
 import {
   batchLastUpdatedAt,
+  batchImportedRows,
   formatVmsDateTime,
   queryVmsDashboardBatches,
   vmsCoverageSummary,
@@ -45,13 +51,49 @@ type SalesRow = {
 };
 
 type TransactionStatusRow = {
-  sale_date: string | null;
-  failed_vend_count: number | string | null;
-  failed_vend_amount: number | string | null;
-  refund_count: number | string | null;
-  refund_amount: number | string | null;
-  failed_payment_count: number | string | null;
-  needs_review_count: number | string | null;
+  batch_id: string | null;
+  source_file_name: string | null;
+  batch_status: string | null;
+  is_active: boolean | null;
+  deleted_at: string | null;
+  uploaded_at: string | null;
+  imported_at: string | null;
+  metadata_report_start_date: string | null;
+  metadata_report_end_date: string | null;
+  metadata_detected_min_datetime: string | null;
+  metadata_detected_max_datetime: string | null;
+  metadata_imported_rows_total: number | string | null;
+  metadata_rows_found_total: number | string | null;
+  metadata_duplicate_rows_total: number | string | null;
+  raw_row_count_total: number | string | null;
+  raw_successful_rows_total: number | string | null;
+  raw_failed_vend_rows_total: number | string | null;
+  raw_refunded_rows_total: number | string | null;
+  raw_failed_payment_rows_total: number | string | null;
+  raw_needs_review_rows_total: number | string | null;
+  raw_missing_datetime_rows_total: number | string | null;
+  raw_missing_amount_rows_total: number | string | null;
+  raw_successful_sales_amount_total: number | string | null;
+  raw_failed_vend_amount_total: number | string | null;
+  raw_refunded_amount_total: number | string | null;
+  raw_units_sold_total: number | string | null;
+  raw_min_transaction_at: string | null;
+  raw_max_transaction_at: string | null;
+  raw_min_sale_date: string | null;
+  raw_max_sale_date: string | null;
+  range_row_count: number | string | null;
+  range_successful_rows: number | string | null;
+  range_failed_vend_rows: number | string | null;
+  range_refunded_rows: number | string | null;
+  range_failed_payment_rows: number | string | null;
+  range_needs_review_rows: number | string | null;
+  range_successful_sales_amount: number | string | null;
+  range_failed_vend_amount: number | string | null;
+  range_refunded_amount: number | string | null;
+  range_units_sold: number | string | null;
+  range_transaction_count: number | string | null;
+  range_min_transaction_at: string | null;
+  range_max_transaction_at: string | null;
 };
 
 function chronologicalSales(rows: { label: string; value: number }[]) {
@@ -96,26 +138,6 @@ function MetricValue({
   );
 }
 
-function buildBatchMetricsById(rows: SalesRow[]) {
-  const metricsByBatchId = new Map<string, { latestTransactionAt: string | null; rows: number; salesAmount: number }>();
-
-  rows.forEach((row) => {
-    const batchId = String(row.import_batch_id ?? "").trim();
-    if (!batchId) return;
-
-    const current = metricsByBatchId.get(batchId) ?? { latestTransactionAt: null, rows: 0, salesAmount: 0 };
-    const candidateTimestamp = row.period_end ?? row.period_start ?? row.sale_date ?? null;
-
-    metricsByBatchId.set(batchId, {
-      latestTransactionAt: latestTimestamp([current.latestTransactionAt, candidateTimestamp]),
-      rows: current.rows + 1,
-      salesAmount: current.salesAmount + numericValue(row.net_sales_amount ?? row.gross_sales_amount),
-    });
-  });
-
-  return metricsByBatchId;
-}
-
 function latestTimestamp(values: Array<string | null | undefined>) {
   return values
     .filter((value): value is string => Boolean(value))
@@ -123,12 +145,60 @@ function latestTimestamp(values: Array<string | null | undefined>) {
     .at(-1) ?? null;
 }
 
+function normalizeSalesBatchReconciliationRows(rows: TransactionStatusRow[]) {
+  return rows.map((row) => ({
+    batchId: String(row.batch_id ?? ""),
+    sourceFileName: String(row.source_file_name ?? "unknown file"),
+    batchStatus: row.batch_status ?? null,
+    isActive: row.is_active ?? null,
+    deletedAt: row.deleted_at ?? null,
+    uploadedAt: row.uploaded_at ?? null,
+    importedAt: row.imported_at ?? null,
+    metadataReportStartDate: row.metadata_report_start_date ?? null,
+    metadataReportEndDate: row.metadata_report_end_date ?? null,
+    metadataDetectedMinDateTime: row.metadata_detected_min_datetime ?? null,
+    metadataDetectedMaxDateTime: row.metadata_detected_max_datetime ?? null,
+    metadataImportedRowsTotal: numericValue(row.metadata_imported_rows_total),
+    metadataRowsFoundTotal: numericValue(row.metadata_rows_found_total),
+    metadataDuplicateRowsTotal: numericValue(row.metadata_duplicate_rows_total),
+    rawRowCountTotal: numericValue(row.raw_row_count_total),
+    rawSuccessfulRowsTotal: numericValue(row.raw_successful_rows_total),
+    rawFailedVendRowsTotal: numericValue(row.raw_failed_vend_rows_total),
+    rawRefundedRowsTotal: numericValue(row.raw_refunded_rows_total),
+    rawFailedPaymentRowsTotal: numericValue(row.raw_failed_payment_rows_total),
+    rawNeedsReviewRowsTotal: numericValue(row.raw_needs_review_rows_total),
+    rawMissingDatetimeRowsTotal: numericValue(row.raw_missing_datetime_rows_total),
+    rawMissingAmountRowsTotal: numericValue(row.raw_missing_amount_rows_total),
+    rawSuccessfulSalesAmountTotal: numericValue(row.raw_successful_sales_amount_total),
+    rawFailedVendAmountTotal: numericValue(row.raw_failed_vend_amount_total),
+    rawRefundedAmountTotal: numericValue(row.raw_refunded_amount_total),
+    rawUnitsSoldTotal: numericValue(row.raw_units_sold_total),
+    rawMinTransactionAt: row.raw_min_transaction_at ?? null,
+    rawMaxTransactionAt: row.raw_max_transaction_at ?? null,
+    rawMinSaleDate: row.raw_min_sale_date ?? null,
+    rawMaxSaleDate: row.raw_max_sale_date ?? null,
+    rangeRowCount: numericValue(row.range_row_count),
+    rangeSuccessfulRows: numericValue(row.range_successful_rows),
+    rangeFailedVendRows: numericValue(row.range_failed_vend_rows),
+    rangeRefundedRows: numericValue(row.range_refunded_rows),
+    rangeFailedPaymentRows: numericValue(row.range_failed_payment_rows),
+    rangeNeedsReviewRows: numericValue(row.range_needs_review_rows),
+    rangeSuccessfulSalesAmount: numericValue(row.range_successful_sales_amount),
+    rangeFailedVendAmount: numericValue(row.range_failed_vend_amount),
+    rangeRefundedAmount: numericValue(row.range_refunded_amount),
+    rangeUnitsSold: numericValue(row.range_units_sold),
+    rangeTransactionCount: numericValue(row.range_transaction_count),
+    rangeMinTransactionAt: row.range_min_transaction_at ?? null,
+    rangeMaxTransactionAt: row.range_max_transaction_at ?? null,
+  } satisfies SalesBatchReconciliation));
+}
+
 async function SalesDashboardPageContent({
   searchParams,
 }: {
   searchParams: Promise<SearchParamsRecord & SalesDashboardSearchParams>;
 }) {
-  await requireCurrentProfileForPath("/sales");
+  const profile = await requireCurrentProfileForPath("/sales");
   const params = cleanSearchParams(await searchParams) as SearchParamsRecord & SalesDashboardSearchParams;
   const supabase = await getAuthenticatedSupabaseServerClient();
   const renderedAt = new Date();
@@ -145,20 +215,29 @@ async function SalesDashboardPageContent({
     );
   }
 
-  const batchResult = await safeSupabaseQuery<VmsDashboardBatch>({
-    label: "sales.vms_import_batches",
-    promise: queryVmsDashboardBatches(supabase, {
-      reportTypes: ["vms_order_details_weekly", "sales"],
-      orderBy: "uploaded_at",
-      ascending: false,
+  const [batchResult, fullReconciliationResult] = await Promise.all([
+    safeSupabaseQuery<VmsDashboardBatch>({
+      label: "sales.vms_import_batches",
+      promise: queryVmsDashboardBatches(supabase, {
+        reportTypes: ["vms_order_details_weekly", "sales"],
+        orderBy: "uploaded_at",
+        ascending: false,
+      }),
     }),
-  });
+    safeSupabaseQuery<TransactionStatusRow>({
+      label: "sales.sales_dashboard_batch_reconciliation.all",
+      promise: supabase.rpc("sales_dashboard_batch_reconciliation"),
+    }),
+  ]);
 
   const batches = batchResult.data as VmsDashboardBatch[];
-  const selectedRange = resolveSalesDashboardRange(params, batches, renderedAt);
+  const fullReconciliationRows = normalizeSalesBatchReconciliationRows(fullReconciliationResult.data as TransactionStatusRow[]);
+  const fullReconciliationByBatchId = salesBatchReconciliationById(fullReconciliationRows);
+  const coverageAwareBatches = applySalesBatchCoverage(batches, fullReconciliationByBatchId);
+  const selectedRange = resolveSalesDashboardRange(params, coverageAwareBatches, renderedAt);
   const selectedRangeLabel = formatSalesRangeLabel(selectedRange);
 
-  const [salesResult, statusResult] = await Promise.all([
+  const [salesResult, filteredReconciliationResult] = await Promise.all([
     safeSupabaseQuery<SalesRow>({
       label: "sales.vms_sales_clean.filtered",
       promise: supabase
@@ -169,34 +248,35 @@ async function SalesDashboardPageContent({
         .order("sale_date", { ascending: true }),
     }),
     safeSupabaseQuery<TransactionStatusRow>({
-      label: "sales.vms_transaction_status_daily.filtered",
-      promise: supabase
-        .from("vms_transaction_status_daily")
-        .select("sale_date, failed_vend_count, failed_vend_amount, refund_count, refund_amount, failed_payment_count, needs_review_count")
-        .gte("sale_date", selectedRange.start)
-        .lte("sale_date", selectedRange.end)
-        .order("sale_date", { ascending: true }),
+      label: "sales.sales_dashboard_batch_reconciliation.filtered",
+      promise: supabase.rpc("sales_dashboard_batch_reconciliation", {
+        p_date_from: selectedRange.start,
+        p_date_to: selectedRange.end,
+      }),
     }),
   ]);
 
   const sales = salesResult.data as SalesRow[];
-  const statuses = statusResult.data as TransactionStatusRow[];
-  const metricsByBatchId = buildBatchMetricsById(sales);
+  const filteredReconciliationRows = normalizeSalesBatchReconciliationRows(filteredReconciliationResult.data as TransactionStatusRow[]);
+  const filteredReconciliationByBatchId = salesBatchReconciliationById(filteredReconciliationRows);
   const fileContributions = buildSalesFileContributions({
     batches,
-    metricsByBatchId,
+    reconciliationByBatchId: filteredReconciliationByBatchId,
     range: selectedRange,
   });
   const contributingFiles = fileContributions.filter((row) => row.included);
   const ignoredFiles = fileContributions.filter((row) => !row.included);
   const detailedFiles = batches.filter((batch) => batch.report_type === "vms_order_details_weekly");
   const summaryOnlyFiles = fileContributions.filter((row) => row.batch.report_type === "sales");
-  const overlappingSummaryFiles = summaryOnlyFiles.filter((row) => (
-    row.coverageStart
-    && row.coverageEnd
-    && rangesOverlap({ start: row.coverageStart, end: row.coverageEnd }, { start: selectedRange.start, end: selectedRange.end })
-  ));
-  const coverage = vmsCoverageSummary(batches);
+  const overlappingSummaryFiles = summaryOnlyFiles.filter((row) => {
+    const coverage = batchCoverageDates(row.batch);
+    return Boolean(
+      coverage.start
+      && coverage.end
+      && rangesOverlap({ start: coverage.start, end: coverage.end }, { start: selectedRange.start, end: selectedRange.end }),
+    );
+  });
+  const coverage = vmsCoverageSummary(coverageAwareBatches);
   const missingPeriods = coverage.gaps.filter((gap) => rangesOverlap(gap, { start: selectedRange.start, end: selectedRange.end }));
   const totalSales = sales.reduce((sum, row) => sum + numericValue(row.net_sales_amount ?? row.gross_sales_amount), 0);
   const totalUnits = sales.reduce((sum, row) => sum + numericValue(row.units_sold), 0);
@@ -204,13 +284,13 @@ async function SalesDashboardPageContent({
   const totalCash = sales.reduce((sum, row) => sum + numericValue(row.cash_sales_amount), 0);
   const totalCard = sales.reduce((sum, row) => sum + numericValue(row.card_sales_amount), 0);
   const hasTenderBreakdown = sales.some((row) => numericValue(row.cash_sales_amount) > 0 || numericValue(row.card_sales_amount) > 0);
-  const statusTotals = statuses.reduce((totals, row) => ({
-    failedVendCount: totals.failedVendCount + numericValue(row.failed_vend_count),
-    failedVendAmount: totals.failedVendAmount + numericValue(row.failed_vend_amount),
-    refundCount: totals.refundCount + numericValue(row.refund_count),
-    refundAmount: totals.refundAmount + numericValue(row.refund_amount),
-    failedPaymentCount: totals.failedPaymentCount + numericValue(row.failed_payment_count),
-    needsReviewCount: totals.needsReviewCount + numericValue(row.needs_review_count),
+  const statusTotals = filteredReconciliationRows.reduce((totals, row) => ({
+    failedVendCount: totals.failedVendCount + row.rangeFailedVendRows,
+    failedVendAmount: totals.failedVendAmount + row.rangeFailedVendAmount,
+    refundCount: totals.refundCount + row.rangeRefundedRows,
+    refundAmount: totals.refundAmount + row.rangeRefundedAmount,
+    failedPaymentCount: totals.failedPaymentCount + row.rangeFailedPaymentRows,
+    needsReviewCount: totals.needsReviewCount + row.rangeNeedsReviewRows,
   }), { failedVendCount: 0, failedVendAmount: 0, refundCount: 0, refundAmount: 0, failedPaymentCount: 0, needsReviewCount: 0 });
   const failedVendRate = totalTransactions + statusTotals.failedVendCount > 0
     ? `${((statusTotals.failedVendCount / (totalTransactions + statusTotals.failedVendCount)) * 100).toFixed(1)}%`
@@ -232,6 +312,31 @@ async function SalesDashboardPageContent({
     return map;
   }, new Map<string, number>());
   const latestIncludedTransaction = latestTimestamp(sales.map((row) => row.period_end ?? row.period_start ?? row.sale_date));
+  const rawRowsInRange = filteredReconciliationRows.reduce((sum, row) => sum + row.rangeRowCount, 0);
+  const rawSuccessfulRowsInRange = filteredReconciliationRows.reduce((sum, row) => sum + row.rangeSuccessfulRows, 0);
+  const rawSuccessfulSalesInRange = filteredReconciliationRows.reduce((sum, row) => sum + row.rangeSuccessfulSalesAmount, 0);
+  const rawUnitsSoldInRange = filteredReconciliationRows.reduce((sum, row) => sum + row.rangeUnitsSold, 0);
+  const inactiveRowsInRange = filteredReconciliationRows
+    .filter((row) => {
+      const batch = batches.find((candidate) => candidate.id === row.batchId);
+      return batch ? !["imported", "imported_with_warnings", "partially_imported"].includes(String(batch.status ?? "")) || batch.is_active === false || Boolean(batch.deleted_at) : false;
+    })
+    .reduce((sum, row) => sum + row.rangeRowCount, 0);
+  const duplicateRowsIgnored = fullReconciliationRows.reduce((sum, row) => sum + row.metadataDuplicateRowsTotal, 0);
+  const missingDatetimeRows = fullReconciliationRows.reduce((sum, row) => sum + row.rawMissingDatetimeRowsTotal, 0);
+  const missingAmountRows = fullReconciliationRows.reduce((sum, row) => sum + row.rawMissingAmountRowsTotal, 0);
+  const statusBreakdownRows = [
+    { label: "successful_sale", count: rawSuccessfulRowsInRange, amount: rawSuccessfulSalesInRange },
+    { label: "failed_vend", count: statusTotals.failedVendCount, amount: statusTotals.failedVendAmount },
+    { label: "refunded", count: statusTotals.refundCount, amount: statusTotals.refundAmount },
+    { label: "failed_payment", count: statusTotals.failedPaymentCount, amount: 0 },
+    { label: "needs_review", count: statusTotals.needsReviewCount, amount: 0 },
+  ].filter((row) => row.count > 0 || row.amount > 0);
+  const rawVsDashboardSalesDelta = rawSuccessfulSalesInRange - totalSales;
+  const rawVsDashboardRowsDelta = rawSuccessfulRowsInRange - sales.length;
+  const showAdminReconciliation = isOwnerAdminRole(profile);
+  const hasRawSuccessfulRows = rawSuccessfulRowsInRange > 0;
+  const hasDashboardSalesRows = sales.length > 0;
 
   return (
     <>
@@ -296,6 +401,7 @@ async function SalesDashboardPageContent({
           subtitle="Sales dashboard totals use detailed VMS Order Details rows where transaction_status = successful_sale. Summary sales files remain reconciliation-only and are shown below for clarity, not for totals."
         >
           <KpiLoadWarning message={batchResult.error} />
+          <KpiLoadWarning message={fullReconciliationResult.error} />
 
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
             <div className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
@@ -305,7 +411,7 @@ async function SalesDashboardPageContent({
               </div>
               <div>
                 <div className="font-semibold text-slate-900">Detailed VMS rows used</div>
-                <div>{formatInteger(sales.length)}</div>
+                <div>{formatInteger(rawSuccessfulRowsInRange)}</div>
               </div>
               <div>
                 <div className="font-semibold text-slate-900">Files contributing data</div>
@@ -322,6 +428,10 @@ async function SalesDashboardPageContent({
               <div>
                 <div className="font-semibold text-slate-900">Latest included transaction</div>
                 <div>{formatVmsDateTime(latestIncludedTransaction)}</div>
+              </div>
+              <div>
+                <div className="font-semibold text-slate-900">Raw detailed rows in selected range</div>
+                <div>{formatInteger(rawRowsInRange)}</div>
               </div>
               <div>
                 <div className="font-semibold text-slate-900">Last dashboard refresh</div>
@@ -352,10 +462,12 @@ async function SalesDashboardPageContent({
                 headers={[
                   "File name",
                   "Uploaded at",
-                  "File date coverage",
-                  "Imported rows total",
+                  "Actual transaction coverage",
+                  "Imported raw rows total",
                   "Rows inside selected filter",
+                  "Successful sale rows in filter",
                   "Sales amount inside selected filter",
+                  "Active",
                   "Status",
                   "Included now",
                   "Reason",
@@ -375,17 +487,24 @@ async function SalesDashboardPageContent({
                       <div>{formatVmsDateTime(row.uploadedAt)}</div>
                       <div className="mt-1 text-xs text-slate-500">Updated {formatVmsDateTime(batchLastUpdatedAt(row.batch))}</div>
                     </td>
-                    <td>{row.coverageLabel}</td>
+                    <td className="text-sm">
+                      <div>{row.actualCoverageLabel}</div>
+                      {row.metadataCoverageLabel !== "-" && row.metadataCoverageLabel !== row.actualCoverageLabel ? (
+                        <div className="mt-1 text-xs text-slate-500">Batch metadata: {row.metadataCoverageLabel}</div>
+                      ) : null}
+                    </td>
                     <td className="text-sm">
                       <div>{formatInteger(row.importedRowsTotal)}</div>
                       {row.batch.report_type === "vms_order_details_weekly" ? (
                         <div className="mt-1 text-xs text-slate-500">
-                          Successful sales: {formatInteger(Number(row.batch.successful_rows_count ?? 0))}
+                          Batch metadata: {formatInteger(batchImportedRows(row.batch))}
                         </div>
                       ) : null}
                     </td>
                     <td>{formatInteger(row.rowsInRange)}</td>
+                    <td>{formatInteger(row.successfulRowsInRange)}</td>
                     <td>{lyd(row.salesAmountInRange)}</td>
+                    <td>{row.isActive ? "Yes" : "No"}</td>
                     <td><StatusBadge status={row.status} /></td>
                     <td>{row.included ? "Yes" : "No"}</td>
                     <td className="max-w-md text-sm text-slate-600">{row.reason}</td>
@@ -396,15 +515,99 @@ async function SalesDashboardPageContent({
           ) : (
             <p className="mt-4 text-sm text-slate-500">No VMS import batches are available yet.</p>
           )}
+
+          {showAdminReconciliation ? (
+            <details className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
+              <summary className="cursor-pointer text-sm font-semibold text-slate-900">Reconciliation details</summary>
+              <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
+                <div>
+                  <div className="font-semibold text-slate-900">Selected date range</div>
+                  <div>{selectedRangeLabel}</div>
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-900">Raw rows in range</div>
+                  <div>{formatInteger(rawRowsInRange)}</div>
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-900">Successful sale rows in range</div>
+                  <div>{formatInteger(rawSuccessfulRowsInRange)}</div>
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-900">Rows excluded by status</div>
+                  <div>{formatInteger(rawRowsInRange - rawSuccessfulRowsInRange)}</div>
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-900">Rows excluded by inactive batch</div>
+                  <div>{formatInteger(inactiveRowsInRange)}</div>
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-900">Duplicate rows skipped during import</div>
+                  <div>{formatInteger(duplicateRowsIgnored)}</div>
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-900">Rows missing datetime</div>
+                  <div>{formatInteger(missingDatetimeRows)}</div>
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-900">Successful rows missing amount</div>
+                  <div>{formatInteger(missingAmountRows)}</div>
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-900">Sales formula</div>
+                  <div>Sum `successful_sale.payment_amount` only</div>
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-900">Raw successful sales</div>
+                  <div>{lyd(rawSuccessfulSalesInRange)}</div>
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-900">Dashboard sales view</div>
+                  <div>{lyd(totalSales)}</div>
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-900">Raw vs dashboard sales delta</div>
+                  <div>{lyd(rawVsDashboardSalesDelta)}</div>
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-900">Raw successful units sold</div>
+                  <div>{formatInteger(rawUnitsSoldInRange)}</div>
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-900">Dashboard successful rows</div>
+                  <div>{formatInteger(sales.length)}</div>
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-900">Raw vs dashboard row delta</div>
+                  <div>{formatInteger(rawVsDashboardRowsDelta)}</div>
+                </div>
+              </div>
+
+              {statusBreakdownRows.length ? (
+                <div className="mt-4">
+                  <DataTable headers={["Normalized status", "Rows", "Amount"]}>
+                    {statusBreakdownRows.map((row) => (
+                      <tr key={row.label}>
+                        <td className="font-medium">{row.label}</td>
+                        <td>{formatInteger(row.count)}</td>
+                        <td>{lyd(row.amount)}</td>
+                      </tr>
+                    ))}
+                  </DataTable>
+                </div>
+              ) : null}
+            </details>
+          ) : null}
         </KpiSection>
 
         <KpiLoadWarning message={salesResult.error} />
-        <KpiLoadWarning message={statusResult.error} />
+        <KpiLoadWarning message={filteredReconciliationResult.error} />
 
-        {!sales.length ? (
+        {!hasDashboardSalesRows ? (
           <EmptyState
-            title="No detailed sales rows found for this date range."
-            body="Summary-only files, preview batches, inactive batches, and files outside the selected range do not feed these KPIs. Adjust the filter or upload finalized Order Details XLS files for the missing period."
+            title={hasRawSuccessfulRows ? "Successful-sale rows exist, but none reached the dashboard view." : "No detailed sales rows found for this date range."}
+            body={hasRawSuccessfulRows
+              ? "Check the reconciliation details below. The raw Order Details rows are inside the selected range, but the dashboard view excluded them before KPI rendering."
+              : "Summary-only files, preview batches, inactive batches, and files outside the selected range do not feed these KPIs. Adjust the filter or upload finalized Order Details XLS files for the missing period."}
           />
         ) : (
           <>
