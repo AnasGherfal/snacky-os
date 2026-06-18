@@ -18,6 +18,11 @@ export type VmsDashboardBatch = {
   rows_skipped_duplicate?: number | null;
   rows_needing_review?: number | null;
   error_count?: number | null;
+  successful_rows_count?: number | null;
+  failed_rows_count?: number | null;
+  refunded_rows_count?: number | null;
+  latest_error?: string | null;
+  last_error?: string | null;
   dashboard_usage?: unknown;
   source_usage?: unknown;
 };
@@ -71,6 +76,11 @@ export const vmsDashboardBatchSelect = [
   "rows_skipped_duplicate",
   "rows_needing_review",
   "error_count",
+  "successful_rows_count",
+  "failed_rows_count",
+  "refunded_rows_count",
+  "latest_error",
+  "last_error",
   "dashboard_usage",
   "source_usage",
 ].join(", ");
