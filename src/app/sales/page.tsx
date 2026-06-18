@@ -13,6 +13,7 @@ import {
   batchCoverageDates,
   buildSalesFileContributions,
   formatSalesRangeLabel,
+  querySalesRangeReconciliationDiagnostics,
   rangesOverlap,
   resolveSalesDashboardRange,
   salesBatchReconciliationById,
@@ -36,11 +37,8 @@ type SalesRow = {
   machine_id: string | null;
   product_id: string | null;
   units_sold: number | string | null;
-  transaction_count: number | string | null;
   net_sales_amount: number | string | null;
   gross_sales_amount: number | string | null;
-  cash_sales_amount: number | string | null;
-  card_sales_amount: number | string | null;
   sale_date: string | null;
   sales_month: string | null;
   period_start: string | null;
@@ -48,6 +46,50 @@ type SalesRow = {
   machine_name: string | null;
   location_name: string | null;
   product_name: string | null;
+};
+
+type SalesSummaryRow = {
+  successful_sales_amount: number | string | null;
+  successful_sales_count: number | string | null;
+  successful_units_sold: number | string | null;
+  failed_vend_count: number | string | null;
+  failed_vend_amount: number | string | null;
+  refund_count: number | string | null;
+  refund_amount: number | string | null;
+  failed_payment_count: number | string | null;
+  needs_review_count: number | string | null;
+  total_attempt_count: number | string | null;
+  average_transaction: number | string | null;
+  cash_payment_count: number | string | null;
+  cash_payment_amount: number | string | null;
+  card_payment_count: number | string | null;
+  card_payment_amount: number | string | null;
+  unknown_payment_count: number | string | null;
+  unknown_payment_amount: number | string | null;
+  payment_method_available: boolean | null;
+  rows_used: number | string | null;
+};
+
+type SalesSummary = {
+  successfulSalesAmount: number;
+  successfulSalesCount: number;
+  successfulUnitsSold: number;
+  failedVendCount: number;
+  failedVendAmount: number;
+  refundCount: number;
+  refundAmount: number;
+  failedPaymentCount: number;
+  needsReviewCount: number;
+  totalAttemptCount: number;
+  averageTransaction: number;
+  cashPaymentCount: number;
+  cashPaymentAmount: number;
+  cardPaymentCount: number;
+  cardPaymentAmount: number;
+  unknownPaymentCount: number;
+  unknownPaymentAmount: number;
+  paymentMethodAvailable: boolean;
+  rowsUsed: number;
 };
 
 type TransactionStatusRow = {
@@ -193,6 +235,87 @@ function normalizeSalesBatchReconciliationRows(rows: TransactionStatusRow[]) {
   } satisfies SalesBatchReconciliation));
 }
 
+const EMPTY_SALES_SUMMARY: SalesSummary = {
+  successfulSalesAmount: 0,
+  successfulSalesCount: 0,
+  successfulUnitsSold: 0,
+  failedVendCount: 0,
+  failedVendAmount: 0,
+  refundCount: 0,
+  refundAmount: 0,
+  failedPaymentCount: 0,
+  needsReviewCount: 0,
+  totalAttemptCount: 0,
+  averageTransaction: 0,
+  cashPaymentCount: 0,
+  cashPaymentAmount: 0,
+  cardPaymentCount: 0,
+  cardPaymentAmount: 0,
+  unknownPaymentCount: 0,
+  unknownPaymentAmount: 0,
+  paymentMethodAvailable: false,
+  rowsUsed: 0,
+};
+
+function normalizeSalesSummary(row?: SalesSummaryRow | null): SalesSummary {
+  if (!row) return EMPTY_SALES_SUMMARY;
+  return {
+    successfulSalesAmount: numericValue(row.successful_sales_amount),
+    successfulSalesCount: numericValue(row.successful_sales_count),
+    successfulUnitsSold: numericValue(row.successful_units_sold),
+    failedVendCount: numericValue(row.failed_vend_count),
+    failedVendAmount: numericValue(row.failed_vend_amount),
+    refundCount: numericValue(row.refund_count),
+    refundAmount: numericValue(row.refund_amount),
+    failedPaymentCount: numericValue(row.failed_payment_count),
+    needsReviewCount: numericValue(row.needs_review_count),
+    totalAttemptCount: numericValue(row.total_attempt_count),
+    averageTransaction: numericValue(row.average_transaction),
+    cashPaymentCount: numericValue(row.cash_payment_count),
+    cashPaymentAmount: numericValue(row.cash_payment_amount),
+    cardPaymentCount: numericValue(row.card_payment_count),
+    cardPaymentAmount: numericValue(row.card_payment_amount),
+    unknownPaymentCount: numericValue(row.unknown_payment_count),
+    unknownPaymentAmount: numericValue(row.unknown_payment_amount),
+    paymentMethodAvailable: Boolean(row.payment_method_available),
+    rowsUsed: numericValue(row.rows_used),
+  };
+}
+
+async function fetchSalesRowsForRange({
+  end,
+  start,
+  supabase,
+}: {
+  end: string;
+  start: string;
+  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>;
+}) {
+  const rows: SalesRow[] = [];
+
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from("vms_sales_clean")
+      .select("id, import_batch_id, machine_id, product_id, units_sold, net_sales_amount, gross_sales_amount, sale_date, sales_month, period_start, period_end, machine_name, location_name, product_name")
+      .gte("sale_date", start)
+      .lte("sale_date", end)
+      .order("sale_date", { ascending: true })
+      .range(from, from + 999);
+
+    if (error) throw error;
+    if (!data?.length) break;
+
+    rows.push(...(data as SalesRow[]));
+    if (data.length < 1000) break;
+  }
+
+  return {
+    count: rows.length,
+    data: rows,
+    error: null,
+  };
+}
+
 async function SalesDashboardPageContent({
   searchParams,
 }: {
@@ -236,16 +359,23 @@ async function SalesDashboardPageContent({
   const coverageAwareBatches = applySalesBatchCoverage(batches, fullReconciliationByBatchId);
   const selectedRange = resolveSalesDashboardRange(params, coverageAwareBatches, renderedAt);
   const selectedRangeLabel = formatSalesRangeLabel(selectedRange);
+  const showAdminReconciliation = isOwnerAdminRole(profile);
 
-  const [salesResult, filteredReconciliationResult] = await Promise.all([
+  const [salesSummaryResult, salesResult, filteredReconciliationResult, adminReconciliationDiagnostics] = await Promise.all([
+    safeSupabaseQuery<SalesSummaryRow>({
+      label: "sales.sales_dashboard_summary.filtered",
+      promise: supabase.rpc("sales_dashboard_summary", {
+        p_date_from: selectedRange.start,
+        p_date_to: selectedRange.end,
+      }),
+    }),
     safeSupabaseQuery<SalesRow>({
       label: "sales.vms_sales_clean.filtered",
-      promise: supabase
-        .from("vms_sales_clean")
-        .select("id, import_batch_id, machine_id, product_id, units_sold, transaction_count, net_sales_amount, gross_sales_amount, cash_sales_amount, card_sales_amount, sale_date, sales_month, period_start, period_end, machine_name, location_name, product_name")
-        .gte("sale_date", selectedRange.start)
-        .lte("sale_date", selectedRange.end)
-        .order("sale_date", { ascending: true }),
+      promise: fetchSalesRowsForRange({
+        end: selectedRange.end,
+        start: selectedRange.start,
+        supabase,
+      }),
     }),
     safeSupabaseQuery<TransactionStatusRow>({
       label: "sales.sales_dashboard_batch_reconciliation.filtered",
@@ -254,8 +384,19 @@ async function SalesDashboardPageContent({
         p_date_to: selectedRange.end,
       }),
     }),
+    showAdminReconciliation
+      ? querySalesRangeReconciliationDiagnostics({
+          batches,
+          range: selectedRange,
+          supabase,
+        }).catch((error) => {
+          console.error("[sales] Admin reconciliation diagnostics failed", error);
+          return null;
+        })
+      : Promise.resolve(null),
   ]);
 
+  const salesSummary = normalizeSalesSummary((salesSummaryResult.data as SalesSummaryRow[])[0]);
   const sales = salesResult.data as SalesRow[];
   const filteredReconciliationRows = normalizeSalesBatchReconciliationRows(filteredReconciliationResult.data as TransactionStatusRow[]);
   const filteredReconciliationByBatchId = salesBatchReconciliationById(filteredReconciliationRows);
@@ -278,22 +419,23 @@ async function SalesDashboardPageContent({
   });
   const coverage = vmsCoverageSummary(coverageAwareBatches);
   const missingPeriods = coverage.gaps.filter((gap) => rangesOverlap(gap, { start: selectedRange.start, end: selectedRange.end }));
-  const totalSales = sales.reduce((sum, row) => sum + numericValue(row.net_sales_amount ?? row.gross_sales_amount), 0);
-  const totalUnits = sales.reduce((sum, row) => sum + numericValue(row.units_sold), 0);
-  const totalTransactions = sales.reduce((sum, row) => sum + numericValue(row.transaction_count), 0);
-  const totalCash = sales.reduce((sum, row) => sum + numericValue(row.cash_sales_amount), 0);
-  const totalCard = sales.reduce((sum, row) => sum + numericValue(row.card_sales_amount), 0);
-  const hasTenderBreakdown = sales.some((row) => numericValue(row.cash_sales_amount) > 0 || numericValue(row.card_sales_amount) > 0);
-  const statusTotals = filteredReconciliationRows.reduce((totals, row) => ({
-    failedVendCount: totals.failedVendCount + row.rangeFailedVendRows,
-    failedVendAmount: totals.failedVendAmount + row.rangeFailedVendAmount,
-    refundCount: totals.refundCount + row.rangeRefundedRows,
-    refundAmount: totals.refundAmount + row.rangeRefundedAmount,
-    failedPaymentCount: totals.failedPaymentCount + row.rangeFailedPaymentRows,
-    needsReviewCount: totals.needsReviewCount + row.rangeNeedsReviewRows,
-  }), { failedVendCount: 0, failedVendAmount: 0, refundCount: 0, refundAmount: 0, failedPaymentCount: 0, needsReviewCount: 0 });
-  const failedVendRate = totalTransactions + statusTotals.failedVendCount > 0
-    ? `${((statusTotals.failedVendCount / (totalTransactions + statusTotals.failedVendCount)) * 100).toFixed(1)}%`
+  const totalSales = salesSummary.successfulSalesAmount;
+  const totalUnits = salesSummary.successfulUnitsSold;
+  const totalTransactions = salesSummary.successfulSalesCount;
+  const totalCash = salesSummary.cashPaymentAmount;
+  const totalCard = salesSummary.cardPaymentAmount;
+  const totalUnknownPayment = salesSummary.unknownPaymentAmount;
+  const hasTenderBreakdown = salesSummary.paymentMethodAvailable;
+  const statusTotals = {
+    failedVendCount: salesSummary.failedVendCount,
+    failedVendAmount: salesSummary.failedVendAmount,
+    refundCount: salesSummary.refundCount,
+    refundAmount: salesSummary.refundAmount,
+    failedPaymentCount: salesSummary.failedPaymentCount,
+    needsReviewCount: salesSummary.needsReviewCount,
+  };
+  const failedVendRate = salesSummary.totalAttemptCount > 0
+    ? `${((statusTotals.failedVendCount / salesSummary.totalAttemptCount) * 100).toFixed(1)}%`
     : "0.0%";
   const revenue = (row: SalesRow) => numericValue(row.net_sales_amount ?? row.gross_sales_amount);
   const byDay = chronologicalSales(groupSum(sales, (row) => row.sale_date ?? "Unknown", revenue));
@@ -333,10 +475,13 @@ async function SalesDashboardPageContent({
     { label: "needs_review", count: statusTotals.needsReviewCount, amount: 0 },
   ].filter((row) => row.count > 0 || row.amount > 0);
   const rawVsDashboardSalesDelta = rawSuccessfulSalesInRange - totalSales;
-  const rawVsDashboardRowsDelta = rawSuccessfulRowsInRange - sales.length;
-  const showAdminReconciliation = isOwnerAdminRole(profile);
+  const rawVsDashboardRowsDelta = rawSuccessfulRowsInRange - totalTransactions;
+  const paymentBreakdownTotal = totalCash + totalCard + totalUnknownPayment;
+  const paymentBreakdownCountTotal = salesSummary.cashPaymentCount + salesSummary.cardPaymentCount + salesSummary.unknownPaymentCount;
+  const paymentBreakdownAmountDelta = Number((totalSales - paymentBreakdownTotal).toFixed(2));
+  const paymentBreakdownCountDelta = totalTransactions - paymentBreakdownCountTotal;
   const hasRawSuccessfulRows = rawSuccessfulRowsInRange > 0;
-  const hasDashboardSalesRows = sales.length > 0;
+  const hasDashboardSalesRows = totalTransactions > 0;
 
   return (
     <>
@@ -402,6 +547,7 @@ async function SalesDashboardPageContent({
         >
           <KpiLoadWarning message={batchResult.error} />
           <KpiLoadWarning message={fullReconciliationResult.error} />
+          <KpiLoadWarning message={salesSummaryResult.error} />
 
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
             <div className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
@@ -412,6 +558,10 @@ async function SalesDashboardPageContent({
               <div>
                 <div className="font-semibold text-slate-900">Detailed VMS rows used</div>
                 <div>{formatInteger(rawSuccessfulRowsInRange)}</div>
+              </div>
+              <div>
+                <div className="font-semibold text-slate-900">KPI source</div>
+                <div>`sales_dashboard_summary()` over active imported Order Details rows</div>
               </div>
               <div>
                 <div className="font-semibold text-slate-900">Files contributing data</div>
@@ -432,6 +582,10 @@ async function SalesDashboardPageContent({
               <div>
                 <div className="font-semibold text-slate-900">Raw detailed rows in selected range</div>
                 <div>{formatInteger(rawRowsInRange)}</div>
+              </div>
+              <div>
+                <div className="font-semibold text-slate-900">KPI filtered rows used</div>
+                <div>{formatInteger(salesSummary.rowsUsed)}</div>
               </div>
               <div>
                 <div className="font-semibold text-slate-900">Last dashboard refresh</div>
@@ -524,6 +678,52 @@ async function SalesDashboardPageContent({
           {showAdminReconciliation ? (
             <details className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
               <summary className="cursor-pointer text-sm font-semibold text-slate-900">Reconciliation details</summary>
+              {adminReconciliationDiagnostics ? (
+                <>
+                  <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
+                    <div>
+                      <div className="font-semibold text-slate-900">Parsed successful rows</div>
+                      <div>{formatInteger(adminReconciliationDiagnostics.parsedSuccessfulCount)}</div>
+                      <div className="text-xs text-slate-500">{lyd(adminReconciliationDiagnostics.parsedSuccessfulAmount)}</div>
+                    </div>
+                    <div>
+                      <div className="font-semibold text-slate-900">Inserted successful rows</div>
+                      <div>{formatInteger(adminReconciliationDiagnostics.importedSuccessfulCount)}</div>
+                      <div className="text-xs text-slate-500">{lyd(adminReconciliationDiagnostics.importedSuccessfulAmount)}</div>
+                    </div>
+                    <div>
+                      <div className="font-semibold text-slate-900">Dashboard-counted rows</div>
+                      <div>{formatInteger(adminReconciliationDiagnostics.dashboardSuccessfulCount)}</div>
+                      <div className="text-xs text-slate-500">{lyd(adminReconciliationDiagnostics.dashboardSuccessfulAmount)}</div>
+                    </div>
+                    <div>
+                      <div className="font-semibold text-slate-900">Excluded successful rows</div>
+                      <div>{formatInteger(adminReconciliationDiagnostics.excludedSuccessfulCount)}</div>
+                      <div className="text-xs text-slate-500">{lyd(adminReconciliationDiagnostics.excludedSuccessfulAmount)}</div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
+                    <div>
+                      <div className="font-semibold text-slate-900">Parsed rows missing product mapping</div>
+                      <div>{formatInteger(adminReconciliationDiagnostics.parsedMissingProductCount)}</div>
+                    </div>
+                    <div>
+                      <div className="font-semibold text-slate-900">Parsed rows missing machine mapping</div>
+                      <div>{formatInteger(adminReconciliationDiagnostics.parsedMissingMachineCount)}</div>
+                    </div>
+                    <div>
+                      <div className="font-semibold text-slate-900">Parsed rows missing business date</div>
+                      <div>{formatInteger(adminReconciliationDiagnostics.parsedMissingBusinessDateCount)}</div>
+                    </div>
+                    <div>
+                      <div className="font-semibold text-slate-900">Duplicate rows seen in parsed file</div>
+                      <div>{formatInteger(adminReconciliationDiagnostics.parsedSuccessfulDuplicateRows)}</div>
+                    </div>
+                  </div>
+                </>
+              ) : null}
+
               <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
                 <div>
                   <div className="font-semibold text-slate-900">Selected date range</div>
@@ -559,18 +759,18 @@ async function SalesDashboardPageContent({
                 </div>
                 <div>
                   <div className="font-semibold text-slate-900">Sales formula</div>
-                  <div>Sum `successful_sale.payment_amount` only</div>
+                  <div>Sum `successful_sale.payment_amount` by business date, even when machine/product mapping is still unknown.</div>
                 </div>
                 <div>
                   <div className="font-semibold text-slate-900">Raw successful sales</div>
                   <div>{lyd(rawSuccessfulSalesInRange)}</div>
                 </div>
                 <div>
-                  <div className="font-semibold text-slate-900">Dashboard sales view</div>
+                  <div className="font-semibold text-slate-900">KPI successful sales</div>
                   <div>{lyd(totalSales)}</div>
                 </div>
                 <div>
-                  <div className="font-semibold text-slate-900">Raw vs dashboard sales delta</div>
+                  <div className="font-semibold text-slate-900">Raw vs KPI sales delta</div>
                   <div>{lyd(rawVsDashboardSalesDelta)}</div>
                 </div>
                 <div>
@@ -578,14 +778,24 @@ async function SalesDashboardPageContent({
                   <div>{formatInteger(rawUnitsSoldInRange)}</div>
                 </div>
                 <div>
-                  <div className="font-semibold text-slate-900">Dashboard successful rows</div>
-                  <div>{formatInteger(sales.length)}</div>
+                  <div className="font-semibold text-slate-900">KPI successful rows</div>
+                  <div>{formatInteger(totalTransactions)}</div>
                 </div>
                 <div>
-                  <div className="font-semibold text-slate-900">Raw vs dashboard row delta</div>
+                  <div className="font-semibold text-slate-900">Raw vs KPI row delta</div>
                   <div>{formatInteger(rawVsDashboardRowsDelta)}</div>
                 </div>
               </div>
+
+              {Math.abs(rawVsDashboardSalesDelta) > 0.005 || rawVsDashboardRowsDelta !== 0 ? (
+                <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900">
+                  Dashboard cards do not match raw filtered transactions.
+                </div>
+              ) : (
+                <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+                  Dashboard cards match raw filtered transactions for this selected business-date range.
+                </div>
+              )}
 
               {statusBreakdownRows.length ? (
                 <div className="mt-4">
@@ -600,10 +810,107 @@ async function SalesDashboardPageContent({
                   </DataTable>
                 </div>
               ) : null}
+
+              {hasTenderBreakdown ? (
+                <div className="mt-4">
+                  <DataTable headers={["Payment type", "Successful rows", "Amount"]}>
+                    {[
+                      { label: "cash", count: salesSummary.cashPaymentCount, amount: totalCash },
+                      { label: "card", count: salesSummary.cardPaymentCount, amount: totalCard },
+                      { label: "unknown", count: salesSummary.unknownPaymentCount, amount: totalUnknownPayment },
+                      { label: "total", count: paymentBreakdownCountTotal, amount: paymentBreakdownTotal },
+                    ].map((row) => (
+                      <tr key={row.label}>
+                        <td className="font-medium">{row.label}</td>
+                        <td>{formatInteger(row.count)}</td>
+                        <td>{lyd(row.amount)}</td>
+                      </tr>
+                    ))}
+                  </DataTable>
+                  {Math.abs(paymentBreakdownAmountDelta) > 0.005 || paymentBreakdownCountDelta !== 0 ? (
+                    <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                      Payment breakdown does not add back to total sales. Check payment-method normalization for this file set.
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+                  Payment method not available in selected Order Details files.
+                </div>
+              )}
+
+              {adminReconciliationDiagnostics?.statusGroups.length ? (
+                <div className="mt-4">
+                  <DataTable headers={["Raw shipping status", "Raw refund status", "Normalized status", "Rows", "Amount"]}>
+                    {adminReconciliationDiagnostics.statusGroups.map((row) => (
+                      <tr key={`${row.rawShippingStatus}:${row.rawRefundStatus}:${row.normalizedStatus}`}>
+                        <td className="font-medium">{row.rawShippingStatus}</td>
+                        <td>{row.rawRefundStatus}</td>
+                        <td>{row.normalizedStatus}</td>
+                        <td>{formatInteger(row.count)}</td>
+                        <td>{lyd(row.amount)}</td>
+                      </tr>
+                    ))}
+                  </DataTable>
+                </div>
+              ) : null}
+
+              {adminReconciliationDiagnostics?.excludedSuccessfulRows.length ? (
+                <div className="mt-4">
+                  <DataTable headers={["Row", "File", "Order id", "Business date", "Machine", "Product", "Slot", "Raw status", "Amount", "Reason"]}>
+                    {adminReconciliationDiagnostics.excludedSuccessfulRows.map((row) => (
+                      <tr key={`${row.batchId}:${row.rowNumber}`}>
+                        <td className="font-medium">{formatInteger(row.rowNumber)}</td>
+                        <td className="text-sm">{row.sourceFileName}</td>
+                        <td className="text-sm">{row.orderId ?? "-"}</td>
+                        <td className="text-sm">{row.businessDate ?? "-"}</td>
+                        <td className="text-sm">{row.machineLabel}</td>
+                        <td className="text-sm">{row.productLabel}</td>
+                        <td className="text-sm">{row.slot ?? "-"}</td>
+                        <td className="text-sm">{row.rawShippingStatus ?? "-"}</td>
+                        <td className="text-sm">
+                          <div>{lyd(row.parsedAmount)}</div>
+                          {row.rawAmount ? <div className="text-xs text-slate-500">Raw: {row.rawAmount}</div> : null}
+                        </td>
+                        <td className="max-w-md text-sm text-slate-600">
+                          <div>{row.exclusionReason}</div>
+                          {row.validationStatus ? <div className="text-xs text-slate-500">Audit status: {row.validationStatus}</div> : null}
+                          {row.validationErrors.length ? <div className="text-xs text-slate-500">{row.validationErrors.join("; ")}</div> : null}
+                        </td>
+                      </tr>
+                    ))}
+                  </DataTable>
+                </div>
+              ) : null}
+
+              {adminReconciliationDiagnostics?.statusFilteredRows.length ? (
+                <div className="mt-4">
+                  <DataTable headers={["Row", "File", "Order id", "Business date", "Machine", "Product", "Slot", "Raw status", "Amount", "Status reason"]}>
+                    {adminReconciliationDiagnostics.statusFilteredRows.map((row) => (
+                      <tr key={`status:${row.batchId}:${row.rowNumber}`}>
+                        <td className="font-medium">{formatInteger(row.rowNumber)}</td>
+                        <td className="text-sm">{row.sourceFileName}</td>
+                        <td className="text-sm">{row.orderId ?? "-"}</td>
+                        <td className="text-sm">{row.businessDate ?? "-"}</td>
+                        <td className="text-sm">{row.machineLabel}</td>
+                        <td className="text-sm">{row.productLabel}</td>
+                        <td className="text-sm">{row.slot ?? "-"}</td>
+                        <td className="text-sm">{row.rawShippingStatus ?? "-"}</td>
+                        <td className="text-sm">
+                          <div>{lyd(row.parsedAmount)}</div>
+                          {row.rawAmount ? <div className="text-xs text-slate-500">Raw: {row.rawAmount}</div> : null}
+                        </td>
+                        <td className="max-w-md text-sm text-slate-600">{row.exclusionReason}</td>
+                      </tr>
+                    ))}
+                  </DataTable>
+                </div>
+              ) : null}
             </details>
           ) : null}
         </KpiSection>
 
+        <KpiLoadWarning message={salesSummaryResult.error} />
         <KpiLoadWarning message={salesResult.error} />
         <KpiLoadWarning message={filteredReconciliationResult.error} />
 
@@ -619,10 +926,11 @@ async function SalesDashboardPageContent({
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
               <KpiSection title="Total sales"><MetricValue>{lyd(totalSales)}</MetricValue></KpiSection>
               <KpiSection title="Units sold"><MetricValue>{formatInteger(totalUnits)}</MetricValue></KpiSection>
-              <KpiSection title="Average transaction"><MetricValue>{totalTransactions ? lyd(totalSales / totalTransactions) : "Unknown / not mapped"}</MetricValue></KpiSection>
+              <KpiSection title="Average transaction"><MetricValue>{totalTransactions ? lyd(salesSummary.averageTransaction || (totalSales / totalTransactions)) : "Unknown / not mapped"}</MetricValue></KpiSection>
               <KpiSection title="Failed vend rate"><MetricValue>{failedVendRate}</MetricValue></KpiSection>
-              <KpiSection title="Cash sales"><MetricValue compact={!hasTenderBreakdown}>{hasTenderBreakdown ? lyd(totalCash) : "Not available in selected files"}</MetricValue></KpiSection>
-              <KpiSection title="Card sales"><MetricValue compact={!hasTenderBreakdown}>{hasTenderBreakdown ? lyd(totalCard) : "Not available in selected files"}</MetricValue></KpiSection>
+              <KpiSection title="Cash sales"><MetricValue compact={!hasTenderBreakdown}>{hasTenderBreakdown ? lyd(totalCash) : "Payment method unavailable"}</MetricValue></KpiSection>
+              <KpiSection title="Card sales"><MetricValue compact={!hasTenderBreakdown}>{hasTenderBreakdown ? lyd(totalCard) : "Payment method unavailable"}</MetricValue></KpiSection>
+              <KpiSection title="Unknown payment"><MetricValue compact={!hasTenderBreakdown}>{hasTenderBreakdown ? lyd(totalUnknownPayment) : "Payment method unavailable"}</MetricValue></KpiSection>
               <KpiSection title="Failed vend amount"><MetricValue>{lyd(statusTotals.failedVendAmount)}</MetricValue></KpiSection>
               <KpiSection title="Refund amount"><MetricValue>{lyd(statusTotals.refundAmount)}</MetricValue></KpiSection>
             </div>
@@ -647,10 +955,10 @@ async function SalesDashboardPageContent({
 
             {hasTenderBreakdown ? (
               <KpiSection title="Cash vs card" subtitle={selectedRangeLabel}>
-                <BarList rows={[{ label: "Cash", value: totalCash }, { label: "Card", value: totalCard }]} valueFormatter={lyd} />
+                <BarList rows={[{ label: "Cash", value: totalCash }, { label: "Card", value: totalCard }, { label: "Unknown", value: totalUnknownPayment }]} valueFormatter={lyd} />
               </KpiSection>
             ) : (
-              <EmptyState title="No cash vs card split available" body="Selected detailed files do not contain usable payment-type splits, so Snacky OS shows total sales only." />
+              <EmptyState title="No cash vs card split available" body="Payment method is not available in the selected detailed Order Details files, so Snacky OS shows total sales only." />
             )}
 
             <KpiSection title="Sales by product" subtitle={selectedRangeLabel}>

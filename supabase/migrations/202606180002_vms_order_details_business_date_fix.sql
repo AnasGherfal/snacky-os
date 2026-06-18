@@ -179,8 +179,6 @@ with detailed_sales as (
   left join public.products p on p.id = tx.mapped_product_id
   left join public.product_reporting_costs prc on prc.product_id = tx.mapped_product_id
   where tx.transaction_status = 'successful_sale'
-    and tx.mapped_product_id is not null
-    and tx.mapped_machine_id is not null
     and coalesce(
       tx.business_date,
       public.snacky_vms_order_details_business_date(tx.raw_row, tx.normalized_row, tx.payment_time, tx.delivery_time)

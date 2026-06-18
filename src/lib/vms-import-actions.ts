@@ -1769,53 +1769,59 @@ async function runVmsImport({
     let mapping: any = null;
     let productId: string | null = null;
     let productNeedsMapping = false;
+    const allowUnmappedOrderDetails = reportType === "vms_order_details_weekly";
 
     if (reportRequiresProduct(reportType)) {
       if (!productLabel) {
-        const reason = "missing product identifier or name. Check the product code/name column mapping.";
-        markInvalidRow(summary, rowNumber, reason);
-        finishRow("invalid_row", [reason]);
-        continue;
-      }
-
-      const productResolution = resolveVmsProduct({
-        mappingMap: mappingsByKey,
-        productLookupMap,
-        vmsProductId,
-        vmsProductName,
-      });
-      mapping = productResolution.mapping;
-
-      if (productResolution.status === "ignored") {
-        const reason = `product mapping is ignored: ${productLabel}.`;
-        markInvalidRow(summary, rowNumber, reason);
-        finishRow("invalid_row", [reason]);
-        continue;
-      }
-
-      if (productResolution.status === "matched") {
-        productId = productResolution.productId;
-      } else if (productResolution.status === "needs_mapping" && reportType !== "product_list") {
+        if (!allowUnmappedOrderDetails) {
+          const reason = "missing product identifier or name. Check the product code/name column mapping.";
+          markInvalidRow(summary, rowNumber, reason);
+          finishRow("invalid_row", [reason]);
+          continue;
+        }
         productNeedsMapping = true;
-        markNeedsProductMapping(summary, productLabel);
-        mapping = mapping ?? await ensureNeedsReviewMapping(supabase, mappingsByKey, profile, vmsProductId, productNameForMapping);
-      }
-
-      if (mapping?.id) {
-        latestMappingRowsById.set(String(mapping.id), {
-          id: mapping.id,
-          vms_product_id: vmsProductId || null,
-          vms_product_name: productNameForMapping,
-          confidence_score: mapping.match_status === "confirmed" ? 1 : 0,
-          vms_selling_price_lyd: importedSellingPrice !== null && importedSellingPrice >= 0 ? importedSellingPrice : mapping.vms_selling_price_lyd ?? null,
-          vms_cost_price_lyd: importedCostPrice !== null && importedCostPrice >= 0 ? importedCostPrice : mapping.vms_cost_price_lyd ?? null,
-          latest_machine_id: machine?.id ?? null,
-          latest_vms_machine_id: identifier || null,
-          latest_machine_name: machine?.name ?? null,
-          last_seen_at: lastSeenAt.toISOString(),
-          last_import_batch_id: batch.id,
-          updated_at: new Date().toISOString(),
+        summary.needsProductMappingRows += 1;
+        uniquePush(summary.unmappedProducts, `Row ${rowNumber}: missing product identifier or name`);
+      } else {
+        const productResolution = resolveVmsProduct({
+          mappingMap: mappingsByKey,
+          productLookupMap,
+          vmsProductId,
+          vmsProductName,
         });
+        mapping = productResolution.mapping;
+
+        if (productResolution.status === "ignored") {
+          const reason = `product mapping is ignored: ${productLabel}.`;
+          markInvalidRow(summary, rowNumber, reason);
+          finishRow("invalid_row", [reason]);
+          continue;
+        }
+
+        if (productResolution.status === "matched") {
+          productId = productResolution.productId;
+        } else if (productResolution.status === "needs_mapping" && reportType !== "product_list") {
+          productNeedsMapping = true;
+          markNeedsProductMapping(summary, productLabel);
+          mapping = mapping ?? await ensureNeedsReviewMapping(supabase, mappingsByKey, profile, vmsProductId, productNameForMapping);
+        }
+
+        if (mapping?.id) {
+          latestMappingRowsById.set(String(mapping.id), {
+            id: mapping.id,
+            vms_product_id: vmsProductId || null,
+            vms_product_name: productNameForMapping,
+            confidence_score: mapping.match_status === "confirmed" ? 1 : 0,
+            vms_selling_price_lyd: importedSellingPrice !== null && importedSellingPrice >= 0 ? importedSellingPrice : mapping.vms_selling_price_lyd ?? null,
+            vms_cost_price_lyd: importedCostPrice !== null && importedCostPrice >= 0 ? importedCostPrice : mapping.vms_cost_price_lyd ?? null,
+            latest_machine_id: machine?.id ?? null,
+            latest_vms_machine_id: identifier || null,
+            latest_machine_name: machine?.name ?? null,
+            last_seen_at: lastSeenAt.toISOString(),
+            last_import_batch_id: batch.id,
+            updated_at: new Date().toISOString(),
+          });
+        }
       }
     }
 
@@ -1926,7 +1932,7 @@ async function runVmsImport({
       if (updateCostFromVms && importedCostPrice !== null && importedCostPrice >= 0) vmsCostPriceByProductId.set(productId, importedCostPrice);
     }
 
-    if (reportRequiresProduct(reportType) && !productNeedsMapping && !productId) {
+    if (reportRequiresProduct(reportType) && !productNeedsMapping && !productId && !allowUnmappedOrderDetails) {
       const reason = "product could not be matched to a Snacky product.";
       markInvalidRow(summary, rowNumber, reason);
       finishRow("invalid_row", [reason]);
@@ -1935,18 +1941,27 @@ async function runVmsImport({
 
     if (reportRequiresMachine(reportType)) {
       if (!identifier) {
-        const reason = "missing machine id. Check the machine column mapping.";
-        markInvalidRow(summary, rowNumber, reason);
-        finishRow("invalid_row", [reason]);
-        continue;
+        if (!allowUnmappedOrderDetails) {
+          const reason = "missing machine id. Check the machine column mapping.";
+          markInvalidRow(summary, rowNumber, reason);
+          finishRow("invalid_row", [reason]);
+          continue;
+        }
+        summary.unknownMachineRows += 1;
+        uniquePush(summary.unknownMachines, `Row ${rowNumber}: missing machine id`);
       }
-      if (!machine) {
+      if (identifier && !machine) {
         await rememberMachineOnce("needs_review");
-        markUnknownMachine(summary, rowNumber, identifier);
-        finishRow("unknown_machine", [`unknown machine: ${identifier}`]);
-        continue;
+        if (!allowUnmappedOrderDetails) {
+          markUnknownMachine(summary, rowNumber, identifier);
+          finishRow("unknown_machine", [`unknown machine: ${identifier}`]);
+          continue;
+        }
+        summary.unknownMachineRows += 1;
+        uniquePush(summary.unknownMachines, identifier);
+      } else if (identifier && machine) {
+        await rememberMachineOnce("confirmed");
       }
-      await rememberMachineOnce("confirmed");
     }
 
     if (reportType === "machine_status") {
@@ -1956,7 +1971,7 @@ async function runVmsImport({
       continue;
     }
 
-    if (productNeedsMapping) {
+    if (productNeedsMapping && !allowUnmappedOrderDetails) {
       summary.skippedRows += 1;
       finishRow("needs_mapping", [`unknown product: ${productLabel}`]);
       continue;
@@ -1974,6 +1989,18 @@ async function runVmsImport({
       const paymentTime = orderDetailsDate(orderDetailsValue(row, orderDetailsAliases.paymentTime));
       const deliveryTime = orderDetailsDate(orderDetailsValue(row, orderDetailsAliases.deliveryTime));
       const refundTime = orderDetailsDate(orderDetailsValue(row, orderDetailsAliases.refundTime));
+      const importWarnings: string[] = [];
+
+      if (!identifier) {
+        importWarnings.push("missing machine id");
+      } else if (!machine) {
+        importWarnings.push(`unknown machine: ${identifier}`);
+      }
+      if (!productLabel) {
+        importWarnings.push("missing product identifier or name");
+      } else if (productNeedsMapping || !productId) {
+        importWarnings.push(`unknown product: ${productLabel}`);
+      }
 
       if (transactionStatus === "successful_sale") {
         summary.successfulSalesRows = (summary.successfulSalesRows ?? 0) + 1;
@@ -2018,13 +2045,21 @@ async function runVmsImport({
         quantity,
         raw_row: originalRow,
         normalized_row: row,
-        mapped_machine_id: machine.id,
-        mapped_product_id: productId,
+        mapped_machine_id: machine?.id ?? null,
+        mapped_product_id: productId ?? null,
         transaction_status: transactionStatus,
         duplicate_hash: duplicateHash,
       });
       summary.importedRows += 1;
-      finishRow("imported", transactionStatus === "needs_review" ? ["transaction status needs review"] : []);
+      if (transactionStatus === "needs_review") {
+        importWarnings.push("transaction status needs review");
+      }
+      finishRow("imported", importWarnings, {
+        machineMatchStatus: identifier ? (machine ? "matched" : "unknown") : "missing",
+        productMatchStatus: productId ? "matched" : (productNeedsMapping || productLabel ? "needs_mapping" : "missing"),
+        matchedMachineId: machine?.id ?? null,
+        matchedProductId: productId ?? null,
+      });
       continue;
     }
 
@@ -2305,6 +2340,22 @@ async function runVmsImport({
     if (error) {
       console.error("[vms-import] Sales raw row upsert failed", error);
       summary.errors.push(importStepError("Sales raw audit save to vms_sales_raw", error));
+    }
+  }
+
+  if (transactionRawRows.length && !fatalImportError && isReprocess && reportType === "vms_order_details_weekly") {
+    const { error } = await supabase
+      .from("vms_transactions_raw")
+      .delete()
+      .eq("import_batch_id", batch.id);
+    if (error) {
+      console.error("[vms-import] Existing order-detail rows could not be cleared before reprocess", {
+        batchId: batch.id,
+        reportType,
+        error,
+      });
+      summary.errors.push(importStepError("Detailed transaction reprocess reset in vms_transactions_raw", error));
+      fatalImportError = true;
     }
   }
 

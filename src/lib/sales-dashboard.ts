@@ -5,6 +5,14 @@ import {
   sourceFileName,
   type VmsDashboardBatch,
 } from "@/lib/vms-dashboard-source";
+import {
+  createVmsOrderDetailsDuplicateHash,
+  orderDetailsAliases,
+  orderDetailsBusinessDate,
+  orderDetailsPaymentAmount,
+  orderDetailsTransactionStatus,
+  orderDetailsValue,
+} from "@/lib/vms-order-details";
 
 export type SalesDashboardSearchParams = {
   range?: string;
@@ -104,6 +112,54 @@ export type SalesFileContribution = {
   uploadedAt: string | null;
 };
 
+export type SalesReconciliationStatusGroup = {
+  amount: number;
+  count: number;
+  normalizedStatus: string;
+  rawRefundStatus: string;
+  rawShippingStatus: string;
+};
+
+export type SalesReconciliationExcludedRow = {
+  batchId: string;
+  batchStatus: string | null;
+  businessDate: string | null;
+  exclusionReason: string;
+  machineLabel: string;
+  machineMatchStatus: string | null;
+  orderId: string | null;
+  parsedAmount: number;
+  productLabel: string;
+  productMatchStatus: string | null;
+  rawAmount: string | null;
+  rawDateTime: string | null;
+  rawRefundStatus: string | null;
+  rawShippingStatus: string | null;
+  rowNumber: number;
+  slot: string | null;
+  sourceFileName: string;
+  validationErrors: string[];
+  validationStatus: string | null;
+};
+
+export type SalesRangeReconciliationDiagnostics = {
+  dashboardSuccessfulAmount: number;
+  dashboardSuccessfulCount: number;
+  excludedSuccessfulAmount: number;
+  excludedSuccessfulCount: number;
+  excludedSuccessfulRows: SalesReconciliationExcludedRow[];
+  importedSuccessfulAmount: number;
+  importedSuccessfulCount: number;
+  parsedMissingBusinessDateCount: number;
+  parsedMissingMachineCount: number;
+  parsedMissingProductCount: number;
+  parsedSuccessfulAmount: number;
+  parsedSuccessfulCount: number;
+  parsedSuccessfulDuplicateRows: number;
+  statusFilteredRows: SalesReconciliationExcludedRow[];
+  statusGroups: SalesReconciliationStatusGroup[];
+};
+
 type DateRangeBounds = {
   end: string;
   start: string;
@@ -192,6 +248,49 @@ function integerValue(value: number | string | null | undefined) {
 
 function normalizeBounds(start: string, end: string) {
   return start <= end ? { start, end } : { start: end, end: start };
+}
+
+function inRange(date: string | null | undefined, range: Pick<SalesDateRange, "start" | "end">) {
+  return Boolean(date && date >= range.start && date <= range.end);
+}
+
+function jsonRecord(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {} as Record<string, string>;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, entry]) => [key, entry == null ? "" : String(entry)]),
+  );
+}
+
+function batchRowKey(batchId: string, rowNumber: number) {
+  return `${batchId}:${rowNumber}`;
+}
+
+function countableDetailedBatch(batch: VmsDashboardBatch | undefined) {
+  if (!batch) return false;
+  if (batch.report_type !== "vms_order_details_weekly") return false;
+  return isActiveImportedVmsBatch(batch);
+}
+
+async function fetchPagedRows<T>({
+  filter,
+  select,
+  supabase,
+  table,
+}: {
+  filter: (query: any) => any;
+  select: string;
+  supabase: any;
+  table: string;
+}): Promise<T[]> {
+  const rows: T[] = [];
+  for (let from = 0; ; from += 1000) {
+    const result = await filter(supabase.from(table).select(select).range(from, from + 999));
+    if (result.error) throw result.error;
+    if (!result.data?.length) break;
+    rows.push(...(result.data as T[]));
+    if (result.data.length < 1000) break;
+  }
+  return rows;
 }
 
 function rangeWithDefaults({
@@ -670,4 +769,300 @@ export function buildSalesFileContributions({
 
 function rawStatus(batch: VmsDashboardBatch) {
   return String(batch.status ?? "").toLowerCase();
+}
+
+type SalesImportAuditRow = {
+  import_batch_id?: string | null;
+  machine_match_status?: string | null;
+  matched_machine_id?: string | null;
+  matched_product_id?: string | null;
+  normalized_data?: unknown;
+  product_match_status?: string | null;
+  raw_data?: unknown;
+  row_number?: number | null;
+  validation_errors?: unknown;
+  validation_status?: string | null;
+};
+
+type SalesTransactionRawRow = {
+  business_date?: string | null;
+  cargo_lane_number?: string | null;
+  duplicate_hash?: string | null;
+  import_batch_id?: string | null;
+  machine_code?: string | null;
+  machine_name?: string | null;
+  mapped_machine_id?: string | null;
+  mapped_product_id?: string | null;
+  order_number?: string | null;
+  payment_amount?: number | string | null;
+  payment_time?: string | null;
+  product_number?: string | null;
+  row_number?: number | null;
+  shipping_status?: string | null;
+  third_party_order_no?: string | null;
+  third_party_transaction_number?: string | null;
+  transaction_status?: string | null;
+  vms_product_name?: string | null;
+};
+
+export async function querySalesRangeReconciliationDiagnostics({
+  batches,
+  range,
+  supabase,
+}: {
+  batches: VmsDashboardBatch[];
+  range: Pick<SalesDateRange, "start" | "end">;
+  supabase: any;
+}): Promise<SalesRangeReconciliationDiagnostics> {
+  const detailedBatches = batches.filter((batch) => batch.report_type === "vms_order_details_weekly");
+  const batchIds = detailedBatches.map((batch) => batch.id).filter(Boolean);
+  if (!batchIds.length) {
+    return {
+      dashboardSuccessfulAmount: 0,
+      dashboardSuccessfulCount: 0,
+      excludedSuccessfulAmount: 0,
+      excludedSuccessfulCount: 0,
+      excludedSuccessfulRows: [],
+      importedSuccessfulAmount: 0,
+      importedSuccessfulCount: 0,
+      parsedMissingBusinessDateCount: 0,
+      parsedMissingMachineCount: 0,
+      parsedMissingProductCount: 0,
+      parsedSuccessfulAmount: 0,
+      parsedSuccessfulCount: 0,
+      parsedSuccessfulDuplicateRows: 0,
+      statusFilteredRows: [],
+      statusGroups: [],
+    };
+  }
+
+  const batchById = new Map(detailedBatches.map((batch) => [batch.id, batch]));
+  const importRows = await fetchPagedRows<SalesImportAuditRow>({
+    supabase,
+    table: "vms_import_rows",
+    select: "import_batch_id, row_number, raw_data, normalized_data, validation_status, validation_errors, machine_match_status, product_match_status, matched_machine_id, matched_product_id",
+    filter: (query) => query.in("import_batch_id", batchIds).order("row_number", { ascending: true }),
+  });
+  const transactionRows = await fetchPagedRows<SalesTransactionRawRow>({
+    supabase,
+    table: "vms_transactions_raw",
+    select: "import_batch_id, row_number, order_number, third_party_transaction_number, third_party_order_no, payment_amount, payment_time, business_date, transaction_status, mapped_machine_id, mapped_product_id, duplicate_hash, shipping_status, cargo_lane_number, machine_code, machine_name, product_number, vms_product_name",
+    filter: (query) => query.in("import_batch_id", batchIds).order("row_number", { ascending: true }),
+  });
+
+  const transactionByBatchRow = new Map(
+    transactionRows.map((row) => [batchRowKey(String(row.import_batch_id ?? ""), Number(row.row_number ?? 0)), row]),
+  );
+  const duplicateGroups = new Map<string, number[]>();
+  const statusGroups = new Map<string, SalesReconciliationStatusGroup>();
+
+  for (const row of importRows) {
+    const batchId = String(row.import_batch_id ?? "");
+    const rowNumber = Number(row.row_number ?? 0);
+    const normalized = jsonRecord(row.normalized_data);
+    const duplicateHash = createVmsOrderDetailsDuplicateHash(normalized);
+    const duplicateKey = `${batchId}:${duplicateHash}`;
+    const numbers = duplicateGroups.get(duplicateKey) ?? [];
+    numbers.push(rowNumber);
+    duplicateGroups.set(duplicateKey, numbers);
+  }
+
+  let parsedSuccessfulCount = 0;
+  let parsedSuccessfulAmount = 0;
+  let parsedMissingBusinessDateCount = 0;
+  let parsedMissingMachineCount = 0;
+  let parsedMissingProductCount = 0;
+  const excludedSuccessfulRows: SalesReconciliationExcludedRow[] = [];
+  const statusFilteredRows: SalesReconciliationExcludedRow[] = [];
+
+  for (const row of importRows) {
+    const batchId = String(row.import_batch_id ?? "");
+    const batch = batchById.get(batchId);
+    if (!batch) continue;
+
+    const rowNumber = Number(row.row_number ?? 0);
+    const normalized = jsonRecord(row.normalized_data);
+    const raw = jsonRecord(row.raw_data);
+    const businessDate = orderDetailsBusinessDate(normalized);
+    const normalizedStatus = orderDetailsTransactionStatus(normalized);
+    const parsedAmount = Math.max(0, orderDetailsPaymentAmount(normalized) ?? 0);
+    const rawShippingStatus = orderDetailsValue(normalized, orderDetailsAliases.shippingStatus)
+      || orderDetailsValue(raw, orderDetailsAliases.shippingStatus)
+      || "(blank)";
+    const rawRefundStatus = orderDetailsValue(normalized, orderDetailsAliases.refundStatus)
+      || orderDetailsValue(raw, orderDetailsAliases.refundStatus)
+      || "(blank)";
+    const groupKey = `${rawShippingStatus}|${rawRefundStatus}|${normalizedStatus}`;
+    const statusGroup = statusGroups.get(groupKey) ?? {
+      amount: 0,
+      count: 0,
+      normalizedStatus,
+      rawRefundStatus,
+      rawShippingStatus,
+    };
+    statusGroup.count += 1;
+    statusGroup.amount += parsedAmount;
+    statusGroups.set(groupKey, statusGroup);
+
+    if (normalizedStatus !== "successful_sale") {
+      if (businessDate && inRange(businessDate, range)) {
+        statusFilteredRows.push({
+          batchId,
+          batchStatus: batch.status ?? null,
+          businessDate,
+          exclusionReason: `status:${normalizedStatus}`,
+          machineLabel: String(
+            orderDetailsValue(normalized, orderDetailsAliases.machineName)
+              || orderDetailsValue(normalized, orderDetailsAliases.machineCode)
+              || "Unknown machine",
+          ),
+          machineMatchStatus: row.machine_match_status ?? null,
+          orderId: String(
+            orderDetailsValue(normalized, orderDetailsAliases.orderNumber)
+              || orderDetailsValue(normalized, orderDetailsAliases.thirdPartyTransactionNumber)
+              || orderDetailsValue(normalized, orderDetailsAliases.thirdPartyOrderNo)
+              || "",
+          ) || null,
+          parsedAmount,
+          productLabel: String(
+            orderDetailsValue(normalized, orderDetailsAliases.productName)
+              || orderDetailsValue(normalized, orderDetailsAliases.productNumber)
+              || "Unknown product",
+          ),
+          productMatchStatus: row.product_match_status ?? null,
+          rawAmount: orderDetailsValue(normalized, orderDetailsAliases.paymentAmount) || null,
+          rawDateTime: orderDetailsValue(raw, orderDetailsAliases.paymentTime)
+            || orderDetailsValue(raw, orderDetailsAliases.deliveryTime)
+            || orderDetailsValue(normalized, orderDetailsAliases.paymentTime)
+            || null,
+          rawRefundStatus: rawRefundStatus === "(blank)" ? null : rawRefundStatus,
+          rawShippingStatus: rawShippingStatus === "(blank)" ? null : rawShippingStatus,
+          rowNumber,
+          slot: orderDetailsValue(normalized, orderDetailsAliases.cargoLaneNumber) || null,
+          sourceFileName: sourceFileName(batch),
+          validationErrors: Array.isArray(row.validation_errors)
+            ? row.validation_errors.map((value) => String(value))
+            : [],
+          validationStatus: row.validation_status ?? null,
+        });
+      }
+      continue;
+    }
+    if (!businessDate) {
+      parsedMissingBusinessDateCount += 1;
+      continue;
+    }
+    if (!inRange(businessDate, range)) continue;
+
+    parsedSuccessfulCount += 1;
+    parsedSuccessfulAmount += parsedAmount;
+    if (!row.matched_machine_id) parsedMissingMachineCount += 1;
+    if (!row.matched_product_id) parsedMissingProductCount += 1;
+
+    const txRow = transactionByBatchRow.get(batchRowKey(batchId, rowNumber));
+    const duplicateHash = createVmsOrderDetailsDuplicateHash(normalized);
+    const duplicateNumbers = duplicateGroups.get(`${batchId}:${duplicateHash}`) ?? [];
+    const exclusionReasons: string[] = [];
+
+    if (!txRow) {
+      if (String(row.validation_status ?? "") !== "imported") exclusionReasons.push(`audit:${String(row.validation_status ?? "unknown")}`);
+      if (!row.matched_product_id) exclusionReasons.push("missing_product_mapping");
+      if (!row.matched_machine_id) exclusionReasons.push("missing_machine_mapping");
+      if (duplicateNumbers.length > 1) exclusionReasons.push(`duplicate_group:${duplicateNumbers.join(",")}`);
+    } else {
+      if (String(txRow.transaction_status ?? "") !== "successful_sale") exclusionReasons.push(`status:${String(txRow.transaction_status ?? "unknown")}`);
+      if (!countableDetailedBatch(batch)) exclusionReasons.push(`batch:${rawStatus(batch) || "inactive"}`);
+      if (!inRange(String(txRow.business_date ?? ""), range)) exclusionReasons.push("outside_business_date_range");
+    }
+
+    if (!exclusionReasons.length) continue;
+
+    excludedSuccessfulRows.push({
+      batchId,
+      batchStatus: batch.status ?? null,
+      businessDate,
+      exclusionReason: exclusionReasons.join(" | "),
+      machineLabel: String(
+        orderDetailsValue(normalized, orderDetailsAliases.machineName)
+          || orderDetailsValue(normalized, orderDetailsAliases.machineCode)
+          || "Unknown machine",
+      ),
+      machineMatchStatus: row.machine_match_status ?? null,
+      orderId: String(
+        orderDetailsValue(normalized, orderDetailsAliases.orderNumber)
+          || orderDetailsValue(normalized, orderDetailsAliases.thirdPartyTransactionNumber)
+          || orderDetailsValue(normalized, orderDetailsAliases.thirdPartyOrderNo)
+          || "",
+      ) || null,
+      parsedAmount,
+      productLabel: String(
+        orderDetailsValue(normalized, orderDetailsAliases.productName)
+          || orderDetailsValue(normalized, orderDetailsAliases.productNumber)
+          || "Unknown product",
+      ),
+      productMatchStatus: row.product_match_status ?? null,
+      rawAmount: orderDetailsValue(normalized, orderDetailsAliases.paymentAmount) || null,
+      rawDateTime: orderDetailsValue(raw, orderDetailsAliases.paymentTime)
+        || orderDetailsValue(raw, orderDetailsAliases.deliveryTime)
+        || orderDetailsValue(normalized, orderDetailsAliases.paymentTime)
+        || null,
+      rawRefundStatus: rawRefundStatus === "(blank)" ? null : rawRefundStatus,
+      rawShippingStatus: rawShippingStatus === "(blank)" ? null : rawShippingStatus,
+      rowNumber,
+      slot: orderDetailsValue(normalized, orderDetailsAliases.cargoLaneNumber) || null,
+      sourceFileName: sourceFileName(batch),
+      validationErrors: Array.isArray(row.validation_errors)
+        ? row.validation_errors.map((value) => String(value))
+        : [],
+      validationStatus: row.validation_status ?? null,
+    });
+  }
+
+  let importedSuccessfulCount = 0;
+  let importedSuccessfulAmount = 0;
+  let dashboardSuccessfulCount = 0;
+  let dashboardSuccessfulAmount = 0;
+
+  for (const row of transactionRows) {
+    const batchId = String(row.import_batch_id ?? "");
+    const batch = batchById.get(batchId);
+    if (!batch) continue;
+    const businessDate = String(row.business_date ?? "").trim();
+    if (!inRange(businessDate, range)) continue;
+    if (String(row.transaction_status ?? "") !== "successful_sale") continue;
+
+    const amount = Math.max(0, Number(row.payment_amount ?? 0) || 0);
+    importedSuccessfulCount += 1;
+    importedSuccessfulAmount += amount;
+
+    if (countableDetailedBatch(batch)) {
+      dashboardSuccessfulCount += 1;
+      dashboardSuccessfulAmount += amount;
+    }
+  }
+
+  const excludedSuccessfulAmount = parsedSuccessfulAmount - dashboardSuccessfulAmount;
+  const excludedSuccessfulCount = parsedSuccessfulCount - dashboardSuccessfulCount;
+  const parsedSuccessfulDuplicateRows = [...duplicateGroups.values()]
+    .reduce((sum, rowNumbers) => sum + Math.max(0, rowNumbers.length - 1), 0);
+
+  return {
+    dashboardSuccessfulAmount,
+    dashboardSuccessfulCount,
+    excludedSuccessfulAmount,
+    excludedSuccessfulCount,
+    excludedSuccessfulRows: excludedSuccessfulRows.sort((left, right) => left.rowNumber - right.rowNumber),
+    importedSuccessfulAmount,
+    importedSuccessfulCount,
+    parsedMissingBusinessDateCount,
+    parsedMissingMachineCount,
+    parsedMissingProductCount,
+    parsedSuccessfulAmount,
+    parsedSuccessfulCount,
+    parsedSuccessfulDuplicateRows,
+    statusFilteredRows: statusFilteredRows.sort((left, right) => left.rowNumber - right.rowNumber),
+    statusGroups: [...statusGroups.values()]
+      .map((group) => ({ ...group, amount: Number(group.amount.toFixed(2)) }))
+      .sort((left, right) => right.count - left.count),
+  };
 }

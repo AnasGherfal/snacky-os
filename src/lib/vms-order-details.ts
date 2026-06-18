@@ -247,27 +247,54 @@ function hashPayload(payload: unknown) {
   return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
 
+function orderDetailsLineIdentity(row: Record<string, string>) {
+  return {
+    machine_code: stableText(orderDetailsValue(row, orderDetailsAliases.machineCode)),
+    cargo_lane_number: stableText(orderDetailsValue(row, orderDetailsAliases.cargoLaneNumber)),
+    product_number: stableText(orderDetailsValue(row, orderDetailsAliases.productNumber)),
+    product_name: stableText(orderDetailsValue(row, orderDetailsAliases.productName)),
+    payment_time: stableText(orderDetailsValue(row, orderDetailsAliases.paymentTime)),
+    delivery_time: stableText(orderDetailsValue(row, orderDetailsAliases.deliveryTime)),
+    payment_amount: String(orderDetailsPaymentAmount(row) ?? 0),
+    quantity: String(orderDetailsQuantity(row)),
+  };
+}
+
 export function createVmsOrderDetailsDuplicateHash(row: Record<string, string>) {
   const orderNumber = orderDetailsValue(row, orderDetailsAliases.orderNumber);
-  if (orderNumber) return hashPayload({ type: "vms_order_details", key: "order_number", value: stableText(orderNumber) });
+  if (orderNumber) {
+    return hashPayload({
+      type: "vms_order_details",
+      key: "order_number_line",
+      value: stableText(orderNumber),
+      ...orderDetailsLineIdentity(row),
+    });
+  }
 
   const thirdPartyTransactionNumber = orderDetailsValue(row, orderDetailsAliases.thirdPartyTransactionNumber);
   if (thirdPartyTransactionNumber) {
-    return hashPayload({ type: "vms_order_details", key: "third_party_transaction_number", value: stableText(thirdPartyTransactionNumber) });
+    return hashPayload({
+      type: "vms_order_details",
+      key: "third_party_transaction_number_line",
+      value: stableText(thirdPartyTransactionNumber),
+      ...orderDetailsLineIdentity(row),
+    });
   }
 
   const thirdPartyOrderNo = orderDetailsValue(row, orderDetailsAliases.thirdPartyOrderNo);
-  if (thirdPartyOrderNo) return hashPayload({ type: "vms_order_details", key: "third_party_order_no", value: stableText(thirdPartyOrderNo) });
+  if (thirdPartyOrderNo) {
+    return hashPayload({
+      type: "vms_order_details",
+      key: "third_party_order_no_line",
+      value: stableText(thirdPartyOrderNo),
+      ...orderDetailsLineIdentity(row),
+    });
+  }
 
   return hashPayload({
     type: "vms_order_details",
     key: "fallback",
-    machine_code: stableText(orderDetailsValue(row, orderDetailsAliases.machineCode)),
-    product_number: stableText(orderDetailsValue(row, orderDetailsAliases.productNumber)),
-    product_name: stableText(orderDetailsValue(row, orderDetailsAliases.productName)),
-    payment_time: stableText(orderDetailsValue(row, orderDetailsAliases.paymentTime)),
-    payment_amount: String(orderDetailsPaymentAmount(row) ?? 0),
-    cargo_lane_number: stableText(orderDetailsValue(row, orderDetailsAliases.cargoLaneNumber)),
+    ...orderDetailsLineIdentity(row),
   });
 }
 

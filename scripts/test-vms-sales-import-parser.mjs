@@ -213,5 +213,29 @@ test("VMS order details derives date range, status, and duplicate hash", () => {
   assert.deepEqual(detectOrderDetailsDateRange(mappedRows), { start: "2026-05-27", end: "2026-05-28" });
   assert.equal(orderDetailsTransactionStatus(mappedRows[0]), "successful_sale");
   assert.equal(orderDetailsTransactionStatus(mappedRows[1]), "failed_vend");
-  assert.equal(createVmsOrderDetailsDuplicateHash(mappedRows[0]), createVmsOrderDetailsDuplicateHash({ ...mappedRows[0], payment_amount: "99.00" }));
+  assert.equal(createVmsOrderDetailsDuplicateHash(mappedRows[0]), createVmsOrderDetailsDuplicateHash({ ...mappedRows[0] }));
+});
+
+test("VMS order details duplicate hash keeps distinct line items from the same order", () => {
+  const firstLine = {
+    machine_identifier: "2510001719",
+    order_number: "ORD-MULTI-1",
+    cargo_lane_number: "A1",
+    product_identifier: "P001",
+    product_name: "Water 500ml",
+    payment_amount: "2.50",
+    payment_time: "2026-05-27 09:03:00",
+    delivery_time: "2026-05-27 09:04:00",
+    num: "1",
+  };
+  const secondLine = {
+    ...firstLine,
+    cargo_lane_number: "B4",
+    product_identifier: "P009",
+    product_name: "Chips",
+  };
+  const exactDuplicate = { ...firstLine };
+
+  assert.notEqual(createVmsOrderDetailsDuplicateHash(firstLine), createVmsOrderDetailsDuplicateHash(secondLine));
+  assert.equal(createVmsOrderDetailsDuplicateHash(firstLine), createVmsOrderDetailsDuplicateHash(exactDuplicate));
 });
