@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Eye, Pencil, Plus, RotateCcw } from "lucide-react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
@@ -118,7 +117,7 @@ export default async function StorageLocationsPage({ searchParams }: { searchPar
       <PageHeader
         title="Storage Locations"
         subtitle="Manage warehouses, operator bags, and internal stock locations used by inventory movements."
-        action={<PrimaryButton href="/storage-locations/new"><Plus className="mr-2 h-4 w-4" />Add location</PrimaryButton>}
+        action={<PrimaryButton href="/storage-locations/new">Add location</PrimaryButton>}
       />
 
       {params.error ? <div className="mb-5 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{params.error}</div> : null}
@@ -173,8 +172,8 @@ export default async function StorageLocationsPage({ searchParams }: { searchPar
                   <td>{formatDate(summary.lastMovementAt)}</td>
                   <td>
                     <div className="flex flex-wrap gap-2">
-                      <Link href={`/storage-locations/${location.id}`} className="btn-secondary px-3 py-2"><Eye className="mr-2 h-4 w-4" />View</Link>
-                      <Link href={`/storage-locations/${location.id}/edit`} className="btn-secondary px-3 py-2"><Pencil className="mr-2 h-4 w-4" />Edit</Link>
+                      <Link href={`/storage-locations/${location.id}`} className="btn-secondary px-3 py-2">View</Link>
+                      <Link href={`/storage-locations/${location.id}/edit`} className="btn-secondary px-3 py-2">Edit</Link>
                       {location.active ? (
                         <ConfirmDialog
                           action={archiveStorageLocation}
@@ -188,7 +187,7 @@ export default async function StorageLocationsPage({ searchParams }: { searchPar
                       ) : (
                         <form action={activateStorageLocation}>
                           <input type="hidden" name="id" value={location.id} />
-                          <button className="btn-secondary px-3 py-2"><RotateCcw className="mr-2 h-4 w-4" />Activate</button>
+                          <button className="btn-secondary px-3 py-2">Activate</button>
                         </form>
                       )}
                       {canHardDelete ? (

@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { ClipboardList, Search, SlidersHorizontal } from "lucide-react";
 import { CreatePurchaseListButton } from "@/components/CreatePurchaseListButton";
 import { ShoppingListButton } from "@/components/ShoppingListButton";
 import { VmsDataSourceCard } from "@/components/VmsDataSourceCard";
@@ -144,7 +143,6 @@ function ThresholdForm({ item, currentPath }: { item: RestockPriorityItem; curre
         <input name="reorder_qty" type="number" min="0" defaultValue={item.reorderQty} className="field-input mt-1" />
       </label>
       <button className="btn-secondary gap-2 sm:col-span-2 lg:col-span-5" type="submit">
-        <SlidersHorizontal className="h-4 w-4" />
         Save restock settings
       </button>
     </form>
@@ -450,10 +448,7 @@ export default async function RestockPriorityPage({
         action={
           <div className="flex flex-wrap gap-2">
             <CreatePurchaseListButton items={purchaseListItems} />
-            <SecondaryButton href="/inventory/movements/new">
-              <ClipboardList className="mr-2 h-4 w-4" />
-              Storage adjustment
-            </SecondaryButton>
+            <SecondaryButton href="/inventory/movements/new">Storage adjustment</SecondaryButton>
           </div>
         }
       />
@@ -511,10 +506,7 @@ export default async function RestockPriorityPage({
             <form className="flex flex-wrap gap-2">
               <input type="hidden" name="filter" value={filter === "focus" ? "" : filter} />
               <SearchInput defaultValue={q} placeholder="Search product..." />
-              <button className="btn-secondary gap-2" type="submit">
-                <Search className="h-4 w-4" />
-                Search
-              </button>
+              <button className="btn-secondary" type="submit">Search</button>
             </form>
             <div className="flex gap-2 overflow-x-auto pb-1">
               {filters.map((item) => (

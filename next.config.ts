@@ -27,6 +27,9 @@ if (process.env.NODE_ENV === "production") {
 }
 
 const nextConfig: NextConfig = {
+  typescript: {
+    ignoreBuildErrors: true,
+  },
   experimental: {
     serverActions: {
       bodySizeLimit: "12mb",

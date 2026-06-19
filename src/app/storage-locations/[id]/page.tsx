@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Pencil, RotateCcw } from "lucide-react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
@@ -114,7 +113,7 @@ export default async function StorageLocationDetailPage({
           { label: "Storage Locations", href: "/storage-locations" },
           { label: typedLocation.name },
         ]}
-        action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/storage-locations">Back</SecondaryButton><SecondaryButton href={`/storage-locations/${typedLocation.id}/edit`}><Pencil className="mr-2 h-4 w-4" />Edit</SecondaryButton></div>}
+        action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/storage-locations">Back</SecondaryButton><SecondaryButton href={`/storage-locations/${typedLocation.id}/edit`}>Edit</SecondaryButton></div>}
       />
 
       {query.error ? <div className="mb-5 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{query.error}</div> : null}
@@ -235,7 +234,7 @@ export default async function StorageLocationDetailPage({
           ) : (
             <form action={activateStorageLocation}>
               <input type="hidden" name="id" value={typedLocation.id} />
-              <button className="btn-secondary"><RotateCcw className="mr-2 h-4 w-4" />Activate location</button>
+              <button className="btn-secondary">Activate location</button>
             </form>
           )}
           {canHardDelete ? (

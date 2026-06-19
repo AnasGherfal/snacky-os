@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { FileText } from "lucide-react";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileRecordCard, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
@@ -70,7 +69,7 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
                     <div className="min-w-0">
                       <h2 className="flex flex-wrap items-center gap-2 break-words text-base font-semibold text-slate-900">
                         <span>{purchase.supplier?.name ?? "Unknown supplier"}</span>
-                        {receiptUrl ? <FileText aria-label="Receipt attached" className="h-4 w-4 shrink-0 text-emerald-700" /> : null}
+                        {receiptUrl ? <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Receipt</span> : null}
                       </h2>
                       <p className="mt-1 text-xs text-slate-500">{purchase.order_date} - Receipt {purchase.receipt_number ?? "-"}</p>
                     </div>
@@ -108,8 +107,7 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
                   <td>
                     {receiptUrl ? (
                       <a href={receiptUrl} target="_blank" rel="noreferrer" className="link-secondary inline-flex items-center gap-1">
-                        <FileText aria-hidden="true" className="h-4 w-4" />
-                        <span>View Receipt</span>
+                        View Receipt
                       </a>
                     ) : "-"}
                   </td>

@@ -1,6 +1,4 @@
 import { redirect } from "next/navigation";
-import type { ComponentType } from "react";
-import { Activity, AlertTriangle, Boxes, CheckCircle2, DatabaseZap, Globe2, PackageSearch, RadioTower, RefreshCw, TestTube2 } from "lucide-react";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, PageHeader, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
@@ -93,22 +91,19 @@ function webConnectionStatus(config: ReturnType<typeof getXyWebApiConfig>) {
 function SyncForm({
   action,
   label,
-  icon: Icon,
   primary = false,
   disabled = false,
   title,
 }: {
   action: (formData?: FormData) => Promise<void>;
   label: string;
-  icon: ComponentType<{ className?: string }>;
   primary?: boolean;
   disabled?: boolean;
   title?: string;
 }) {
   return (
     <form action={action}>
-      <button type="submit" disabled={disabled} title={title} className={`${primary ? "btn-primary" : "btn-secondary"} inline-flex w-full items-center justify-center gap-2`}>
-        <Icon className="h-4 w-4" />
+      <button type="submit" disabled={disabled} title={title} className={`${primary ? "btn-primary" : "btn-secondary"} inline-flex w-full items-center justify-center`}>
         <span>{label}</span>
       </button>
     </form>
@@ -252,10 +247,7 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
 
         <section className="surface-card">
           <div className="mb-3 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
-              <Globe2 className="h-4 w-4" />
-              Web Fallback
-            </div>
+            <div className="text-sm font-medium text-slate-500">Web Fallback</div>
             <StatusBadge status={webStatus.status} />
           </div>
           <div className="text-2xl font-semibold text-slate-900">{webStatus.label}</div>
@@ -267,19 +259,13 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
         </section>
 
         <section className="surface-card">
-          <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-500">
-            <Activity className="h-4 w-4" />
-            Last Sync
-          </div>
+          <div className="mb-3 text-sm font-medium text-slate-500">Last Sync</div>
           <div className="text-lg font-semibold text-slate-900">{formatDate(lastCompleted?.completed_at)}</div>
           <p className="mt-3 text-sm leading-6 text-slate-500">Latest completed XY sync run saved in `vms_sync_runs`.</p>
         </section>
 
         <section className="surface-card">
-          <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-500">
-            <DatabaseZap className="h-4 w-4" />
-            Imported Data
-          </div>
+          <div className="mb-3 text-sm font-medium text-slate-500">Imported Data</div>
           <div className="grid grid-cols-3 gap-3 text-center">
             <div><div className="text-xl font-semibold text-slate-900">{productCatalogCount.count ?? 0}</div><div className="text-xs text-slate-500">Products</div></div>
             <div><div className="text-xl font-semibold text-slate-900">{stockSnapshotCount.count ?? 0}</div><div className="text-xs text-slate-500">Stock</div></div>
@@ -288,10 +274,7 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
         </section>
 
         <section className="surface-card">
-          <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-500">
-            <AlertTriangle className="h-4 w-4" />
-            Needs Review
-          </div>
+          <div className="mb-3 text-sm font-medium text-slate-500">Needs Review</div>
           <div className="text-2xl font-semibold text-slate-900">{needsReviewCount.count ?? 0}</div>
           <p className="mt-3 text-sm leading-6 text-slate-500">Unmatched VMS products are kept for mapping instead of being dropped.</p>
         </section>
@@ -315,16 +298,16 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
             <h2 className="text-base font-semibold text-slate-900">Manual Sync</h2>
             <p className="mt-1 text-sm leading-6 text-slate-500">Buttons run on the Next.js server. Machine status is manual only for now, not polled.</p>
           </div>
-          <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+          <span className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Server-side</span>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <SyncForm action={testXyOfficialApiAction} label="Test Official Signed API" icon={TestTube2} primary />
-          <SyncForm action={syncXyMachinesAction} label="Sync Machines" icon={Boxes} disabled={syncDisabled} title={syncDisabled ? syncDisabledTitle : undefined} />
-          <SyncForm action={syncXyProductsAction} label="Sync Products" icon={PackageSearch} disabled={syncDisabled} title={syncDisabled ? syncDisabledTitle : undefined} />
-          <SyncForm action={syncXyMachineGoodsAction} label="Sync Machine Goods / Stock" icon={DatabaseZap} disabled={syncDisabled} title={syncDisabled ? syncDisabledTitle : undefined} />
-          <SyncForm action={syncXyMachineStatusAction} label="Sync Machine Status" icon={RadioTower} disabled={syncDisabled} title={syncDisabled ? syncDisabledTitle : undefined} />
-          <SyncForm action={syncXyAllAction} label="Sync All" icon={RefreshCw} disabled={syncDisabled} title={syncDisabled ? syncDisabledTitle : undefined} />
-          <SyncForm action={testXyWebDashboardAction} label="Test Web Dashboard Fallback" icon={Globe2} />
+          <SyncForm action={testXyOfficialApiAction} label="Test Official Signed API" primary />
+          <SyncForm action={syncXyMachinesAction} label="Sync Machines" disabled={syncDisabled} title={syncDisabled ? syncDisabledTitle : undefined} />
+          <SyncForm action={syncXyProductsAction} label="Sync Products" disabled={syncDisabled} title={syncDisabled ? syncDisabledTitle : undefined} />
+          <SyncForm action={syncXyMachineGoodsAction} label="Sync Machine Goods / Stock" disabled={syncDisabled} title={syncDisabled ? syncDisabledTitle : undefined} />
+          <SyncForm action={syncXyMachineStatusAction} label="Sync Machine Status" disabled={syncDisabled} title={syncDisabled ? syncDisabledTitle : undefined} />
+          <SyncForm action={syncXyAllAction} label="Sync All" disabled={syncDisabled} title={syncDisabled ? syncDisabledTitle : undefined} />
+          <SyncForm action={testXyWebDashboardAction} label="Test Web Dashboard Fallback" />
         </div>
         <p className="mt-4 text-xs leading-5 text-slate-500">
           Official signed calls send `shbh`, `jqbh` when needed, `key`, `timestamp`, and `sign`. The secret stays server-side and is only used to calculate the MD5 signature.
