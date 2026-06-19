@@ -3,6 +3,7 @@ import {
   batchLastUpdatedAt,
   isActiveImportedVmsBatch,
   sourceFileName,
+  vmsCoverageSummary,
   type VmsDashboardBatch,
 } from "@/lib/vms-dashboard-source";
 import {
@@ -187,6 +188,11 @@ export type NormalizedSalesDashboardBreakdownRow = {
   rowsUsed: number;
 };
 
+function numericValue(value: number | string | null | undefined) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 export function normalizeSalesBreakdownRows(rows: SalesDashboardBreakdownRow[]) {
   return rows.map((row) => ({
     bucketKey: String(row.bucket_key ?? ""),
@@ -202,6 +208,30 @@ export function normalizeSalesBreakdownRows(rows: SalesDashboardBreakdownRow[]) 
 type DateRangeBounds = {
   end: string;
   start: string;
+};
+
+type PagedSupabaseError = {
+  code?: unknown;
+  details?: unknown;
+  hint?: unknown;
+  message?: unknown;
+};
+
+type PagedSupabaseResult<T> = {
+  data: T[] | null;
+  error: PagedSupabaseError | null;
+};
+
+type PagedSupabaseQuery = {
+  in: (column: string, values: string[]) => PagedSupabaseQuery;
+  order: (column: string, options: { ascending: boolean }) => unknown;
+  range: (from: number, to: number) => PagedSupabaseQuery;
+};
+
+type PagedSupabaseClient = {
+  from: (table: string) => {
+    select: (columns: string) => PagedSupabaseQuery;
+  };
 };
 
 function isValidDatePart(year: number, month: number, day: number) {
@@ -273,10 +303,6 @@ function startOfYear(date: Date) {
   return new Date(date.getFullYear(), 0, 1);
 }
 
-function endOfYear(date: Date) {
-  return new Date(date.getFullYear(), 11, 31);
-}
-
 function formatMonthValue(date: Date) {
   return `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}`;
 }
@@ -332,14 +358,14 @@ async function fetchPagedRows<T>({
   supabase,
   table,
 }: {
-  filter: (query: any) => any;
+  filter: (query: PagedSupabaseQuery) => unknown;
   select: string;
-  supabase: any;
+  supabase: PagedSupabaseClient;
   table: string;
 }): Promise<T[]> {
   const rows: T[] = [];
   for (let from = 0; ; from += 1000) {
-    const result = await filter(supabase.from(table).select(select).range(from, from + 999));
+    const result = await Promise.resolve(filter(supabase.from(table).select(select).range(from, from + 999))) as PagedSupabaseResult<T>;
     if (result.error) throw result.error;
     if (!result.data?.length) break;
     rows.push(...(result.data as T[]));
@@ -579,7 +605,6 @@ export function resolveSalesDashboardRange(
   }
 
   if (rawRange === "year" && yearValue) {
-    const year = Number(yearValue);
     return rangeWithDefaults({
       key: "year",
       label: yearValue,
@@ -981,7 +1006,7 @@ export async function querySalesRangeReconciliationDiagnostics({
 }: {
   batches: VmsDashboardBatch[];
   range: Pick<SalesDateRange, "start" | "end">;
-  supabase: any;
+  supabase: unknown;
 }): Promise<SalesRangeReconciliationDiagnostics> {
   const detailedBatches = batches.filter((batch) => batch.report_type === "vms_order_details_weekly");
   const batchIds = detailedBatches.map((batch) => batch.id).filter(Boolean);
@@ -1005,15 +1030,16 @@ export async function querySalesRangeReconciliationDiagnostics({
     };
   }
 
+  const pagedSupabase = supabase as PagedSupabaseClient;
   const batchById = new Map(detailedBatches.map((batch) => [batch.id, batch]));
   const importRows = await fetchPagedRows<SalesImportAuditRow>({
-    supabase,
+    supabase: pagedSupabase,
     table: "vms_import_rows",
     select: "import_batch_id, row_number, raw_data, normalized_data, validation_status, validation_errors, machine_match_status, product_match_status, matched_machine_id, matched_product_id",
     filter: (query) => query.in("import_batch_id", batchIds).order("row_number", { ascending: true }),
   });
   const transactionRows = await fetchPagedRows<SalesTransactionRawRow>({
-    supabase,
+    supabase: pagedSupabase,
     table: "vms_transactions_raw",
     select: "import_batch_id, row_number, order_number, third_party_transaction_number, third_party_order_no, payment_amount, payment_time, business_date, transaction_status, mapped_machine_id, mapped_product_id, duplicate_hash, shipping_status, cargo_lane_number, machine_code, machine_name, product_number, vms_product_name",
     filter: (query) => query.in("import_batch_id", batchIds).order("row_number", { ascending: true }),

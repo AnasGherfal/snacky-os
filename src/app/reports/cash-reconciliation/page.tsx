@@ -602,7 +602,9 @@ export default async function CashReconciliationPage({
   const dayBreakdownRows = [...normalizeCashBreakdownRows(dayBreakdownResult.data)].sort((left, right) => left.sortKey.localeCompare(right.sortKey) || left.bucketLabel.localeCompare(right.bucketLabel));
   const monthBreakdownRows = [...normalizeCashBreakdownRows(monthBreakdownResult.data)].sort((left, right) => left.sortKey.localeCompare(right.sortKey) || left.bucketLabel.localeCompare(right.bucketLabel));
   const machineBreakdownRows = [...normalizeCashBreakdownRows(machineBreakdownResult.data)].sort((left, right) => right.actualCashCollectedAmount - left.actualCashCollectedAmount || left.bucketLabel.localeCompare(right.bucketLabel));
-  const showDayBreakdown = Boolean(selectedRange.start && selectedRange.end) && inclusiveDayCount(selectedRange.start, selectedRange.end) <= 62;
+  const selectedRangeStart = selectedRange.start;
+  const selectedRangeEnd = selectedRange.end;
+  const showDayBreakdown = selectedRangeStart !== null && selectedRangeEnd !== null && inclusiveDayCount(selectedRangeStart, selectedRangeEnd) <= 62;
   const hasCollections = selectedSummary.collectionCount > 0;
   const loadWarning = [comparisonRange ? comparisonSummaryResult.error : null, dayBreakdownResult.error, monthBreakdownResult.error, machineBreakdownResult.error].filter(Boolean) as string[];
   const comparisonSubtitle = comparisonRange

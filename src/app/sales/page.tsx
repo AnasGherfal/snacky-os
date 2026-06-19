@@ -8,7 +8,7 @@ import { isOwnerAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { formatInteger } from "@/lib/kpi";
 import { cleanSearchParams, type SearchParamsRecord } from "@/lib/pagination";
-import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
+import { supabaseQueryErrorMessage } from "@/lib/safe-supabase-query";
 import {
   applySalesBatchCoverage,
   batchCoverageDates,
@@ -23,6 +23,7 @@ import {
   type NormalizedSalesDashboardBreakdownRow,
   type SalesDashboardBreakdownRow,
   type SalesBatchReconciliation,
+  type SalesRangeReconciliationDiagnostics,
   type SalesDashboardSearchParams,
 } from "@/lib/sales-dashboard";
 import {
@@ -86,12 +87,6 @@ type SalesSummary = {
   unknownPaymentAmount: number;
   paymentMethodAvailable: boolean;
   rowsUsed: number;
-};
-
-type SalesComparisonSummary = {
-  label: string;
-  rangeLabel: string;
-  salesSummary: SalesSummary;
 };
 
 type TransactionStatusRow = {
@@ -182,17 +177,22 @@ function MetricValue({
   );
 }
 
+function SectionInlineMessage({
+  body,
+  title,
+}: {
+  body: string;
+  title: string;
+}) {
+  return <EmptyState title={title} body={body} />;
+}
+
 function breakdownRowsToBarRows(rows: SalesBreakdownRow[]) {
   return chronologicalSales(rows.map((row) => ({ label: row.bucketLabel, value: row.successfulSalesAmount, detail: row.rowsUsed ? `${formatInteger(row.rowsUsed)} rows` : undefined })));
 }
 
 function breakdownRowsToTableRows(rows: SalesBreakdownRow[]) {
   return [...rows].sort((left, right) => left.sortKey.localeCompare(right.sortKey) || left.bucketLabel.localeCompare(right.bucketLabel));
-}
-
-function percentChange(current: number, comparison: number) {
-  if (comparison === 0) return null;
-  return ((current - comparison) / comparison) * 100;
 }
 
 function formatDelta(value: number) {
@@ -205,13 +205,6 @@ function formatPercentPointDelta(value: number) {
   const rounded = Number(value.toFixed(1));
   const sign = rounded > 0 ? "+" : "";
   return `${sign}${rounded.toFixed(1)} pp`;
-}
-
-function latestTimestamp(values: Array<string | null | undefined>) {
-  return values
-    .filter((value): value is string => Boolean(value))
-    .sort((left, right) => new Date(left).getTime() - new Date(right).getTime())
-    .at(-1) ?? null;
 }
 
 function normalizeSalesBatchReconciliationRows(rows: TransactionStatusRow[]) {
@@ -265,6 +258,50 @@ function normalizeSalesBatchReconciliationRows(rows: TransactionStatusRow[]) {
 type TechnicalIssue = {
   label: string;
   message: string;
+  code: string | null;
+  sectionName: string;
+  rpcName: string | null;
+  selectedRangeKey: string;
+  dateFrom: string;
+  dateTo: string;
+  loadedAt: string;
+  elapsedMs: number;
+  rowCount: number;
+};
+
+type SupabaseSectionError = {
+  code?: unknown;
+  message?: unknown;
+  details?: unknown;
+  hint?: unknown;
+};
+
+type SupabaseSectionResult<T> = {
+  data?: T[] | null;
+  count?: number | null;
+  error?: SupabaseSectionError | null;
+};
+
+type LoggedSalesSectionResult<T> = {
+  count: number;
+  data: T[];
+  elapsedMs: number;
+  error: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  loadedAt: string;
+  rpcName: string | null;
+  sectionName: string;
+};
+
+type LoggedSalesTaskResult<T> = {
+  data: T | null;
+  elapsedMs: number;
+  error: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  loadedAt: string;
+  sectionName: string;
 };
 
 const EMPTY_SALES_SUMMARY: SalesSummary = {
@@ -356,6 +393,197 @@ function businessContributionReason(row: { status: string; reason: string }) {
   }
 }
 
+async function loadSalesQuerySection<T>({
+  dateFrom,
+  dateTo,
+  fallback = [],
+  filterMode,
+  profileId,
+  promise,
+  role,
+  rpcName,
+  sectionName,
+}: {
+  dateFrom: string;
+  dateTo: string;
+  fallback?: T[];
+  filterMode: string;
+  profileId: string;
+  promise: PromiseLike<SupabaseSectionResult<T>>;
+  role: string;
+  rpcName?: string | null;
+  sectionName: string;
+}): Promise<LoggedSalesSectionResult<T>> {
+  const startedAt = Date.now();
+  const loadedAt = new Date().toISOString();
+
+  try {
+    const result = await promise;
+    const elapsedMs = Date.now() - startedAt;
+    const data = (result.data ?? fallback) as T[];
+    const rowCount = result.count ?? data.length ?? 0;
+
+    if (result.error) {
+      const errorCode = result.error.code == null ? null : String(result.error.code);
+      const errorMessage = supabaseQueryErrorMessage(result.error);
+      console.error("[sales] Section load failed", {
+        current_user_id: profileId,
+        current_user_role: role,
+        data_missing: result.data == null,
+        date_from: dateFrom,
+        date_to: dateTo,
+        elapsed_ms: elapsedMs,
+        error_code: errorCode,
+        error_message: errorMessage,
+        filter_mode: filterMode,
+        returned_row_count: rowCount,
+        rpc_function_name: rpcName ?? null,
+        section_name: sectionName,
+      });
+      return {
+        count: rowCount,
+        data: fallback,
+        elapsedMs,
+        error: errorMessage,
+        errorCode,
+        errorMessage,
+        loadedAt,
+        rpcName: rpcName ?? null,
+        sectionName,
+      };
+    }
+
+    console.info("[sales] Section load completed", {
+      current_user_id: profileId,
+      current_user_role: role,
+      data_missing: result.data == null,
+      date_from: dateFrom,
+      date_to: dateTo,
+      elapsed_ms: elapsedMs,
+      filter_mode: filterMode,
+      returned_row_count: rowCount,
+      rpc_function_name: rpcName ?? null,
+      section_name: sectionName,
+    });
+
+    return {
+      count: rowCount,
+      data,
+      elapsedMs,
+      error: null,
+      errorCode: null,
+      errorMessage: null,
+      loadedAt,
+      rpcName: rpcName ?? null,
+      sectionName,
+    };
+  } catch (error) {
+    const elapsedMs = Date.now() - startedAt;
+    const errorMessage = supabaseQueryErrorMessage(error);
+    const errorCode = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code ?? "") || null : null;
+    console.error("[sales] Section load threw", {
+      current_user_id: profileId,
+      current_user_role: role,
+      data_missing: true,
+      date_from: dateFrom,
+      date_to: dateTo,
+      elapsed_ms: elapsedMs,
+      error_code: errorCode,
+      error_message: errorMessage,
+      filter_mode: filterMode,
+      returned_row_count: 0,
+      rpc_function_name: rpcName ?? null,
+      section_name: sectionName,
+    });
+    return {
+      count: 0,
+      data: fallback,
+      elapsedMs,
+      error: errorMessage,
+      errorCode,
+      errorMessage,
+      loadedAt,
+      rpcName: rpcName ?? null,
+      sectionName,
+    };
+  }
+}
+
+async function loadSalesTaskSection<T>({
+  dateFrom,
+  dateTo,
+  filterMode,
+  profileId,
+  role,
+  sectionName,
+  task,
+}: {
+  dateFrom: string;
+  dateTo: string;
+  filterMode: string;
+  profileId: string;
+  role: string;
+  sectionName: string;
+  task: Promise<T>;
+}): Promise<LoggedSalesTaskResult<T>> {
+  const startedAt = Date.now();
+  const loadedAt = new Date().toISOString();
+
+  try {
+    const data = await task;
+    const elapsedMs = Date.now() - startedAt;
+    const rowCount = Array.isArray(data) ? data.length : data == null ? 0 : 1;
+    console.info("[sales] Section load completed", {
+      current_user_id: profileId,
+      current_user_role: role,
+      data_missing: data == null,
+      date_from: dateFrom,
+      date_to: dateTo,
+      elapsed_ms: elapsedMs,
+      filter_mode: filterMode,
+      returned_row_count: rowCount,
+      rpc_function_name: null,
+      section_name: sectionName,
+    });
+    return {
+      data,
+      elapsedMs,
+      error: null,
+      errorCode: null,
+      errorMessage: null,
+      loadedAt,
+      sectionName,
+    };
+  } catch (error) {
+    const elapsedMs = Date.now() - startedAt;
+    const errorMessage = supabaseQueryErrorMessage(error);
+    const errorCode = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code ?? "") || null : null;
+    console.error("[sales] Section load threw", {
+      current_user_id: profileId,
+      current_user_role: role,
+      data_missing: true,
+      date_from: dateFrom,
+      date_to: dateTo,
+      elapsed_ms: elapsedMs,
+      error_code: errorCode,
+      error_message: errorMessage,
+      filter_mode: filterMode,
+      returned_row_count: 0,
+      rpc_function_name: null,
+      section_name: sectionName,
+    });
+    return {
+      data: null,
+      elapsedMs,
+      error: errorMessage,
+      errorCode,
+      errorMessage,
+      loadedAt,
+      sectionName,
+    };
+  }
+}
+
 async function SalesDashboardPageContent({
   searchParams,
 }: {
@@ -365,6 +593,8 @@ async function SalesDashboardPageContent({
   const params = cleanSearchParams(await searchParams) as SearchParamsRecord & SalesDashboardSearchParams;
   const supabase = await getAuthenticatedSupabaseServerClient();
   const renderedAt = new Date();
+  const profileId = String((profile as { id?: unknown }).id ?? "unknown");
+  const profileRole = String((profile as { role?: unknown }).role ?? "unknown");
 
   if (!supabase) {
     return (
@@ -379,17 +609,28 @@ async function SalesDashboardPageContent({
   }
 
   const [batchResult, fullReconciliationResult] = await Promise.all([
-    safeSupabaseQuery<VmsDashboardBatch>({
-      label: "sales.vms_import_batches",
+    loadSalesQuerySection<VmsDashboardBatch>({
+      dateFrom: "",
+      dateTo: "",
+      filterMode: String(params.range ?? "default"),
+      profileId,
       promise: queryVmsDashboardBatches(supabase, {
         reportTypes: ["vms_order_details_weekly", "sales"],
         orderBy: "uploaded_at",
         ascending: false,
       }),
+      role: profileRole,
+      sectionName: "vms_batch_sources",
     }),
-    safeSupabaseQuery<TransactionStatusRow>({
-      label: "sales.sales_dashboard_batch_reconciliation.all",
+    loadSalesQuerySection<TransactionStatusRow>({
+      dateFrom: "",
+      dateTo: "",
+      filterMode: String(params.range ?? "default"),
+      profileId,
       promise: supabase.rpc("sales_dashboard_batch_reconciliation"),
+      role: profileRole,
+      rpcName: "sales_dashboard_batch_reconciliation",
+      sectionName: "batch_reconciliation_all",
     }),
   ]);
 
@@ -400,89 +641,168 @@ async function SalesDashboardPageContent({
   const selectedRange = resolveSalesDashboardRange(params, coverageAwareBatches, renderedAt);
   const selectedRangeLabel = formatSalesRangeLabel(selectedRange);
   const showAdminReconciliation = isOwnerAdminRole(profile);
+  const comparisonRange = buildSalesComparisonRange(selectedRange);
+  const comparisonRangeLabel = comparisonRange ? formatSalesRangeLabel(comparisonRange) : null;
 
   const [salesSummaryResult, comparisonSummaryResult, dayBreakdownResult, monthBreakdownResult, hourBreakdownResult, machineBreakdownResult, locationBreakdownResult, productBreakdownResult, filteredReconciliationResult, adminReconciliationDiagnostics] = await Promise.all([
-    safeSupabaseQuery<SalesSummaryRow>({
-      label: "sales.sales_dashboard_summary.filtered",
+    loadSalesQuerySection<SalesSummaryRow>({
+      dateFrom: selectedRange.start,
+      dateTo: selectedRange.end,
+      filterMode: selectedRange.key,
+      profileId,
       promise: supabase.rpc("sales_dashboard_summary", {
         p_date_from: selectedRange.start,
         p_date_to: selectedRange.end,
       }),
+      role: profileRole,
+      rpcName: "sales_dashboard_summary",
+      sectionName: "summary_kpi",
     }),
     comparisonRange
-      ? safeSupabaseQuery<SalesSummaryRow>({
-          label: "sales.sales_dashboard_summary.comparison",
+      ? loadSalesQuerySection<SalesSummaryRow>({
+          dateFrom: comparisonRange.start,
+          dateTo: comparisonRange.end,
+          filterMode: comparisonRange.key,
+          profileId,
           promise: supabase.rpc("sales_dashboard_summary", {
             p_date_from: comparisonRange.start,
             p_date_to: comparisonRange.end,
           }),
+          role: profileRole,
+          rpcName: "sales_dashboard_summary",
+          sectionName: "summary_comparison",
         })
-      : Promise.resolve({ data: [], error: null } as { data: SalesSummaryRow[]; error: null }),
-    safeSupabaseQuery<SalesDashboardBreakdownRow>({
-      label: "sales.sales_dashboard_breakdown.day",
+      : Promise.resolve({
+          count: 0,
+          data: [] as SalesSummaryRow[],
+          elapsedMs: 0,
+          error: null,
+          errorCode: null,
+          errorMessage: null,
+          loadedAt: new Date().toISOString(),
+          rpcName: "sales_dashboard_summary",
+          sectionName: "summary_comparison",
+        } satisfies LoggedSalesSectionResult<SalesSummaryRow>),
+    loadSalesQuerySection<SalesDashboardBreakdownRow>({
+      dateFrom: selectedRange.start,
+      dateTo: selectedRange.end,
+      filterMode: selectedRange.key,
+      profileId,
       promise: supabase.rpc("sales_dashboard_breakdown", {
         p_dimension: "day",
         p_date_from: selectedRange.start,
         p_date_to: selectedRange.end,
       }),
+      role: profileRole,
+      rpcName: "sales_dashboard_breakdown",
+      sectionName: "chart_day",
     }),
-    safeSupabaseQuery<SalesDashboardBreakdownRow>({
-      label: "sales.sales_dashboard_breakdown.month",
+    loadSalesQuerySection<SalesDashboardBreakdownRow>({
+      dateFrom: selectedRange.start,
+      dateTo: selectedRange.end,
+      filterMode: selectedRange.key,
+      profileId,
       promise: supabase.rpc("sales_dashboard_breakdown", {
         p_dimension: "month",
         p_date_from: selectedRange.start,
         p_date_to: selectedRange.end,
       }),
+      role: profileRole,
+      rpcName: "sales_dashboard_breakdown",
+      sectionName: "chart_month",
     }),
-    safeSupabaseQuery<SalesDashboardBreakdownRow>({
-      label: "sales.sales_dashboard_breakdown.hour",
+    loadSalesQuerySection<SalesDashboardBreakdownRow>({
+      dateFrom: selectedRange.start,
+      dateTo: selectedRange.end,
+      filterMode: selectedRange.key,
+      profileId,
       promise: supabase.rpc("sales_dashboard_breakdown", {
         p_dimension: "hour",
         p_date_from: selectedRange.start,
         p_date_to: selectedRange.end,
       }),
+      role: profileRole,
+      rpcName: "sales_dashboard_breakdown",
+      sectionName: "chart_hour",
     }),
-    safeSupabaseQuery<SalesDashboardBreakdownRow>({
-      label: "sales.sales_dashboard_breakdown.machine",
+    loadSalesQuerySection<SalesDashboardBreakdownRow>({
+      dateFrom: selectedRange.start,
+      dateTo: selectedRange.end,
+      filterMode: selectedRange.key,
+      profileId,
       promise: supabase.rpc("sales_dashboard_breakdown", {
         p_dimension: "machine",
         p_date_from: selectedRange.start,
         p_date_to: selectedRange.end,
       }),
+      role: profileRole,
+      rpcName: "sales_dashboard_breakdown",
+      sectionName: "chart_machine",
     }),
-    safeSupabaseQuery<SalesDashboardBreakdownRow>({
-      label: "sales.sales_dashboard_breakdown.location",
+    loadSalesQuerySection<SalesDashboardBreakdownRow>({
+      dateFrom: selectedRange.start,
+      dateTo: selectedRange.end,
+      filterMode: selectedRange.key,
+      profileId,
       promise: supabase.rpc("sales_dashboard_breakdown", {
         p_dimension: "location",
         p_date_from: selectedRange.start,
         p_date_to: selectedRange.end,
       }),
+      role: profileRole,
+      rpcName: "sales_dashboard_breakdown",
+      sectionName: "chart_location",
     }),
-    safeSupabaseQuery<SalesDashboardBreakdownRow>({
-      label: "sales.sales_dashboard_breakdown.product",
+    loadSalesQuerySection<SalesDashboardBreakdownRow>({
+      dateFrom: selectedRange.start,
+      dateTo: selectedRange.end,
+      filterMode: selectedRange.key,
+      profileId,
       promise: supabase.rpc("sales_dashboard_breakdown", {
         p_dimension: "product",
         p_date_from: selectedRange.start,
         p_date_to: selectedRange.end,
       }),
+      role: profileRole,
+      rpcName: "sales_dashboard_breakdown",
+      sectionName: "chart_product",
     }),
-    safeSupabaseQuery<TransactionStatusRow>({
-      label: "sales.sales_dashboard_batch_reconciliation.filtered",
+    loadSalesQuerySection<TransactionStatusRow>({
+      dateFrom: selectedRange.start,
+      dateTo: selectedRange.end,
+      filterMode: selectedRange.key,
+      profileId,
       promise: supabase.rpc("sales_dashboard_batch_reconciliation", {
         p_date_from: selectedRange.start,
         p_date_to: selectedRange.end,
       }),
+      role: profileRole,
+      rpcName: "sales_dashboard_batch_reconciliation",
+      sectionName: "batch_reconciliation_filtered",
     }),
     showAdminReconciliation
-      ? querySalesRangeReconciliationDiagnostics({
-          batches,
-          range: selectedRange,
-          supabase,
-        }).catch((error) => {
-          console.error("[sales] Admin reconciliation diagnostics failed", error);
-          return null;
+      ? loadSalesTaskSection({
+          dateFrom: selectedRange.start,
+          dateTo: selectedRange.end,
+          filterMode: selectedRange.key,
+          profileId,
+          role: profileRole,
+          sectionName: "admin_reconciliation_diagnostics",
+          task: querySalesRangeReconciliationDiagnostics({
+            batches,
+            range: selectedRange,
+            supabase,
+          }),
         })
-      : Promise.resolve(null),
+      : Promise.resolve({
+          data: null,
+          elapsedMs: 0,
+          error: null,
+          errorCode: null,
+          errorMessage: null,
+          loadedAt: new Date().toISOString(),
+          sectionName: "admin_reconciliation_diagnostics",
+        } satisfies LoggedSalesTaskResult<SalesRangeReconciliationDiagnostics>),
   ]);
 
   const selectedSummary = normalizeSalesSummary((salesSummaryResult.data as SalesSummaryRow[])[0]);
@@ -495,6 +815,7 @@ async function SalesDashboardPageContent({
   const productBreakdownRows = breakdownRowsToTableRows(normalizeSalesBreakdownRows(productBreakdownResult.data as SalesDashboardBreakdownRow[]));
   const unitsByProduct = new Map(productBreakdownRows.map((row) => [row.bucketLabel, row.unitsSold]));
   const filteredReconciliationRows = normalizeSalesBatchReconciliationRows(filteredReconciliationResult.data as TransactionStatusRow[]);
+  const adminDiagnostics = adminReconciliationDiagnostics.data;
   const summaryMismatch = !salesSummaryResult.error && selectedSummary.rowsUsed === 0 && (
     dayBreakdownRows.length > 0
       || monthBreakdownRows.length > 0
@@ -531,7 +852,23 @@ async function SalesDashboardPageContent({
   const totalCard = selectedSummary.cardPaymentAmount;
   const totalUnknownPayment = selectedSummary.unknownPaymentAmount;
   const hasTenderBreakdown = selectedSummary.paymentMethodAvailable;
-  const hasBreakdownRows = selectedSummary.rowsUsed > 0 || dayBreakdownRows.length > 0;
+  const hasBreakdownData = [
+    dayBreakdownRows,
+    monthBreakdownRows,
+    hourBreakdownRows,
+    machineBreakdownRows,
+    locationBreakdownRows,
+    productBreakdownRows,
+  ].some((rows) => rows.length > 0);
+  const hasBreakdownErrors = Boolean(
+    dayBreakdownResult.error
+    || monthBreakdownResult.error
+    || hourBreakdownResult.error
+    || machineBreakdownResult.error
+    || locationBreakdownResult.error
+    || productBreakdownResult.error,
+  );
+  const hasBreakdownRows = hasBreakdownData || hasBreakdownErrors;
   const statusTotals = {
     failedVendCount: selectedSummary.failedVendCount,
     failedVendAmount: selectedSummary.failedVendAmount,
@@ -572,19 +909,21 @@ async function SalesDashboardPageContent({
   const hasRawSuccessfulRows = rawSuccessfulRowsInRange > 0;
   const hasDashboardSalesRows = totalTransactions > 0;
   const publicSummaryUnavailable = Boolean(salesSummaryResult.error) || summaryMismatch;
-  const publicChartUnavailable = Boolean(dayBreakdownResult.error || monthBreakdownResult.error || hourBreakdownResult.error || machineBreakdownResult.error || locationBreakdownResult.error || productBreakdownResult.error);
+  const publicComparisonUnavailable = Boolean(comparisonRange && (comparisonSummaryResult.error || publicSummaryUnavailable));
+  const publicSourceUnavailable = Boolean(batchResult.error || fullReconciliationResult.error || filteredReconciliationResult.error);
   const technicalIssues: TechnicalIssue[] = [
-    batchResult.error ? { label: "VMS batch coverage query", message: batchResult.error } : null,
-    fullReconciliationResult.error ? { label: "Full reconciliation query", message: fullReconciliationResult.error } : null,
-    salesSummaryResult.error ? { label: "Sales summary RPC", message: salesSummaryResult.error } : null,
-    comparisonRange && comparisonSummaryResult.error ? { label: "Comparison sales summary RPC", message: comparisonSummaryResult.error } : null,
-    dayBreakdownResult.error ? { label: "Daily sales breakdown RPC", message: dayBreakdownResult.error } : null,
-    monthBreakdownResult.error ? { label: "Monthly sales breakdown RPC", message: monthBreakdownResult.error } : null,
-    hourBreakdownResult.error ? { label: "Hourly sales breakdown RPC", message: hourBreakdownResult.error } : null,
-    machineBreakdownResult.error ? { label: "Machine sales breakdown RPC", message: machineBreakdownResult.error } : null,
-    locationBreakdownResult.error ? { label: "Location sales breakdown RPC", message: locationBreakdownResult.error } : null,
-    productBreakdownResult.error ? { label: "Product sales breakdown RPC", message: productBreakdownResult.error } : null,
-    filteredReconciliationResult.error ? { label: "Filtered reconciliation query", message: filteredReconciliationResult.error } : null,
+    batchResult.error ? { label: "VMS batch coverage query", message: batchResult.error, code: batchResult.errorCode, sectionName: batchResult.sectionName, rpcName: batchResult.rpcName, selectedRangeKey: String(params.range ?? "default"), dateFrom: "", dateTo: "", loadedAt: batchResult.loadedAt, elapsedMs: batchResult.elapsedMs, rowCount: batchResult.count } : null,
+    fullReconciliationResult.error ? { label: "Full reconciliation query", message: fullReconciliationResult.error, code: fullReconciliationResult.errorCode, sectionName: fullReconciliationResult.sectionName, rpcName: fullReconciliationResult.rpcName, selectedRangeKey: String(params.range ?? "default"), dateFrom: "", dateTo: "", loadedAt: fullReconciliationResult.loadedAt, elapsedMs: fullReconciliationResult.elapsedMs, rowCount: fullReconciliationResult.count } : null,
+    salesSummaryResult.error ? { label: "Sales summary RPC", message: salesSummaryResult.error, code: salesSummaryResult.errorCode, sectionName: salesSummaryResult.sectionName, rpcName: salesSummaryResult.rpcName, selectedRangeKey: selectedRange.key, dateFrom: selectedRange.start, dateTo: selectedRange.end, loadedAt: salesSummaryResult.loadedAt, elapsedMs: salesSummaryResult.elapsedMs, rowCount: salesSummaryResult.count } : null,
+    comparisonRange && comparisonSummaryResult.error ? { label: "Comparison sales summary RPC", message: comparisonSummaryResult.error, code: comparisonSummaryResult.errorCode, sectionName: comparisonSummaryResult.sectionName, rpcName: comparisonSummaryResult.rpcName, selectedRangeKey: comparisonRange.key, dateFrom: comparisonRange.start, dateTo: comparisonRange.end, loadedAt: comparisonSummaryResult.loadedAt, elapsedMs: comparisonSummaryResult.elapsedMs, rowCount: comparisonSummaryResult.count } : null,
+    dayBreakdownResult.error ? { label: "Daily sales breakdown RPC", message: dayBreakdownResult.error, code: dayBreakdownResult.errorCode, sectionName: dayBreakdownResult.sectionName, rpcName: dayBreakdownResult.rpcName, selectedRangeKey: selectedRange.key, dateFrom: selectedRange.start, dateTo: selectedRange.end, loadedAt: dayBreakdownResult.loadedAt, elapsedMs: dayBreakdownResult.elapsedMs, rowCount: dayBreakdownResult.count } : null,
+    monthBreakdownResult.error ? { label: "Monthly sales breakdown RPC", message: monthBreakdownResult.error, code: monthBreakdownResult.errorCode, sectionName: monthBreakdownResult.sectionName, rpcName: monthBreakdownResult.rpcName, selectedRangeKey: selectedRange.key, dateFrom: selectedRange.start, dateTo: selectedRange.end, loadedAt: monthBreakdownResult.loadedAt, elapsedMs: monthBreakdownResult.elapsedMs, rowCount: monthBreakdownResult.count } : null,
+    hourBreakdownResult.error ? { label: "Hourly sales breakdown RPC", message: hourBreakdownResult.error, code: hourBreakdownResult.errorCode, sectionName: hourBreakdownResult.sectionName, rpcName: hourBreakdownResult.rpcName, selectedRangeKey: selectedRange.key, dateFrom: selectedRange.start, dateTo: selectedRange.end, loadedAt: hourBreakdownResult.loadedAt, elapsedMs: hourBreakdownResult.elapsedMs, rowCount: hourBreakdownResult.count } : null,
+    machineBreakdownResult.error ? { label: "Machine sales breakdown RPC", message: machineBreakdownResult.error, code: machineBreakdownResult.errorCode, sectionName: machineBreakdownResult.sectionName, rpcName: machineBreakdownResult.rpcName, selectedRangeKey: selectedRange.key, dateFrom: selectedRange.start, dateTo: selectedRange.end, loadedAt: machineBreakdownResult.loadedAt, elapsedMs: machineBreakdownResult.elapsedMs, rowCount: machineBreakdownResult.count } : null,
+    locationBreakdownResult.error ? { label: "Location sales breakdown RPC", message: locationBreakdownResult.error, code: locationBreakdownResult.errorCode, sectionName: locationBreakdownResult.sectionName, rpcName: locationBreakdownResult.rpcName, selectedRangeKey: selectedRange.key, dateFrom: selectedRange.start, dateTo: selectedRange.end, loadedAt: locationBreakdownResult.loadedAt, elapsedMs: locationBreakdownResult.elapsedMs, rowCount: locationBreakdownResult.count } : null,
+    productBreakdownResult.error ? { label: "Product sales breakdown RPC", message: productBreakdownResult.error, code: productBreakdownResult.errorCode, sectionName: productBreakdownResult.sectionName, rpcName: productBreakdownResult.rpcName, selectedRangeKey: selectedRange.key, dateFrom: selectedRange.start, dateTo: selectedRange.end, loadedAt: productBreakdownResult.loadedAt, elapsedMs: productBreakdownResult.elapsedMs, rowCount: productBreakdownResult.count } : null,
+    filteredReconciliationResult.error ? { label: "Filtered reconciliation query", message: filteredReconciliationResult.error, code: filteredReconciliationResult.errorCode, sectionName: filteredReconciliationResult.sectionName, rpcName: filteredReconciliationResult.rpcName, selectedRangeKey: selectedRange.key, dateFrom: selectedRange.start, dateTo: selectedRange.end, loadedAt: filteredReconciliationResult.loadedAt, elapsedMs: filteredReconciliationResult.elapsedMs, rowCount: filteredReconciliationResult.count } : null,
+    adminReconciliationDiagnostics.error ? { label: "Admin reconciliation diagnostics", message: adminReconciliationDiagnostics.error, code: adminReconciliationDiagnostics.errorCode, sectionName: adminReconciliationDiagnostics.sectionName, rpcName: null, selectedRangeKey: selectedRange.key, dateFrom: selectedRange.start, dateTo: selectedRange.end, loadedAt: adminReconciliationDiagnostics.loadedAt, elapsedMs: adminReconciliationDiagnostics.elapsedMs, rowCount: adminDiagnostics ? 1 : 0 } : null,
   ].filter((issue): issue is TechnicalIssue => Boolean(issue));
 
   return (
@@ -662,6 +1001,12 @@ async function SalesDashboardPageContent({
           title="Data Source Summary"
           subtitle="Sales dashboard totals use active detailed Order Details files inside the selected business-date range."
         >
+          {publicSourceUnavailable ? (
+            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">
+              Sales data source details could not load. Please contact admin.
+            </div>
+          ) : null}
+
           {publicSummaryUnavailable ? (
             <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">
               {summaryMismatch
@@ -786,11 +1131,21 @@ async function SalesDashboardPageContent({
 
             {technicalIssues.length ? (
               <div className="mt-4">
-                <DataTable headers={["Technical check", "Result"]}>
+                <DataTable headers={["Technical check", "Result", "Context"]}>
                   {technicalIssues.map((issue) => (
-                    <tr key={issue.label}>
+                    <tr key={`${issue.sectionName}:${issue.label}`}>
                       <td className="font-medium">{issue.label}</td>
                       <td className="text-sm text-slate-600">{issue.message}</td>
+                      <td className="text-xs text-slate-500">
+                        <div>Section: {issue.sectionName}</div>
+                        {issue.rpcName ? <div>RPC: {issue.rpcName}</div> : null}
+                        {issue.code ? <div>Code: {issue.code}</div> : null}
+                        <div>Filter: {issue.selectedRangeKey}</div>
+                        {issue.dateFrom && issue.dateTo ? <div>Range: {issue.dateFrom} to {issue.dateTo}</div> : null}
+                        <div>Rows returned: {formatInteger(issue.rowCount)}</div>
+                        <div>Loaded at: {formatVmsDateTime(issue.loadedAt)}</div>
+                        <div>Elapsed: {issue.elapsedMs} ms</div>
+                      </td>
                     </tr>
                   ))}
                 </DataTable>
@@ -842,47 +1197,47 @@ async function SalesDashboardPageContent({
               </div>
             ) : null}
 
-            {adminReconciliationDiagnostics ? (
+            {adminDiagnostics ? (
                 <>
                   <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
                     <div>
                       <div className="font-semibold text-slate-900">Parsed successful rows</div>
-                      <div>{formatInteger(adminReconciliationDiagnostics.parsedSuccessfulCount)}</div>
-                      <div className="text-xs text-slate-500">{lyd(adminReconciliationDiagnostics.parsedSuccessfulAmount)}</div>
+                      <div>{formatInteger(adminDiagnostics.parsedSuccessfulCount)}</div>
+                      <div className="text-xs text-slate-500">{lyd(adminDiagnostics.parsedSuccessfulAmount)}</div>
                     </div>
                     <div>
                       <div className="font-semibold text-slate-900">Inserted successful rows</div>
-                      <div>{formatInteger(adminReconciliationDiagnostics.importedSuccessfulCount)}</div>
-                      <div className="text-xs text-slate-500">{lyd(adminReconciliationDiagnostics.importedSuccessfulAmount)}</div>
+                      <div>{formatInteger(adminDiagnostics.importedSuccessfulCount)}</div>
+                      <div className="text-xs text-slate-500">{lyd(adminDiagnostics.importedSuccessfulAmount)}</div>
                     </div>
                     <div>
                       <div className="font-semibold text-slate-900">Dashboard-counted rows</div>
-                      <div>{formatInteger(adminReconciliationDiagnostics.dashboardSuccessfulCount)}</div>
-                      <div className="text-xs text-slate-500">{lyd(adminReconciliationDiagnostics.dashboardSuccessfulAmount)}</div>
+                      <div>{formatInteger(adminDiagnostics.dashboardSuccessfulCount)}</div>
+                      <div className="text-xs text-slate-500">{lyd(adminDiagnostics.dashboardSuccessfulAmount)}</div>
                     </div>
                     <div>
                       <div className="font-semibold text-slate-900">Excluded successful rows</div>
-                      <div>{formatInteger(adminReconciliationDiagnostics.excludedSuccessfulCount)}</div>
-                      <div className="text-xs text-slate-500">{lyd(adminReconciliationDiagnostics.excludedSuccessfulAmount)}</div>
+                      <div>{formatInteger(adminDiagnostics.excludedSuccessfulCount)}</div>
+                      <div className="text-xs text-slate-500">{lyd(adminDiagnostics.excludedSuccessfulAmount)}</div>
                     </div>
                   </div>
 
                   <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
                     <div>
                       <div className="font-semibold text-slate-900">Parsed rows missing product mapping</div>
-                      <div>{formatInteger(adminReconciliationDiagnostics.parsedMissingProductCount)}</div>
+                      <div>{formatInteger(adminDiagnostics.parsedMissingProductCount)}</div>
                     </div>
                     <div>
                       <div className="font-semibold text-slate-900">Parsed rows missing machine mapping</div>
-                      <div>{formatInteger(adminReconciliationDiagnostics.parsedMissingMachineCount)}</div>
+                      <div>{formatInteger(adminDiagnostics.parsedMissingMachineCount)}</div>
                     </div>
                     <div>
                       <div className="font-semibold text-slate-900">Parsed rows missing business date</div>
-                      <div>{formatInteger(adminReconciliationDiagnostics.parsedMissingBusinessDateCount)}</div>
+                      <div>{formatInteger(adminDiagnostics.parsedMissingBusinessDateCount)}</div>
                     </div>
                     <div>
                       <div className="font-semibold text-slate-900">Duplicate rows seen in parsed file</div>
-                      <div>{formatInteger(adminReconciliationDiagnostics.parsedSuccessfulDuplicateRows)}</div>
+                      <div>{formatInteger(adminDiagnostics.parsedSuccessfulDuplicateRows)}</div>
                     </div>
                   </div>
                 </>
@@ -1003,10 +1358,10 @@ async function SalesDashboardPageContent({
                 </div>
               )}
 
-              {adminReconciliationDiagnostics?.statusGroups.length ? (
+              {adminDiagnostics?.statusGroups.length ? (
                 <div className="mt-4">
                   <DataTable headers={["Raw shipping status", "Raw refund status", "Normalized status", "Rows", "Amount"]}>
-                    {adminReconciliationDiagnostics.statusGroups.map((row) => (
+                    {adminDiagnostics.statusGroups.map((row) => (
                       <tr key={`${row.rawShippingStatus}:${row.rawRefundStatus}:${row.normalizedStatus}`}>
                         <td className="font-medium">{row.rawShippingStatus}</td>
                         <td>{row.rawRefundStatus}</td>
@@ -1019,10 +1374,10 @@ async function SalesDashboardPageContent({
                 </div>
               ) : null}
 
-              {adminReconciliationDiagnostics?.excludedSuccessfulRows.length ? (
+              {adminDiagnostics?.excludedSuccessfulRows.length ? (
                 <div className="mt-4">
                   <DataTable headers={["Row", "File", "Order id", "Business date", "Machine", "Product", "Slot", "Raw status", "Amount", "Reason"]}>
-                    {adminReconciliationDiagnostics.excludedSuccessfulRows.map((row) => (
+                    {adminDiagnostics.excludedSuccessfulRows.map((row) => (
                       <tr key={`${row.batchId}:${row.rowNumber}`}>
                         <td className="font-medium">{formatInteger(row.rowNumber)}</td>
                         <td className="text-sm">{row.sourceFileName}</td>
@@ -1047,10 +1402,10 @@ async function SalesDashboardPageContent({
                 </div>
               ) : null}
 
-              {adminReconciliationDiagnostics?.statusFilteredRows.length ? (
+              {adminDiagnostics?.statusFilteredRows.length ? (
                 <div className="mt-4">
                   <DataTable headers={["Row", "File", "Order id", "Business date", "Machine", "Product", "Slot", "Raw status", "Amount", "Status reason"]}>
-                    {adminReconciliationDiagnostics.statusFilteredRows.map((row) => (
+                    {adminDiagnostics.statusFilteredRows.map((row) => (
                       <tr key={`status:${row.batchId}:${row.rowNumber}`}>
                         <td className="font-medium">{formatInteger(row.rowNumber)}</td>
                         <td className="text-sm">{row.sourceFileName}</td>
@@ -1078,7 +1433,11 @@ async function SalesDashboardPageContent({
           title="Comparison view"
           subtitle={comparisonRange ? `Selected range ${selectedRangeLabel} compared with ${comparisonRangeLabel}.` : "All-time reports do not have a comparison window, so choose a finite month or year for side-by-side reporting."}
         >
-          {comparisonRange ? (
+          {comparisonRange ? publicComparisonUnavailable ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">
+              Sales comparison could not load. Please contact admin.
+            </div>
+          ) : (
             <DataTable headers={["Metric", "Selected", "Comparison", "Delta"]}>
               <tr>
                 <td className="font-medium">Total sales</td>
@@ -1129,13 +1488,7 @@ async function SalesDashboardPageContent({
           )}
         </KpiSection>
 
-        {publicChartUnavailable ? (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">
-            Some detailed sales breakdowns could not load. Please contact admin.
-          </div>
-        ) : null}
-
-        {!hasDashboardSalesRows ? (
+        {!hasDashboardSalesRows && !hasBreakdownRows ? (
           <EmptyState
             title={hasRawSuccessfulRows || publicSummaryUnavailable ? "Sales summary could not be calculated from the selected files." : "No detailed sales rows found for this date range."}
             body={hasRawSuccessfulRows || publicSummaryUnavailable
@@ -1144,35 +1497,69 @@ async function SalesDashboardPageContent({
           />
         ) : (
           <>
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              <KpiSection title="Total sales"><MetricValue>{lyd(totalSales)}</MetricValue></KpiSection>
-              <KpiSection title="Units sold"><MetricValue>{formatInteger(totalUnits)}</MetricValue></KpiSection>
-              <KpiSection title="Average transaction"><MetricValue>{totalTransactions ? lyd(selectedSummary.averageTransaction || (totalSales / totalTransactions)) : "Unknown / not mapped"}</MetricValue></KpiSection>
-              <KpiSection title="Failed vend rate"><MetricValue>{failedVendRate}</MetricValue></KpiSection>
-              <KpiSection title="Cash sales"><MetricValue compact={!hasTenderBreakdown}>{hasTenderBreakdown ? lyd(totalCash) : "Payment method unavailable"}</MetricValue></KpiSection>
-              <KpiSection title="Card sales"><MetricValue compact={!hasTenderBreakdown}>{hasTenderBreakdown ? lyd(totalCard) : "Payment method unavailable"}</MetricValue></KpiSection>
-              <KpiSection title="Unknown payment"><MetricValue compact={!hasTenderBreakdown}>{hasTenderBreakdown ? lyd(totalUnknownPayment) : "Payment method unavailable"}</MetricValue></KpiSection>
-              <KpiSection title="Failed vend amount"><MetricValue>{lyd(statusTotals.failedVendAmount)}</MetricValue></KpiSection>
-              <KpiSection title="Refund amount"><MetricValue>{lyd(statusTotals.refundAmount)}</MetricValue></KpiSection>
-            </div>
+            {hasDashboardSalesRows ? (
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <KpiSection title="Total sales"><MetricValue>{lyd(totalSales)}</MetricValue></KpiSection>
+                <KpiSection title="Units sold"><MetricValue>{formatInteger(totalUnits)}</MetricValue></KpiSection>
+                <KpiSection title="Average transaction"><MetricValue>{totalTransactions ? lyd(selectedSummary.averageTransaction || (totalSales / totalTransactions)) : "Unknown / not mapped"}</MetricValue></KpiSection>
+                <KpiSection title="Failed vend rate"><MetricValue>{failedVendRate}</MetricValue></KpiSection>
+                <KpiSection title="Cash sales"><MetricValue compact={!hasTenderBreakdown}>{hasTenderBreakdown ? lyd(totalCash) : "Payment method unavailable"}</MetricValue></KpiSection>
+                <KpiSection title="Card sales"><MetricValue compact={!hasTenderBreakdown}>{hasTenderBreakdown ? lyd(totalCard) : "Payment method unavailable"}</MetricValue></KpiSection>
+                <KpiSection title="Unknown payment"><MetricValue compact={!hasTenderBreakdown}>{hasTenderBreakdown ? lyd(totalUnknownPayment) : "Payment method unavailable"}</MetricValue></KpiSection>
+                <KpiSection title="Failed vend amount"><MetricValue>{lyd(statusTotals.failedVendAmount)}</MetricValue></KpiSection>
+                <KpiSection title="Refund amount"><MetricValue>{lyd(statusTotals.refundAmount)}</MetricValue></KpiSection>
+              </div>
+            ) : (
+              <EmptyState title="Sales summary could not load." body="Please contact admin if this keeps happening." />
+            )}
 
             {hasBreakdownRows ? (
               <>
                 <div className="grid gap-4 xl:grid-cols-2">
                   <KpiSection title="Sales by day" subtitle={selectedRangeLabel}>
-                    <BarList rows={breakdownRowsToBarRows(dayBreakdownRows)} valueFormatter={lyd} />
+                    {dayBreakdownResult.error ? (
+                      <SectionInlineMessage title="Sales by day could not load." body="Please contact admin if this keeps happening." />
+                    ) : dayBreakdownRows.length ? (
+                      <BarList rows={breakdownRowsToBarRows(dayBreakdownRows)} valueFormatter={lyd} />
+                    ) : (
+                      <SectionInlineMessage title="No daily sales found." body="There are no detailed daily sales rows in the selected range." />
+                    )}
                   </KpiSection>
                   <KpiSection title="Monthly sales trend" subtitle={selectedRangeLabel}>
-                    <BarList rows={breakdownRowsToBarRows(monthBreakdownRows)} valueFormatter={lyd} />
+                    {monthBreakdownResult.error ? (
+                      <SectionInlineMessage title="Monthly sales trend could not load." body="Please contact admin if this keeps happening." />
+                    ) : monthBreakdownRows.length ? (
+                      <BarList rows={breakdownRowsToBarRows(monthBreakdownRows)} valueFormatter={lyd} />
+                    ) : (
+                      <SectionInlineMessage title="No monthly sales found." body="There are no detailed monthly sales rows in the selected range." />
+                    )}
                   </KpiSection>
                   <KpiSection title="Sales by hour" subtitle={selectedRangeLabel}>
-                    <BarList rows={breakdownRowsToBarRows(hourBreakdownRows)} valueFormatter={lyd} />
+                    {hourBreakdownResult.error ? (
+                      <SectionInlineMessage title="Sales by hour could not load." body="Please contact admin if this keeps happening." />
+                    ) : hourBreakdownRows.length ? (
+                      <BarList rows={breakdownRowsToBarRows(hourBreakdownRows)} valueFormatter={lyd} />
+                    ) : (
+                      <SectionInlineMessage title="No hourly sales found." body="There are no detailed hourly sales rows in the selected range." />
+                    )}
                   </KpiSection>
                   <KpiSection title="Sales by machine" subtitle={selectedRangeLabel}>
-                    <BarList rows={breakdownRowsToBarRows(machineBreakdownRows).slice(0, 10)} valueFormatter={lyd} />
+                    {machineBreakdownResult.error ? (
+                      <SectionInlineMessage title="Sales by machine could not load." body="Please contact admin if this keeps happening." />
+                    ) : machineBreakdownRows.length ? (
+                      <BarList rows={breakdownRowsToBarRows(machineBreakdownRows).slice(0, 10)} valueFormatter={lyd} />
+                    ) : (
+                      <SectionInlineMessage title="No machine sales found." body="There are no detailed machine sales rows in the selected range." />
+                    )}
                   </KpiSection>
                   <KpiSection title="Sales by location" subtitle={selectedRangeLabel}>
-                    <BarList rows={breakdownRowsToBarRows(locationBreakdownRows).slice(0, 10)} valueFormatter={lyd} />
+                    {locationBreakdownResult.error ? (
+                      <SectionInlineMessage title="Sales by location could not load." body="Please contact admin if this keeps happening." />
+                    ) : locationBreakdownRows.length ? (
+                      <BarList rows={breakdownRowsToBarRows(locationBreakdownRows).slice(0, 10)} valueFormatter={lyd} />
+                    ) : (
+                      <SectionInlineMessage title="No location sales found." body="There are no detailed location sales rows in the selected range." />
+                    )}
                   </KpiSection>
                 </div>
 
@@ -1185,19 +1572,28 @@ async function SalesDashboardPageContent({
                 )}
 
                 <KpiSection title="Sales by product" subtitle={selectedRangeLabel}>
-                  <DataTable headers={["Product", "Units", "Revenue"]}>
-                    {productBreakdownRows.map((row) => (
-                      <tr key={row.bucketLabel}>
-                        <td className="font-medium">{row.bucketLabel}</td>
-                        <td>{formatInteger(unitsByProduct.get(row.bucketLabel) ?? 0)}</td>
-                        <td>{lyd(row.successfulSalesAmount)}</td>
-                      </tr>
-                    ))}
-                  </DataTable>
+                  {productBreakdownResult.error ? (
+                    <SectionInlineMessage title="Sales by product could not load." body="Please contact admin if this keeps happening." />
+                  ) : productBreakdownRows.length ? (
+                    <DataTable headers={["Product", "Units", "Revenue"]}>
+                      {productBreakdownRows.map((row) => (
+                        <tr key={row.bucketLabel}>
+                          <td className="font-medium">{row.bucketLabel}</td>
+                          <td>{formatInteger(unitsByProduct.get(row.bucketLabel) ?? 0)}</td>
+                          <td>{lyd(row.successfulSalesAmount)}</td>
+                        </tr>
+                      ))}
+                    </DataTable>
+                  ) : (
+                    <SectionInlineMessage title="No product sales found." body="There are no detailed product sales rows in the selected range." />
+                  )}
                 </KpiSection>
               </>
             ) : (
-              <EmptyState title="Detailed sales breakdown unavailable" body="Some detailed sales breakdowns could not load. Please contact admin." />
+              <EmptyState
+                title={hasBreakdownErrors ? "Sales chart could not load." : "No sales chart data found."}
+                body={hasBreakdownErrors ? "Please contact admin if this keeps happening." : "There are no detailed chart breakdown rows in the selected range."}
+              />
             )}
           </>
         )}
