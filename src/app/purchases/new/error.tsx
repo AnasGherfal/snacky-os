@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 
-export default function NewPurchaseError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+export default function NewPurchaseError({ reset }: { error: Error & { digest?: string }; reset: () => void }) {
   return (
     <div className="surface-card border-rose-200">
       <div className="max-w-2xl">
@@ -10,12 +10,6 @@ export default function NewPurchaseError({ error, reset }: { error: Error & { di
         <p className="mt-2 text-sm leading-6 text-slate-600">
           The form state hit a problem, but no purchase was received and no inventory movement was created. Retry the form, or go back to purchases.
         </p>
-        {process.env.NODE_ENV !== "production" ? (
-          <details className="mt-4 rounded-lg bg-slate-50 p-3 text-xs text-slate-700">
-            <summary className="cursor-pointer font-semibold">Debug details</summary>
-            <pre className="mt-2 whitespace-pre-wrap break-words">{error.message}</pre>
-          </details>
-        ) : null}
         <div className="mt-5 flex flex-col gap-2 sm:flex-row">
           <button type="button" onClick={reset} className="btn-primary">Retry form</button>
           <Link href="/purchases" className="btn-secondary">Back to purchases</Link>

@@ -1001,7 +1001,7 @@ export default async function DashboardPage() {
     return (
       <>
         <PageHeader title="Dashboard" subtitle="How much money Snacky made, what needs attention, and what should happen next." />
-        <EmptyState title="Dashboard recovered from an error" body="One of the dashboard render paths failed unexpectedly. The page stayed online; technical details are in the server logs." />
+        <EmptyState title="Dashboard recovered from an error" body="One of the dashboard render paths failed unexpectedly. Please contact admin if the issue keeps happening." />
       </>
     );
   }

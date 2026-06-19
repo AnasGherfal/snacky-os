@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { FormSubmitButton } from "@/components/FormSubmitButton";
+import { AdminTechnicalDetails } from "@/components/TechnicalDetails";
 import { DataTable, ErrorState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
-import { canConfirmVmsImports, canViewVmsImports, getEffectivePermissions } from "@/lib/authz";
+import { canConfirmVmsImports, canViewVmsImports, getEffectivePermissions, isOwnerAdminRole } from "@/lib/authz";
 import { reprocessVmsImportBatch, updateVmsImportBatchState } from "@/lib/vms-import-actions";
 import { parseReportType, vmsExpectedFields, vmsReportTypes } from "@/lib/vms-parser";
 import {
@@ -148,20 +149,18 @@ function userFacingLoadError(error: unknown, queryName?: string) {
   // Try to extract specific missing table or column names for actionable diagnostics.
   const tableMatch = text.match(/relation ['"]?([a-z0-9_\.]+)['"]? does not exist/i) || text.match(/table ['"]?([a-z0-9_\.]+)['"]? does not exist/i);
   if (tableMatch) {
-    const missing = tableMatch[1];
-    console.error("[vms-import:detail] Missing table detected", { missing, raw: text });
-    return `Missing database table: ${missing}. Run the latest migration to create this table.`;
+    console.error("[vms-import:detail] Missing table detected", { missing: tableMatch[1], raw: text });
+    return "VMS import setup is incomplete. Please contact admin.";
   }
   const columnMatch = text.match(/column ['"]?([a-z0-9_]+)['"]? does not exist/i);
   if (columnMatch) {
-    const missingCol = columnMatch[1];
-    console.error("[vms-import:detail] Missing column detected", { missingCol, raw: text });
-    return `Missing database column: ${missingCol}. Run the latest migration to add this column.`;
+    console.error("[vms-import:detail] Missing column detected", { missingCol: columnMatch[1], raw: text });
+    return "VMS import setup is incomplete. Please contact admin.";
   }
   if (queryError?.code === "42P01" || queryError?.code === "42703" || text.includes("does not exist") || text.includes("schema cache")) {
-    return "VMS import schema is missing or stale. Run the latest migration.";
+    return "VMS import setup is incomplete. Please contact admin.";
   }
-  return "Snacky OS could not load this VMS import. Technical details are available in the server console.";
+  return "VMS import could not load. Please contact admin.";
 }
 
 async function checkRequiredVmsTables(supabase: SupabaseServerClient, batchId: string, currentUserId: string | null, effectivePermissions: string[]) {
@@ -658,7 +657,7 @@ async function VmsImportBatchDetailPageContent({
             {summary?.failedTargets?.length ? (
               <ul className="mt-2 list-disc pl-5">{summary.failedTargets.map((target) => <li key={target}>{target}</li>)}</ul>
             ) : batch.latest_error || batch.last_error ? (
-              <p className="mt-2">{stringValue(batch.latest_error) || stringValue(batch.last_error)}</p>
+              <p className="mt-2">One or more import steps failed. Please contact admin.</p>
             ) : (
               <p className="mt-2">Nothing failed.</p>
             )}
@@ -710,8 +709,12 @@ async function VmsImportBatchDetailPageContent({
         ) : null}
       </section>
 
-      <section className="surface-card mb-6">
-        <h2 className="mb-4 text-lg font-semibold text-slate-900">Diagnostics</h2>
+      <AdminTechnicalDetails
+        canView={isOwnerAdminRole(profile)}
+        title="Technical details"
+        summary="Batch loader issues, relation status, and row counts for owner/admin review."
+        className="mb-6"
+      >
         {latestDiagnosticError ? (
           <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             Latest load issue: {latestDiagnosticError}
@@ -795,7 +798,7 @@ async function VmsImportBatchDetailPageContent({
             ))}
           </div>
         </div>
-      </section>
+      </AdminTechnicalDetails>
 
       {canConfirmVmsImports(profile) ? (
         <section className="surface-card mb-6">
@@ -855,91 +858,98 @@ async function VmsImportBatchDetailPageContent({
         </section>
       ) : null}
 
-      <section className="surface-card mb-6">
-        <h2 className="mb-4 text-lg font-semibold text-slate-900">Mapped columns</h2>
-        {!Object.keys(mapping).length ? (
-          <InlineEmpty title="No column mapping saved" body="This batch was imported before column mapping details were recorded." />
-        ) : (
-          <DataTable headers={["Expected field", "Source column"]}>
-            {Object.entries(mapping).map(([field, source]) => (
-              <tr key={field}>
-                <td className="font-medium text-slate-900">{fieldLabels.get(field) ?? field}</td>
-                <td>{String(source || "-")}</td>
-              </tr>
-            ))}
-          </DataTable>
-        )}
-      </section>
+      <AdminTechnicalDetails
+        canView={isOwnerAdminRole(profile)}
+        title="Technical details"
+        summary="Mapped columns, row-level validation issues, and raw import rows for owner/admin review."
+        className="mb-6"
+      >
+        <section>
+          <h2 className="mb-4 text-lg font-semibold text-slate-900">Mapped columns</h2>
+          {!Object.keys(mapping).length ? (
+            <InlineEmpty title="No column mapping saved" body="This batch was imported before column mapping details were recorded." />
+          ) : (
+            <DataTable headers={["Expected field", "Source column"]}>
+              {Object.entries(mapping).map(([field, source]) => (
+                <tr key={field}>
+                  <td className="font-medium text-slate-900">{fieldLabels.get(field) ?? field}</td>
+                  <td>{String(source || "-")}</td>
+                </tr>
+              ))}
+            </DataTable>
+          )}
+        </section>
 
-      <section className="surface-card mb-6">
-        <h2 className="mb-4 text-lg font-semibold text-slate-900">Row status breakdown</h2>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          <StatCard label="Imported" value={importedRows.length} />
-          <StatCard label="Needs product mapping" value={needsMappingRows.length} />
-          <StatCard label="Unknown machine" value={unknownMachineRows.length} />
-          <StatCard label="Invalid row" value={invalidRows.length} />
-          <StatCard label="Skipped" value={rowList.filter((row) => row.validation_status === "skipped").length} />
-        </div>
-      </section>
+        <section>
+          <h2 className="mb-4 text-lg font-semibold text-slate-900">Row status breakdown</h2>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            <StatCard label="Imported" value={importedRows.length} />
+            <StatCard label="Needs product mapping" value={needsMappingRows.length} />
+            <StatCard label="Unknown machine" value={unknownMachineRows.length} />
+            <StatCard label="Invalid row" value={invalidRows.length} />
+            <StatCard label="Skipped" value={rowList.filter((row) => row.validation_status === "skipped").length} />
+          </div>
+        </section>
 
-      <section className="surface-card mb-6">
-        <h2 className="mb-4 text-lg font-semibold text-slate-900">Rows needing product mapping</h2>
-        {!needsMappingRows.length ? (
-          <InlineEmpty title="No product mapping rows" body="All product values in this batch are mapped or not required by the report type." />
-        ) : (
-          <DataTable headers={["Row", "VMS product", "Machine", "Status", "Errors", "Raw data"]}>
-            {needsMappingRows.slice(0, 100).map((row) => (
-              <tr key={row.id}>
-                <td>{row.row_number}</td>
-                <td>{productLabel(row)}</td>
-                <td>{machineLabel(row)}</td>
-                <td><StatusBadge status={row.product_match_status ?? row.validation_status} /></td>
-                <td className="max-w-xs">{validationErrors(row)}</td>
-                <td><RawData row={row} /></td>
-              </tr>
-            ))}
-          </DataTable>
-        )}
-      </section>
+        <section>
+          <h2 className="mb-4 text-lg font-semibold text-slate-900">Rows needing product mapping</h2>
+          {!needsMappingRows.length ? (
+            <InlineEmpty title="No product mapping rows" body="All product values in this batch are mapped or not required by the report type." />
+          ) : (
+            <DataTable headers={["Row", "VMS product", "Machine", "Status", "Errors", "Raw data"]}>
+              {needsMappingRows.slice(0, 100).map((row) => (
+                <tr key={row.id}>
+                  <td>{row.row_number}</td>
+                  <td>{productLabel(row)}</td>
+                  <td>{machineLabel(row)}</td>
+                  <td><StatusBadge status={row.product_match_status ?? row.validation_status} /></td>
+                  <td className="max-w-xs">{validationErrors(row)}</td>
+                  <td><RawData row={row} /></td>
+                </tr>
+              ))}
+            </DataTable>
+          )}
+        </section>
 
-      <section className="surface-card mb-6">
-        <h2 className="mb-4 text-lg font-semibold text-slate-900">Unknown machines</h2>
-        {!unknownMachineRows.length ? (
-          <InlineEmpty title="No unknown machines" body="All machine values in this batch were matched." />
-        ) : (
-          <DataTable headers={["Row", "Machine value", "Product", "Status", "Errors", "Raw data"]}>
-            {unknownMachineRows.slice(0, 100).map((row) => (
-              <tr key={row.id}>
-                <td>{row.row_number}</td>
-                <td>{machineLabel(row)}</td>
-                <td>{productLabel(row)}</td>
-                <td><StatusBadge status={row.machine_match_status ?? row.validation_status} /></td>
-                <td className="max-w-xs">{validationErrors(row)}</td>
-                <td><RawData row={row} /></td>
-              </tr>
-            ))}
-          </DataTable>
-        )}
-      </section>
+        <section>
+          <h2 className="mb-4 text-lg font-semibold text-slate-900">Unknown machines</h2>
+          {!unknownMachineRows.length ? (
+            <InlineEmpty title="No unknown machines" body="All machine values in this batch were matched." />
+          ) : (
+            <DataTable headers={["Row", "Machine value", "Product", "Status", "Errors", "Raw data"]}>
+              {unknownMachineRows.slice(0, 100).map((row) => (
+                <tr key={row.id}>
+                  <td>{row.row_number}</td>
+                  <td>{machineLabel(row)}</td>
+                  <td>{productLabel(row)}</td>
+                  <td><StatusBadge status={row.machine_match_status ?? row.validation_status} /></td>
+                  <td className="max-w-xs">{validationErrors(row)}</td>
+                  <td><RawData row={row} /></td>
+                </tr>
+              ))}
+            </DataTable>
+          )}
+        </section>
 
-      <section className="surface-card">
-        <h2 className="mb-4 text-lg font-semibold text-slate-900">Invalid rows</h2>
-        {!invalidRows.length ? (
-          <InlineEmpty title="No invalid rows" body="No hard validation errors were saved for this batch." />
-        ) : (
-          <DataTable headers={["Row", "Machine", "Product", "Errors", "Raw data"]}>
-            {invalidRows.slice(0, 100).map((row) => (
-              <tr key={row.id}>
-                <td>{row.row_number}</td>
-                <td>{machineLabel(row)}</td>
-                <td>{productLabel(row)}</td>
-                <td className="max-w-xs">{validationErrors(row)}</td>
-                <td><RawData row={row} /></td>
-              </tr>
-            ))}
-          </DataTable>
-        )}
-      </section>
+        <section>
+          <h2 className="mb-4 text-lg font-semibold text-slate-900">Invalid rows</h2>
+          {!invalidRows.length ? (
+            <InlineEmpty title="No invalid rows" body="No hard validation errors were saved for this batch." />
+          ) : (
+            <DataTable headers={["Row", "Machine", "Product", "Errors", "Raw data"]}>
+              {invalidRows.slice(0, 100).map((row) => (
+                <tr key={row.id}>
+                  <td>{row.row_number}</td>
+                  <td>{machineLabel(row)}</td>
+                  <td>{productLabel(row)}</td>
+                  <td className="max-w-xs">{validationErrors(row)}</td>
+                  <td><RawData row={row} /></td>
+                </tr>
+              ))}
+            </DataTable>
+          )}
+        </section>
+      </AdminTechnicalDetails>
     </>
   );
 }

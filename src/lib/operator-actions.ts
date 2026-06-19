@@ -111,26 +111,26 @@ function pickupPublicError(error: unknown) {
     return "User does not have permission to confirm pickup.";
   }
   if (code === "42883" || code === "PGRST202" || (text.includes("function") && (text.includes("confirm_route_pickup_batch") || text.includes("validate_route_workflow_schema")))) {
-    return "Database schema is missing the confirm pickup function.";
+    return "Pickup confirmation could not be saved. Please contact admin.";
   }
   if (code === "42703" || code === "PGRST204" || text.includes("schema cache") || text.includes("column")) {
-    return "Database schema is missing a column needed for pickup confirmation.";
+    return "Pickup confirmation could not be saved. Please contact admin.";
   }
   if (text.includes("invalid input value for enum route_status")) {
-    return "Database schema is missing a route status needed for pickup confirmation.";
+    return "Pickup confirmation could not be saved. Please contact admin.";
   }
   if (text.includes("invalid input value for enum route_stop_status")) {
-    return "Database schema is missing a route stop status needed for pickup confirmation.";
+    return "Pickup confirmation could not be saved. Please contact admin.";
   }
   if (code === "23503") {
-    return "Inventory movement could not be created because linked route, product, operator, storage, or pickup batch data is missing.";
+    return "Pickup confirmation could not be saved because some linked data is missing.";
   }
   if (code === "23514" || text.includes("movement_quantity_positive")) {
-    return "Inventory movement could not be created because one quantity or status is invalid.";
+    return "Pickup confirmation could not be saved because one quantity or status is invalid.";
   }
   if (text.includes("inventory movement")) return message;
 
-  return "Could not confirm pickup. Check route status, stop status, permissions, storage stock, and database setup.";
+  return "Could not confirm pickup. Please contact admin.";
 }
 
 function isMissingOptionalPickupChecklistColumn(error: unknown) {
@@ -235,8 +235,8 @@ function routeCompletionPublicError(error: unknown) {
   if (text.includes("route not found")) return message;
   if (text.includes("already cancelled") || text.includes("cancelled route")) return message;
   if (code === "42501" || text.includes("row-level security") || text.includes("permission")) return "You do not have permission to complete this route.";
-  if (code === "42703" || code === "PGRST204" || text.includes("schema cache") || text.includes("column")) return "Route completion database schema is missing a required column. Run the latest migration.";
-  if (code === "23503") return "Route completion could not save because linked route, operator, product, or storage data is missing.";
+  if (code === "42703" || code === "PGRST204" || text.includes("schema cache") || text.includes("column")) return "Route completion could not be saved. Please contact admin.";
+  if (code === "23503") return "Route completion could not save because some linked data is missing.";
   if (code === "23514") return "Route completion could not save because one route status or quantity is invalid.";
   return message || "Could not complete this route.";
 }

@@ -236,7 +236,7 @@ export default async function AdminToolsPage({
           </form>
         </ToolCard>
 
-        <ToolCard title="Reprocess VMS Mapping" description="Re-runs import processing against saved raw rows after product or machine mapping fixes.">
+        <ToolCard title="Reprocess VMS Mapping" description="Re-runs import processing after product or machine mapping fixes.">
           <form action={reprocessVmsImportBatch} className="space-y-3">
             <BatchSelect batches={batches} />
             <FormSubmitButton pendingLabel="Reprocessing import...">Reprocess import</FormSubmitButton>

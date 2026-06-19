@@ -199,13 +199,11 @@ export default async function OperatorRouteDetailPage({
       permission_filtered_route_found: Boolean(visibleRoute),
       exact_reason_page_would_not_found: "app_permission_check_denied",
     });
-    return (
+      return (
       <>
         <ErrorState
           title="Route unavailable"
-          body={process.env.NODE_ENV === "development"
-            ? `This route is assigned to ${routeRow.operator_id}. Linked operator ids for auth user ${profile?.id ?? "none"} are ${accessibleOperatorIds.join(", ") || "none"}.`
-            : "This route is not assigned to you."}
+          body="This route is not assigned to you."
           action={<SecondaryButton href="/operator/routes">Back to routes</SecondaryButton>}
         />
       </>

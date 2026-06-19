@@ -609,7 +609,7 @@ export function PurchaseForm({
   const [manualTotal, setManualTotal] = useState<string>(() => initialPurchase?.manualTotalLyd === null || initialPurchase?.manualTotalLyd === undefined ? "" : String(initialPurchase.manualTotalLyd));
   const [searchByLine, setSearchByLine] = useState<Record<string, string>>({});
   const [submitIntent, setSubmitIntent] = useState<"draft" | "received" | null>(null);
-  const [submitMessage, setSubmitMessage] = useState<{ type: "success" | "error"; text: string; debug?: string } | null>(null);
+  const [submitMessage, setSubmitMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [detailsErrors, setDetailsErrors] = useState<{ purchaseDate?: string }>({});
   const [lineErrors, setLineErrors] = useState<Record<string, string>>({});
   const [receiptPreview, setReceiptPreview] = useState<ReceiptPreviewState | null>(() => {
@@ -1128,7 +1128,7 @@ export function PurchaseForm({
     try {
       const result = await action(formData);
       if (!result.ok) {
-        setSubmitMessage({ type: "error", text: result.message || "Could not save purchase. Please contact admin.", debug: result.debugMessage });
+        setSubmitMessage({ type: "error", text: result.message || "Could not save purchase. Please contact admin." });
         return;
       }
       setSubmitMessage({ type: "success", text: result.message });
@@ -1139,7 +1139,7 @@ export function PurchaseForm({
       }
     } catch (error) {
       console.error("[purchases] Client submit failed", error);
-      setSubmitMessage({ type: "error", text: "Could not save purchase. Please contact admin.", debug: error instanceof Error ? error.message : undefined });
+      setSubmitMessage({ type: "error", text: "Could not save purchase. Please contact admin." });
     } finally {
       submittingRef.current = false;
       setSubmitIntent(null);
@@ -1159,12 +1159,6 @@ export function PurchaseForm({
       {submitMessage ? (
         <div ref={submitMessageRef} className={`rounded-lg border p-4 text-sm font-medium ${submitMessage.type === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-rose-200 bg-rose-50 text-rose-800"}`}>
           <div>{submitMessage.text}</div>
-          {process.env.NODE_ENV !== "production" && submitMessage.debug ? (
-            <details className="mt-3 rounded-lg bg-white/70 p-3 text-xs font-normal">
-              <summary className="cursor-pointer font-semibold">Debug details</summary>
-              <pre className="mt-2 whitespace-pre-wrap break-words">{submitMessage.debug}</pre>
-            </details>
-          ) : null}
         </div>
       ) : null}
       <DraftRestoreBanner pendingDraft={localDraft.pendingDraft} onRestore={localDraft.restoreDraft} onDiscard={localDraft.discardDraft} />

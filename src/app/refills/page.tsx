@@ -372,7 +372,7 @@ export default async function RefillsPage(props: Parameters<typeof RefillsPageCo
     return (
       <>
         <PageHeader title="Refills" subtitle="System recommendations plus machine refill completion proofs from imported history and live operator work." />
-        <EmptyState title="Something did not load" body="Snacky OS recovered from a VMS data load error. Please retry after the latest import finishes; technical details are in the server logs." />
+        <EmptyState title="Something did not load" body="Snacky OS recovered from a VMS data load error. Please retry after the latest import finishes or contact admin." />
       </>
     );
   }

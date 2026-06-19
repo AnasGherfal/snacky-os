@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { BarList, KpiSection } from "@/components/KpiDashboard";
+import { AdminTechnicalDetails } from "@/components/TechnicalDetails";
 import { DataTable, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
@@ -751,10 +752,14 @@ async function SalesDashboardPageContent({
           )}
 
         {showAdminReconciliation ? (
-          <details className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
-            <summary className="cursor-pointer text-sm font-semibold text-slate-900">Admin technical details</summary>
-            <p className="mt-3 text-sm text-slate-500">
-              Technical diagnostics, reconciliation data, query errors, and internal batch references are hidden from normal users.
+          <AdminTechnicalDetails
+            canView
+            title="Technical details"
+            summary="Reconciliation data, query errors, and internal batch references are hidden from normal users."
+            className="mt-4"
+          >
+            <p className="text-sm text-slate-500">
+              Owner/admin-only diagnostics show where each file contributed, which rows were counted, and why a file was included or excluded.
             </p>
 
             {missingSalesSummaryRpc ? (
@@ -1061,7 +1066,7 @@ async function SalesDashboardPageContent({
                   </DataTable>
                 </div>
               ) : null}
-            </details>
+          </AdminTechnicalDetails>
         ) : null}
       </KpiSection>
 

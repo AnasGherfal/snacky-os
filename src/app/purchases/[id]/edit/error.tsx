@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 
-export default function EditPurchaseError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+export default function EditPurchaseError({ reset }: { error: Error & { digest?: string }; reset: () => void }) {
   return (
     <div className="surface-card border-rose-200">
       <div className="max-w-2xl">
@@ -10,12 +10,6 @@ export default function EditPurchaseError({ error, reset }: { error: Error & { d
         <p className="mt-2 text-sm leading-6 text-slate-600">
           The draft edit form hit a problem. No receive action was completed from this screen unless you already confirmed it.
         </p>
-        {process.env.NODE_ENV !== "production" ? (
-          <details className="mt-4 rounded-lg bg-slate-50 p-3 text-xs text-slate-700">
-            <summary className="cursor-pointer font-semibold">Debug details</summary>
-            <pre className="mt-2 whitespace-pre-wrap break-words">{error.message}</pre>
-          </details>
-        ) : null}
         <div className="mt-5 flex flex-col gap-2 sm:flex-row">
           <button type="button" onClick={reset} className="btn-primary">Retry form</button>
           <Link href="/purchases" className="btn-secondary">Back to purchases</Link>

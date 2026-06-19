@@ -197,9 +197,9 @@ async function checkVmsRequiredTables(
 function requiredTablesMessage(missingTables: string[], reportType: VmsReportType, stage: VmsImportSchemaCheckStage) {
   const action = stage === "preview" ? "preview" : "confirm";
   if (missingTables.length === 1) {
-    return `Missing required VMS ${reportType} ${action} table: ${missingTables[0]}. Run the latest migration before importing.`;
+    return "VMS import setup is incomplete. Please contact admin.";
   }
-  return `Missing required VMS ${reportType} ${action} tables: ${missingTables.join(", ")}. Run the latest migration before importing.`;
+  return "VMS import setup is incomplete. Please contact admin.";
 }
 
 function buildVmsImportStateRedirect(params: {
@@ -1590,7 +1590,7 @@ async function runVmsImport({
   }));
   const initialRawRowsResult = await upsertRawRows(supabase, initialRawRows);
   if (!initialRawRowsResult.ok) {
-    errorRedirect(vmsSchemaIssueMessage(initialRawRowsResult.error, "vms_import_rows.upsert") ?? "Could not save VMS imported row audit. Technical details are in the server console.");
+    errorRedirect(vmsSchemaIssueMessage(initialRawRowsResult.error, "vms_import_rows.upsert") ?? "Could not save VMS imported row audit. Please contact admin.");
     return;
   }
 
@@ -2838,13 +2838,13 @@ function previewErrorMessage(error: unknown, tableName: string) {
   if (schemaMessage) return schemaMessage;
   if (supabaseError?.code === "MISSING_SCHEMA" && supabaseError.message) return supabaseError.message;
   if (isPermissionPreviewError(error)) return "You do not have permission to create VMS import previews.";
-  if (supabaseError?.code === "42P01" || supabaseError?.code === "PGRST205") return `${tableName} table is missing. Run the latest migration.`;
+  if (supabaseError?.code === "42P01" || supabaseError?.code === "PGRST205") return "VMS import setup is incomplete. Please contact admin.";
   if (isMissingColumnPreviewError(error)) {
     const issue = extractVmsSchemaIssue(error);
     const column = issue?.type === "missing_column" ? issue.column : null;
-    return `Preview schema is outdated${column ? `. Missing column: ${column}.` : ". Run the latest migration."}`;
+    return column ? "VMS import setup is missing a required field. Please contact admin." : "VMS import setup is incomplete. Please contact admin.";
   }
-  return `${tableName} failed while preparing the VMS import preview. Technical details are in the server console.`;
+  return `${tableName} could not prepare the VMS import preview. Please contact admin.`;
 }
 
 function supabaseMutationError(error: unknown) {
@@ -2894,16 +2894,16 @@ function batchMutationErrorMessage(error: unknown) {
   if (schemaMessage) return schemaMessage;
   if (supabaseError?.code === "TIMEOUT") return "Save took too long. Please check your connection and retry.";
   if (isBatchPermissionError(error)) return "You do not have permission to create or confirm VMS imports.";
-  if (isBatchMissingTableError(error)) return "VMS import batches table is missing. Run the latest migration.";
+  if (isBatchMissingTableError(error)) return "VMS import setup is incomplete. Please contact admin.";
   if (isBatchMissingColumnError(error)) {
     const column = missingColumnName(error);
-    return `VMS import batch schema is outdated${column ? `. Missing column: ${column}.` : ". Run the latest migration."}`;
+    return column ? "VMS import setup is missing a required field. Please contact admin." : "VMS import setup is incomplete. Please contact admin.";
   }
   if (isBatchConstraintError(error)) {
     return `VMS import batch status or import mode was rejected by the database constraint. Technical detail: ${supabaseError?.message ?? "check constraint failed"}`;
   }
   if (supabaseError?.code === "23505") return "This VMS import batch already exists. Open the existing import or reprocess it instead of creating a duplicate.";
-  return "Could not save VMS import batch. Technical details are in the server console.";
+  return "Could not save VMS import batch. Please contact admin.";
 }
 
 type VmsBatchMutationResponse<T> = {
@@ -3861,7 +3861,7 @@ export async function completeVmsImport(formData: FormData) {
       selectedImportBatchId: submittedImportBatchId ?? null,
       currentStep: "confirm_import",
     });
-    redirect(`/vms-import?error=${encodeURIComponent("Could not load the VMS import preview before confirming. Technical details are in the server console.")}`);
+    redirect(`/vms-import?error=${encodeURIComponent("Could not load the VMS import preview before confirming. Please contact admin.")}`);
   }
   const previewLookupValue = (!previewLookupResult.timedOut && Object.prototype.hasOwnProperty.call(previewLookupResult, 'value'))
     ? (previewLookupResult as any).value
@@ -4339,7 +4339,7 @@ async function finalizePreviewStockImportBatch({
   }
   if (rawRowsCountResult.error) {
     console.error("[vms-import] Preview finalize raw row count failed", { batchId, error: rawRowsCountResult.error });
-    redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Could not count saved raw rows for this batch.")}`);
+    redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Could not count saved rows for this batch. Please contact admin.")}`);
   }
 
   let stockSnapshotRows = (stockSnapshotRowsResult.data ?? []) as Array<{
@@ -4746,7 +4746,7 @@ export async function updateVmsImportBatchState(formData: FormData) {
   const error = stateUpdateResult.error ?? stateUpdateResult.value?.error ?? null;
   if (stateUpdateResult.timedOut || error) {
     console.error("[vms-import] Batch state update failed", error ?? "timeout");
-    redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Could not update this VMS import batch. Run the latest migration.")}`);
+    redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Could not update this VMS import batch. Please contact admin.")}`);
   }
 
   await logActivity({

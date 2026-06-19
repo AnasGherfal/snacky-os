@@ -541,15 +541,15 @@ export default async function NewRoutePage() {
     const diagnosticBatchAuditRows = batchAuditRows.length;
     const reasonMessageByCode: Record<RouteRecommendationDiagnosticReasonCode, string> = {
       healthy: "Route creation can use this machine's latest stock and recommendation rows.",
-      no_active_stock_snapshot: `No recommendations because there is no active imported stock snapshot. Latest stock batch is ${diagnosticBatch ? `${sourceFileName(diagnosticBatch)} (${String(diagnosticBatch.status ?? "unknown")}, stock rows ${diagnosticBatchStockRows}, audit rows ${diagnosticBatchAuditRows})` : "missing"}.`,
-      no_latest_stock_rows: "No recommendations because the active stock snapshot did not produce any latest stock rows for this machine.",
-      machine_mapping_missing: "No recommendations because this machine does not have a VMS machine mapping yet.",
-      machine_has_no_planogram: "No recommendations because this machine has no planogram rows in machine_slots.",
-      all_products_unmapped: "No recommendations because the latest stock snapshot rows for this machine still have unmapped products.",
-      all_products_inactive: "Recommendation rows exist, but every recommended product for this machine is inactive and filtered out before rendering.",
-      current_stock_full: "No recommendations because the current machine stock is already at or above the target quantities.",
-      no_positive_recommendations: "Latest stock rows exist, but they currently generate zero positive refill quantities for this machine.",
-      unknown: "Recommendation diagnostics are incomplete for this machine. Check the server logs for the failed query.",
+      no_active_stock_snapshot: "No active stock snapshot is available yet.",
+      no_latest_stock_rows: "The latest stock snapshot did not produce refill recommendations for this machine.",
+      machine_mapping_missing: "This machine still needs a VMS mapping.",
+      machine_has_no_planogram: "This machine has not been configured yet.",
+      all_products_unmapped: "The latest stock snapshot still needs product mapping.",
+      all_products_inactive: "Recommendations exist, but all products are inactive.",
+      current_stock_full: "Current stock is already at or above target quantities.",
+      no_positive_recommendations: "The latest stock snapshot does not require a refill for this machine.",
+      unknown: "Recommendation data is temporarily unavailable for this machine. Please contact admin.",
     };
     return {
       machineId: machine.id,
@@ -597,23 +597,23 @@ export default async function NewRoutePage() {
     summaryReasonCode,
     summaryReasonLabel: reasonLabel(summaryReasonCode),
     summaryMessage: diagnosticsWarnings.length
-      ? `Recommendation diagnostics are partially unavailable. ${diagnosticsWarnings.join(" ")}`
+      ? "Recommendation data is partially unavailable right now."
       : summaryReasonCode === "healthy"
         ? "Latest stock rows and refill recommendations are available for route creation."
         : machineDiagnosticsWithIssues.find((machine) => machine.reasonCode === summaryReasonCode)?.reasonMessage
           ?? (summaryReasonCode === "no_active_stock_snapshot"
-            ? `No recommendations because there is no active imported stock snapshot. Latest stock batch is ${diagnosticBatch ? `${sourceFileName(diagnosticBatch)} (${String(diagnosticBatch.status ?? "unknown")}, active ${diagnosticBatch.is_active === false ? "no" : "yes"}, stock rows ${diagnosticBatchStockRows}, audit rows ${diagnosticBatchAuditRows})` : "missing"}.`
+            ? "No active stock snapshot is available yet."
             : summaryReasonCode === "no_latest_stock_rows"
-              ? "No recommendations because the active stock snapshot produced zero latest_vms_stock_by_slot rows."
+              ? "The latest stock snapshot did not produce refill recommendations."
               : summaryReasonCode === "all_products_inactive"
-                ? "Recommendations were generated, but every product was filtered out because it is inactive."
+                ? "Recommendations were generated, but every product is inactive."
                 : summaryReasonCode === "machine_has_no_planogram"
-                  ? "No recommendations because the relevant machines do not have planogram rows in machine_slots."
+                  ? "This machine has not been configured yet."
                   : summaryReasonCode === "all_products_unmapped"
-                    ? "No recommendations because the latest stock snapshot rows are still unmapped to Snacky products."
+                    ? "The latest stock snapshot still needs product mapping."
                     : summaryReasonCode === "machine_mapping_missing"
-                      ? "No recommendations because the relevant machines are missing VMS machine mappings."
-                      : "No recommendations because the current stock is already at or above target quantities."),
+                      ? "This machine still needs a VMS mapping."
+                      : "Current stock is already at or above target quantities."),
     activeStockBatchId: latestActiveStockBatch?.id ?? null,
     activeStockBatchFileName: latestActiveStockBatch ? sourceFileName(latestActiveStockBatch) : null,
     activeStockBatchImportedAt: batchTimestamp(latestActiveStockBatch),

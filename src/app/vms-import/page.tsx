@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { FormSubmitButton } from "@/components/FormSubmitButton";
 import { LocalDraftForm } from "@/components/LocalDraft";
 import { PaginationControls } from "@/components/PaginationControls";
+import { AdminTechnicalDetails } from "@/components/TechnicalDetails";
 import { DataTable, EmptyState, ErrorState, FormField, PageHeader, SectionCard, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canCreateVmsImports, canValidateVmsImports, canViewVmsImports, getEffectivePermissions, isOwnerAdminRole } from "@/lib/authz";
@@ -438,8 +439,8 @@ function userFacingLoadError(error: SupabaseQueryError | null, queryName?: strin
   if (isPermissionError(error)) return "You do not have permission to load VMS imports.";
   const schemaMessage = vmsSchemaIssueMessage(error, queryName);
   if (schemaMessage) return schemaMessage;
-  if (isMissingSchemaError(error)) return "VMS import schema is missing or stale. Run the latest migration.";
-  return "Snacky OS could not load VMS imports. Technical details are available in the server console.";
+  if (isMissingSchemaError(error)) return "VMS imports could not load. Please contact admin.";
+  return "Snacky OS could not load VMS imports. Please contact admin.";
 }
 
 function relationFromQueryName(queryName: string) {
@@ -745,7 +746,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
         <div className="mb-6"><UploadCard /></div>
         <InlineLoadIssue title="VMS import page recovered from a server render error" issue={issue} />
         {isOwnerAdminRole(profile) ? (
-          <AdminDiagnosticsPanel issues={[issue]} currentUserId={profile?.id ?? null} effectivePermissions={effectivePermissions} />
+          <AdminDiagnosticsPanel canView issues={[issue]} currentUserId={profile?.id ?? null} effectivePermissions={effectivePermissions} />
         ) : null}
       </>
     );
@@ -894,6 +895,7 @@ function DebugBlock({ title, value }: { title: string; value: unknown }) {
 }
 
 function VmsImportDebugPanel({
+  canView,
   selectedSheetName,
   detectedHeaderRow,
   detectedColumns,
@@ -901,6 +903,7 @@ function VmsImportDebugPanel({
   sampleNormalizedRows,
   validation,
 }: {
+  canView: boolean;
   selectedSheetName: string | null;
   detectedHeaderRow: number | null;
   detectedColumns: string[];
@@ -908,7 +911,7 @@ function VmsImportDebugPanel({
   sampleNormalizedRows: Record<string, string>[];
   validation: VmsValidationResult | null;
 }) {
-  if (process.env.NODE_ENV !== "development" || !selectedSheetName) return null;
+  if (!canView || !selectedSheetName) return null;
 
   const validationErrors = (validation?.errorRowsList ?? []).slice(0, 5).map((row) => ({
     rowNumber: row.rowNumber,
@@ -926,11 +929,12 @@ function VmsImportDebugPanel({
   }));
 
   return (
-    <section className="surface-card mb-6 space-y-4 border-amber-200 bg-amber-50">
-      <div>
-        <h2 className="text-lg font-semibold text-slate-900">Development debug</h2>
-        <p className="mt-1 text-sm text-slate-600">Visible only when NODE_ENV=development.</p>
-      </div>
+    <AdminTechnicalDetails
+      canView={canView}
+      title="Technical details"
+      summary="Imported sheet parsing, normalized sample rows, and validation issues for owner/admin review."
+      className="mb-6 border-amber-200 bg-amber-50"
+    >
       <div className="grid gap-4 xl:grid-cols-2">
         <DebugBlock title="Selected sheet name" value={selectedSheetName} />
         <DebugBlock title="Detected header row" value={detectedHeaderRow === null ? "none" : detectedHeaderRow + 1} />
@@ -942,20 +946,16 @@ function VmsImportDebugPanel({
           <DebugBlock title="Raw row data for failed rows" value={failedRawRows} />
         </div>
       </div>
-    </section>
+    </AdminTechnicalDetails>
   );
 }
 
 function InlineLoadIssue({ title, issue }: { title: string; issue?: VmsPageLoadIssue | null }) {
   if (!issue) return null;
-  const missingText = issue.missing ? ` Missing: ${issue.missing}.` : "";
   return (
     <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900" role="status">
       <div className="font-semibold text-amber-950">{title}</div>
-      <p className="mt-1">
-        {issue.missing ? "VMS import schema needs repair." : "This section could not load."}
-        {missingText} {issue.message}
-      </p>
+      <p className="mt-1">This section could not load. Please contact admin.</p>
     </div>
   );
 }
@@ -965,56 +965,78 @@ function VmsSchemaRepairPanel({ schemaHealth, canRepair }: { schemaHealth: VmsSc
   const missingTables = Array.isArray(safeHealth.missingTables) ? safeHealth.missingTables : [];
   const missingColumns = Array.isArray(safeHealth.missingColumns) ? safeHealth.missingColumns : [];
   const errors = Array.isArray(safeHealth.errors) ? safeHealth.errors : [];
-  const missing = [...missingTables, ...missingColumns];
-  if (!missing.length && !errors.length) return null;
+  if (!missingTables.length && !missingColumns.length && !errors.length) return null;
 
   return (
     <section className="surface-card mb-6 border-amber-200 bg-amber-50">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h2 className="text-base font-semibold text-amber-950">VMS import schema needs repair</h2>
+          <h2 className="text-base font-semibold text-amber-950">VMS import setup needs attention</h2>
           <p className="mt-1 text-sm text-amber-900">
-            Missing: {missing.length ? missing.join(", ") : "schema status access"}. Run migration repair; upload and other available sections still work.
+            Some VMS import features are not ready yet. Uploading is still available, but a few import sections may stay unavailable until admin fixes setup.
           </p>
         </div>
-        {canRepair ? (
-          <details className="rounded-lg border border-amber-300 bg-white p-3 text-sm">
-            <summary className="cursor-pointer font-semibold text-slate-900">Repair VMS Schema</summary>
-            <div className="mt-3 space-y-2 text-slate-700">
-              <p>Apply the idempotent VMS migrations, especially:</p>
-              <code className="block rounded bg-slate-950 p-3 text-xs text-white">
-                npx supabase migration up
-              </code>
-              <p className="text-xs">
-                Relevant migration: supabase/migrations/202606010002_vms_import_batch_metadata_contract.sql
-              </p>
+        <AdminTechnicalDetails
+          canView={canRepair}
+          title="Technical details"
+          summary="Owner/admin-only repair guidance and missing VMS relations."
+          className="rounded-lg border border-amber-300 bg-white p-3 text-sm"
+        >
+          <div className="space-y-2 text-slate-700">
+            <p>Apply the idempotent VMS migrations, especially:</p>
+            <code className="block rounded bg-slate-950 p-3 text-xs text-white">
+              npx supabase migration up
+            </code>
+            <p className="text-xs">
+              Relevant migration: supabase/migrations/202606010002_vms_import_batch_metadata_contract.sql
+            </p>
+            <div className="grid gap-2 text-xs text-slate-600 sm:grid-cols-2">
+              <div>Missing tables: {missingTables.length ? missingTables.join(", ") : "-"}</div>
+              <div>Missing columns: {missingColumns.length ? missingColumns.join(", ") : "-"}</div>
             </div>
-          </details>
-        ) : null}
+          </div>
+        </AdminTechnicalDetails>
       </div>
-      {errors.map((issue) => (
-        <InlineLoadIssue key={issue.loader} title={issue.loader} issue={issue} />
-      ))}
+      <AdminTechnicalDetails
+        canView={canRepair && errors.length > 0}
+        title="Load errors"
+        summary="Loaded from the VMS import repair checks."
+        className="mt-4 rounded-lg border border-amber-300 bg-white p-3 text-sm"
+      >
+        <div className="grid gap-2">
+          {errors.map((issue) => (
+            <div key={issue.loader} className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-slate-700">
+              <div className="font-semibold text-slate-900">{issue.loader}</div>
+              <div className="mt-1 text-xs text-slate-500">{issue.message}</div>
+            </div>
+          ))}
+        </div>
+      </AdminTechnicalDetails>
     </section>
   );
 }
 
 function AdminDiagnosticsPanel({
+  canView,
   issues,
   currentUserId,
   effectivePermissions,
 }: {
+  canView: boolean;
   issues: VmsPageLoadIssue[];
   currentUserId: string | null;
   effectivePermissions: string[];
 }) {
   const safeIssues = Array.isArray(issues) ? issues : [];
   const safePermissions = Array.isArray(effectivePermissions) ? effectivePermissions : [];
-  if (!safeIssues.length) return null;
+  if (!canView || !safeIssues.length) return null;
   return (
-    <section className="surface-card mb-6 border-amber-200 bg-white">
-      <h2 className="text-lg font-semibold text-slate-900">VMS Error Diagnostics</h2>
-      <p className="mt-1 text-sm text-slate-500">Admin/debug detail for failed VMS loaders. The page is using safe fallbacks instead of crashing.</p>
+    <AdminTechnicalDetails
+      canView={canView}
+      title="Technical details"
+      summary="Owner/admin-only loader issues, fallback behavior, and internal access context."
+      className="mb-6 border-amber-200 bg-white"
+    >
       <div className="mt-4 grid gap-3">
         {safeIssues.map((issue, index) => (
           <div key={`${issue.loader}-${index}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
@@ -1033,7 +1055,7 @@ function AdminDiagnosticsPanel({
           </div>
         ))}
       </div>
-    </section>
+    </AdminTechnicalDetails>
   );
 }
 
@@ -1222,13 +1244,13 @@ function validationReferenceErrorMessage(blockingError: ValidationBlockingError)
   if (isPermissionError(blockingError.error)) return "You do not have permission to validate VMS imports.";
   const schemaMessage = vmsSchemaIssueMessage(blockingError.error, blockingError.queryName);
   if (schemaMessage) return schemaMessage;
-  if (isMissingSchemaError(blockingError.error)) return "VMS import schema is missing or stale. Run the latest migration.";
+  if (isMissingSchemaError(blockingError.error)) return "VMS imports could not load. Please contact admin.";
   if (blockingError.queryName === "machines.validation_references") return "Could not load machines needed to validate this VMS import.";
   if (blockingError.queryName === "products.validation_references") return "Could not load products needed to validate this VMS import.";
-  if (blockingError.queryName === "vms_import_preview_rows.current_preview") return "Could not load preview rows for this import. Run the latest migration or re-upload the file.";
-  if (blockingError.queryName === "vms_import_preview_rows.empty") return "This import batch has no preview rows. Please re-upload the file.";
-  if (blockingError.queryName === "vms_import_previews.selected") return "This import preview no longer exists. Please re-upload the file.";
-  return "Could not load VMS import. Technical details are in console.";
+  if (blockingError.queryName === "vms_import_preview_rows.current_preview") return "Could not load preview rows for this import.";
+  if (blockingError.queryName === "vms_import_preview_rows.empty") return "This import batch has no preview rows.";
+  if (blockingError.queryName === "vms_import_previews.selected") return "This import preview no longer exists.";
+  return "Could not load VMS import. Please contact admin.";
 }
 
 async function loadVmsValidationReferences({
@@ -1760,7 +1782,7 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
       ) : null}
 
       {isOwnerAdminRole(profile) ? (
-        <AdminDiagnosticsPanel issues={pageIssues} currentUserId={profile?.id ?? null} effectivePermissions={effectivePermissions} />
+        <AdminDiagnosticsPanel canView issues={pageIssues} currentUserId={profile?.id ?? null} effectivePermissions={effectivePermissions} />
       ) : null}
 
       {!preview && canCreateVmsImports(profile) ? <div className="mb-6"><UploadCard /></div> : null}
@@ -2204,6 +2226,7 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
       ) : null}
 
       <VmsImportDebugPanel
+        canView={isOwnerAdminRole(profile)}
         selectedSheetName={selectedSheet?.name ?? null}
         detectedHeaderRow={selectedSheet ? selectedRows.headerRowIndex : null}
         detectedColumns={selectedRows.headers}
@@ -2212,10 +2235,13 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
         validation={validation}
       />
 
-      {/* Parse diagnostics panel: shows parse metadata passed from server for visibility before confirming import */}
-      {(params.rows || params.headers || preview) ? (
-        <section className="surface-card mt-4">
-          <h2 className="mb-2 text-lg font-semibold text-slate-900">Parse Diagnostics</h2>
+      {isOwnerAdminRole(profile) && (params.rows || params.headers || preview) ? (
+        <AdminTechnicalDetails
+          canView
+          title="Technical details"
+          summary="Parse metadata from the current upload step."
+          className="mt-4"
+        >
           <div className="grid gap-2 sm:grid-cols-2">
             <div className="text-sm text-slate-700"><strong>File:</strong> {preview?.file_name ?? params.fileName ?? "-"}</div>
             <div className="text-sm text-slate-700"><strong>File size:</strong> {preview?.file_size_bytes ? String(preview.file_size_bytes) : (params.fileSize ?? "-")}</div>
@@ -2225,14 +2251,14 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
             <div className="text-sm text-slate-700"><strong>User id:</strong> {params.uid ?? profile?.id ?? "-"}</div>
             <div className="text-sm text-slate-700"><strong>Import batch id:</strong> {params.importBatchId ?? "-"}</div>
           </div>
-        </section>
+        </AdminTechnicalDetails>
       ) : null}
 
       <section className="surface-card">
         <h2 className="mb-4 text-lg font-semibold text-slate-900">Recent imports</h2>
         <InlineLoadIssue title="Recent imports could not load" issue={batchesError ? loadIssueFromError("vms_import_batches.list", batchesError) : null} />
         {!batches?.length ? (
-          <EmptyState title={batchesError ? "Recent imports unavailable" : "No VMS reports imported yet."} body={batchesError ? "Upload is still available. Admin diagnostics above show the exact VMS import query issue." : "Upload your first VMS report to start building sales KPIs."} />
+          <EmptyState title={batchesError ? "Recent imports unavailable" : "No VMS reports imported yet."} body={batchesError ? "Upload is still available. Please contact admin if this keeps happening." : "Upload your first VMS report to start building sales KPIs."} />
         ) : (
           <>
             <DataTable headers={["Status", "Active", "File name", "Report type", "Date range", "Used in", "Rows found", "Rows imported", "Duplicates", "Needs review", "Successful sales", "Failed rows", "Refunds", "Uploaded by", "Date", "Notes"]}>

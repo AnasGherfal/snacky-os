@@ -230,7 +230,7 @@ function stopSubmitErrorMessage(response: Response, parsed: ParsedServerResponse
   if (!parsed.isJson) {
     return "Server returned a non-JSON response while completing the stop. Your refill draft is saved. Refresh the app and retry.";
   }
-  return serverMessage || "Could not complete this stop. Your refill draft is saved. Technical details are in the console.";
+  return serverMessage || "Could not complete this stop. Your refill draft is saved. Please contact admin.";
 }
 
 function normalizeClientSubmitError(error: unknown) {
@@ -555,7 +555,7 @@ export default function MachineStopPage() {
       if (!routeId || !stopId) {
         setLoadError({
           title: "Stop link incomplete",
-          body: "Route or stop id is missing. Go back to your route and open the stop again.",
+          body: "Route or stop information is missing. Go back to your route and open the stop again.",
         });
         setLoading(false);
         return;
@@ -578,23 +578,19 @@ export default function MachineStopPage() {
         }
         if (!response.ok) {
           const serverMessage = responseMessage(data) || "Failed to load stop data";
-          const details = process.env.NODE_ENV === "development" && data.details ? ` ${data.details}` : "";
-          const debug = data.debug as StopDebugDetails | undefined;
-
           if (response.status === 403 || responseCode(data) === "UNAUTHORIZED") {
-            setLoadError({ title: "Unauthorized", body: `${serverMessage}${details}`, debug });
+            setLoadError({ title: "Unauthorized", body: serverMessage });
             return;
           }
 
           if (responseCode(data) === "STOP_NOT_FOUND") {
-            setLoadError({ title: "Stop unavailable", body: "This stop no longer exists.", debug });
+            setLoadError({ title: "Stop unavailable", body: "This stop no longer exists." });
             return;
           }
 
           setLoadError({
             title: responseCode(data) === "STOP_ROUTE_MISMATCH" ? "Stop route mismatch" : "Stop could not be loaded",
-            body: `${serverMessage}${details}`,
-            debug,
+            body: serverMessage,
           });
           return;
         }
@@ -825,7 +821,6 @@ export default function MachineStopPage() {
             body={loadError?.body ?? "Failed to load machine stop details."}
             action={<SecondaryButton href={routeHref}>Back to route</SecondaryButton>}
           />
-          {loadError?.debug ? <DebugDetails debug={loadError.debug} /> : null}
         </div>
       </>
     );
@@ -1082,7 +1077,6 @@ export default function MachineStopPage() {
           <strong>Reminder:</strong> This page is for physical execution at the machine: actual filled quantities, shortage reasons, cash, issues, and the final photo after cleaning. Leftovers are returned later from the dedicated leftovers screen.
         </div>
 
-        {stopData.debug ? <DebugDetails debug={stopData.debug} /> : null}
       </div>
     </>
   );
@@ -1252,32 +1246,5 @@ function CashAndIssueSections({
         </div>
       </section>
     </>
-  );
-}
-
-function DebugDetails({ debug }: { debug: StopDebugDetails }) {
-  if (process.env.NODE_ENV !== "development") return null;
-
-  const rows = [
-    ["auth user id", debug.authUserId],
-    ["matched team_member id", debug.matchedTeamMemberId],
-    ["route id", debug.routeId],
-    ["stop id", debug.stopId],
-    ["route.operator_id", debug.routeOperatorId],
-    ["route_stop.route_id", debug.routeStopRouteId],
-  ];
-
-  return (
-    <section className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
-      <h2 className="mb-3 text-sm font-semibold text-slate-900">Development debug</h2>
-      <dl className="grid gap-2 sm:grid-cols-2">
-        {rows.map(([label, value]) => (
-          <div key={label}>
-            <dt className="font-medium text-slate-700">{label}</dt>
-            <dd className="break-all font-mono">{value ?? "none"}</dd>
-          </div>
-        ))}
-      </dl>
-    </section>
   );
 }

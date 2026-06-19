@@ -382,7 +382,7 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
           {!latestOfficialEndpointSummaries.length ? (
             <EmptyState title="No endpoint summaries saved" body="Run the official XY API test again." />
           ) : (
-            <DataTable headers={["Endpoint", "HTTP", "XY code", "Message", "Rows", "Signing debug", "Sample first 3 machines"]}>
+            <DataTable headers={["Endpoint", "HTTP", "XY code", "Message", "Rows", "Signing details", "Sample first 3 machines"]}>
               {latestOfficialEndpointSummaries.map((summary) => (
                 <tr key={String(summary.endpoint ?? summary.message ?? "endpoint")}>
                   <td className="font-medium">{summary.endpoint ?? "-"}</td>

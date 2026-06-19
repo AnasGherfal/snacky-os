@@ -143,7 +143,7 @@ export default async function RouteRecommendationDebugPage() {
   if (!supabase) {
     return (
       <EmptyState
-        title="Route recommendation debug unavailable"
+        title="Route recommendation health unavailable"
         body="Supabase is not configured, so Snacky OS cannot inspect the recommendation pipeline."
       />
     );
@@ -251,11 +251,11 @@ export default async function RouteRecommendationDebugPage() {
   return (
     <>
       <PageHeader
-        title="Route Recommendation Debug"
-        subtitle="Trace the pipeline from stock import rows to latest route-source rows to refill_recommendations to the exact rows visible on /routes/new."
+        title="Route Recommendation Health"
+        subtitle="Trace the pipeline from stock import rows to latest route-source rows to refill_recommendations to the rows visible on /routes/new."
         breadcrumbs={[
           { label: "Admin", href: "/admin" },
-          { label: "Route Recommendation Debug" },
+          { label: "Route Recommendation Health" },
         ]}
         action={(
           <div className="flex flex-wrap gap-2">

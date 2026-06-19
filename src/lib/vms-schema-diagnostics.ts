@@ -109,22 +109,16 @@ export function vmsSchemaIssueMessage(error: unknown, queryName?: string | null)
   const issue = extractVmsSchemaIssue(error, queryName);
   if (!issue) return null;
   if (issue.type === "permission") {
-    return issue.relation
-      ? `You do not have permission to access ${issue.relation}.`
-      : "You do not have permission to load VMS import data.";
+    return "You do not have permission to load this VMS data.";
   }
   if (issue.type === "missing_relation") {
-    return `Missing VMS database relation: ${issue.relation}. Run the latest migration.`;
+    return "VMS setup is incomplete. Please contact admin.";
   }
   if (issue.type === "missing_column") {
-    return issue.relation
-      ? `VMS import schema is outdated. Missing column: ${issue.relation}.${issue.column}.`
-      : `VMS import schema is outdated. Missing column: ${issue.column}.`;
+    return "VMS setup is missing a required field. Please contact admin.";
   }
   if (issue.type === "schema_cache") {
-    return issue.relation
-      ? `VMS import schema cache is missing expected fields for ${issue.relation}. Reload schema or run the latest migration.`
-      : "VMS import schema cache is stale. Reload schema or run the latest migration.";
+    return "VMS setup needs to be refreshed. Please contact admin.";
   }
   return null;
 }

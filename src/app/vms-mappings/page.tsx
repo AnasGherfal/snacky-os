@@ -98,9 +98,9 @@ function missingColumnName(error: unknown) {
 }
 
 function mappingLoadErrorMessage(error: unknown, queryName: string) {
-  if (isMissingTableError(error)) return "VMS product mappings table is missing. Run the latest migration.";
+  if (isMissingTableError(error)) return "VMS product mappings could not load. Please contact admin.";
   const column = missingColumnName(error);
-  if (column) return `VMS product mappings schema is outdated. Missing column: ${column}.`;
+  if (column) return "VMS product mappings could not load. Please contact admin.";
   if (isPermissionError(error)) return "You do not have permission to load VMS product mappings.";
   if (queryName.startsWith("products.")) return "Could not load Snacky products for VMS mappings.";
   return "Snacky OS could not load VMS product mappings from Supabase.";
