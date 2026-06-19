@@ -6,18 +6,22 @@ import { DataTable, EmptyState, PageHeader, StatusBadge } from "@/components/ui"
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
-import { formatInteger, groupSum } from "@/lib/kpi";
+import { formatInteger } from "@/lib/kpi";
 import { cleanSearchParams, type SearchParamsRecord } from "@/lib/pagination";
 import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
 import {
   applySalesBatchCoverage,
   batchCoverageDates,
+  buildSalesComparisonRange,
   buildSalesFileContributions,
   formatSalesRangeLabel,
   querySalesRangeReconciliationDiagnostics,
   rangesOverlap,
   resolveSalesDashboardRange,
   salesBatchReconciliationById,
+  normalizeSalesBreakdownRows,
+  type NormalizedSalesDashboardBreakdownRow,
+  type SalesDashboardBreakdownRow,
   type SalesBatchReconciliation,
   type SalesDashboardSearchParams,
 } from "@/lib/sales-dashboard";
@@ -31,23 +35,6 @@ import {
 } from "@/lib/vms-dashboard-source";
 
 export const dynamic = "force-dynamic";
-
-type SalesRow = {
-  id: string;
-  import_batch_id: string | null;
-  machine_id: string | null;
-  product_id: string | null;
-  units_sold: number | string | null;
-  net_sales_amount: number | string | null;
-  gross_sales_amount: number | string | null;
-  sale_date: string | null;
-  sales_month: string | null;
-  period_start: string | null;
-  period_end: string | null;
-  machine_name: string | null;
-  location_name: string | null;
-  product_name: string | null;
-};
 
 type SalesSummaryRow = {
   successful_sales_amount: number | string | null;
@@ -76,6 +63,8 @@ type SalesSummaryRow = {
   unknown_payment_amount?: number | string | null;
 };
 
+type SalesBreakdownRow = NormalizedSalesDashboardBreakdownRow;
+
 type SalesSummary = {
   successfulSalesAmount: number;
   successfulSalesCount: number;
@@ -97,6 +86,12 @@ type SalesSummary = {
   unknownPaymentAmount: number;
   paymentMethodAvailable: boolean;
   rowsUsed: number;
+};
+
+type SalesComparisonSummary = {
+  label: string;
+  rangeLabel: string;
+  salesSummary: SalesSummary;
 };
 
 type TransactionStatusRow = {
@@ -185,6 +180,31 @@ function MetricValue({
       {children}
     </div>
   );
+}
+
+function breakdownRowsToBarRows(rows: SalesBreakdownRow[]) {
+  return chronologicalSales(rows.map((row) => ({ label: row.bucketLabel, value: row.successfulSalesAmount, detail: row.rowsUsed ? `${formatInteger(row.rowsUsed)} rows` : undefined })));
+}
+
+function breakdownRowsToTableRows(rows: SalesBreakdownRow[]) {
+  return [...rows].sort((left, right) => left.sortKey.localeCompare(right.sortKey) || left.bucketLabel.localeCompare(right.bucketLabel));
+}
+
+function percentChange(current: number, comparison: number) {
+  if (comparison === 0) return null;
+  return ((current - comparison) / comparison) * 100;
+}
+
+function formatDelta(value: number) {
+  const rounded = Number(value.toFixed(2));
+  const sign = rounded > 0 ? "+" : "";
+  return `${sign}${lyd(rounded)}`;
+}
+
+function formatPercentPointDelta(value: number) {
+  const rounded = Number(value.toFixed(1));
+  const sign = rounded > 0 ? "+" : "";
+  return `${sign}${rounded.toFixed(1)} pp`;
 }
 
 function latestTimestamp(values: Array<string | null | undefined>) {
@@ -300,45 +320,6 @@ function normalizeSalesSummary(row?: SalesSummaryRow | null): SalesSummary {
   };
 }
 
-function summarizeSalesFallback(
-  sales: SalesRow[],
-  reconciliationRows: SalesBatchReconciliation[],
-): SalesSummary {
-  const successfulSalesAmount = sales.reduce((sum, row) => sum + numericValue(row.net_sales_amount ?? row.gross_sales_amount), 0);
-  const successfulSalesCount = sales.length;
-  const successfulUnitsSold = sales.reduce((sum, row) => sum + numericValue(row.units_sold), 0);
-  const failedVendCount = reconciliationRows.reduce((sum, row) => sum + row.rangeFailedVendRows, 0);
-  const failedVendAmount = reconciliationRows.reduce((sum, row) => sum + row.rangeFailedVendAmount, 0);
-  const refundCount = reconciliationRows.reduce((sum, row) => sum + row.rangeRefundedRows, 0);
-  const refundAmount = reconciliationRows.reduce((sum, row) => sum + row.rangeRefundedAmount, 0);
-  const failedPaymentCount = reconciliationRows.reduce((sum, row) => sum + row.rangeFailedPaymentRows, 0);
-  const needsReviewCount = reconciliationRows.reduce((sum, row) => sum + row.rangeNeedsReviewRows, 0);
-  const totalAttemptCount = successfulSalesCount + failedVendCount + refundCount + failedPaymentCount + needsReviewCount;
-
-  return {
-    successfulSalesAmount,
-    successfulSalesCount,
-    successfulUnitsSold,
-    failedVendCount,
-    failedVendAmount,
-    refundCount,
-    refundAmount,
-    failedPaymentCount,
-    needsReviewCount,
-    totalAttemptCount,
-    failedVendRate: totalAttemptCount > 0 ? failedVendCount / totalAttemptCount : 0,
-    averageTransaction: successfulSalesCount > 0 ? successfulSalesAmount / successfulSalesCount : 0,
-    cashPaymentCount: 0,
-    cashPaymentAmount: 0,
-    cardPaymentCount: 0,
-    cardPaymentAmount: 0,
-    unknownPaymentCount: successfulSalesCount,
-    unknownPaymentAmount: successfulSalesAmount,
-    paymentMethodAvailable: false,
-    rowsUsed: totalAttemptCount,
-  };
-}
-
 function isMissingSalesSummaryRpcError(message?: string | null) {
   const text = String(message ?? "").toLowerCase();
   return text.includes("pgrst202") && text.includes("sales_dashboard_summary");
@@ -373,40 +354,6 @@ function businessContributionReason(row: { status: string; reason: string }) {
     default:
       return row.reason;
   }
-}
-
-async function fetchSalesRowsForRange({
-  end,
-  start,
-  supabase,
-}: {
-  end: string;
-  start: string;
-  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>;
-}) {
-  const rows: SalesRow[] = [];
-
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await supabase
-      .from("vms_sales_clean")
-      .select("id, import_batch_id, machine_id, product_id, units_sold, net_sales_amount, gross_sales_amount, sale_date, sales_month, period_start, period_end, machine_name, location_name, product_name")
-      .gte("sale_date", start)
-      .lte("sale_date", end)
-      .order("sale_date", { ascending: true })
-      .range(from, from + 999);
-
-    if (error) throw error;
-    if (!data?.length) break;
-
-    rows.push(...(data as SalesRow[]));
-    if (data.length < 1000) break;
-  }
-
-  return {
-    count: rows.length,
-    data: rows,
-    error: null,
-  };
 }
 
 async function SalesDashboardPageContent({
@@ -454,7 +401,7 @@ async function SalesDashboardPageContent({
   const selectedRangeLabel = formatSalesRangeLabel(selectedRange);
   const showAdminReconciliation = isOwnerAdminRole(profile);
 
-  const [salesSummaryResult, salesResult, filteredReconciliationResult, adminReconciliationDiagnostics] = await Promise.all([
+  const [salesSummaryResult, comparisonSummaryResult, dayBreakdownResult, monthBreakdownResult, hourBreakdownResult, machineBreakdownResult, locationBreakdownResult, productBreakdownResult, filteredReconciliationResult, adminReconciliationDiagnostics] = await Promise.all([
     safeSupabaseQuery<SalesSummaryRow>({
       label: "sales.sales_dashboard_summary.filtered",
       promise: supabase.rpc("sales_dashboard_summary", {
@@ -462,12 +409,61 @@ async function SalesDashboardPageContent({
         p_date_to: selectedRange.end,
       }),
     }),
-    safeSupabaseQuery<SalesRow>({
-      label: "sales.vms_sales_clean.filtered",
-      promise: fetchSalesRowsForRange({
-        end: selectedRange.end,
-        start: selectedRange.start,
-        supabase,
+    comparisonRange
+      ? safeSupabaseQuery<SalesSummaryRow>({
+          label: "sales.sales_dashboard_summary.comparison",
+          promise: supabase.rpc("sales_dashboard_summary", {
+            p_date_from: comparisonRange.start,
+            p_date_to: comparisonRange.end,
+          }),
+        })
+      : Promise.resolve({ data: [], error: null } as { data: SalesSummaryRow[]; error: null }),
+    safeSupabaseQuery<SalesDashboardBreakdownRow>({
+      label: "sales.sales_dashboard_breakdown.day",
+      promise: supabase.rpc("sales_dashboard_breakdown", {
+        p_dimension: "day",
+        p_date_from: selectedRange.start,
+        p_date_to: selectedRange.end,
+      }),
+    }),
+    safeSupabaseQuery<SalesDashboardBreakdownRow>({
+      label: "sales.sales_dashboard_breakdown.month",
+      promise: supabase.rpc("sales_dashboard_breakdown", {
+        p_dimension: "month",
+        p_date_from: selectedRange.start,
+        p_date_to: selectedRange.end,
+      }),
+    }),
+    safeSupabaseQuery<SalesDashboardBreakdownRow>({
+      label: "sales.sales_dashboard_breakdown.hour",
+      promise: supabase.rpc("sales_dashboard_breakdown", {
+        p_dimension: "hour",
+        p_date_from: selectedRange.start,
+        p_date_to: selectedRange.end,
+      }),
+    }),
+    safeSupabaseQuery<SalesDashboardBreakdownRow>({
+      label: "sales.sales_dashboard_breakdown.machine",
+      promise: supabase.rpc("sales_dashboard_breakdown", {
+        p_dimension: "machine",
+        p_date_from: selectedRange.start,
+        p_date_to: selectedRange.end,
+      }),
+    }),
+    safeSupabaseQuery<SalesDashboardBreakdownRow>({
+      label: "sales.sales_dashboard_breakdown.location",
+      promise: supabase.rpc("sales_dashboard_breakdown", {
+        p_dimension: "location",
+        p_date_from: selectedRange.start,
+        p_date_to: selectedRange.end,
+      }),
+    }),
+    safeSupabaseQuery<SalesDashboardBreakdownRow>({
+      label: "sales.sales_dashboard_breakdown.product",
+      promise: supabase.rpc("sales_dashboard_breakdown", {
+        p_dimension: "product",
+        p_date_from: selectedRange.start,
+        p_date_to: selectedRange.end,
       }),
     }),
     safeSupabaseQuery<TransactionStatusRow>({
@@ -489,14 +485,24 @@ async function SalesDashboardPageContent({
       : Promise.resolve(null),
   ]);
 
-  const sales = salesResult.data as SalesRow[];
+  const selectedSummary = normalizeSalesSummary((salesSummaryResult.data as SalesSummaryRow[])[0]);
+  const comparisonSummary = comparisonRange ? normalizeSalesSummary((comparisonSummaryResult.data as SalesSummaryRow[])[0]) : EMPTY_SALES_SUMMARY;
+  const dayBreakdownRows = breakdownRowsToTableRows(normalizeSalesBreakdownRows(dayBreakdownResult.data as SalesDashboardBreakdownRow[]));
+  const monthBreakdownRows = breakdownRowsToTableRows(normalizeSalesBreakdownRows(monthBreakdownResult.data as SalesDashboardBreakdownRow[]));
+  const hourBreakdownRows = breakdownRowsToTableRows(normalizeSalesBreakdownRows(hourBreakdownResult.data as SalesDashboardBreakdownRow[]));
+  const machineBreakdownRows = breakdownRowsToTableRows(normalizeSalesBreakdownRows(machineBreakdownResult.data as SalesDashboardBreakdownRow[]));
+  const locationBreakdownRows = breakdownRowsToTableRows(normalizeSalesBreakdownRows(locationBreakdownResult.data as SalesDashboardBreakdownRow[]));
+  const productBreakdownRows = breakdownRowsToTableRows(normalizeSalesBreakdownRows(productBreakdownResult.data as SalesDashboardBreakdownRow[]));
+  const unitsByProduct = new Map(productBreakdownRows.map((row) => [row.bucketLabel, row.unitsSold]));
   const filteredReconciliationRows = normalizeSalesBatchReconciliationRows(filteredReconciliationResult.data as TransactionStatusRow[]);
-  const primarySalesSummary = normalizeSalesSummary((salesSummaryResult.data as SalesSummaryRow[])[0]);
-  const salesSummaryReturnedZeroUnexpectedly = !salesSummaryResult.error && primarySalesSummary.successfulSalesCount === 0 && sales.length > 0;
-  const usingSalesSummaryFallback = (Boolean(salesSummaryResult.error) || salesSummaryReturnedZeroUnexpectedly) && sales.length > 0;
-  const salesSummary = usingSalesSummaryFallback
-    ? summarizeSalesFallback(sales, filteredReconciliationRows)
-    : primarySalesSummary;
+  const summaryMismatch = !salesSummaryResult.error && selectedSummary.rowsUsed === 0 && (
+    dayBreakdownRows.length > 0
+      || monthBreakdownRows.length > 0
+      || hourBreakdownRows.length > 0
+      || machineBreakdownRows.length > 0
+      || locationBreakdownRows.length > 0
+      || productBreakdownRows.length > 0
+  );
   const missingSalesSummaryRpc = isMissingSalesSummaryRpcError(salesSummaryResult.error);
   const filteredReconciliationByBatchId = salesBatchReconciliationById(filteredReconciliationRows);
   const fileContributions = buildSalesFileContributions({
@@ -518,42 +524,25 @@ async function SalesDashboardPageContent({
   });
   const coverage = vmsCoverageSummary(coverageAwareBatches);
   const missingPeriods = coverage.gaps.filter((gap) => rangesOverlap(gap, { start: selectedRange.start, end: selectedRange.end }));
-  const totalSales = salesSummary.successfulSalesAmount;
-  const totalUnits = salesSummary.successfulUnitsSold;
-  const totalTransactions = salesSummary.successfulSalesCount;
-  const totalCash = salesSummary.cashPaymentAmount;
-  const totalCard = salesSummary.cardPaymentAmount;
-  const totalUnknownPayment = salesSummary.unknownPaymentAmount;
-  const hasTenderBreakdown = salesSummary.paymentMethodAvailable;
-  const hasBreakdownRows = !salesResult.error && sales.length > 0;
+  const totalSales = selectedSummary.successfulSalesAmount;
+  const totalUnits = selectedSummary.successfulUnitsSold;
+  const totalTransactions = selectedSummary.successfulSalesCount;
+  const totalCash = selectedSummary.cashPaymentAmount;
+  const totalCard = selectedSummary.cardPaymentAmount;
+  const totalUnknownPayment = selectedSummary.unknownPaymentAmount;
+  const hasTenderBreakdown = selectedSummary.paymentMethodAvailable;
+  const hasBreakdownRows = selectedSummary.rowsUsed > 0 || dayBreakdownRows.length > 0;
   const statusTotals = {
-    failedVendCount: salesSummary.failedVendCount,
-    failedVendAmount: salesSummary.failedVendAmount,
-    refundCount: salesSummary.refundCount,
-    refundAmount: salesSummary.refundAmount,
-    failedPaymentCount: salesSummary.failedPaymentCount,
-    needsReviewCount: salesSummary.needsReviewCount,
+    failedVendCount: selectedSummary.failedVendCount,
+    failedVendAmount: selectedSummary.failedVendAmount,
+    refundCount: selectedSummary.refundCount,
+    refundAmount: selectedSummary.refundAmount,
+    failedPaymentCount: selectedSummary.failedPaymentCount,
+    needsReviewCount: selectedSummary.needsReviewCount,
   };
-  const failedVendRate = salesSummary.totalAttemptCount > 0
-    ? `${((salesSummary.failedVendRate || (statusTotals.failedVendCount / salesSummary.totalAttemptCount)) * 100).toFixed(1)}%`
+  const failedVendRate = selectedSummary.totalAttemptCount > 0
+    ? `${((selectedSummary.failedVendRate || (statusTotals.failedVendCount / selectedSummary.totalAttemptCount)) * 100).toFixed(1)}%`
     : "0.0%";
-  const revenue = (row: SalesRow) => numericValue(row.net_sales_amount ?? row.gross_sales_amount);
-  const byDay = chronologicalSales(groupSum(sales, (row) => row.sale_date ?? "Unknown", revenue));
-  const byMonth = chronologicalSales(groupSum(sales, (row) => String(row.sales_month ?? "Unknown").slice(0, 7), revenue));
-  const byHour = chronologicalSales(groupSum(sales, (row) => {
-    const date = row.period_start ? new Date(row.period_start) : null;
-    if (!date || Number.isNaN(date.getTime())) return "Unknown";
-    return `${String(date.getHours()).padStart(2, "0")}:00`;
-  }, revenue));
-  const byMachine = groupSum(sales, (row) => row.machine_name ?? "Unknown / not mapped", revenue).slice(0, 10);
-  const byLocation = groupSum(sales, (row) => row.location_name ?? "Unknown location", revenue).slice(0, 10);
-  const byProduct = groupSum(sales, (row) => row.product_name ?? "Unknown / not mapped", revenue).slice(0, 10);
-  const unitsByProduct = sales.reduce((map, row) => {
-    const key = row.product_name ?? "Unknown / not mapped";
-    map.set(key, (map.get(key) ?? 0) + numericValue(row.units_sold));
-    return map;
-  }, new Map<string, number>());
-  const latestIncludedTransaction = latestTimestamp(sales.map((row) => row.period_end ?? row.period_start ?? row.sale_date));
   const rawRowsInRange = filteredReconciliationRows.reduce((sum, row) => sum + row.rangeRowCount, 0);
   const rawSuccessfulRowsInRange = filteredReconciliationRows.reduce((sum, row) => sum + row.rangeSuccessfulRows, 0);
   const rawSuccessfulSalesInRange = filteredReconciliationRows.reduce((sum, row) => sum + row.rangeSuccessfulSalesAmount, 0);
@@ -577,18 +566,24 @@ async function SalesDashboardPageContent({
   const rawVsDashboardSalesDelta = rawSuccessfulSalesInRange - totalSales;
   const rawVsDashboardRowsDelta = rawSuccessfulRowsInRange - totalTransactions;
   const paymentBreakdownTotal = totalCash + totalCard + totalUnknownPayment;
-  const paymentBreakdownCountTotal = salesSummary.cashPaymentCount + salesSummary.cardPaymentCount + salesSummary.unknownPaymentCount;
+  const paymentBreakdownCountTotal = selectedSummary.cashPaymentCount + selectedSummary.cardPaymentCount + selectedSummary.unknownPaymentCount;
   const paymentBreakdownAmountDelta = Number((totalSales - paymentBreakdownTotal).toFixed(2));
   const paymentBreakdownCountDelta = totalTransactions - paymentBreakdownCountTotal;
   const hasRawSuccessfulRows = rawSuccessfulRowsInRange > 0;
   const hasDashboardSalesRows = totalTransactions > 0;
-  const publicSummaryUnavailable = Boolean(salesSummaryResult.error) && !usingSalesSummaryFallback;
-  const publicChartUnavailable = Boolean(salesResult.error);
+  const publicSummaryUnavailable = Boolean(salesSummaryResult.error) || summaryMismatch;
+  const publicChartUnavailable = Boolean(dayBreakdownResult.error || monthBreakdownResult.error || hourBreakdownResult.error || machineBreakdownResult.error || locationBreakdownResult.error || productBreakdownResult.error);
   const technicalIssues: TechnicalIssue[] = [
     batchResult.error ? { label: "VMS batch coverage query", message: batchResult.error } : null,
     fullReconciliationResult.error ? { label: "Full reconciliation query", message: fullReconciliationResult.error } : null,
     salesSummaryResult.error ? { label: "Sales summary RPC", message: salesSummaryResult.error } : null,
-    salesResult.error ? { label: "Paged sales view query", message: salesResult.error } : null,
+    comparisonRange && comparisonSummaryResult.error ? { label: "Comparison sales summary RPC", message: comparisonSummaryResult.error } : null,
+    dayBreakdownResult.error ? { label: "Daily sales breakdown RPC", message: dayBreakdownResult.error } : null,
+    monthBreakdownResult.error ? { label: "Monthly sales breakdown RPC", message: monthBreakdownResult.error } : null,
+    hourBreakdownResult.error ? { label: "Hourly sales breakdown RPC", message: hourBreakdownResult.error } : null,
+    machineBreakdownResult.error ? { label: "Machine sales breakdown RPC", message: machineBreakdownResult.error } : null,
+    locationBreakdownResult.error ? { label: "Location sales breakdown RPC", message: locationBreakdownResult.error } : null,
+    productBreakdownResult.error ? { label: "Product sales breakdown RPC", message: productBreakdownResult.error } : null,
     filteredReconciliationResult.error ? { label: "Filtered reconciliation query", message: filteredReconciliationResult.error } : null,
   ].filter((issue): issue is TechnicalIssue => Boolean(issue));
 
@@ -607,10 +602,12 @@ async function SalesDashboardPageContent({
             <FilterPresetLink active={selectedRange.key === "yesterday"} href="/sales?range=yesterday" label="Yesterday" />
             <FilterPresetLink active={selectedRange.key === "this_week"} href="/sales?range=this_week" label="This week" />
             <FilterPresetLink active={selectedRange.key === "this_month"} href="/sales?range=this_month" label="This month" />
+            <FilterPresetLink active={selectedRange.key === "this_year"} href="/sales?range=this_year" label="This year" />
             <FilterPresetLink active={selectedRange.key === "last_month"} href="/sales?range=last_month" label="Last month" />
+            <FilterPresetLink active={selectedRange.key === "all_time"} href="/sales?range=all_time" label="All time" />
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-3">
+          <div className="grid gap-4 xl:grid-cols-4">
             <form className="rounded-xl border border-slate-200 bg-slate-50 p-4">
               <div className="text-sm font-semibold text-slate-900">Specific month</div>
               <p className="mt-1 text-sm text-slate-500">Filter KPIs and file contributions to one business-date calendar month.</p>
@@ -618,6 +615,16 @@ async function SalesDashboardPageContent({
                 <input type="hidden" name="range" value="month" />
                 <input name="month" type="month" defaultValue={selectedRange.monthValue} className="field-input" />
                 <button className="btn-secondary">Apply month</button>
+              </div>
+            </form>
+
+            <form className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm font-semibold text-slate-900">Specific year</div>
+              <p className="mt-1 text-sm text-slate-500">Review a full calendar year of business-date sales.</p>
+              <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+                <input type="hidden" name="range" value="year" />
+                <input name="year" type="number" min="2000" max="2100" defaultValue={selectedRange.yearValue} className="field-input" />
+                <button className="btn-secondary">Apply year</button>
               </div>
             </form>
 
@@ -647,6 +654,7 @@ async function SalesDashboardPageContent({
             <div className="text-sm font-semibold text-slate-900">Selected range</div>
             <div className="mt-1 text-lg font-semibold text-slate-900">Showing sales for business dates {selectedRangeLabel}</div>
             <p className="mt-1 text-sm text-slate-500">{selectedRange.helperText}</p>
+            {comparisonRangeLabel ? <p className="mt-1 text-sm text-slate-500">Comparison period: {comparisonRangeLabel}</p> : <p className="mt-1 text-sm text-slate-500">Comparison period: not available for all-time reports.</p>}
           </div>
         </section>
 
@@ -656,7 +664,9 @@ async function SalesDashboardPageContent({
         >
           {publicSummaryUnavailable ? (
             <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">
-              Sales summary could not load. Please contact admin.
+              {summaryMismatch
+                ? "Sales summary does not match the aggregate breakdown for this period. Please contact admin."
+                : "Sales summary could not load. Please contact admin."}
             </div>
           ) : null}
 
@@ -675,8 +685,8 @@ async function SalesDashboardPageContent({
                 <div>{formatInteger(ignoredFiles.length)}</div>
               </div>
               <div>
-                <div className="font-semibold text-slate-900">Latest included transaction</div>
-                <div>{formatVmsDateTime(latestIncludedTransaction)}</div>
+                <div className="font-semibold text-slate-900">Latest included business date</div>
+                <div>{selectedRange.end}</div>
               </div>
               <div>
                 <div className="font-semibold text-slate-900">Uploaded detailed files</div>
@@ -768,15 +778,9 @@ async function SalesDashboardPageContent({
               </div>
             ) : null}
 
-            {usingSalesSummaryFallback ? (
+            {summaryMismatch ? (
               <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                This page is using the full paged sales view plus reconciliation totals as a temporary KPI fallback.
-              </div>
-            ) : null}
-
-            {salesSummaryReturnedZeroUnexpectedly ? (
-              <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                Raw successful rows exist, but the KPI RPC returned zero. This page fell back to the full paged sales view for the visible totals.
+                The aggregate sales summary returned zero while the aggregated breakdowns still contain rows. Please contact admin.
               </div>
             ) : null}
 
@@ -975,9 +979,9 @@ async function SalesDashboardPageContent({
                 <div className="mt-4">
                   <DataTable headers={["Payment type", "Successful rows", "Amount"]}>
                     {[
-                      { label: "cash", count: salesSummary.cashPaymentCount, amount: totalCash },
-                      { label: "card", count: salesSummary.cardPaymentCount, amount: totalCard },
-                      { label: "unknown", count: salesSummary.unknownPaymentCount, amount: totalUnknownPayment },
+                      { label: "cash", count: selectedSummary.cashPaymentCount, amount: totalCash },
+                      { label: "card", count: selectedSummary.cardPaymentCount, amount: totalCard },
+                      { label: "unknown", count: selectedSummary.unknownPaymentCount, amount: totalUnknownPayment },
                       { label: "total", count: paymentBreakdownCountTotal, amount: paymentBreakdownTotal },
                     ].map((row) => (
                       <tr key={row.label}>
@@ -1070,6 +1074,61 @@ async function SalesDashboardPageContent({
         ) : null}
       </KpiSection>
 
+        <KpiSection
+          title="Comparison view"
+          subtitle={comparisonRange ? `Selected range ${selectedRangeLabel} compared with ${comparisonRangeLabel}.` : "All-time reports do not have a comparison window, so choose a finite month or year for side-by-side reporting."}
+        >
+          {comparisonRange ? (
+            <DataTable headers={["Metric", "Selected", "Comparison", "Delta"]}>
+              <tr>
+                <td className="font-medium">Total sales</td>
+                <td>{lyd(totalSales)}</td>
+                <td>{lyd(comparisonSummary.successfulSalesAmount)}</td>
+                <td className="font-semibold">{formatDelta(totalSales - comparisonSummary.successfulSalesAmount)}</td>
+              </tr>
+              <tr>
+                <td className="font-medium">Units sold</td>
+                <td>{formatInteger(totalUnits)}</td>
+                <td>{formatInteger(comparisonSummary.successfulUnitsSold)}</td>
+                <td className="font-semibold">{formatInteger(totalUnits - comparisonSummary.successfulUnitsSold)}</td>
+              </tr>
+              <tr>
+                <td className="font-medium">Average transaction</td>
+                <td>{lyd(totalTransactions ? selectedSummary.averageTransaction || (totalSales / totalTransactions) : 0)}</td>
+                <td>{lyd(comparisonSummary.successfulSalesCount ? comparisonSummary.averageTransaction || (comparisonSummary.successfulSalesAmount / comparisonSummary.successfulSalesCount) : 0)}</td>
+                <td className="font-semibold">{formatDelta(
+                  (totalTransactions ? selectedSummary.averageTransaction || (totalSales / totalTransactions) : 0) -
+                  (comparisonSummary.successfulSalesCount ? comparisonSummary.averageTransaction || (comparisonSummary.successfulSalesAmount / comparisonSummary.successfulSalesCount) : 0),
+                )}</td>
+              </tr>
+              <tr>
+                <td className="font-medium">Cash sales</td>
+                <td>{lyd(totalCash)}</td>
+                <td>{lyd(comparisonSummary.cashPaymentAmount)}</td>
+                <td className="font-semibold">{formatDelta(totalCash - comparisonSummary.cashPaymentAmount)}</td>
+              </tr>
+              <tr>
+                <td className="font-medium">Card sales</td>
+                <td>{lyd(totalCard)}</td>
+                <td>{lyd(comparisonSummary.cardPaymentAmount)}</td>
+                <td className="font-semibold">{formatDelta(totalCard - comparisonSummary.cardPaymentAmount)}</td>
+              </tr>
+              <tr>
+                <td className="font-medium">Failed vend rate</td>
+                <td>{failedVendRate}</td>
+                <td>{comparisonSummary.totalAttemptCount > 0 ? `${((comparisonSummary.failedVendRate || (comparisonSummary.failedVendCount / comparisonSummary.totalAttemptCount)) * 100).toFixed(1)}%` : "0.0%"}</td>
+                <td className="font-semibold">
+                  {comparisonSummary.totalAttemptCount > 0
+                    ? formatPercentPointDelta(((selectedSummary.failedVendRate || (statusTotals.failedVendCount / selectedSummary.totalAttemptCount)) - (comparisonSummary.failedVendRate || (comparisonSummary.failedVendCount / comparisonSummary.totalAttemptCount))) * 100)
+                    : "n/a"}
+                </td>
+              </tr>
+            </DataTable>
+          ) : (
+            <p className="text-sm text-slate-500">All-time reports do not have a natural comparison range. Switch to a month or year report to see a side-by-side comparison.</p>
+          )}
+        </KpiSection>
+
         {publicChartUnavailable ? (
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">
             Some detailed sales breakdowns could not load. Please contact admin.
@@ -1088,7 +1147,7 @@ async function SalesDashboardPageContent({
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
               <KpiSection title="Total sales"><MetricValue>{lyd(totalSales)}</MetricValue></KpiSection>
               <KpiSection title="Units sold"><MetricValue>{formatInteger(totalUnits)}</MetricValue></KpiSection>
-              <KpiSection title="Average transaction"><MetricValue>{totalTransactions ? lyd(salesSummary.averageTransaction || (totalSales / totalTransactions)) : "Unknown / not mapped"}</MetricValue></KpiSection>
+              <KpiSection title="Average transaction"><MetricValue>{totalTransactions ? lyd(selectedSummary.averageTransaction || (totalSales / totalTransactions)) : "Unknown / not mapped"}</MetricValue></KpiSection>
               <KpiSection title="Failed vend rate"><MetricValue>{failedVendRate}</MetricValue></KpiSection>
               <KpiSection title="Cash sales"><MetricValue compact={!hasTenderBreakdown}>{hasTenderBreakdown ? lyd(totalCash) : "Payment method unavailable"}</MetricValue></KpiSection>
               <KpiSection title="Card sales"><MetricValue compact={!hasTenderBreakdown}>{hasTenderBreakdown ? lyd(totalCard) : "Payment method unavailable"}</MetricValue></KpiSection>
@@ -1101,19 +1160,19 @@ async function SalesDashboardPageContent({
               <>
                 <div className="grid gap-4 xl:grid-cols-2">
                   <KpiSection title="Sales by day" subtitle={selectedRangeLabel}>
-                    <BarList rows={byDay} valueFormatter={lyd} />
+                    <BarList rows={breakdownRowsToBarRows(dayBreakdownRows)} valueFormatter={lyd} />
                   </KpiSection>
                   <KpiSection title="Monthly sales trend" subtitle={selectedRangeLabel}>
-                    <BarList rows={byMonth} valueFormatter={lyd} />
+                    <BarList rows={breakdownRowsToBarRows(monthBreakdownRows)} valueFormatter={lyd} />
                   </KpiSection>
                   <KpiSection title="Sales by hour" subtitle={selectedRangeLabel}>
-                    <BarList rows={byHour} valueFormatter={lyd} />
+                    <BarList rows={breakdownRowsToBarRows(hourBreakdownRows)} valueFormatter={lyd} />
                   </KpiSection>
                   <KpiSection title="Sales by machine" subtitle={selectedRangeLabel}>
-                    <BarList rows={byMachine} valueFormatter={lyd} />
+                    <BarList rows={breakdownRowsToBarRows(machineBreakdownRows).slice(0, 10)} valueFormatter={lyd} />
                   </KpiSection>
                   <KpiSection title="Sales by location" subtitle={selectedRangeLabel}>
-                    <BarList rows={byLocation} valueFormatter={lyd} />
+                    <BarList rows={breakdownRowsToBarRows(locationBreakdownRows).slice(0, 10)} valueFormatter={lyd} />
                   </KpiSection>
                 </div>
 
@@ -1127,11 +1186,11 @@ async function SalesDashboardPageContent({
 
                 <KpiSection title="Sales by product" subtitle={selectedRangeLabel}>
                   <DataTable headers={["Product", "Units", "Revenue"]}>
-                    {byProduct.map((row) => (
-                      <tr key={row.label}>
-                        <td className="font-medium">{row.label}</td>
-                        <td>{formatInteger(unitsByProduct.get(row.label) ?? 0)}</td>
-                        <td>{lyd(row.value)}</td>
+                    {productBreakdownRows.map((row) => (
+                      <tr key={row.bucketLabel}>
+                        <td className="font-medium">{row.bucketLabel}</td>
+                        <td>{formatInteger(unitsByProduct.get(row.bucketLabel) ?? 0)}</td>
+                        <td>{lyd(row.successfulSalesAmount)}</td>
                       </tr>
                     ))}
                   </DataTable>

@@ -4,15 +4,8 @@ import { EmptyState, ErrorState, PageHeader, SectionCard, StatusBadge } from "@/
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canExecuteRoutes, canManageOperations } from "@/lib/authz";
 import { loadAccessibleOperatorIds, preferredOperatorViewerId } from "@/lib/operator-route-access";
-import { loadOperatorRoutePayPreviewMap, type OperatorRoutePreviewRow, type OperatorRoutePreviewStopRow } from "@/lib/payroll-server";
-import { moneyLabel } from "@/lib/payroll";
+import { type OperatorRoutePreviewRow, type OperatorRoutePreviewStopRow } from "@/lib/operator-route-types";
 import { isOperatorVisibleRouteStatus, isRouteStopDoneStatus, isTerminalRouteStatus, routeDisplayStatus } from "@/lib/route-workflow";
-
-type OperatorPayrollRunSummary = {
-  id: string;
-  net_pay_lyd?: number | string | null;
-  status?: string | null;
-};
 
 function routeProgress(route: OperatorRoutePreviewRow) {
   const completedStops = route.route_stops?.filter((stop: OperatorRoutePreviewStopRow) => isRouteStopDoneStatus(stop.status)).length ?? 0;
@@ -23,11 +16,9 @@ function routeProgress(route: OperatorRoutePreviewRow) {
 
 function RouteCard({
   route,
-  payText,
   subtitle,
 }: {
   route: OperatorRoutePreviewRow;
-  payText: string;
   subtitle: string;
 }) {
   const { completedStops, totalStops, progress } = routeProgress(route);
@@ -41,7 +32,6 @@ function RouteCard({
         <div className="min-w-0">
           <h3 className="font-semibold text-slate-900">{route.route_date}</h3>
           <p className="text-sm text-slate-500">{subtitle}</p>
-          <p className="mt-2 text-sm font-medium text-slate-700">{payText}</p>
         </div>
         <div className="shrink-0">
           <StatusBadge status={routeDisplayStatus(route.status, route.operator_id)} />
@@ -80,12 +70,6 @@ export default async function OperatorRoutesPage() {
 
   const canManageAllRoutes = canManageOperations(profile);
   const accessibleOperatorIds = await loadAccessibleOperatorIds(supabase, profile);
-  const currentViewerOperatorId = preferredOperatorViewerId(profile, accessibleOperatorIds);
-  const currentMonthStart = (() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
-  })();
-
   const routeSelect = "id, route_date, status, operator_id, route_stops(id, status, stop_order, machine_id)";
 
   const assignedQuery = canManageAllRoutes
@@ -99,12 +83,9 @@ export default async function OperatorRoutesPage() {
     .is("operator_id", null)
     .order("route_date", { ascending: true });
 
-  const [assignedResult, availableResult, currentPayrollRunResult] = await Promise.all([
+  const [assignedResult, availableResult] = await Promise.all([
     assignedQuery,
     availableQuery,
-    currentViewerOperatorId
-      ? supabase.from("payroll_runs").select("id, net_pay_lyd, status").eq("operator_id", currentViewerOperatorId).eq("period_start", currentMonthStart).maybeSingle()
-      : Promise.resolve({ data: null, error: null }),
   ]);
 
   const error = assignedResult.error ?? availableResult.error;
@@ -127,13 +108,6 @@ export default async function OperatorRoutesPage() {
   const completedRoutes = assignedRoutes
     .filter((route) => isTerminalRouteStatus(route.status))
     .sort((a, b) => String(b.route_date ?? "").localeCompare(String(a.route_date ?? "")));
-  const previewRoutes = [...assignedRoutes, ...availableRoutes]
-    .filter((route, index, rows) => rows.findIndex((candidate) => candidate.id === route.id) === index);
-  const { previewByRouteId } = await loadOperatorRoutePayPreviewMap({
-    supabase,
-    routes: previewRoutes,
-    viewerTeamMemberId: currentViewerOperatorId,
-  });
 
   return (
     <>
@@ -144,11 +118,21 @@ export default async function OperatorRoutesPage() {
         />
 
         <SectionCard>
-          <div className="p-4">
-            <h2 className="text-base font-semibold text-slate-900">Monthly earned total</h2>
-            <div className="mt-3 text-3xl font-semibold text-slate-900">{moneyLabel((currentPayrollRunResult.data as OperatorPayrollRunSummary | null)?.net_pay_lyd ?? 0)}</div>
-            <div className="mt-2 text-sm text-slate-500">
-              {currentPayrollRunResult.data ? `Current period status: ${(currentPayrollRunResult.data as OperatorPayrollRunSummary).status}` : "Current month payroll run has not been created yet."}
+          <div className="grid gap-4 p-4 sm:grid-cols-3">
+            <div>
+              <div className="text-sm text-slate-500">Open assigned</div>
+              <div className="mt-2 text-3xl font-semibold text-slate-900">{assignedOpenRoutes.length}</div>
+              <div className="mt-1 text-sm text-slate-500">Routes already assigned and still waiting on completion.</div>
+            </div>
+            <div>
+              <div className="text-sm text-slate-500">Available</div>
+              <div className="mt-2 text-3xl font-semibold text-slate-900">{availableRoutes.length}</div>
+              <div className="mt-1 text-sm text-slate-500">Open routes you can claim when the team leaves them unassigned.</div>
+            </div>
+            <div>
+              <div className="text-sm text-slate-500">Completed</div>
+              <div className="mt-2 text-3xl font-semibold text-slate-900">{completedRoutes.length}</div>
+              <div className="mt-1 text-sm text-slate-500">Finished routes stay visible for history and follow-up.</div>
             </div>
           </div>
         </SectionCard>
@@ -165,17 +149,11 @@ export default async function OperatorRoutesPage() {
           ) : (
             <div className="space-y-4">
               {assignedOpenRoutes.map((route) => {
-                const payPreview = previewByRouteId.get(route.id);
                 return (
                   <RouteCard
                     key={route.id}
                     route={route}
                     subtitle={`${route.route_stops?.length ?? 0} machine stops`}
-                    payText={
-                      payPreview?.totalPay !== null && payPreview?.totalPay !== undefined
-                        ? `${payPreview.source === "saved" ? "Stored route pay" : "Estimated pay"}: ${moneyLabel(payPreview.totalPay)}`
-                        : "Route pay estimate appears after a payroll profile is assigned."
-                    }
                   />
                 );
               })}
@@ -193,17 +171,11 @@ export default async function OperatorRoutesPage() {
           ) : (
             <div className="space-y-4">
               {availableRoutes.map((route) => {
-                const payPreview = previewByRouteId.get(route.id);
                 return (
                   <RouteCard
                     key={route.id}
                     route={route}
                     subtitle={`${route.route_stops?.length ?? 0} machine stops - ready to claim`}
-                    payText={
-                      payPreview?.totalPay !== null && payPreview?.totalPay !== undefined
-                        ? `Estimated pay: ${moneyLabel(payPreview.totalPay)}`
-                        : "Route pay estimate appears after a payroll profile is assigned."
-                    }
                   />
                 );
               })}
@@ -213,25 +185,19 @@ export default async function OperatorRoutesPage() {
 
         <section className="space-y-4">
           <div>
-            <h2 className="text-base font-semibold text-slate-900">Completed / Past routes</h2>
-            <p className="mt-1 text-sm text-slate-500">Finished routes stay visible with their stored pay while payroll is reviewed and paid.</p>
+            <h2 className="text-base font-semibold text-slate-900">Completed routes</h2>
+            <p className="mt-1 text-sm text-slate-500">Finished routes stay visible here for history and follow-up.</p>
           </div>
           {!completedRoutes.length ? (
             <EmptyState title="No completed routes yet" body="Completed routes will stay visible here after route closure." />
           ) : (
             <div className="space-y-4">
               {completedRoutes.map((route) => {
-                const payPreview = previewByRouteId.get(route.id);
                 return (
                   <RouteCard
                     key={route.id}
                     route={route}
                     subtitle={`${route.route_stops?.length ?? 0} machine stops`}
-                    payText={
-                      payPreview?.totalPay !== null && payPreview?.totalPay !== undefined
-                        ? `${payPreview.source === "saved" ? "Completed route pay" : "Estimated route pay"}: ${moneyLabel(payPreview.totalPay)}`
-                        : "Route pay becomes visible after a payroll profile is assigned."
-                    }
                   />
                 );
               })}

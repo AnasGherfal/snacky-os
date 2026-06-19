@@ -17,6 +17,7 @@ import {
 export type SalesDashboardSearchParams = {
   range?: string;
   month?: string;
+  year?: string;
   date?: string;
   date_from?: string;
   date_to?: string;
@@ -29,7 +30,10 @@ export type SalesDateRangeKey =
   | "this_week"
   | "this_month"
   | "last_month"
+  | "this_year"
   | "month"
+  | "year"
+  | "all_time"
   | "date"
   | "custom";
 
@@ -40,6 +44,7 @@ export type SalesDateRange = {
   start: string;
   end: string;
   monthValue: string;
+  yearValue: string;
   dateValue: string;
   dateFromValue: string;
   dateToValue: string;
@@ -160,6 +165,40 @@ export type SalesRangeReconciliationDiagnostics = {
   statusGroups: SalesReconciliationStatusGroup[];
 };
 
+export type SalesDashboardBreakdownDimension = "day" | "month" | "hour" | "machine" | "location" | "product";
+
+export type SalesDashboardBreakdownRow = {
+  bucket_key?: string | null;
+  bucket_label?: string | null;
+  sort_key?: string | null;
+  successful_sales_amount?: number | string | null;
+  successful_sales_count?: number | string | null;
+  units_sold?: number | string | null;
+  rows_used?: number | string | null;
+};
+
+export type NormalizedSalesDashboardBreakdownRow = {
+  bucketKey: string;
+  bucketLabel: string;
+  sortKey: string;
+  successfulSalesAmount: number;
+  successfulSalesCount: number;
+  unitsSold: number;
+  rowsUsed: number;
+};
+
+export function normalizeSalesBreakdownRows(rows: SalesDashboardBreakdownRow[]) {
+  return rows.map((row) => ({
+    bucketKey: String(row.bucket_key ?? ""),
+    bucketLabel: String(row.bucket_label ?? row.bucket_key ?? "Unknown"),
+    sortKey: String(row.sort_key ?? row.bucket_key ?? row.bucket_label ?? ""),
+    successfulSalesAmount: numericValue(row.successful_sales_amount),
+    successfulSalesCount: numericValue(row.successful_sales_count),
+    unitsSold: numericValue(row.units_sold),
+    rowsUsed: numericValue(row.rows_used),
+  }));
+}
+
 type DateRangeBounds = {
   end: string;
   start: string;
@@ -198,6 +237,14 @@ function parseMonthValue(value: string | null | undefined) {
   return `${year}-${padDatePart(month)}`;
 }
 
+function parseYearValue(value: string | null | undefined) {
+  if (!value) return null;
+  const match = /^(\d{4})$/.exec(String(value).trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  return Number.isInteger(year) && year >= 1900 && year <= 2100 ? String(year) : null;
+}
+
 function dateFromParts(year: number, month: number, day: number) {
   return new Date(year, month - 1, day);
 }
@@ -220,6 +267,14 @@ function startOfMonth(date: Date) {
 
 function endOfMonth(date: Date) {
   return new Date(date.getFullYear(), date.getMonth() + 1, 0);
+}
+
+function startOfYear(date: Date) {
+  return new Date(date.getFullYear(), 0, 1);
+}
+
+function endOfYear(date: Date) {
+  return new Date(date.getFullYear(), 11, 31);
 }
 
 function formatMonthValue(date: Date) {
@@ -314,6 +369,7 @@ function rangeWithDefaults({
     start: normalized.start,
     end: normalized.end,
     monthValue: normalized.start.slice(0, 7),
+    yearValue: normalized.start.slice(0, 4),
     dateValue: normalized.start === normalized.end ? normalized.start : normalized.end,
     dateFromValue: normalized.start,
     dateToValue: normalized.end,
@@ -443,6 +499,7 @@ export function resolveSalesDashboardRange(
   const today = formatLocalDate(now);
   const rawRange = String(params.range ?? "").trim().toLowerCase();
   const monthValue = parseMonthValue(params.month);
+  const yearValue = parseYearValue(params.year);
   const singleDate = parseIsoDate(params.date);
   const customStart = parseIsoDate(params.date_from);
   const customEnd = parseIsoDate(params.date_to);
@@ -488,6 +545,16 @@ export function resolveSalesDashboardRange(
     });
   }
 
+  if (rawRange === "this_year") {
+    return rangeWithDefaults({
+      key: "this_year",
+      label: "This year",
+      helperText: "Showing detailed sales from January 1 through today.",
+      start: formatLocalDate(startOfYear(now)),
+      end: today,
+    });
+  }
+
   if (rawRange === "last_month") {
     const previousMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     return rangeWithDefaults({
@@ -508,6 +575,30 @@ export function resolveSalesDashboardRange(
       helperText: `Showing detailed sales for ${monthLabel(monthValue)}.`,
       start: formatLocalDate(startOfMonth(monthDate)),
       end: formatLocalDate(endOfMonth(monthDate)),
+    });
+  }
+
+  if (rawRange === "year" && yearValue) {
+    const year = Number(yearValue);
+    return rangeWithDefaults({
+      key: "year",
+      label: yearValue,
+      helperText: `Showing detailed sales for ${yearValue}.`,
+      start: `${yearValue}-01-01`,
+      end: `${yearValue}-12-31`,
+    });
+  }
+
+  if (rawRange === "all_time") {
+    const coverage = vmsCoverageSummary(activeDetailedSalesBatches(batches));
+    const allTimeStart = coverage.start || defaultSalesRange(batches, now).start;
+    const allTimeEnd = coverage.end || today;
+    return rangeWithDefaults({
+      key: "all_time",
+      label: "All time",
+      helperText: "Showing all active detailed sales currently available in Snacky OS.",
+      start: allTimeStart,
+      end: allTimeEnd,
     });
   }
 
@@ -534,6 +625,84 @@ export function resolveSalesDashboardRange(
   }
 
   return defaultSalesRange(batches, now);
+}
+
+function inclusiveDayCount(start: string, end: string) {
+  const startDate = dateFromParts(Number(start.slice(0, 4)), Number(start.slice(5, 7)), Number(start.slice(8, 10)));
+  const endDate = dateFromParts(Number(end.slice(0, 4)), Number(end.slice(5, 7)), Number(end.slice(8, 10)));
+  const diff = Math.round((endDate.getTime() - startDate.getTime()) / 86_400_000);
+  return Math.max(1, diff + 1);
+}
+
+function shiftIsoDate(value: string, days: number) {
+  const shifted = new Date(dateFromParts(Number(value.slice(0, 4)), Number(value.slice(5, 7)), Number(value.slice(8, 10))));
+  shifted.setDate(shifted.getDate() + days);
+  return formatLocalDate(shifted);
+}
+
+export function buildSalesComparisonRange(range: SalesDateRange) {
+  if (range.key === "all_time") return null;
+
+  if (range.key === "month" || range.key === "last_month") {
+    const [year, month] = range.start.slice(0, 7).split("-").map(Number);
+    const previousMonth = new Date(year, month - 2, 1);
+    return rangeWithDefaults({
+      key: "month",
+      label: monthLabel(formatMonthValue(previousMonth)),
+      helperText: "Comparison period: previous calendar month.",
+      start: formatLocalDate(startOfMonth(previousMonth)),
+      end: formatLocalDate(endOfMonth(previousMonth)),
+    });
+  }
+
+  if (range.key === "year") {
+    const year = Number(range.start.slice(0, 4)) - 1;
+    return rangeWithDefaults({
+      key: "year",
+      label: String(year),
+      helperText: "Comparison period: previous calendar year.",
+      start: `${year}-01-01`,
+      end: `${year}-12-31`,
+    });
+  }
+
+  if (range.key === "this_year") {
+    const currentYear = Number(range.start.slice(0, 4));
+    const comparisonEndDate = new Date(Number(range.end.slice(0, 4)) - 1, Number(range.end.slice(5, 7)) - 1, Number(range.end.slice(8, 10)));
+    const comparisonEnd = formatLocalDate(comparisonEndDate);
+    const comparisonStart = `${currentYear - 1}-01-01`;
+    return rangeWithDefaults({
+      key: "this_year",
+      label: `${currentYear - 1} YTD`,
+      helperText: "Comparison period: previous year to date.",
+      start: comparisonStart,
+      end: comparisonEnd,
+    });
+  }
+
+  if (range.key === "this_month") {
+    const dayCount = inclusiveDayCount(range.start, range.end);
+    const comparisonEnd = shiftIsoDate(range.start, -1);
+    const comparisonStart = shiftIsoDate(comparisonEnd, -(dayCount - 1));
+    return rangeWithDefaults({
+      key: "custom",
+      label: "Previous period",
+      helperText: "Comparison period: the immediately preceding date span with the same number of days.",
+      start: comparisonStart,
+      end: comparisonEnd,
+    });
+  }
+
+  const dayCount = inclusiveDayCount(range.start, range.end);
+  const comparisonEnd = shiftIsoDate(range.start, -1);
+  const comparisonStart = shiftIsoDate(comparisonEnd, -(dayCount - 1));
+  return rangeWithDefaults({
+    key: "custom",
+    label: "Previous period",
+    helperText: "Comparison period: the immediately preceding date span with the same number of days.",
+    start: comparisonStart,
+    end: comparisonEnd,
+  });
 }
 
 function looksLikeMissingColumnError(value: string) {

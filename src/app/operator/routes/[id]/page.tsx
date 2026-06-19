@@ -4,11 +4,10 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge, SectionCard } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute, canExecuteRoutes } from "@/lib/authz";
-import { buildOperatorRouteAccessContext, loadAccessibleOperatorIds, preferredOperatorViewerId } from "@/lib/operator-route-access";
-import { loadOperatorRoutePayPreviewMap, type OperatorRoutePreviewRow, type OperatorRoutePreviewStopRow } from "@/lib/payroll-server";
-import { moneyLabel } from "@/lib/payroll";
+import { buildOperatorRouteAccessContext, loadAccessibleOperatorIds } from "@/lib/operator-route-access";
+import { type OperatorRoutePreviewRow, type OperatorRoutePreviewStopRow } from "@/lib/operator-route-types";
 import { sortPickupProductRows } from "@/lib/route-pickup-checklist";
-import { isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isRouteStopActiveStatus, isRouteStopDoneStatus, isRouteStopPendingStatus, isTerminalRouteStatus, nextOperatorRouteHref, routeDisplayStatus, ROUTE_STOP_COMPLETED_STATUS } from "@/lib/route-workflow";
+import { isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isRouteStopActiveStatus, isRouteStopDoneStatus, isRouteStopPendingStatus, nextOperatorRouteHref, routeDisplayStatus, ROUTE_STOP_COMPLETED_STATUS } from "@/lib/route-workflow";
 import { skipStop } from "@/lib/operator-actions";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -30,12 +29,6 @@ type OperatorRouteStockLineRow = {
   picked_qty?: number | string | null;
   returned_qty?: number | string | null;
   product?: { name?: string | null; category?: string | null } | null;
-};
-
-type OperatorPayrollRunSummary = {
-  id: string;
-  net_pay_lyd?: number | string | null;
-  status?: string | null;
 };
 
 const OPERATOR_ROUTE_BASE_SELECT = "id, route_date, status, operator_id, started_at, completed_at, created_at, notes";
@@ -89,7 +82,6 @@ export default async function OperatorRouteDetailPage({
   const routeDiagnosticClient = getSupabaseAdminClient() ?? supabase;
   const routeAccessProfile = await buildOperatorRouteAccessContext(supabase, profile);
   const accessibleOperatorIds = await loadAccessibleOperatorIds(supabase, profile);
-  const currentViewerOperatorId = preferredOperatorViewerId(profile, accessibleOperatorIds);
 
   const [baseRouteResult, visibleRouteResult] = await Promise.all([
     readOperatorRouteBaseById(routeDiagnosticClient, routeId),
@@ -199,7 +191,7 @@ export default async function OperatorRouteDetailPage({
       permission_filtered_route_found: Boolean(visibleRoute),
       exact_reason_page_would_not_found: "app_permission_check_denied",
     });
-      return (
+    return (
       <>
         <ErrorState
           title="Route unavailable"
@@ -210,10 +202,6 @@ export default async function OperatorRouteDetailPage({
     );
   }
 
-  const currentMonthStart = (() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
-  })();
   const routeStops = (stops ?? []) as OperatorRoutePreviewStopRow[];
   const machineIds = routeStops.map((stop) => stop.machine_id).filter(Boolean);
   const { data: machines } = machineIds.length
@@ -223,15 +211,6 @@ export default async function OperatorRouteDetailPage({
   const doneStops = routeStops.filter((s) => isRouteStopDoneStatus(s.status)).length;
   const totalStops = routeStops.length;
   const pickItems = (routeStock ?? []) as OperatorRouteStockLineRow[];
-  const currentPayrollRunResult = currentViewerOperatorId
-    ? await routeReadClient.from("payroll_runs").select("id, net_pay_lyd, status").eq("operator_id", currentViewerOperatorId).eq("period_start", currentMonthStart).maybeSingle()
-    : { data: null };
-  const { previewByRouteId } = await loadOperatorRoutePayPreviewMap({
-    supabase: routeReadClient,
-    routes: [{ ...routeRow, route_stops: routeStops }],
-    viewerTeamMemberId: currentViewerOperatorId,
-  });
-  const payPreview = previewByRouteId.get(routeId);
   const hasPickup = pickItems.some((item) => Number(item.picked_qty ?? 0) > 0);
   const sortedPickItems = sortPickupProductRows(
     pickItems.map((item) => ({
@@ -262,7 +241,7 @@ export default async function OperatorRouteDetailPage({
         {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{error}</div> : null}
 
         {/* Route Status Cards */}
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <SectionCard>
             <div className="p-4">
               <div className="text-sm text-slate-500 mb-1">Status</div>
@@ -279,28 +258,15 @@ export default async function OperatorRouteDetailPage({
           </SectionCard>
           <SectionCard>
             <div className="p-4">
-              <div className="mb-1 text-sm text-slate-500">{isTerminalRouteStatus(routeRow.status) ? "Completed route pay" : "Estimated route pay"}</div>
+              <div className="mb-1 text-sm text-slate-500">Stops</div>
               <div className="font-semibold text-lg text-slate-900">
-                {payPreview?.totalPay !== null && payPreview?.totalPay !== undefined ? moneyLabel(payPreview.totalPay) : "Unavailable"}
+                {totalStops}
               </div>
               <div className="mt-1 text-xs text-slate-500">
-                {payPreview?.source === "saved"
-                  ? "This amount comes from the stored route pay breakdown."
-                  : "This amount updates from your current pay profile until admin verifies payroll."}
+                Machine stops on this route.
               </div>
             </div>
           </SectionCard>
-          <SectionCard>
-            <div className="p-4">
-                <div className="mb-1 text-sm text-slate-500">Monthly earned total</div>
-                <div className="font-semibold text-lg text-slate-900">
-                {moneyLabel((currentPayrollRunResult.data as OperatorPayrollRunSummary | null)?.net_pay_lyd ?? 0)}
-                </div>
-                <div className="mt-1 text-xs text-slate-500">
-                {currentPayrollRunResult.data ? `Current period status: ${(currentPayrollRunResult.data as OperatorPayrollRunSummary).status}` : "Current month payroll run has not been created yet."}
-                </div>
-              </div>
-            </SectionCard>
           <SectionCard>
             <div className="p-4">
               <div className="text-sm text-slate-500 mb-1">Action</div>
