@@ -1,9 +1,7 @@
 import {
   batchImportedRows,
   batchLastUpdatedAt,
-  isActiveImportedVmsBatch,
   sourceFileName,
-  vmsCoverageSummary,
   type VmsDashboardBatch,
 } from "@/lib/vms-dashboard-source";
 import {
@@ -346,10 +344,17 @@ function batchRowKey(batchId: string, rowNumber: number) {
   return `${batchId}:${rowNumber}`;
 }
 
-function countableDetailedBatch(batch: VmsDashboardBatch | undefined) {
+function finalizedDetailedSalesBatch(batch: VmsDashboardBatch | undefined) {
   if (!batch) return false;
   if (batch.report_type !== "vms_order_details_weekly") return false;
-  return isActiveImportedVmsBatch(batch);
+  if (batch.deleted_at) return false;
+  const status = String(batch.status ?? "").toLowerCase();
+  if (status === "disabled" || status === "deleted") return false;
+  return ["imported", "imported_with_warnings", "partially_imported"].includes(status);
+}
+
+function countableDetailedBatch(batch: VmsDashboardBatch | undefined) {
+  return finalizedDetailedSalesBatch(batch);
 }
 
 async function fetchPagedRows<T>({
@@ -402,8 +407,29 @@ function rangeWithDefaults({
   };
 }
 
-function activeDetailedSalesBatches(batches: VmsDashboardBatch[]) {
-  return batches.filter((batch) => batch.report_type === "vms_order_details_weekly" && isActiveImportedVmsBatch(batch));
+function finalizedDetailedSalesBatches(batches: VmsDashboardBatch[]) {
+  return batches.filter((batch) => finalizedDetailedSalesBatch(batch));
+}
+
+export function salesCoverageSummary(batches: VmsDashboardBatch[]) {
+  const finalized = finalizedDetailedSalesBatches(batches)
+    .sort((a, b) => String(a.report_start_date ?? "").localeCompare(String(b.report_start_date ?? "")));
+  const ranges = finalized
+    .map((batch) => ({ start: batch.report_start_date ?? "", end: batch.report_end_date ?? "" }))
+    .filter((range) => range.start && range.end);
+  const gaps: { start: string; end: string }[] = [];
+  for (let index = 1; index < ranges.length; index += 1) {
+    const expected = shiftIsoDate(ranges[index - 1].end, 1);
+    if (expected < ranges[index].start) gaps.push({ start: expected, end: shiftIsoDate(ranges[index].start, -1) });
+  }
+  const latest = [...finalized].sort((a, b) => String(b.uploaded_at ?? b.imported_at ?? "").localeCompare(String(a.uploaded_at ?? a.imported_at ?? "")))[0] ?? null;
+  return {
+    active: finalized,
+    gaps,
+    start: ranges[0]?.start ?? "",
+    end: ranges.at(-1)?.end ?? "",
+    latest,
+  };
 }
 
 function coverageLabel(start: string | null | undefined, end: string | null | undefined) {
@@ -480,29 +506,29 @@ function latestCurrentMonthCoverage(batches: VmsDashboardBatch[], monthStart: st
 }
 
 function defaultSalesRange(batches: VmsDashboardBatch[], now: Date) {
-  const activeDetailed = activeDetailedSalesBatches(batches);
+  const finalizedDetailed = finalizedDetailedSalesBatches(batches);
   const today = formatLocalDate(now);
   const currentMonthStart = formatLocalDate(startOfMonth(now));
   const currentMonthEnd = formatLocalDate(endOfMonth(now));
-  const currentMonthLatestEnd = latestCurrentMonthCoverage(activeDetailed, currentMonthStart, currentMonthEnd);
+  const currentMonthLatestEnd = latestCurrentMonthCoverage(finalizedDetailed, currentMonthStart, currentMonthEnd);
 
   if (currentMonthLatestEnd) {
     return rangeWithDefaults({
       key: "default",
       label: "Latest available detailed sales",
-      helperText: "Defaulted to the current month because active detailed sales exist for this month.",
+      helperText: "Defaulted to the current month because finalized detailed sales exist for this month.",
       start: currentMonthStart,
       end: currentMonthLatestEnd <= today ? currentMonthLatestEnd : today,
     });
   }
 
-  const latestDetailed = [...activeDetailed].sort((left, right) => rangeSortKey(right).localeCompare(rangeSortKey(left)))[0] ?? null;
+  const latestDetailed = [...finalizedDetailed].sort((left, right) => rangeSortKey(right).localeCompare(rangeSortKey(left)))[0] ?? null;
   const latestCoverage = latestDetailed ? batchCoverageDates(latestDetailed) : null;
   if (latestCoverage?.start && latestCoverage.end) {
     return rangeWithDefaults({
       key: "default",
       label: "Latest available detailed sales",
-      helperText: `Defaulted to the latest active detailed sales coverage from ${sourceFileName(latestDetailed)}.`,
+      helperText: `Defaulted to the latest finalized detailed sales coverage from ${sourceFileName(latestDetailed)}.`,
       start: latestCoverage.start,
       end: latestCoverage.end,
     });
@@ -511,7 +537,7 @@ function defaultSalesRange(batches: VmsDashboardBatch[], now: Date) {
   return rangeWithDefaults({
     key: "default",
     label: "Current month",
-    helperText: "No active detailed sales files were found, so the dashboard is waiting for imports.",
+    helperText: "No finalized detailed sales files were found, so the dashboard is waiting for imports.",
     start: currentMonthStart,
     end: today,
   });
@@ -615,13 +641,13 @@ export function resolveSalesDashboardRange(
   }
 
   if (rawRange === "all_time") {
-    const coverage = vmsCoverageSummary(activeDetailedSalesBatches(batches));
+    const coverage = salesCoverageSummary(batches);
     const allTimeStart = coverage.start || defaultSalesRange(batches, now).start;
     const allTimeEnd = coverage.end || today;
     return rangeWithDefaults({
       key: "all_time",
       label: "All time",
-      helperText: "Showing all active detailed sales currently available in Snacky OS.",
+      helperText: "Showing all finalized detailed sales currently available in Snacky OS.",
       start: allTimeStart,
       end: allTimeEnd,
     });
@@ -788,12 +814,12 @@ function classifyContribution({
     };
   }
 
-  if (batch.deleted_at || batch.is_active === false || rawStatus === "disabled" || rawStatus === "deleted") {
+  if (batch.deleted_at || rawStatus === "disabled" || rawStatus === "deleted") {
     return {
       included: false,
       reason: rowsInRange > 0
-        ? `This detailed sales batch has ${rowsInRange.toLocaleString("en-US")} row(s) inside the selected business-date range, but the batch is inactive so the dashboard excludes it.`
-        : "This detailed sales batch is inactive, so it is excluded from dashboard totals.",
+        ? `This detailed sales batch has ${rowsInRange.toLocaleString("en-US")} row(s) inside the selected business-date range, but the batch was disabled or deleted so the dashboard excludes it.`
+        : "This detailed sales batch was disabled or deleted, so it is excluded from dashboard totals.",
       status: "inactive_batch",
     };
   }
@@ -818,10 +844,10 @@ function classifyContribution({
     };
   }
 
-  if (!isActiveImportedVmsBatch(batch)) {
+  if (!finalizedDetailedSalesBatch(batch)) {
     return {
       included: false,
-      reason: "This detailed sales batch is not currently active for dashboard use.",
+      reason: "This detailed sales batch is not finalized for dashboard use yet.",
       status: "inactive_batch",
     };
   }

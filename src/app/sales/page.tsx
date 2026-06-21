@@ -16,6 +16,7 @@ import {
   normalizeSalesBreakdownRows,
   rangesOverlap,
   resolveSalesDashboardRange,
+  salesCoverageSummary,
   salesBatchReconciliationById,
   type NormalizedSalesDashboardBreakdownRow,
   type SalesBatchReconciliation,
@@ -26,7 +27,6 @@ import {
   batchLastUpdatedAt,
   formatVmsDateTime,
   queryVmsDashboardBatches,
-  vmsCoverageSummary,
   type VmsDashboardBatch,
 } from "@/lib/vms-dashboard-source";
 
@@ -174,6 +174,43 @@ type TransactionStatusRow = {
   range_transaction_count: number | string | null;
   range_min_transaction_at: string | null;
   range_max_transaction_at: string | null;
+};
+
+type SalesMonthlyCoverageRow = {
+  business_month: string | null;
+  total_rows: number | string | null;
+  finalized_rows: number | string | null;
+  successful_sale_rows: number | string | null;
+  finalized_successful_sale_rows: number | string | null;
+  successful_sale_amount: number | string | null;
+  finalized_successful_sale_amount: number | string | null;
+  min_business_date: string | null;
+  max_business_date: string | null;
+  batch_count: number | string | null;
+  finalized_batch_count: number | string | null;
+  active_finalized_batch_count: number | string | null;
+  null_business_date_rows: number | string | null;
+};
+
+type NormalizedSalesMonthlyCoverageRow = {
+  businessMonth: string | null;
+  totalRows: number;
+  finalizedRows: number;
+  successfulSaleRows: number;
+  finalizedSuccessfulSaleRows: number;
+  successfulSaleAmount: number;
+  finalizedSuccessfulSaleAmount: number;
+  minBusinessDate: string | null;
+  maxBusinessDate: string | null;
+  batchCount: number;
+  finalizedBatchCount: number;
+  activeFinalizedBatchCount: number;
+  nullBusinessDateRows: number;
+};
+
+type SalesNoDataState = {
+  body: string;
+  title: string;
 };
 
 type SupabaseSectionError = {
@@ -370,6 +407,19 @@ function businessContributionReason(row: { status: string; reason: string }) {
   }
 }
 
+function isFinalizedDetailedBatch(batch: VmsDashboardBatch) {
+  return batch.report_type === "vms_order_details_weekly"
+    && ["imported", "imported_with_warnings", "partially_imported"].includes(String(batch.status ?? ""))
+    && !batch.deleted_at;
+}
+
+function formatCoverageMonthLabel(value: string | null | undefined) {
+  if (!value) return "Missing business date";
+  const [year, month] = String(value).slice(0, 7).split("-").map(Number);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return String(value);
+  return new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(new Date(year, month - 1, 1));
+}
+
 function rangeDayCount(start: string, end: string) {
   const startDate = new Date(`${start}T00:00:00`);
   const endDate = new Date(`${end}T00:00:00`);
@@ -476,6 +526,106 @@ function normalizeSalesBatchReconciliationRows(rows: TransactionStatusRow[]) {
     rangeMinTransactionAt: row.range_min_transaction_at ?? null,
     rangeMaxTransactionAt: row.range_max_transaction_at ?? null,
   } satisfies SalesBatchReconciliation));
+}
+
+function normalizeSalesMonthlyCoverageRows(rows: SalesMonthlyCoverageRow[]) {
+  return rows.map((row) => ({
+    businessMonth: row.business_month ?? null,
+    totalRows: numericValue(row.total_rows),
+    finalizedRows: numericValue(row.finalized_rows),
+    successfulSaleRows: numericValue(row.successful_sale_rows),
+    finalizedSuccessfulSaleRows: numericValue(row.finalized_successful_sale_rows),
+    successfulSaleAmount: numericValue(row.successful_sale_amount),
+    finalizedSuccessfulSaleAmount: numericValue(row.finalized_successful_sale_amount),
+    minBusinessDate: row.min_business_date ?? null,
+    maxBusinessDate: row.max_business_date ?? null,
+    batchCount: numericValue(row.batch_count),
+    finalizedBatchCount: numericValue(row.finalized_batch_count),
+    activeFinalizedBatchCount: numericValue(row.active_finalized_batch_count),
+    nullBusinessDateRows: numericValue(row.null_business_date_rows),
+  } satisfies NormalizedSalesMonthlyCoverageRow));
+}
+
+function summarizeSalesCoverage(rows: NormalizedSalesMonthlyCoverageRow[]) {
+  const finalizedRows = rows.filter((row) => row.businessMonth && row.finalizedSuccessfulSaleRows > 0);
+  const earliestBusinessDate = finalizedRows
+    .map((row) => row.minBusinessDate)
+    .filter((value): value is string => Boolean(value))
+    .sort()[0] ?? null;
+  const latestBusinessDate = finalizedRows
+    .map((row) => row.maxBusinessDate)
+    .filter((value): value is string => Boolean(value))
+    .sort()
+    .at(-1) ?? null;
+  const monthsWithFinalizedData = finalizedRows.map((row) => formatCoverageMonthLabel(row.businessMonth));
+  const nullBusinessDateRows = rows.reduce((sum, row) => sum + row.nullBusinessDateRows, 0);
+  return {
+    earliestBusinessDate,
+    latestBusinessDate,
+    monthsWithFinalizedData,
+    monthsWithFinalizedDataLabel: monthsWithFinalizedData.length ? monthsWithFinalizedData.join(", ") : "No finalized months yet",
+    nullBusinessDateRows,
+  };
+}
+
+function buildNoSalesState({
+  contributingFiles,
+  coverageLabel,
+  fileContributions,
+  monthlyCoverageRows,
+  selectedRange,
+}: {
+  contributingFiles: ReturnType<typeof buildSalesFileContributions>;
+  coverageLabel: string;
+  fileContributions: ReturnType<typeof buildSalesFileContributions>;
+  monthlyCoverageRows: NormalizedSalesMonthlyCoverageRow[];
+  selectedRange: { end: string; start: string };
+}): SalesNoDataState {
+  const rangeBounds = { start: selectedRange.start, end: selectedRange.end };
+  const detailedRowsInRange = fileContributions.filter((row) => {
+    if (row.batch.report_type !== "vms_order_details_weekly") return false;
+    if (row.rowsInRange > 0 || row.successfulRowsInRange > 0) return true;
+    return Boolean(
+      row.actualCoverageStart
+      && row.actualCoverageEnd
+      && rangesOverlap({ start: row.actualCoverageStart, end: row.actualCoverageEnd }, rangeBounds),
+    );
+  });
+
+  if (contributingFiles.some((row) => row.included)) {
+    return {
+      title: "Sales rows exist, but the dashboard summary could not calculate them.",
+      body: "Detailed successful-sale rows overlap this range, but the dashboard totals came back empty. Check the summary RPC and data source diagnostics.",
+    };
+  }
+
+  if (detailedRowsInRange.some((row) => row.status === "preview_only" || row.status === "inactive_batch")) {
+    return {
+      title: "Rows exist for this range, but the import batch is not finalized/active.",
+      body: "Finalize or reactivate the overlapping Order Details file so Snacky OS can include it in dashboard totals.",
+    };
+  }
+
+  if (detailedRowsInRange.some((row) => row.status === "missing_transaction_datetime") || monthlyCoverageRows.some((row) => row.businessMonth === null && row.finalizedRows > 0 && row.nullBusinessDateRows > 0)) {
+    return {
+      title: "Rows exist but business dates are missing.",
+      body: "Some Order Details rows still do not have a resolved business date. Rebuild business dates, then reload the dashboard.",
+    };
+  }
+
+  if (detailedRowsInRange.some((row) => row.status === "rows_excluded_by_status")) {
+    return {
+      title: "Rows exist for this range, but they were not successful sales.",
+      body: "The overlapping Order Details rows were saved, but they were classified as failed vends, refunds, or another non-success status.",
+    };
+  }
+
+  return {
+    title: "No detailed Order Details rows found for this range.",
+    body: coverageLabel === "-"
+      ? "Change the date filter or finalize imported Order Details files first."
+      : `Change the date filter. Current finalized coverage runs from ${coverageLabel}.`,
+  };
 }
 
 function emptySectionResult<T>(rpcName: string | null, sectionName: string): LoggedSalesSectionResult<T> {
@@ -629,7 +779,7 @@ async function SalesDashboardPageContent({
     );
   }
 
-  const [batchResult, fullReconciliationResult] = await Promise.all([
+  const [batchResult, fullReconciliationResult, monthlyCoverageResult] = await Promise.all([
     loadSalesQuerySection<VmsDashboardBatch>({
       dateFrom: "",
       dateTo: "",
@@ -653,10 +803,21 @@ async function SalesDashboardPageContent({
       rpcName: "sales_dashboard_batch_reconciliation",
       sectionName: "batch_reconciliation_all",
     }),
+    loadSalesQuerySection<SalesMonthlyCoverageRow>({
+      dateFrom: "",
+      dateTo: "",
+      filterMode: String(params.range ?? "default"),
+      profileId,
+      promise: supabase.rpc("sales_dashboard_monthly_coverage"),
+      role: profileRole,
+      rpcName: "sales_dashboard_monthly_coverage",
+      sectionName: "monthly_coverage",
+    }),
   ]);
 
   const batches = batchResult.data as VmsDashboardBatch[];
   const fullReconciliationRows = normalizeSalesBatchReconciliationRows(fullReconciliationResult.data as TransactionStatusRow[]);
+  const monthlyCoverageRows = normalizeSalesMonthlyCoverageRows(monthlyCoverageResult.data as SalesMonthlyCoverageRow[]);
   const fullReconciliationByBatchId = salesBatchReconciliationById(fullReconciliationRows);
   const coverageAwareBatches = applySalesBatchCoverage(batches, fullReconciliationByBatchId);
   const selectedRange = resolveSalesDashboardRange(params, coverageAwareBatches, renderedAt);
@@ -852,7 +1013,9 @@ async function SalesDashboardPageContent({
       && rangesOverlap({ start: coverage.start, end: coverage.end }, { start: selectedRange.start, end: selectedRange.end }),
     );
   });
-  const coverage = vmsCoverageSummary(coverageAwareBatches);
+  const coverage = salesCoverageSummary(coverageAwareBatches);
+  const coverageSummary = summarizeSalesCoverage(monthlyCoverageRows);
+  const finalizedDetailedFiles = detailedFiles.filter(isFinalizedDetailedBatch);
   const missingPeriods = coverage.gaps.filter((gap) => rangesOverlap(gap, { start: selectedRange.start, end: selectedRange.end }));
   const dayCount = rangeDayCount(selectedRange.start, selectedRange.end);
   const trendUsesDaily = dayCount <= 62;
@@ -866,18 +1029,30 @@ async function SalesDashboardPageContent({
     .slice(0, 15);
   const latestSourceBatch = coverage.latest ?? detailedFiles[0] ?? batches[0] ?? null;
   const lastUpdatedAt = batchLastUpdatedAt(latestSourceBatch) ?? renderedAt.toISOString();
+  const finalizedCoverageLabel = coverageSummary.earliestBusinessDate && coverageSummary.latestBusinessDate
+    ? `${coverageSummary.earliestBusinessDate} to ${coverageSummary.latestBusinessDate}`
+    : "-";
   const sourceStatusText = contributingFiles.length
     ? missingPeriods.length
-      ? `${formatInteger(contributingFiles.length)} active detailed file(s), with coverage gaps in this range`
-      : `${formatInteger(contributingFiles.length)} active detailed file(s) contributing`
-    : "Waiting for finalized detailed Order Details files";
+      ? `${formatInteger(contributingFiles.length)} finalized detailed file(s) contributing, with coverage gaps in this range`
+      : `${formatInteger(contributingFiles.length)} finalized detailed file(s) contributing`
+    : finalizedDetailedFiles.length
+      ? "No finalized detailed files overlap the selected business-date range."
+      : "Waiting for finalized detailed Order Details files";
   const paymentMethodText = summary.paymentMethodAvailable
     ? "Cash and card split is available for this range."
     : "Payment method split is not available for this range.";
   const summaryLoadFailed = Boolean(salesSummaryResult.error);
-  const sourceLoadFailed = Boolean(batchResult.error || fullReconciliationResult.error || filteredReconciliationResult.error);
+  const sourceLoadFailed = Boolean(batchResult.error || fullReconciliationResult.error || filteredReconciliationResult.error || monthlyCoverageResult.error);
   const hasSalesRows = summary.successfulSalesCount > 0 || trendRows.length > 0;
   const hasProfitWarning = canViewProfit && (summary.missingCostRevenueAmount > 0 || summary.estimatedCostRevenueAmount > 0);
+  const noSalesState = buildNoSalesState({
+    contributingFiles,
+    coverageLabel: finalizedCoverageLabel,
+    fileContributions,
+    monthlyCoverageRows,
+    selectedRange,
+  });
 
   return (
     <>
@@ -966,8 +1141,8 @@ async function SalesDashboardPageContent({
 
         {!hasSalesRows ? (
           <EmptyState
-            title="No sales found for this range."
-            body="Change the date filter or import finalized Order Details files for the missing business dates."
+            title={noSalesState.title}
+            body={noSalesState.body}
           />
         ) : (
           <>
@@ -1194,8 +1369,8 @@ async function SalesDashboardPageContent({
                 <div>{formatInteger(detailedFiles.length)}</div>
               </div>
               <div>
-                <div className="font-semibold text-slate-900">Latest included date</div>
-                <div>{selectedRange.end}</div>
+                <div className="font-semibold text-slate-900">Finalized detailed files</div>
+                <div>{formatInteger(finalizedDetailedFiles.length)}</div>
               </div>
               <div>
                 <div className="font-semibold text-slate-900">Coverage gaps</div>
@@ -1204,6 +1379,22 @@ async function SalesDashboardPageContent({
               <div>
                 <div className="font-semibold text-slate-900">Payment method split</div>
                 <div>{summary.paymentMethodAvailable ? "Available" : "Unavailable"}</div>
+              </div>
+              <div>
+                <div className="font-semibold text-slate-900">Available finalized coverage</div>
+                <div>{finalizedCoverageLabel}</div>
+              </div>
+              <div>
+                <div className="font-semibold text-slate-900">Months with finalized data</div>
+                <div>{coverageSummary.monthsWithFinalizedDataLabel}</div>
+              </div>
+              <div>
+                <div className="font-semibold text-slate-900">Rows missing business date</div>
+                <div>{formatInteger(coverageSummary.nullBusinessDateRows)}</div>
+              </div>
+              <div>
+                <div className="font-semibold text-slate-900">Excluded detailed files</div>
+                <div>{formatInteger(Math.max(0, detailedFiles.length - finalizedDetailedFiles.length))}</div>
               </div>
             </div>
 
@@ -1221,6 +1412,21 @@ async function SalesDashboardPageContent({
                   </p>
                 ))}
               </div>
+            ) : null}
+
+            {monthlyCoverageRows.length ? (
+              <DataTable headers={["Business month", "Finalized successful rows", "Finalized revenue", "Batch counts", "Coverage", "Missing business dates"]}>
+                {monthlyCoverageRows.map((row) => (
+                  <tr key={row.businessMonth ?? "missing-business-date"}>
+                    <td className="font-medium">{formatCoverageMonthLabel(row.businessMonth)}</td>
+                    <td>{formatInteger(row.finalizedSuccessfulSaleRows)}</td>
+                    <td>{lyd(row.finalizedSuccessfulSaleAmount)}</td>
+                    <td>{`${formatInteger(row.finalizedBatchCount)} finalized / ${formatInteger(row.activeFinalizedBatchCount)} active / ${formatInteger(row.batchCount)} total`}</td>
+                    <td>{row.minBusinessDate && row.maxBusinessDate ? `${row.minBusinessDate} to ${row.maxBusinessDate}` : "-"}</td>
+                    <td>{formatInteger(row.nullBusinessDateRows)}</td>
+                  </tr>
+                ))}
+              </DataTable>
             ) : null}
 
             {fileContributions.length ? (
