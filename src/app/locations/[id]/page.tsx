@@ -4,7 +4,7 @@ import { LocalDraftForm } from "@/components/LocalDraft";
 import { EmptyState, ErrorState, FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { hasPermission } from "@/lib/authz";
-import { buildLocationLegacyPayload, buildLocationMinimalPayload, buildLocationPayload, LOCATION_TYPE_OPTIONS, normalizeLocationType } from "@/lib/location-records";
+import { buildLocationPayload, LOCATION_TYPE_OPTIONS, normalizeLocationType } from "@/lib/location-records";
 import { formatSiteLabel } from "@/lib/machine-site-display";
 import { locationPayrollDistanceKm } from "@/lib/payroll";
 
@@ -18,7 +18,7 @@ type LocationStorageRow = {
   name?: string | null;
 };
 
-type PayloadMode = "full" | "legacy" | "minimal" | "preflight";
+type PayloadMode = "site" | "payroll" | "preflight";
 
 type LocationRow = {
   id: string;
@@ -52,21 +52,77 @@ type LocationRow = {
 
 type UpdatedLocationResult = Pick<LocationRow, "id" | "name" | "updated_at">;
 
+const SITE_UPDATE_KEYS = [
+  "name",
+  "site_name",
+  "area",
+  "city",
+  "address_text",
+  "google_maps_url",
+  "contact_person_name",
+  "contact_person_phone",
+  "source_location_lead_id",
+  "address",
+  "contact_name",
+  "contact_phone",
+  "location_type",
+  "rent_amount",
+  "status",
+  "notes",
+  "latitude",
+  "longitude",
+] as const;
+
+const PAYROLL_UPDATE_KEYS = [
+  "distance_zone",
+  "access_difficulty",
+  "stop_multiplier",
+  "payroll_storage_location_id",
+  "distance_from_storage_km",
+  "use_round_trip_distance",
+  "payroll_distance_notes",
+] as const;
+
+type RecoverableLocationUpdateResult<T> = {
+  data: T | null;
+  error: unknown;
+  omittedColumns: string[];
+  payloadKeys: string[];
+  returnedRows: number;
+};
+
 function cleanText(value: FormDataEntryValue | null) {
   const text = String(value ?? "").trim();
   return text || null;
 }
 
+function rawText(value: FormDataEntryValue | null) {
+  return String(value ?? "").trim();
+}
+
 function optionalNumber(value: FormDataEntryValue | null) {
-  const text = String(value ?? "").trim();
+  const text = rawText(value).replace(/\s+/g, "");
   if (!text) return null;
-  const parsed = Number(text);
+  const normalized = text
+    .replace(/٬/g, "")
+    .replace(/٫/g, ".")
+    .replace(/,/g, text.includes(".") ? "" : ".");
+  const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
 function isMissingColumnError(error: { code?: string | null; message?: string | null; details?: string | null; hint?: string | null } | null | undefined) {
   const message = `${error?.message ?? ""} ${error?.details ?? ""} ${error?.hint ?? ""}`.toLowerCase();
   return error?.code === "42703" || error?.code === "PGRST204" || (message.includes("column") && message.includes("does not exist"));
+}
+
+function missingColumnName(error: { message?: string | null; details?: string | null; hint?: string | null } | null | undefined) {
+  const text = `${error?.message ?? ""} ${error?.details ?? ""} ${error?.hint ?? ""}`;
+  const standardMatch = text.match(/column ["']?([a-z0-9_]+)["']?/i);
+  if (standardMatch?.[1]) return standardMatch[1];
+
+  const postgrestMatch = text.match(/["']([a-z0-9_]+)["'] column/i);
+  return postgrestMatch?.[1] ?? null;
 }
 
 function notice(message: string, tone: "success" | "error") {
@@ -87,6 +143,80 @@ function withMessage(pathname: string, key: "success" | "error", message: string
 function errorField(error: unknown, key: string) {
   if (!error || typeof error !== "object") return null;
   return (error as Record<string, unknown>)[key] ?? null;
+}
+
+function pickPayload<T extends Record<string, unknown>>(payload: T, keys: readonly string[]) {
+  return Object.fromEntries(
+    keys
+      .filter((key) => Object.prototype.hasOwnProperty.call(payload, key))
+      .map((key) => [key, payload[key as keyof T]]),
+  ) as Record<string, unknown>;
+}
+
+async function updateLocationColumnsWithRecovery<T>({
+  id,
+  payload,
+  select,
+  supabase,
+}: {
+  id: string;
+  payload: Record<string, unknown>;
+  select: string;
+  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>;
+}): Promise<RecoverableLocationUpdateResult<T>> {
+  const workingPayload = { ...payload };
+  const omittedColumns: string[] = [];
+
+  while (Object.keys(workingPayload).filter((key) => key !== "updated_at").length > 0) {
+    const updateResult = await supabase
+      .from("locations")
+      .update(workingPayload)
+      .eq("id", id)
+      .select(select);
+
+    const returnedRows = updateResult.data?.length ?? 0;
+    if (!updateResult.error) {
+      return {
+        data: (updateResult.data?.[0] as T | undefined) ?? null,
+        error: null,
+        omittedColumns,
+        payloadKeys: Object.keys(workingPayload),
+        returnedRows,
+      };
+    }
+
+    if (!isMissingColumnError(updateResult.error)) {
+      return {
+        data: null,
+        error: updateResult.error,
+        omittedColumns,
+        payloadKeys: Object.keys(workingPayload),
+        returnedRows,
+      };
+    }
+
+    const column = missingColumnName(updateResult.error);
+    if (!column || !Object.prototype.hasOwnProperty.call(workingPayload, column)) {
+      return {
+        data: null,
+        error: updateResult.error,
+        omittedColumns,
+        payloadKeys: Object.keys(workingPayload),
+        returnedRows,
+      };
+    }
+
+    delete workingPayload[column];
+    omittedColumns.push(column);
+  }
+
+  return {
+    data: null,
+    error: null,
+    omittedColumns,
+    payloadKeys: [],
+    returnedRows: 0,
+  };
 }
 
 function logLocationUpdateEvent({
@@ -162,6 +292,38 @@ async function saveLocation(formData: FormData) {
   const siteName = String(formData.get("site_name") || "").trim();
   if (!siteName) redirect(withMessage(detailPath, "error", "Could not update location. Exact site name is required."));
 
+  const rentAmountInput = rawText(formData.get("rent_amount"));
+  const stopMultiplierInput = rawText(formData.get("stop_multiplier"));
+  const latitudeInput = rawText(formData.get("latitude"));
+  const longitudeInput = rawText(formData.get("longitude"));
+  const distanceFromStorageInput = rawText(formData.get("distance_from_storage_km"));
+
+  const rentAmount = optionalNumber(formData.get("rent_amount"));
+  const stopMultiplier = optionalNumber(formData.get("stop_multiplier"));
+  const latitude = optionalNumber(formData.get("latitude"));
+  const longitude = optionalNumber(formData.get("longitude"));
+  const distanceFromStorageKm = optionalNumber(formData.get("distance_from_storage_km"));
+
+  if (rentAmountInput && rentAmount === null) {
+    redirect(withMessage(detailPath, "error", "Could not update location. Enter a valid rent amount."));
+  }
+
+  if (stopMultiplierInput && (stopMultiplier === null || stopMultiplier <= 0)) {
+    redirect(withMessage(detailPath, "error", "Could not update location. Stop multiplier must be greater than zero."));
+  }
+
+  if (latitudeInput && latitude === null) {
+    redirect(withMessage(detailPath, "error", "Could not update location. Enter a valid latitude."));
+  }
+
+  if (longitudeInput && longitude === null) {
+    redirect(withMessage(detailPath, "error", "Could not update location. Enter a valid longitude."));
+  }
+
+  if (distanceFromStorageInput && (distanceFromStorageKm === null || distanceFromStorageKm < 0)) {
+    redirect(withMessage(detailPath, "error", "Could not update location. Enter a valid non-negative payroll distance."));
+  }
+
   const draft = {
     site_name: siteName,
     area: cleanText(formData.get("area")),
@@ -172,16 +334,16 @@ async function saveLocation(formData: FormData) {
     contact_person_phone: cleanText(formData.get("contact_person_phone")),
     source_location_lead_id: cleanText(formData.get("source_location_lead_id")),
     location_type: normalizeLocationType(formData.get("location_type")),
-    rent_amount: optionalNumber(formData.get("rent_amount")) ?? 0,
+    rent_amount: rentAmount ?? 0,
     status: String(formData.get("status") || "active"),
     notes: cleanText(formData.get("notes")),
-    latitude: optionalNumber(formData.get("latitude")),
-    longitude: optionalNumber(formData.get("longitude")),
+    latitude,
+    longitude,
     distance_zone: String(formData.get("distance_zone") || "within_10_km"),
     access_difficulty: String(formData.get("access_difficulty") || "normal"),
-    stop_multiplier: optionalNumber(formData.get("stop_multiplier")) ?? 1,
+    stop_multiplier: stopMultiplier ?? 1,
     payroll_storage_location_id: cleanText(formData.get("payroll_storage_location_id")),
-    distance_from_storage_km: optionalNumber(formData.get("distance_from_storage_km")),
+    distance_from_storage_km: distanceFromStorageKm,
     use_round_trip_distance: String(formData.get("use_round_trip_distance") || "") === "yes",
     payroll_distance_notes: cleanText(formData.get("payroll_distance_notes")),
   };
@@ -224,81 +386,108 @@ async function saveLocation(formData: FormData) {
     redirect(withMessage(listPath, "error", "Could not update location. The location may not exist or you may not have permission."));
   }
 
-  const payloadCandidates = [
-    { mode: "full", value: { ...buildLocationPayload(draft), updated_at: now } },
-    { mode: "legacy", value: { ...buildLocationLegacyPayload(draft), updated_at: now } },
-    { mode: "minimal", value: { ...buildLocationMinimalPayload(draft), updated_at: now } },
-  ] as const;
+  const fullPayload = buildLocationPayload(draft);
+  const siteUpdateResult = await updateLocationColumnsWithRecovery<UpdatedLocationResult>({
+    id,
+    payload: { ...pickPayload(fullPayload, SITE_UPDATE_KEYS), updated_at: now },
+    select: "id, name, updated_at",
+    supabase,
+  });
 
-  let lastError: unknown = null;
-  let lastReturnedRows = 0;
-  let lastPayloadMode: PayloadMode = payloadCandidates[0].mode;
-  let updatedLocation: UpdatedLocationResult | null = null;
-  let lastPayloadKeys: string[] = [];
-
-  for (const candidate of payloadCandidates) {
-    lastPayloadMode = candidate.mode;
-    lastPayloadKeys = Object.keys(candidate.value);
-    const updateResult = await supabase
-      .from("locations")
-      .update(candidate.value)
-      .eq("id", id)
-      .select("id, name, updated_at");
-
-    const returnedRows = updateResult.data?.length ?? 0;
-    lastReturnedRows = returnedRows;
-
-    if (updateResult.error) {
-      lastError = updateResult.error;
-      if (isMissingColumnError(updateResult.error) && candidate.mode !== "minimal") {
-        continue;
-      }
-
-      logLocationUpdateEvent({
-        level: "error",
-        action: "Location update failed",
-        profile,
-        locationId: id,
-        table: "locations",
-        payloadKeys: lastPayloadKeys,
-        payloadMode: candidate.mode,
-        error: updateResult.error,
-        returnedRows,
-        updatedRowId: null,
-        revalidationPaths,
-        redirectPath: detailPath,
-      });
-      redirect(withMessage(detailPath, "error", "Could not update location. Please try again."));
-    }
-
-    if (!updateResult.data?.length) {
-      lastError = null;
-      continue;
-    }
-
-    updatedLocation = updateResult.data[0] as UpdatedLocationResult;
-    break;
-  }
-
-  if (!updatedLocation) {
+  if (siteUpdateResult.error) {
     logLocationUpdateEvent({
       level: "error",
-      action: "Location update returned zero rows",
+      action: "Location site update failed",
       profile,
       locationId: id,
       table: "locations",
-      payloadKeys: lastPayloadKeys,
-      payloadMode: lastPayloadMode,
-      error: lastError,
-      returnedRows: lastReturnedRows,
+      payloadKeys: siteUpdateResult.payloadKeys,
+      payloadMode: "site",
+      error: siteUpdateResult.error,
+      returnedRows: siteUpdateResult.returnedRows,
+      updatedRowId: null,
+      revalidationPaths,
+      redirectPath: detailPath,
+      extra: {
+        omitted_columns: siteUpdateResult.omittedColumns,
+      },
+    });
+    redirect(withMessage(detailPath, "error", "Could not update location. Please try again."));
+  }
+
+  const updatedLocation = siteUpdateResult.data;
+  if (!updatedLocation) {
+    logLocationUpdateEvent({
+      level: "error",
+      action: "Location site update returned zero rows",
+      profile,
+      locationId: id,
+      table: "locations",
+      payloadKeys: siteUpdateResult.payloadKeys,
+      payloadMode: "site",
+      error: siteUpdateResult.error,
+      returnedRows: siteUpdateResult.returnedRows,
       updatedRowId: null,
       revalidationPaths,
       redirectPath: detailPath,
       extra: {
         zero_rows_reason: "No updated row was returned from Supabase. The location may not exist or update permission may be blocked.",
+        omitted_columns: siteUpdateResult.omittedColumns,
       },
     });
     redirect(withMessage(detailPath, "error", "Could not update location. The location may not exist or you may not have permission."));
+  }
+
+  const payrollUpdateResult = await updateLocationColumnsWithRecovery<LocationRow>({
+    id,
+    payload: { ...pickPayload(fullPayload, PAYROLL_UPDATE_KEYS), updated_at: now },
+    select: "id, payroll_storage_location_id, distance_from_storage_km, use_round_trip_distance, payroll_distance_notes, distance_zone, access_difficulty, stop_multiplier, updated_at",
+    supabase,
+  });
+
+  if (payrollUpdateResult.error || !payrollUpdateResult.data) {
+    revalidationPaths.forEach((path) => revalidatePath(path));
+    logLocationUpdateEvent({
+      level: "error",
+      action: "Location payroll settings update failed after site save",
+      profile,
+      locationId: id,
+      table: "locations",
+      payloadKeys: payrollUpdateResult.payloadKeys,
+      payloadMode: "payroll",
+      error: payrollUpdateResult.error,
+      returnedRows: payrollUpdateResult.returnedRows,
+      updatedRowId: updatedLocation.id,
+      revalidationPaths,
+      redirectPath: detailPath,
+      extra: {
+        site_update_completed: true,
+        omitted_columns: payrollUpdateResult.omittedColumns,
+      },
+    });
+    redirect(withMessage(detailPath, "error", "Location name saved, but payroll distance could not be saved."));
+  }
+
+  if (payrollUpdateResult.omittedColumns.length) {
+    revalidationPaths.forEach((path) => revalidatePath(path));
+    logLocationUpdateEvent({
+      level: "error",
+      action: "Location payroll settings partially saved",
+      profile,
+      locationId: id,
+      table: "locations",
+      payloadKeys: payrollUpdateResult.payloadKeys,
+      payloadMode: "payroll",
+      returnedRows: payrollUpdateResult.returnedRows,
+      updatedRowId: updatedLocation.id,
+      revalidationPaths,
+      redirectPath: detailPath,
+      extra: {
+        site_update_completed: true,
+        omitted_columns: payrollUpdateResult.omittedColumns,
+      },
+    });
+    redirect(withMessage(detailPath, "error", "Location name saved, but some payroll distance fields are not available in this database yet."));
   }
 
   revalidationPaths.forEach((path) => revalidatePath(path));
@@ -308,8 +497,8 @@ async function saveLocation(formData: FormData) {
     profile,
     locationId: id,
     table: "locations",
-    payloadKeys: lastPayloadKeys,
-    payloadMode: lastPayloadMode,
+    payloadKeys: [...siteUpdateResult.payloadKeys, ...payrollUpdateResult.payloadKeys],
+    payloadMode: "site",
     returnedRows: 1,
     updatedRowId: updatedLocation.id,
     revalidationPaths,
@@ -319,6 +508,9 @@ async function saveLocation(formData: FormData) {
       updated_area: draft.area ?? null,
       updated_city: draft.city ?? null,
       updated_name_column: updatedLocation.name ?? null,
+      payroll_storage_location_id: payrollUpdateResult.data.payroll_storage_location_id ?? null,
+      distance_from_storage_km: payrollUpdateResult.data.distance_from_storage_km ?? null,
+      use_round_trip_distance: payrollUpdateResult.data.use_round_trip_distance ?? null,
     },
   });
   redirect(withMessage(detailPath, "success", "Location updated successfully."));
