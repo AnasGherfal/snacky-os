@@ -4,7 +4,7 @@ import { LocalDraftForm } from "@/components/LocalDraft";
 import { EmptyState, ErrorState, FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { hasPermission } from "@/lib/authz";
-import { buildLocationLegacyPayload, buildLocationMinimalPayload, buildLocationPayload } from "@/lib/location-records";
+import { buildLocationLegacyPayload, buildLocationMinimalPayload, buildLocationPayload, LOCATION_TYPE_OPTIONS, normalizeLocationType } from "@/lib/location-records";
 import { formatSiteLabel } from "@/lib/machine-site-display";
 import { locationPayrollDistanceKm } from "@/lib/payroll";
 
@@ -171,7 +171,7 @@ async function saveLocation(formData: FormData) {
     contact_person_name: cleanText(formData.get("contact_person_name")),
     contact_person_phone: cleanText(formData.get("contact_person_phone")),
     source_location_lead_id: cleanText(formData.get("source_location_lead_id")),
-    location_type: String(formData.get("location_type") || "other"),
+    location_type: normalizeLocationType(formData.get("location_type")),
     rent_amount: optionalNumber(formData.get("rent_amount")) ?? 0,
     status: String(formData.get("status") || "active"),
     notes: cleanText(formData.get("notes")),
@@ -393,7 +393,13 @@ export default async function EditLocationPage({
               <input required name="site_name" defaultValue={location.site_name ?? location.name} className="field-input" />
             </FormField>
             <FormField label="Site type" required>
-              <input required name="location_type" defaultValue={location.location_type} className="field-input" />
+              <select required name="location_type" defaultValue={normalizeLocationType(location.location_type)} className="field-input">
+                {LOCATION_TYPE_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
             </FormField>
             <FormField label="Area">
               <input name="area" defaultValue={location.area ?? ""} className="field-input" placeholder="عين زارة" />

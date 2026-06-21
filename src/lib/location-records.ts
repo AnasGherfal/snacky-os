@@ -22,6 +22,53 @@ export type LocationSiteDraft = {
   payroll_distance_notes?: string | null;
 };
 
+export const LOCATION_TYPE_OPTIONS = [
+  "school",
+  "hospital",
+  "mall",
+  "university",
+  "office",
+  "gym",
+  "warehouse",
+  "mixed",
+  "other",
+] as const;
+
+const LOCATION_TYPE_ALIASES: Record<string, (typeof LOCATION_TYPE_OPTIONS)[number]> = {
+  school: "school",
+  schools: "school",
+  hospital: "hospital",
+  hospitals: "hospital",
+  mall: "mall",
+  malls: "mall",
+  university: "university",
+  universities: "university",
+  college: "university",
+  campus: "university",
+  office: "office",
+  offices: "office",
+  company: "office",
+  business: "office",
+  gym: "gym",
+  gyms: "gym",
+  fitness: "gym",
+  warehouse: "warehouse",
+  storage: "warehouse",
+  mixed: "mixed",
+  multi: "mixed",
+  other: "other",
+};
+
+export function normalizeLocationType(value: FormDataEntryValue | string | null | undefined) {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+
+  if (!normalized) return "other";
+  return LOCATION_TYPE_ALIASES[normalized] ?? "other";
+}
+
 export function buildLocationName(siteName: string, area: string | null) {
   const cleanSiteName = siteName.trim();
   if (cleanSiteName) return cleanSiteName;

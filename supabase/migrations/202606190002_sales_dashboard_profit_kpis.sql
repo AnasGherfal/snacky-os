@@ -196,12 +196,6 @@ select
   case
     when sales.product_id is null then 'unmapped_product'
     when sales.historical_unit_cost_lyd is not null and sales.historical_unit_cost_lyd > 0 then 'historical_cost'
-    when sales.fallback_unit_cost_lyd is not null and sales.fallback_unit_cost_lyd > 0 then 'current_cost_fallback'
-    else 'missing_cost'
-  end as cost_status,
-  case
-    when sales.product_id is null then 'unmapped_product'
-    when sales.historical_unit_cost_lyd is not null and sales.historical_unit_cost_lyd > 0 then 'historical_cost'
     when sales.fallback_unit_cost_lyd is not null and sales.fallback_unit_cost_lyd > 0 then coalesce(sales.fallback_cost_method, 'current_cost_fallback')
     else 'missing'
   end as cost_method,
@@ -219,13 +213,6 @@ select
     coalesce(sales.historical_unit_cost_lyd, sales.fallback_unit_cost_lyd) is null
     or coalesce(sales.historical_unit_cost_lyd, sales.fallback_unit_cost_lyd) <= 0
   ) as cost_missing,
-  (
-    sales.product_id is not null
-    and sales.historical_unit_cost_lyd is null
-    and sales.fallback_unit_cost_lyd is not null
-    and sales.fallback_unit_cost_lyd > 0
-  ) as cost_estimated,
-  sales.payment_method,
   sales.period_start,
   sales.period_end,
   sales.created_at,
@@ -242,10 +229,25 @@ select
       when sales.fallback_unit_cost_lyd is not null and sales.fallback_unit_cost_lyd > 0 then 'current_cost_fallback'
       else 'missing_cost'
     end
-  ) as metadata
+  ) as metadata,
+  sales.payment_method,
+  case
+    when sales.product_id is null then 'unmapped_product'
+    when sales.historical_unit_cost_lyd is not null and sales.historical_unit_cost_lyd > 0 then 'historical_cost'
+    when sales.fallback_unit_cost_lyd is not null and sales.fallback_unit_cost_lyd > 0 then 'current_cost_fallback'
+    else 'missing_cost'
+  end as cost_status,
+  (
+    sales.product_id is not null
+    and sales.historical_unit_cost_lyd is null
+    and sales.fallback_unit_cost_lyd is not null
+    and sales.fallback_unit_cost_lyd > 0
+  ) as cost_estimated
 from costed_sales sales;
 
-create or replace function public.sales_dashboard_summary(
+drop function if exists public.sales_dashboard_summary(date, date);
+
+create function public.sales_dashboard_summary(
   p_date_from date default null,
   p_date_to date default null
 )
@@ -410,7 +412,9 @@ as $$
   join allowed on allowed.permitted;
 $$;
 
-create or replace function public.sales_dashboard_profit_breakdown(
+drop function if exists public.sales_dashboard_profit_breakdown(text, date, date);
+
+create function public.sales_dashboard_profit_breakdown(
   p_dimension text,
   p_date_from date default null,
   p_date_to date default null

@@ -3,7 +3,12 @@ import { redirect } from "next/navigation";
 import { LocalDraftForm } from "@/components/LocalDraft";
 import { FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient } from "@/lib/auth";
-import { buildLocationLegacyPayload, buildLocationMinimalPayload, buildLocationPayload } from "@/lib/location-records";
+import { buildLocationLegacyPayload, buildLocationMinimalPayload, buildLocationPayload, LOCATION_TYPE_OPTIONS, normalizeLocationType } from "@/lib/location-records";
+
+type StorageLocationRow = {
+  id: string;
+  name?: string | null;
+};
 
 function cleanText(value: FormDataEntryValue | null) {
   const text = String(value ?? "").trim();
@@ -38,7 +43,7 @@ async function createLocation(formData: FormData) {
     google_maps_url: cleanText(formData.get("google_maps_url")),
     contact_person_name: cleanText(formData.get("contact_person_name")),
     contact_person_phone: cleanText(formData.get("contact_person_phone")),
-    location_type: String(formData.get("location_type") || "other"),
+    location_type: normalizeLocationType(formData.get("location_type")),
     rent_amount: Number(formData.get("rent_amount") || 0),
     status: String(formData.get("status") || "active"),
     notes: cleanText(formData.get("notes")),
@@ -92,8 +97,14 @@ export default async function NewLocationPage() {
             <FormField label="Exact site name" required hint="Example: مدرسة لسان العرب">
               <input required name="site_name" className="field-input" placeholder="Exact place/site name" />
             </FormField>
-            <FormField label="Site type" required hint="Examples: school, hospital, office, gym, mall, other.">
-              <input required name="location_type" className="field-input" placeholder="school" />
+            <FormField label="Site type" required hint="Choose the closest location type so Snacky saves a valid site record.">
+              <select required name="location_type" className="field-input" defaultValue="other">
+                {LOCATION_TYPE_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
             </FormField>
             <FormField label="Area" hint="General area only, not the exact site name.">
               <input name="area" className="field-input" placeholder="عين زارة" />
@@ -138,7 +149,7 @@ export default async function NewLocationPage() {
             <FormField label="Storage location">
               <select name="payroll_storage_location_id" className="field-input" defaultValue="">
                 <option value="">No storage selected</option>
-                {(storageLocations ?? []).map((storageLocation: any) => (
+                {((storageLocations ?? []) as StorageLocationRow[]).map((storageLocation) => (
                   <option key={storageLocation.id} value={storageLocation.id}>{storageLocation.name}</option>
                 ))}
               </select>
