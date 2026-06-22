@@ -1,6 +1,7 @@
 import {
   batchImportedRows,
   batchLastUpdatedAt,
+  isActiveImportedVmsBatch,
   sourceFileName,
   type VmsDashboardBatch,
 } from "@/lib/vms-dashboard-source";
@@ -347,10 +348,7 @@ function batchRowKey(batchId: string, rowNumber: number) {
 function finalizedDetailedSalesBatch(batch: VmsDashboardBatch | undefined) {
   if (!batch) return false;
   if (batch.report_type !== "vms_order_details_weekly") return false;
-  if (batch.deleted_at) return false;
-  const status = String(batch.status ?? "").toLowerCase();
-  if (status === "disabled" || status === "deleted") return false;
-  return ["imported", "imported_with_warnings", "partially_imported"].includes(status);
+  return isActiveImportedVmsBatch(batch);
 }
 
 function countableDetailedBatch(batch: VmsDashboardBatch | undefined) {

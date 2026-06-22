@@ -4,7 +4,7 @@ import { FormSubmitButton } from "@/components/FormSubmitButton";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
-import { canConfirmVmsImports, canViewVmsImports } from "@/lib/authz";
+import { canConfirmVmsImports, canViewVmsImports, isOwnerAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { cleanSearchParams, getPagination, type SearchParamsRecord } from "@/lib/pagination";
 import { privateStorageObjectUrl } from "@/lib/storage-buckets";
@@ -199,11 +199,15 @@ function logVmsDataSourcesLoadIssue({
 function SourceActions({
   batch,
   canManage,
+  canFinalizeOrderDetailsFiles,
   stockSnapshotRowCount,
+  transactionRowCount,
 }: {
   batch: VmsSourceRow;
   canManage: boolean;
+  canFinalizeOrderDetailsFiles: boolean;
   stockSnapshotRowCount: number;
+  transactionRowCount: number;
 }) {
   const originalFileUrl = batch.storage_bucket && batch.storage_path
     ? privateStorageObjectUrl(String(batch.storage_bucket), String(batch.storage_path))
@@ -212,6 +216,16 @@ function SourceActions({
     && String(batch.status ?? "") === "previewed"
     && !batch.deleted_at;
   const canMarkImportedAndActivate = isPreviewStockBatch && stockSnapshotRowCount > 0;
+  const isOrderDetailsBatch = String(batch.report_type ?? batch.source_type) === "vms_order_details_weekly";
+  const canFinalizeOrderDetails = canManage
+    && canFinalizeOrderDetailsFiles
+    && isOrderDetailsBatch
+    && transactionRowCount > 0
+    && !batch.deleted_at
+    && !(isUsableImportStatus(batch.status) && batch.is_active !== false);
+  const genericRestoreBlockedByOrderDetailsFinalization = isOrderDetailsBatch
+    && transactionRowCount > 0
+    && !(isUsableImportStatus(batch.status) && batch.is_active !== false);
 
   return (
     <div className="flex flex-wrap gap-2">
@@ -219,11 +233,13 @@ function SourceActions({
       {originalFileUrl ? <Link href={originalFileUrl} className="btn-secondary">Original File</Link> : null}
       {canManage ? (
         <>
-          {canMarkImportedAndActivate ? (
+          {canMarkImportedAndActivate || canFinalizeOrderDetails ? (
             <form action={updateVmsImportBatchState}>
               <input type="hidden" name="batch_id" value={batch.id} />
               <input type="hidden" name="action" value="finalize_import" />
-              <FormSubmitButton className="btn-primary" pendingLabel="Marking imported...">Mark imported and activate</FormSubmitButton>
+              <FormSubmitButton className="btn-primary" pendingLabel={canFinalizeOrderDetails ? "Finalizing file..." : "Marking imported..."}>
+                {canFinalizeOrderDetails ? "Finalize file" : "Mark imported and activate"}
+              </FormSubmitButton>
             </form>
           ) : isUsableImportStatus(batch.status) && batch.is_active !== false && !batch.deleted_at ? (
             <form action={updateVmsImportBatchState} className="flex gap-2">
@@ -232,7 +248,7 @@ function SourceActions({
               <input name="reason" placeholder="Reason" className="field-input h-9 w-40 text-xs" />
               <FormSubmitButton className="btn-secondary" pendingLabel="Disabling...">Disable</FormSubmitButton>
             </form>
-          ) : !isPreviewStockBatch ? (
+          ) : !isPreviewStockBatch && !genericRestoreBlockedByOrderDetailsFinalization ? (
             <form action={updateVmsImportBatchState}>
               <input type="hidden" name="batch_id" value={batch.id} />
               <input type="hidden" name="action" value="restore" />
@@ -269,12 +285,14 @@ async function VmsDataSourcesPageContent({ searchParams }: { searchParams: Promi
   const { page, pageSize, from, to } = getPagination(params);
   const paginationParams = cleanSearchParams(params);
   const canManage = canConfirmVmsImports(profile);
+  const canFinalizeOrderDetailsFiles = isOwnerAdminRole(profile);
 
   let batches: VmsSourceRow[] = [];
   let batchCount = 0;
   let loadError = "";
   let schemaNotice = "";
   const stockSnapshotRowsByBatchId = new Map<string, number>();
+  const transactionRowsByBatchId = new Map<string, number>();
 
   if (supabase) {
     const preferred = await supabase
@@ -333,6 +351,30 @@ async function VmsDataSourcesPageContent({ searchParams }: { searchParams: Promi
           const batchId = String(row.import_batch_id ?? "").trim();
           if (!batchId) return;
           stockSnapshotRowsByBatchId.set(batchId, (stockSnapshotRowsByBatchId.get(batchId) ?? 0) + 1);
+        });
+      }
+    }
+
+    const orderDetailsBatchIds = batches
+      .filter((batch) => String(batch.report_type ?? batch.source_type) === "vms_order_details_weekly" && !batch.deleted_at)
+      .map((batch) => batch.id);
+    if (orderDetailsBatchIds.length) {
+      const transactionRowsResult = await supabase
+        .from("vms_transactions_raw")
+        .select("import_batch_id")
+        .in("import_batch_id", orderDetailsBatchIds);
+
+      if (transactionRowsResult.error) {
+        console.error("[vms-data-sources] Could not load Order Details row counts for data source actions", {
+          query: "vms_transactions_raw.order_details_counts",
+          batchIds: orderDetailsBatchIds,
+          error: transactionRowsResult.error,
+        });
+      } else {
+        ((transactionRowsResult.data ?? []) as Array<{ import_batch_id?: string | null }>).forEach((row) => {
+          const linkedBatchId = String(row.import_batch_id ?? "").trim();
+          if (!linkedBatchId) return;
+          transactionRowsByBatchId.set(linkedBatchId, (transactionRowsByBatchId.get(linkedBatchId) ?? 0) + 1);
         });
       }
     }
@@ -406,6 +448,9 @@ async function VmsDataSourcesPageContent({ searchParams }: { searchParams: Promi
                   {isMachineStockSnapshotImportType(batch.report_type ?? batch.source_type) && String(batch.status ?? "") === "previewed" && (stockSnapshotRowsByBatchId.get(batch.id) ?? 0) > 0 ? (
                     <div className="text-xs text-emerald-700">Saved stock rows: {stockSnapshotRowsByBatchId.get(batch.id) ?? 0}</div>
                   ) : null}
+                  {String(batch.report_type ?? batch.source_type) === "vms_order_details_weekly" && (transactionRowsByBatchId.get(batch.id) ?? 0) > 0 && !(isUsableImportStatus(batch.status) && batch.is_active !== false) ? (
+                    <div className="text-xs text-emerald-700">Saved transaction rows: {transactionRowsByBatchId.get(batch.id) ?? 0}</div>
+                  ) : null}
                 </td>
                 <td>{batch.rows_skipped_duplicate ?? 0}</td>
                 <td>{batch.rows_needing_review ?? 0}</td>
@@ -419,7 +464,7 @@ async function VmsDataSourcesPageContent({ searchParams }: { searchParams: Promi
                   {batch.latest_error || batch.last_error || batch.disable_reason || batch.delete_reason || "-"}
                   <div className="mt-1 text-slate-500">Failed: {batch.failed_rows_count ?? 0} | Refunds: {batch.refunded_rows_count ?? 0}</div>
                 </td>
-                <td><SourceActions batch={batch} canManage={canManage} stockSnapshotRowCount={stockSnapshotRowsByBatchId.get(batch.id) ?? 0} /></td>
+                <td><SourceActions batch={batch} canManage={canManage} canFinalizeOrderDetailsFiles={canFinalizeOrderDetailsFiles} stockSnapshotRowCount={stockSnapshotRowsByBatchId.get(batch.id) ?? 0} transactionRowCount={transactionRowsByBatchId.get(batch.id) ?? 0} /></td>
               </tr>
             ))}
           </DataTable>

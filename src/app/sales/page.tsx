@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { FormSubmitButton } from "@/components/FormSubmitButton";
 import { BarList, KpiSection } from "@/components/KpiDashboard";
 import { DataTable, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
@@ -29,6 +30,7 @@ import {
   queryVmsDashboardBatches,
   type VmsDashboardBatch,
 } from "@/lib/vms-dashboard-source";
+import { updateVmsImportBatchState } from "@/lib/vms-import-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -210,6 +212,7 @@ type NormalizedSalesMonthlyCoverageRow = {
 
 type SalesNoDataState = {
   body: string;
+  kind: "summary_error" | "inactive_batch" | "missing_business_date" | "status_filtered" | "no_rows";
   title: string;
 };
 
@@ -407,9 +410,36 @@ function businessContributionReason(row: { status: string; reason: string }) {
   }
 }
 
+function salesContributionStatusLabel(status: string) {
+  switch (status) {
+    case "included":
+      return "Included";
+    case "summary_file_only":
+      return "Summary only";
+    case "preview_only":
+    case "inactive_batch":
+      return "Needs finalization";
+    case "failed_import":
+      return "Import failed";
+    case "outside_selected_date_range":
+      return "Outside range";
+    case "rows_excluded_by_status":
+      return "Excluded by status";
+    case "missing_transaction_datetime":
+      return "Missing business date";
+    case "metadata_without_raw_rows":
+      return "Missing raw rows";
+    case "duplicate_rows_ignored":
+      return "Duplicates only";
+    default:
+      return status.replaceAll("_", " ");
+  }
+}
+
 function isFinalizedDetailedBatch(batch: VmsDashboardBatch) {
   return batch.report_type === "vms_order_details_weekly"
     && ["imported", "imported_with_warnings", "partially_imported"].includes(String(batch.status ?? ""))
+    && batch.is_active !== false
     && !batch.deleted_at;
 }
 
@@ -569,12 +599,14 @@ function summarizeSalesCoverage(rows: NormalizedSalesMonthlyCoverageRow[]) {
 }
 
 function buildNoSalesState({
+  canFinalizeInactiveFiles,
   contributingFiles,
   coverageLabel,
   fileContributions,
   monthlyCoverageRows,
   selectedRange,
 }: {
+  canFinalizeInactiveFiles: boolean;
   contributingFiles: ReturnType<typeof buildSalesFileContributions>;
   coverageLabel: string;
   fileContributions: ReturnType<typeof buildSalesFileContributions>;
@@ -594,6 +626,7 @@ function buildNoSalesState({
 
   if (contributingFiles.some((row) => row.included)) {
     return {
+      kind: "summary_error",
       title: "Sales rows exist, but the dashboard summary could not calculate them.",
       body: "Detailed successful-sale rows overlap this range, but the dashboard totals came back empty. Check the summary RPC and data source diagnostics.",
     };
@@ -601,13 +634,17 @@ function buildNoSalesState({
 
   if (detailedRowsInRange.some((row) => row.status === "preview_only" || row.status === "inactive_batch")) {
     return {
-      title: "Rows exist for this range, but the import batch is not finalized/active.",
-      body: "Finalize or reactivate the overlapping Order Details file so Snacky OS can include it in dashboard totals.",
+      kind: "inactive_batch",
+      title: canFinalizeInactiveFiles ? "Sales rows exist, but the file is not active yet." : "Sales data is being prepared.",
+      body: canFinalizeInactiveFiles
+        ? "Finalize or reactivate the overlapping Order Details file so Snacky OS can include it in dashboard totals."
+        : "The sales file for this date range is still being finalized.",
     };
   }
 
   if (detailedRowsInRange.some((row) => row.status === "missing_transaction_datetime") || monthlyCoverageRows.some((row) => row.businessMonth === null && row.finalizedRows > 0 && row.nullBusinessDateRows > 0)) {
     return {
+      kind: "missing_business_date",
       title: "Rows exist but business dates are missing.",
       body: "Some Order Details rows still do not have a resolved business date. Rebuild business dates, then reload the dashboard.",
     };
@@ -615,17 +652,42 @@ function buildNoSalesState({
 
   if (detailedRowsInRange.some((row) => row.status === "rows_excluded_by_status")) {
     return {
+      kind: "status_filtered",
       title: "Rows exist for this range, but they were not successful sales.",
       body: "The overlapping Order Details rows were saved, but they were classified as failed vends, refunds, or another non-success status.",
     };
   }
 
   return {
+    kind: "no_rows",
     title: "No detailed Order Details rows found for this range.",
     body: coverageLabel === "-"
       ? "Change the date filter or finalize imported Order Details files first."
       : `Change the date filter. Current finalized coverage runs from ${coverageLabel}.`,
   };
+}
+
+function salesContributionOverlapsSelectedRange(
+  row: ReturnType<typeof buildSalesFileContributions>[number],
+  range: { start: string; end: string },
+) {
+  if (row.rowsInRange > 0 || row.successfulRowsInRange > 0) return true;
+  return Boolean(
+    row.actualCoverageStart
+    && row.actualCoverageEnd
+    && rangesOverlap({ start: row.actualCoverageStart, end: row.actualCoverageEnd }, range),
+  );
+}
+
+function salesContributionNeedsFinalization(
+  row: ReturnType<typeof buildSalesFileContributions>[number],
+  range: { start: string; end: string },
+) {
+  return row.batch.report_type === "vms_order_details_weekly"
+    && (row.status === "preview_only" || row.status === "inactive_batch")
+    && row.importedRowsTotal > 0
+    && !row.batch.deleted_at
+    && salesContributionOverlapsSelectedRange(row, range);
 }
 
 function emptySectionResult<T>(rpcName: string | null, sectionName: string): LoggedSalesSectionResult<T> {
@@ -766,6 +828,7 @@ async function SalesDashboardPageContent({
   const profileId = String((profile as { id?: unknown }).id ?? "unknown");
   const profileRole = String((profile as { role?: unknown }).role ?? "unknown");
   const canViewProfit = isOwnerAdminRole(profile);
+  const canFinalizeOrderDetailsFiles = isOwnerAdminRole(profile);
 
   if (!supabase) {
     return (
@@ -1047,12 +1110,14 @@ async function SalesDashboardPageContent({
   const hasSalesRows = summary.successfulSalesCount > 0 || trendRows.length > 0;
   const hasProfitWarning = canViewProfit && (summary.missingCostRevenueAmount > 0 || summary.estimatedCostRevenueAmount > 0);
   const noSalesState = buildNoSalesState({
+    canFinalizeInactiveFiles: canFinalizeOrderDetailsFiles,
     contributingFiles,
     coverageLabel: finalizedCoverageLabel,
     fileContributions,
     monthlyCoverageRows,
     selectedRange,
   });
+  const finalizableInactiveFiles = fileContributions.filter((row) => salesContributionNeedsFinalization(row, selectedRange));
 
   return (
     <>
@@ -1140,10 +1205,35 @@ async function SalesDashboardPageContent({
         ) : null}
 
         {!hasSalesRows ? (
-          <EmptyState
-            title={noSalesState.title}
-            body={noSalesState.body}
-          />
+          <div className="space-y-4">
+            <EmptyState
+              title={noSalesState.title}
+              body={noSalesState.body}
+            />
+            {noSalesState.kind === "inactive_batch" && canFinalizeOrderDetailsFiles && finalizableInactiveFiles.length ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                <div className="font-semibold">Finalize overlapping Order Details files</div>
+                <div className="mt-1">Sales rows are already saved for these files, but the batch is not active yet.</div>
+                <div className="mt-3 space-y-3">
+                  {finalizableInactiveFiles.map((row) => (
+                    <div key={row.batch.id} className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-white p-3 lg:flex-row lg:items-center lg:justify-between">
+                      <div>
+                        <div className="font-medium text-slate-900">{row.fileName}</div>
+                        <div className="text-xs text-slate-500">
+                          Coverage {row.actualCoverageLabel !== "-" ? row.actualCoverageLabel : row.metadataCoverageLabel} • Saved rows {formatInteger(row.importedRowsTotal)}
+                        </div>
+                      </div>
+                      <form action={updateVmsImportBatchState}>
+                        <input type="hidden" name="batch_id" value={row.batch.id} />
+                        <input type="hidden" name="action" value="finalize_import" />
+                        <FormSubmitButton className="btn-primary" pendingLabel="Finalizing file...">Finalize file</FormSubmitButton>
+                      </form>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
         ) : (
           <>
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -1430,7 +1520,7 @@ async function SalesDashboardPageContent({
             ) : null}
 
             {fileContributions.length ? (
-              <DataTable headers={["File", "Uploaded", "Coverage", "Rows in range", "Revenue", "Status", "Used now"]}>
+              <DataTable headers={["File", "Uploaded", "Coverage", "Rows in range", "Revenue", "Status", "Used now", "Action"]}>
                 {fileContributions.map((row) => (
                   <tr key={row.batch.id}>
                     <td className="max-w-xs">
@@ -1450,8 +1540,19 @@ async function SalesDashboardPageContent({
                     </td>
                     <td>{formatInteger(row.successfulRowsInRange)}</td>
                     <td>{lyd(row.salesAmountInRange)}</td>
-                    <td><StatusBadge status={row.status} /></td>
+                    <td><StatusBadge status={salesContributionStatusLabel(row.status)} /></td>
                     <td>{row.included ? "Yes" : "No"}</td>
+                    <td>
+                      {canFinalizeOrderDetailsFiles && salesContributionNeedsFinalization(row, selectedRange) ? (
+                        <form action={updateVmsImportBatchState}>
+                          <input type="hidden" name="batch_id" value={row.batch.id} />
+                          <input type="hidden" name="action" value="finalize_import" />
+                          <FormSubmitButton className="btn-secondary" pendingLabel="Finalizing...">Finalize file</FormSubmitButton>
+                        </form>
+                      ) : (
+                        <span className="text-xs text-slate-400">-</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </DataTable>

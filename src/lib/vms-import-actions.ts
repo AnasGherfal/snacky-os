@@ -601,6 +601,13 @@ type PersistedOrderDetailsBatchSummary = {
   detectedMaxDatetime: string | null;
   businessDateStart: string | null;
   businessDateEnd: string | null;
+  successfulRowsCount: number;
+  failedVendRowsCount: number;
+  failedRowsCount: number;
+  refundedRowsCount: number;
+  failedPaymentRowsCount: number;
+  needsReviewRowsCount: number;
+  totalSuccessfulSales: number;
   error: unknown | null;
 };
 
@@ -656,7 +663,7 @@ async function loadPersistedOrderDetailsBatchSummary({
 }): Promise<PersistedOrderDetailsBatchSummary> {
   const preferred = await supabase
     .from("vms_transactions_raw")
-    .select("business_date, payment_time, delivery_time")
+    .select("business_date, payment_time, delivery_time, transaction_status, payment_amount")
     .eq("import_batch_id", batchId);
   const fallbackToLegacySelect = preferred.error && (
     String((preferred.error as { code?: unknown }).code ?? "") === "42703"
@@ -666,7 +673,7 @@ async function loadPersistedOrderDetailsBatchSummary({
   const result = fallbackToLegacySelect
     ? await supabase
       .from("vms_transactions_raw")
-      .select("payment_time, delivery_time")
+      .select("payment_time, delivery_time, transaction_status, payment_amount")
       .eq("import_batch_id", batchId)
     : preferred;
 
@@ -677,11 +684,24 @@ async function loadPersistedOrderDetailsBatchSummary({
       detectedMaxDatetime: null,
       businessDateStart: null,
       businessDateEnd: null,
+      successfulRowsCount: 0,
+      failedVendRowsCount: 0,
+      failedRowsCount: 0,
+      refundedRowsCount: 0,
+      failedPaymentRowsCount: 0,
+      needsReviewRowsCount: 0,
+      totalSuccessfulSales: 0,
       error: result.error,
     };
   }
 
-  const rows = (result.data ?? []) as Array<{ business_date?: string | null; payment_time?: string | null; delivery_time?: string | null }>;
+  const rows = (result.data ?? []) as Array<{
+    business_date?: string | null;
+    payment_time?: string | null;
+    delivery_time?: string | null;
+    transaction_status?: string | null;
+    payment_amount?: number | string | null;
+  }>;
   const capturedValues = rows
     .flatMap((row) => [row.payment_time, row.delivery_time])
     .map((value) => String(value ?? "").trim())
@@ -691,6 +711,18 @@ async function loadPersistedOrderDetailsBatchSummary({
     .map((row) => String(row.business_date ?? "").trim())
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b));
+  const successfulRowsCount = rows.reduce((sum, row) => sum + (String(row.transaction_status ?? "") === "successful_sale" ? 1 : 0), 0);
+  const failedVendRowsCount = rows.reduce((sum, row) => sum + (String(row.transaction_status ?? "") === "failed_vend" ? 1 : 0), 0);
+  const refundedRowsCount = rows.reduce((sum, row) => sum + (String(row.transaction_status ?? "") === "refunded" ? 1 : 0), 0);
+  const failedPaymentRowsCount = rows.reduce((sum, row) => sum + (String(row.transaction_status ?? "") === "failed_payment" ? 1 : 0), 0);
+  const needsReviewRowsCount = rows.reduce((sum, row) => sum + (String(row.transaction_status ?? "") === "needs_review" ? 1 : 0), 0);
+  const totalSuccessfulSales = Number(rows
+    .reduce((sum, row) => {
+      if (String(row.transaction_status ?? "") !== "successful_sale") return sum;
+      const amount = Number(row.payment_amount ?? 0);
+      return sum + (Number.isFinite(amount) ? Math.max(0, amount) : 0);
+    }, 0)
+    .toFixed(2));
 
   return {
     rowCount: Number(rows.length ?? 0),
@@ -698,6 +730,13 @@ async function loadPersistedOrderDetailsBatchSummary({
     detectedMaxDatetime: capturedValues.at(-1) ?? null,
     businessDateStart: businessDates[0] ?? null,
     businessDateEnd: businessDates.at(-1) ?? null,
+    successfulRowsCount,
+    failedVendRowsCount,
+    failedRowsCount: failedVendRowsCount + failedPaymentRowsCount + needsReviewRowsCount,
+    refundedRowsCount,
+    failedPaymentRowsCount,
+    needsReviewRowsCount,
+    totalSuccessfulSales,
     error: null,
   };
 }
@@ -2512,6 +2551,10 @@ async function runVmsImport({
   const persistedOrderDetailsRowCount = persistedOrderDetailsSummary?.rowCount ?? 0;
   const persistedOrderDetailsBusinessDateStart = persistedOrderDetailsSummary?.businessDateStart ?? null;
   const persistedOrderDetailsBusinessDateEnd = persistedOrderDetailsSummary?.businessDateEnd ?? null;
+  const persistedOrderDetailsSuccessfulRows = persistedOrderDetailsSummary?.successfulRowsCount ?? 0;
+  const persistedOrderDetailsFailedRows = persistedOrderDetailsSummary?.failedRowsCount ?? 0;
+  const persistedOrderDetailsRefundedRows = persistedOrderDetailsSummary?.refundedRowsCount ?? 0;
+  const persistedOrderDetailsTotalSuccessfulSales = persistedOrderDetailsSummary?.totalSuccessfulSales ?? 0;
   const attemptedImportedRows = summary.importedRows;
   const effectiveImportedRows = isMachineStockReport(reportType)
     ? (persistedImportedRowCount > 0 ? persistedImportedRowCount : summary.importedRows)
@@ -2520,6 +2563,12 @@ async function runVmsImport({
       : summary.importedRows;
   if (reportType === "vms_order_details_weekly") {
     summary.importedRows = effectiveImportedRows;
+    summary.successfulSalesRows = persistedOrderDetailsSuccessfulRows;
+    summary.failedVendRows = persistedOrderDetailsSummary?.failedVendRowsCount ?? summary.failedVendRows;
+    summary.refundedRows = persistedOrderDetailsRefundedRows;
+    summary.failedPaymentRows = persistedOrderDetailsSummary?.failedPaymentRowsCount ?? summary.failedPaymentRows;
+    summary.needsReviewTransactionRows = persistedOrderDetailsSummary?.needsReviewRowsCount ?? summary.needsReviewTransactionRows;
+    summary.estimatedSuccessfulSales = persistedOrderDetailsTotalSuccessfulSales;
   }
   const importedRowsFromPersistence = isMachineStockReport(reportType)
     && effectiveImportedRows > 0
@@ -2541,8 +2590,8 @@ async function runVmsImport({
   }
   const status = isMachineStockReport(reportType) && effectiveImportedRows > 0
     ? "imported"
-    : reportType === "vms_order_details_weekly" && effectiveImportedRows <= 0 && attemptedImportedRows > 0
-      ? "failed"
+    : reportType === "vms_order_details_weekly"
+      ? (effectiveImportedRows > 0 ? "imported" : "failed")
       : importResult.status;
   const detectedMinDatetime = isMachineStockReport(reportType)
     ? (persistedStockSummary?.detectedMinDatetime ?? stockDetectedMinDatetime ?? stockFallbackTimestamp)
@@ -2587,13 +2636,21 @@ async function runVmsImport({
     detected_min_datetime: detectedMinDatetime,
     detected_max_datetime: detectedMaxDatetime,
     total_successful_sales: reportType === "sales" || reportType === "vms_order_details_weekly"
-      ? (effectiveImportedRows > 0 ? summary.estimatedSuccessfulSales ?? 0 : 0)
+      ? (effectiveImportedRows > 0
+        ? (reportType === "vms_order_details_weekly"
+          ? persistedOrderDetailsTotalSuccessfulSales
+          : summary.estimatedSuccessfulSales ?? 0)
+        : 0)
       : 0,
     successful_rows_count: reportType === "vms_order_details_weekly"
-      ? (effectiveImportedRows > 0 ? summary.successfulSalesRows ?? 0 : 0)
+      ? (effectiveImportedRows > 0 ? persistedOrderDetailsSuccessfulRows : 0)
       : reportType === "sales" ? effectiveImportedRows : 0,
-    failed_rows_count: (summary.failedVendRows ?? 0) + (summary.failedPaymentRows ?? 0) + (summary.needsReviewTransactionRows ?? 0),
-    refunded_rows_count: summary.refundedRows ?? 0,
+    failed_rows_count: reportType === "vms_order_details_weekly"
+      ? persistedOrderDetailsFailedRows
+      : (summary.failedVendRows ?? 0) + (summary.failedPaymentRows ?? 0) + (summary.needsReviewTransactionRows ?? 0),
+    refunded_rows_count: reportType === "vms_order_details_weekly"
+      ? persistedOrderDetailsRefundedRows
+      : summary.refundedRows ?? 0,
     rows_imported: effectiveImportedRows,
     rows_skipped_duplicate: summary.rowsSkippedDuplicate,
     rows_needing_review: summary.rowsNeedingReview,
@@ -2674,7 +2731,9 @@ async function runVmsImport({
     const metadataWarning = `Imported data was preserved, but final batch metadata could not update: ${batchMutationErrorMessage(finalUpdateProblem)}`;
     summary.errors.push(metadataWarning);
     summary.failedTargets = Array.from(new Set([...summary.failedTargets, "Import metadata"]));
-    summary.resultMessage = "Imported data was preserved. Some metadata could not update.";
+    summary.resultMessage = reportType === "vms_order_details_weekly"
+      ? "Detailed Order Details rows were saved. Snacky OS repaired the batch state from the imported rows."
+      : "Imported data was preserved. Some metadata could not update.";
     const metadataFallbackUpdate = await runVmsImportBatchMutationWithMetadataFallback({
       queryName: "vms_import_batches.update.final_metadata_fallback",
       currentStep: "confirm_import",
@@ -2733,6 +2792,21 @@ async function runVmsImport({
     detectedMinDatetime: stockDetectedMinDatetime ?? stockFallbackTimestamp,
     detectedMaxDatetime: stockDetectedMaxDatetime ?? stockFallbackTimestamp,
   });
+  const orderDetailsBatchUsable = await ensureConfirmedOrderDetailsImportBatchIsUsable({
+    supabase,
+    profile,
+    batchId: batch.id,
+    reportType,
+    summary,
+    reportStartDate: finalizedReportStartDate,
+    reportEndDate: finalizedReportEndDate,
+    detectedMinDatetime,
+    detectedMaxDatetime,
+  });
+  if (!orderDetailsBatchUsable && reportType === "vms_order_details_weekly" && effectiveImportedRows > 0) {
+    errorRedirect("Detailed Order Details rows were saved, but Snacky OS could not finalize the batch metadata automatically. Use Finalize file from the batch page.");
+    return;
+  }
 
   await deactivateOlderActiveStockBatches({
     supabase,
@@ -3118,6 +3192,276 @@ async function activateStockBatchWithCoreMetadata({
     payload: corePayload,
     batch: (verificationResult.data ?? null) as CoreActivatedStockBatch | null,
   };
+}
+
+type CoreActivatedOrderDetailsBatch = {
+  id?: string | null;
+  status?: string | null;
+  is_active?: boolean | null;
+  rows_imported?: number | null;
+  report_type?: string | null;
+};
+
+async function activateOrderDetailsBatchWithCoreMetadata({
+  supabase,
+  batchId,
+  actorId,
+  rowsFound,
+  rowCount,
+  rowsImported,
+}: {
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  batchId: string;
+  actorId: string | null;
+  rowsFound: number;
+  rowCount: number;
+  rowsImported: number;
+}) {
+  const now = new Date().toISOString();
+  const corePayload = {
+    status: "imported",
+    is_active: true,
+    report_type: "vms_order_details_weekly",
+    imported_by: actorId,
+    imported_at: now,
+    updated_at: now,
+    rows_found: rowsFound,
+    row_count: rowCount,
+    rows_imported: rowsImported,
+  };
+
+  const updateResult = await withSoftTimeout(
+    supabase
+      .from("vms_import_batches")
+      .update(corePayload)
+      .eq("id", batchId),
+    VMS_SAVE_QUERY_TIMEOUT_MS,
+  );
+
+  if (updateResult.timedOut) {
+    return {
+      ok: false as const,
+      error: { code: "TIMEOUT", message: "Core Order Details batch activation timed out." },
+      payload: corePayload,
+      batch: null,
+    };
+  }
+
+  if ("error" in updateResult) {
+    return {
+      ok: false as const,
+      error: updateResult.error,
+      payload: corePayload,
+      batch: null,
+    };
+  }
+
+  if (updateResult.value?.error) {
+    return {
+      ok: false as const,
+      error: updateResult.value.error,
+      payload: corePayload,
+      batch: null,
+    };
+  }
+
+  const verificationResult = await supabase
+    .from("vms_import_batches")
+    .select("id, status, is_active, rows_imported, report_type")
+    .eq("id", batchId)
+    .maybeSingle();
+
+  if (verificationResult.error) {
+    return {
+      ok: false as const,
+      error: verificationResult.error,
+      payload: corePayload,
+      batch: null,
+    };
+  }
+
+  return {
+    ok: true as const,
+    error: null,
+    payload: corePayload,
+    batch: (verificationResult.data ?? null) as CoreActivatedOrderDetailsBatch | null,
+  };
+}
+
+async function ensureConfirmedOrderDetailsImportBatchIsUsable({
+  supabase,
+  profile,
+  batchId,
+  reportType,
+  summary,
+  reportStartDate,
+  reportEndDate,
+  detectedMinDatetime,
+  detectedMaxDatetime,
+}: {
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  profile: Awaited<ReturnType<typeof getCurrentProfile>>;
+  batchId: string;
+  reportType: VmsReportType;
+  summary: ImportSummary;
+  reportStartDate: string | null;
+  reportEndDate: string | null;
+  detectedMinDatetime: string | null;
+  detectedMaxDatetime: string | null;
+}) {
+  if (reportType !== "vms_order_details_weekly") return true;
+
+  const persistedOrderDetailsSummary = await loadPersistedOrderDetailsBatchSummary({ supabase, batchId });
+  if (persistedOrderDetailsSummary.error) {
+    console.warn("[vms-import] Could not count persisted detailed rows during confirm postcondition check", {
+      batchId,
+      reportType,
+      error: persistedOrderDetailsSummary.error,
+    });
+  }
+
+  const effectiveImportedRows = persistedOrderDetailsSummary.rowCount > 0 ? persistedOrderDetailsSummary.rowCount : summary.importedRows;
+  if (effectiveImportedRows <= 0) return true;
+
+  const { data: currentBatch, error: currentBatchError } = await supabase
+    .from("vms_import_batches")
+    .select("id, status, is_active, rows_imported")
+    .eq("id", batchId)
+    .maybeSingle();
+
+  if (currentBatchError || !currentBatch?.id) {
+    console.warn("[vms-import] Could not verify final Order Details batch usability after confirm", {
+      batchId,
+      reportType,
+      error: currentBatchError,
+    });
+    return false;
+  }
+
+  const currentStatus = String(currentBatch.status ?? "").trim().toLowerCase();
+  const currentRowsImported = wholeNumberValue(currentBatch.rows_imported);
+  const usableStatus = currentStatus === "imported" || currentStatus === "imported_with_warnings";
+  const isUsable = usableStatus && currentBatch.is_active !== false && currentRowsImported > 0;
+  if (isUsable) return true;
+
+  console.warn("[vms-import] Repairing Order Details batch metadata after confirm because the final state is not usable", {
+    batchId,
+    reportType,
+    currentStatus,
+    isActive: currentBatch.is_active ?? null,
+    currentRowsImported,
+    expectedRowsImported: effectiveImportedRows,
+  });
+
+  const actorId = profile?.team_member_id ?? profile?.id ?? null;
+  const now = new Date().toISOString();
+  const recoveredWarning = `Recovered Order Details import metadata after confirm because the batch was left in ${currentStatus || "an unusable"} state.`;
+  const nextErrors = summary.errors.includes(recoveredWarning) ? summary.errors : [...summary.errors, recoveredWarning];
+  const rowsFound = Math.max(summary.rowsFound, effectiveImportedRows);
+  const rowCount = Math.max(summary.rowsFound, summary.totalRows, effectiveImportedRows);
+  const repairedDetectedMinDatetime = persistedOrderDetailsSummary.detectedMinDatetime || detectedMinDatetime || null;
+  const repairedDetectedMaxDatetime = persistedOrderDetailsSummary.detectedMaxDatetime || detectedMaxDatetime || repairedDetectedMinDatetime;
+  const repairedReportStartDate = persistedOrderDetailsSummary.businessDateStart || reportStartDate || null;
+  const repairedReportEndDate = persistedOrderDetailsSummary.businessDateEnd || reportEndDate || repairedReportStartDate;
+  const repairPayload = {
+    status: "imported",
+    is_active: true,
+    imported_by: actorId,
+    imported_at: now,
+    report_type: "vms_order_details_weekly",
+    updated_at: now,
+    source_usage: vmsSourceUsage("vms_order_details_weekly"),
+    dashboard_usage: vmsSourceUsage("vms_order_details_weekly"),
+    rows_found: rowsFound,
+    row_count: rowCount,
+    rows_imported: effectiveImportedRows,
+    rows_skipped: summary.skippedRows,
+    rows_skipped_duplicate: summary.rowsSkippedDuplicate,
+    rows_needing_review: summary.rowsNeedingReview,
+    error_count: nextErrors.length,
+    errors: nextErrors,
+    latest_error: null,
+    last_error: null,
+    report_start_date: repairedReportStartDate,
+    report_end_date: repairedReportEndDate,
+    detected_min_datetime: repairedDetectedMinDatetime,
+    detected_max_datetime: repairedDetectedMaxDatetime,
+    total_successful_sales: persistedOrderDetailsSummary.totalSuccessfulSales,
+    successful_rows_count: persistedOrderDetailsSummary.successfulRowsCount,
+    failed_rows_count: persistedOrderDetailsSummary.failedRowsCount,
+    refunded_rows_count: persistedOrderDetailsSummary.refundedRowsCount,
+    notes: JSON.stringify({
+      ...summary,
+      status: "imported",
+      errors: nextErrors,
+      postconditionRepair: {
+        repaired_at: now,
+        previous_status: currentStatus || null,
+        previous_is_active: currentBatch.is_active ?? null,
+        previous_rows_imported: currentRowsImported,
+        recovered_rows_imported: effectiveImportedRows,
+      },
+    }),
+  };
+
+  const repairResult = await runVmsImportBatchMutationWithMetadataFallback({
+    queryName: "vms_import_batches.update.confirm_order_details_postcondition",
+    currentStep: "confirm_import",
+    selectedImportBatchId: batchId,
+    payload: repairPayload,
+    run: (payload) => supabase
+      .from("vms_import_batches")
+      .update(payload)
+      .eq("id", batchId)
+      .select("id, status, is_active, rows_imported")
+      .maybeSingle(),
+  });
+
+  const repairProblem = repairResult.timedOut
+    ? { code: "TIMEOUT", message: "Order Details import postcondition repair timed out." }
+    : repairResult.error
+      ?? repairResult.value?.error
+      ?? (!batchMutationReturnedRow(repairResult.value)
+        ? missingBatchMutationRowError({
+            queryName: "vms_import_batches.update.confirm_order_details_postcondition",
+            currentStep: "confirm_import",
+            selectedImportBatchId: batchId,
+          })
+        : null);
+
+  if (repairProblem) {
+    logVmsBatchMutationFailure({
+      queryName: "vms_import_batches.update.confirm_order_details_postcondition",
+      error: repairProblem,
+      payload: repairResult.payload,
+      profile,
+      selectedImportBatchId: batchId,
+      currentStep: "confirm_import",
+    });
+
+    const fallbackActivation = await activateOrderDetailsBatchWithCoreMetadata({
+      supabase,
+      batchId,
+      actorId,
+      rowsFound,
+      rowCount,
+      rowsImported: effectiveImportedRows,
+    });
+
+    if (!fallbackActivation.ok) {
+      logVmsBatchMutationFailure({
+        queryName: "vms_import_batches.update.confirm_order_details_postcondition.minimal_activation",
+        error: fallbackActivation.error,
+        payload: fallbackActivation.payload,
+        profile,
+        selectedImportBatchId: batchId,
+        currentStep: "confirm_import",
+      });
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function logVmsBatchMutationFailure({
@@ -4276,6 +4620,181 @@ function revalidateVmsDataSourcePaths(batchId?: string) {
   revalidatePath("/reports");
 }
 
+async function finalizeDetailedOrderDetailsImportBatch({
+  supabase,
+  profile,
+  batchId,
+  batch,
+}: {
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  profile: Awaited<ReturnType<typeof getCurrentProfile>>;
+  batchId: string;
+  batch: Record<string, unknown>;
+}) {
+  const reportType = parseReportType(textValue(batch.report_type) || null);
+  if (reportType !== "vms_order_details_weekly") {
+    redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Only detailed Order Details imports can be finalized from saved rows.")}`);
+  }
+  if (!isOwnerAdminRole(profile)) {
+    redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Only owner/admin users can finalize imported Order Details rows.")}`);
+  }
+
+  const actorId = profile?.team_member_id ?? profile?.id ?? null;
+  const now = new Date().toISOString();
+  const persistedSummary = await loadPersistedOrderDetailsBatchSummary({ supabase, batchId });
+  if (persistedSummary.error) {
+    console.error("[vms-import] Order Details finalize row lookup failed", { batchId, error: persistedSummary.error });
+    redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Could not inspect saved Order Details rows for this batch.")}`);
+  }
+  if (persistedSummary.rowCount <= 0) {
+    redirect(`/vms-import/${batchId}?error=${encodeURIComponent("This file does not have saved Order Details rows to finalize yet.")}`);
+  }
+
+  const previousStatus = textValue(batch.status);
+  const rowsFound = Math.max(wholeNumberValue(batch.rows_found ?? batch.row_count), persistedSummary.rowCount);
+  const rowCount = Math.max(wholeNumberValue(batch.row_count), rowsFound, persistedSummary.rowCount);
+  const warningMessages: string[] = [];
+
+  if (previousStatus && previousStatus !== "imported") {
+    warningMessages.push(`Recovered ${persistedSummary.rowCount} saved Order Details row(s) from a batch that was left in ${previousStatus}.`);
+  }
+  if (wholeNumberValue(batch.rows_imported) !== persistedSummary.rowCount) {
+    warningMessages.push(`Reset rows_imported to ${persistedSummary.rowCount} based on linked rows in vms_transactions_raw.`);
+  }
+
+  let previousNotes = objectRecord(null);
+  try {
+    previousNotes = objectRecord(textValue(batch.notes) ? JSON.parse(textValue(batch.notes)) : null);
+  } catch {
+    previousNotes = {};
+  }
+
+  const finalizePayload = {
+    status: "imported",
+    is_active: true,
+    imported_by: actorId,
+    imported_at: now,
+    report_type: "vms_order_details_weekly",
+    updated_at: now,
+    source_usage: vmsSourceUsage("vms_order_details_weekly"),
+    dashboard_usage: vmsSourceUsage("vms_order_details_weekly"),
+    rows_found: rowsFound,
+    row_count: rowCount,
+    rows_imported: persistedSummary.rowCount,
+    rows_skipped_duplicate: wholeNumberValue(batch.rows_skipped_duplicate),
+    rows_needing_review: wholeNumberValue(batch.rows_needing_review),
+    error_count: warningMessages.length,
+    errors: warningMessages,
+    latest_error: null,
+    last_error: null,
+    report_start_date: persistedSummary.businessDateStart || textValue(batch.report_start_date) || null,
+    report_end_date: persistedSummary.businessDateEnd || textValue(batch.report_end_date) || persistedSummary.businessDateStart || null,
+    detected_min_datetime: persistedSummary.detectedMinDatetime || textValue(batch.detected_min_datetime) || null,
+    detected_max_datetime: persistedSummary.detectedMaxDatetime || textValue(batch.detected_max_datetime) || persistedSummary.detectedMinDatetime || null,
+    total_successful_sales: persistedSummary.totalSuccessfulSales,
+    successful_rows_count: persistedSummary.successfulRowsCount,
+    failed_rows_count: persistedSummary.failedRowsCount,
+    refunded_rows_count: persistedSummary.refundedRowsCount,
+    notes: JSON.stringify({
+      ...previousNotes,
+      warnings: warningMessages,
+      repair: {
+        finalized_at: now,
+        finalized_by: actorId,
+        repair_mode: previousStatus === "imported" || (previousStatus && ["imported_with_warnings", "partially_imported"].includes(previousStatus))
+          ? "reactivate_finalized_batch"
+          : "finalize_existing_rows",
+        transaction_rows: persistedSummary.rowCount,
+        successful_rows: persistedSummary.successfulRowsCount,
+        failed_rows: persistedSummary.failedRowsCount,
+        refunded_rows: persistedSummary.refundedRowsCount,
+        business_date_start: persistedSummary.businessDateStart,
+        business_date_end: persistedSummary.businessDateEnd,
+      },
+    }),
+  };
+
+  const finalizeResult = await runVmsImportBatchMutationWithMetadataFallback<Record<string, unknown>>({
+    queryName: "vms_import_batches.update.finalize_order_details",
+    currentStep: "finalize_order_details",
+    selectedImportBatchId: batchId,
+    payload: finalizePayload,
+    run: (payload) => supabase
+      .from("vms_import_batches")
+      .update(payload)
+      .eq("id", batchId)
+      .select("id, status, is_active, rows_imported, report_type, latest_error, last_error, detected_min_datetime, detected_max_datetime")
+      .maybeSingle(),
+  });
+
+  const finalizeProblem = finalizeResult.timedOut
+    ? { code: "TIMEOUT", message: "Order Details finalize batch metadata update timed out." }
+    : finalizeResult.error
+      ?? finalizeResult.value?.error
+      ?? (!batchMutationReturnedRow(finalizeResult.value)
+        ? missingBatchMutationRowError({
+            queryName: "vms_import_batches.update.finalize_order_details",
+            currentStep: "finalize_order_details",
+            selectedImportBatchId: batchId,
+          })
+        : null);
+
+  if (finalizeProblem) {
+    console.error("[vms-import] Order Details finalize batch metadata update failed", {
+      batchId,
+      error: finalizeProblem,
+      droppedOptionalColumns: finalizeResult.droppedOptionalColumns,
+      payload: finalizeResult.payload,
+    });
+
+    const fallbackActivation = await activateOrderDetailsBatchWithCoreMetadata({
+      supabase,
+      batchId,
+      actorId,
+      rowsFound,
+      rowCount,
+      rowsImported: persistedSummary.rowCount,
+    });
+
+    if (!fallbackActivation.ok) {
+      console.error("[vms-import] Order Details finalize minimal activation failed", {
+        batchId,
+        error: fallbackActivation.error,
+        payload: fallbackActivation.payload,
+      });
+      redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Could not finalize imported Order Details rows for this batch.")}`);
+    }
+
+    await logActivity({
+      profile,
+      action: "update",
+      entityType: "vms_import",
+      entityId: batchId,
+      entityLabel: textValue(batch.file_name) || batchId,
+      beforeData: batch,
+      afterData: fallbackActivation.batch ?? fallbackActivation.payload,
+      summary: `Activated saved Order Details rows for ${textValue(batch.file_name) || batchId}`,
+    });
+
+    revalidateVmsDataSourcePaths(batchId);
+    redirect(`/vms-import/${batchId}?success=${encodeURIComponent(`Activated ${persistedSummary.rowCount} saved Order Details row(s) for dashboards.`)}`);
+  }
+
+  await logActivity({
+    profile,
+    action: "update",
+    entityType: "vms_import",
+    entityId: batchId,
+    entityLabel: textValue(batch.file_name) || batchId,
+    beforeData: batch,
+    afterData: finalizeResult.value?.data ?? finalizePayload,
+    summary: `Finalized imported Order Details rows for ${textValue(batch.file_name) || batchId}`,
+  });
+
+  revalidateVmsDataSourcePaths(batchId);
+  redirect(`/vms-import/${batchId}?success=${encodeURIComponent(`Finalized ${persistedSummary.rowCount} Order Details row(s) and activated this file for dashboards.`)}`);
+}
+
 async function finalizePreviewStockImportBatch({
   supabase,
   profile,
@@ -4648,6 +5167,26 @@ export async function updateVmsImportBatchState(formData: FormData) {
     };
     activitySummary = `Disabled VMS import ${beforeBatch.file_name ?? batchId}`;
   } else if (action === "finalize_import") {
+    if (beforeReportType === "vms_order_details_weekly") {
+      await finalizeDetailedOrderDetailsImportBatch({
+        supabase,
+        profile,
+        batchId,
+        batch: objectRecord(beforeBatch),
+      });
+    } else {
+      await finalizePreviewStockImportBatch({
+        supabase,
+        profile,
+        batchId,
+        batch: objectRecord(beforeBatch),
+      });
+    }
+    return;
+  } else if ((action === "enable" || action === "restore")
+    && beforeReportType
+    && isMachineStockReport(beforeReportType)
+    && String(beforeBatch.status ?? "") === "previewed") {
     await finalizePreviewStockImportBatch({
       supabase,
       profile,
@@ -4656,10 +5195,9 @@ export async function updateVmsImportBatchState(formData: FormData) {
     });
     return;
   } else if ((action === "enable" || action === "restore")
-    && beforeReportType
-    && isMachineStockReport(beforeReportType)
-    && String(beforeBatch.status ?? "") === "previewed") {
-    await finalizePreviewStockImportBatch({
+    && beforeReportType === "vms_order_details_weekly"
+    && String(beforeBatch.status ?? "") !== "deleted") {
+    await finalizeDetailedOrderDetailsImportBatch({
       supabase,
       profile,
       batchId,

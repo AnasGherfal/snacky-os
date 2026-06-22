@@ -508,6 +508,10 @@ async function VmsImportBatchDetailPageContent({
   const canFinalizePreviewStockBatch = canConfirmVmsImports(profile)
     && String(batch.status ?? "") === "previewed"
     && isMachineStockSnapshotReportType(stringValue(batch.report_type));
+  const canFinalizeOrderDetailsBatch = isOwnerAdminRole(profile)
+    && stringValue(batch.report_type) === "vms_order_details_weekly"
+    && Number(transactionsRawCount.count ?? 0) > 0
+    && !(isUsableImportStatus(stringValue(batch.status)) && batch.is_active !== false && !batch.deleted_at);
   const finalizeEvidenceCount = Math.max(
     Number(stockSnapshotRowsCount.count ?? 0),
     Number(machineStockAuditRowsCount.count ?? 0),
@@ -567,12 +571,12 @@ async function VmsImportBatchDetailPageContent({
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge status={stringValue(batch.status)} />
             {needsMappingRows.length ? <Link href="/vms-mappings?status=needs_review" className="btn-secondary">Review product mappings</Link> : null}
-            {canFinalizePreviewStockBatch ? (
+            {canFinalizePreviewStockBatch || canFinalizeOrderDetailsBatch ? (
               <form action={updateVmsImportBatchState}>
                 <input type="hidden" name="batch_id" value={String(batch.id)} />
                 <input type="hidden" name="action" value="finalize_import" />
-                <FormSubmitButton className="btn-primary" pendingLabel="Marking imported..." disabled={finalizeEvidenceCount <= 0}>
-                  Mark imported and activate
+                <FormSubmitButton className="btn-primary" pendingLabel={canFinalizeOrderDetailsBatch ? "Finalizing file..." : "Marking imported..."} disabled={canFinalizePreviewStockBatch ? finalizeEvidenceCount <= 0 : false}>
+                  {canFinalizeOrderDetailsBatch ? "Finalize file" : "Mark imported and activate"}
                 </FormSubmitButton>
               </form>
             ) : null}
@@ -821,6 +825,22 @@ async function VmsImportBatchDetailPageContent({
                 </FormSubmitButton>
               </form>
             ) : null}
+            {canFinalizeOrderDetailsBatch ? (
+              <form action={updateVmsImportBatchState} className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <input type="hidden" name="batch_id" value={String(batch.id)} />
+                <input type="hidden" name="action" value="finalize_import" />
+                <div className="text-sm font-semibold text-amber-900">Finalize imported rows</div>
+                <p className="text-xs text-amber-900/80">
+                  Promotes saved <code>vms_transactions_raw</code> rows into an active imported Order Details batch for dashboards. No rows are re-imported or duplicated.
+                </p>
+                <div className="text-xs text-amber-900/80">
+                  Evidence found: transaction rows {transactionsRawCount.count ?? 0}
+                </div>
+                <FormSubmitButton className="btn-primary w-full" pendingLabel="Finalizing file...">
+                  Finalize file
+                </FormSubmitButton>
+              </form>
+            ) : null}
             {isUsableImportStatus(stringValue(batch.status)) && batch.is_active !== false ? (
               <form action={updateVmsImportBatchState} className="space-y-3 rounded-lg border border-slate-200 p-3">
                 <input type="hidden" name="batch_id" value={String(batch.id)} />
@@ -829,7 +849,7 @@ async function VmsImportBatchDetailPageContent({
                 <input name="reason" className="field-input" placeholder="Reason" />
                 <FormSubmitButton className="btn-secondary w-full" pendingLabel="Disabling file...">Disable</FormSubmitButton>
               </form>
-            ) : !canFinalizePreviewStockBatch ? (
+            ) : !canFinalizePreviewStockBatch && !(stringValue(batch.report_type) === "vms_order_details_weekly" && Number(transactionsRawCount.count ?? 0) > 0) ? (
               <form action={updateVmsImportBatchState} className="space-y-3 rounded-lg border border-slate-200 p-3">
                 <input type="hidden" name="batch_id" value={String(batch.id)} />
                 <input type="hidden" name="action" value={stringValue(batch.status) === "deleted" ? "restore" : "enable"} />
