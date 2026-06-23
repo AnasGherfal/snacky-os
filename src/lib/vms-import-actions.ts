@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { logActivity } from "@/lib/activity-log";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canConfirmVmsImports, canCreateVmsImports, getEffectivePermissions, isOwnerAdminRole } from "@/lib/authz";
+import { isActiveImportedVmsBatch } from "@/lib/vms-dashboard-source";
 import {
   applyColumnMapping,
   detectHeaderRowIndex,
@@ -89,6 +90,7 @@ type ImportSummary = {
   failedVendAmount?: number;
   refundedAmount?: number;
   estimatedSuccessfulSales?: number;
+  existingDashboardSource?: ExistingOrderDetailsDashboardSource | null;
 };
 
 type VmsRawRowStatus = "pending" | "imported" | "needs_mapping" | "unknown_machine" | "invalid_row" | "skipped";
@@ -611,6 +613,34 @@ type PersistedOrderDetailsBatchSummary = {
   error: unknown | null;
 };
 
+type ExistingOrderDetailsDashboardSource = {
+  batchId: string;
+  fileName: string;
+  status: string | null;
+  isActive: boolean;
+  rowCount: number;
+  businessDateStart: string | null;
+  businessDateEnd: string | null;
+  successfulRowsCount: number;
+  totalSuccessfulSales: number;
+  detectedMinDatetime: string | null;
+  detectedMaxDatetime: string | null;
+};
+
+type ExistingOrderDetailsDashboardSourceCandidate = {
+  batch: {
+    id: string;
+    file_name?: string | null;
+    original_file_name?: string | null;
+    status?: string | null;
+    is_active?: boolean | null;
+    deleted_at?: string | null;
+    imported_at?: string | null;
+    updated_at?: string | null;
+  };
+  summary: PersistedOrderDetailsBatchSummary;
+};
+
 async function loadPersistedStockSnapshotBatchSummary({
   supabase,
   batchId,
@@ -795,6 +825,137 @@ async function loadPersistedOrderDetailsBatchSummary({
     totalSuccessfulSales: Number(totalSuccessfulSales.toFixed(2)),
     error: null,
   };
+}
+
+async function loadExistingOrderDetailsDashboardSourceCandidates({
+  supabase,
+  batchIds,
+  fallbackFileHash,
+  fallbackFileName,
+}: {
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  batchIds: string[];
+  fallbackFileHash?: string | null;
+  fallbackFileName?: string | null;
+}): Promise<ExistingOrderDetailsDashboardSourceCandidate[]> {
+  const uniqueBatchIds = [...new Set(batchIds.map((value) => String(value ?? "").trim()).filter(Boolean))];
+  const candidateRows: ExistingOrderDetailsDashboardSourceCandidate["batch"][] = [];
+
+  if (uniqueBatchIds.length) {
+    const { data: batches, error } = await supabase
+    .from("vms_import_batches")
+    .select("id, file_name, original_file_name, status, is_active, deleted_at, imported_at, updated_at")
+    .in("id", uniqueBatchIds);
+
+    if (error) {
+      console.warn("[vms-import] Could not load duplicate Order Details source batch metadata", {
+        batchIds: uniqueBatchIds,
+        error,
+      });
+    } else {
+      candidateRows.push(...((batches ?? []) as ExistingOrderDetailsDashboardSourceCandidate["batch"][]));
+    }
+  }
+
+  if ((!candidateRows.length || candidateRows.every((batch) => !batch.id)) && fallbackFileHash) {
+    const { data: hashMatches, error: hashError } = await supabase
+      .from("vms_import_batches")
+      .select("id, file_name, original_file_name, status, is_active, deleted_at, imported_at, updated_at")
+      .eq("report_type", "vms_order_details_weekly")
+      .eq("file_hash", fallbackFileHash);
+    if (hashError) {
+      console.warn("[vms-import] Could not load duplicate Order Details batches by file hash", {
+        fallbackFileHash,
+        error: hashError,
+      });
+    } else {
+      candidateRows.push(...((hashMatches ?? []) as ExistingOrderDetailsDashboardSourceCandidate["batch"][]));
+    }
+  }
+
+  if (!candidateRows.length && fallbackFileName) {
+    const [fileNameMatches, originalFileNameMatches] = await Promise.all([
+      supabase
+        .from("vms_import_batches")
+        .select("id, file_name, original_file_name, status, is_active, deleted_at, imported_at, updated_at")
+        .eq("report_type", "vms_order_details_weekly")
+        .eq("file_name", fallbackFileName),
+      supabase
+        .from("vms_import_batches")
+        .select("id, file_name, original_file_name, status, is_active, deleted_at, imported_at, updated_at")
+        .eq("report_type", "vms_order_details_weekly")
+        .eq("original_file_name", fallbackFileName),
+    ]);
+
+    if (fileNameMatches.error) {
+      console.warn("[vms-import] Could not load duplicate Order Details batches by file name", {
+        fallbackFileName,
+        error: fileNameMatches.error,
+      });
+    } else {
+      candidateRows.push(...((fileNameMatches.data ?? []) as ExistingOrderDetailsDashboardSourceCandidate["batch"][]));
+    }
+
+    if (originalFileNameMatches.error) {
+      console.warn("[vms-import] Could not load duplicate Order Details batches by original file name", {
+        fallbackFileName,
+        error: originalFileNameMatches.error,
+      });
+    } else {
+      candidateRows.push(...((originalFileNameMatches.data ?? []) as ExistingOrderDetailsDashboardSourceCandidate["batch"][]));
+    }
+  }
+
+  const batchById = new Map(candidateRows.map((batch) => [String(batch.id), batch]));
+  const candidateIds = [...new Set(candidateRows.map((batch) => String(batch.id).trim()).filter(Boolean))];
+  const candidates = await Promise.all(candidateIds.map(async (batchId) => {
+    const batch = batchById.get(batchId);
+    if (!batch) return null;
+    const summary = await loadPersistedOrderDetailsBatchSummary({ supabase, batchId });
+    if (summary.error || summary.rowCount <= 0 || summary.successfulRowsCount <= 0) return null;
+    return { batch, summary } satisfies ExistingOrderDetailsDashboardSourceCandidate;
+  }));
+
+  return candidates.filter((candidate): candidate is ExistingOrderDetailsDashboardSourceCandidate => Boolean(candidate));
+}
+
+function pickBestOrderDetailsDashboardSourceCandidate(candidates: ExistingOrderDetailsDashboardSourceCandidate[]) {
+  return [...candidates].sort((left, right) => {
+    const leftActive = isActiveImportedVmsBatch({
+      id: left.batch.id,
+      file_name: left.batch.file_name ?? null,
+      original_file_name: left.batch.original_file_name ?? null,
+      report_type: "vms_order_details_weekly",
+      status: left.batch.status ?? null,
+      is_active: left.batch.is_active ?? null,
+      deleted_at: left.batch.deleted_at ?? null,
+      uploaded_at: left.batch.imported_at ?? null,
+      imported_at: left.batch.imported_at ?? null,
+    });
+    const rightActive = isActiveImportedVmsBatch({
+      id: right.batch.id,
+      file_name: right.batch.file_name ?? null,
+      original_file_name: right.batch.original_file_name ?? null,
+      report_type: "vms_order_details_weekly",
+      status: right.batch.status ?? null,
+      is_active: right.batch.is_active ?? null,
+      deleted_at: right.batch.deleted_at ?? null,
+      uploaded_at: right.batch.imported_at ?? null,
+      imported_at: right.batch.imported_at ?? null,
+    });
+    if (leftActive !== rightActive) return Number(rightActive) - Number(leftActive);
+    if (left.summary.rowCount !== right.summary.rowCount) return right.summary.rowCount - left.summary.rowCount;
+    if (left.summary.successfulRowsCount !== right.summary.successfulRowsCount) return right.summary.successfulRowsCount - left.summary.successfulRowsCount;
+    return String(right.batch.imported_at ?? right.batch.updated_at ?? "").localeCompare(String(left.batch.imported_at ?? left.batch.updated_at ?? ""));
+  })[0] ?? null;
+}
+
+function formatOrderDetailsDashboardSourceCandidate(candidate: ExistingOrderDetailsDashboardSourceCandidate) {
+  const fileName = textValue(candidate.batch.original_file_name) || textValue(candidate.batch.file_name) || "unknown file";
+  const businessDateRange = candidate.summary.businessDateStart && candidate.summary.businessDateEnd
+    ? `${candidate.summary.businessDateStart} to ${candidate.summary.businessDateEnd}`
+    : "unknown date range";
+  return `${fileName} [batch_id=${candidate.batch.id}, status=${textValue(candidate.batch.status) || "unknown"}, active=${candidate.batch.is_active !== false ? "yes" : "no"}, rows=${candidate.summary.rowCount}, business_dates=${businessDateRange}, successful_sales=${candidate.summary.successfulRowsCount}, sales_amount=${candidate.summary.totalSuccessfulSales.toFixed(2)}]`;
 }
 
 function markInvalidRow(summary: ImportSummary, rowNumber: number, reason: string) {
@@ -2454,6 +2615,7 @@ async function runVmsImport({
     }
   }
 
+  const existingExternalDuplicateBatchIds = new Set<string>();
   if (transactionRawRows.length && !fatalImportError) {
     const rowsByHash = new Map<string, Record<string, unknown>>();
     transactionRawRows.forEach((row) => {
@@ -2488,8 +2650,11 @@ async function runVmsImport({
         break;
       }
       ((data ?? []) as { duplicate_hash: string | null; import_batch_id: string | null }[]).forEach((row) => {
-        if (!isReprocess || String(row.import_batch_id ?? "") !== String(batch.id)) {
-          existingExternalDuplicateHashes.add(String(row.duplicate_hash));
+        const duplicateHash = String(row.duplicate_hash ?? "").trim();
+        const duplicateBatchId = String(row.import_batch_id ?? "").trim();
+        if (!isReprocess || duplicateBatchId !== String(batch.id)) {
+          if (duplicateHash) existingExternalDuplicateHashes.add(duplicateHash);
+          if (duplicateBatchId) existingExternalDuplicateBatchIds.add(duplicateBatchId);
         }
       });
     }
@@ -2663,7 +2828,122 @@ async function runVmsImport({
     && attemptedImportedRows <= 0
     && summary.rowsSkippedDuplicate > 0;
   if (duplicateOnlyOrderDetailsReupload) {
-    summary.resultMessage = `All ${summary.rowsSkippedDuplicate} detailed Order Details row(s) in this file were already imported. No new rows were added, so the existing imported batch remains the dashboard source.`;
+    const dashboardSourceCandidates = await loadExistingOrderDetailsDashboardSourceCandidates({
+      supabase,
+      batchIds: [...existingExternalDuplicateBatchIds],
+      fallbackFileHash: fileHash,
+      fallbackFileName: fileName,
+    });
+    const dashboardSourceCandidate = pickBestOrderDetailsDashboardSourceCandidate(dashboardSourceCandidates);
+
+    if (!dashboardSourceCandidate) {
+      summary.errors.push("Rows already exist, but Snacky OS could not identify an active dashboard batch.");
+      summary.failedTargets = Array.from(new Set([...summary.failedTargets, "Sales dashboard"]));
+      summary.resultMessage = `Rows already exist, but Snacky OS could not identify an active dashboard batch. Repair required.`;
+    } else {
+      let sourceInfo: ExistingOrderDetailsDashboardSource = {
+        batchId: dashboardSourceCandidate.batch.id,
+        fileName: textValue(dashboardSourceCandidate.batch.original_file_name) || textValue(dashboardSourceCandidate.batch.file_name) || "unknown file",
+        status: textValue(dashboardSourceCandidate.batch.status) || null,
+        isActive: dashboardSourceCandidate.batch.is_active !== false && !dashboardSourceCandidate.batch.deleted_at,
+        rowCount: dashboardSourceCandidate.summary.rowCount,
+        businessDateStart: dashboardSourceCandidate.summary.businessDateStart,
+        businessDateEnd: dashboardSourceCandidate.summary.businessDateEnd,
+        successfulRowsCount: dashboardSourceCandidate.summary.successfulRowsCount,
+        totalSuccessfulSales: dashboardSourceCandidate.summary.totalSuccessfulSales,
+        detectedMinDatetime: dashboardSourceCandidate.summary.detectedMinDatetime,
+        detectedMaxDatetime: dashboardSourceCandidate.summary.detectedMaxDatetime,
+      };
+      summary.existingDashboardSource = sourceInfo;
+
+      const sourceLabel = formatOrderDetailsDashboardSourceCandidate(dashboardSourceCandidate);
+      const repairedSourceLabel = formatOrderDetailsDashboardSourceCandidate({
+        batch: {
+          ...dashboardSourceCandidate.batch,
+          status: "imported",
+          is_active: true,
+          deleted_at: null,
+        },
+        summary: dashboardSourceCandidate.summary,
+      });
+      const sourceActive = dashboardSourceCandidate.batch.deleted_at == null
+        && isActiveImportedVmsBatch({
+          id: dashboardSourceCandidate.batch.id,
+          file_name: dashboardSourceCandidate.batch.file_name ?? null,
+          original_file_name: dashboardSourceCandidate.batch.original_file_name ?? null,
+          report_type: "vms_order_details_weekly",
+          status: dashboardSourceCandidate.batch.status ?? null,
+          is_active: dashboardSourceCandidate.batch.is_active ?? null,
+          deleted_at: dashboardSourceCandidate.batch.deleted_at ?? null,
+          uploaded_at: dashboardSourceCandidate.batch.imported_at ?? null,
+          imported_at: dashboardSourceCandidate.batch.imported_at ?? null,
+        });
+
+      console.info("[vms-import] Duplicate-only Order Details reupload matched existing dashboard source", {
+        currentBatchId: batch.id,
+        existingBatchId: dashboardSourceCandidate.batch.id,
+        existingBatchStatus: dashboardSourceCandidate.batch.status ?? null,
+        existingBatchIsActive: dashboardSourceCandidate.batch.is_active ?? null,
+        existingBatchDeletedAt: dashboardSourceCandidate.batch.deleted_at ?? null,
+        existingBatchRowCount: dashboardSourceCandidate.summary.rowCount,
+        existingBatchBusinessDateStart: dashboardSourceCandidate.summary.businessDateStart,
+        existingBatchBusinessDateEnd: dashboardSourceCandidate.summary.businessDateEnd,
+        existingBatchSuccessfulRows: dashboardSourceCandidate.summary.successfulRowsCount,
+        existingBatchSuccessfulSalesAmount: dashboardSourceCandidate.summary.totalSuccessfulSales,
+        sourceLabel,
+      });
+
+      if (sourceActive) {
+        summary.updatedTargets = Array.from(new Set([...summary.updatedTargets, "Sales dashboard"]));
+        summary.resultMessage = `File already imported. Existing active batch is used in dashboard: ${sourceLabel}`;
+      } else if (dashboardSourceCandidate.batch.deleted_at) {
+        summary.errors.push("Rows already exist, but the matching batch is soft-deleted and cannot be reactivated automatically.");
+        summary.failedTargets = Array.from(new Set([...summary.failedTargets, "Sales dashboard"]));
+        summary.resultMessage = `Rows already exist, but the matching batch is soft-deleted and cannot be reactivated automatically: ${sourceLabel}`;
+      } else {
+        const actorId = profile.team_member_id ?? profile.id ?? null;
+        const repairResult = await activateOrderDetailsBatchWithCoreMetadata({
+          supabase,
+          batchId: dashboardSourceCandidate.batch.id,
+          actorId,
+          rowsFound: dashboardSourceCandidate.summary.rowCount,
+          rowCount: dashboardSourceCandidate.summary.rowCount,
+          rowsImported: dashboardSourceCandidate.summary.rowCount,
+          reportStartDate: dashboardSourceCandidate.summary.businessDateStart,
+          reportEndDate: dashboardSourceCandidate.summary.businessDateEnd,
+          detectedMinDatetime: dashboardSourceCandidate.summary.detectedMinDatetime,
+          detectedMaxDatetime: dashboardSourceCandidate.summary.detectedMaxDatetime,
+          successfulRowsCount: dashboardSourceCandidate.summary.successfulRowsCount,
+          failedRowsCount: dashboardSourceCandidate.summary.failedRowsCount,
+          refundedRowsCount: dashboardSourceCandidate.summary.refundedRowsCount,
+          totalSuccessfulSales: dashboardSourceCandidate.summary.totalSuccessfulSales,
+        });
+
+        if (repairResult.ok) {
+          sourceInfo = {
+            ...sourceInfo,
+            status: "imported",
+            isActive: true,
+          };
+          summary.existingDashboardSource = sourceInfo;
+          summary.updatedTargets = Array.from(new Set([...summary.updatedTargets, "Sales dashboard"]));
+          summary.resultMessage = `File already imported. Reactivated existing batch for dashboard: ${repairedSourceLabel}`;
+          revalidateVmsDataSourcePaths(dashboardSourceCandidate.batch.id);
+        } else {
+          logVmsBatchMutationFailure({
+            queryName: "vms_import_batches.update.duplicate_order_details_reactivate",
+            error: repairResult.error,
+            payload: repairResult.payload,
+            profile,
+            selectedImportBatchId: dashboardSourceCandidate.batch.id,
+            currentStep: "confirm_import",
+          });
+          summary.errors.push("Rows already exist, but Snacky OS could not reactivate the existing dashboard batch automatically.");
+          summary.failedTargets = Array.from(new Set([...summary.failedTargets, "Sales dashboard"]));
+          summary.resultMessage = `Rows already exist, but Snacky OS could not reactivate the existing dashboard batch automatically: ${sourceLabel}`;
+        }
+      }
+    }
   }
   const status = isMachineStockReport(reportType) && effectiveImportedRows > 0
     ? "imported"
@@ -3298,6 +3578,14 @@ async function activateOrderDetailsBatchWithCoreMetadata({
   rowsFound,
   rowCount,
   rowsImported,
+  reportStartDate = null,
+  reportEndDate = null,
+  detectedMinDatetime = null,
+  detectedMaxDatetime = null,
+  successfulRowsCount = null,
+  failedRowsCount = null,
+  refundedRowsCount = null,
+  totalSuccessfulSales = null,
 }: {
   supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
   batchId: string;
@@ -3305,6 +3593,14 @@ async function activateOrderDetailsBatchWithCoreMetadata({
   rowsFound: number;
   rowCount: number;
   rowsImported: number;
+  reportStartDate?: string | null;
+  reportEndDate?: string | null;
+  detectedMinDatetime?: string | null;
+  detectedMaxDatetime?: string | null;
+  successfulRowsCount?: number | null;
+  failedRowsCount?: number | null;
+  refundedRowsCount?: number | null;
+  totalSuccessfulSales?: number | null;
 }) {
   const now = new Date().toISOString();
   const corePayload = {
@@ -3317,6 +3613,16 @@ async function activateOrderDetailsBatchWithCoreMetadata({
     rows_found: rowsFound,
     row_count: rowCount,
     rows_imported: rowsImported,
+    report_start_date: reportStartDate,
+    report_end_date: reportEndDate,
+    detected_min_datetime: detectedMinDatetime,
+    detected_max_datetime: detectedMaxDatetime,
+    successful_rows_count: successfulRowsCount ?? rowsImported,
+    failed_rows_count: failedRowsCount ?? 0,
+    refunded_rows_count: refundedRowsCount ?? 0,
+    total_successful_sales: totalSuccessfulSales ?? 0,
+    latest_error: null,
+    last_error: null,
   };
 
   const updateResult = await withSoftTimeout(
@@ -3535,6 +3841,14 @@ async function ensureConfirmedOrderDetailsImportBatchIsUsable({
       rowsFound,
       rowCount,
       rowsImported: effectiveImportedRows,
+      reportStartDate,
+      reportEndDate,
+      detectedMinDatetime,
+      detectedMaxDatetime,
+      successfulRowsCount: persistedOrderDetailsSummary.successfulRowsCount,
+      failedRowsCount: persistedOrderDetailsSummary.failedRowsCount,
+      refundedRowsCount: persistedOrderDetailsSummary.refundedRowsCount,
+      totalSuccessfulSales: persistedOrderDetailsSummary.totalSuccessfulSales,
     });
 
     if (!fallbackActivation.ok) {
@@ -4843,6 +5157,14 @@ async function finalizeDetailedOrderDetailsImportBatch({
       rowsFound,
       rowCount,
       rowsImported: persistedSummary.rowCount,
+      reportStartDate: persistedSummary.businessDateStart || textValue(batch.report_start_date) || null,
+      reportEndDate: persistedSummary.businessDateEnd || textValue(batch.report_end_date) || persistedSummary.businessDateStart || null,
+      detectedMinDatetime: persistedSummary.detectedMinDatetime || textValue(batch.detected_min_datetime) || null,
+      detectedMaxDatetime: persistedSummary.detectedMaxDatetime || textValue(batch.detected_max_datetime) || persistedSummary.detectedMinDatetime || null,
+      successfulRowsCount: persistedSummary.successfulRowsCount,
+      failedRowsCount: persistedSummary.failedRowsCount,
+      refundedRowsCount: persistedSummary.refundedRowsCount,
+      totalSuccessfulSales: persistedSummary.totalSuccessfulSales,
     });
 
     if (!fallbackActivation.ok) {
