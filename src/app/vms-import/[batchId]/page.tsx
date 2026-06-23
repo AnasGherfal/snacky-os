@@ -54,12 +54,17 @@ type ImportSummary = {
   updatedTargets?: string[];
   failedTargets?: string[];
   resultMessage?: string;
+  message?: string;
 };
 
 function parseSummary(notes: string | null | undefined): ImportSummary | null {
   if (!notes) return null;
   try {
-    return JSON.parse(notes) as ImportSummary;
+    const parsed = JSON.parse(notes) as ImportSummary;
+    if (!parsed.resultMessage && parsed.message) {
+      parsed.resultMessage = parsed.message;
+    }
+    return parsed;
   } catch {
     return null;
   }
@@ -535,6 +540,11 @@ async function VmsImportBatchDetailPageContent({
   const unknownMachineRows = rowList.filter((row) => row.validation_status === "unknown_machine" || row.machine_match_status === "unknown");
   const invalidRows = rowList.filter((row) => row.validation_status === "invalid_row");
   const importedRows = rowList.filter((row) => row.validation_status === "imported");
+  const savedRowsValue = reportType === "vms_order_details_weekly"
+    ? numberValue(transactionsRawCount.count, 0)
+    : isStockReportType(stringValue(batch.report_type))
+      ? numberValue(stockSnapshotRowsCount.count, importedRowsCount.count ?? rowList.length)
+      : numberValue(importedRowsCount.count, rowList.length);
 
   return (
     <>
@@ -590,13 +600,13 @@ async function VmsImportBatchDetailPageContent({
         </div>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
           <StatCard label="Total rows" value={summary?.totalRows ?? numberValue(batch.row_count, rowList.length)} />
-          <StatCard label="Imported" value={summary?.importedRows ?? numberValue(batch.rows_imported, importedRows.length)} />
+          <StatCard label="Imported" value={summary?.importedRows ?? numberValue(batch.rows_imported, importedRowsCount.count ?? importedRows.length)} />
           <StatCard label="Active in dashboards" value={isUsableImportStatus(stringValue(batch.status)) && batch.is_active !== false && !batch.deleted_at ? "Yes" : "No"} />
           <StatCard label="Duplicates skipped" value={summary?.rowsSkippedDuplicate ?? numberValue(batch.rows_skipped_duplicate)} />
           <StatCard label="Needs mapping" value={summary?.needsProductMappingRows ?? needsMappingRows.length} />
           <StatCard label="Unknown machines" value={summary?.unknownMachineRows ?? unknownMachineRows.length} />
           <StatCard label="Invalid rows" value={summary?.invalidRows ?? invalidRows.length} />
-          <StatCard label="Saved rows" value={rowList.length} />
+          <StatCard label="Saved rows" value={savedRowsValue} />
           <StatCard label="Successful sales" value={isStockReportType(stringValue(batch.report_type)) ? "N/A" : (batch.total_successful_sales ? String(batch.total_successful_sales) : String(summary?.estimatedSuccessfulSales ?? 0))} />
         </div>
         {isStockReportType(stringValue(batch.report_type)) ? (
@@ -617,7 +627,7 @@ async function VmsImportBatchDetailPageContent({
           <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
             <StatCard label="Report start" value={textValue(batch.report_start_date, summary?.orderDetailsReportPeriod?.reportStartDate ?? "-")} />
             <StatCard label="Report end" value={textValue(batch.report_end_date, summary?.orderDetailsReportPeriod?.reportEndDate ?? "-")} />
-            <StatCard label="Successful sales" value={summary?.successfulSalesRows ?? 0} />
+            <StatCard label="Successful sales" value={summary?.successfulSalesRows ?? numberValue(batch.successful_rows_count, 0)} />
             <StatCard label="Failed vend" value={summary?.failedVendRows ?? 0} />
             <StatCard label="Refunded" value={summary?.refundedRows ?? 0} />
             <StatCard label="Needs review" value={summary?.needsReviewTransactionRows ?? 0} />

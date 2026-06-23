@@ -7,7 +7,7 @@ import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { QuantityStepper } from "@/components/QuantityStepper";
 import { EmptyState, ErrorState, LoadingState, PageHeader, SecondaryButton, SectionCard } from "@/components/ui";
 import { applyPendingStopRecommendationRefresh, confirmPickList, previewPendingStopRecommendationRefresh, startRoute, type PendingStopRefreshComparison } from "@/lib/operator-actions";
-import { pickupProductPriorityGroup, sortPickupProductRows } from "@/lib/route-pickup-checklist";
+import { comparePickupProductRows, groupRouteItemsForDisplay, pickupProductPriorityGroup, sortPickupProductRows } from "@/lib/route-pickup-checklist";
 import { ROUTE_STOP_PENDING_STATUS } from "@/lib/route-workflow";
 
 const UNASSIGNED_EXTRA_TARGET = "__unassigned__";
@@ -255,6 +255,7 @@ export default function PickListPage() {
   const [checklistSyncError, setChecklistSyncError] = useState("");
   const [notice, setNotice] = useState("");
   const [refreshPreview, setRefreshPreview] = useState<RefreshPreviewState>({ loading: false, applying: false, comparisons: [], message: "", error: "" });
+  const [expandedChecklistFamilyKeys, setExpandedChecklistFamilyKeys] = useState<Record<string, boolean>>({});
   const errorRef = useRef<HTMLDivElement | null>(null);
   const initialPickDraftRef = useRef<string>("");
   const localChecklistRef = useRef<LocalPickupChecklistState>({});
@@ -578,6 +579,13 @@ export default function PickListPage() {
     });
   };
 
+  const toggleChecklistFamily = (familyKey: string, defaultExpanded = false) => {
+    setExpandedChecklistFamilyKeys((current) => ({
+      ...current,
+      [familyKey]: !(current[familyKey] ?? defaultExpanded),
+    }));
+  };
+
   const handlePreviewRefresh = async () => {
     setRefreshPreview({ loading: true, applying: false, comparisons: [], message: "", error: "" });
     setError("");
@@ -886,7 +894,12 @@ export default function PickListPage() {
                       </div>
                     </div>
                     {locationGroup.groups.map((group) => {
-                      const sortedItems = sortPickupProductRows(group.items);
+                      const groupedItems = groupRouteItemsForDisplay(group.items.map((item) => ({
+                        ...item,
+                        quantity: item.confirmedQty,
+                        checked: item.isChecked,
+                        sortKey: `${group.stopOrder ?? 0}|${item.productName}|${item.routeStopItemId}`,
+                      })));
                       const groupCheckedCount = group.items.filter((item) => item.isChecked).length;
                       const groupProgress = progressPercent(groupCheckedCount, group.items.length);
                       const groupKey = group.routeStopId ?? group.machineId ?? `${group.machineName}-${group.stopOrder}`;
@@ -906,80 +919,108 @@ export default function PickListPage() {
                               Picked {groupCheckedCount} of {group.items.length}
                             </div>
                           </div>
-                          <div className="divide-y divide-slate-200">
-                            {sortedItems.map((item) => {
-                              const maxQty = maxForProduct(item.productId, item.confirmedQty, item.availableStorageQty);
-                              const saving = savingCheckedIds.has(item.routeStopItemId);
-                              const priorityBadge = pickupPriorityBadge(item.productName);
+                          <div className="space-y-3 border-t border-slate-200 p-3">
+                            {groupedItems.map((familyGroup) => {
+                              const familyKey = `${groupKey}:${familyGroup.groupKey}`;
+                              const familyExpanded = expandedChecklistFamilyKeys[familyKey] ?? familyGroup.defaultExpanded;
                               return (
-                                <div
-                                  key={item.routeStopItemId}
-                                  role="button"
-                                  tabIndex={locked ? -1 : 0}
-                                  onClick={() => togglePickupItemChecked(item)}
-                                  onKeyDown={(event) => {
-                                    if (event.key === "Enter" || event.key === " ") {
-                                      event.preventDefault();
-                                      togglePickupItemChecked(item);
-                                    }
-                                  }}
-                                  className={`cursor-pointer space-y-4 p-4 transition ${item.isChecked ? "bg-emerald-50" : "bg-white hover:bg-slate-50"} ${saving ? "opacity-70" : ""}`}
-                                >
-                                  <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_190px] md:items-start">
-                                    <div className="flex min-w-0 gap-3">
-                                      <input
-                                        type="checkbox"
-                                        checked={item.isChecked}
-                                        onChange={() => togglePickupItemChecked(item)}
-                                        onClick={(event) => event.stopPropagation()}
-                                        disabled={locked || submitting}
-                                        aria-label={`Mark ${item.productName} picked`}
-                                        className="mt-1 h-11 w-11 shrink-0 cursor-pointer rounded-lg border-2 border-slate-300 accent-emerald-600 disabled:cursor-not-allowed"
-                                      />
-                                      <div className="min-w-0">
-                                        <div className="flex flex-wrap items-center gap-2">
-                                          <p className={`break-words font-semibold ${item.isChecked ? "text-emerald-950" : "text-slate-900"}`}>{item.productName}</p>
-                                          {priorityBadge ? <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${priorityBadge.className}`}>{priorityBadge.label}</span> : null}
-                                          {saving ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Saving</span> : null}
-                                        </div>
-                                        <p className="mt-1 break-words text-xs text-slate-500">
-                                          SKU: {item.sku ?? "No SKU"} - Recommended: {item.requestedQty} - Route storage: {item.availableStorageQty}
-                                        </p>
-                                        <p className="mt-1 text-xs text-slate-500">{item.source === "manual_admin_assignment" ? "Manual assignment" : "Refill recommendation"}</p>
+                                <section key={familyKey} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleChecklistFamily(familyKey, familyGroup.defaultExpanded)}
+                                    className="flex w-full items-start justify-between gap-3 border-b border-slate-200 px-4 py-3 text-left"
+                                  >
+                                    <div className="min-w-0">
+                                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{familyGroup.groupLabel}</div>
+                                      <div className="mt-1 text-sm font-semibold text-slate-900">
+                                        {familyGroup.checkedCount}/{familyGroup.itemCount} checked · {familyGroup.totalQuantity} units
                                       </div>
                                     </div>
-                                    <label className="block" onClick={(event) => event.stopPropagation()}>
-                                      <span className="mb-1 block text-sm font-medium text-slate-800">Pickup qty</span>
-                                      <QuantityStepper
-                                        value={item.confirmedQty}
-                                        max={maxQty}
-                                        onChange={(quantity) => updateStopItem(item.routeStopItemId, { confirmedQty: quantity })}
-                                        disabled={locked}
-                                        inputLabel={`${item.machineName} ${item.productName} pickup quantity`}
-                                      />
-                                      <span className="mt-1 block text-xs text-slate-500">Available for this row: {maxQty}</span>
-                                    </label>
-                                  </div>
+                                    <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+                                      {familyExpanded ? "Hide" : "Show"}
+                                    </div>
+                                  </button>
 
-                                  {item.confirmedQty !== item.requestedQty ? (
-                                    <div className="grid gap-3 md:grid-cols-2" onClick={(event) => event.stopPropagation()}>
-                                      <label className="block">
-                                        <span className="mb-1 block text-sm font-medium text-slate-800">Reason</span>
-                                        <select value={item.reason} onChange={(event) => updateStopItem(item.routeStopItemId, { reason: event.target.value })} className="field-input" disabled={locked}>
-                                          <option>Product not available in storage</option>
-                                          <option>Product not in operator bag</option>
-                                          <option>Product expired/damaged</option>
-                                          <option>Customer demand</option>
-                                          <option>Other</option>
-                                        </select>
-                                      </label>
-                                      <label className="block">
-                                        <span className="mb-1 block text-sm font-medium text-slate-800">Notes</span>
-                                        <input value={item.notes} onChange={(event) => updateStopItem(item.routeStopItemId, { notes: event.target.value })} className="field-input" placeholder="Explain the pickup change" disabled={locked} />
-                                      </label>
+                                  {familyExpanded ? (
+                                    <div className="divide-y divide-slate-200">
+                                      {familyGroup.items.map((item) => {
+                                        const maxQty = maxForProduct(item.productId, item.confirmedQty, item.availableStorageQty);
+                                        const saving = savingCheckedIds.has(item.routeStopItemId);
+                                        const priorityBadge = pickupPriorityBadge(item.productName);
+                                        return (
+                                          <div
+                                            key={item.routeStopItemId}
+                                            role="button"
+                                            tabIndex={locked ? -1 : 0}
+                                            onClick={() => togglePickupItemChecked(item)}
+                                            onKeyDown={(event) => {
+                                              if (event.key === "Enter" || event.key === " ") {
+                                                event.preventDefault();
+                                                togglePickupItemChecked(item);
+                                              }
+                                            }}
+                                            className={`cursor-pointer space-y-4 p-4 transition ${item.isChecked ? "bg-emerald-50" : "bg-white hover:bg-slate-50"} ${saving ? "opacity-70" : ""}`}
+                                          >
+                                            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_190px] md:items-start">
+                                              <div className="flex min-w-0 gap-3">
+                                                <input
+                                                  type="checkbox"
+                                                  checked={item.isChecked}
+                                                  onChange={() => togglePickupItemChecked(item)}
+                                                  onClick={(event) => event.stopPropagation()}
+                                                  disabled={locked || submitting}
+                                                  aria-label={`Mark ${item.productName} picked`}
+                                                  className="mt-1 h-11 w-11 shrink-0 cursor-pointer rounded-lg border-2 border-slate-300 accent-emerald-600 disabled:cursor-not-allowed"
+                                                />
+                                                <div className="min-w-0">
+                                                  <div className="flex flex-wrap items-center gap-2">
+                                                    <p className={`break-words font-semibold ${item.isChecked ? "text-emerald-950" : "text-slate-900"}`}>{item.productName}</p>
+                                                    {priorityBadge ? <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${priorityBadge.className}`}>{priorityBadge.label}</span> : null}
+                                                    {saving ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Saving</span> : null}
+                                                  </div>
+                                                  <p className="mt-1 break-words text-xs text-slate-500">
+                                                    SKU: {item.sku ?? "No SKU"} - Recommended: {item.requestedQty} - Route storage: {item.availableStorageQty}
+                                                  </p>
+                                                  <p className="mt-1 text-xs text-slate-500">{item.source === "manual_admin_assignment" ? "Manual assignment" : "Refill recommendation"}</p>
+                                                </div>
+                                              </div>
+                                              <label className="block" onClick={(event) => event.stopPropagation()}>
+                                                <span className="mb-1 block text-sm font-medium text-slate-800">Pickup qty</span>
+                                                <QuantityStepper
+                                                  value={item.confirmedQty}
+                                                  max={maxQty}
+                                                  onChange={(quantity) => updateStopItem(item.routeStopItemId, { confirmedQty: quantity })}
+                                                  disabled={locked}
+                                                  inputLabel={`${item.machineName} ${item.productName} pickup quantity`}
+                                                />
+                                                <span className="mt-1 block text-xs text-slate-500">Available for this row: {maxQty}</span>
+                                              </label>
+                                            </div>
+
+                                            {item.confirmedQty !== item.requestedQty ? (
+                                              <div className="grid gap-3 md:grid-cols-2" onClick={(event) => event.stopPropagation()}>
+                                                <label className="block">
+                                                  <span className="mb-1 block text-sm font-medium text-slate-800">Reason</span>
+                                                  <select value={item.reason} onChange={(event) => updateStopItem(item.routeStopItemId, { reason: event.target.value })} className="field-input" disabled={locked}>
+                                                    <option>Product not available in storage</option>
+                                                    <option>Product not in operator bag</option>
+                                                    <option>Product expired/damaged</option>
+                                                    <option>Customer demand</option>
+                                                    <option>Other</option>
+                                                  </select>
+                                                </label>
+                                                <label className="block">
+                                                  <span className="mb-1 block text-sm font-medium text-slate-800">Notes</span>
+                                                  <input value={item.notes} onChange={(event) => updateStopItem(item.routeStopItemId, { notes: event.target.value })} className="field-input" placeholder="Explain the pickup change" disabled={locked} />
+                                                </label>
+                                              </div>
+                                            ) : null}
+                                          </div>
+                                        );
+                                      })}
                                     </div>
                                   ) : null}
-                                </div>
+                                </section>
                               );
                             })}
                           </div>
@@ -1040,10 +1081,14 @@ export default function PickListPage() {
           </div>
         </section>
 
-        <div className="sticky bottom-3 z-10 -mx-3 flex flex-col gap-2 border-t border-slate-200 bg-slate-100/95 px-3 py-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:border-0 sm:bg-transparent sm:p-0">
+        <div className="sticky bottom-3 z-10 -mx-3 flex flex-col gap-3 border-t border-slate-200 bg-slate-100/95 px-3 py-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:border-0 sm:bg-transparent sm:p-0">
+          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 sm:flex-1">
+            <div className="font-semibold text-slate-900">{checkedItemCount} of {allStopItems.length} items checked</div>
+            <div className="mt-1 text-xs text-slate-500">{selectedStopIds.length} stops selected · {totalPickedUnits} total units in this pickup batch</div>
+          </div>
           {error ? <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 sm:hidden">{error}</div> : null}
           <button type="button" onClick={handleConfirmPick} disabled={submitting || (!locked && selectedStopIds.length === 0)} className="btn-primary w-full flex-1 disabled:cursor-not-allowed disabled:opacity-50">
-            {locked ? "Back to Route" : submitting ? "Saving..." : alreadyConfirmed ? "Confirm Pickup Batch" : "Confirm Pickup Batch"}
+            {locked ? "Back to Route" : submitting ? "Saving..." : alreadyConfirmed ? "Confirm Pickup List" : "Confirm Pickup List"}
           </button>
           <SecondaryButton href={routeHref} type="button">Cancel</SecondaryButton>
         </div>
@@ -1146,6 +1191,10 @@ function ProductCombobox({
   const selected = products.find((product) => product.id === productId);
   const filtered = products
     .filter((product) => !query.trim() || [product.name, product.sku, product.barcode, product.category, product.brand].some((value) => String(value ?? "").toLowerCase().includes(query.trim().toLowerCase())))
+    .sort((a, b) => comparePickupProductRows(
+      { productName: a.name, productCategory: a.category },
+      { productName: b.name, productCategory: b.category },
+    ) || a.name.localeCompare(b.name))
     .slice(0, 8);
 
   return (

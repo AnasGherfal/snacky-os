@@ -661,82 +661,138 @@ async function loadPersistedOrderDetailsBatchSummary({
   supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
   batchId: string;
 }): Promise<PersistedOrderDetailsBatchSummary> {
-  const preferred = await supabase
-    .from("vms_transactions_raw")
-    .select("business_date, payment_time, delivery_time, transaction_status, payment_amount")
-    .eq("import_batch_id", batchId);
-  const fallbackToLegacySelect = preferred.error && (
-    String((preferred.error as { code?: unknown }).code ?? "") === "42703"
-    || String((preferred.error as { code?: unknown }).code ?? "") === "PGRST204"
-    || /business_date|column|schema cache/i.test(String((preferred.error as { message?: unknown }).message ?? ""))
-  );
-  const result = fallbackToLegacySelect
-    ? await supabase
-      .from("vms_transactions_raw")
-      .select("payment_time, delivery_time, transaction_status, payment_amount")
-      .eq("import_batch_id", batchId)
-    : preferred;
+  const pageSize = 1000;
+  const preferredColumns = "business_date, payment_time, delivery_time, transaction_status, payment_amount";
+  const legacyColumns = "payment_time, delivery_time, transaction_status, payment_amount";
 
-  if (result.error) {
-    return {
-      rowCount: 0,
-      detectedMinDatetime: null,
-      detectedMaxDatetime: null,
-      businessDateStart: null,
-      businessDateEnd: null,
-      successfulRowsCount: 0,
-      failedVendRowsCount: 0,
-      failedRowsCount: 0,
-      refundedRowsCount: 0,
-      failedPaymentRowsCount: 0,
-      needsReviewRowsCount: 0,
-      totalSuccessfulSales: 0,
-      error: result.error,
-    };
-  }
-
-  const rows = (result.data ?? []) as Array<{
+  type PersistedOrderDetailsRow = {
     business_date?: string | null;
     payment_time?: string | null;
     delivery_time?: string | null;
     transaction_status?: string | null;
     payment_amount?: number | string | null;
-  }>;
-  const capturedValues = rows
-    .flatMap((row) => [row.payment_time, row.delivery_time])
-    .map((value) => String(value ?? "").trim())
-    .filter(Boolean)
-    .sort((a, b) => a.localeCompare(b));
-  const businessDates = rows
-    .map((row) => String(row.business_date ?? "").trim())
-    .filter(Boolean)
-    .sort((a, b) => a.localeCompare(b));
-  const successfulRowsCount = rows.reduce((sum, row) => sum + (String(row.transaction_status ?? "") === "successful_sale" ? 1 : 0), 0);
-  const failedVendRowsCount = rows.reduce((sum, row) => sum + (String(row.transaction_status ?? "") === "failed_vend" ? 1 : 0), 0);
-  const refundedRowsCount = rows.reduce((sum, row) => sum + (String(row.transaction_status ?? "") === "refunded" ? 1 : 0), 0);
-  const failedPaymentRowsCount = rows.reduce((sum, row) => sum + (String(row.transaction_status ?? "") === "failed_payment" ? 1 : 0), 0);
-  const needsReviewRowsCount = rows.reduce((sum, row) => sum + (String(row.transaction_status ?? "") === "needs_review" ? 1 : 0), 0);
-  const totalSuccessfulSales = Number(rows
-    .reduce((sum, row) => {
-      if (String(row.transaction_status ?? "") !== "successful_sale") return sum;
-      const amount = Number(row.payment_amount ?? 0);
-      return sum + (Number.isFinite(amount) ? Math.max(0, amount) : 0);
-    }, 0)
-    .toFixed(2));
+  };
+
+  const emptySummary = (error: unknown | null): PersistedOrderDetailsBatchSummary => ({
+    rowCount: 0,
+    detectedMinDatetime: null,
+    detectedMaxDatetime: null,
+    businessDateStart: null,
+    businessDateEnd: null,
+    successfulRowsCount: 0,
+    failedVendRowsCount: 0,
+    failedRowsCount: 0,
+    refundedRowsCount: 0,
+    failedPaymentRowsCount: 0,
+    needsReviewRowsCount: 0,
+    totalSuccessfulSales: 0,
+    error,
+  });
+
+  const runSelect = async (columns: string, includeExactCount: boolean, offset: number) => {
+    const query = supabase
+      .from("vms_transactions_raw")
+      .select(columns, includeExactCount ? { count: "exact" } : undefined)
+      .eq("import_batch_id", batchId)
+      .range(offset, offset + pageSize - 1);
+    return query;
+  };
+
+  const firstPreferred = await runSelect(preferredColumns, true, 0);
+  const fallbackToLegacySelect = firstPreferred.error && (
+    String((firstPreferred.error as { code?: unknown }).code ?? "") === "42703"
+    || String((firstPreferred.error as { code?: unknown }).code ?? "") === "PGRST204"
+    || /business_date|column|schema cache/i.test(String((firstPreferred.error as { message?: unknown }).message ?? ""))
+  );
+  const firstResult = fallbackToLegacySelect
+    ? await runSelect(legacyColumns, true, 0)
+    : firstPreferred;
+
+  if (firstResult.error) {
+    return emptySummary(firstResult.error);
+  }
+
+  const useLegacyColumns = fallbackToLegacySelect;
+  const firstPageRows = (firstResult.data ?? []) as PersistedOrderDetailsRow[];
+  const totalCount = Number(firstResult.count ?? firstPageRows.length);
+  let rowCount = 0;
+  let detectedMinDatetime: string | null = null;
+  let detectedMaxDatetime: string | null = null;
+  let businessDateStart: string | null = null;
+  let businessDateEnd: string | null = null;
+  let successfulRowsCount = 0;
+  let failedVendRowsCount = 0;
+  let refundedRowsCount = 0;
+  let failedPaymentRowsCount = 0;
+  let needsReviewRowsCount = 0;
+  let totalSuccessfulSales = 0;
+
+  const accumulateRows = (rows: PersistedOrderDetailsRow[]) => {
+    rows.forEach((row) => {
+      rowCount += 1;
+
+      const paymentTime = String(row.payment_time ?? "").trim();
+      if (paymentTime) {
+        detectedMinDatetime = detectedMinDatetime && detectedMinDatetime < paymentTime ? detectedMinDatetime : paymentTime;
+        detectedMaxDatetime = detectedMaxDatetime && detectedMaxDatetime > paymentTime ? detectedMaxDatetime : paymentTime;
+      }
+
+      const deliveryTime = String(row.delivery_time ?? "").trim();
+      if (deliveryTime) {
+        detectedMinDatetime = detectedMinDatetime && detectedMinDatetime < deliveryTime ? detectedMinDatetime : deliveryTime;
+        detectedMaxDatetime = detectedMaxDatetime && detectedMaxDatetime > deliveryTime ? detectedMaxDatetime : deliveryTime;
+      }
+
+      const businessDate = String(row.business_date ?? "").trim();
+      if (businessDate) {
+        businessDateStart = businessDateStart && businessDateStart < businessDate ? businessDateStart : businessDate;
+        businessDateEnd = businessDateEnd && businessDateEnd > businessDate ? businessDateEnd : businessDate;
+      }
+
+      const transactionStatus = String(row.transaction_status ?? "");
+      if (transactionStatus === "successful_sale") {
+        successfulRowsCount += 1;
+        const amount = Number(row.payment_amount ?? 0);
+        totalSuccessfulSales += Number.isFinite(amount) ? Math.max(0, amount) : 0;
+      } else if (transactionStatus === "failed_vend") {
+        failedVendRowsCount += 1;
+      } else if (transactionStatus === "refunded") {
+        refundedRowsCount += 1;
+      } else if (transactionStatus === "failed_payment") {
+        failedPaymentRowsCount += 1;
+      } else if (transactionStatus === "needs_review") {
+        needsReviewRowsCount += 1;
+      }
+    });
+  };
+
+  accumulateRows(firstPageRows);
+
+  for (let offset = firstPageRows.length; offset < totalCount; offset += pageSize) {
+    const pageResult = await runSelect(useLegacyColumns ? legacyColumns : preferredColumns, false, offset);
+    if (pageResult.error) {
+      return emptySummary(pageResult.error);
+    }
+
+    const pageRows = (pageResult.data ?? []) as PersistedOrderDetailsRow[];
+    if (!pageRows.length) break;
+    accumulateRows(pageRows);
+    if (pageRows.length < pageSize) break;
+  }
 
   return {
-    rowCount: Number(rows.length ?? 0),
-    detectedMinDatetime: capturedValues[0] ?? null,
-    detectedMaxDatetime: capturedValues.at(-1) ?? null,
-    businessDateStart: businessDates[0] ?? null,
-    businessDateEnd: businessDates.at(-1) ?? null,
+    rowCount: totalCount > 0 ? totalCount : rowCount,
+    detectedMinDatetime,
+    detectedMaxDatetime,
+    businessDateStart,
+    businessDateEnd,
     successfulRowsCount,
     failedVendRowsCount,
     failedRowsCount: failedVendRowsCount + failedPaymentRowsCount + needsReviewRowsCount,
     refundedRowsCount,
     failedPaymentRowsCount,
     needsReviewRowsCount,
-    totalSuccessfulSales,
+    totalSuccessfulSales: Number(totalSuccessfulSales.toFixed(2)),
     error: null,
   };
 }
@@ -2555,20 +2611,33 @@ async function runVmsImport({
   const persistedOrderDetailsFailedRows = persistedOrderDetailsSummary?.failedRowsCount ?? 0;
   const persistedOrderDetailsRefundedRows = persistedOrderDetailsSummary?.refundedRowsCount ?? 0;
   const persistedOrderDetailsTotalSuccessfulSales = persistedOrderDetailsSummary?.totalSuccessfulSales ?? 0;
+  const parsedOrderDetailsSuccessfulRows = summary.successfulSalesRows ?? 0;
+  const parsedOrderDetailsFailedVendRows = summary.failedVendRows ?? 0;
+  const parsedOrderDetailsRefundedRows = summary.refundedRows ?? 0;
+  const parsedOrderDetailsFailedPaymentRows = summary.failedPaymentRows ?? 0;
+  const parsedOrderDetailsNeedsReviewRows = summary.needsReviewTransactionRows ?? 0;
+  const parsedOrderDetailsTotalSuccessfulSales = summary.estimatedSuccessfulSales ?? 0;
   const attemptedImportedRows = summary.importedRows;
   const effectiveImportedRows = isMachineStockReport(reportType)
     ? (persistedImportedRowCount > 0 ? persistedImportedRowCount : summary.importedRows)
     : reportType === "vms_order_details_weekly"
       ? persistedOrderDetailsRowCount
       : summary.importedRows;
+  const hasPersistedOrderDetailsRows = persistedOrderDetailsRowCount > 0;
+  const orderDetailsSuccessfulRowsForMetadata = hasPersistedOrderDetailsRows ? persistedOrderDetailsSuccessfulRows : parsedOrderDetailsSuccessfulRows;
+  const orderDetailsFailedVendRowsForMetadata = hasPersistedOrderDetailsRows ? (persistedOrderDetailsSummary?.failedVendRowsCount ?? 0) : parsedOrderDetailsFailedVendRows;
+  const orderDetailsRefundedRowsForMetadata = hasPersistedOrderDetailsRows ? persistedOrderDetailsRefundedRows : parsedOrderDetailsRefundedRows;
+  const orderDetailsFailedPaymentRowsForMetadata = hasPersistedOrderDetailsRows ? (persistedOrderDetailsSummary?.failedPaymentRowsCount ?? 0) : parsedOrderDetailsFailedPaymentRows;
+  const orderDetailsNeedsReviewRowsForMetadata = hasPersistedOrderDetailsRows ? (persistedOrderDetailsSummary?.needsReviewRowsCount ?? 0) : parsedOrderDetailsNeedsReviewRows;
+  const orderDetailsTotalSuccessfulSalesForMetadata = hasPersistedOrderDetailsRows ? persistedOrderDetailsTotalSuccessfulSales : parsedOrderDetailsTotalSuccessfulSales;
   if (reportType === "vms_order_details_weekly") {
     summary.importedRows = effectiveImportedRows;
-    summary.successfulSalesRows = persistedOrderDetailsSuccessfulRows;
-    summary.failedVendRows = persistedOrderDetailsSummary?.failedVendRowsCount ?? summary.failedVendRows;
-    summary.refundedRows = persistedOrderDetailsRefundedRows;
-    summary.failedPaymentRows = persistedOrderDetailsSummary?.failedPaymentRowsCount ?? summary.failedPaymentRows;
-    summary.needsReviewTransactionRows = persistedOrderDetailsSummary?.needsReviewRowsCount ?? summary.needsReviewTransactionRows;
-    summary.estimatedSuccessfulSales = persistedOrderDetailsTotalSuccessfulSales;
+    summary.successfulSalesRows = orderDetailsSuccessfulRowsForMetadata;
+    summary.failedVendRows = orderDetailsFailedVendRowsForMetadata;
+    summary.refundedRows = orderDetailsRefundedRowsForMetadata;
+    summary.failedPaymentRows = orderDetailsFailedPaymentRowsForMetadata;
+    summary.needsReviewTransactionRows = orderDetailsNeedsReviewRowsForMetadata;
+    summary.estimatedSuccessfulSales = orderDetailsTotalSuccessfulSalesForMetadata;
   }
   const importedRowsFromPersistence = isMachineStockReport(reportType)
     && effectiveImportedRows > 0
@@ -2588,10 +2657,18 @@ async function runVmsImport({
     summary.failedTargets = Array.from(new Set([...summary.failedTargets, "Sales dashboard"]));
     summary.resultMessage = transactionSaveError;
   }
+  const duplicateOnlyOrderDetailsReupload = reportType === "vms_order_details_weekly"
+    && !fatalImportError
+    && effectiveImportedRows <= 0
+    && attemptedImportedRows <= 0
+    && summary.rowsSkippedDuplicate > 0;
+  if (duplicateOnlyOrderDetailsReupload) {
+    summary.resultMessage = `All ${summary.rowsSkippedDuplicate} detailed Order Details row(s) in this file were already imported. No new rows were added, so the existing imported batch remains the dashboard source.`;
+  }
   const status = isMachineStockReport(reportType) && effectiveImportedRows > 0
     ? "imported"
     : reportType === "vms_order_details_weekly"
-      ? (effectiveImportedRows > 0 ? "imported" : "failed")
+      ? (effectiveImportedRows > 0 || duplicateOnlyOrderDetailsReupload ? "imported" : "failed")
       : importResult.status;
   const detectedMinDatetime = isMachineStockReport(reportType)
     ? (persistedStockSummary?.detectedMinDatetime ?? stockDetectedMinDatetime ?? stockFallbackTimestamp)
@@ -2636,20 +2713,18 @@ async function runVmsImport({
     detected_min_datetime: detectedMinDatetime,
     detected_max_datetime: detectedMaxDatetime,
     total_successful_sales: reportType === "sales" || reportType === "vms_order_details_weekly"
-      ? (effectiveImportedRows > 0
-        ? (reportType === "vms_order_details_weekly"
-          ? persistedOrderDetailsTotalSuccessfulSales
-          : summary.estimatedSuccessfulSales ?? 0)
-        : 0)
+      ? (reportType === "vms_order_details_weekly"
+        ? orderDetailsTotalSuccessfulSalesForMetadata
+        : (effectiveImportedRows > 0 ? summary.estimatedSuccessfulSales ?? 0 : 0))
       : 0,
     successful_rows_count: reportType === "vms_order_details_weekly"
-      ? (effectiveImportedRows > 0 ? persistedOrderDetailsSuccessfulRows : 0)
+      ? orderDetailsSuccessfulRowsForMetadata
       : reportType === "sales" ? effectiveImportedRows : 0,
     failed_rows_count: reportType === "vms_order_details_weekly"
-      ? persistedOrderDetailsFailedRows
+      ? (orderDetailsFailedVendRowsForMetadata + orderDetailsFailedPaymentRowsForMetadata + orderDetailsNeedsReviewRowsForMetadata)
       : (summary.failedVendRows ?? 0) + (summary.failedPaymentRows ?? 0) + (summary.needsReviewTransactionRows ?? 0),
     refunded_rows_count: reportType === "vms_order_details_weekly"
-      ? persistedOrderDetailsRefundedRows
+      ? orderDetailsRefundedRowsForMetadata
       : summary.refundedRows ?? 0,
     rows_imported: effectiveImportedRows,
     rows_skipped_duplicate: summary.rowsSkippedDuplicate,
@@ -2675,17 +2750,31 @@ async function runVmsImport({
     },
     notes: JSON.stringify({
       reportType: finalizedReportType,
+      importType: effectiveImportMode,
       fileName,
       fileType,
       sheetName,
       status,
+      totalRows: summary.totalRows,
       message: summary.resultMessage,
+      resultMessage: summary.resultMessage,
       updatedTargets: summary.updatedTargets,
       failedTargets: summary.failedTargets,
       importedRows: effectiveImportedRows,
       rowsFound: summary.rowsFound,
+      skippedRows: summary.skippedRows,
+      needsProductMappingRows: summary.needsProductMappingRows,
+      unknownMachineRows: summary.unknownMachineRows,
+      invalidRows: summary.invalidRows,
       rowsSkippedDuplicate: summary.rowsSkippedDuplicate,
       rowsNeedingReview: summary.rowsNeedingReview,
+      orderDetailsReportPeriod: summary.orderDetailsReportPeriod,
+      successfulSalesRows: orderDetailsSuccessfulRowsForMetadata,
+      failedVendRows: orderDetailsFailedVendRowsForMetadata,
+      refundedRows: orderDetailsRefundedRowsForMetadata,
+      failedPaymentRows: orderDetailsFailedPaymentRowsForMetadata,
+      needsReviewTransactionRows: orderDetailsNeedsReviewRowsForMetadata,
+      estimatedSuccessfulSales: orderDetailsTotalSuccessfulSalesForMetadata,
       errors: summary.errors,
       unknownMachines: summary.unknownMachines,
       unmappedProducts: summary.unmappedProducts,

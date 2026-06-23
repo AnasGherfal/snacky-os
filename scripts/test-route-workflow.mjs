@@ -30,7 +30,7 @@ import {
   routeDisplayStatus,
   routeStatusForNewRoute,
 } from "../src/lib/route-workflow.ts";
-import { pickupProductPriorityGroup, sortPickupProductRows } from "../src/lib/route-pickup-checklist.ts";
+import { groupRouteItemsForDisplay, pickupProductPriorityGroup, sortPickupProductRows } from "../src/lib/route-pickup-checklist.ts";
 
 function sourceWindow(path, marker, length = 900) {
   const source = readFileSync(path, "utf8");
@@ -40,10 +40,10 @@ function sourceWindow(path, marker, length = 900) {
 }
 
 test("route status groups describe one consistent workflow", () => {
-  assert.deepEqual([...ROUTE_STATUS_VALUES], ["draft", "assigned", "in_progress", "pickup_confirmed", "completed", "reviewed", "cancelled"]);
+  assert.deepEqual([...ROUTE_STATUS_VALUES], ["draft", "assigned", "in_progress", "pickup_confirmed", "completed", "verified", "payroll_pending", "paid", "disputed", "reviewed", "cancelled"]);
   assert.deepEqual([...OPERATOR_VISIBLE_ROUTE_STATUSES], ["draft"]);
   assert.deepEqual([...ACTIVE_ROUTE_STATUSES], ["in_progress", "pickup_confirmed"]);
-  assert.deepEqual([...TERMINAL_ROUTE_STATUSES], ["completed", "cancelled", "reviewed"]);
+  assert.deepEqual([...TERMINAL_ROUTE_STATUSES], ["completed", "verified", "payroll_pending", "paid", "disputed", "cancelled", "reviewed"]);
 
   for (const status of [ROUTE_DRAFT_STATUS]) {
     assert.equal(isOperatorVisibleRouteStatus(status), true, status);
@@ -120,11 +120,11 @@ test("partial route continuation respects independent stop statuses", () => {
 });
 
 test("database write statuses avoid production enum mismatch values", () => {
-  assert.deepEqual([...ROUTE_DATABASE_WRITE_STATUSES], ["draft", "assigned", "in_progress", "pickup_confirmed", "completed", "reviewed", "cancelled"]);
+  assert.deepEqual([...ROUTE_DATABASE_WRITE_STATUSES], ["draft", "assigned", "in_progress", "pickup_confirmed", "completed", "verified", "payroll_pending", "paid", "disputed", "reviewed", "cancelled"]);
   assert.deepEqual([...ROUTE_DATABASE_SAFE_TERMINAL_STATUSES], ["completed", "reviewed", "cancelled"]);
 
   for (const status of ROUTE_DATABASE_WRITE_STATUSES) {
-    assert.equal(["draft", "assigned", "in_progress", "pickup_confirmed", "completed", "reviewed", "cancelled"].includes(status), true, status);
+    assert.equal(["draft", "assigned", "in_progress", "pickup_confirmed", "completed", "verified", "payroll_pending", "paid", "disputed", "reviewed", "cancelled"].includes(status), true, status);
   }
 
   assert.equal(ROUTE_RESERVATION_STATUSES.includes("available"), false);
@@ -144,7 +144,7 @@ test("route status enum mismatch detection matches Supabase errors", () => {
 test("schema validation reports missing enum values before route workflow writes", () => {
   assert.deepEqual(
     missingRouteWorkflowStatuses({
-      routeStatuses: ["draft", "assigned", "in_progress", "completed", "reviewed", "cancelled"],
+      routeStatuses: ["draft", "assigned", "in_progress", "completed", "verified", "payroll_pending", "paid", "disputed", "reviewed", "cancelled"],
       routeStopStatuses: [...ROUTE_STOP_STATUS_VALUES],
     }),
     { routeStatuses: ["pickup_confirmed"], routeStopStatuses: [] },
@@ -198,4 +198,36 @@ test("route pickup checklist prioritizes Mr Crunch, then Doritos, then other pro
   assert.equal(pickupProductPriorityGroup("Tarboouch"), 1);
   assert.equal(pickupProductPriorityGroup("Doritos Green Hot"), 2);
   assert.equal(pickupProductPriorityGroup("Water"), 3);
+});
+
+test("route product grouping keeps similar products together in the expected family order", () => {
+  const grouped = groupRouteItemsForDisplay([
+    { productName: "Water 500ml", quantity: 1 },
+    { productName: "Doritos Nacho", quantity: 2 },
+    { productName: "Brioche Roll", quantity: 3 },
+    { productName: "Almarai Strawberry Milk", quantity: 4 },
+    { productName: "Bebeto Gummies", quantity: 5 },
+    { productName: "Pepsi Cola", quantity: 6 },
+    { productName: "Mr Crunch Tarboosh", quantity: 7 },
+    { productName: "Galaxy Chocolate", quantity: 8 },
+    { productName: "Snickers", quantity: 9 },
+    { productName: "Twix", quantity: 10 },
+    { productName: "Mystery Snack", quantity: 11 },
+  ]);
+
+  assert.deepEqual(grouped.map((group) => group.groupKey), [
+    "chips",
+    "chocolates",
+    "rolls_bakery",
+    "almarai_dairy",
+    "candy",
+    "drinks",
+    "water",
+    "other",
+  ]);
+  assert.deepEqual(grouped[0].items.map((item) => item.productName), ["Mr Crunch Tarboosh", "Doritos Nacho"]);
+  assert.deepEqual(grouped[1].items.map((item) => item.productName), ["Galaxy Chocolate", "Snickers", "Twix"]);
+  assert.equal(grouped[0].totalQuantity, 9);
+  assert.equal(grouped[0].defaultExpanded, true);
+  assert.equal(grouped[2].defaultExpanded, false);
 });
