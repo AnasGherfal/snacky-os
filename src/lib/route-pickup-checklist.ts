@@ -65,6 +65,7 @@ const CHOCOLATE_KEYWORDS = ["chocolate", "choco", "cocoa", "شوكولاتة"];
 const GALAXY_ALIASES = ["galaxy"];
 const SNICKERS_ALIASES = ["snickers"];
 const TWIX_ALIASES = ["twix"];
+const LUPPO_ALIASES = ["luppo"];
 const BAKERY_KEYWORDS = ["roll", "rolls", "brioche", "croissant", "cake", "bakery", "bread", "pastry", "toast", "رول", "بريوش", "كرواسون", "كيك", "خبز"];
 const ALMARAI_KEYWORDS = ["almarai", "المرعي", "مراعى", "milk", "dairy", "yogurt", "yoghurt", "laban", "حليب", "لبن"];
 const ALMARAI_FEATURED_ALIASES = ["almarai chocolate", "almarai strawberry"];
@@ -74,6 +75,7 @@ const DRINK_KEYWORDS = ["drink", "juice", "cola", "soda", "energy", "tea", "coff
 const PEPSI_ALIASES = ["pepsi"];
 const SCHWEPPES_ALIASES = ["schweppes"];
 const EXAR_ALIASES = ["exar"];
+const XIR_ALIASES = ["x!r", "x r", "xr"];
 const WATER_KEYWORDS = ["water", "mineral water", "sparkling water", "ماء", "مياه"];
 
 function normalizedText(value: string | null | undefined) {
@@ -97,11 +99,11 @@ function groupKeyForProduct(productName: string, productCategory?: string | null
 
   if (includesAny(text, WATER_KEYWORDS)) return "water";
   if (includesAny(text, MR_CRUNCH_ALIASES) || includesAny(text, DORITOS_ALIASES) || includesAny(text, CHIPS_KEYWORDS)) return "chips";
-  if (includesAny(text, GALAXY_ALIASES) || includesAny(text, SNICKERS_ALIASES) || includesAny(text, TWIX_ALIASES) || includesAny(text, CHOCOLATE_KEYWORDS)) return "chocolates";
+  if (includesAny(text, GALAXY_ALIASES) || includesAny(text, SNICKERS_ALIASES) || includesAny(text, TWIX_ALIASES) || includesAny(text, LUPPO_ALIASES) || includesAny(text, CHOCOLATE_KEYWORDS)) return "chocolates";
   if (includesAny(text, BAKERY_KEYWORDS)) return "rolls_bakery";
   if (includesAny(text, ALMARAI_FEATURED_ALIASES) || includesAny(text, ALMARAI_KEYWORDS)) return "almarai_dairy";
   if (includesAny(text, BEBETO_ALIASES) || includesAny(text, CANDY_KEYWORDS)) return "candy";
-  if (includesAny(text, PEPSI_ALIASES) || includesAny(text, SCHWEPPES_ALIASES) || includesAny(text, EXAR_ALIASES) || includesAny(text, DRINK_KEYWORDS)) return "drinks";
+  if (includesAny(text, PEPSI_ALIASES) || includesAny(text, SCHWEPPES_ALIASES) || includesAny(text, EXAR_ALIASES) || includesAny(text, XIR_ALIASES) || includesAny(text, DRINK_KEYWORDS)) return "drinks";
   return "other";
 }
 
@@ -122,7 +124,8 @@ function featureRank(productName: string, productCategory?: string | null, produ
     if (includesAny(text, GALAXY_ALIASES)) return 0;
     if (includesAny(text, SNICKERS_ALIASES)) return 1;
     if (includesAny(text, TWIX_ALIASES)) return 2;
-    return 3;
+    if (includesAny(text, LUPPO_ALIASES)) return 3;
+    return 4;
   }
   if (groupKey === "rolls_bakery") {
     if (text.includes("brioche")) return 0;
@@ -147,7 +150,8 @@ function featureRank(productName: string, productCategory?: string | null, produ
     if (includesAny(text, PEPSI_ALIASES)) return 0;
     if (includesAny(text, SCHWEPPES_ALIASES)) return 1;
     if (includesAny(text, EXAR_ALIASES)) return 2;
-    return 3;
+    if (includesAny(text, XIR_ALIASES)) return 3;
+    return 4;
   }
   if (groupKey === "water") return 0;
   return 99;

@@ -7,7 +7,7 @@ import { canAccessOperatorRoute, canExecuteRoutes } from "@/lib/authz";
 import { buildOperatorRouteAccessContext, loadAccessibleOperatorIds } from "@/lib/operator-route-access";
 import { type OperatorRoutePreviewRow, type OperatorRoutePreviewStopRow } from "@/lib/operator-route-types";
 import { sortPickupProductRows } from "@/lib/route-pickup-checklist";
-import { isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isRouteStopActiveStatus, isRouteStopDoneStatus, isRouteStopPendingStatus, nextOperatorRouteHref, routeDisplayStatus, ROUTE_STOP_COMPLETED_STATUS } from "@/lib/route-workflow";
+import { isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isPickupConfirmedStatus, isRouteStopActiveStatus, isRouteStopDoneStatus, isRouteStopPendingStatus, nextOperatorRouteHref, routeDisplayStatus, ROUTE_STOP_COMPLETED_STATUS } from "@/lib/route-workflow";
 import { skipStop } from "@/lib/operator-actions";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -308,6 +308,12 @@ export default async function OperatorRouteDetailPage({
             View Pick List
           </Link>
         </section>
+
+        {isPickupConfirmedStatus(routeRow.status) ? (
+          <div className="rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+            Pick any prepared machine below. The default stop order is only a suggestion, so you can fill stops in the order that works best.
+          </div>
+        ) : null}
 
         {/* Machine Stops */}
         <section className="rounded-lg border border-slate-200 bg-white overflow-hidden">

@@ -205,8 +205,10 @@ test("route product grouping keeps similar products together in the expected fam
     { productName: "Water 500ml", quantity: 1 },
     { productName: "Doritos Nacho", quantity: 2 },
     { productName: "Brioche Roll", quantity: 3 },
+    { productName: "Luppo", quantity: 4 },
     { productName: "Almarai Strawberry Milk", quantity: 4 },
     { productName: "Bebeto Gummies", quantity: 5 },
+    { productName: "X!R", quantity: 6 },
     { productName: "Pepsi Cola", quantity: 6 },
     { productName: "Mr Crunch Tarboosh", quantity: 7 },
     { productName: "Galaxy Chocolate", quantity: 8 },
@@ -226,7 +228,8 @@ test("route product grouping keeps similar products together in the expected fam
     "other",
   ]);
   assert.deepEqual(grouped[0].items.map((item) => item.productName), ["Mr Crunch Tarboosh", "Doritos Nacho"]);
-  assert.deepEqual(grouped[1].items.map((item) => item.productName), ["Galaxy Chocolate", "Snickers", "Twix"]);
+  assert.deepEqual(grouped[1].items.map((item) => item.productName), ["Galaxy Chocolate", "Snickers", "Twix", "Luppo"]);
+  assert.deepEqual(grouped[5].items.map((item) => item.productName), ["Pepsi Cola", "X!R"]);
   assert.equal(grouped[0].totalQuantity, 9);
   assert.equal(grouped[0].defaultExpanded, true);
   assert.equal(grouped[2].defaultExpanded, false);
