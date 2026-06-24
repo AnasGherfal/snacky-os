@@ -50,6 +50,8 @@ export type SalesDateRange = {
   dateToValue: string;
 };
 
+export type SalesDashboardSourceMode = "detailed" | "monthly";
+
 export type SalesBatchReconciliation = {
   batchId: string;
   sourceFileName: string;
@@ -347,7 +349,7 @@ function batchRowKey(batchId: string, rowNumber: number) {
 
 function finalizedDetailedSalesBatch(batch: VmsDashboardBatch | undefined) {
   if (!batch) return false;
-  if (batch.report_type !== "vms_order_details_weekly") return false;
+  if (!["vms_order_details_weekly", "monthly_product_profit"].includes(String(batch.report_type ?? ""))) return false;
   return isActiveImportedVmsBatch(batch);
 }
 
@@ -464,6 +466,10 @@ export function formatSalesRangeLabel(range: Pick<SalesDateRange, "start" | "end
   return `${range.start} to ${range.end}`;
 }
 
+export function salesDashboardPrefersMonthlyProfitSource(range: Pick<SalesDateRange, "key">) {
+  return ["month", "year", "last_month", "this_year", "all_time"].includes(range.key);
+}
+
 export function salesBatchReconciliationById(rows: SalesBatchReconciliation[]) {
   return new Map(rows.map((row) => [row.batchId, row]));
 }
@@ -473,7 +479,7 @@ export function applySalesBatchCoverage(
   reconciliationByBatchId: Map<string, SalesBatchReconciliation>,
 ) {
   return batches.map((batch) => {
-    if (batch.report_type !== "vms_order_details_weekly") return batch;
+    if (!["vms_order_details_weekly", "monthly_product_profit"].includes(String(batch.report_type ?? ""))) return batch;
     const reconciliation = reconciliationByBatchId.get(batch.id);
     if (!reconciliation) return batch;
     return {
@@ -771,11 +777,13 @@ function classifyContribution({
   metadataCoverage,
   reconciliation,
   range,
+  sourceMode,
 }: {
   batch: VmsDashboardBatch;
   metadataCoverage: ReturnType<typeof batchCoverageDates>;
   reconciliation: SalesBatchReconciliation | null;
   range: SalesDateRange;
+  sourceMode?: SalesDashboardSourceMode;
 }) {
   const reportType = String(batch.report_type ?? "");
   const rawStatus = String(batch.status ?? "").toLowerCase();
@@ -793,6 +801,120 @@ function classifyContribution({
   const rowsInRange = reconciliation?.rangeRowCount ?? 0;
   const successfulRowsInRange = reconciliation?.rangeSuccessfulRows ?? 0;
   const rowsExcludedByStatus = rowsInRange - successfulRowsInRange;
+
+  if (sourceMode === "monthly" && reportType === "vms_order_details_weekly") {
+    return {
+      included: false,
+      reason: "Detailed Order Details file is available for audit only because the dashboard is using the monthly commodity profit source for this range.",
+      status: "other_source_active",
+    };
+  }
+
+  if (sourceMode === "detailed" && reportType === "monthly_product_profit") {
+    return {
+      included: false,
+      reason: "Monthly commodity profit file is available for audit only because the dashboard is using detailed Order Details for this range.",
+      status: "other_source_active",
+    };
+  }
+
+  if (reportType === "monthly_product_profit") {
+    if (batch.deleted_at || rawStatus === "disabled" || rawStatus === "deleted") {
+      return {
+        included: false,
+        reason: rowsInRange > 0
+          ? `This monthly profit batch has ${rowsInRange.toLocaleString("en-US")} row(s) inside the selected range, but the batch was disabled or deleted so the dashboard excludes it.`
+          : "This monthly profit batch was disabled or deleted, so it is excluded from dashboard totals.",
+        status: "inactive_batch",
+      };
+    }
+
+    if (rawStatus === "failed") {
+      return {
+        included: false,
+        reason: looksLikeMissingColumnError(latestError)
+          ? "Import failed because required columns or headers were missing, so no monthly profit rows could be used."
+          : "Import failed before this monthly profit batch could become active.",
+        status: looksLikeMissingColumnError(latestError) ? "missing_required_columns" : "failed_import",
+      };
+    }
+
+    if (rawStatus === "previewed" || rawStatus === "draft" || rawStatus === "cancelled" || rawStatus === "canceled") {
+      return {
+        included: false,
+        reason: rowsInRange > 0
+          ? `This batch has ${rowsInRange.toLocaleString("en-US")} row(s) inside the selected range, but it is still preview-only or unfinished so those rows are blocked from dashboard totals.`
+          : "This batch is preview-only or unfinished, so it cannot contribute to dashboard totals yet.",
+        status: "preview_only",
+      };
+    }
+
+    if (!finalizedDetailedSalesBatch(batch)) {
+      return {
+        included: false,
+        reason: "This monthly profit batch is not finalized for dashboard use yet.",
+        status: "inactive_batch",
+      };
+    }
+
+    if (successfulRowsInRange > 0) {
+      return {
+        included: true,
+        reason: duplicateRows > 0
+          ? `Contributing ${successfulRowsInRange.toLocaleString("en-US")} monthly profit row(s) inside the selected range. ${duplicateRows.toLocaleString("en-US")} duplicate row(s) were skipped during import.`
+          : `Contributing ${successfulRowsInRange.toLocaleString("en-US")} monthly profit row(s) inside the selected range.`,
+        status: "included",
+      };
+    }
+
+    if (duplicateRows > 0 && importedRows === 0) {
+      return {
+        included: false,
+        reason: "All usable rows were already present from older monthly profit files, so this batch added no new dashboard rows.",
+        status: "duplicate_rows_ignored",
+      };
+    }
+
+    if (importedRows <= 0 && (batchImportedRows(batch) > 0 || integerValue(batch.rows_found) > 0)) {
+      return {
+        included: false,
+        reason: metadataCoverage.start && metadataCoverage.end
+          ? `Batch metadata says this file covers ${metadataCoverage.start} to ${metadataCoverage.end}, but 0 monthly profit rows were actually saved.`
+          : "Batch metadata shows imported rows, but 0 monthly profit rows were actually saved.",
+        status: "metadata_without_raw_rows",
+      };
+    }
+
+    if (actualCoverage.start && actualCoverage.end && !overlapsSelectedRange) {
+      return {
+        included: false,
+        reason: `Monthly profit coverage is ${actualCoverage.start} to ${actualCoverage.end}, which falls outside the selected range ${range.start} to ${range.end}.`,
+        status: "outside_selected_date_range",
+      };
+    }
+
+    if (rowsInRange > 0 && rowsExcludedByStatus > 0) {
+      return {
+        included: false,
+        reason: `This batch has ${rowsInRange.toLocaleString("en-US")} monthly row(s) inside the selected range, but all of them are excluded from dashboard totals.`,
+        status: "rows_excluded_by_status",
+      };
+    }
+
+    if (successfulRows <= 0 || importedRows <= 0) {
+      return {
+        included: false,
+        reason: "The batch imported no usable monthly profit rows for dashboard totals.",
+        status: "no_detailed_rows",
+      };
+    }
+
+    return {
+      included: false,
+      reason: "The monthly profit file is active, but it contributes 0 rows inside the selected range.",
+      status: "no_detailed_rows",
+    };
+  }
 
   if (reportType === "sales") {
     return {
@@ -926,11 +1048,12 @@ function contributionSortRank(row: SalesFileContribution) {
   if (row.status === "metadata_without_raw_rows") return 3;
   if (row.status === "missing_transaction_datetime") return 4;
   if (row.status === "summary_file_only") return 5;
-  if (row.status === "preview_only") return 6;
-  if (row.status === "failed_import" || row.status === "missing_required_columns") return 7;
-  if (row.status === "inactive_batch") return 8;
-  if (row.status === "duplicate_rows_ignored") return 9;
-  if (row.status === "no_detailed_rows") return 10;
+  if (row.status === "other_source_active") return 6;
+  if (row.status === "preview_only") return 7;
+  if (row.status === "failed_import" || row.status === "missing_required_columns") return 8;
+  if (row.status === "inactive_batch") return 9;
+  if (row.status === "duplicate_rows_ignored") return 10;
+  if (row.status === "no_detailed_rows") return 11;
   return 11;
 }
 
@@ -938,20 +1061,24 @@ export function buildSalesFileContributions({
   batches,
   reconciliationByBatchId,
   range,
+  sourceMode,
 }: {
   batches: VmsDashboardBatch[];
   reconciliationByBatchId: Map<string, SalesBatchReconciliation>;
   range: SalesDateRange;
+  sourceMode?: SalesDashboardSourceMode;
 }) {
   return batches
     .map((batch) => {
       const metadataCoverage = batchCoverageDates(batch);
       const reconciliation = reconciliationByBatchId.get(batch.id) ?? null;
       const actualCoverage = reconciliationCoverageDates(reconciliation);
-      const classification = classifyContribution({ batch, metadataCoverage, reconciliation, range });
+      const classification = classifyContribution({ batch, metadataCoverage, reconciliation, range, sourceMode });
       const importedRowsTotal = batch.report_type === "vms_order_details_weekly"
         ? reconciliation?.rawRowCountTotal ?? batchImportedRows(batch)
-        : batchImportedRows(batch);
+        : batch.report_type === "monthly_product_profit"
+          ? reconciliation?.rawRowCountTotal ?? batchImportedRows(batch)
+          : batchImportedRows(batch);
 
       return {
         batch,

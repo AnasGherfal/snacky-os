@@ -27,6 +27,7 @@ export const VMS_IMPORT_PIPELINE_RELATIONS: VmsSchemaRelation[] = [
   { name: "vms_import_rows", kind: "table", requiredFor: "final imported row audit" },
   { name: "vms_sales_raw", kind: "table", requiredFor: "summary sales imports" },
   { name: "vms_transactions_raw", kind: "table", requiredFor: "detailed order transaction imports" },
+  { name: "vms_monthly_product_profit", kind: "table", requiredFor: "monthly commodity profit imports" },
   { name: "vms_stock_snapshots", kind: "table", requiredFor: "stock imports and refill recommendations" },
   { name: "vms_machine_stock_snapshots", kind: "table", requiredFor: "machine goods inventory import audit" },
   { name: "vms_sales_snapshots", kind: "table", requiredFor: "legacy sales reconciliation" },

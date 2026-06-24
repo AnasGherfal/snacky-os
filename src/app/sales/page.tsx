@@ -19,6 +19,8 @@ import {
   resolveSalesDashboardRange,
   salesCoverageSummary,
   salesBatchReconciliationById,
+  salesDashboardPrefersMonthlyProfitSource,
+  type SalesDashboardSourceMode,
   type NormalizedSalesDashboardBreakdownRow,
   type SalesBatchReconciliation,
   type SalesDashboardBreakdownRow,
@@ -27,6 +29,7 @@ import {
 import {
   batchLastUpdatedAt,
   formatVmsDateTime,
+  isActiveImportedVmsBatch,
   queryVmsDashboardBatches,
   type VmsDashboardBatch,
 } from "@/lib/vms-dashboard-source";
@@ -389,6 +392,8 @@ function businessContributionReason(row: { status: string; reason: string }) {
       return "Used in the selected sales totals.";
     case "summary_file_only":
       return "Summary-only file. Revenue uses detailed Order Details files.";
+    case "other_source_active":
+      return "Audit-only file. Another sales source is active for this range.";
     case "preview_only":
       return "Preview file. Finalize import before it can feed sales.";
     case "inactive_batch":
@@ -416,6 +421,8 @@ function salesContributionStatusLabel(status: string) {
       return "Included";
     case "summary_file_only":
       return "Summary only";
+    case "other_source_active":
+      return "Audit only";
     case "preview_only":
     case "inactive_batch":
       return "Needs finalization";
@@ -604,6 +611,7 @@ function buildNoSalesState({
   coverageLabel,
   fileContributions,
   monthlyCoverageRows,
+  sourceMode,
   selectedRange,
 }: {
   canFinalizeInactiveFiles: boolean;
@@ -611,11 +619,13 @@ function buildNoSalesState({
   coverageLabel: string;
   fileContributions: ReturnType<typeof buildSalesFileContributions>;
   monthlyCoverageRows: NormalizedSalesMonthlyCoverageRow[];
+  sourceMode: SalesDashboardSourceMode;
   selectedRange: { end: string; start: string };
 }): SalesNoDataState {
   const rangeBounds = { start: selectedRange.start, end: selectedRange.end };
-  const detailedRowsInRange = fileContributions.filter((row) => {
-    if (row.batch.report_type !== "vms_order_details_weekly") return false;
+  const sourceReportType = sourceMode === "monthly" ? "monthly_product_profit" : "vms_order_details_weekly";
+  const sourceRowsInRange = fileContributions.filter((row) => {
+    if (row.batch.report_type !== sourceReportType) return false;
     if (row.rowsInRange > 0 || row.successfulRowsInRange > 0) return true;
     return Boolean(
       row.actualCoverageStart
@@ -623,47 +633,64 @@ function buildNoSalesState({
       && rangesOverlap({ start: row.actualCoverageStart, end: row.actualCoverageEnd }, rangeBounds),
     );
   });
+  const sourceLabel = sourceMode === "monthly" ? "monthly commodity profit" : "Order Details";
 
   if (contributingFiles.some((row) => row.included)) {
     return {
       kind: "summary_error",
-      title: "Sales rows exist, but the dashboard summary could not calculate them.",
-      body: "Detailed successful-sale rows overlap this range, but the dashboard totals came back empty. Check the summary RPC and data source diagnostics.",
+      title: `${sourceLabel} rows exist, but the dashboard summary could not calculate them.`,
+      body: sourceMode === "monthly"
+        ? "Monthly profit rows overlap this range, but the dashboard totals came back empty. Check the monthly summary RPC and data source diagnostics."
+        : "Detailed successful-sale rows overlap this range, but the dashboard totals came back empty. Check the summary RPC and data source diagnostics.",
     };
   }
 
-  if (detailedRowsInRange.some((row) => row.status === "preview_only" || row.status === "inactive_batch")) {
+  if (sourceRowsInRange.some((row) => row.status === "preview_only" || row.status === "inactive_batch")) {
     return {
       kind: "inactive_batch",
-      title: canFinalizeInactiveFiles ? "Sales rows exist, but the file is not active yet." : "Sales data is being prepared.",
+      title: canFinalizeInactiveFiles
+        ? `${sourceLabel} rows exist, but the file is not active yet.`
+        : "Sales data is being prepared.",
       body: canFinalizeInactiveFiles
-        ? "Finalize or reactivate the overlapping Order Details file so Snacky OS can include it in dashboard totals."
+        ? sourceMode === "monthly"
+          ? "Activate the overlapping monthly profit file so Snacky OS can include it in dashboard totals."
+          : "Finalize or reactivate the overlapping Order Details file so Snacky OS can include it in dashboard totals."
         : "The sales file for this date range is still being finalized.",
     };
   }
 
-  if (detailedRowsInRange.some((row) => row.status === "missing_transaction_datetime") || monthlyCoverageRows.some((row) => row.businessMonth === null && row.finalizedRows > 0 && row.nullBusinessDateRows > 0)) {
+  if (sourceRowsInRange.some((row) => row.status === "missing_transaction_datetime") || monthlyCoverageRows.some((row) => row.businessMonth === null && row.finalizedRows > 0 && row.nullBusinessDateRows > 0)) {
     return {
       kind: "missing_business_date",
       title: "Rows exist but business dates are missing.",
-      body: "Some Order Details rows still do not have a resolved business date. Rebuild business dates, then reload the dashboard.",
+      body: sourceMode === "monthly"
+        ? "Some monthly profit rows still do not have a resolved business date. Rebuild the import dates, then reload the dashboard."
+        : "Some Order Details rows still do not have a resolved business date. Rebuild business dates, then reload the dashboard.",
     };
   }
 
-  if (detailedRowsInRange.some((row) => row.status === "rows_excluded_by_status")) {
+  if (sourceRowsInRange.some((row) => row.status === "rows_excluded_by_status")) {
     return {
       kind: "status_filtered",
       title: "Rows exist for this range, but they were not successful sales.",
-      body: "The overlapping Order Details rows were saved, but they were classified as failed vends, refunds, or another non-success status.",
+      body: sourceMode === "monthly"
+        ? "The overlapping monthly rows were saved, but they were not counted in the dashboard totals."
+        : "The overlapping Order Details rows were saved, but they were classified as failed vends, refunds, or another non-success status.",
     };
   }
 
   return {
     kind: "no_rows",
-    title: "No detailed Order Details rows found for this range.",
+    title: sourceMode === "monthly"
+      ? "No monthly commodity profit rows found for this range."
+      : "No detailed Order Details rows found for this range.",
     body: coverageLabel === "-"
-      ? "Change the date filter or finalize imported Order Details files first."
-      : `Change the date filter. Current finalized coverage runs from ${coverageLabel}.`,
+      ? sourceMode === "monthly"
+        ? "Change the date filter or import a monthly profit file first."
+        : "Change the date filter or finalize imported Order Details files first."
+      : sourceMode === "monthly"
+        ? `Change the date filter. Current finalized coverage runs from ${coverageLabel}.`
+        : `Change the date filter. Current finalized coverage runs from ${coverageLabel}.`,
   };
 }
 
@@ -842,14 +869,14 @@ async function SalesDashboardPageContent({
     );
   }
 
-  const [batchResult, fullReconciliationResult, monthlyCoverageResult] = await Promise.all([
+  const [batchResult, fullReconciliationResult] = await Promise.all([
     loadSalesQuerySection<VmsDashboardBatch>({
       dateFrom: "",
       dateTo: "",
       filterMode: String(params.range ?? "default"),
       profileId,
       promise: queryVmsDashboardBatches(supabase, {
-        reportTypes: ["vms_order_details_weekly", "sales"],
+        reportTypes: ["vms_order_details_weekly", "monthly_product_profit", "sales"],
         orderBy: "uploaded_at",
         ascending: false,
       }),
@@ -866,184 +893,359 @@ async function SalesDashboardPageContent({
       rpcName: "sales_dashboard_batch_reconciliation",
       sectionName: "batch_reconciliation_all",
     }),
-    loadSalesQuerySection<SalesMonthlyCoverageRow>({
-      dateFrom: "",
-      dateTo: "",
-      filterMode: String(params.range ?? "default"),
-      profileId,
-      promise: supabase.rpc("sales_dashboard_monthly_coverage"),
-      role: profileRole,
-      rpcName: "sales_dashboard_monthly_coverage",
-      sectionName: "monthly_coverage",
-    }),
   ]);
 
   const batches = batchResult.data as VmsDashboardBatch[];
   const fullReconciliationRows = normalizeSalesBatchReconciliationRows(fullReconciliationResult.data as TransactionStatusRow[]);
-  const monthlyCoverageRows = normalizeSalesMonthlyCoverageRows(monthlyCoverageResult.data as SalesMonthlyCoverageRow[]);
   const fullReconciliationByBatchId = salesBatchReconciliationById(fullReconciliationRows);
   const coverageAwareBatches = applySalesBatchCoverage(batches, fullReconciliationByBatchId);
   const selectedRange = resolveSalesDashboardRange(params, coverageAwareBatches, renderedAt);
   const selectedRangeLabel = formatSalesRangeLabel(selectedRange);
   const compactRangeLabel = `${selectedRange.start} to ${selectedRange.end}`;
+  const monthlyFiles = batches.filter((batch) => batch.report_type === "monthly_product_profit");
+  const activeMonthlyFiles = monthlyFiles.filter(isActiveImportedVmsBatch);
+  const useMonthlySource = salesDashboardPrefersMonthlyProfitSource(selectedRange) && activeMonthlyFiles.length > 0;
+  const sourceMode: SalesDashboardSourceMode = useMonthlySource ? "monthly" : "detailed";
 
-  const [
-    salesSummaryResult,
-    dayBreakdownResult,
-    monthBreakdownResult,
-    machineBreakdownResult,
-    locationBreakdownResult,
-    productBreakdownResult,
-    filteredReconciliationResult,
-    productProfitResult,
-    machineProfitResult,
-    locationProfitResult,
-  ] = await Promise.all([
-    loadSalesQuerySection<SalesSummaryRow>({
-      dateFrom: selectedRange.start,
-      dateTo: selectedRange.end,
-      filterMode: selectedRange.key,
-      profileId,
-      promise: supabase.rpc("sales_dashboard_summary", {
-        p_date_from: selectedRange.start,
-        p_date_to: selectedRange.end,
+  let salesSummaryResult: LoggedSalesSectionResult<SalesSummaryRow>;
+  let dayBreakdownResult: LoggedSalesSectionResult<SalesDashboardBreakdownRow>;
+  let monthBreakdownResult: LoggedSalesSectionResult<SalesDashboardBreakdownRow>;
+  let machineBreakdownResult: LoggedSalesSectionResult<SalesDashboardBreakdownRow>;
+  let locationBreakdownResult: LoggedSalesSectionResult<SalesDashboardBreakdownRow>;
+  let productBreakdownResult: LoggedSalesSectionResult<SalesDashboardBreakdownRow>;
+  let filteredReconciliationResult: LoggedSalesSectionResult<TransactionStatusRow>;
+  let productProfitResult: LoggedSalesSectionResult<SalesProfitBreakdownRow>;
+  let machineProfitResult: LoggedSalesSectionResult<SalesProfitBreakdownRow>;
+  let locationProfitResult: LoggedSalesSectionResult<SalesProfitBreakdownRow>;
+  let monthlyCoverageResult: LoggedSalesSectionResult<SalesMonthlyCoverageRow>;
+
+  if (useMonthlySource) {
+    dayBreakdownResult = emptySectionResult<SalesDashboardBreakdownRow>("sales_dashboard_monthly_breakdown", "chart_day");
+    [
+      salesSummaryResult,
+      monthBreakdownResult,
+      machineBreakdownResult,
+      locationBreakdownResult,
+      productBreakdownResult,
+      filteredReconciliationResult,
+      productProfitResult,
+      machineProfitResult,
+      locationProfitResult,
+      monthlyCoverageResult,
+    ] = await Promise.all([
+      loadSalesQuerySection<SalesSummaryRow>({
+        dateFrom: selectedRange.start,
+        dateTo: selectedRange.end,
+        filterMode: selectedRange.key,
+        profileId,
+        promise: supabase.rpc("sales_dashboard_monthly_summary", {
+          p_date_from: selectedRange.start,
+          p_date_to: selectedRange.end,
+        }),
+        role: profileRole,
+        rpcName: "sales_dashboard_monthly_summary",
+        sectionName: "summary_kpi",
       }),
-      role: profileRole,
-      rpcName: "sales_dashboard_summary",
-      sectionName: "summary_kpi",
-    }),
-    loadSalesQuerySection<SalesDashboardBreakdownRow>({
-      dateFrom: selectedRange.start,
-      dateTo: selectedRange.end,
-      filterMode: selectedRange.key,
-      profileId,
-      promise: supabase.rpc("sales_dashboard_breakdown", {
-        p_dimension: "day",
-        p_date_from: selectedRange.start,
-        p_date_to: selectedRange.end,
+      loadSalesQuerySection<SalesDashboardBreakdownRow>({
+        dateFrom: selectedRange.start,
+        dateTo: selectedRange.end,
+        filterMode: selectedRange.key,
+        profileId,
+        promise: supabase.rpc("sales_dashboard_monthly_breakdown", {
+          p_dimension: "month",
+          p_date_from: selectedRange.start,
+          p_date_to: selectedRange.end,
+        }),
+        role: profileRole,
+        rpcName: "sales_dashboard_monthly_breakdown",
+        sectionName: "chart_month",
       }),
-      role: profileRole,
-      rpcName: "sales_dashboard_breakdown",
-      sectionName: "chart_day",
-    }),
-    loadSalesQuerySection<SalesDashboardBreakdownRow>({
-      dateFrom: selectedRange.start,
-      dateTo: selectedRange.end,
-      filterMode: selectedRange.key,
-      profileId,
-      promise: supabase.rpc("sales_dashboard_breakdown", {
-        p_dimension: "month",
-        p_date_from: selectedRange.start,
-        p_date_to: selectedRange.end,
+      loadSalesQuerySection<SalesDashboardBreakdownRow>({
+        dateFrom: selectedRange.start,
+        dateTo: selectedRange.end,
+        filterMode: selectedRange.key,
+        profileId,
+        promise: supabase.rpc("sales_dashboard_monthly_breakdown", {
+          p_dimension: "machine",
+          p_date_from: selectedRange.start,
+          p_date_to: selectedRange.end,
+        }),
+        role: profileRole,
+        rpcName: "sales_dashboard_monthly_breakdown",
+        sectionName: "chart_machine",
       }),
-      role: profileRole,
-      rpcName: "sales_dashboard_breakdown",
-      sectionName: "chart_month",
-    }),
-    loadSalesQuerySection<SalesDashboardBreakdownRow>({
-      dateFrom: selectedRange.start,
-      dateTo: selectedRange.end,
-      filterMode: selectedRange.key,
-      profileId,
-      promise: supabase.rpc("sales_dashboard_breakdown", {
-        p_dimension: "machine",
-        p_date_from: selectedRange.start,
-        p_date_to: selectedRange.end,
+      loadSalesQuerySection<SalesDashboardBreakdownRow>({
+        dateFrom: selectedRange.start,
+        dateTo: selectedRange.end,
+        filterMode: selectedRange.key,
+        profileId,
+        promise: supabase.rpc("sales_dashboard_monthly_breakdown", {
+          p_dimension: "location",
+          p_date_from: selectedRange.start,
+          p_date_to: selectedRange.end,
+        }),
+        role: profileRole,
+        rpcName: "sales_dashboard_monthly_breakdown",
+        sectionName: "chart_location",
       }),
-      role: profileRole,
-      rpcName: "sales_dashboard_breakdown",
-      sectionName: "chart_machine",
-    }),
-    loadSalesQuerySection<SalesDashboardBreakdownRow>({
-      dateFrom: selectedRange.start,
-      dateTo: selectedRange.end,
-      filterMode: selectedRange.key,
-      profileId,
-      promise: supabase.rpc("sales_dashboard_breakdown", {
-        p_dimension: "location",
-        p_date_from: selectedRange.start,
-        p_date_to: selectedRange.end,
+      loadSalesQuerySection<SalesDashboardBreakdownRow>({
+        dateFrom: selectedRange.start,
+        dateTo: selectedRange.end,
+        filterMode: selectedRange.key,
+        profileId,
+        promise: supabase.rpc("sales_dashboard_monthly_breakdown", {
+          p_dimension: "product",
+          p_date_from: selectedRange.start,
+          p_date_to: selectedRange.end,
+        }),
+        role: profileRole,
+        rpcName: "sales_dashboard_monthly_breakdown",
+        sectionName: "chart_product",
       }),
-      role: profileRole,
-      rpcName: "sales_dashboard_breakdown",
-      sectionName: "chart_location",
-    }),
-    loadSalesQuerySection<SalesDashboardBreakdownRow>({
-      dateFrom: selectedRange.start,
-      dateTo: selectedRange.end,
-      filterMode: selectedRange.key,
-      profileId,
-      promise: supabase.rpc("sales_dashboard_breakdown", {
-        p_dimension: "product",
-        p_date_from: selectedRange.start,
-        p_date_to: selectedRange.end,
+      loadSalesQuerySection<TransactionStatusRow>({
+        dateFrom: selectedRange.start,
+        dateTo: selectedRange.end,
+        filterMode: selectedRange.key,
+        profileId,
+        promise: supabase.rpc("sales_dashboard_monthly_batch_reconciliation", {
+          p_date_from: selectedRange.start,
+          p_date_to: selectedRange.end,
+        }),
+        role: profileRole,
+        rpcName: "sales_dashboard_monthly_batch_reconciliation",
+        sectionName: "batch_reconciliation_filtered",
       }),
-      role: profileRole,
-      rpcName: "sales_dashboard_breakdown",
-      sectionName: "chart_product",
-    }),
-    loadSalesQuerySection<TransactionStatusRow>({
-      dateFrom: selectedRange.start,
-      dateTo: selectedRange.end,
-      filterMode: selectedRange.key,
-      profileId,
-      promise: supabase.rpc("sales_dashboard_batch_reconciliation", {
-        p_date_from: selectedRange.start,
-        p_date_to: selectedRange.end,
+      canViewProfit
+        ? loadSalesQuerySection<SalesProfitBreakdownRow>({
+            dateFrom: selectedRange.start,
+            dateTo: selectedRange.end,
+            filterMode: selectedRange.key,
+            profileId,
+            promise: supabase.rpc("sales_dashboard_monthly_profit_breakdown", {
+              p_dimension: "product",
+              p_date_from: selectedRange.start,
+              p_date_to: selectedRange.end,
+            }),
+            role: profileRole,
+            rpcName: "sales_dashboard_monthly_profit_breakdown",
+            sectionName: "profit_product",
+          })
+        : Promise.resolve(emptySectionResult<SalesProfitBreakdownRow>("sales_dashboard_monthly_profit_breakdown", "profit_product")),
+      canViewProfit
+        ? loadSalesQuerySection<SalesProfitBreakdownRow>({
+            dateFrom: selectedRange.start,
+            dateTo: selectedRange.end,
+            filterMode: selectedRange.key,
+            profileId,
+            promise: supabase.rpc("sales_dashboard_monthly_profit_breakdown", {
+              p_dimension: "machine",
+              p_date_from: selectedRange.start,
+              p_date_to: selectedRange.end,
+            }),
+            role: profileRole,
+            rpcName: "sales_dashboard_monthly_profit_breakdown",
+            sectionName: "profit_machine",
+          })
+        : Promise.resolve(emptySectionResult<SalesProfitBreakdownRow>("sales_dashboard_monthly_profit_breakdown", "profit_machine")),
+      canViewProfit
+        ? loadSalesQuerySection<SalesProfitBreakdownRow>({
+            dateFrom: selectedRange.start,
+            dateTo: selectedRange.end,
+            filterMode: selectedRange.key,
+            profileId,
+            promise: supabase.rpc("sales_dashboard_monthly_profit_breakdown", {
+              p_dimension: "location",
+              p_date_from: selectedRange.start,
+              p_date_to: selectedRange.end,
+            }),
+            role: profileRole,
+            rpcName: "sales_dashboard_monthly_profit_breakdown",
+            sectionName: "profit_location",
+          })
+        : Promise.resolve(emptySectionResult<SalesProfitBreakdownRow>("sales_dashboard_monthly_profit_breakdown", "profit_location")),
+      loadSalesQuerySection<SalesMonthlyCoverageRow>({
+        dateFrom: selectedRange.start,
+        dateTo: selectedRange.end,
+        filterMode: selectedRange.key,
+        profileId,
+        promise: supabase.rpc("sales_dashboard_monthly_profit_coverage"),
+        role: profileRole,
+        rpcName: "sales_dashboard_monthly_profit_coverage",
+        sectionName: "monthly_coverage",
       }),
-      role: profileRole,
-      rpcName: "sales_dashboard_batch_reconciliation",
-      sectionName: "batch_reconciliation_filtered",
-    }),
-    canViewProfit
-      ? loadSalesQuerySection<SalesProfitBreakdownRow>({
-          dateFrom: selectedRange.start,
-          dateTo: selectedRange.end,
-          filterMode: selectedRange.key,
-          profileId,
-          promise: supabase.rpc("sales_dashboard_profit_breakdown", {
-            p_dimension: "product",
-            p_date_from: selectedRange.start,
-            p_date_to: selectedRange.end,
-          }),
-          role: profileRole,
-          rpcName: "sales_dashboard_profit_breakdown",
-          sectionName: "profit_product",
-        })
-      : Promise.resolve(emptySectionResult<SalesProfitBreakdownRow>("sales_dashboard_profit_breakdown", "profit_product")),
-    canViewProfit
-      ? loadSalesQuerySection<SalesProfitBreakdownRow>({
-          dateFrom: selectedRange.start,
-          dateTo: selectedRange.end,
-          filterMode: selectedRange.key,
-          profileId,
-          promise: supabase.rpc("sales_dashboard_profit_breakdown", {
-            p_dimension: "machine",
-            p_date_from: selectedRange.start,
-            p_date_to: selectedRange.end,
-          }),
-          role: profileRole,
-          rpcName: "sales_dashboard_profit_breakdown",
-          sectionName: "profit_machine",
-        })
-      : Promise.resolve(emptySectionResult<SalesProfitBreakdownRow>("sales_dashboard_profit_breakdown", "profit_machine")),
-    canViewProfit
-      ? loadSalesQuerySection<SalesProfitBreakdownRow>({
-          dateFrom: selectedRange.start,
-          dateTo: selectedRange.end,
-          filterMode: selectedRange.key,
-          profileId,
-          promise: supabase.rpc("sales_dashboard_profit_breakdown", {
-            p_dimension: "location",
-            p_date_from: selectedRange.start,
-            p_date_to: selectedRange.end,
-          }),
-          role: profileRole,
-          rpcName: "sales_dashboard_profit_breakdown",
-          sectionName: "profit_location",
-        })
-      : Promise.resolve(emptySectionResult<SalesProfitBreakdownRow>("sales_dashboard_profit_breakdown", "profit_location")),
-  ]);
+    ]);
+  } else {
+    [
+      salesSummaryResult,
+      dayBreakdownResult,
+      monthBreakdownResult,
+      machineBreakdownResult,
+      locationBreakdownResult,
+      productBreakdownResult,
+      filteredReconciliationResult,
+      productProfitResult,
+      machineProfitResult,
+      locationProfitResult,
+      monthlyCoverageResult,
+    ] = await Promise.all([
+      loadSalesQuerySection<SalesSummaryRow>({
+        dateFrom: selectedRange.start,
+        dateTo: selectedRange.end,
+        filterMode: selectedRange.key,
+        profileId,
+        promise: supabase.rpc("sales_dashboard_summary", {
+          p_date_from: selectedRange.start,
+          p_date_to: selectedRange.end,
+        }),
+        role: profileRole,
+        rpcName: "sales_dashboard_summary",
+        sectionName: "summary_kpi",
+      }),
+      loadSalesQuerySection<SalesDashboardBreakdownRow>({
+        dateFrom: selectedRange.start,
+        dateTo: selectedRange.end,
+        filterMode: selectedRange.key,
+        profileId,
+        promise: supabase.rpc("sales_dashboard_breakdown", {
+          p_dimension: "day",
+          p_date_from: selectedRange.start,
+          p_date_to: selectedRange.end,
+        }),
+        role: profileRole,
+        rpcName: "sales_dashboard_breakdown",
+        sectionName: "chart_day",
+      }),
+      loadSalesQuerySection<SalesDashboardBreakdownRow>({
+        dateFrom: selectedRange.start,
+        dateTo: selectedRange.end,
+        filterMode: selectedRange.key,
+        profileId,
+        promise: supabase.rpc("sales_dashboard_breakdown", {
+          p_dimension: "month",
+          p_date_from: selectedRange.start,
+          p_date_to: selectedRange.end,
+        }),
+        role: profileRole,
+        rpcName: "sales_dashboard_breakdown",
+        sectionName: "chart_month",
+      }),
+      loadSalesQuerySection<SalesDashboardBreakdownRow>({
+        dateFrom: selectedRange.start,
+        dateTo: selectedRange.end,
+        filterMode: selectedRange.key,
+        profileId,
+        promise: supabase.rpc("sales_dashboard_breakdown", {
+          p_dimension: "machine",
+          p_date_from: selectedRange.start,
+          p_date_to: selectedRange.end,
+        }),
+        role: profileRole,
+        rpcName: "sales_dashboard_breakdown",
+        sectionName: "chart_machine",
+      }),
+      loadSalesQuerySection<SalesDashboardBreakdownRow>({
+        dateFrom: selectedRange.start,
+        dateTo: selectedRange.end,
+        filterMode: selectedRange.key,
+        profileId,
+        promise: supabase.rpc("sales_dashboard_breakdown", {
+          p_dimension: "location",
+          p_date_from: selectedRange.start,
+          p_date_to: selectedRange.end,
+        }),
+        role: profileRole,
+        rpcName: "sales_dashboard_breakdown",
+        sectionName: "chart_location",
+      }),
+      loadSalesQuerySection<SalesDashboardBreakdownRow>({
+        dateFrom: selectedRange.start,
+        dateTo: selectedRange.end,
+        filterMode: selectedRange.key,
+        profileId,
+        promise: supabase.rpc("sales_dashboard_breakdown", {
+          p_dimension: "product",
+          p_date_from: selectedRange.start,
+          p_date_to: selectedRange.end,
+        }),
+        role: profileRole,
+        rpcName: "sales_dashboard_breakdown",
+        sectionName: "chart_product",
+      }),
+      loadSalesQuerySection<TransactionStatusRow>({
+        dateFrom: selectedRange.start,
+        dateTo: selectedRange.end,
+        filterMode: selectedRange.key,
+        profileId,
+        promise: supabase.rpc("sales_dashboard_batch_reconciliation", {
+          p_date_from: selectedRange.start,
+          p_date_to: selectedRange.end,
+        }),
+        role: profileRole,
+        rpcName: "sales_dashboard_batch_reconciliation",
+        sectionName: "batch_reconciliation_filtered",
+      }),
+      canViewProfit
+        ? loadSalesQuerySection<SalesProfitBreakdownRow>({
+            dateFrom: selectedRange.start,
+            dateTo: selectedRange.end,
+            filterMode: selectedRange.key,
+            profileId,
+            promise: supabase.rpc("sales_dashboard_profit_breakdown", {
+              p_dimension: "product",
+              p_date_from: selectedRange.start,
+              p_date_to: selectedRange.end,
+            }),
+            role: profileRole,
+            rpcName: "sales_dashboard_profit_breakdown",
+            sectionName: "profit_product",
+          })
+        : Promise.resolve(emptySectionResult<SalesProfitBreakdownRow>("sales_dashboard_profit_breakdown", "profit_product")),
+      canViewProfit
+        ? loadSalesQuerySection<SalesProfitBreakdownRow>({
+            dateFrom: selectedRange.start,
+            dateTo: selectedRange.end,
+            filterMode: selectedRange.key,
+            profileId,
+            promise: supabase.rpc("sales_dashboard_profit_breakdown", {
+              p_dimension: "machine",
+              p_date_from: selectedRange.start,
+              p_date_to: selectedRange.end,
+            }),
+            role: profileRole,
+            rpcName: "sales_dashboard_profit_breakdown",
+            sectionName: "profit_machine",
+          })
+        : Promise.resolve(emptySectionResult<SalesProfitBreakdownRow>("sales_dashboard_profit_breakdown", "profit_machine")),
+      canViewProfit
+        ? loadSalesQuerySection<SalesProfitBreakdownRow>({
+            dateFrom: selectedRange.start,
+            dateTo: selectedRange.end,
+            filterMode: selectedRange.key,
+            profileId,
+            promise: supabase.rpc("sales_dashboard_profit_breakdown", {
+              p_dimension: "location",
+              p_date_from: selectedRange.start,
+              p_date_to: selectedRange.end,
+            }),
+            role: profileRole,
+            rpcName: "sales_dashboard_profit_breakdown",
+            sectionName: "profit_location",
+          })
+        : Promise.resolve(emptySectionResult<SalesProfitBreakdownRow>("sales_dashboard_profit_breakdown", "profit_location")),
+      loadSalesQuerySection<SalesMonthlyCoverageRow>({
+        dateFrom: selectedRange.start,
+        dateTo: selectedRange.end,
+        filterMode: selectedRange.key,
+        profileId,
+        promise: supabase.rpc("sales_dashboard_monthly_coverage"),
+        role: profileRole,
+        rpcName: "sales_dashboard_monthly_coverage",
+        sectionName: "monthly_coverage",
+      }),
+    ]);
+  }
+
+  const monthlyCoverageRows = normalizeSalesMonthlyCoverageRows(monthlyCoverageResult.data as SalesMonthlyCoverageRow[]);
 
   const summary = normalizeSalesSummary((salesSummaryResult.data as SalesSummaryRow[])[0]);
   const dayBreakdownRows = normalizeSalesBreakdownRows(dayBreakdownResult.data as SalesDashboardBreakdownRow[]);
@@ -1063,10 +1265,12 @@ async function SalesDashboardPageContent({
     batches,
     reconciliationByBatchId: filteredReconciliationByBatchId,
     range: selectedRange,
+    sourceMode,
   });
   const contributingFiles = fileContributions.filter((row) => row.included);
   const ignoredFiles = fileContributions.filter((row) => !row.included);
   const detailedFiles = batches.filter((batch) => batch.report_type === "vms_order_details_weekly");
+  const finalizedMonthlyFiles = monthlyFiles.filter(isActiveImportedVmsBatch);
   const summaryOnlyFiles = fileContributions.filter((row) => row.batch.report_type === "sales");
   const overlappingSummaryFiles = summaryOnlyFiles.filter((row) => {
     const coverage = batchCoverageDates(row.batch);
@@ -1076,12 +1280,13 @@ async function SalesDashboardPageContent({
       && rangesOverlap({ start: coverage.start, end: coverage.end }, { start: selectedRange.start, end: selectedRange.end }),
     );
   });
-  const coverage = salesCoverageSummary(coverageAwareBatches);
+  const coverage = salesCoverageSummary(sourceMode === "monthly" ? monthlyFiles : detailedFiles);
   const coverageSummary = summarizeSalesCoverage(monthlyCoverageRows);
   const finalizedDetailedFiles = detailedFiles.filter(isFinalizedDetailedBatch);
+  const activePrimaryFiles = sourceMode === "monthly" ? finalizedMonthlyFiles : finalizedDetailedFiles;
   const missingPeriods = coverage.gaps.filter((gap) => rangesOverlap(gap, { start: selectedRange.start, end: selectedRange.end }));
   const dayCount = rangeDayCount(selectedRange.start, selectedRange.end);
-  const trendUsesDaily = dayCount <= 62;
+  const trendUsesDaily = sourceMode !== "monthly" && dayCount <= 62;
   const trendRows = trendUsesDaily ? dayBreakdownRows : monthBreakdownRows;
   const trendTitle = trendUsesDaily ? "Sales by day" : "Sales by month";
   const trendSubtitle = trendUsesDaily
@@ -1090,23 +1295,41 @@ async function SalesDashboardPageContent({
   const topProductSalesRows = [...productBreakdownRows]
     .sort((left, right) => right.successfulSalesAmount - left.successfulSalesAmount || right.unitsSold - left.unitsSold || left.bucketLabel.localeCompare(right.bucketLabel))
     .slice(0, 15);
-  const latestSourceBatch = coverage.latest ?? detailedFiles[0] ?? batches[0] ?? null;
+  const latestSourceBatch = contributingFiles[0]?.batch ?? activePrimaryFiles[0] ?? coverage.latest ?? batches[0] ?? null;
   const lastUpdatedAt = batchLastUpdatedAt(latestSourceBatch) ?? renderedAt.toISOString();
   const finalizedCoverageLabel = coverageSummary.earliestBusinessDate && coverageSummary.latestBusinessDate
     ? `${coverageSummary.earliestBusinessDate} to ${coverageSummary.latestBusinessDate}`
     : "-";
   const sourceStatusText = contributingFiles.length
     ? missingPeriods.length
-      ? `${formatInteger(contributingFiles.length)} finalized detailed file(s) contributing, with coverage gaps in this range`
-      : `${formatInteger(contributingFiles.length)} finalized detailed file(s) contributing`
-    : finalizedDetailedFiles.length
-      ? "No finalized detailed files overlap the selected business-date range."
-      : "Waiting for finalized detailed Order Details files";
+      ? `${formatInteger(contributingFiles.length)} finalized ${sourceMode === "monthly" ? "monthly profit" : "detailed"} file(s) contributing, with coverage gaps in this range`
+      : `${formatInteger(contributingFiles.length)} finalized ${sourceMode === "monthly" ? "monthly profit" : "detailed"} file(s) contributing`
+    : activePrimaryFiles.length
+      ? `No finalized ${sourceMode === "monthly" ? "monthly profit" : "detailed"} files overlap the selected business-date range.`
+      : sourceMode === "monthly"
+        ? "Waiting for finalized monthly profit files"
+        : "Waiting for finalized detailed Order Details files";
   const paymentMethodText = summary.paymentMethodAvailable
     ? "Cash and card split is available for this range."
-    : "Payment method split is not available for this range.";
+    : sourceMode === "monthly"
+      ? "Payment method split is not available for monthly profit reports."
+      : "Payment method split is not available for this range.";
   const summaryLoadFailed = Boolean(salesSummaryResult.error);
-  const sourceLoadFailed = Boolean(batchResult.error || fullReconciliationResult.error || filteredReconciliationResult.error || monthlyCoverageResult.error);
+  const sourceLoadFailed = Boolean(
+    batchResult.error
+      || fullReconciliationResult.error
+      || salesSummaryResult.error
+      || dayBreakdownResult.error
+      || monthBreakdownResult.error
+      || machineBreakdownResult.error
+      || locationBreakdownResult.error
+      || productBreakdownResult.error
+      || filteredReconciliationResult.error
+      || productProfitResult.error
+      || machineProfitResult.error
+      || locationProfitResult.error
+      || monthlyCoverageResult.error,
+  );
   const hasSalesRows = summary.successfulSalesCount > 0 || trendRows.length > 0;
   const hasProfitWarning = canViewProfit && (summary.missingCostRevenueAmount > 0 || summary.estimatedCostRevenueAmount > 0);
   const noSalesState = buildNoSalesState({
@@ -1115,15 +1338,27 @@ async function SalesDashboardPageContent({
     coverageLabel: finalizedCoverageLabel,
     fileContributions,
     monthlyCoverageRows,
+    sourceMode,
     selectedRange,
   });
   const finalizableInactiveFiles = fileContributions.filter((row) => salesContributionNeedsFinalization(row, selectedRange));
+  const pageSubtitle = sourceMode === "monthly"
+    ? "Monthly commodity profit reports power the sales dashboard for month, year, and all-time ranges."
+    : "Sales are calculated from imported VMS Order Details for the selected business dates.";
+  const sourceFilesUploadedLabel = sourceMode === "monthly" ? "Monthly profit files uploaded" : "Detailed files uploaded";
+  const finalizedSourceFilesLabel = sourceMode === "monthly" ? "Finalized monthly profit files" : "Finalized detailed files";
+  const profitSectionSubtitle = sourceMode === "monthly"
+    ? "Revenue, cost, and profit come from the monthly commodity profit report."
+    : "Revenue remains unchanged. Profit uses historical cost when available, then current product cost fallback.";
+  const profitEmptyStateBody = sourceMode === "monthly"
+    ? "Profit appears after monthly profit data is available."
+    : "Profit appears after detailed sales and product cost data are available.";
 
   return (
     <>
       <PageHeader
         title="Sales Dashboard"
-        subtitle="Sales are calculated from imported VMS Order Details for the selected business dates."
+        subtitle={pageSubtitle}
       />
 
       <div className="space-y-6">
@@ -1357,7 +1592,7 @@ async function SalesDashboardPageContent({
             </KpiSection>
 
             {canViewProfit ? (
-              <KpiSection title="Product profit" subtitle="Revenue remains unchanged. Profit uses historical cost when available, then current product cost fallback.">
+              <KpiSection title="Product profit" subtitle={profitSectionSubtitle}>
                 {productProfitResult.error ? (
                   <SectionInlineMessage title="Product profit could not load." body="Please contact admin if this keeps happening." />
                 ) : productProfitRows.length ? (
@@ -1375,14 +1610,14 @@ async function SalesDashboardPageContent({
                     ))}
                   </DataTable>
                 ) : (
-                  <SectionInlineMessage title="No product profit rows found." body="Profit appears after detailed sales and product cost data are available." />
+                  <SectionInlineMessage title="No product profit rows found." body={profitEmptyStateBody} />
                 )}
               </KpiSection>
             ) : null}
 
             {canViewProfit ? (
               <div className="grid gap-4 xl:grid-cols-2">
-                <KpiSection title="Profit by machine" subtitle="Top machines ranked by gross profit.">
+                <KpiSection title="Profit by machine" subtitle={sourceMode === "monthly" ? "Top machines ranked by gross profit from the monthly profit report." : "Top machines ranked by gross profit."}>
                   {machineProfitResult.error ? (
                     <SectionInlineMessage title="Machine profit could not load." body="Please contact admin if this keeps happening." />
                   ) : machineProfitRows.length ? (
@@ -1399,11 +1634,11 @@ async function SalesDashboardPageContent({
                       ))}
                     </DataTable>
                   ) : (
-                    <SectionInlineMessage title="No machine profit rows found." body="Profit appears after detailed sales and product cost data are available." />
+                    <SectionInlineMessage title="No machine profit rows found." body={profitEmptyStateBody} />
                   )}
                 </KpiSection>
 
-                <KpiSection title="Profit by location" subtitle="Top locations ranked by gross profit.">
+                <KpiSection title="Profit by location" subtitle={sourceMode === "monthly" ? "Top locations ranked by gross profit from the monthly profit report." : "Top locations ranked by gross profit."}>
                   {locationProfitResult.error ? (
                     <SectionInlineMessage title="Location profit could not load." body="Please contact admin if this keeps happening." />
                   ) : locationProfitRows.length ? (
@@ -1420,7 +1655,7 @@ async function SalesDashboardPageContent({
                       ))}
                     </DataTable>
                   ) : (
-                    <SectionInlineMessage title="No location profit rows found." body="Profit appears after detailed sales and product cost data are available." />
+                    <SectionInlineMessage title="No location profit rows found." body={profitEmptyStateBody} />
                   )}
                 </KpiSection>
               </div>
@@ -1455,12 +1690,12 @@ async function SalesDashboardPageContent({
                 <div>{formatVmsDateTime(lastUpdatedAt)}</div>
               </div>
               <div>
-                <div className="font-semibold text-slate-900">Detailed files uploaded</div>
-                <div>{formatInteger(detailedFiles.length)}</div>
+                <div className="font-semibold text-slate-900">{sourceFilesUploadedLabel}</div>
+                <div>{formatInteger(sourceMode === "monthly" ? monthlyFiles.length : detailedFiles.length)}</div>
               </div>
               <div>
-                <div className="font-semibold text-slate-900">Finalized detailed files</div>
-                <div>{formatInteger(finalizedDetailedFiles.length)}</div>
+                <div className="font-semibold text-slate-900">{finalizedSourceFilesLabel}</div>
+                <div>{formatInteger(sourceMode === "monthly" ? finalizedMonthlyFiles.length : finalizedDetailedFiles.length)}</div>
               </div>
               <div>
                 <div className="font-semibold text-slate-900">Coverage gaps</div>
@@ -1488,7 +1723,11 @@ async function SalesDashboardPageContent({
               </div>
             </div>
 
-            {overlappingSummaryFiles.length ? (
+            {sourceMode === "monthly" && detailedFiles.length ? (
+              <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+                {formatInteger(detailedFiles.length)} detailed Order Details file(s) are available for audit, but Snacky sales totals for this range come from monthly profit files.
+              </div>
+            ) : overlappingSummaryFiles.length ? (
               <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
                 {formatInteger(overlappingSummaryFiles.length)} summary sales file(s) overlap this period, but Snacky sales totals still come from detailed Order Details files only.
               </div>

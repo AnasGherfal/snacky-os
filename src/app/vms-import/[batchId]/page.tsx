@@ -76,6 +76,7 @@ function reportLabel(reportType: string | null | undefined) {
 
 function updatedFallbackForReport(reportType: string | null | undefined) {
   if (reportType === "vms_order_details_weekly") return ["Sales dashboard", "Product sales", "Failed vend report"];
+  if (reportType === "monthly_product_profit") return ["Sales dashboard", "Product profit", "Machine profit"];
   if (reportType === "sales") return ["Reconciliation totals"];
   if (isStockReportType(reportType)) return ["Machine stock", "Recommended refill items"];
   return [] as string[];
@@ -99,6 +100,15 @@ function dashboardUsageForReport(reportType: string | null | undefined) {
       ["Product dashboard", false],
       ["Machine dashboard", false],
       ["Finance dashboard", false],
+    ] as const;
+  }
+  if (reportType === "monthly_product_profit") {
+    return [
+      ["Sales dashboard", true],
+      ["Product profit", true],
+      ["Machine profit", true],
+      ["Finance dashboard", true],
+      ["Audit detail", false],
     ] as const;
   }
   if (reportType === "stock" || reportType === "machine_stock_snapshot" || reportType === "planogram") {
@@ -534,6 +544,7 @@ async function VmsImportBatchDetailPageContent({
   const rowList = rows ?? [];
   const summary = parseSummary(stringValue(batch.notes) || null);
   const reportType = parseReportType(stringValue(batch.report_type));
+  const isSalesLikeReport = reportType === "sales" || reportType === "monthly_product_profit";
   const fieldLabels = new Map((reportType ? vmsExpectedFields[reportType] : []).map((field) => [field.field, field.label]));
   const mapping = jsonRecord(batch.column_mapping);
   const needsMappingRows = rowList.filter((row) => row.validation_status === "needs_mapping" || row.product_match_status === "needs_mapping");
@@ -616,7 +627,7 @@ async function VmsImportBatchDetailPageContent({
             <StatCard label="Sales revenue" value="N/A" />
           </div>
         ) : null}
-        {stringValue(batch.report_type) === "sales" ? (
+        {isSalesLikeReport ? (
           <div className="mt-3 grid gap-3 md:grid-cols-3">
             <StatCard label="Import mode" value={String(batch.import_mode ?? summary?.importType ?? "append").replaceAll("_", " ")} />
             <StatCard label="Report start" value={textValue(batch.report_start_date)} />
@@ -859,12 +870,18 @@ async function VmsImportBatchDetailPageContent({
                 <input name="reason" className="field-input" placeholder="Reason" />
                 <FormSubmitButton className="btn-secondary w-full" pendingLabel="Disabling file...">Disable</FormSubmitButton>
               </form>
-            ) : !canFinalizePreviewStockBatch && !(stringValue(batch.report_type) === "vms_order_details_weekly" && Number(transactionsRawCount.count ?? 0) > 0) ? (
+            ) : !canFinalizePreviewStockBatch && !(stringValue(batch.report_type) === "vms_order_details_weekly" && Number(transactionsRawCount.count ?? 0) > 0 && stringValue(batch.status) !== "deleted") ? (
               <form action={updateVmsImportBatchState} className="space-y-3 rounded-lg border border-slate-200 p-3">
                 <input type="hidden" name="batch_id" value={String(batch.id)} />
                 <input type="hidden" name="action" value={stringValue(batch.status) === "deleted" ? "restore" : "enable"} />
-                <div className="text-sm font-semibold text-slate-900">Restore to dashboards</div>
-                <p className="text-xs text-slate-500">Restores active imported status and recalculates dashboard views.</p>
+                <div className="text-sm font-semibold text-slate-900">
+                  {stringValue(batch.status) === "deleted" ? "Restore deleted batch" : "Restore to dashboards"}
+                </div>
+                <p className="text-xs text-slate-500">
+                  {stringValue(batch.status) === "deleted"
+                    ? "Restores this deleted Order Details batch as the active dashboard source unless that would double count an already active batch."
+                    : "Restores active imported status and recalculates dashboard views."}
+                </p>
                 <FormSubmitButton className="btn-secondary w-full" pendingLabel="Restoring file...">Restore</FormSubmitButton>
               </form>
             ) : null}

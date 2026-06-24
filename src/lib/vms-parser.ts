@@ -1,4 +1,4 @@
-export type VmsReportType = "stock" | "machine_stock_snapshot" | "sales" | "vms_order_details_weekly" | "product_list" | "machine_status" | "planogram" | "custom";
+export type VmsReportType = "stock" | "machine_stock_snapshot" | "sales" | "monthly_product_profit" | "vms_order_details_weekly" | "product_list" | "machine_status" | "planogram" | "custom";
 
 export type VmsParsedSheet = {
   name: string;
@@ -49,6 +49,7 @@ export const vmsReportTypes: { value: VmsReportType; label: string }[] = [
   { value: "stock", label: "Machine Goods / Stock" },
   { value: "vms_order_details_weekly", label: "Detailed Order Details Report - Recommended" },
   { value: "sales", label: "General / Summary Sales Report" },
+  { value: "monthly_product_profit", label: "Monthly Commodity Profit Report" },
   { value: "product_list", label: "Product list" },
   { value: "machine_status", label: "Machine status" },
   { value: "planogram", label: "Planogram / selection management" },
@@ -99,6 +100,24 @@ export const vmsExpectedFields: Record<VmsReportType, VmsFieldDef[]> = {
     { field: "vms_transaction_id", label: "VMS transaction ID", aliases: ["Transaction ID", "Transaction No", "Order ID", "Order No", "Receipt ID", "Receipt No", "Txn ID", "txn_id", "transaction_id", "transaction_no", "order_id", "receipt_id"] },
     { field: "payment_method", label: "Payment method", aliases: ["Payment Method", "Payment", "Tender", "Method", "payment_method"] },
     { field: "selling_price", label: "Selling price", aliases: ["Selling Price", "Price", "Unit Price", "selling_price", "sale_price", "سعر البيع"] },
+  ],
+  monthly_product_profit: [
+    { field: "merchant_id", label: "Merchant ID", aliases: ["Merchant ID", "merchant_id"] },
+    { field: "merchant_name", label: "Merchant Name", aliases: ["Merchant Name", "merchant_name"] },
+    { field: "machine_identifier", label: "Machine code", aliases: ["Machine code", "Machine Code", "machine_code", "Machine ID", "Machine Id", "machine_id"] },
+    { field: "machine_name", label: "Machine name", aliases: ["Machine name", "Machine Name", "machine_name", "Device Name"] },
+    { field: "product_identifier", label: "Product Number", aliases: ["Product Number", "Product number", "product_number", "Product No", "Product No.", "product_no"] },
+    { field: "product_name", label: "product name", aliases: ["product name", "Product name", "Product Name", "product_name", "Commodity Name", "Goods Name"] },
+    { field: "commodity_price", label: "Commodity price", aliases: ["Commodity price", "Commodity Price", "commodity_price", "Commodity unit price", "Unit price", "Unit Price"] },
+    { field: "transaction_count", label: "Number of transaction", aliases: ["Number of transaction", "Number of transactions", "Transaction Count", "transaction_count", "number_of_transaction", "number_of_transactions"] },
+    { field: "transaction_amount", label: "Transaction amount", aliases: ["Transaction amount", "Transaction Amount", "transaction_amount", "Amount", "Sales Amount", "Revenue"] },
+    { field: "refund_count", label: "Refund count", aliases: ["Refund count", "Refund Count", "refund_count"] },
+    { field: "refund_amount", label: "Refund amount", aliases: ["Refund amount", "Refund Amount", "refund_amount"] },
+    { field: "total_transaction_count", label: "Total Transaction", aliases: ["Total Transaction", "Total transactions", "total_transaction_count"] },
+    { field: "total_transaction_amount", label: "Total Transaction amount", aliases: ["Total Transaction amount", "Total Transaction Amount", "total_transaction_amount"] },
+    { field: "cost_price", label: "Cost Price", aliases: ["Cost Price", "cost_price", "Cost price"] },
+    { field: "cost_amount", label: "Cost Amount", aliases: ["Cost Amount", "cost_amount", "Cost amount"] },
+    { field: "profit_amount", label: "Profits", aliases: ["Profits", "Profit", "profit_amount", "Gross Profit"] },
   ],
   vms_order_details_weekly: [
     { field: "merchant_id", label: "Merchant ID", aliases: ["Merchant ID", "merchant_id"] },
@@ -259,6 +278,17 @@ function extraAliasesForField(field: string) {
     sold_qty: ["Number of transaction", "Number of transactions", "Transaction Count", "Transactions", "transaction_count", "number_of_transaction"],
     total_sales_amount: ["Transaction amount", "Transaction Amount", "Total Sales LYD", "total_sales_lyd", "transaction_amount"],
     selling_price: ["Commodity price", "Commodity Price", "Commodity unit price", "commodity_price"],
+    merchant_id: ["Merchant ID", "merchant_id"],
+    merchant_name: ["Merchant Name", "merchant_name"],
+    transaction_count: ["Number of transaction", "Number of transactions", "Transaction Count", "transaction_count", "number_of_transaction", "total_transaction_count"],
+    transaction_amount: ["Transaction amount", "Transaction Amount", "transaction_amount", "Sales Amount", "Revenue"],
+    refund_count: ["Refund count", "Refund Count", "refund_count"],
+    refund_amount: ["Refund amount", "Refund Amount", "refund_amount"],
+    total_transaction_count: ["Total Transaction", "Total transactions", "total_transaction_count"],
+    total_transaction_amount: ["Total Transaction amount", "Total Transaction Amount", "total_transaction_amount"],
+    cost_price: ["Cost Price", "cost_price"],
+    cost_amount: ["Cost Amount", "cost_amount"],
+    profit_amount: ["Profits", "Profit", "profit_amount", "Gross Profit"],
     payment_amount: ["Payment amount", "Payment Amount", "Amount paid"],
     payment_time: ["Time of payment", "Payment time", "Payment Time"],
     delivery_time: ["Delivery time", "Delivery Time"],
@@ -450,6 +480,23 @@ export function sheetRowsToRecords(rows: unknown[][], options: { reportType?: Vm
 export function detectVmsReportTypeFromHeaders(headers: string[]): VmsReportType | null {
   const normalized = new Set(headers.map(normalizeHeader).filter(Boolean));
   const has = (aliases: string[]) => aliases.some((alias) => normalized.has(normalizeHeader(alias)));
+  const monthlyProfitSignals = [
+    has(["Merchant ID", "merchant_id"]),
+    has(["Merchant Name", "merchant_name"]),
+    has(["Machine code", "Machine Code", "machine_code"]),
+    has(["Machine name", "Machine Name", "machine_name"]),
+    has(["Product Number", "Product number", "product_number"]),
+    has(["product name", "Product name", "Product Name", "product_name"]),
+    has(["Commodity price", "Commodity Price", "commodity_price"]),
+    has(["Number of transaction", "Number of transactions", "transaction_count", "number_of_transaction"]),
+    has(["Transaction amount", "Transaction Amount", "transaction_amount"]),
+    has(["Cost Price", "cost_price"]),
+    has(["Cost Amount", "cost_amount"]),
+    has(["Profits", "Profit", "profit_amount"]),
+  ].filter(Boolean).length;
+
+  if (monthlyProfitSignals >= 7) return "monthly_product_profit";
+
   const stockSnapshotSignals = [
     has(["Inventory quantity", "Inventory Quantity", "inventory_quantity"]),
     has(["Out of stock quantity", "Out Of Stock Quantity", "out_of_stock_quantity"]),
@@ -487,6 +534,10 @@ export function detectVmsReportTypeFromRows(rows: unknown[][]): VmsReportType | 
   const nonEmptyRows = cleanRows(rows);
   if (!nonEmptyRows.length) return null;
   const headerRowIndex = detectHeaderRowIndex(nonEmptyRows);
+  const metadataRows = nonEmptyRows.slice(0, headerRowIndex);
+  if (metadataRows.some((row) => row.join(" ").toLowerCase().includes("statistical statement of commodity profit"))) {
+    return "monthly_product_profit";
+  }
   const headers = uniqueHeaders(nonEmptyRows[headerRowIndex] ?? []);
   return detectVmsReportTypeFromHeaders(headers);
 }

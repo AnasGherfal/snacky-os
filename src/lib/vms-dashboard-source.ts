@@ -54,7 +54,8 @@ export type VmsDashboardUsageKey =
   | "restock"
   | "routes"
   | "reconciliation"
-  | "failed_vends";
+  | "failed_vends"
+  | "finance";
 
 export const vmsDashboardBatchSelect = [
   "id",
@@ -113,6 +114,7 @@ const dashboardUsageLabels: Record<VmsDashboardUsageKey | "routes", string> = {
   reconciliation: "Reconciliation",
   failed_vends: "Failed Vend / Refund Report",
   routes: "Route Creation",
+  finance: "Finance Dashboard",
 };
 
 function dateOnly(date: Date) {
@@ -187,6 +189,7 @@ export async function queryVmsDashboardBatches(
 
 function fallbackDashboardUsageKeys(reportType: string | null | undefined): VmsDashboardUsageKey[] {
   if (reportType === "vms_order_details_weekly") return ["dashboard", "sales", "products", "machines", "restock", "failed_vends"];
+  if (reportType === "monthly_product_profit") return ["dashboard", "sales", "products", "machines", "finance"];
   if (reportType === "sales") return ["reconciliation"];
   if (["stock", "machine_stock_snapshot", "planogram"].includes(String(reportType ?? ""))) return ["dashboard", "inventory", "products", "machines", "refills", "restock", "routes"];
   return [];

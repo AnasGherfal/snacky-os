@@ -132,6 +132,14 @@ function dashboardUsageForReport(reportType: string | null | undefined) {
       "Refill recommendation",
     ];
   }
+  if (reportType === "monthly_product_profit") {
+    return [
+      "Sales dashboard",
+      "Product profit",
+      "Machine profit",
+      "Finance dashboard",
+    ];
+  }
   if (reportType === "sales") return ["Reconciliation only"];
   if (reportType === "stock" || reportType === "machine_stock_snapshot" || reportType === "planogram") return ["Inventory dashboard", "Refill recommendations", "Product mapping", "Machine mapping"];
   return ["Not used until mapped"];
@@ -1644,13 +1652,15 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
 
   const requestedImportMode = parseVmsImportMode(params.importMode);
   const importMode = selectedReportType === "vms_order_details_weekly" ? VMS_IMPORT_MODES.APPEND_NEW : requestedImportMode;
-  const titleSalesReportPeriod = selectedSheet && selectedReportType === "sales"
+  const titleSalesReportPeriod = selectedSheet && (selectedReportType === "sales" || selectedReportType === "monthly_product_profit")
     ? findSalesReportPeriod(selectedSheet.rows, selectedRows.headerRowIndex)
     : null;
   const mappedSalesRange = selectedReportType === "sales" ? findMappedSalesReportRange(mappedRows) : { start: "", end: "" };
   const orderDetailsRange = selectedReportType === "vms_order_details_weekly" ? detectOrderDetailsDateRange(mappedRows) : { start: "", end: "" };
-  const reportStartDate = params.reportStartDate ?? titleSalesReportPeriod?.reportStartDate ?? (selectedReportType === "vms_order_details_weekly" ? orderDetailsRange.start : mappedSalesRange.start);
-  const reportEndDate = params.reportEndDate ?? titleSalesReportPeriod?.reportEndDate ?? (selectedReportType === "vms_order_details_weekly" ? orderDetailsRange.end : mappedSalesRange.end);
+  const reportStartDate = params.reportStartDate ?? titleSalesReportPeriod?.reportStartDate ?? (selectedReportType === "vms_order_details_weekly" ? orderDetailsRange.start : selectedReportType === "sales" ? mappedSalesRange.start : "");
+  const reportEndDate = params.reportEndDate ?? titleSalesReportPeriod?.reportEndDate ?? (selectedReportType === "vms_order_details_weekly" ? orderDetailsRange.end : selectedReportType === "sales" ? mappedSalesRange.end : "");
+  const isMonthlyProductProfitReport = selectedReportType === "monthly_product_profit";
+  const isSalesLikeReport = selectedReportType === "sales" || isMonthlyProductProfitReport;
   let duplicatePreviewCount = 0;
   if (validation && selectedReportType === "sales" && currentStep >= 6) {
     const sourceKeys = mappedRows
@@ -1730,8 +1740,10 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
   const refundAmount = selectedReportType === "vms_order_details_weekly"
     ? mappedRows.reduce((sum, row) => orderDetailsTransactionStatus(row) === "refunded" ? sum + Math.max(0, orderDetailsPaymentAmount(row) ?? 0) : sum, 0)
     : 0;
-  const estimatedSalesTotal = selectedReportType === "sales"
-    ? mappedRows.reduce((sum, row) => sum + (mappedNumber(vmsValue(row, ["total_sales_amount", "transaction_amount", "revenue_amount", "sales_amount", "total_sales", "total_sales_lyd", "sale_amount", "amount", "total_amount", "paid_amount", "revenue", "gross_sales", "turnover", "net_sales"])) ?? 0), 0)
+  const estimatedSalesTotal = selectedReportType === "sales" || isMonthlyProductProfitReport
+    ? mappedRows.reduce((sum, row) => sum + (mappedNumber(vmsValue(row, isMonthlyProductProfitReport
+      ? ["transaction_amount", "total_transaction_amount", "amount", "total_amount", "revenue", "gross_sales"]
+      : ["total_sales_amount", "transaction_amount", "revenue_amount", "sales_amount", "total_sales", "total_sales_lyd", "sale_amount", "amount", "total_amount", "paid_amount", "revenue", "gross_sales", "turnover", "net_sales"])) ?? 0), 0)
     : selectedReportType === "vms_order_details_weekly"
       ? orderDetailsSuccessfulSalesAmount(mappedRows)
       : 0;
@@ -2042,14 +2054,14 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
           {validation ? (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
               <StatCard label="Total rows" value={validation.totalRows} />
-              <StatCard label="Rows to import" value={rowsReadyToImport} note={["sales", "vms_order_details_weekly"].includes(selectedReportType) ? `${duplicatePreviewCount} duplicates skipped` : undefined} />
+              <StatCard label="Rows to import" value={rowsReadyToImport} note={isSalesLikeReport || selectedReportType === "vms_order_details_weekly" ? `${duplicatePreviewCount} duplicates skipped` : undefined} />
               <StatCard label="Needs product mapping" value={validation.needsProductMappingRows} note={`${validation.missingProductMappingCount} unique products`} />
               <StatCard label="Unknown machine" value={validation.unknownMachineRows} note={`${validation.unknownMachineCount} unique machines`} />
               <StatCard label="Invalid row" value={validation.invalidRows} />
               <StatCard label="Warnings" value={validation.warningRows} />
             </div>
           ) : null}
-          {selectedReportType === "sales" ? (
+          {isSalesLikeReport ? (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
               <StatCard label="Import mode" value={vmsImportModeLabels[importMode]} />
               <StatCard label="Report period" value={reportStartDate && reportEndDate ? `${reportStartDate} to ${reportEndDate}` : "-"} />
@@ -2130,13 +2142,13 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
               <WizardStateInputs step={5} {...baseState} mapping={selectedMapping} />
               <FormSubmitButton className="btn-secondary" pendingLabel="Returning to mapping...">Back to mapping</FormSubmitButton>
             </form>
-            <form className={selectedReportType === "sales" || selectedReportType === "vms_order_details_weekly" ? "grid gap-3 md:grid-cols-[minmax(220px,1fr)_minmax(160px,auto)_minmax(160px,auto)_auto]" : "grid gap-3 md:grid-cols-[minmax(260px,1fr)_auto]"}>
+            <form className={isSalesLikeReport || selectedReportType === "vms_order_details_weekly" ? "grid gap-3 md:grid-cols-[minmax(220px,1fr)_minmax(160px,auto)_minmax(160px,auto)_auto]" : "grid gap-3 md:grid-cols-[minmax(260px,1fr)_auto]"}>
               <WizardStateInputs step={7} {...baseState} mapping={selectedMapping} includeImportOptions={false} />
               <input type="hidden" name="autoCreateProducts" value={optionValue(autoCreateProducts)} />
               <input type="hidden" name="updateCostFromVms" value={optionValue(updateCostFromVms)} />
-              {selectedReportType === "sales" || selectedReportType === "vms_order_details_weekly" ? (
+              {isSalesLikeReport || selectedReportType === "vms_order_details_weekly" ? (
                 <>
-                  {selectedReportType === "sales" ? (
+                  {isSalesLikeReport ? (
                     <FormField label="Import mode">
                       <select name="importMode" defaultValue={importMode} className="field-input">
                         {Object.entries(vmsImportModeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -2187,7 +2199,7 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
               <StatCard label="Duplicates skipped" value={duplicatePreviewCount} />
             </div>
           ) : null}
-          {selectedReportType === "sales" ? (
+          {isSalesLikeReport ? (
             <div className="grid gap-3 md:grid-cols-3">
               <StatCard label="Import mode" value={vmsImportModeLabels[importMode]} />
               <StatCard label="Report period" value={reportStartDate && reportEndDate ? `${reportStartDate} to ${reportEndDate}` : "-"} />
@@ -2279,7 +2291,7 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
                   <td>{isStockReportType(batch.report_type ?? batch.source_type) ? "N/A" : batch.refunded_rows_count ?? batchMetric(batch, "refundedRows", 0)}</td>
                   <td>{batch.uploaded_by || batch.imported_by ? importerById.get(String(batch.uploaded_by ?? batch.imported_by)) ?? "Unknown" : "-"}</td>
                   <td>{formatDateTime(batch.uploaded_at ?? batch.imported_at)}</td>
-                  <td className="max-w-xs text-xs text-slate-600">{batch.delete_reason || batch.disable_reason || (batch.report_type === "sales" ? "Reconciliation only" : "-")}</td>
+                  <td className="max-w-xs text-xs text-slate-600">{batch.delete_reason || batch.disable_reason || (batch.report_type === "sales" ? "Reconciliation only" : batch.report_type === "monthly_product_profit" ? "Monthly profit source" : "-")}</td>
                 </tr>
               ))}
             </DataTable>

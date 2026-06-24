@@ -33,8 +33,13 @@ const salesRows = [
     "Transaction amount",
     "Refund count",
     "Refund amount",
+    "Total Transaction",
+    "Total Transaction amount",
+    "Cost Price",
+    "Cost Amount",
+    "Profits",
   ],
-  ["6591", "Snacky", "2510001719", "HT Mall", "P001", "Water 500ml", "2.50", "10", "25.00", "1", "2.50"],
+  ["6591", "Snacky", "2510001719", "HT Mall", "P001", "Water 500ml", "2.50", "10", "25.00", "1", "2.50", "11", "27.50", "1.20", "12.00", "13.00"],
 ];
 
 const orderDetailsRows = [
@@ -89,9 +94,9 @@ const machineStockSnapshotRows = [
 ];
 
 test("VMS sales Excel title provides the March 2026 report period", () => {
-  assert.equal(detectVmsReportTypeFromRows(salesRows), "sales");
+  assert.equal(detectVmsReportTypeFromRows(salesRows), "monthly_product_profit");
 
-  const headerRow = detectHeaderRowIndex(salesRows, "sales");
+  const headerRow = detectHeaderRowIndex(salesRows, "monthly_product_profit");
   assert.equal(headerRow, 1);
 
   const period = findSalesReportPeriod(salesRows, headerRow);
@@ -109,22 +114,28 @@ test("VMS sales Excel title provides the March 2026 report period", () => {
 });
 
 test("VMS sales header detection skips the title row and maps transaction columns", () => {
-  const headerRow = detectHeaderRowIndex(salesRows, "sales");
-  const sheet = sheetRowsToRecords(salesRows, { reportType: "sales", headerRowIndex: headerRow });
-  const mapping = detectColumnMapping(sheet.headers, "sales", sheet.columnSamples);
+  const headerRow = detectHeaderRowIndex(salesRows, "monthly_product_profit");
+  const sheet = sheetRowsToRecords(salesRows, { reportType: "monthly_product_profit", headerRowIndex: headerRow });
+  const mapping = detectColumnMapping(sheet.headers, "monthly_product_profit", sheet.columnSamples);
   const mappedRows = applyColumnMapping(sheet.records, mapping);
 
   assert.equal(sheet.records.length, 1);
   assert.equal(sheet.headers[0], "Merchant ID");
   assert.equal(mapping.machine_identifier, "Machine code");
   assert.equal(mapping.product_identifier, "Product Number");
-  assert.equal(mapping.sold_qty, "Number of transaction");
-  assert.equal(mapping.total_sales_amount, "Transaction amount");
-  assert.deepEqual(requiredMissing(mapping, "sales"), []);
+  assert.equal(mapping.transaction_count, "Number of transaction");
+  assert.equal(mapping.transaction_amount, "Transaction amount");
+  assert.equal(mapping.cost_price, "Cost Price");
+  assert.equal(mapping.cost_amount, "Cost Amount");
+  assert.equal(mapping.profit_amount, "Profits");
+  assert.deepEqual(requiredMissing(mapping, "monthly_product_profit"), []);
   assert.equal(mappedRows[0].machine_identifier, "2510001719");
   assert.equal(mappedRows[0].product_identifier, "P001");
-  assert.equal(mappedRows[0].sold_qty, "10");
-  assert.equal(mappedRows[0].total_sales_amount, "25.00");
+  assert.equal(mappedRows[0].transaction_count, "10");
+  assert.equal(mappedRows[0].transaction_amount, "25.00");
+  assert.equal(mappedRows[0].cost_price, "1.20");
+  assert.equal(mappedRows[0].cost_amount, "12.00");
+  assert.equal(mappedRows[0].profit_amount, "13.00");
 });
 
 test("VMS sales source row key is stable for duplicate imports", () => {
@@ -156,7 +167,7 @@ test("VMS sales source row key is stable for duplicate imports", () => {
 
 test("VMS header signature identifies reusable report formats", () => {
   const signature = vmsHeaderSignature("sales", salesRows[1]);
-  assert.equal(signature, "sales:merchant_id|merchant_name|machine_code|machine_name|product_number|product_name|commodity_price|number_of_transaction|transaction_amount|refund_count|refund_amount");
+  assert.equal(signature, "sales:merchant_id|merchant_name|machine_code|machine_name|product_number|product_name|commodity_price|number_of_transaction|transaction_amount|refund_count|refund_amount|total_transaction|total_transaction_amount|cost_price|cost_amount|profits");
 });
 
 test("VMS order details auto-detects title row and duplicate commodity price headers", () => {
