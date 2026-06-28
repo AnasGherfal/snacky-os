@@ -9,6 +9,7 @@ import { lyd } from "@/lib/format";
 import { cleanSearchParams, getPagination, type SearchParamsRecord } from "@/lib/pagination";
 import { privateStorageObjectUrl } from "@/lib/storage-buckets";
 import { reprocessVmsImportBatch, updateVmsImportBatchState } from "@/lib/vms-import-actions";
+import { createVmsImportDuplicateContextMap, describeVmsImportBatchStatus, type VmsImportBatchStatus } from "@/lib/vms-import-status";
 import { vmsReportTypes } from "@/lib/vms-parser";
 import { extractVmsSchemaIssue } from "@/lib/vms-schema-diagnostics";
 import { batchUsageSummary } from "@/lib/vms-dashboard-source";
@@ -44,6 +45,7 @@ type VmsSourceRow = {
   disabled_at?: string | null;
   delete_reason?: string | null;
   disable_reason?: string | null;
+  file_hash?: string | null;
   source_usage?: unknown;
   dashboard_usage?: unknown;
   storage_bucket?: string | null;
@@ -86,6 +88,7 @@ const preferredBatchSelect = [
   "disabled_at",
   "delete_reason",
   "disable_reason",
+  "file_hash",
   "source_usage",
   "dashboard_usage",
   "storage_bucket",
@@ -116,6 +119,7 @@ const legacyBatchSelect = [
   "rows_found",
   "rows_imported",
   "error_count",
+  "file_hash",
   "notes",
 ].join(", ");
 
@@ -200,18 +204,39 @@ function SourceActions({
   batch,
   canManage,
   canFinalizeOrderDetailsFiles,
+  statusInfo,
   stockSnapshotRowCount,
   transactionRowCount,
 }: {
   batch: VmsSourceRow;
   canManage: boolean;
   canFinalizeOrderDetailsFiles: boolean;
+  statusInfo: VmsImportBatchStatus;
   stockSnapshotRowCount: number;
   transactionRowCount: number;
 }) {
   const originalFileUrl = batch.storage_bucket && batch.storage_path
     ? privateStorageObjectUrl(String(batch.storage_bucket), String(batch.storage_path))
     : null;
+
+  if (statusInfo.action === "view_existing" && statusInfo.relatedBatchId) {
+    return (
+      <div className="flex flex-wrap gap-2">
+        <Link href={`/vms-import/${batch.id}`} className="btn-secondary">View</Link>
+        <Link href={`/vms-import/${statusInfo.relatedBatchId}`} className="btn-primary">{statusInfo.actionLabel ?? "Open active copy"}</Link>
+      </div>
+    );
+  }
+
+  if (statusInfo.action === "review_mappings") {
+    return (
+      <div className="flex flex-wrap gap-2">
+        <Link href={`/vms-import/${batch.id}`} className="btn-secondary">View</Link>
+        <Link href="/vms-mappings?status=needs_review" className="btn-primary">{statusInfo.actionLabel ?? "Review mappings"}</Link>
+      </div>
+    );
+  }
+
   const isPreviewStockBatch = isMachineStockSnapshotImportType(batch.report_type ?? batch.source_type)
     && String(batch.status ?? "") === "previewed"
     && !batch.deleted_at;
@@ -248,7 +273,7 @@ function SourceActions({
               <input name="reason" placeholder="Reason" className="field-input h-9 w-40 text-xs" />
               <FormSubmitButton className="btn-secondary" pendingLabel="Disabling...">Disable</FormSubmitButton>
             </form>
-          ) : !isPreviewStockBatch && !genericRestoreBlockedByOrderDetailsFinalization ? (
+          ) : statusInfo.action === "restore" && !isPreviewStockBatch && !genericRestoreBlockedByOrderDetailsFinalization ? (
             <form action={updateVmsImportBatchState}>
               <input type="hidden" name="batch_id" value={batch.id} />
               <input type="hidden" name="action" value="restore" />
@@ -380,6 +405,8 @@ async function VmsDataSourcesPageContent({ searchParams }: { searchParams: Promi
     }
   }
 
+  const duplicateContexts = createVmsImportDuplicateContextMap(batches);
+
   return (
     <>
       <PageHeader
@@ -432,41 +459,56 @@ async function VmsDataSourcesPageContent({ searchParams }: { searchParams: Promi
           </div>
 
           <DataTable headers={["Active", "Status", "File", "Report type", "Date range / snapshot", "Rows", "Skipped dupes", "Needs review", "Used in dashboards/features", "Uploaded by", "Uploaded at", "Last error / warning", "Actions"]}>
-            {batches.map((batch) => (
-              <tr key={batch.id}>
-                <td><StatusBadge status={activeLabel(batch)} /></td>
-                <td><StatusBadge status={batch.status ?? "unknown"} /></td>
-                <td className="max-w-xs">
-                  <Link href={`/vms-import/${batch.id}`} className="link-secondary font-medium text-slate-900">{batch.original_file_name ?? batch.file_name ?? "-"}</Link>
-                  <div className="mt-1 text-xs text-slate-500">{batch.sheet_name ?? "-"} {batch.file_type ? `- ${String(batch.file_type).toUpperCase()}` : ""}</div>
-                </td>
-                <td>{reportLabel(batch.report_type ?? batch.source_type)}</td>
-                <td>{batchDateRange(batch)}</td>
-                <td className="text-sm">
-                  <div>Found: {batch.rows_found ?? batch.row_count ?? 0}</div>
-                  <div>Imported: {batch.rows_imported ?? 0}</div>
-                  {isMachineStockSnapshotImportType(batch.report_type ?? batch.source_type) && String(batch.status ?? "") === "previewed" && (stockSnapshotRowsByBatchId.get(batch.id) ?? 0) > 0 ? (
-                    <div className="text-xs text-emerald-700">Saved stock rows: {stockSnapshotRowsByBatchId.get(batch.id) ?? 0}</div>
-                  ) : null}
-                  {String(batch.report_type ?? batch.source_type) === "vms_order_details_weekly" && (transactionRowsByBatchId.get(batch.id) ?? 0) > 0 && !(isUsableImportStatus(batch.status) && batch.is_active !== false) ? (
-                    <div className="text-xs text-emerald-700">Saved transaction rows: {transactionRowsByBatchId.get(batch.id) ?? 0}</div>
-                  ) : null}
-                </td>
-                <td>{batch.rows_skipped_duplicate ?? 0}</td>
-                <td>{batch.rows_needing_review ?? 0}</td>
-                <td className="max-w-xs text-xs text-slate-600">{usageText(batch)}</td>
-                <td className="text-xs text-slate-600">{batch.uploaded_by ?? batch.imported_by ?? "-"}</td>
-                <td className="text-sm">
-                  <div>{formatDateTime(batch.uploaded_at ?? batch.imported_at)}</div>
-                  {batch.last_reprocessed_at ? <div className="text-xs text-slate-500">Reprocessed {batch.reprocess_count ?? 0}x</div> : null}
-                </td>
-                <td className="max-w-xs text-xs text-amber-700">
-                  {batch.latest_error || batch.last_error || batch.disable_reason || batch.delete_reason || "-"}
-                  <div className="mt-1 text-slate-500">Failed: {batch.failed_rows_count ?? 0} | Refunds: {batch.refunded_rows_count ?? 0}</div>
-                </td>
-                <td><SourceActions batch={batch} canManage={canManage} canFinalizeOrderDetailsFiles={canFinalizeOrderDetailsFiles} stockSnapshotRowCount={stockSnapshotRowsByBatchId.get(batch.id) ?? 0} transactionRowCount={transactionRowsByBatchId.get(batch.id) ?? 0} /></td>
-              </tr>
-            ))}
+            {batches.map((batch) => {
+              const statusInfo = describeVmsImportBatchStatus(batch, duplicateContexts.get(batch.id) ?? {});
+              return (
+                <tr key={batch.id}>
+                  <td><StatusBadge status={activeLabel(batch)} /></td>
+                  <td>
+                    <StatusBadge status={statusInfo.label} />
+                    <div className="mt-1 text-xs text-slate-500">{statusInfo.actionLabel ?? "No action needed"}</div>
+                  </td>
+                  <td className="max-w-xs">
+                    <Link href={`/vms-import/${batch.id}`} className="link-secondary font-medium text-slate-900">{batch.original_file_name ?? batch.file_name ?? "-"}</Link>
+                    <div className="mt-1 text-xs text-slate-500">{batch.sheet_name ?? "-"} {batch.file_type ? `- ${String(batch.file_type).toUpperCase()}` : ""}</div>
+                  </td>
+                  <td>{reportLabel(batch.report_type ?? batch.source_type)}</td>
+                  <td>{batchDateRange(batch)}</td>
+                  <td className="text-sm">
+                    <div>Found: {batch.rows_found ?? batch.row_count ?? 0}</div>
+                    <div>Imported: {batch.rows_imported ?? 0}</div>
+                    {isMachineStockSnapshotImportType(batch.report_type ?? batch.source_type) && String(batch.status ?? "") === "previewed" && (stockSnapshotRowsByBatchId.get(batch.id) ?? 0) > 0 ? (
+                      <div className="text-xs text-emerald-700">Saved stock rows: {stockSnapshotRowsByBatchId.get(batch.id) ?? 0}</div>
+                    ) : null}
+                    {String(batch.report_type ?? batch.source_type) === "vms_order_details_weekly" && (transactionRowsByBatchId.get(batch.id) ?? 0) > 0 && !(isUsableImportStatus(batch.status) && batch.is_active !== false) ? (
+                      <div className="text-xs text-emerald-700">Saved transaction rows: {transactionRowsByBatchId.get(batch.id) ?? 0}</div>
+                    ) : null}
+                  </td>
+                  <td>{batch.rows_skipped_duplicate ?? 0}</td>
+                  <td>{batch.rows_needing_review ?? 0}</td>
+                  <td className="max-w-xs text-xs text-slate-600">{usageText(batch)}</td>
+                  <td className="text-xs text-slate-600">{batch.uploaded_by ?? batch.imported_by ?? "-"}</td>
+                  <td className="text-sm">
+                    <div>{formatDateTime(batch.uploaded_at ?? batch.imported_at)}</div>
+                    {batch.last_reprocessed_at ? <div className="text-xs text-slate-500">Reprocessed {batch.reprocess_count ?? 0}x</div> : null}
+                  </td>
+                  <td className="max-w-xs text-xs text-amber-700">
+                    {statusInfo.reason}
+                    <div className="mt-1 text-slate-500">Failed: {batch.failed_rows_count ?? 0} | Refunds: {batch.refunded_rows_count ?? 0}</div>
+                  </td>
+                  <td>
+                    <SourceActions
+                      batch={batch}
+                      canManage={canManage}
+                      canFinalizeOrderDetailsFiles={canFinalizeOrderDetailsFiles}
+                      statusInfo={statusInfo}
+                      stockSnapshotRowCount={stockSnapshotRowsByBatchId.get(batch.id) ?? 0}
+                      transactionRowCount={transactionRowsByBatchId.get(batch.id) ?? 0}
+                    />
+                  </td>
+                </tr>
+              );
+            })}
           </DataTable>
           <PaginationControls basePath="/vms-import/sources" searchParams={paginationParams} page={page} pageSize={pageSize} totalCount={batchCount} itemLabel="VMS files" />
         </div>

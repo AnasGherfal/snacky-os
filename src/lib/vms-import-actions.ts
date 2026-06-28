@@ -4955,7 +4955,7 @@ export async function completeVmsImport(formData: FormData) {
   const resolvedReportStartDate = submittedReportStartDate ?? salesReportPeriod?.reportStartDate ?? null;
   const resolvedReportEndDate = submittedReportEndDate ?? salesReportPeriod?.reportEndDate ?? null;
   if (reportType === "monthly_product_profit" && (!resolvedReportStartDate || !resolvedReportEndDate)) {
-    errorRedirect("Select the report start and end date for the monthly commodity profit report.");
+    redirect(`/vms-import?error=${encodeURIComponent("Select the report start and end date for the monthly commodity profit report.")}`);
     return;
   }
 

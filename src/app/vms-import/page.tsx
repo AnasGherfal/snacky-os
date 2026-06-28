@@ -49,6 +49,10 @@ import {
   orderDetailsSuccessfulSalesAmount,
   orderDetailsTransactionStatus,
 } from "@/lib/vms-order-details";
+import {
+  createVmsImportDuplicateContextMap,
+  describeVmsImportBatchStatus,
+} from "@/lib/vms-import-status";
 import { extractVmsSchemaIssue, vmsSchemaIssueMessage } from "@/lib/vms-schema-diagnostics";
 
 export const dynamic = "force-dynamic";
@@ -1456,6 +1460,7 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
   });
 
   if (batchesError) pageIssues.push(loadIssueFromError("vms_import_batches.list", batchesError));
+  const duplicateContexts = createVmsImportDuplicateContextMap(batches as VmsBatchRow[]);
 
   let preview: VmsImportPreviewRow | null = null;
   let selectedPreviewNotice = "";
@@ -2273,10 +2278,18 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
           <EmptyState title={batchesError ? "Recent imports unavailable" : "No VMS reports imported yet."} body={batchesError ? "Upload is still available. Please contact admin if this keeps happening." : "Upload your first VMS report to start building sales KPIs."} />
         ) : (
           <>
-            <DataTable headers={["Status", "Active", "File name", "Report type", "Date range", "Used in", "Rows found", "Rows imported", "Duplicates", "Needs review", "Successful sales", "Failed rows", "Refunds", "Uploaded by", "Date", "Notes"]}>
-              {batches.map((batch) => (
+          <DataTable headers={["Status", "Active", "File name", "Report type", "Date range", "Used in", "Rows found", "Rows imported", "Duplicates", "Needs review", "Successful sales", "Failed rows", "Refunds", "Uploaded by", "Date", "Notes"]}>
+            {batches.map((batch) => {
+              const statusInfo = describeVmsImportBatchStatus(batch as VmsBatchRow, duplicateContexts.get(batch.id) ?? {});
+              const noteText = batch.delete_reason || batch.disable_reason || statusInfo.reason;
+              return (
                 <tr key={batch.id}>
-                  <td><Link href={`/vms-import/${batch.id}`}><StatusBadge status={batch.status} /></Link></td>
+                  <td>
+                    <Link href={`/vms-import/${batch.id}`}>
+                      <StatusBadge status={statusInfo.label} />
+                    </Link>
+                    <div className="mt-1 text-xs text-slate-500">{statusInfo.actionLabel ?? "No action needed"}</div>
+                  </td>
                   <td><StatusBadge status={activeLabel(batch)} /></td>
                   <td className="font-medium text-slate-900"><Link className="link-secondary" href={`/vms-import/${batch.id}`}>{batch.file_name ?? "-"}</Link></td>
                   <td>{reportLabel(batch.report_type ?? batch.source_type)}</td>
@@ -2291,10 +2304,11 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
                   <td>{isStockReportType(batch.report_type ?? batch.source_type) ? "N/A" : batch.refunded_rows_count ?? batchMetric(batch, "refundedRows", 0)}</td>
                   <td>{batch.uploaded_by || batch.imported_by ? importerById.get(String(batch.uploaded_by ?? batch.imported_by)) ?? "Unknown" : "-"}</td>
                   <td>{formatDateTime(batch.uploaded_at ?? batch.imported_at)}</td>
-                  <td className="max-w-xs text-xs text-slate-600">{batch.delete_reason || batch.disable_reason || (batch.report_type === "sales" ? "Reconciliation only" : batch.report_type === "monthly_product_profit" ? "Monthly profit source" : "-")}</td>
+                  <td className="max-w-xs text-xs text-slate-600">{noteText || (batch.report_type === "sales" ? "Reconciliation only" : batch.report_type === "monthly_product_profit" ? "Monthly profit source" : "-")}</td>
                 </tr>
-              ))}
-            </DataTable>
+              );
+            })}
+          </DataTable>
             <PaginationControls basePath="/vms-import" searchParams={paginationParams} page={page} pageSize={pageSize} totalCount={batchCount ?? 0} itemLabel="imports" />
           </>
         )}

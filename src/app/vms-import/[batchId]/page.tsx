@@ -8,6 +8,11 @@ import { canConfirmVmsImports, canViewVmsImports, getEffectivePermissions, isOwn
 import { reprocessVmsImportBatch, updateVmsImportBatchState } from "@/lib/vms-import-actions";
 import { parseReportType, vmsExpectedFields, vmsReportTypes } from "@/lib/vms-parser";
 import {
+  createVmsImportDuplicateContextMap,
+  describeVmsImportBatchStatus,
+  vmsImportReportTypeLabel,
+} from "@/lib/vms-import-status";
+import {
   VMS_IMPORT_PIPELINE_RELATIONS,
   extractVmsSchemaIssue,
   vmsSchemaIssueMessage,
@@ -481,6 +486,23 @@ async function VmsImportBatchDetailPageContent({
 
   const rows = loadedImport.rows;
   const rowsLoadError = loadedImport.errors.find((issue) => issue.loader === "vms_import_rows.for_batch")?.error ?? null;
+  let duplicateSiblingRows: VmsImportBatchRow[] = [];
+  if (stringValue(batch.file_hash)) {
+    try {
+      const siblingResult = await supabase
+        .from("vms_import_batches")
+        .select("id, file_name, original_file_name, file_hash, status, is_active, deleted_at, report_type, uploaded_at, imported_at, rows_found, row_count, rows_imported, rows_needing_review, disabled_at, disable_reason, delete_reason")
+        .eq("file_hash", stringValue(batch.file_hash))
+        .neq("id", String(batch.id));
+      if (!siblingResult.error) {
+        duplicateSiblingRows = (siblingResult.data ?? []) as VmsImportBatchRow[];
+      }
+    } catch {
+      duplicateSiblingRows = [];
+    }
+  }
+  const duplicateContext = createVmsImportDuplicateContextMap([batch as VmsImportBatchRow, ...duplicateSiblingRows]);
+  const statusInfo = describeVmsImportBatchStatus(batch as VmsImportBatchRow, duplicateContext.get(String(batch.id)) ?? {});
 
   let importer: { id: string; full_name: string | null } | null = null;
   if (batch.uploaded_by ?? batch.imported_by) {
@@ -590,7 +612,8 @@ async function VmsImportBatchDetailPageContent({
             ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <StatusBadge status={stringValue(batch.status)} />
+            <StatusBadge status={statusInfo.label} />
+            <span className="text-sm text-slate-500">{statusInfo.actionLabel ?? "No action needed"}</span>
             {needsMappingRows.length ? <Link href="/vms-mappings?status=needs_review" className="btn-secondary">Review product mappings</Link> : null}
             {canFinalizePreviewStockBatch || canFinalizeOrderDetailsBatch ? (
               <form action={updateVmsImportBatchState}>
@@ -759,8 +782,8 @@ async function VmsImportBatchDetailPageContent({
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard label="Batch id" value={String(batch.id)} />
           <StatCard label="File name" value={textValue(batch.file_name)} />
-          <StatCard label="Report type" value={reportLabel(stringValue(batch.report_type) || stringValue(batch.source_type))} />
-          <StatCard label="Status" value={textValue(batch.status)} />
+          <StatCard label="Report type" value={vmsImportReportTypeLabel(stringValue(batch.report_type) || stringValue(batch.source_type))} />
+          <StatCard label="Status" value={statusInfo.label} />
           <StatCard label="Active" value={isUsableImportStatus(stringValue(batch.status)) && batch.is_active !== false && !batch.deleted_at ? "Yes" : "No"} />
           <StatCard label="Rows found" value={numberValue(batch.rows_found ?? batch.row_count)} />
           <StatCard label="Rows imported" value={numberValue(batch.rows_imported)} />

@@ -26,6 +26,7 @@ import {
   type SalesDashboardBreakdownRow,
   type SalesDashboardSearchParams,
 } from "@/lib/sales-dashboard";
+import { salesDashboardSourceLabel } from "@/lib/sales-coverage";
 import {
   batchLastUpdatedAt,
   formatVmsDateTime,
@@ -901,7 +902,6 @@ async function SalesDashboardPageContent({
   const coverageAwareBatches = applySalesBatchCoverage(batches, fullReconciliationByBatchId);
   const selectedRange = resolveSalesDashboardRange(params, coverageAwareBatches, renderedAt);
   const selectedRangeLabel = formatSalesRangeLabel(selectedRange);
-  const compactRangeLabel = `${selectedRange.start} to ${selectedRange.end}`;
   const monthlyFiles = batches.filter((batch) => batch.report_type === "monthly_product_profit");
   const activeMonthlyFiles = monthlyFiles.filter(isActiveImportedVmsBatch);
   const useMonthlySource = salesDashboardPrefersMonthlyProfitSource(selectedRange) && activeMonthlyFiles.length > 0;
@@ -1300,20 +1300,6 @@ async function SalesDashboardPageContent({
   const finalizedCoverageLabel = coverageSummary.earliestBusinessDate && coverageSummary.latestBusinessDate
     ? `${coverageSummary.earliestBusinessDate} to ${coverageSummary.latestBusinessDate}`
     : "-";
-  const sourceStatusText = contributingFiles.length
-    ? missingPeriods.length
-      ? `${formatInteger(contributingFiles.length)} finalized ${sourceMode === "monthly" ? "monthly profit" : "detailed"} file(s) contributing, with coverage gaps in this range`
-      : `${formatInteger(contributingFiles.length)} finalized ${sourceMode === "monthly" ? "monthly profit" : "detailed"} file(s) contributing`
-    : activePrimaryFiles.length
-      ? `No finalized ${sourceMode === "monthly" ? "monthly profit" : "detailed"} files overlap the selected business-date range.`
-      : sourceMode === "monthly"
-        ? "Waiting for finalized monthly profit files"
-        : "Waiting for finalized detailed Order Details files";
-  const paymentMethodText = summary.paymentMethodAvailable
-    ? "Cash and card split is available for this range."
-    : sourceMode === "monthly"
-      ? "Payment method split is not available for monthly profit reports."
-      : "Payment method split is not available for this range.";
   const summaryLoadFailed = Boolean(salesSummaryResult.error);
   const sourceLoadFailed = Boolean(
     batchResult.error
@@ -1330,6 +1316,20 @@ async function SalesDashboardPageContent({
       || locationProfitResult.error
       || monthlyCoverageResult.error,
   );
+  const sourceStatusText = contributingFiles.length
+    ? missingPeriods.length
+      ? `${formatInteger(contributingFiles.length)} finalized ${sourceMode === "monthly" ? "monthly profit" : "detailed"} file(s) contributing, with coverage gaps in this range`
+      : `${formatInteger(contributingFiles.length)} finalized ${sourceMode === "monthly" ? "monthly profit" : "detailed"} file(s) contributing`
+    : activePrimaryFiles.length
+      ? `No finalized ${sourceMode === "monthly" ? "monthly profit" : "detailed"} files overlap the selected business-date range.`
+      : sourceMode === "monthly"
+        ? "Waiting for finalized monthly profit files"
+        : "Waiting for finalized detailed Order Details files";
+  const paymentMethodText = summary.paymentMethodAvailable
+    ? "Cash and card split is available for this range."
+    : sourceMode === "monthly"
+      ? "Payment method split is not available for monthly profit reports."
+      : "Payment method split is not available for this range.";
   const hasSalesRows = summary.successfulSalesCount > 0 || trendRows.length > 0;
   const hasProfitWarning = canViewProfit && (summary.missingCostRevenueAmount > 0 || summary.estimatedCostRevenueAmount > 0);
   const noSalesState = buildNoSalesState({
@@ -1341,6 +1341,25 @@ async function SalesDashboardPageContent({
     sourceMode,
     selectedRange,
   });
+  const dataStatusText = summaryLoadFailed || sourceLoadFailed
+    ? "Needs attention"
+    : !hasSalesRows
+      ? "Missing"
+      : missingPeriods.length || noSalesState.kind === "inactive_batch" || noSalesState.kind === "missing_business_date" || noSalesState.kind === "status_filtered"
+        ? "Partial"
+        : "Ready";
+  const dataStatusReason = summaryLoadFailed || sourceLoadFailed
+    ? "One or more source queries failed to load."
+    : !hasSalesRows
+      ? noSalesState.body
+      : missingPeriods.length
+        ? `${formatInteger(missingPeriods.length)} coverage gap(s) remain in the selected range.`
+        : sourceStatusText;
+  const dataStatusToneClass = dataStatusText === "Ready"
+    ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+    : dataStatusText === "Partial"
+      ? "border-amber-200 bg-amber-50 text-amber-900"
+      : "border-rose-200 bg-rose-50 text-rose-900";
   const finalizableInactiveFiles = fileContributions.filter((row) => salesContributionNeedsFinalization(row, selectedRange));
   const pageSubtitle = sourceMode === "monthly"
     ? "Monthly commodity profit reports power the sales dashboard for month, year, and all-time ranges."
@@ -1363,16 +1382,35 @@ async function SalesDashboardPageContent({
 
       <div className="space-y-6">
         <section className="surface-card space-y-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div className="space-y-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-full bg-slate-900 px-3 py-1.5 text-sm font-medium text-white">{compactRangeLabel}</span>
-                <span className="text-sm text-slate-500">Updated {formatVmsDateTime(lastUpdatedAt)}</span>
-              </div>
-              <div className="text-sm text-slate-500">{sourceStatusText}</div>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Selected range</div>
+              <div className="mt-2 text-base font-semibold text-slate-900">{selectedRangeLabel}</div>
+              <div className="mt-1 text-sm leading-6 text-slate-500">{selectedRange.helperText}</div>
             </div>
+            <div className={`rounded-2xl border p-4 ${dataStatusToneClass}`}>
+              <div className="text-xs font-semibold uppercase tracking-wide">Data status</div>
+              <div className="mt-2 text-base font-semibold">{dataStatusText}</div>
+              <div className="mt-1 text-sm leading-6 opacity-90">{dataStatusReason}</div>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Source used</div>
+              <div className="mt-2 text-base font-semibold text-slate-900">{salesDashboardSourceLabel(sourceMode)}</div>
+              <div className="mt-1 text-sm leading-6 text-slate-500">{sourceStatusText}</div>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Last updated</div>
+              <div className="mt-2 text-base font-semibold text-slate-900">{formatVmsDateTime(lastUpdatedAt)}</div>
+              <div className="mt-1 text-sm leading-6 text-slate-500">Latest imported or updated source batch.</div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Link href="/reports/sales-coverage" className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900">
+              Open coverage page
+            </Link>
             <Link href="#data-sources" className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900">
-              Data sources
+              Coverage details
             </Link>
           </div>
 
@@ -1664,11 +1702,11 @@ async function SalesDashboardPageContent({
         )}
 
         <details id="data-sources" className="surface-card">
-          <summary className="cursor-pointer text-base font-semibold text-slate-900">Data sources and coverage</summary>
+          <summary className="cursor-pointer text-base font-semibold text-slate-900">Coverage details</summary>
           <div className="mt-4 space-y-4">
             {sourceLoadFailed ? (
               <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900">
-                Data source details could not load completely. Please contact admin if this keeps happening.
+                Some coverage details could not load completely. Ask an admin if the issue keeps happening.
               </div>
             ) : null}
 
