@@ -750,17 +750,16 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
     });
 
     return (
-      <>
-        <PageHeader
-          title="VMS Import"
-          subtitle="Three-step import: upload and detect, review mapping, confirm import."
-        />
-        <div className="mb-6"><UploadCard /></div>
-        <InlineLoadIssue title="VMS import page recovered from a server render error" issue={issue} />
-        {isOwnerAdminRole(profile) ? (
-          <AdminDiagnosticsPanel canView issues={[issue]} currentUserId={profile?.id ?? null} effectivePermissions={effectivePermissions} />
-        ) : null}
-      </>
+      <ErrorState
+        title="Something did not load"
+        body="Snacky OS hit an unexpected error while loading VMS Import. Please try again or return to the dashboard."
+        action={
+          <>
+            <Link href="/vms-import" className="btn-primary">Try again</Link>
+            <Link href="/dashboard" className="btn-secondary">Back to dashboard</Link>
+          </>
+        }
+      />
     );
   }
 }
