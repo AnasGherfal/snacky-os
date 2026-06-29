@@ -6,7 +6,7 @@ import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from 
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { QuantityStepper } from "@/components/QuantityStepper";
 import { EmptyState, ErrorState, LoadingState, PageHeader, SecondaryButton } from "@/components/ui";
-import { markStopInProgress, uploadRefillProofPhoto } from "@/lib/operator-actions";
+import { markStopInProgress, uploadInventoryAdjustmentPhoto, uploadRefillProofPhoto } from "@/lib/operator-actions";
 import { ROUTE_STOP_COMPLETED_STATUS, ROUTE_STOP_IN_PROGRESS_STATUS, ROUTE_STOP_PICKED_STATUS } from "@/lib/route-workflow";
 
 const STOP_REQUEST_TIMEOUT_MS = 45_000;
@@ -21,6 +21,26 @@ const reasonOptions = [
   "Machine slot changed",
   "Product expired/damaged",
   "Customer demand",
+  "Other",
+];
+
+const damagedReasonOptions = [
+  "Damaged during transport",
+  "Broken / opened",
+  "Melted / heat damage",
+  "Expired",
+  "Customer returned damaged",
+  "Machine issue damaged product",
+  "Other",
+];
+
+const returnedReasonOptions = [
+  "Product replaced",
+  "Slow moving item removed",
+  "Expired soon",
+  "Wrong product in slot",
+  "Machine reset / re-layout",
+  "Customer complaint",
   "Other",
 ];
 
@@ -48,6 +68,20 @@ interface ProductOption {
   brand: string | null;
   imageUrl?: string | null;
   availableQty: number;
+  sourceLabel?: string | null;
+}
+
+interface InventoryAdjustmentRow {
+  id: string;
+  adjustmentType: "damaged" | "returned_from_machine" | string;
+  productId: string | null;
+  productName: string;
+  quantity: number;
+  reason: string;
+  notes: string;
+  photoUrl: string | null;
+  status: string;
+  createdAt: string | null;
 }
 
 interface StopData {
@@ -62,6 +96,8 @@ interface StopData {
   refillItems: StopRefillItem[];
   extraItems?: ExtraProductLine[];
   productOptions: ProductOption[];
+  machineProductOptions?: ProductOption[];
+  adjustments?: InventoryAdjustmentRow[];
   hasCompletionPhoto?: boolean;
   debug?: StopDebugDetails;
 }
@@ -116,6 +152,12 @@ type StopDraft = {
 
 function newClientId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function adjustmentSubmitErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (typeof error === "string" && error.trim()) return error;
+  return "Could not save inventory adjustment.";
 }
 
 type ApiResponsePayload = {
@@ -518,16 +560,17 @@ export default function MachineStopPage() {
   }, [filledQtys, missingReports, stopData, unavailableProducts]);
   const stopExecutionSummary = useMemo(() => {
     if (!stopData) {
-      return {
-        assignedUnits: 0,
-        filledUnits: 0,
-        shortageUnits: 0,
-        extraUnits: 0,
-        unavailableCount: 0,
-        missingReportCount: 0,
-        proofReady: false,
-      };
-    }
+    return {
+      assignedUnits: 0,
+      filledUnits: 0,
+      shortageUnits: 0,
+      extraUnits: 0,
+      unavailableCount: 0,
+      missingReportCount: 0,
+      adjustmentCount: 0,
+      proofReady: false,
+    };
+  }
 
     const assignedSummary = stopData.refillItems.reduce(
       (summary, item) => {
@@ -546,6 +589,7 @@ export default function MachineStopPage() {
       ...assignedSummary,
       extraUnits: extraProducts.reduce((sum, item) => sum + Math.max(0, Number(item.quantity ?? 0)), 0),
       missingReportCount: missingReports.filter((item) => item.productName.trim()).length,
+      adjustmentCount: stopData.adjustments?.length ?? 0,
       proofReady: Boolean(finalPhotoFile || stopData.hasCompletionPhoto),
     };
   }, [extraProducts, filledQtys, finalPhotoFile, missingReports, stopData, unavailableProducts]);
@@ -854,6 +898,7 @@ export default function MachineStopPage() {
           <Metric label="Filled now" value={stopExecutionSummary.filledUnits} />
           <Metric label="Shortage to explain" value={stopExecutionSummary.shortageUnits} tone={stopExecutionSummary.shortageUnits > 0 ? "warn" : "neutral"} />
           <Metric label="Extra units added" value={stopExecutionSummary.extraUnits} />
+          <Metric label="Inventory adjustments" value={stopExecutionSummary.adjustmentCount} />
           <Metric label="Proof photo" value={stopExecutionSummary.proofReady ? "Ready" : "Needed"} tone={stopExecutionSummary.proofReady ? "neutral" : "warn"} />
         </section>
 
@@ -984,6 +1029,22 @@ export default function MachineStopPage() {
             ) : null}
           </div>
         </section>
+
+        <InventoryAdjustmentsSection
+          routeId={routeId}
+          stopId={stopId}
+          machineId={stopData.machineId}
+          machineName={stopData.machineName}
+          machineCode={stopData.machineCode}
+          machineProducts={stopData.machineProductOptions ?? stopData.productOptions}
+          allProducts={stopData.productOptions}
+          adjustments={stopData.adjustments ?? []}
+          onSaved={(adjustment) => {
+            setStopData((current) => current
+              ? { ...current, adjustments: [adjustment, ...(current.adjustments ?? [])] }
+              : current);
+          }}
+        />
 
         <CashAndIssueSections
           cashCollected={cashCollected}
@@ -1152,12 +1213,12 @@ function QuantityInput({ value, max, onChange }: { value: number; max: number; o
   );
 }
 
-function ReasonSelect({ value, onChange }: { value: string; onChange: (reason: string) => void }) {
+function ReasonSelect({ value, onChange, options = reasonOptions }: { value: string; onChange: (reason: string) => void; options?: string[] }) {
   return (
     <label className="block">
       <span className="mb-1 block text-sm font-medium text-slate-800">Reason</span>
       <select value={value} onChange={(event) => onChange(event.target.value)} className="field-input">
-        {reasonOptions.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
+        {options.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
       </select>
     </label>
   );
@@ -1246,5 +1307,365 @@ function CashAndIssueSections({
         </div>
       </section>
     </>
+  );
+}
+
+function InventoryAdjustmentsSection({
+  routeId,
+  stopId,
+  machineId,
+  machineName,
+  machineCode,
+  machineProducts,
+  allProducts,
+  adjustments,
+  onSaved,
+}: {
+  routeId: string;
+  stopId: string;
+  machineId: string;
+  machineName: string;
+  machineCode: string;
+  machineProducts: ProductOption[];
+  allProducts: ProductOption[];
+  adjustments: InventoryAdjustmentRow[];
+  onSaved: (adjustment: InventoryAdjustmentRow) => void;
+}) {
+  const damagedAdjustments = adjustments.filter((adjustment) => adjustment.adjustmentType === "damaged");
+  const returnedAdjustments = adjustments.filter((adjustment) => adjustment.adjustmentType === "returned_from_machine");
+  const damagedQuantity = damagedAdjustments.reduce((sum, adjustment) => sum + Number(adjustment.quantity ?? 0), 0);
+  const returnedQuantity = returnedAdjustments.reduce((sum, adjustment) => sum + Number(adjustment.quantity ?? 0), 0);
+
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold">Inventory adjustments</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Record damaged products and products returned from this machine without leaving the stop screen.
+          </p>
+          <p className="mt-2 text-xs text-slate-500">
+            Machine: <span className="font-medium text-slate-700">{machineName}</span> {machineCode ? `(${machineCode})` : ""}.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        <Metric label="Damaged units" value={damagedQuantity} tone={damagedQuantity > 0 ? "warn" : "neutral"} />
+        <Metric label="Returned units" value={returnedQuantity} tone={returnedQuantity > 0 ? "neutral" : "neutral"} />
+        <Metric label="Adjustment rows" value={adjustments.length} />
+      </div>
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-2">
+        <InventoryAdjustmentForm
+          adjustmentType="damaged"
+          title="Add damaged product"
+          description="Record items that broke, expired, melted, or cannot be sold."
+          routeId={routeId}
+          stopId={stopId}
+          machineId={machineId}
+          machineProducts={machineProducts}
+          allProducts={allProducts}
+          reasonOptions={damagedReasonOptions}
+          submitLabel="Save damaged product"
+          onSaved={onSaved}
+        />
+        <InventoryAdjustmentForm
+          adjustmentType="returned_from_machine"
+          title="Add returned product"
+          description="Record products removed from the machine and brought back."
+          routeId={routeId}
+          stopId={stopId}
+          machineId={machineId}
+          machineProducts={machineProducts}
+          allProducts={allProducts}
+          reasonOptions={returnedReasonOptions}
+          submitLabel="Save returned product"
+          onSaved={onSaved}
+        />
+      </div>
+
+      <div className="mt-6">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <div>
+            <h3 className="text-base font-semibold text-slate-900">Recent adjustments</h3>
+            <p className="text-sm text-slate-500">Saved adjustments for this stop appear here immediately.</p>
+          </div>
+          <StatusBadge status={adjustments.length ? "confirmed" : "pending"} />
+        </div>
+        {adjustments.length ? (
+          <div className="space-y-3">
+            {adjustments.map((adjustment) => (
+              <article key={adjustment.id} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <StatusBadge status={adjustment.adjustmentType} />
+                      <span className="text-sm font-semibold text-slate-900">{adjustment.productName}</span>
+                      <span className="text-sm text-slate-500">x{adjustment.quantity}</span>
+                    </div>
+                    <p className="mt-1 text-sm text-slate-600">{adjustment.reason}</p>
+                    {adjustment.notes ? <p className="mt-1 text-sm text-slate-500">{adjustment.notes}</p> : null}
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    {adjustment.createdAt ? new Date(adjustment.createdAt).toLocaleString("en-US") : "Just now"}
+                    {adjustment.photoUrl ? <div className="mt-1 font-medium text-emerald-700">Photo attached</div> : null}
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">
+            No damaged or returned items have been recorded for this stop yet.
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function InventoryAdjustmentForm({
+  adjustmentType,
+  title,
+  description,
+  routeId,
+  stopId,
+  machineId,
+  machineProducts,
+  allProducts,
+  reasonOptions,
+  submitLabel,
+  onSaved,
+}: {
+  adjustmentType: "damaged" | "returned_from_machine";
+  title: string;
+  description: string;
+  routeId: string;
+  stopId: string;
+  machineId: string;
+  machineProducts: ProductOption[];
+  allProducts: ProductOption[];
+  reasonOptions: string[];
+  submitLabel: string;
+  onSaved: (adjustment: InventoryAdjustmentRow) => void;
+}) {
+  const [sourceMode, setSourceMode] = useState<"machine" | "all">("machine");
+  const [productId, setProductId] = useState("");
+  const [quantity, setQuantity] = useState(1);
+  const [reason, setReason] = useState(reasonOptions[0] ?? "Other");
+  const [notes, setNotes] = useState("");
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [photoInputKey, setPhotoInputKey] = useState(() => newClientId());
+  const submissionIdRef = useRef(newClientId());
+  const productChoices = sourceMode === "machine" ? machineProducts : allProducts;
+  const selectedProduct = allProducts.find((product) => product.id === productId) ?? machineProducts.find((product) => product.id === productId) ?? null;
+
+  useEffect(() => {
+    if (!reasonOptions.includes(reason)) {
+      setReason(reasonOptions[0] ?? "Other");
+    }
+  }, [reason, reasonOptions]);
+
+  async function handleSave() {
+    if (!productId) {
+      setError("Choose a product first.");
+      return;
+    }
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setError("Quantity must be greater than 0.");
+      return;
+    }
+    if (!reason) {
+      setError("Choose a reason.");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    setSuccess("");
+    try {
+      let photoUrl: string | null = null;
+      let photoSaved = false;
+      if (photoFile) {
+        const photoFormData = new FormData();
+        photoFormData.append("routeId", routeId);
+        photoFormData.append("stopId", stopId);
+        photoFormData.append("machineId", machineId);
+        photoFormData.append("adjustmentType", adjustmentType);
+        photoFormData.append("photo", photoFile);
+        const uploaded = await uploadInventoryAdjustmentPhoto(photoFormData);
+        photoUrl = uploaded.photoUrl ?? null;
+        photoSaved = !uploaded.uploadUnavailable && Boolean(photoUrl);
+      }
+
+      const clientSubmissionId = submissionIdRef.current;
+      const response = await fetchWithTimeout(`/api/operator/routes/${routeId}/stops/${stopId}/adjustments`, {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          adjustmentId: clientSubmissionId,
+          adjustmentType,
+          productId,
+          machineId,
+          quantity,
+          reason,
+          notes: notes.trim(),
+          photoUrl,
+          clientSubmissionId,
+        }),
+      });
+      const parsed = await readServerResponse(response, {
+        operation: "operator_route_adjustment_save",
+        route_id: routeId,
+        route_stop_id: stopId,
+        machine_id: machineId,
+        adjustment_type: adjustmentType,
+        client_submission_id: clientSubmissionId,
+      });
+
+      if (!response.ok || parsed.payload?.success === false || !parsed.payload) {
+        throw new Error(responseMessage(parsed.payload) || "Could not save inventory adjustment.");
+      }
+
+      const saved = parsed.payload.adjustment as Record<string, unknown> | undefined;
+      if (!saved) {
+        throw new Error("The adjustment was saved, but no row was returned.");
+      }
+
+      const savedAdjustment: InventoryAdjustmentRow = {
+        id: String(saved.id ?? clientSubmissionId),
+        adjustmentType: String(saved.adjustment_type ?? adjustmentType),
+        productId: saved.product_id ? String(saved.product_id) : productId,
+        productName: saved.product_name ? String(saved.product_name) : (selectedProduct?.name ?? "Unknown product"),
+        quantity: Number(saved.quantity ?? quantity),
+        reason: saved.reason ? String(saved.reason) : reason,
+        notes: saved.notes ? String(saved.notes) : notes.trim(),
+        photoUrl: typeof saved.photo_url === "string" ? saved.photo_url : photoUrl,
+        status: saved.status ? String(saved.status) : "confirmed",
+        createdAt: typeof saved.created_at === "string" ? saved.created_at : new Date().toISOString(),
+      };
+
+      onSaved(savedAdjustment);
+      submissionIdRef.current = newClientId();
+      setProductId("");
+      setQuantity(1);
+      setReason(reasonOptions[0] ?? "Other");
+      setNotes("");
+      setPhotoFile(null);
+      setPhotoInputKey(newClientId());
+      setSuccess(
+        adjustmentType === "damaged"
+          ? photoSaved
+            ? "Damaged product saved with a photo."
+            : "Damaged product saved."
+          : photoSaved
+            ? "Returned product saved with a photo."
+            : "Returned product saved.",
+      );
+    } catch (err) {
+      setError(adjustmentSubmitErrorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <article className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+      <div className="space-y-2">
+        <h3 className="text-base font-semibold text-slate-900">{title}</h3>
+        <p className="text-sm leading-6 text-slate-500">{description}</p>
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => setSourceMode("machine")}
+          className={sourceMode === "machine" ? "btn-primary" : "btn-secondary"}
+        >
+          Machine products
+        </button>
+        <button
+          type="button"
+          onClick={() => setSourceMode("all")}
+          className={sourceMode === "all" ? "btn-primary" : "btn-secondary"}
+        >
+          Search all products
+        </button>
+      </div>
+
+      <div className="mt-4">
+        <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800">
+          {sourceMode === "machine"
+            ? "Showing products already linked to this machine first."
+            : "Search the full product catalog if the item is not in this machine list."}
+        </div>
+      </div>
+
+      <div className="mt-4 space-y-4">
+        <ProductPicker
+          key={`${adjustmentType}-${sourceMode}`}
+          products={productChoices}
+          value={productId}
+          onChange={setProductId}
+          label={sourceMode === "machine" ? "Machine products" : "Search all products"}
+        />
+
+        <div className="grid gap-4 md:grid-cols-[160px_1fr]">
+          <QuantityInput value={quantity} max={999} onChange={setQuantity} />
+          <ReasonSelect value={reason} onChange={setReason} options={reasonOptions} />
+        </div>
+
+        <label className="block">
+          <span className="mb-1 block text-sm font-medium text-slate-800">Notes</span>
+          <textarea
+            value={notes}
+            onChange={(event) => setNotes(event.target.value)}
+            className="field-input"
+            rows={3}
+            placeholder="Optional context about this adjustment"
+          />
+        </label>
+
+        <label className="block">
+          <span className="mb-1 block text-sm font-medium text-slate-800">Photo</span>
+          <input
+            key={photoInputKey}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={(event) => setPhotoFile(event.target.files?.[0] ?? null)}
+            className="field-input"
+          />
+          <span className="mt-1 block text-xs text-slate-500">Optional. Use a photo if the item is damaged or the return needs proof.</span>
+        </label>
+
+        {selectedProduct ? (
+          <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+            Selected: <span className="font-medium text-slate-900">{selectedProduct.name}</span>
+            {selectedProduct.sku ? <span className="text-slate-500"> - {selectedProduct.sku}</span> : null}
+          </div>
+        ) : null}
+
+        {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-800">{error}</div> : null}
+        {success ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-medium text-emerald-900">{success}</div> : null}
+
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving}
+          className="btn-primary w-full disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {saving ? "Saving..." : submitLabel}
+        </button>
+      </div>
+    </article>
   );
 }

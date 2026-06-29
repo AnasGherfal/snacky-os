@@ -15,6 +15,7 @@ const movementReasons = [
   "storage_to_operator_bag",
   "operator_bag_to_machine",
   "operator_bag_to_storage",
+  "returned_from_machine",
   "machine_to_storage",
   "damaged",
   "expired",

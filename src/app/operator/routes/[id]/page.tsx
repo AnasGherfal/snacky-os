@@ -31,6 +31,20 @@ type OperatorRouteStockLineRow = {
   product?: { name?: string | null; category?: string | null } | null;
 };
 
+type OperatorRouteAdjustmentRow = {
+  id: string;
+  adjustment_type?: string | null;
+  product_name?: string | null;
+  quantity?: number | string | null;
+  reason?: string | null;
+  notes?: string | null;
+  photo_url?: string | null;
+  status?: string | null;
+  created_at?: string | null;
+  machine_id?: string | null;
+  route_stop_id?: string | null;
+};
+
 const OPERATOR_ROUTE_BASE_SELECT = "id, route_date, status, operator_id, started_at, completed_at, created_at, notes";
 
 function errorSummary(error: unknown) {
@@ -161,7 +175,7 @@ export default async function OperatorRouteDetailPage({
     });
   }
 
-  const [{ data: operator }, { data: stops, error: stopsError }, { data: routeStock }] = await Promise.all([
+  const [{ data: operator }, { data: stops, error: stopsError }, { data: routeStock }, { data: routeAdjustments, error: adjustmentsError }] = await Promise.all([
     routeRow.operator_id
       ? routeReadClient.from("team_members").select("id, full_name").eq("id", routeRow.operator_id).maybeSingle()
       : Promise.resolve({ data: null }),
@@ -174,8 +188,15 @@ export default async function OperatorRouteDetailPage({
       .from("route_stock_lines")
       .select("id, product_id, planned_qty, picked_qty, returned_qty, product:products(name, category)")
       .eq("route_id", routeId),
+    routeReadClient
+      .from("inventory_adjustments")
+      .select("id, adjustment_type, product_name, quantity, reason, notes, photo_url, status, created_at, machine_id, route_stop_id")
+      .eq("route_id", routeId)
+      .neq("status", "cancelled")
+      .order("created_at", { ascending: false }),
   ]);
   if (stopsError) console.error("[operator:route] Failed to load stops", { routeId, error: stopsError });
+  if (adjustmentsError) console.error("[operator:route] Failed to load route adjustments", { routeId, error: adjustmentsError });
 
   if (!canAccess) {
     console.error("[operator:route] Route access denied by app permission check", {
@@ -208,6 +229,11 @@ export default async function OperatorRouteDetailPage({
     ? await routeReadClient.from("machines").select("id, name, machine_code").in("id", machineIds)
     : { data: [] };
   const machineById = new Map(((machines ?? []) as OperatorRouteMachineRow[]).map((machine) => [machine.id, machine]));
+  const adjustmentRows = (routeAdjustments ?? []) as OperatorRouteAdjustmentRow[];
+  const damagedAdjustmentRows = adjustmentRows.filter((adjustment) => adjustment.adjustment_type === "damaged");
+  const returnedAdjustmentRows = adjustmentRows.filter((adjustment) => adjustment.adjustment_type === "returned_from_machine");
+  const damagedAdjustmentQty = damagedAdjustmentRows.reduce((sum, adjustment) => sum + Number(adjustment.quantity ?? 0), 0);
+  const returnedAdjustmentQty = returnedAdjustmentRows.reduce((sum, adjustment) => sum + Number(adjustment.quantity ?? 0), 0);
   const doneStops = routeStops.filter((s) => isRouteStopDoneStatus(s.status)).length;
   const totalStops = routeStops.length;
   const pickItems = (routeStock ?? []) as OperatorRouteStockLineRow[];
@@ -280,6 +306,58 @@ export default async function OperatorRouteDetailPage({
             </div>
           </SectionCard>
         </div>
+
+        {adjustmentRows.length ? (
+          <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold">Inventory adjustments</h2>
+                <p className="mt-1 text-sm text-slate-500">Damaged products and products returned from the machine are recorded here.</p>
+              </div>
+              <StatusBadge status={damagedAdjustmentRows.length ? "damaged" : "returned_from_machine"} />
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">Damaged units</div>
+                <div className="mt-1 text-2xl font-semibold text-amber-950">{damagedAdjustmentQty}</div>
+              </div>
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-emerald-800">Returned units</div>
+                <div className="mt-1 text-2xl font-semibold text-emerald-950">{returnedAdjustmentQty}</div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Adjustment rows</div>
+                <div className="mt-1 text-2xl font-semibold text-slate-900">{adjustmentRows.length}</div>
+              </div>
+            </div>
+            <div className="mt-4 space-y-3">
+              {adjustmentRows.map((adjustment) => (
+                <article key={adjustment.id} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <StatusBadge status={adjustment.adjustment_type} />
+                        <span className="font-semibold text-slate-900">{adjustment.product_name ?? "Unknown product"}</span>
+                        <span className="text-sm text-slate-500">x{adjustment.quantity ?? 0}</span>
+                      </div>
+                      <p className="mt-1 text-sm text-slate-600">{adjustment.reason ?? "No reason added"}</p>
+                      {adjustment.notes ? <p className="mt-1 text-sm text-slate-500">{adjustment.notes}</p> : null}
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      <div>{adjustment.created_at ? new Date(adjustment.created_at).toLocaleString("en-US") : "-"}</div>
+                      <div className="mt-1 font-medium text-slate-700">{machineById.get(adjustment.machine_id ?? "")?.name ?? "Unknown machine"}</div>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : (
+          <section className="rounded-lg border border-dashed border-slate-300 bg-white p-4 md:p-6">
+            <h2 className="text-lg font-semibold text-slate-900">Inventory adjustments</h2>
+            <p className="mt-1 text-sm text-slate-500">No damaged or returned products have been recorded for this route yet.</p>
+          </section>
+        )}
 
         {/* Pick List Section */}
         <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">

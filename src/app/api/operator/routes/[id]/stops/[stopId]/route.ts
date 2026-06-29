@@ -61,6 +61,20 @@ type FillLineRow = { product_id?: string | null; action_type?: string | null; ac
 type MovementRow = { product_id?: string | null; quantity?: unknown; related_route_stop_id?: string | null; reason?: string | null; from_entity_type?: string | null; to_entity_type?: string | null };
 type RouteStockLineRow = { product_id?: string | null; picked_qty?: unknown; returned_qty?: unknown };
 type ProductOptionRow = { id: string; sku?: string | null; barcode?: string | null; name: string; category?: string | null; brand?: string | null; image_url?: string | null };
+type MachineProductSignalRow = { product_id?: string | null };
+type AdjustmentRow = {
+  id: string;
+  adjustment_type?: string | null;
+  product_id?: string | null;
+  product_name?: string | null;
+  quantity?: unknown;
+  reason?: string | null;
+  notes?: string | null;
+  photo_url?: string | null;
+  status?: string | null;
+  created_at?: string | null;
+  product?: ProductOptionRow | ProductOptionRow[] | null;
+};
 type PlannedProductLine = {
   refillOrderLineId: string | null;
   routeStopItemId?: string | null;
@@ -404,7 +418,15 @@ export async function GET(
     });
     });
 
-    const [{ data: routeMovements, error: movementError }, { data: fillMovements, error: fillMovementsError }, { data: products, error: productsError }, { data: refillHistory, error: refillHistoryError }] = await Promise.all([
+    const [
+      { data: routeMovements, error: movementError },
+      { data: fillMovements, error: fillMovementsError },
+      { data: products, error: productsError },
+      { data: refillHistory, error: refillHistoryError },
+      latestStockResult,
+      recentSalesResult,
+      adjustmentsResult,
+    ] = await Promise.all([
       supabase
         .from("inventory_movements")
         .select("product_id, quantity, related_route_stop_id, reason, from_entity_type, to_entity_type")
@@ -425,11 +447,39 @@ export async function GET(
         .select("machine_photo_url, machine_photo_path")
         .eq("legacy_refill_id", `route_stop:${stopId}`)
         .maybeSingle(),
+      supabase
+        .from("latest_vms_stock_by_slot")
+        .select("product_id")
+        .eq("machine_id", stop.machine_id)
+        .not("product_id", "is", null)
+        .limit(500),
+      supabase
+        .from("vms_sales_snapshots")
+        .select("product_id")
+        .eq("machine_id", stop.machine_id)
+        .not("product_id", "is", null)
+        .order("period_end", { ascending: false })
+        .limit(500),
+      supabase
+        .from("inventory_adjustments")
+        .select("id, adjustment_type, product_id, product_name, quantity, reason, notes, photo_url, status, created_at, product:products(id, sku, barcode, name, category, brand, image_url)")
+        .eq("route_stop_id", stopId)
+        .neq("status", "cancelled")
+        .order("created_at", { ascending: false }),
     ]);
     if (movementError) throw movementError;
     if (fillMovementsError) throw fillMovementsError;
     if (productsError) throw productsError;
     if (refillHistoryError) throw refillHistoryError;
+    if (latestStockResult.error && !isMissingTable(latestStockResult.error, "latest_vms_stock_by_slot")) {
+      console.warn("[operator:stop-data] Could not load latest VMS stock products for picker priority", { routeId, stopId, error: latestStockResult.error });
+    }
+    if (recentSalesResult.error && !isMissingTable(recentSalesResult.error, "vms_sales_snapshots")) {
+      console.warn("[operator:stop-data] Could not load recent machine sales products for picker priority", { routeId, stopId, error: recentSalesResult.error });
+    }
+    if (adjustmentsResult.error && !isMissingTable(adjustmentsResult.error, "inventory_adjustments")) {
+      throw adjustmentsResult.error;
+    }
 
     const filledByProduct = new Map<string, number>();
     const currentStopFilledByProduct = new Map<string, number>();
@@ -462,6 +512,19 @@ export async function GET(
       item.availableQty = availableByProduct.get(String(item.productId)) ?? 0;
     });
 
+    const productPriority = new Map<string, { rank: number; label: string }>();
+    const markProductPriority = (productId: unknown, rank: number, label: string) => {
+      const key = String(productId ?? "");
+      if (!key) return;
+      const existing = productPriority.get(key);
+      if (!existing || rank < existing.rank) productPriority.set(key, { rank, label });
+    };
+
+    (slots ?? []).forEach((slot) => markProductPriority(slot.product_id, 1, "Machine products"));
+    lineItems.forEach((item) => markProductPriority(item.productId, 2, "Route pickup list"));
+    ((latestStockResult.data ?? []) as MachineProductSignalRow[]).forEach((row) => markProductPriority(row.product_id, 3, "Latest VMS stock"));
+    ((recentSalesResult.data ?? []) as MachineProductSignalRow[]).forEach((row) => markProductPriority(row.product_id, 4, "Known machine product"));
+
     const refillItems = lineItems;
     const productOptions = ((products ?? []) as ProductOptionRow[]).map((product) => ({
       id: product.id,
@@ -472,7 +535,28 @@ export async function GET(
       brand: product.brand,
       imageUrl: product.image_url,
       availableQty: availableByProduct.get(String(product.id)) ?? 0,
+      sourceLabel: productPriority.get(String(product.id))?.label ?? null,
     }));
+    const productOptionById = new Map(productOptions.map((product) => [product.id, product]));
+    const machineProductOptions = Array.from(productPriority.entries())
+      .sort((a, b) => a[1].rank - b[1].rank || (productOptionById.get(a[0])?.name ?? "").localeCompare(productOptionById.get(b[0])?.name ?? ""))
+      .map(([productId]) => productOptionById.get(productId))
+      .filter((product): product is (typeof productOptions)[number] => Boolean(product));
+    const adjustments = ((adjustmentsResult.data ?? []) as AdjustmentRow[]).map((adjustment) => {
+      const product = firstRelation(adjustment.product);
+      return {
+        id: adjustment.id,
+        adjustmentType: adjustment.adjustment_type ?? "damaged",
+        productId: adjustment.product_id ?? product?.id ?? null,
+        productName: adjustment.product_name ?? product?.name ?? "Unknown product",
+        quantity: movementQuantity(adjustment.quantity),
+        reason: adjustment.reason ?? "",
+        notes: adjustment.notes ?? "",
+        photoUrl: adjustment.photo_url ?? null,
+        status: adjustment.status ?? "confirmed",
+        createdAt: adjustment.created_at ?? null,
+      };
+    });
 
     return NextResponse.json({
       stopId,
@@ -486,6 +570,8 @@ export async function GET(
       refillItems,
       extraItems: existingExtraItems,
       productOptions,
+      machineProductOptions,
+      adjustments,
       hasCompletionPhoto: Boolean(refillHistory?.machine_photo_url || refillHistory?.machine_photo_path),
       debug: buildDebugDetails({ profile, routeId, stopId, route, stop }),
     });

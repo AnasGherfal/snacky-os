@@ -34,7 +34,7 @@ function statusTone(status: string | null | undefined) {
   const value = String(status ?? "unknown").toLowerCase();
   const danger = ["critical", "inactive", "void", "cancel", "damaged", "expired", "out_of_stock", "failed", "rejected", "deleted", "delete"];
   const warn = ["review", "pending", "draft", "assigned", "in_progress", "maintenance", "low_stock", "reserved", "partial", "unpaid", "missing", "mapping", "duplicate", "disputed", "contacted", "meeting_needed", "offer_sent", "follow_up_later", "want_to_contact"];
-  const ok = ["active", "confirmed", "completed", "paid", "received", "available", "resolved", "reviewed", "verified", "counted_confirmed", "included", "ok", "complete", "accepted", "interested", "machine_placed"];
+  const ok = ["active", "confirmed", "completed", "paid", "received", "available", "resolved", "reviewed", "verified", "counted_confirmed", "included", "ok", "complete", "accepted", "interested", "machine_placed", "returned_from_machine"];
   if (danger.some((word) => value.includes(word))) return "danger";
   if (warn.some((word) => value.includes(word))) return "warn";
   if (ok.some((word) => value.includes(word))) return "ok";

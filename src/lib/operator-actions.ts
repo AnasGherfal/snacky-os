@@ -27,7 +27,7 @@ import {
   isTerminalRouteStatus,
   type RouteStatus,
 } from "@/lib/route-workflow";
-import { REFILL_PHOTO_BUCKET } from "@/lib/storage-buckets";
+import { ISSUE_PHOTO_BUCKET, REFILL_PHOTO_BUCKET } from "@/lib/storage-buckets";
 
 const REFILL_PHOTO_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"];
 const REFILL_PHOTO_MAX_SIZE = 10 * 1024 * 1024;
@@ -273,6 +273,28 @@ async function ensureRefillPhotoBucket() {
   return storageClient;
 }
 
+async function ensureAdjustmentPhotoBucket() {
+  const storageClient = getSupabaseAdminClient();
+  if (!storageClient) return null;
+
+  const config = {
+    public: false,
+    fileSizeLimit: "10MB",
+    allowedMimeTypes: REFILL_PHOTO_MIME_TYPES,
+  };
+
+  const { error: getError } = await storageClient.storage.getBucket(ISSUE_PHOTO_BUCKET);
+  if (!getError) {
+    const { error: updateError } = await storageClient.storage.updateBucket(ISSUE_PHOTO_BUCKET, config);
+    if (updateError) console.warn("[operator] Could not update adjustment photo bucket settings", updateError);
+    return storageClient;
+  }
+
+  const { error: createError } = await storageClient.storage.createBucket(ISSUE_PHOTO_BUCKET, config);
+  if (createError && !createError.message.toLowerCase().includes("already exists")) throw createError;
+  return storageClient;
+}
+
 export async function uploadRefillProofPhoto(formData: FormData) {
   const routeId = String(formData.get("routeId") || "").trim();
   const stopId = String(formData.get("stopId") || "").trim();
@@ -347,6 +369,87 @@ export async function uploadRefillProofPhoto(formData: FormData) {
     return {
       photoUrl: null,
       photoPath: `storage-unavailable/${routeId}/${safeFileSegment(stopId, "stop")}/${safeFileSegment(originalName, "refill-photo")}`,
+      originalName,
+      uploadUnavailable: true,
+    };
+  }
+}
+
+export async function uploadInventoryAdjustmentPhoto(formData: FormData) {
+  const routeId = String(formData.get("routeId") || "").trim();
+  const stopId = String(formData.get("stopId") || "").trim();
+  const machineId = String(formData.get("machineId") || "").trim();
+  const adjustmentType = safeFileSegment(String(formData.get("adjustmentType") || "inventory-adjustment"), "inventory-adjustment");
+  const file = formData.get("photo");
+
+  if (!routeId || !stopId || !machineId) throw new Error("Route, stop, and machine are required for the adjustment photo.");
+  if (!(file instanceof File) || file.size === 0) throw new Error("Choose a photo before uploading.");
+  if (!REFILL_PHOTO_MIME_TYPES.includes(file.type) || file.size > REFILL_PHOTO_MAX_SIZE) {
+    throw new Error("Adjustment photo must be PNG, JPG, or WEBP and under 10MB.");
+  }
+
+  const supabase = await getAuthenticatedSupabaseServerClient();
+  if (!supabase) throw new Error("No Supabase client");
+
+  const profile = await getCurrentProfile();
+  const routeAccessProfile = await buildOperatorRouteAccessContext(supabase, profile);
+  const { data: route, error: routeError } = await supabase
+    .from("routes")
+    .select("id, operator_id")
+    .eq("id", routeId)
+    .maybeSingle();
+
+  if (routeError) throwActionError(routeError, "Could not load this route for the adjustment photo.");
+  if (!route) throw new Error("Route not found");
+  if (!canAccessOperatorRoute(routeAccessProfile, route.operator_id)) {
+    throw new Error("You are not authorized to upload a photo for this route.");
+  }
+
+  const { data: stop, error: stopError } = await supabase
+    .from("route_stops")
+    .select("id, route_id, machine_id")
+    .eq("id", stopId)
+    .maybeSingle();
+  if (stopError) throwActionError(stopError, "Could not load this stop for the adjustment photo.");
+  if (!stop || stop.route_id !== routeId || stop.machine_id !== machineId) {
+    throw new Error("This stop does not belong to the selected route.");
+  }
+
+  const originalName = file.name || "adjustment-photo";
+  const extension = safeFileSegment(originalName.split(".").pop() || "jpg", "jpg");
+  const objectName = `${safeFileSegment(stopId, "stop")}-${adjustmentType}-${Date.now()}.${extension}`;
+  const objectPath = `${routeId}/adjustments/${objectName}`;
+
+  try {
+    const storageClient = await ensureAdjustmentPhotoBucket();
+    if (!storageClient) {
+      return {
+        photoUrl: null,
+        photoPath: `storage-unavailable/${routeId}/${safeFileSegment(stopId, "stop")}/${safeFileSegment(originalName, "adjustment-photo")}`,
+        originalName,
+        uploadUnavailable: true,
+      };
+    }
+
+    const { error } = await storageClient.storage.from(ISSUE_PHOTO_BUCKET).upload(objectPath, file, {
+      cacheControl: "31536000",
+      contentType: file.type,
+      upsert: true,
+    });
+
+    if (error) throw error;
+
+    return {
+      photoUrl: `/api/storage/${ISSUE_PHOTO_BUCKET}/${encodeURIComponent(routeId)}/adjustments/${encodeURIComponent(objectName)}`,
+      photoPath: objectPath,
+      originalName,
+      uploadUnavailable: false,
+    };
+  } catch (error) {
+    console.warn("[operator] Adjustment photo upload unavailable", error);
+    return {
+      photoUrl: null,
+      photoPath: `storage-unavailable/${routeId}/${safeFileSegment(stopId, "stop")}/${safeFileSegment(originalName, "adjustment-photo")}`,
       originalName,
       uploadUnavailable: true,
     };
