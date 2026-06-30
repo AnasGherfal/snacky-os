@@ -1507,7 +1507,7 @@ function InventoryAdjustmentForm({
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          adjustmentId: clientSubmissionId,
+          adjustmentId: undefined,
           adjustmentType,
           productId,
           machineId,

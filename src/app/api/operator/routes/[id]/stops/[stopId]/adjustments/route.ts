@@ -28,6 +28,12 @@ function quantityValue(value: unknown) {
   return Math.max(0, Math.floor(parsed));
 }
 
+
+function isUuid(value: unknown) {
+  const text = clean(value);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text);
+}
+
 function errorMessage(error: unknown) {
   if (error instanceof Error && error.message) return error.message;
   if (typeof error === "string") return error;
@@ -79,7 +85,8 @@ export async function POST(
   }
 
   const adjustmentType = clean(payload.adjustmentType) as AdjustmentType;
-  const adjustmentId = clean(payload.adjustmentId);
+  const rawAdjustmentId = clean(payload.adjustmentId);
+  const adjustmentId = isUuid(rawAdjustmentId) ? rawAdjustmentId : "";
   const productId = clean(payload.productId);
   const machineId = clean(payload.machineId);
   const quantity = quantityValue(payload.quantity);
@@ -90,9 +97,6 @@ export async function POST(
 
   if (!["damaged", "returned_from_machine"].includes(adjustmentType)) {
     return NextResponse.json({ success: false, code: "INVALID_ADJUSTMENT_TYPE", error: "Choose damaged or returned product." }, { status: 400 });
-  }
-  if (!adjustmentId) {
-    return NextResponse.json({ success: false, code: "MISSING_ADJUSTMENT_ID", error: "Adjustment id is required. Refresh the page and retry." }, { status: 400 });
   }
   if (!productId) {
     return NextResponse.json({ success: false, code: "MISSING_PRODUCT", error: "Product is required." }, { status: 400 });
@@ -107,9 +111,19 @@ export async function POST(
     return NextResponse.json({ success: false, code: "MISSING_REASON", error: "Reason is required." }, { status: 400 });
   }
 
+  if (rawAdjustmentId && !adjustmentId) {
+    console.warn("[operator:inventory-adjustment] Ignoring non-UUID adjustmentId", {
+      ...requestContext,
+      adjustment_id: rawAdjustmentId || null,
+      adjustment_type: adjustmentType,
+      product_id: productId,
+      machine_id: machineId,
+    });
+  }
+
   try {
     const { data, error } = await supabase.rpc("create_route_inventory_adjustment", {
-      p_adjustment_id: adjustmentId,
+      p_adjustment_id: adjustmentId || null,
       p_adjustment_type: adjustmentType,
       p_product_id: productId,
       p_machine_id: machineId,
@@ -119,7 +133,7 @@ export async function POST(
       p_reason: reason,
       p_notes: notes || null,
       p_photo_url: photoUrl || null,
-      p_client_submission_id: clientSubmissionId || `route-inventory-adjustment:${adjustmentId}`,
+      p_client_submission_id: clientSubmissionId || `route-inventory-adjustment:${routeId}:${stopId}:${productId}:${adjustmentType}`,
     });
 
     if (error) throw error;
@@ -138,6 +152,7 @@ export async function POST(
     const status = responseStatusForAdjustment(error);
     console.error("[operator:inventory-adjustment] Failed to save adjustment", {
       ...requestContext,
+      adjustment_id: rawAdjustmentId || null,
       adjustment_type: adjustmentType,
       product_id: productId,
       quantity,
