@@ -34,6 +34,16 @@ function isMissingColumnError(error: unknown, columns: string[]) {
   return columns.some((column) => text.includes(column.toLowerCase()));
 }
 
+function isMissingOnConflictConstraint(error: unknown) {
+  const text = errorText(error).toLowerCase();
+  const code = String((error as { code?: unknown } | null)?.code ?? "");
+  return (
+    code === "42P10"
+    || text.includes("there is no unique or exclusion constraint matching the on conflict specification")
+    || text.includes("missing unique constraint")
+  );
+}
+
 function quantity(value: unknown) {
   const parsed = Number(value ?? 0);
   if (!Number.isFinite(parsed)) return 0;
@@ -221,8 +231,22 @@ async function recalculateRouteInventoryLedgerRows({
   }));
 
   if (rows.length) {
-    const { error } = await supabase.from("route_stock_lines").upsert(rows, { onConflict: "route_id,product_id" });
-    if (error) throw error;
+    const upsertResult = await supabase.from("route_stock_lines").upsert(rows, { onConflict: "route_id,product_id" });
+    if (upsertResult.error) {
+      if (!isMissingOnConflictConstraint(upsertResult.error)) throw upsertResult.error;
+
+      console.warn("[admin-tools] route_stock_lines upsert missing unique conflict target; replacing route stock lines instead", {
+        routeId,
+        onConflict: "route_id,product_id",
+        error: upsertResult.error,
+      });
+
+      const deleteResult = await supabase.from("route_stock_lines").delete().eq("route_id", routeId);
+      if (deleteResult.error) throw deleteResult.error;
+
+      const insertResult = await supabase.from("route_stock_lines").insert(rows);
+      if (insertResult.error) throw insertResult.error;
+    }
   }
 
   return { route, rows, movementCount: routeMovements?.length ?? 0 };
@@ -408,7 +432,7 @@ export async function recalculateRouteInventoryLedger(formData: FormData) {
     redirectTools({ success: `Route ledger recalculated from ${result.movementCount} inventory movement(s).` }, returnTo);
   } catch (error) {
     console.error("[admin-tools] Route ledger recalculation failed", { routeId, error });
-    redirectTools({ error: `Route ledger recalculation failed: ${errorMessage(error)}` }, returnTo);
+    redirectTools({ error: "Could not save route changes. Please try again." }, returnTo);
   }
 }
 
@@ -440,7 +464,7 @@ export async function repairStuckRoute(formData: FormData) {
     redirectTools({ success: "Route repair completed. The operator can retry the route workflow." }, returnTo);
   } catch (error) {
     console.error("[admin-tools] Route repair failed", { routeId, error });
-    redirectTools({ error: `Route repair failed: ${errorMessage(error)}` }, returnTo);
+    redirectTools({ error: "Could not save route changes. Please try again." }, returnTo);
   }
 }
 
@@ -507,7 +531,7 @@ export async function forceCompleteRouteWithAudit(formData: FormData) {
     redirectTools({ success: "Route force-completed with audit and ledger reconciliation." }, returnTo);
   } catch (error) {
     console.error("[admin-tools] Force route completion failed", { routeId, error });
-    redirectTools({ error: `Force completion failed: ${errorMessage(error)}` }, returnTo);
+    redirectTools({ error: "Could not complete the route. Please try again." }, returnTo);
   }
 }
 
