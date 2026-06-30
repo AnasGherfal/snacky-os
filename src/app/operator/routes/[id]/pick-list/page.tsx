@@ -240,6 +240,7 @@ export default function PickListPage() {
   const rawRouteId = params?.id;
   const routeId = Array.isArray(rawRouteId) ? rawRouteId[0] ?? "" : rawRouteId ?? "";
   const routeHref = safeRouteHref(routeId);
+  const pickupSubmissionIdRef = useRef(crypto.randomUUID());
   const shouldStartRoute = searchParams.get("start") === "1";
   const startAttempted = useRef(false);
   const [stopGroups, setStopGroups] = useState<PickStopGroup[]>([]);
@@ -671,12 +672,13 @@ export default function PickListPage() {
               notes: item.notes,
             };
           }),
-        { stopIds: selectedStopIds },
+        { stopIds: selectedStopIds, clientSubmissionId: pickupSubmissionIdRef.current },
       );
       if (result && "success" in result && result.success === false) {
         throw new Error(result.error || "Could not save added product");
       }
       localDraft.clearDraft();
+      pickupSubmissionIdRef.current = crypto.randomUUID();
       const successMessage = selectedStopIds.length === 1
         ? "Pickup batch saved for 1 stop."
         : `Pickup batch saved for ${selectedStopIds.length} stops.`;

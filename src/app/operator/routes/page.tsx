@@ -2,8 +2,9 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { EmptyState, ErrorState, PageHeader, SectionCard, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { canExecuteRoutes, canManageOperations } from "@/lib/authz";
-import { loadAccessibleOperatorIds, preferredOperatorViewerId } from "@/lib/operator-route-access";
+import { loadAccessibleOperatorIds } from "@/lib/operator-route-access";
 import { type OperatorRoutePreviewRow, type OperatorRoutePreviewStopRow } from "@/lib/operator-route-types";
 import { isOperatorVisibleRouteStatus, isRouteStopDoneStatus, isTerminalRouteStatus, routeDisplayStatus } from "@/lib/route-workflow";
 
@@ -70,14 +71,15 @@ export default async function OperatorRoutesPage() {
 
   const canManageAllRoutes = canManageOperations(profile);
   const accessibleOperatorIds = await loadAccessibleOperatorIds(supabase, profile);
+  const routeReadClient = getSupabaseAdminClient() ?? supabase;
   const routeSelect = "id, route_date, status, operator_id, route_stops(id, status, stop_order, machine_id)";
 
   const assignedQuery = canManageAllRoutes
-    ? supabase.from("routes").select(routeSelect).not("operator_id", "is", null).order("route_date", { ascending: false })
+    ? routeReadClient.from("routes").select(routeSelect).not("operator_id", "is", null).order("route_date", { ascending: false })
     : accessibleOperatorIds.length
-      ? supabase.from("routes").select(routeSelect).in("operator_id", accessibleOperatorIds).order("route_date", { ascending: false })
+      ? routeReadClient.from("routes").select(routeSelect).in("operator_id", accessibleOperatorIds).order("route_date", { ascending: false })
       : Promise.resolve({ data: [], error: null });
-  const availableQuery = supabase
+  const availableQuery = routeReadClient
     .from("routes")
     .select(routeSelect)
     .is("operator_id", null)
@@ -208,3 +210,4 @@ export default async function OperatorRoutesPage() {
     </>
   );
 }
+

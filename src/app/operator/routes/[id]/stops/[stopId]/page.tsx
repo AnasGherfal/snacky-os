@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from "@/components/LocalDraft";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { QuantityStepper } from "@/components/QuantityStepper";
-import { EmptyState, ErrorState, LoadingState, PageHeader, SecondaryButton } from "@/components/ui";
+import { EmptyState, ErrorState, LoadingState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { markStopInProgress, uploadInventoryAdjustmentPhoto, uploadRefillProofPhoto } from "@/lib/operator-actions";
 import { ROUTE_STOP_COMPLETED_STATUS, ROUTE_STOP_IN_PROGRESS_STATUS, ROUTE_STOP_PICKED_STATUS } from "@/lib/route-workflow";
 
@@ -1463,12 +1463,8 @@ function InventoryAdjustmentForm({
   const submissionIdRef = useRef(newClientId());
   const productChoices = sourceMode === "machine" ? machineProducts : allProducts;
   const selectedProduct = allProducts.find((product) => product.id === productId) ?? machineProducts.find((product) => product.id === productId) ?? null;
+  const selectedReason = reasonOptions.includes(reason) ? reason : (reasonOptions[0] ?? "Other");
 
-  useEffect(() => {
-    if (!reasonOptions.includes(reason)) {
-      setReason(reasonOptions[0] ?? "Other");
-    }
-  }, [reason, reasonOptions]);
 
   async function handleSave() {
     if (!productId) {
@@ -1479,7 +1475,7 @@ function InventoryAdjustmentForm({
       setError("Quantity must be greater than 0.");
       return;
     }
-    if (!reason) {
+    if (!selectedReason) {
       setError("Choose a reason.");
       return;
     }
@@ -1516,7 +1512,7 @@ function InventoryAdjustmentForm({
           productId,
           machineId,
           quantity,
-          reason,
+          selectedReason,
           notes: notes.trim(),
           photoUrl,
           clientSubmissionId,
@@ -1546,7 +1542,7 @@ function InventoryAdjustmentForm({
         productId: saved.product_id ? String(saved.product_id) : productId,
         productName: saved.product_name ? String(saved.product_name) : (selectedProduct?.name ?? "Unknown product"),
         quantity: Number(saved.quantity ?? quantity),
-        reason: saved.reason ? String(saved.reason) : reason,
+        reason: saved.reason ? String(saved.reason) : selectedReason,
         notes: saved.notes ? String(saved.notes) : notes.trim(),
         photoUrl: typeof saved.photo_url === "string" ? saved.photo_url : photoUrl,
         status: saved.status ? String(saved.status) : "confirmed",
@@ -1620,7 +1616,7 @@ function InventoryAdjustmentForm({
 
         <div className="grid gap-4 md:grid-cols-[160px_1fr]">
           <QuantityInput value={quantity} max={999} onChange={setQuantity} />
-          <ReasonSelect value={reason} onChange={setReason} options={reasonOptions} />
+          <ReasonSelect value={selectedReason} onChange={setReason} options={reasonOptions} />
         </div>
 
         <label className="block">
@@ -1669,3 +1665,6 @@ function InventoryAdjustmentForm({
     </article>
   );
 }
+
+
+

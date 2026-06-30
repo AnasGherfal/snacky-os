@@ -1,5 +1,5 @@
-import { batchCoverageDates, rangesOverlap, type SalesDashboardSourceMode } from "@/lib/sales-dashboard";
-import { type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
+import { batchCoverageDates, rangesOverlap, type SalesDashboardSourceMode, type SalesFileContribution } from "./sales-dashboard.ts";
+import { type VmsDashboardBatch } from "./vms-dashboard-source.ts";
 
 export type SalesMonthlyCoverageRow = {
   active_finalized_batch_count?: number | string | null;
@@ -146,10 +146,241 @@ export function monthValuesForYear(year: number) {
   return Array.from({ length: 12 }, (_, index) => `${year}-${padDatePart(index + 1)}`);
 }
 
-export function salesDashboardSourceLabel(sourceMode: SalesDashboardSourceMode) {
-  return sourceMode === "monthly" ? "Monthly Commodity Profit Report" : "Detailed Order Details Report";
+export type SalesCoverageStateKind =
+  | "summary_error"
+  | "no_source"
+  | "inactive_batch"
+  | "deleted_batch"
+  | "failed_import"
+  | "missing_business_date"
+  | "status_filtered"
+  | "no_rows"
+  | "partial"
+  | "ready";
+
+export type SalesCoverageState = {
+  body: string;
+  kind: SalesCoverageStateKind;
+  label: string;
+  title: string;
+};
+
+function coverageState(kind: SalesCoverageStateKind, label: string, title: string, body: string): SalesCoverageState {
+  return { body, kind, label, title };
 }
 
+function sourceLabelForMode(sourceMode: SalesDashboardSourceMode) {
+  return sourceMode === "monthly" ? "Monthly Profit Report" : "Detailed Order Details";
+}
+
+export function salesDashboardSourceLabel(sourceMode: SalesDashboardSourceMode) {
+  return sourceLabelForMode(sourceMode);
+}
+
+export function describeSalesDashboardNoDataState({
+  canFinalizeInactiveFiles,
+  contributingFiles,
+  coverageLabel,
+  fileContributions,
+  monthlyCoverageRows,
+  sourceMode,
+  selectedRange,
+}: {
+  canFinalizeInactiveFiles: boolean;
+  contributingFiles: SalesFileContribution[];
+  coverageLabel: string;
+  fileContributions: SalesFileContribution[];
+  monthlyCoverageRows: NormalizedSalesMonthlyCoverageRow[];
+  sourceMode: SalesDashboardSourceMode;
+  selectedRange: { end: string; start: string };
+}): SalesCoverageState {
+  const rangeBounds = { start: selectedRange.start, end: selectedRange.end };
+  const sourceReportType = sourceMode === "monthly" ? "monthly_product_profit" : "vms_order_details_weekly";
+  const sourceRowsInRange = fileContributions.filter((row) => {
+    if (row.batch.report_type !== sourceReportType) return false;
+    if (row.rowsInRange > 0 || row.successfulRowsInRange > 0) return true;
+    return Boolean(
+      row.actualCoverageStart
+      && row.actualCoverageEnd
+      && rangesOverlap({ start: row.actualCoverageStart, end: row.actualCoverageEnd }, rangeBounds),
+    );
+  });
+  const sourceLabel = sourceLabelForMode(sourceMode);
+
+  if (contributingFiles.some((row) => row.included)) {
+    return coverageState(
+      "summary_error",
+      "Needs attention",
+      sourceLabel + " rows exist, but the dashboard summary could not calculate them.",
+      sourceMode === "monthly"
+        ? "Monthly profit rows overlap this range, but the dashboard totals came back empty. Check the monthly summary RPC and data source diagnostics."
+        : "Detailed successful-sale rows overlap this range, but the dashboard totals came back empty. Check the summary RPC and data source diagnostics.",
+    );
+  }
+
+  if (sourceRowsInRange.some((row) => row.batch.deleted_at || String(row.batch.status ?? "") === "deleted")) {
+    return coverageState(
+      "deleted_batch",
+      "Deleted",
+      "This date range has a deleted import file.",
+      "Restore it or import as a new active file.",
+    );
+  }
+
+  if (sourceRowsInRange.some((row) => String(row.status ?? "") === "failed_import" || String(row.status ?? "") === "missing_required_columns" || String(row.batch.status ?? "") === "failed")) {
+    return coverageState(
+      "failed_import",
+      "Failed",
+      "An import exists for this range, but it failed.",
+      "Reprocess or repair it.",
+    );
+  }
+
+  if (sourceRowsInRange.some((row) => row.status === "preview_only" || row.status === "inactive_batch")) {
+    return coverageState(
+      "inactive_batch",
+      "Inactive",
+      "Sales rows exist, but the file is not active yet.",
+      canFinalizeInactiveFiles
+        ? "Finalize or activate the file before it can feed the dashboard."
+        : "The sales file for this date range is still being finalized.",
+    );
+  }
+
+  if (sourceRowsInRange.some((row) => row.status === "missing_transaction_datetime") || monthlyCoverageRows.some((row) => row.businessMonth === null && row.finalizedRows > 0 && row.nullBusinessDateRows > 0)) {
+    return coverageState(
+      "missing_business_date",
+      "Missing dates",
+      "Rows exist but business dates are missing.",
+      sourceMode === "monthly"
+        ? "Some monthly profit rows still do not have a resolved business date. Rebuild the import dates, then reload the dashboard."
+        : "Some Order Details rows still do not have a resolved business date. Rebuild business dates, then reload the dashboard.",
+    );
+  }
+
+  if (sourceRowsInRange.some((row) => row.status === "rows_excluded_by_status")) {
+    return coverageState(
+      "status_filtered",
+      "Partial",
+      "Rows exist for this range, but they were not successful sales.",
+      sourceMode === "monthly"
+        ? "The overlapping monthly rows were saved, but they were not counted in the dashboard totals."
+        : "The overlapping Order Details rows were saved, but they were classified as failed vends, refunds, failed payments, or needs review.",
+    );
+  }
+
+  if (sourceRowsInRange.length === 0) {
+    return coverageState(
+      "no_source",
+      "No source",
+      "No VMS sales file uploaded for this range.",
+      sourceMode === "monthly"
+        ? "Import a monthly profit report file to populate this range."
+        : "Import a detailed Order Details file to populate this range.",
+    );
+  }
+
+  return coverageState(
+    "no_rows",
+    "Missing",
+    sourceMode === "monthly"
+      ? "No monthly profit rows found for this range."
+      : "No detailed Order Details rows found for this range.",
+    coverageLabel === "-"
+      ? sourceMode === "monthly"
+        ? "Change the date filter or import the matching monthly profit report first."
+        : "Change the date filter or import the matching detailed Order Details file first."
+      : "Change the date filter. Current finalized coverage runs from " + coverageLabel + ".",
+  );
+}
+
+export function describeSalesCoverageState({
+  activeBatches,
+  coverageError,
+  coveredDays,
+  monthDays,
+  monthLabel,
+  sourceBatches,
+  sourceLabel,
+}: {
+  activeBatches: Array<{ deleted_at?: string | null; is_active?: boolean | null; status?: string | null }>; 
+  coverageError: string | null;
+  coveredDays: Set<string>;
+  monthDays: string[];
+  monthLabel: string;
+  sourceBatches: Array<{ deleted_at?: string | null; is_active?: boolean | null; status?: string | null }>; 
+  sourceLabel: string;
+}): SalesCoverageState {
+  if (coverageError) {
+    return coverageState(
+      "summary_error",
+      "Needs attention",
+      "Coverage totals could not load for this view.",
+      "Please contact admin if this keeps happening.",
+    );
+  }
+
+  if (!sourceBatches.length) {
+    return coverageState(
+      "no_source",
+      "No source",
+      "No VMS sales file uploaded for this range.",
+      "Import a " + sourceLabel.toLowerCase() + " file to start coverage tracking.",
+    );
+  }
+
+  if (sourceBatches.some((batch) => batch.deleted_at || String(batch.status ?? "") === "deleted")) {
+    return coverageState(
+      "deleted_batch",
+      "Deleted",
+      "This date range has a deleted import file.",
+      "Restore it or import as a new active file.",
+    );
+  }
+
+  if (sourceBatches.some((batch) => String(batch.status ?? "") === "failed")) {
+    return coverageState(
+      "failed_import",
+      "Failed",
+      "An import exists for this range, but it failed.",
+      "Reprocess or repair it.",
+    );
+  }
+
+  if (!activeBatches.length) {
+    return coverageState(
+      "inactive_batch",
+      "Inactive",
+      "Sales rows exist, but the file is not active yet.",
+      "Activate the file before it can feed coverage.",
+    );
+  }
+
+  if (!coveredDays.size) {
+    return coverageState(
+      "no_rows",
+      "Missing",
+      "Active files exist, but none overlap " + monthLabel + ".",
+      "Import or activate the missing " + sourceLabel.toLowerCase() + " rows to complete coverage.",
+    );
+  }
+
+  if (coveredDays.size < monthDays.length) {
+    return coverageState(
+      "partial",
+      "Partial",
+      "Some days are still missing from " + monthLabel + ".",
+      "Import or activate the missing " + sourceLabel.toLowerCase() + " rows to complete coverage.",
+    );
+  }
+
+  return coverageState(
+    "ready",
+    "Ready",
+    monthLabel + " is fully covered by active files.",
+    "Snacky OS can use the active " + sourceLabel.toLowerCase() + " rows for this period.",
+  );
+}
 export function monthCoverageCoveredDays(
   monthValue: string,
   batches: VmsDashboardBatch[],

@@ -10,6 +10,7 @@ import { createPurchaseFinancialTransaction } from "@/lib/finance-actions";
 import { resolvePurchaseUnitCost, type ProductCostMemory } from "@/lib/purchase-cost-memory";
 import { resolveProductSku } from "@/lib/product-sku";
 import { resolvePurchaseReceiptUrl } from "@/lib/purchase-receipts";
+import { inventoryMovementIdempotencyKey } from "@/lib/inventory-movement";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 type PurchaseLineInput = {
@@ -551,11 +552,14 @@ async function createPurchaseWithLinesFallback({ supabase, profile, supplierId, 
       related_purchase_line_id: line.id,
       unit_cost_lyd: Number(line.unit_cost_lyd ?? line.unit_cost ?? 0),
       line_total_lyd: Number(line.line_total_lyd ?? line.line_total ?? 0),
+      source_type: "purchase_receipt",
+      source_id: purchase.id,
+      idempotency_key: inventoryMovementIdempotencyKey("purchase-received-fallback", purchase.id, line.id, line.total_units, storageId),
       created_by: profile?.team_member_id ?? null,
       notes: "Purchase received",
     }));
     if (movements.length) {
-      const { error: movementError } = await supabase.from("inventory_movements").insert(movements);
+      const { error: movementError } = await supabase.from("inventory_movements").upsert(movements, { onConflict: "idempotency_key", ignoreDuplicates: true });
       if (movementError) throw movementError;
       movementCount = movements.length;
     }
@@ -1020,11 +1024,14 @@ async function receivePurchaseById(id: string): Promise<PurchaseReceiveResult> {
       related_purchase_line_id: line.id,
       unit_cost_lyd: Number(line.unit_cost_lyd ?? line.unit_cost ?? 0),
       line_total_lyd: Number(line.line_total_lyd ?? line.line_total ?? 0),
+      source_type: "purchase_receipt",
+      source_id: id,
+      idempotency_key: inventoryMovementIdempotencyKey("purchase-received", id, line.id, line.total_units, storageId),
       created_by: profile.team_member_id,
       notes: "Purchase received",
     }));
 
-    const { error: movementError } = await supabase.from("inventory_movements").insert(movements);
+    const { error: movementError } = await supabase.from("inventory_movements").upsert(movements, { onConflict: "idempotency_key", ignoreDuplicates: true });
     if (movementError) {
       if (movementError.code !== "23505") throw movementError;
     }
@@ -1361,12 +1368,15 @@ export async function voidReceivedPurchase(fd: FormData) {
     line_total_lyd: movement.line_total_lyd === null || movement.line_total_lyd === undefined ? null : -Math.abs(Number(movement.line_total_lyd)),
     reversed_movement_id: movement.id,
     correction_reason: reason,
+    source_type: "purchase_void",
+    source_id: id,
+    idempotency_key: inventoryMovementIdempotencyKey("purchase-void", id, movement.id, reason, movement.quantity ?? 0),
     created_by: profile.team_member_id,
     notes: `Voided purchase ${purchase.receipt_number ?? id.slice(0, 8)}: ${reason}`,
   }));
 
   if (reversalRows.length) {
-    const { error } = await supabase.from("inventory_movements").insert(reversalRows);
+    const { error } = await supabase.from("inventory_movements").upsert(reversalRows, { onConflict: "idempotency_key", ignoreDuplicates: true });
     if (error) {
       console.error("[purchases] Failed to create purchase reversal movements", error);
       fail(path, "Could not create reversal inventory movements.");

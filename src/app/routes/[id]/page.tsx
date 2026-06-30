@@ -254,8 +254,8 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     images: completionProofsByStopId.get(String(stop.id)) ?? [],
   }));
   const canManageRouteAssignment = isAdminRole(profile);
-  const hasPickMovements = Boolean(movements?.some((movement: any) => movement.reason === "storage_to_operator_bag"));
-  const hasReturnMovements = Boolean(movements?.some((movement: any) => movement.reason === "operator_bag_to_storage"));
+  const hasPickMovements = Boolean(movements?.some((movement: any) => movement.reason === "storage_to_operator_bag" || movement.reason === "storage_to_route"));
+  const hasReturnMovements = Boolean(movements?.some((movement: any) => movement.reason === "operator_bag_to_storage" || movement.reason === "route_to_storage_return"));
   const canStartRoute = canExecuteRoutes(profile) && Boolean(profile.team_member_id) && isAvailableRouteStatus(routeRow.status);
   const continueHref = canExecuteRoutes(profile)
     ? nextOperatorRouteHref({ routeId: id, status: routeRow.status, hasPickup: hasPickMovements, stops: routeStops, start: true })

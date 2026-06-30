@@ -262,8 +262,8 @@ function SourceActions({
             <form action={updateVmsImportBatchState}>
               <input type="hidden" name="batch_id" value={batch.id} />
               <input type="hidden" name="action" value="finalize_import" />
-              <FormSubmitButton className="btn-primary" pendingLabel={canFinalizeOrderDetails ? "Finalizing file..." : "Marking imported..."}>
-                {canFinalizeOrderDetails ? "Finalize file" : "Mark imported and activate"}
+              <FormSubmitButton className="btn-primary" pendingLabel="Finalizing file...">
+                Finalize file
               </FormSubmitButton>
             </form>
           ) : isUsableImportStatus(batch.status) && batch.is_active !== false && !batch.deleted_at ? (
@@ -277,12 +277,12 @@ function SourceActions({
             <form action={updateVmsImportBatchState}>
               <input type="hidden" name="batch_id" value={batch.id} />
               <input type="hidden" name="action" value="restore" />
-              <FormSubmitButton className="btn-secondary" pendingLabel="Restoring...">Restore</FormSubmitButton>
+              <FormSubmitButton className="btn-secondary" pendingLabel="Restoring file...">{statusInfo.actionLabel ?? "Restore deleted batch"}</FormSubmitButton>
             </form>
           ) : null}
           <form action={reprocessVmsImportBatch}>
             <input type="hidden" name="batch_id" value={batch.id} />
-            <FormSubmitButton className="btn-secondary" pendingLabel="Reprocessing...">Reprocess / repair</FormSubmitButton>
+            <FormSubmitButton className="btn-secondary" pendingLabel="Reprocessing file...">Reprocess file</FormSubmitButton>
           </form>
           {!batch.deleted_at ? (
             <details className="rounded-lg border border-slate-200 bg-white px-3 py-2">

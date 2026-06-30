@@ -153,9 +153,7 @@ function isStockReportType(reportType: string | null | undefined) {
   return reportType === "stock" || reportType === "machine_stock_snapshot" || reportType === "planogram";
 }
 
-function activeLabel(batch: VmsBatchRow) {
-  return ["imported", "imported_with_warnings", "partially_imported"].includes(String(batch.status ?? "")) && batch.is_active !== false && !batch.deleted_at ? "Yes" : "No";
-}
+
 
 function batchDateRange(batch: VmsBatchRow) {
   if (isStockReportType(batch.report_type ?? batch.source_type)) {
@@ -808,7 +806,7 @@ function UploadCard() {
         <FormField label="Report type" hint="Auto-detect usually identifies the detailed weekly order report. You can change it in the wizard.">
           <select name="report_type" defaultValue="" className="field-input">
             <option value="">Auto-detect</option>
-            <option value="vms_order_details_weekly">Detailed Order Details Report - Recommended</option>
+            <option value="vms_order_details_weekly">Detailed Order Details - Recommended</option>
             <option value="machine_stock_snapshot">Machine Stock Snapshot</option>
             <option value="stock">Machine Stock Report (legacy)</option>
             <option value="sales">General / Summary Sales Report</option>
@@ -891,73 +889,6 @@ function OriginalRowData({ row }: { row: Record<string, string> }) {
     <pre className="max-h-32 max-w-xl overflow-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-2 text-xs text-slate-700">
       {JSON.stringify(row, null, 2)}
     </pre>
-  );
-}
-
-function DebugBlock({ title, value }: { title: string; value: unknown }) {
-  return (
-    <div>
-      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</div>
-      <pre className="max-h-72 overflow-auto rounded-lg bg-slate-950 p-3 text-xs text-slate-100">
-        {typeof value === "string" ? value : JSON.stringify(value, null, 2)}
-      </pre>
-    </div>
-  );
-}
-
-function VmsImportDebugPanel({
-  canView,
-  selectedSheetName,
-  detectedHeaderRow,
-  detectedColumns,
-  selectedMapping,
-  sampleNormalizedRows,
-  validation,
-}: {
-  canView: boolean;
-  selectedSheetName: string | null;
-  detectedHeaderRow: number | null;
-  detectedColumns: string[];
-  selectedMapping: Record<string, string>;
-  sampleNormalizedRows: Record<string, string>[];
-  validation: VmsValidationResult | null;
-}) {
-  if (!canView || !selectedSheetName) return null;
-
-  const validationErrors = (validation?.errorRowsList ?? []).slice(0, 5).map((row) => ({
-    rowNumber: row.rowNumber,
-    status: row.status,
-    reasons: row.reasons,
-    machine: row.machineIdentifier,
-    productIdentifier: row.productIdentifier,
-    productName: row.productName,
-  }));
-  const failedRawRows = (validation?.reviewRowsList ?? []).slice(0, 5).map((row) => ({
-    rowNumber: row.rowNumber,
-    status: row.status,
-    reasons: row.reasons,
-    raw: row.originalRow,
-  }));
-
-  return (
-    <AdminTechnicalDetails
-      canView={canView}
-      title="Technical details"
-      summary="Imported sheet parsing, normalized sample rows, and validation issues for owner/admin review."
-      className="mb-6 border-amber-200 bg-amber-50"
-    >
-      <div className="grid gap-4 xl:grid-cols-2">
-        <DebugBlock title="Selected sheet name" value={selectedSheetName} />
-        <DebugBlock title="Detected header row" value={detectedHeaderRow === null ? "none" : detectedHeaderRow + 1} />
-        <DebugBlock title="Detected columns" value={detectedColumns} />
-        <DebugBlock title="Selected mappings" value={selectedMapping} />
-        <DebugBlock title="Sample normalized rows" value={sampleNormalizedRows.slice(0, 5)} />
-        <DebugBlock title="First 5 validation errors" value={validationErrors} />
-        <div className="xl:col-span-2">
-          <DebugBlock title="Raw row data for failed rows" value={failedRawRows} />
-        </div>
-      </div>
-    </AdminTechnicalDetails>
   );
 }
 
@@ -2241,16 +2172,7 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
         </section>
       ) : null}
 
-      <VmsImportDebugPanel
-        canView={isOwnerAdminRole(profile)}
-        selectedSheetName={selectedSheet?.name ?? null}
-        detectedHeaderRow={selectedSheet ? selectedRows.headerRowIndex : null}
-        detectedColumns={selectedRows.headers}
-        selectedMapping={selectedMapping}
-        sampleNormalizedRows={mappedRows.slice(0, 5)}
-        validation={validation}
-      />
-
+      
       {isOwnerAdminRole(profile) && (params.rows || params.headers || preview) ? (
         <AdminTechnicalDetails
           canView
@@ -2277,7 +2199,7 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
           <EmptyState title={batchesError ? "Recent imports unavailable" : "No VMS reports imported yet."} body={batchesError ? "Upload is still available. Please contact admin if this keeps happening." : "Upload your first VMS report to start building sales KPIs."} />
         ) : (
           <>
-          <DataTable headers={["Status", "Active", "File name", "Report type", "Date range", "Used in", "Rows found", "Rows imported", "Duplicates", "Needs review", "Successful sales", "Failed rows", "Refunds", "Uploaded by", "Date", "Notes"]}>
+          <DataTable headers={["Status", "Active in dashboard", "File name", "Report type", "Date range", "Used in", "Rows found", "Rows imported", "Duplicates", "Needs review", "Successful sales", "Failed rows", "Refunds", "Uploaded by", "Date", "Notes"]}>
             {batches.map((batch) => {
               const statusInfo = describeVmsImportBatchStatus(batch as VmsBatchRow, duplicateContexts.get(batch.id) ?? {});
               const noteText = batch.delete_reason || batch.disable_reason || statusInfo.reason;
@@ -2289,7 +2211,7 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
                     </Link>
                     <div className="mt-1 text-xs text-slate-500">{statusInfo.actionLabel ?? "No action needed"}</div>
                   </td>
-                  <td><StatusBadge status={activeLabel(batch)} /></td>
+                  <td>{statusInfo.activeInDashboard ? "Yes" : "No"}</td>
                   <td className="font-medium text-slate-900"><Link className="link-secondary" href={`/vms-import/${batch.id}`}>{batch.file_name ?? "-"}</Link></td>
                   <td>{reportLabel(batch.report_type ?? batch.source_type)}</td>
                   <td>{batchDateRange(batch)}</td>
@@ -2303,7 +2225,7 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
                   <td>{isStockReportType(batch.report_type ?? batch.source_type) ? "N/A" : batch.refunded_rows_count ?? batchMetric(batch, "refundedRows", 0)}</td>
                   <td>{batch.uploaded_by || batch.imported_by ? importerById.get(String(batch.uploaded_by ?? batch.imported_by)) ?? "Unknown" : "-"}</td>
                   <td>{formatDateTime(batch.uploaded_at ?? batch.imported_at)}</td>
-                  <td className="max-w-xs text-xs text-slate-600">{noteText || (batch.report_type === "sales" ? "Reconciliation only" : batch.report_type === "monthly_product_profit" ? "Monthly profit source" : "-")}</td>
+                  <td className="max-w-xs text-xs text-slate-600">{noteText || (batch.report_type === "sales" ? "Reconciliation only" : batch.report_type === "monthly_product_profit" ? "Monthly Profit Report" : "-")}</td>
                 </tr>
               );
             })}

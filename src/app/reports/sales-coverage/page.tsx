@@ -7,6 +7,7 @@ import { lyd } from "@/lib/format";
 import { formatInteger } from "@/lib/kpi";
 import { resolveSalesDashboardRange, salesDashboardPrefersMonthlyProfitSource, type SalesDashboardSearchParams } from "@/lib/sales-dashboard";
 import {
+  describeSalesCoverageState,
   enumerateMonthDays,
   formatCoverageMonthLabel,
   monthCoverageCoveredDays,
@@ -130,8 +131,8 @@ function coverageBatchLabel(batch: SalesCoverageBatchRow) {
 function selectedMonthPillClass(value: string) {
   const normalized = value.toLowerCase();
   if (normalized.includes("ready")) return "border-emerald-200 bg-emerald-50 text-emerald-900";
-  if (normalized.includes("partial") || normalized.includes("action")) return "border-amber-200 bg-amber-50 text-amber-900";
-  if (normalized.includes("missing") || normalized.includes("attention")) return "border-rose-200 bg-rose-50 text-rose-900";
+  if (normalized.includes("deleted") || normalized.includes("failed") || normalized.includes("attention")) return "border-rose-200 bg-rose-50 text-rose-900";
+  if (normalized.includes("partial") || normalized.includes("action") || normalized.includes("inactive") || normalized.includes("missing") || normalized.includes("source")) return "border-amber-200 bg-amber-50 text-amber-900";
   return "border-slate-200 bg-slate-50 text-slate-900";
 }
 
@@ -195,13 +196,10 @@ type CoverageRowsLoadResult = {
 };
 
 async function loadCoverageRows(supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>, sourceMode: "monthly" | "detailed"): Promise<CoverageRowsLoadResult> {
-  const queryName = sourceMode === "monthly"
-    ? "sales_dashboard_monthly_profit_coverage"
-    : "sales_dashboard_monthly_coverage";
-  const rpc = sourceMode === "monthly"
-    ? supabase.rpc("sales_dashboard_monthly_profit_coverage")
-    : supabase.rpc("sales_dashboard_monthly_coverage");
-  const result = await rpc;
+  const queryName = "sales_dashboard_monthly_coverage_truth";
+  const result = await supabase.rpc("sales_dashboard_monthly_coverage_truth", {
+    p_report_type: sourceMode === "monthly" ? "monthly_product_profit" : "vms_order_details_weekly",
+  });
   if (result.error) {
     return {
       error: vmsSchemaIssueMessage(result.error, queryName) ?? String(result.error.message ?? "Could not load sales coverage rows."),
@@ -214,51 +212,9 @@ async function loadCoverageRows(supabase: NonNullable<Awaited<ReturnType<typeof 
   };
 }
 
-function coverageStateLabel({
-  coverageError,
-  coveredDays,
-  monthDays,
-  sourceBatches,
-  activeBatches,
-}: {
-  activeBatches: SalesCoverageBatchRow[];
-  coverageError: string | null;
-  coveredDays: Set<string>;
-  monthDays: string[];
-  sourceBatches: SalesCoverageBatchRow[];
-}) {
-  if (coverageError) return "Needs attention";
-  if (!sourceBatches.length) return "Missing";
-  if (!activeBatches.length) return "Needs action";
-  if (!coveredDays.size) return "Missing";
-  if (coveredDays.size < monthDays.length) return "Partial";
-  return "Ready";
-}
 
-function coverageStateReason({
-  activeBatches,
-  coverageError,
-  coveredDays,
-  monthDays,
-  monthLabel,
-  sourceBatches,
-  sourceLabel,
-}: {
-  activeBatches: SalesCoverageBatchRow[];
-  coverageError: string | null;
-  coveredDays: Set<string>;
-  monthDays: string[];
-  monthLabel: string;
-  sourceBatches: SalesCoverageBatchRow[];
-  sourceLabel: string;
-}) {
-  if (coverageError) return "Coverage totals could not load for this view.";
-  if (!sourceBatches.length) return `No finalized ${sourceLabel} files have been imported yet.`;
-  if (!activeBatches.length) return `Files exist, but none are active in the dashboard yet.`;
-  if (!coveredDays.size) return `Active files exist, but none overlap ${monthLabel}.`;
-  if (coveredDays.size < monthDays.length) return `Some days are still missing from ${monthLabel}.`;
-  return `${monthLabel} is fully covered by active files.`;
-}
+
+
 
 function BatchActionCell({
   batch,
@@ -379,14 +335,7 @@ async function SalesCoveragePageContent({
     successfulSaleRows: 0,
     totalRows: 0,
   });
-  const dataStatus = coverageStateLabel({
-    activeBatches: activeSourceBatches,
-    coverageError: coverageLoad.error,
-    coveredDays,
-    monthDays: selectedMonthDays,
-    sourceBatches,
-  });
-  const dataStatusReason = coverageStateReason({
+  const coverageState = describeSalesCoverageState({
     activeBatches: activeSourceBatches,
     coverageError: coverageLoad.error,
     coveredDays,
@@ -395,6 +344,8 @@ async function SalesCoveragePageContent({
     sourceBatches,
     sourceLabel,
   });
+  const dataStatus = coverageState.label;
+  const dataStatusReason = coverageState.body;
   const canManage = canConfirmVmsImports(profile);
   const sourceStatusText = sourceBatches.length
     ? `${formatInteger(activeSourceBatches.length)} active / ${formatInteger(sourceBatches.length)} total ${sourceLabel.toLowerCase()} file(s)`
@@ -441,7 +392,7 @@ async function SalesCoveragePageContent({
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Source used</div>
-              <div className="mt-2 text-base font-semibold text-slate-900">{sourceLabel}</div>
+              <div className="mt-2 text-base font-semibold text-slate-900">Using {sourceLabel}.</div>
               <div className="mt-1 text-sm leading-6 text-slate-500">{sourceStatusText}</div>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -492,7 +443,7 @@ async function SalesCoveragePageContent({
               ))}
             </DataTable>
           ) : (
-            <EmptyState title="No monthly coverage yet" body="Import detailed Order Details files or monthly commodity profit files to start filling the coverage table." />
+            <EmptyState title="No monthly coverage yet" body="Import detailed Order Details files or Monthly Profit Report files to start filling the coverage table." />
           )}
         </section>
 
@@ -536,7 +487,7 @@ async function SalesCoveragePageContent({
             </p>
           </div>
           {!salesBatches.length ? (
-            <EmptyState title="No sales files yet" body="Import detailed Order Details or monthly commodity profit files to see file-level status here." />
+            <EmptyState title="No sales files yet" body="Import detailed Order Details or Monthly Profit Report files to see file-level status here." />
           ) : (
             <DataTable headers={["Status", "Action", "File", "Report type", "Coverage", "Rows", "Updated", "Why"]}>
               {salesBatches.map((batch) => {

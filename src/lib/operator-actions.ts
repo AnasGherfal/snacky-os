@@ -1,10 +1,11 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { actionFailure, actionSuccess, type ActionResult } from "@/lib/action-result";
+import { inventoryMovementIdempotencyKey } from "@/lib/inventory-movement";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute, canExecuteRoutes, getEffectivePermissions } from "@/lib/authz";
@@ -173,6 +174,17 @@ function unitQuantity(value: unknown) {
   const parsed = Number(value ?? 0);
   if (!Number.isFinite(parsed)) return 0;
   return Math.max(0, Math.floor(parsed));
+}
+
+function stableUuid(seed: string) {
+  const hex = createHash("sha256").update(seed).digest("hex");
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20, 32),
+  ].join("-");
 }
 
 function machineFillDelta(movement: any) {
@@ -530,7 +542,7 @@ export async function confirmPickList(
   routeId: string,
   pickedItems: { routeStopItemId?: string | null; routeStopId?: string | null; machineId?: string | null; productId: string; quantity: number; plannedQty?: number; reason?: string; notes?: string; isChecked?: boolean }[],
   extras: { routeStopId?: string | null; machineId?: string | null; productId: string; quantity: number; reason: string; notes?: string }[] = [],
-  options: { stopIds?: string[] } = {},
+  options: { stopIds?: string[]; clientSubmissionId?: string | null } = {},
 ): Promise<ActionResult> {
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) throw new Error("No Supabase client");
@@ -577,6 +589,8 @@ export async function confirmPickList(
     };
     const selectedStopIds = Array.from(new Set((options.stopIds ?? []).map((id) => String(id ?? "").trim()).filter(Boolean)));
     const batchMode = selectedStopIds.length > 0;
+    const clientSubmissionId = String(options.clientSubmissionId ?? "").trim() || null;
+    const pickupSubmissionScope = clientSubmissionId || routeId;
     const selectedStopIdSet = new Set(selectedStopIds);
     logSelectedStopIds = selectedStopIds;
 
@@ -769,7 +783,7 @@ export async function confirmPickList(
     const newRouteStopItemRows: Record<string, unknown>[] = [];
     if (newAssignedExtras.size) {
       Array.from(newAssignedExtras.values()).forEach((extra) => {
-        const stopItemId = randomUUID();
+        const stopItemId = stableUuid(`pickup-stop-item:${pickupSubmissionScope}:${extra.routeStopId ?? "unassigned"}:${extra.productId}:${unitQuantity(extra.quantity)}:${extra.machineId ?? ""}:${extra.reason ?? ""}:${extra.notes ?? ""}`);
         const planned: PlannedStopItem = {
           id: stopItemId,
           routeStopId: extra.routeStopId,
@@ -1037,7 +1051,7 @@ export async function confirmPickList(
     }
 
     const confirmedAt = new Date().toISOString();
-    let pickupBatchId: string | null = batchMode ? randomUUID() : null;
+    let pickupBatchId: string | null = batchMode ? pickupSubmissionScope : clientSubmissionId || null;
     logPickupBatchId = pickupBatchId;
     const productSummary = Array.from(pickedByProduct.entries()).map(([productId, quantity]) => ({
       product_id: productId,
@@ -1069,6 +1083,9 @@ export async function confirmPickList(
         reason: "storage_to_operator_bag" as const,
         related_route_id: routeId,
         related_pickup_batch_id: pickupBatchId,
+        idempotency_key: inventoryMovementIdempotencyKey("route-pickup", routeId, pickupSubmissionScope, item.productId, item.locationId, route.operator_id ?? "", item.quantity),
+        source_type: "route_pickup_batch",
+        source_id: pickupBatchId ?? routeId,
         created_by: route.operator_id,
         notes: pickupBatchId ? `Picked for route ${routeId} batch ${pickupBatchId}` : `Picked for route ${routeId}`,
       })),
@@ -1088,7 +1105,10 @@ export async function confirmPickList(
             to_entity_id: pickedLocation.storageId,
             reason: "operator_bag_to_storage" as const,
             related_route_id: routeId,
-            related_pickup_batch_id: null,
+            related_pickup_batch_id: pickupBatchId,
+            idempotency_key: inventoryMovementIdempotencyKey("route-pickup-return", routeId, pickupSubmissionScope, productId, pickedLocation.storageId, pickedLocation.operatorId ?? route.operator_id ?? "", returnedQty),
+            source_type: "route_pickup_batch",
+            source_id: pickupBatchId ?? routeId,
             created_by: route.operator_id,
             notes: `Pickup quantity reduced for route ${routeId}`,
           });
@@ -1105,6 +1125,7 @@ export async function confirmPickList(
         const pickedQty = Math.max(0, Number(item.quantity ?? 0));
         const actionType = item.actionType ?? "planned_pick";
         return {
+          id: stableUuid(`pickup-list-row:${pickupSubmissionScope}:planned:${item.routeStopItemId ?? item.productId}:${item.productId}:${pickedQty}:${actionType}:${item.routeStopId ?? ""}:${item.reason ?? ""}:${item.notes ?? ""}`),
           route_id: routeId,
           route_stop_id: item.routeStopId,
           route_stop_item_id: item.id || null,
@@ -1127,6 +1148,7 @@ export async function confirmPickList(
         const plannedQty = plannedByProduct.get(String(item.productId)) ?? Number(item.plannedQty ?? 0);
         const pickedQty = Math.max(0, Number(item.quantity ?? 0));
         return {
+          id: stableUuid(`pickup-list-row:${pickupSubmissionScope}:legacy:${item.productId}:${pickedQty}:${plannedQty}:${item.reason ?? ""}:${item.notes ?? ""}`),
           route_id: routeId,
           route_stop_id: null,
           route_stop_item_id: null,
@@ -1146,6 +1168,7 @@ export async function confirmPickList(
         };
       }),
       ...extraRows.map((item) => ({
+        id: stableUuid(`pickup-list-row:${pickupSubmissionScope}:extra:${item.productId}:${Math.max(0, Number(item.quantity ?? 0))}:${item.reason ?? ""}:${item.notes ?? ""}`),
         route_id: routeId,
         route_stop_id: null,
         route_stop_item_id: null,
@@ -2015,6 +2038,7 @@ export async function completeStop({
   completionPhotoOriginalName,
   completionPhotoUploadUnavailable,
   issue,
+  clientSubmissionId,
 }: {
   stopId: string;
   routeId: string;
@@ -2034,6 +2058,7 @@ export async function completeStop({
     priority: "critical" | "high" | "normal" | "low";
     description: string;
   };
+  clientSubmissionId?: string | null;
 }): Promise<CompleteStopResult> {
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) return actionFailure("Database is not available.", { expectedCash: null, routeId, stopId });
@@ -2053,6 +2078,7 @@ export async function completeStop({
     logProfile = profile;
     const routeAccessProfile = await buildOperatorRouteAccessContext(supabase, profile);
     const completedAt = new Date().toISOString();
+    const stopSubmissionId = String(clientSubmissionId ?? "").trim() || routeId;
     const hasNewCompletionPhoto = Boolean(
       completionPhotoUrl?.trim() ||
       completionPhotoPath?.trim() ||
@@ -2292,6 +2318,9 @@ export async function completeStop({
           related_route_id: routeId,
           related_route_stop_id: stopId,
           related_machine_id: machineId,
+          idempotency_key: inventoryMovementIdempotencyKey("route-stop-fill", routeId, stopId, machineId, productId, delta, stopSubmissionId),
+          source_type: "route_stop_completion",
+          source_id: stopSubmissionId,
           created_by: route.operator_id,
           notes: `Filled at machine ${machineId}`,
         }];
@@ -2308,6 +2337,9 @@ export async function completeStop({
           related_route_id: routeId,
           related_route_stop_id: stopId,
           related_machine_id: machineId,
+          idempotency_key: inventoryMovementIdempotencyKey("route-stop-fill-correction", routeId, stopId, machineId, productId, Math.abs(delta), stopSubmissionId),
+          source_type: "route_stop_completion",
+          source_id: stopSubmissionId,
           created_by: route.operator_id,
           notes: `Reduced filled quantity at machine ${machineId}`,
         }];
@@ -2318,7 +2350,7 @@ export async function completeStop({
     if (movements.length) {
       const { error: movementError } = await supabase
         .from("inventory_movements")
-        .insert(movements);
+        .upsert(movements, { onConflict: "idempotency_key", ignoreDuplicates: true });
 
       if (movementError) throwActionError(movementError, "Could not create machine fill inventory movements.");
     }
@@ -2635,9 +2667,11 @@ export async function completeStop({
 export async function recordLeftovers({
   routeId,
   leftoverItems,
+  clientSubmissionId,
 }: {
   routeId: string;
   leftoverItems: { productId: string; quantity: number }[];
+  clientSubmissionId?: string | null;
 }) {
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) return actionFailure("Supabase is not configured.", { code: "NO_SUPABASE" });
@@ -2670,6 +2704,7 @@ export async function recordLeftovers({
 
     const storageId = storages?.[0]?.id;
     if (!storageId) throw new Error("No active storage location found");
+    const leftoversSubmissionId = String(clientSubmissionId ?? "").trim() || routeId;
 
     // Create inventory movements: operator_bag -> storage
     const leftoversByProduct = new Map<string, number>();
@@ -2699,7 +2734,7 @@ export async function recordLeftovers({
         .from("inventory_movements")
         .select("product_id, quantity")
         .eq("related_route_id", routeId)
-        .eq("reason", "operator_bag_to_storage"),
+        .in("reason", ["operator_bag_to_storage", "route_to_storage_return"]),
     ]);
     if (movementBalanceError) throwActionError(movementBalanceError, "Could not calculate route operator bag inventory.");
     if (filledError) throwActionError(filledError, "Could not verify filled route stock.");
@@ -2728,24 +2763,31 @@ export async function recordLeftovers({
     }
 
     const movements = Array.from(leftoversByProduct.entries())
-      .map(([productId, desiredQuantity]) => ({
-        product_id: productId,
-        quantity: Math.max(0, desiredQuantity - (returnedByProduct.get(productId) ?? 0)),
-        from_entity_type: "operator_bag" as const,
-        from_entity_id: route.operator_id,
-        to_entity_type: "storage" as const,
-        to_entity_id: storageId,
-        reason: "operator_bag_to_storage" as const,
-        related_route_id: routeId,
-        created_by: route.operator_id,
-        notes: `Leftovers returned from route ${routeId}`,
-      }))
+      .map(([productId, desiredQuantity]) => {
+        const remainingQuantity = Math.max(0, desiredQuantity - (returnedByProduct.get(productId) ?? 0));
+        return {
+          product_id: productId,
+          quantity: remainingQuantity,
+          from_entity_type: "operator_bag" as const,
+          from_entity_id: route.operator_id,
+          to_entity_type: "storage" as const,
+          to_entity_id: storageId,
+          reason: "operator_bag_to_storage" as const,
+          related_route_id: routeId,
+          related_pickup_batch_id: null,
+          idempotency_key: inventoryMovementIdempotencyKey("route-leftovers", routeId, leftoversSubmissionId, productId, storageId, route.operator_id ?? "", remainingQuantity),
+          source_type: "route_leftovers",
+          source_id: leftoversSubmissionId,
+          created_by: route.operator_id,
+          notes: `Leftovers returned from route ${routeId}`,
+        };
+      })
       .filter((movement) => movement.quantity > 0);
 
     if (movements.length > 0) {
       const { error: movementError } = await supabase
         .from("inventory_movements")
-        .insert(movements);
+        .upsert(movements, { onConflict: "idempotency_key", ignoreDuplicates: true });
 
       if (movementError) throwActionError(movementError, "Could not create leftover return movements.");
     }

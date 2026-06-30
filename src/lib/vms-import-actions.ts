@@ -1669,7 +1669,7 @@ async function runVmsImport({
     return;
   }
   if (reportType === "monthly_product_profit" && !reportStartDate && !reportEndDate && !salesReportPeriod) {
-    errorRedirect("Select the report start and end date for the monthly commodity profit report.");
+    errorRedirect("Select the report start and end date for the Monthly Profit Report.");
     return;
   }
 
@@ -4955,7 +4955,7 @@ export async function completeVmsImport(formData: FormData) {
   const resolvedReportStartDate = submittedReportStartDate ?? salesReportPeriod?.reportStartDate ?? null;
   const resolvedReportEndDate = submittedReportEndDate ?? salesReportPeriod?.reportEndDate ?? null;
   if (reportType === "monthly_product_profit" && (!resolvedReportStartDate || !resolvedReportEndDate)) {
-    redirect(`/vms-import?error=${encodeURIComponent("Select the report start and end date for the monthly commodity profit report.")}`);
+    redirect(`/vms-import?error=${encodeURIComponent("Select the report start and end date for the Monthly Profit Report.")}`);
     return;
   }
 

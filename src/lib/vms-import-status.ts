@@ -4,7 +4,7 @@ import {
   isActiveImportedVmsBatch,
   sourceFileName,
   type VmsDashboardBatch,
-} from "@/lib/vms-dashboard-source";
+} from "./vms-dashboard-source.ts";
 
 export type VmsImportBatchLike = VmsDashboardBatch & {
   delete_reason?: string | null;
@@ -96,7 +96,7 @@ export function vmsImportReportTypeLabel(reportType: string | null | undefined) 
     case "vms_order_details_weekly":
       return "Detailed Order Details";
     case "monthly_product_profit":
-      return "Monthly Commodity Profit Report";
+      return "Monthly Profit Report";
     case "sales":
       return "VMS Sales Summary";
     case "stock":
@@ -191,7 +191,7 @@ export function describeVmsImportBatchStatus(
         actionLabel: "Open active copy",
         activeInDashboard: false,
         key: "deleted_duplicate_active",
-        label: "Deleted duplicate of active file",
+        label: "Deleted import file",
         relatedBatchId: representativeId,
         reason: representativeLabel
           ? `This deleted batch matches ${representativeLabel}, which is already active in the dashboard.`
@@ -207,7 +207,7 @@ export function describeVmsImportBatchStatus(
         actionLabel: "Restore deleted batch",
         activeInDashboard: false,
         key: "duplicate_deleted",
-        label: "Duplicate of deleted file",
+        label: "Deleted import file",
         relatedBatchId: representativeId,
         reason: representativeLabel
           ? `This file matches deleted source ${representativeLabel}. Restore the deleted batch or import it again as a new active batch.`
@@ -222,7 +222,7 @@ export function describeVmsImportBatchStatus(
       actionLabel: hasUsableRows ? "Restore deleted batch" : "Reprocess file",
       activeInDashboard: false,
       key: "deleted",
-      label: "Deleted",
+      label: "Deleted import file",
       relatedBatchId: null,
       reason: hasUsableRows
         ? "This file was soft-deleted, so its rows are not included in the dashboard."
@@ -235,10 +235,10 @@ export function describeVmsImportBatchStatus(
   if (status === "failed") {
     return {
       action: "reprocess",
-      actionLabel: hasUsableRows ? "Reprocess file" : "Reupload file",
+      actionLabel: hasUsableRows ? "Reprocess file" : "Reprocess file",
       activeInDashboard: false,
       key: "failed",
-      label: "Failed",
+      label: "Import failed",
       relatedBatchId: null,
       reason: hasUsableRows
         ? "The import failed, but saved rows or metadata still exist and can be repaired."
@@ -255,11 +255,11 @@ export function describeVmsImportBatchStatus(
         actionLabel: needsMapping ? "Review mappings" : null,
         activeInDashboard: true,
         key: "already_active",
-        label: "Already imported and active",
+        label: "Active in dashboard",
         relatedBatchId: representativeId,
         reason: representativeLabel
-          ? `This is the active copy of ${representativeLabel}.`
-          : "This is the active copy of a file that already exists in the dashboard.",
+          ? `This batch is the active copy of ${representativeLabel} and is already feeding the dashboard.`
+          : "This batch is already the active copy in the dashboard.",
         secondaryAction: "none",
         secondaryActionLabel: null,
       };
@@ -270,11 +270,11 @@ export function describeVmsImportBatchStatus(
       actionLabel: "Open active copy",
       activeInDashboard: false,
       key: "duplicate_active",
-      label: "Duplicate of active file",
+      label: "Duplicate active file",
       relatedBatchId: representativeId,
       reason: representativeLabel
-        ? `An active copy of ${representativeLabel} is already feeding the dashboard.`
-        : "An active copy of this file already exists in the dashboard.",
+        ? `Another active copy of ${representativeLabel} is already feeding the dashboard.`
+        : "Another active copy of this file is already feeding the dashboard.",
       secondaryAction: "import_as_new_active",
       secondaryActionLabel: "Import as new active batch",
     };
@@ -286,7 +286,7 @@ export function describeVmsImportBatchStatus(
       actionLabel: "Restore deleted batch",
       activeInDashboard: false,
       key: "duplicate_deleted",
-      label: "Duplicate of deleted file",
+      label: "Deleted import file",
       relatedBatchId: representativeId,
       reason: representativeLabel
         ? `This file matches deleted source ${representativeLabel}. Restore the deleted batch or import it again as a new active batch.`
@@ -299,10 +299,10 @@ export function describeVmsImportBatchStatus(
   if (disabled) {
     return {
       action: hasUsableRows ? "restore" : "reprocess",
-      actionLabel: hasUsableRows ? "Restore to dashboards" : "Reprocess file",
+      actionLabel: hasUsableRows ? "Activate file" : "Reprocess file",
       activeInDashboard: false,
       key: "disabled",
-      label: hasUsableRows ? "Imported but inactive" : "Disabled",
+      label: hasUsableRows ? "Inactive file" : "Inactive file",
       relatedBatchId: null,
       reason: batch.disable_reason
         ? `This file was disabled: ${batch.disable_reason}`
@@ -315,10 +315,10 @@ export function describeVmsImportBatchStatus(
   if (status === "previewed" || status === "draft" || status === "cancelled" || status === "canceled") {
     return {
       action: hasUsableRows ? "finalize" : "reprocess",
-      actionLabel: hasUsableRows ? "Finalize / activate" : "Reprocess file",
+      actionLabel: hasUsableRows ? "Finalize file" : "Reprocess file",
       activeInDashboard: false,
       key: "needs_finalization",
-      label: "Imported but inactive",
+      label: "Needs finalization",
       relatedBatchId: null,
       reason: hasUsableRows
         ? "Rows were saved, but this batch is not active in the dashboard yet."
@@ -334,7 +334,7 @@ export function describeVmsImportBatchStatus(
       actionLabel: needsMapping ? "Review mappings" : null,
       activeInDashboard: true,
       key: needsMapping ? "active_needs_mapping" : "active",
-      label: needsMapping ? "Needs mapping but imported" : "Imported and active",
+      label: "Active in dashboard",
       relatedBatchId: null,
       reason: needsMapping
         ? "Rows are imported and active, but some mappings still need review."
@@ -347,10 +347,10 @@ export function describeVmsImportBatchStatus(
   if (hasUsableRows) {
     return {
       action: "finalize",
-      actionLabel: "Finalize / activate",
+      actionLabel: "Finalize file",
       activeInDashboard: false,
       key: "imported_inactive",
-      label: "Imported but inactive",
+      label: "Needs finalization",
       relatedBatchId: null,
       reason: "Rows were saved, but the batch is not active in the dashboard.",
       secondaryAction: "reprocess",

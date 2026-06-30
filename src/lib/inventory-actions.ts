@@ -5,13 +5,29 @@ import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canAddProducts, hasPermission, isOwnerAdminRole } from "@/lib/authz";
+import { INVENTORY_MOVEMENT_FORM_OPTIONS, inventoryMovementIdempotencyKey, normalizeInventoryEntityType, normalizeInventoryMovementReason } from "@/lib/inventory-movement";
 import { resolveProductSku } from "@/lib/product-sku";
 import { isRouteReservationStatus } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
-const movementTypes = ["storage_to_operator_bag", "operator_bag_to_storage", "storage_adjustment", "damaged", "expired", "manual_correction", "product_substitution"] as const;
+const movementTypes = Array.from(new Set([
+  ...INVENTORY_MOVEMENT_FORM_OPTIONS.map((option) => option.value),
+  "storage_to_operator_bag",
+  "operator_bag_to_machine",
+  "operator_bag_to_storage",
+  "machine_to_storage",
+  "storage_adjustment",
+  "manual_correction",
+  "stock_count_adjustment",
+  "damaged",
+  "expired",
+  "product_substitution",
+  "returned_from_machine",
+  "historical_route_deduction",
+  "purchase_received",
+]));
 type MovementType = (typeof movementTypes)[number];
-type EntityType = "storage" | "operator_bag" | "waste" | "adjustment";
+type EntityType = "storage" | "operator_bag" | "machine" | "waste" | "adjustment";
 type SimpleAdjustmentType = "set_exact" | "add" | "remove";
 
 const simpleAdjustmentReasons = new Map([
@@ -26,8 +42,8 @@ const simpleAdjustmentReasons = new Map([
 function parseLocation(value: FormDataEntryValue | null): { type: EntityType; id: string | null } | null {
   const raw = String(value || "");
   const [type, id = ""] = raw.split(":");
-  if (!["storage", "operator_bag", "waste", "adjustment"].includes(type)) return null;
-  return { type: type as EntityType, id: id || null };
+  const normalizedType = normalizeInventoryEntityType(type);
+  return { type: normalizedType, id: id || null };
 }
 
 function clean(value: FormDataEntryValue | null) {
@@ -91,7 +107,7 @@ export async function createQuickProduct(formData: FormData) {
 
 function movementReason(type: MovementType) {
   if (type === "storage_adjustment") return "stock_count_adjustment";
-  return type;
+  return normalizeInventoryMovementReason(type);
 }
 
 function userContext(profile: NonNullable<Awaited<ReturnType<typeof getCurrentProfile>>>) {
@@ -282,21 +298,57 @@ export async function createStockMovement(formData: FormData) {
 
   const fromLocation = from as { type: EntityType; id: string | null };
   const toLocation = to as { type: EntityType; id: string | null };
+  const normalizedMovementType = movementType === "storage_adjustment" ? "stock_count_correction" : movementType;
 
-  if (movementType === "storage_to_operator_bag" && (fromLocation.type !== "storage" || toLocation.type !== "operator_bag")) {
-    fail("Storage to operator bag movements must move from storage to an operator bag.");
-  }
-  if (movementType === "operator_bag_to_storage" && (fromLocation.type !== "operator_bag" || toLocation.type !== "storage")) {
-    fail("Operator bag returns must move from an operator bag to storage.");
-  }
-  if (movementType === "storage_adjustment" && fromLocation.type !== "storage" && toLocation.type !== "storage") {
-    fail("Storage adjustments must include a storage location.");
-  }
-  if ((movementType === "damaged" || movementType === "expired") && toLocation.type !== "waste") {
-    fail("Damaged and expired stock must move to waste.");
-  }
-  if (movementType === "product_substitution" && !relatedRouteId) {
-    fail("Product substitution movements must be linked to a route.");
+  switch (normalizedMovementType) {
+    case "storage_to_route":
+    case "storage_to_operator_bag":
+      if (fromLocation.type !== "storage" || toLocation.type !== "operator_bag") {
+        fail("Storage to route bag movements must move from storage to a route bag.");
+      }
+      break;
+    case "route_to_machine":
+    case "operator_bag_to_machine":
+      if (fromLocation.type !== "operator_bag" || toLocation.type !== "machine") {
+        fail("Route bag to machine movements must move from a route bag to a machine.");
+      }
+      break;
+    case "route_to_storage_return":
+    case "operator_bag_to_storage":
+      if (fromLocation.type !== "operator_bag" || toLocation.type !== "storage") {
+        fail("Route bag returns must move from a route bag to storage.");
+      }
+      break;
+    case "machine_to_storage_return":
+    case "machine_to_storage":
+      if (fromLocation.type !== "machine" || toLocation.type !== "storage") {
+        fail("Machine returns must move from a machine to storage.");
+      }
+      break;
+    case "route_to_damaged":
+    case "machine_to_damaged":
+    case "damaged":
+    case "expired":
+      if (toLocation.type !== "waste") {
+        fail("Damaged and expired stock must move to waste.");
+      }
+      break;
+    case "manual_adjustment_in":
+    case "manual_adjustment_out":
+    case "stock_count_correction":
+    case "manual_correction":
+    case "stock_count_adjustment":
+      if (fromLocation.type !== "adjustment" && toLocation.type !== "adjustment") {
+        fail("Manual adjustments must involve the adjustment account.");
+      }
+      break;
+    case "product_substitution":
+      if (!relatedRouteId) {
+        fail("Product substitution movements must be linked to a route.");
+      }
+      break;
+    default:
+      break;
   }
 
   if (fromLocation.type === "storage" && !adminOverride) {
@@ -334,7 +386,18 @@ export async function createStockMovement(formData: FormData) {
     from_entity_id: fromLocation.id,
     to_entity_type: toLocation.type,
     to_entity_id: toLocation.id,
-    reason: movementReason(movementType),
+    reason: movementReason(normalizedMovementType as MovementType),
+    idempotency_key: inventoryMovementIdempotencyKey(
+      "inventory-movement",
+      movementReason(normalizedMovementType as MovementType),
+      productId,
+      fromLocation.type,
+      fromLocation.id ?? "",
+      toLocation.type,
+      toLocation.id ?? "",
+      relatedRouteId ?? "",
+      quantity,
+    ),
     related_route_id: relatedRouteId,
     created_by: profile.team_member_id,
     notes,
@@ -345,7 +408,7 @@ export async function createStockMovement(formData: FormData) {
     fail("Could not create stock movement.");
   }
 
-  if (movementType === "storage_to_operator_bag" && relatedRouteId) {
+  if ((normalizedMovementType === "storage_to_route" || normalizedMovementType === "storage_to_operator_bag") && relatedRouteId) {
     const { data: stockLine } = await supabase
       .from("route_stock_lines")
       .select("id, planned_qty, picked_qty")
@@ -371,6 +434,31 @@ export async function createStockMovement(formData: FormData) {
       });
     }
   }
+  if ((normalizedMovementType === "route_to_storage_return" || normalizedMovementType === "operator_bag_to_storage") && relatedRouteId) {
+    const { data: stockLine } = await supabase
+      .from("route_stock_lines")
+      .select("id, planned_qty, returned_qty")
+      .eq("route_id", relatedRouteId)
+      .eq("product_id", productId)
+      .maybeSingle();
+
+    if (stockLine) {
+      await supabase
+        .from("route_stock_lines")
+        .update({
+          returned_qty: Number(stockLine.returned_qty ?? 0) + quantity,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", stockLine.id);
+    } else {
+      await supabase.from("route_stock_lines").insert({
+        route_id: relatedRouteId,
+        product_id: productId,
+        planned_qty: quantity,
+        returned_qty: quantity,
+      });
+    }
+  }
 
   revalidatePath("/inventory");
   revalidatePath("/inventory/movements/new");
@@ -391,6 +479,35 @@ export async function createInventoryMovementCorrection(formData: FormData) {
 
   const { data: movement, error: movementError } = await supabase.from("inventory_movements").select("*").eq("id", id).maybeSingle();
   if (movementError || !movement) fail("/inventory/movements", "Inventory movement not found.");
+
+  const correctionIdempotencyKey = inventoryMovementIdempotencyKey(
+    "inventory-correction",
+    id,
+    reason,
+    movement.product_id ?? "",
+    movement.quantity ?? 0,
+    movement.related_route_id ?? "",
+    movement.related_purchase_id ?? "",
+    movement.related_machine_id ?? "",
+  );
+
+  const { data: existingCorrection, error: existingCorrectionError } = await supabase
+    .from("inventory_movements")
+    .select("*")
+    .eq("idempotency_key", correctionIdempotencyKey)
+    .maybeSingle();
+  if (existingCorrectionError) {
+    console.error("[inventory:movement] Failed to load existing correction", existingCorrectionError);
+    fail("/inventory/movements", "Could not verify correction status.");
+  }
+  if (existingCorrection) {
+    revalidatePath("/inventory");
+    revalidatePath("/inventory/movements");
+    if (movement.related_route_id) revalidatePath("/routes/" + movement.related_route_id);
+    if (movement.related_purchase_id) revalidatePath("/purchases/" + movement.related_purchase_id);
+    revalidatePath("/products/" + movement.product_id + "/history");
+    redirect("/inventory/movements?corrected=" + id.slice(0, 8));
+  }
 
   const { count: existingCorrectionCount, error: correctionCheckError } = await supabase
     .from("inventory_movements")
@@ -421,14 +538,27 @@ export async function createInventoryMovementCorrection(formData: FormData) {
     line_total_lyd: movement.line_total_lyd === null || movement.line_total_lyd === undefined ? null : -Math.abs(Number(movement.line_total_lyd)),
     reversed_movement_id: id,
     correction_reason: reason,
+    source_type: "inventory_movement_correction",
+    source_id: id,
+    idempotency_key: correctionIdempotencyKey,
     created_by: profile.team_member_id,
-    notes: `Correction for movement ${id.slice(0, 8)}: ${reason}`,
+    notes: "Correction for movement " + id.slice(0, 8) + ": " + reason,
   };
 
-  const { data: correction, error } = await supabase.from("inventory_movements").insert(payload).select("*").single();
+  const { error } = await supabase.from("inventory_movements").upsert(payload, { onConflict: "idempotency_key", ignoreDuplicates: true });
   if (error) {
     console.error("[inventory:movement] Failed to create correction", error);
     fail("/inventory/movements", "Could not create correction movement.");
+  }
+
+  const { data: correction, error: correctionLoadError } = await supabase
+    .from("inventory_movements")
+    .select("*")
+    .eq("idempotency_key", correctionIdempotencyKey)
+    .maybeSingle();
+  if (correctionLoadError || !correction) {
+    console.error("[inventory:movement] Failed to reload correction", correctionLoadError);
+    fail("/inventory/movements", "Could not load correction movement.");
   }
 
   await logActivity({
@@ -445,8 +575,8 @@ export async function createInventoryMovementCorrection(formData: FormData) {
 
   revalidatePath("/inventory");
   revalidatePath("/inventory/movements");
-  if (movement.related_route_id) revalidatePath(`/routes/${movement.related_route_id}`);
-  if (movement.related_purchase_id) revalidatePath(`/purchases/${movement.related_purchase_id}`);
-  revalidatePath(`/products/${movement.product_id}/history`);
-  redirect(`/inventory/movements?corrected=${id.slice(0, 8)}`);
+  if (movement.related_route_id) revalidatePath("/routes/" + movement.related_route_id);
+  if (movement.related_purchase_id) revalidatePath("/purchases/" + movement.related_purchase_id);
+  revalidatePath("/products/" + movement.product_id + "/history");
+  redirect("/inventory/movements?corrected=" + id.slice(0, 8));
 }

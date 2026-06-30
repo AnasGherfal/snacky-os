@@ -4,7 +4,7 @@ import {
   isActiveImportedVmsBatch,
   sourceFileName,
   type VmsDashboardBatch,
-} from "@/lib/vms-dashboard-source";
+} from "./vms-dashboard-source.ts";
 import {
   createVmsOrderDetailsDuplicateHash,
   orderDetailsAliases,
@@ -12,7 +12,7 @@ import {
   orderDetailsPaymentAmount,
   orderDetailsTransactionStatus,
   orderDetailsValue,
-} from "@/lib/vms-order-details";
+} from "./vms-order-details.ts";
 
 export type SalesDashboardSearchParams = {
   range?: string;
@@ -805,7 +805,7 @@ function classifyContribution({
   if (sourceMode === "monthly" && reportType === "vms_order_details_weekly") {
     return {
       included: false,
-      reason: "Detailed Order Details file is available for audit only because the dashboard is using the monthly commodity profit source for this range.",
+      reason: "Detailed Order Details file is available for audit only because the dashboard is using the Monthly Profit Report source for this range.",
       status: "other_source_active",
     };
   }
@@ -813,7 +813,7 @@ function classifyContribution({
   if (sourceMode === "detailed" && reportType === "monthly_product_profit") {
     return {
       included: false,
-      reason: "Monthly commodity profit file is available for audit only because the dashboard is using detailed Order Details for this range.",
+      reason: "Monthly Profit Report file is available for audit only because the dashboard is using detailed Order Details for this range.",
       status: "other_source_active",
     };
   }

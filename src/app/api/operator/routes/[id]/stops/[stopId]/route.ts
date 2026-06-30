@@ -720,6 +720,7 @@ export async function POST(
       completionPhotoOriginalName: payload.completionPhotoOriginalName ? String(payload.completionPhotoOriginalName) : null,
       completionPhotoUploadUnavailable: Boolean(payload.completionPhotoUploadUnavailable),
       issue,
+      clientSubmissionId,
     });
     statusCode = responseStatusForCompleteStop(result);
 

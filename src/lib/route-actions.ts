@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
+import { inventoryMovementIdempotencyKey } from "@/lib/inventory-movement";
 import { canExecuteRoutes, isAdminRole } from "@/lib/authz";
 import {
   ROUTE_ASSIGNED_STATUS,
@@ -76,7 +77,7 @@ async function reverseOutstandingPickedStock(
   const [{ data: routeStockLines, error: stockError }, { data: fillMovements, error: fillError }, { data: pickMovements, error: pickError }] = await Promise.all([
     supabase.from("route_stock_lines").select("id, product_id, picked_qty, returned_qty").eq("route_id", routeId),
     supabase.from("inventory_movements").select("product_id, quantity, reason, from_entity_type, to_entity_type").eq("related_route_id", routeId).in("reason", ["operator_bag_to_machine", "manual_correction"]),
-    supabase.from("inventory_movements").select("product_id, quantity, from_entity_id, to_entity_id").eq("related_route_id", routeId).eq("reason", "storage_to_operator_bag").order("created_at", { ascending: true }),
+    supabase.from("inventory_movements").select("product_id, quantity, from_entity_id, to_entity_id").eq("related_route_id", routeId).in("reason", ["storage_to_operator_bag", "storage_to_route"]).order("created_at", { ascending: true }),
   ]);
 
   if (stockError) throw stockError;
@@ -130,6 +131,9 @@ async function reverseOutstandingPickedStock(
         to_entity_id: pickedLocation.storageId,
         reason: "operator_bag_to_storage",
         related_route_id: routeId,
+        source_type: "route_cancellation",
+        source_id: routeId,
+        idempotency_key: inventoryMovementIdempotencyKey("route-cancel-return", routeId, productId, pickedLocation.storageId, pickedLocation.operatorId ?? "", movementQty),
         created_by: actorTeamMemberId,
         notes: `Route cancellation return for ${routeId}`,
       });
@@ -141,7 +145,7 @@ async function reverseOutstandingPickedStock(
   }
 
   if (reversalMovements.length) {
-    const { error } = await supabase.from("inventory_movements").insert(reversalMovements);
+    const { error } = await supabase.from("inventory_movements").upsert(reversalMovements, { onConflict: "idempotency_key", ignoreDuplicates: true });
     if (error) throw error;
   }
 

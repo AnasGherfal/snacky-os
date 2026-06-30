@@ -58,6 +58,44 @@ function errorSummary(error: unknown) {
   };
 }
 
+function missingDbObjectName(error: unknown) {
+  const summary = errorSummary(error);
+  const text = [summary?.code, summary?.message, summary?.details, summary?.hint]
+    .map((value) => String(value ?? ""))
+    .join(" ");
+  const relation = text.match(/relation "([^"]+)"/i)?.[1] ?? null;
+  const column = text.match(/column "([^"]+)"/i)?.[1] ?? null;
+  return relation ?? column;
+}
+
+function logRouteLoaderIssue({
+  step,
+  query,
+  error,
+  context,
+  optional = false,
+}: {
+  step: string;
+  query: string;
+  error: unknown;
+  context: Record<string, unknown>;
+  optional?: boolean;
+}) {
+  const summary = errorSummary(error);
+  const payload = {
+    ...context,
+    loader_step: step,
+    loader_query: query,
+    optional_data_failed: optional,
+    db_error_code: summary?.code ?? null,
+    db_error_message: summary?.message ?? null,
+    db_error_details: summary?.details ?? null,
+    db_error_hint: summary?.hint ?? null,
+    missing_relation_or_column: missingDbObjectName(error),
+  };
+  (optional ? console.warn : console.error)('[operator:route] ' + step + ' failed', payload);
+}
+
 async function readOperatorRouteBaseById(
   client: NonNullable<ReturnType<typeof getSupabaseServerClient>>,
   routeId: string,
@@ -156,7 +194,20 @@ export default async function OperatorRouteDetailPage({
 
   const routeRow = route as OperatorRouteDetailRow;
   const canAccess = canAccessOperatorRoute(routeAccessProfile, routeRow.operator_id);
-  const routeReadClient = visibleRoute ? supabase : routeDiagnosticClient;
+  const routeReadClient = routeDiagnosticClient;
+  const loaderContext = {
+    route_id: routeId,
+    current_user_id: profile.id,
+    current_user_role: profile.role,
+    current_user_roles: profile.roles,
+    operator_profile_id: profile.team_member_id ?? null,
+    linked_operator_ids: accessibleOperatorIds,
+    route_status: routeRow.status ?? null,
+    assigned_operator_id: routeRow.operator_id ?? null,
+    base_route_found: Boolean(baseRoute),
+    visible_route_found: Boolean(visibleRoute),
+    permission_check_passed: canAccess,
+  };
 
   if (!visibleRoute && baseRoute) {
     console.warn("[operator:route] Using base route read after permission-filtered query returned no row", {
@@ -175,10 +226,10 @@ export default async function OperatorRouteDetailPage({
     });
   }
 
-  const [{ data: operator }, { data: stops, error: stopsError }, { data: routeStock }, { data: routeAdjustments, error: adjustmentsError }] = await Promise.all([
+  const [{ data: operator, error: operatorError }, { data: stops, error: stopsError }, { data: routeStock, error: routeStockError }, { data: routeAdjustments, error: adjustmentsError }] = await Promise.all([
     routeRow.operator_id
       ? routeReadClient.from("team_members").select("id, full_name").eq("id", routeRow.operator_id).maybeSingle()
-      : Promise.resolve({ data: null }),
+      : Promise.resolve({ data: null, error: null }),
     routeReadClient
       .from("route_stops")
       .select("id, stop_order, status, machine_id")
@@ -195,9 +246,10 @@ export default async function OperatorRouteDetailPage({
       .neq("status", "cancelled")
       .order("created_at", { ascending: false }),
   ]);
-  if (stopsError) console.error("[operator:route] Failed to load stops", { routeId, error: stopsError });
-  if (adjustmentsError) console.error("[operator:route] Failed to load route adjustments", { routeId, error: adjustmentsError });
-
+  if (operatorError) logRouteLoaderIssue({ step: 'load_route_operator', query: 'team_members', error: operatorError, context: loaderContext, optional: true });
+  if (stopsError) logRouteLoaderIssue({ step: 'load_route_stops', query: 'route_stops', error: stopsError, context: loaderContext });
+  if (routeStockError) logRouteLoaderIssue({ step: 'load_route_stock_lines', query: 'route_stock_lines', error: routeStockError, context: loaderContext });
+  if (adjustmentsError) logRouteLoaderIssue({ step: 'load_inventory_adjustments', query: 'inventory_adjustments', error: adjustmentsError, context: loaderContext, optional: true });
   if (!canAccess) {
     console.error("[operator:route] Route access denied by app permission check", {
       route_id: routeId,
@@ -223,13 +275,26 @@ export default async function OperatorRouteDetailPage({
     );
   }
 
+  if (stopsError || routeStockError) {
+    return (
+      <>
+        <ErrorState
+          title="Route details unavailable"
+          body="Some required route data could not load. Refresh this page and try again. If it keeps happening, ask a supervisor to check the route data."
+          action={<SecondaryButton href="/operator/routes">Back to routes</SecondaryButton>}
+        />
+      </>
+    );
+  }
+
   const routeStops = (stops ?? []) as OperatorRoutePreviewStopRow[];
   const machineIds = routeStops.map((stop) => stop.machine_id).filter(Boolean);
-  const { data: machines } = machineIds.length
+  const { data: machines, error: machinesError } = machineIds.length
     ? await routeReadClient.from("machines").select("id, name, machine_code").in("id", machineIds)
-    : { data: [] };
+    : { data: [], error: null };
+  if (machinesError) logRouteLoaderIssue({ step: 'load_route_machines', query: 'machines', error: machinesError, context: loaderContext, optional: true });
   const machineById = new Map(((machines ?? []) as OperatorRouteMachineRow[]).map((machine) => [machine.id, machine]));
-  const adjustmentRows = (routeAdjustments ?? []) as OperatorRouteAdjustmentRow[];
+  const adjustmentRows = adjustmentsError ? [] : (routeAdjustments ?? []) as OperatorRouteAdjustmentRow[];
   const damagedAdjustmentRows = adjustmentRows.filter((adjustment) => adjustment.adjustment_type === "damaged");
   const returnedAdjustmentRows = adjustmentRows.filter((adjustment) => adjustment.adjustment_type === "returned_from_machine");
   const damagedAdjustmentQty = damagedAdjustmentRows.reduce((sum, adjustment) => sum + Number(adjustment.quantity ?? 0), 0);
@@ -265,6 +330,11 @@ export default async function OperatorRouteDetailPage({
         />
         {success ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900">{success}</div> : null}
         {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{error}</div> : null}
+        {operatorError || machinesError || adjustmentsError ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            Some route details could not load. The route is still available, but a few non-critical details may be missing.
+          </div>
+        ) : null}
 
         {/* Route Status Cards */}
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

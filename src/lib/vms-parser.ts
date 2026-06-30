@@ -47,9 +47,9 @@ export type VmsMappingDetection = {
 export const vmsReportTypes: { value: VmsReportType; label: string }[] = [
   { value: "machine_stock_snapshot", label: "Machine Stock Snapshot" },
   { value: "stock", label: "Machine Goods / Stock" },
-  { value: "vms_order_details_weekly", label: "Detailed Order Details Report - Recommended" },
+  { value: "vms_order_details_weekly", label: "Detailed Order Details - Recommended" },
   { value: "sales", label: "General / Summary Sales Report" },
-  { value: "monthly_product_profit", label: "Monthly Commodity Profit Report" },
+  { value: "monthly_product_profit", label: "Monthly Profit Report" },
   { value: "product_list", label: "Product list" },
   { value: "machine_status", label: "Machine status" },
   { value: "planogram", label: "Planogram / selection management" },

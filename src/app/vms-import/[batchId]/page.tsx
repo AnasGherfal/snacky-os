@@ -619,15 +619,15 @@ async function VmsImportBatchDetailPageContent({
               <form action={updateVmsImportBatchState}>
                 <input type="hidden" name="batch_id" value={String(batch.id)} />
                 <input type="hidden" name="action" value="finalize_import" />
-                <FormSubmitButton className="btn-primary" pendingLabel={canFinalizeOrderDetailsBatch ? "Finalizing file..." : "Marking imported..."} disabled={canFinalizePreviewStockBatch ? finalizeEvidenceCount <= 0 : false}>
-                  {canFinalizeOrderDetailsBatch ? "Finalize file" : "Mark imported and activate"}
+                <FormSubmitButton className="btn-primary" pendingLabel="Finalizing file..." disabled={canFinalizePreviewStockBatch ? finalizeEvidenceCount <= 0 : false}>
+                  Finalize file
                 </FormSubmitButton>
               </form>
             ) : null}
             {rowList.length && canConfirmVmsImports(profile) ? (
               <form action={reprocessVmsImportBatch}>
                 <input type="hidden" name="batch_id" value={String(batch.id)} />
-                <FormSubmitButton pendingLabel="Reprocessing VMS import...">Repair metadata / reprocess mappings</FormSubmitButton>
+                <FormSubmitButton pendingLabel="Reprocessing file...">Reprocess file</FormSubmitButton>
               </form>
             ) : null}
           </div>
@@ -635,7 +635,7 @@ async function VmsImportBatchDetailPageContent({
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
           <StatCard label="Total rows" value={summary?.totalRows ?? numberValue(batch.row_count, rowList.length)} />
           <StatCard label="Imported" value={summary?.importedRows ?? numberValue(batch.rows_imported, importedRowsCount.count ?? importedRows.length)} />
-          <StatCard label="Active in dashboards" value={isUsableImportStatus(stringValue(batch.status)) && batch.is_active !== false && !batch.deleted_at ? "Yes" : "No"} />
+          <StatCard label="Active in dashboard" value={isUsableImportStatus(stringValue(batch.status)) && batch.is_active !== false && !batch.deleted_at ? "Yes" : "No"} />
           <StatCard label="Duplicates skipped" value={summary?.rowsSkippedDuplicate ?? numberValue(batch.rows_skipped_duplicate)} />
           <StatCard label="Needs mapping" value={summary?.needsProductMappingRows ?? needsMappingRows.length} />
           <StatCard label="Unknown machines" value={summary?.unknownMachineRows ?? unknownMachineRows.length} />
@@ -857,15 +857,15 @@ async function VmsImportBatchDetailPageContent({
               <form action={updateVmsImportBatchState} className="space-y-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
                 <input type="hidden" name="batch_id" value={String(batch.id)} />
                 <input type="hidden" name="action" value="finalize_import" />
-                <div className="text-sm font-semibold text-emerald-900">Mark imported and activate</div>
+                <div className="text-sm font-semibold text-emerald-900">Finalize file</div>
                 <p className="text-xs text-emerald-900/80">
                   Promotes saved stock rows into an active imported batch for <code>/routes/new</code>. No rows are deleted.
                 </p>
                 <div className="text-xs text-emerald-900/80">
                   Evidence found: stock rows {stockSnapshotRowsCount.count ?? 0}, machine audit rows {machineStockAuditRowsCount.count ?? 0}, imported row audit rows {importedRowsCount.count ?? 0}
                 </div>
-                <FormSubmitButton className="btn-primary w-full" pendingLabel="Marking imported..." disabled={finalizeEvidenceCount <= 0}>
-                  Mark imported and activate
+                <FormSubmitButton className="btn-primary w-full" pendingLabel="Finalizing file..." disabled={finalizeEvidenceCount <= 0}>
+                  Finalize file
                 </FormSubmitButton>
               </form>
             ) : null}
@@ -873,7 +873,7 @@ async function VmsImportBatchDetailPageContent({
               <form action={updateVmsImportBatchState} className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
                 <input type="hidden" name="batch_id" value={String(batch.id)} />
                 <input type="hidden" name="action" value="finalize_import" />
-                <div className="text-sm font-semibold text-amber-900">Finalize imported rows</div>
+                <div className="text-sm font-semibold text-amber-900">Finalize file</div>
                 <p className="text-xs text-amber-900/80">
                   Promotes saved <code>vms_transactions_raw</code> rows into an active imported Order Details batch for dashboards. No rows are re-imported or duplicated.
                 </p>
@@ -898,14 +898,14 @@ async function VmsImportBatchDetailPageContent({
                 <input type="hidden" name="batch_id" value={String(batch.id)} />
                 <input type="hidden" name="action" value={stringValue(batch.status) === "deleted" ? "restore" : "enable"} />
                 <div className="text-sm font-semibold text-slate-900">
-                  {stringValue(batch.status) === "deleted" ? "Restore deleted batch" : "Restore to dashboards"}
+                  {stringValue(batch.status) === "deleted" ? "Restore deleted batch" : "Activate file"}
                 </div>
                 <p className="text-xs text-slate-500">
                   {stringValue(batch.status) === "deleted"
                     ? "Restores this deleted Order Details batch as the active dashboard source unless that would double count an already active batch."
                     : "Restores active imported status and recalculates dashboard views."}
                 </p>
-                <FormSubmitButton className="btn-secondary w-full" pendingLabel="Restoring file...">Restore</FormSubmitButton>
+                <FormSubmitButton className="btn-secondary w-full" pendingLabel={stringValue(batch.status) === "deleted" ? "Restoring file..." : "Activating file..."}>{stringValue(batch.status) === "deleted" ? "Restore deleted batch" : "Activate file"}</FormSubmitButton>
               </form>
             ) : null}
             {stringValue(batch.status) !== "deleted" ? (

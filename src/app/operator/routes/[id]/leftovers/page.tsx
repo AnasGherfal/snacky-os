@@ -41,6 +41,7 @@ export default function LeftoversPage() {
   const rawRouteId = params?.id;
   const routeId = Array.isArray(rawRouteId) ? rawRouteId[0] ?? "" : rawRouteId ?? "";
   const routeHref = routeId ? `/operator/routes/${routeId}` : "/operator";
+  const leftoversSubmissionIdRef = useRef(crypto.randomUUID());
 
   const [items, setItems] = useState<LeftoverItem[]>([]);
   const [reconciliation, setReconciliation] = useState<ReconciliationItem[]>([]);
@@ -106,7 +107,7 @@ export default function LeftoversPage() {
         }));
 
       setProgressMessage("Creating return movements...");
-      const leftoversResult = await recordLeftovers({ routeId, leftoverItems });
+      const leftoversResult = await recordLeftovers({ routeId, leftoverItems, clientSubmissionId: leftoversSubmissionIdRef.current });
       if (!leftoversResult.success) throw new Error(leftoversResult.error);
 
       // Complete the route
@@ -115,6 +116,7 @@ export default function LeftoversPage() {
       if (!completionResult.success) throw new Error(completionResult.error);
 
       localDraft.clearDraft();
+      leftoversSubmissionIdRef.current = crypto.randomUUID();
       const completionWarning = "warning" in completionResult ? completionResult.warning : null;
       const successMessage = completionWarning
         ? `Route completed. ${completionWarning}`

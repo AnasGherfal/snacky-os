@@ -28,7 +28,12 @@
     "diagnose:finance": "node scripts/diagnose-finance-sync.mjs",
     "repair:finance": "node scripts/diagnose-finance-sync.mjs --repair --confirm-repair",
     "test:finance-ledger": "node --experimental-strip-types --test scripts/test-finance-ledger-visibility.mjs",
-    "check:codex-env": "node scripts/diagnose-finance-sync.mjs --check-env"
+    "check:codex-env": "node scripts/diagnose-finance-sync.mjs --check-env",
+    "test:route-product-grouping": "node --experimental-strip-types --test scripts/test-route-product-grouping.mjs",
+    "test:route-inventory-summary": "node --experimental-strip-types --test scripts/test-route-inventory-summary.mjs",
+    "smoke": "npm run test:route-product-grouping && npm run test:route-inventory-summary && npm run test:critical-workflows && npm run smoke:auth-pages && npm run test:route-workflow && npm run test:route-inventory-regression && npm run test:vms-import-validation && npm run test:vms-sales-import-parser && npm run test:sales-coverage-cleanup && npm run test:finance-ledger",
+    "test:vms-sales-import-parser": "node --experimental-strip-types --test scripts/test-vms-sales-import-parser.mjs",
+    "test:sales-coverage-cleanup": "node --experimental-strip-types --test scripts/test-sales-coverage-cleanup.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "latest",

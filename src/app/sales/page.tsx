@@ -26,7 +26,7 @@ import {
   type SalesDashboardBreakdownRow,
   type SalesDashboardSearchParams,
 } from "@/lib/sales-dashboard";
-import { salesDashboardSourceLabel } from "@/lib/sales-coverage";
+import { describeSalesDashboardNoDataState, salesDashboardSourceLabel } from "@/lib/sales-coverage";
 import {
   batchLastUpdatedAt,
   formatVmsDateTime,
@@ -217,6 +217,7 @@ type NormalizedSalesMonthlyCoverageRow = {
 type SalesNoDataState = {
   body: string;
   kind: "summary_error" | "inactive_batch" | "missing_business_date" | "status_filtered" | "no_rows";
+  label: string;
   title: string;
 };
 
@@ -623,76 +624,15 @@ function buildNoSalesState({
   sourceMode: SalesDashboardSourceMode;
   selectedRange: { end: string; start: string };
 }): SalesNoDataState {
-  const rangeBounds = { start: selectedRange.start, end: selectedRange.end };
-  const sourceReportType = sourceMode === "monthly" ? "monthly_product_profit" : "vms_order_details_weekly";
-  const sourceRowsInRange = fileContributions.filter((row) => {
-    if (row.batch.report_type !== sourceReportType) return false;
-    if (row.rowsInRange > 0 || row.successfulRowsInRange > 0) return true;
-    return Boolean(
-      row.actualCoverageStart
-      && row.actualCoverageEnd
-      && rangesOverlap({ start: row.actualCoverageStart, end: row.actualCoverageEnd }, rangeBounds),
-    );
+  return describeSalesDashboardNoDataState({
+    canFinalizeInactiveFiles,
+    contributingFiles,
+    coverageLabel,
+    fileContributions,
+    monthlyCoverageRows,
+    sourceMode,
+    selectedRange,
   });
-  const sourceLabel = sourceMode === "monthly" ? "monthly commodity profit" : "Order Details";
-
-  if (contributingFiles.some((row) => row.included)) {
-    return {
-      kind: "summary_error",
-      title: `${sourceLabel} rows exist, but the dashboard summary could not calculate them.`,
-      body: sourceMode === "monthly"
-        ? "Monthly profit rows overlap this range, but the dashboard totals came back empty. Check the monthly summary RPC and data source diagnostics."
-        : "Detailed successful-sale rows overlap this range, but the dashboard totals came back empty. Check the summary RPC and data source diagnostics.",
-    };
-  }
-
-  if (sourceRowsInRange.some((row) => row.status === "preview_only" || row.status === "inactive_batch")) {
-    return {
-      kind: "inactive_batch",
-      title: canFinalizeInactiveFiles
-        ? `${sourceLabel} rows exist, but the file is not active yet.`
-        : "Sales data is being prepared.",
-      body: canFinalizeInactiveFiles
-        ? sourceMode === "monthly"
-          ? "Activate the overlapping monthly profit file so Snacky OS can include it in dashboard totals."
-          : "Finalize or reactivate the overlapping Order Details file so Snacky OS can include it in dashboard totals."
-        : "The sales file for this date range is still being finalized.",
-    };
-  }
-
-  if (sourceRowsInRange.some((row) => row.status === "missing_transaction_datetime") || monthlyCoverageRows.some((row) => row.businessMonth === null && row.finalizedRows > 0 && row.nullBusinessDateRows > 0)) {
-    return {
-      kind: "missing_business_date",
-      title: "Rows exist but business dates are missing.",
-      body: sourceMode === "monthly"
-        ? "Some monthly profit rows still do not have a resolved business date. Rebuild the import dates, then reload the dashboard."
-        : "Some Order Details rows still do not have a resolved business date. Rebuild business dates, then reload the dashboard.",
-    };
-  }
-
-  if (sourceRowsInRange.some((row) => row.status === "rows_excluded_by_status")) {
-    return {
-      kind: "status_filtered",
-      title: "Rows exist for this range, but they were not successful sales.",
-      body: sourceMode === "monthly"
-        ? "The overlapping monthly rows were saved, but they were not counted in the dashboard totals."
-        : "The overlapping Order Details rows were saved, but they were classified as failed vends, refunds, or another non-success status.",
-    };
-  }
-
-  return {
-    kind: "no_rows",
-    title: sourceMode === "monthly"
-      ? "No monthly commodity profit rows found for this range."
-      : "No detailed Order Details rows found for this range.",
-    body: coverageLabel === "-"
-      ? sourceMode === "monthly"
-        ? "Change the date filter or import a monthly profit file first."
-        : "Change the date filter or finalize imported Order Details files first."
-      : sourceMode === "monthly"
-        ? `Change the date filter. Current finalized coverage runs from ${coverageLabel}.`
-        : `Change the date filter. Current finalized coverage runs from ${coverageLabel}.`,
-  };
 }
 
 function salesContributionOverlapsSelectedRange(
@@ -1068,9 +1008,9 @@ async function SalesDashboardPageContent({
         dateTo: selectedRange.end,
         filterMode: selectedRange.key,
         profileId,
-        promise: supabase.rpc("sales_dashboard_monthly_profit_coverage"),
+        promise: supabase.rpc("sales_dashboard_monthly_coverage_truth", { p_report_type: "monthly_product_profit" }),
         role: profileRole,
-        rpcName: "sales_dashboard_monthly_profit_coverage",
+        rpcName: "sales_dashboard_monthly_coverage_truth",
         sectionName: "monthly_coverage",
       }),
     ]);
@@ -1237,9 +1177,9 @@ async function SalesDashboardPageContent({
         dateTo: selectedRange.end,
         filterMode: selectedRange.key,
         profileId,
-        promise: supabase.rpc("sales_dashboard_monthly_coverage"),
+        promise: supabase.rpc("sales_dashboard_monthly_coverage_truth", { p_report_type: sourceMode === "monthly" ? "monthly_product_profit" : "vms_order_details_weekly" }),
         role: profileRole,
-        rpcName: "sales_dashboard_monthly_coverage",
+        rpcName: "sales_dashboard_monthly_coverage_truth",
         sectionName: "monthly_coverage",
       }),
     ]);
@@ -1343,34 +1283,48 @@ async function SalesDashboardPageContent({
   });
   const dataStatusText = summaryLoadFailed || sourceLoadFailed
     ? "Needs attention"
-    : !hasSalesRows
-      ? "Missing"
-      : missingPeriods.length || noSalesState.kind === "inactive_batch" || noSalesState.kind === "missing_business_date" || noSalesState.kind === "status_filtered"
-        ? "Partial"
-        : "Ready";
+    : noSalesState.kind === "summary_error"
+      ? noSalesState.label
+      : noSalesState.kind === "deleted_batch"
+        ? noSalesState.label
+        : noSalesState.kind === "failed_import"
+          ? noSalesState.label
+          : noSalesState.kind === "inactive_batch"
+            ? noSalesState.label
+            : noSalesState.kind === "missing_business_date"
+              ? noSalesState.label
+              : noSalesState.kind === "status_filtered"
+                ? noSalesState.label
+                : noSalesState.kind === "no_source"
+                  ? noSalesState.label
+                  : hasSalesRows
+                    ? (missingPeriods.length ? "Partial" : "Ready")
+                    : noSalesState.label;
   const dataStatusReason = summaryLoadFailed || sourceLoadFailed
     ? "One or more source queries failed to load."
-    : !hasSalesRows
-      ? noSalesState.body
-      : missingPeriods.length
+    : hasSalesRows && noSalesState.kind === "no_rows"
+      ? (missingPeriods.length
         ? `${formatInteger(missingPeriods.length)} coverage gap(s) remain in the selected range.`
-        : sourceStatusText;
-  const dataStatusToneClass = dataStatusText === "Ready"
-    ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-    : dataStatusText === "Partial"
-      ? "border-amber-200 bg-amber-50 text-amber-900"
-      : "border-rose-200 bg-rose-50 text-rose-900";
+        : sourceStatusText)
+      : noSalesState.body;
+  const dataStatusToneClass = summaryLoadFailed || sourceLoadFailed
+    ? "border-rose-200 bg-rose-50 text-rose-900"
+    : dataStatusText === "Ready"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+      : dataStatusText === "Partial" || dataStatusText === "No source" || dataStatusText === "Inactive" || dataStatusText === "Missing" || dataStatusText === "Missing dates"
+        ? "border-amber-200 bg-amber-50 text-amber-900"
+        : "border-rose-200 bg-rose-50 text-rose-900";
   const finalizableInactiveFiles = fileContributions.filter((row) => salesContributionNeedsFinalization(row, selectedRange));
   const pageSubtitle = sourceMode === "monthly"
-    ? "Monthly commodity profit reports power the sales dashboard for month, year, and all-time ranges."
+    ? "Monthly Profit Report data powers the sales dashboard for month, year, and all-time ranges."
     : "Sales are calculated from imported VMS Order Details for the selected business dates.";
   const sourceFilesUploadedLabel = sourceMode === "monthly" ? "Monthly profit files uploaded" : "Detailed files uploaded";
   const finalizedSourceFilesLabel = sourceMode === "monthly" ? "Finalized monthly profit files" : "Finalized detailed files";
   const profitSectionSubtitle = sourceMode === "monthly"
-    ? "Revenue, cost, and profit come from the monthly commodity profit report."
+    ? "Revenue, cost, and profit come from the Monthly Profit Report."
     : "Revenue remains unchanged. Profit uses historical cost when available, then current product cost fallback.";
   const profitEmptyStateBody = sourceMode === "monthly"
-    ? "Profit appears after monthly profit data is available."
+    ? "Profit appears after Monthly Profit Report data is available."
     : "Profit appears after detailed sales and product cost data are available.";
 
   return (
@@ -1395,7 +1349,7 @@ async function SalesDashboardPageContent({
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Source used</div>
-              <div className="mt-2 text-base font-semibold text-slate-900">{salesDashboardSourceLabel(sourceMode)}</div>
+              <div className="mt-2 text-base font-semibold text-slate-900">Using {salesDashboardSourceLabel(sourceMode)}.</div>
               <div className="mt-1 text-sm leading-6 text-slate-500">{sourceStatusText}</div>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -1824,7 +1778,7 @@ async function SalesDashboardPageContent({
                         <form action={updateVmsImportBatchState}>
                           <input type="hidden" name="batch_id" value={row.batch.id} />
                           <input type="hidden" name="action" value="finalize_import" />
-                          <FormSubmitButton className="btn-secondary" pendingLabel="Finalizing...">Finalize file</FormSubmitButton>
+                          <FormSubmitButton className="btn-secondary" pendingLabel="Finalizing file...">Finalize file</FormSubmitButton>
                         </form>
                       ) : (
                         <span className="text-xs text-slate-400">-</span>

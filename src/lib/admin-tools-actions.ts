@@ -340,7 +340,7 @@ async function returnOutstandingRouteBagStock({
   }
 
   if (returnRows.length) {
-    const insertResult = await supabase.from("inventory_movements").insert(returnRows);
+    const insertResult = await supabase.from("inventory_movements").upsert(returnRows, { onConflict: "idempotency_key", ignoreDuplicates: true });
     if (insertResult.error && isMissingColumnError(insertResult.error, ["source_type", "source_id", "idempotency_key"])) {
       const fallbackRows = returnRows.map(({ source_type, source_id, idempotency_key, ...row }) => row);
       const fallbackResult = await supabase.from("inventory_movements").insert(fallbackRows);

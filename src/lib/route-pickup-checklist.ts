@@ -99,9 +99,9 @@ function groupKeyForProduct(productName: string, productCategory?: string | null
 
   if (includesAny(text, WATER_KEYWORDS)) return "water";
   if (includesAny(text, MR_CRUNCH_ALIASES) || includesAny(text, DORITOS_ALIASES) || includesAny(text, CHIPS_KEYWORDS)) return "chips";
+  if (includesAny(text, ALMARAI_FEATURED_ALIASES) || includesAny(text, ALMARAI_KEYWORDS)) return "almarai_dairy";
   if (includesAny(text, GALAXY_ALIASES) || includesAny(text, SNICKERS_ALIASES) || includesAny(text, TWIX_ALIASES) || includesAny(text, LUPPO_ALIASES) || includesAny(text, CHOCOLATE_KEYWORDS)) return "chocolates";
   if (includesAny(text, BAKERY_KEYWORDS)) return "rolls_bakery";
-  if (includesAny(text, ALMARAI_FEATURED_ALIASES) || includesAny(text, ALMARAI_KEYWORDS)) return "almarai_dairy";
   if (includesAny(text, BEBETO_ALIASES) || includesAny(text, CANDY_KEYWORDS)) return "candy";
   if (includesAny(text, PEPSI_ALIASES) || includesAny(text, SCHWEPPES_ALIASES) || includesAny(text, EXAR_ALIASES) || includesAny(text, XIR_ALIASES) || includesAny(text, DRINK_KEYWORDS)) return "drinks";
   return "other";

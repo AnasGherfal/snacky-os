@@ -492,7 +492,7 @@ export async function GET(
       .from("inventory_movements")
       .select("id")
       .eq("related_route_id", routeId)
-      .eq("reason", "storage_to_operator_bag")
+      .in("reason", ["storage_to_operator_bag", "storage_to_route"])
       .limit(1);
     if (pickMovementError) throw pickMovementError;
     const confirmed = Boolean(pickMovements?.length);

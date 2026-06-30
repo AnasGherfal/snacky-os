@@ -1,5 +1,6 @@
 import type { UserProfile } from "@/lib/auth";
 import type { AuthUserContext } from "@/lib/authz";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import type { getSupabaseServerClient } from "@/lib/supabase-server";
 
 type RouteAccessSupabase = NonNullable<ReturnType<typeof getSupabaseServerClient>>;
@@ -13,9 +14,10 @@ export async function loadAccessibleOperatorIds(
   profile: UserProfile | null | undefined,
 ) {
   const fallbackIds = uniqueIds([profile?.team_member_id]);
-  if (!supabase || !profile?.id) return fallbackIds;
+  const readClient = getSupabaseAdminClient() ?? supabase;
+  if (!readClient || !profile?.id) return fallbackIds;
 
-  const { data, error } = await supabase
+  const { data, error } = await readClient
     .from("team_members")
     .select("id")
     .eq("auth_user_id", profile.id);

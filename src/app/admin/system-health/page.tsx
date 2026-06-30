@@ -662,14 +662,14 @@ export default async function SystemHealthPage({
             </form>
           </QuickActionCard>
 
-          <QuickActionCard title="Reprocess VMS import" description="Replay a saved VMS batch after mapping fixes or import warnings without using SQL.">
+          <QuickActionCard title="Reprocess file" description="Replay a saved VMS batch after mapping fixes or import warnings without using SQL.">
             {!batchRepairOptions.length ? (
               <p className="text-sm text-slate-500">No recent VMS import batches are available.</p>
             ) : (
               <form action={reprocessVmsImportBatch} className="space-y-3">
                 <HiddenReturnTo />
                 <BatchSelect batches={batchRepairOptions} />
-                <FormSubmitButton pendingLabel="Reprocessing VMS import...">Reprocess VMS import</FormSubmitButton>
+                <FormSubmitButton pendingLabel="Reprocessing file...">Reprocess file</FormSubmitButton>
               </form>
             )}
           </QuickActionCard>
