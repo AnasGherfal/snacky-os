@@ -13,4 +13,4 @@ create unique index if not exists machine_refill_history_legacy_refill_id_unique
 create unique index if not exists route_stock_lines_route_id_product_id_key
   on public.route_stock_lines(route_id, product_id);
 
-select pg_notify('pgrst', 'reload schema');p
+select pg_notify('pgrst', 'reload schema');
