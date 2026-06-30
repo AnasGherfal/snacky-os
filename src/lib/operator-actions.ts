@@ -38,6 +38,15 @@ function isMissingTable(error: any, tableName: string) {
   return error?.code === "PGRST205" && String(error?.message ?? "").includes(tableName);
 }
 
+function isMissingOnConflictConstraint(error: unknown) {
+  const info = serializeActionError(error);
+  const code = String(info.code ?? "");
+  const text = [code, info.message, info.details, info.hint].map((value) => String(value ?? "")).join(" ").toLowerCase();
+  return code === "42P10"
+    || text.includes("there is no unique or exclusion constraint matching the on conflict specification")
+    || text.includes("missing unique constraint");
+}
+
 function getErrorMessage(error: unknown, fallback = "Something went wrong.") {
   if (error instanceof Error && error.message) return error.message;
   if (typeof error === "string" && error.trim()) return error;
@@ -193,6 +202,50 @@ function machineFillDelta(movement: any) {
     return -qty;
   }
   return qty;
+}
+
+async function upsertInventoryMovementsWithFallback({
+  supabase,
+  rows,
+  routeId,
+  operationLabel,
+}: {
+  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>;
+  rows: any[];
+  routeId: string;
+  operationLabel: string;
+}) {
+  const upsertResult = await supabase.from("inventory_movements").upsert(rows, { onConflict: "idempotency_key", ignoreDuplicates: true });
+  if (!upsertResult.error) return;
+  if (!isMissingOnConflictConstraint(upsertResult.error)) throwActionError(upsertResult.error, `Could not ${operationLabel}.`);
+
+  console.warn("[operator] inventory_movements upsert missing unique conflict target; falling back to insert", {
+    routeId,
+    operationLabel,
+    row_count: rows.length,
+    error: upsertResult.error,
+  });
+
+  const idempotencyKeys = Array.from(new Set(rows.map((row) => String(row.idempotency_key ?? "")).filter(Boolean)));
+  let existingKeys = new Set<string>();
+  if (idempotencyKeys.length) {
+    const existingResult = await supabase
+      .from("inventory_movements")
+      .select("idempotency_key")
+      .in("idempotency_key", idempotencyKeys);
+    if (existingResult.error) throwActionError(existingResult.error, `Could not verify existing ${operationLabel}.`);
+    existingKeys = new Set((existingResult.data ?? []).map((row: any) => String(row.idempotency_key ?? "")));
+  }
+
+  const rowsToInsert = rows.filter((row) => {
+    const key = String(row.idempotency_key ?? "");
+    return !key || !existingKeys.has(key);
+  });
+
+  if (rowsToInsert.length) {
+    const insertResult = await supabase.from("inventory_movements").insert(rowsToInsert);
+    if (insertResult.error) throwActionError(insertResult.error, `Could not create ${operationLabel}.`);
+  }
 }
 
 function addProductQuantity(map: Map<string, number>, productId: unknown, quantity: unknown) {
@@ -2348,11 +2401,12 @@ export async function completeStop({
     });
 
     if (movements.length) {
-      const { error: movementError } = await supabase
-        .from("inventory_movements")
-        .upsert(movements, { onConflict: "idempotency_key", ignoreDuplicates: true });
-
-      if (movementError) throwActionError(movementError, "Could not create machine fill inventory movements.");
+      await upsertInventoryMovementsWithFallback({
+        supabase,
+        rows: movements,
+        routeId,
+        operationLabel: 'create machine fill inventory movements',
+      });
     }
 
     const { error: auditDeleteError } = await supabase.from("route_stop_fill_lines").delete().eq("route_stop_id", stopId);
@@ -2489,51 +2543,79 @@ export async function completeStop({
     const machineLabel = machine?.name ?? machine?.machine_code ?? machineId;
     const savedPhotoUrl = completionPhotoUrl?.trim() || existingProof?.machine_photo_url || null;
     const savedPhotoPath = completionPhotoPath?.trim() || completionPhotoOriginalName?.trim() || existingProof?.machine_photo_path || null;
-    const { data: refillHistory, error: refillHistoryError } = await supabase
-      .from("machine_refill_history")
-      .upsert({
-        legacy_refill_id: `route_stop:${stopId}`,
-        refill_at: completedAt,
-        machine_id: machineId,
-        machine_name: machineLabel,
-        operator_id: route.operator_id,
-        operator_email: operatorMember?.email ?? profile?.email ?? null,
-        machine_photo_url: savedPhotoUrl,
-        machine_photo_path: savedPhotoPath,
-        fill_status: fillStatus,
-        issues_found: hasIssueReport,
-        issue_notes: issue?.description?.trim() || null,
-        linked_issue_id: linkedIssueId,
+    const refillHistorySelect = "id, legacy_refill_id, refill_at, machine_id, machine_name, operator_id, fill_status, issues_found, machine_photo_url, machine_photo_path, linked_issue_id";
+    const refillHistoryPayload = {
+      legacy_refill_id: `route_stop:${stopId}`,
+      refill_at: completedAt,
+      machine_id: machineId,
+      machine_name: machineLabel,
+      operator_id: route.operator_id,
+      operator_email: operatorMember?.email ?? profile?.email ?? null,
+      machine_photo_url: savedPhotoUrl,
+      machine_photo_path: savedPhotoPath,
+      fill_status: fillStatus,
+      issues_found: hasIssueReport,
+      issue_notes: issue?.description?.trim() || null,
+      linked_issue_id: linkedIssueId,
+      route_id: routeId,
+      route_stop_id: stopId,
+      source_file: "Snacky OS operator completion",
+      source_row: null,
+      import_status: "imported",
+      raw_record: {
         route_id: routeId,
         route_stop_id: stopId,
-        source_file: "Snacky OS operator completion",
-        source_row: null,
-        import_status: "imported",
-        raw_record: {
-          route_id: routeId,
-          route_stop_id: stopId,
-          machine_id: machineId,
-          machine_code: machine?.machine_code ?? null,
-          machine_name: machineLabel,
-          operator_id: route.operator_id,
-          operator_name: operatorMember?.full_name ?? null,
-          cash_collected: cashCollected,
-          cash_bag_id: cashBagId?.trim() || null,
-          notes: notes?.trim() || null,
-          fill_status: fillStatus,
-          filled_items: normalizedFilledItems,
-          extra_items: normalizedExtraItems,
-          missing_products: normalizedMissingProducts,
-          completion_photo_original_name: completionPhotoOriginalName?.trim() || null,
-          completion_photo_upload_unavailable: Boolean(completionPhotoUploadUnavailable),
-          movement_count: movements.length,
-        },
-        updated_at: completedAt,
-      }, { onConflict: "legacy_refill_id" })
-      .select("id, legacy_refill_id, refill_at, machine_id, machine_name, operator_id, fill_status, issues_found, machine_photo_url, machine_photo_path, linked_issue_id")
+        machine_id: machineId,
+        machine_code: machine?.machine_code ?? null,
+        machine_name: machineLabel,
+        operator_id: route.operator_id,
+        operator_name: operatorMember?.full_name ?? null,
+        cash_collected: cashCollected,
+        cash_bag_id: cashBagId?.trim() || null,
+        notes: notes?.trim() || null,
+        fill_status: fillStatus,
+        filled_items: normalizedFilledItems,
+        extra_items: normalizedExtraItems,
+        missing_products: normalizedMissingProducts,
+        completion_photo_original_name: completionPhotoOriginalName?.trim() || null,
+        completion_photo_upload_unavailable: Boolean(completionPhotoUploadUnavailable),
+        movement_count: movements.length,
+      },
+      updated_at: completedAt,
+    };
+    let refillHistoryResult = await supabase
+      .from("machine_refill_history")
+      .upsert(refillHistoryPayload, { onConflict: "legacy_refill_id" })
+      .select(refillHistorySelect)
       .single();
 
-    if (refillHistoryError) throwActionError(refillHistoryError, "Could not save the machine refill proof.");
+    if (refillHistoryResult.error && isMissingOnConflictConstraint(refillHistoryResult.error)) {
+      console.warn("[operator:complete-stop] machine_refill_history upsert missing unique conflict target; falling back to insert/update", {
+        routeId,
+        stopId,
+        error: refillHistoryResult.error,
+      });
+      const existingRefillHistory = await supabase
+        .from("machine_refill_history")
+        .select("id")
+        .eq("legacy_refill_id", `route_stop:${stopId}`)
+        .maybeSingle();
+      if (existingRefillHistory.error) throwActionError(existingRefillHistory.error, "Could not save the machine refill proof.");
+      refillHistoryResult = existingRefillHistory.data?.id
+        ? await supabase
+            .from("machine_refill_history")
+            .update(refillHistoryPayload)
+            .eq("id", existingRefillHistory.data.id)
+            .select(refillHistorySelect)
+            .single()
+        : await supabase
+            .from("machine_refill_history")
+            .insert(refillHistoryPayload)
+            .select(refillHistorySelect)
+            .single();
+    }
+
+    if (refillHistoryResult.error) throwActionError(refillHistoryResult.error, "Could not save the machine refill proof.");
 
     // Update stop status
     const { error: stopUpdateError } = await supabase
@@ -2785,11 +2867,12 @@ export async function recordLeftovers({
       .filter((movement) => movement.quantity > 0);
 
     if (movements.length > 0) {
-      const { error: movementError } = await supabase
-        .from("inventory_movements")
-        .upsert(movements, { onConflict: "idempotency_key", ignoreDuplicates: true });
-
-      if (movementError) throwActionError(movementError, "Could not create leftover return movements.");
+      await upsertInventoryMovementsWithFallback({
+        supabase,
+        rows: movements,
+        routeId,
+        operationLabel: 'create leftover return movements',
+      });
     }
 
     for (const line of routeStockLines ?? []) {

@@ -25,6 +25,13 @@ function fail(path: string, message: string): never {
   redirect(`${path}?error=${encodeURIComponent(message)}`);
 }
 
+function isMissingOnConflictConstraint(error: unknown) {
+  const message = String((error as any)?.message ?? "").toLowerCase();
+  const details = String((error as any)?.details ?? "").toLowerCase();
+  const hint = String((error as any)?.hint ?? "").toLowerCase();
+  return message.includes("no unique or exclusion constraint") || message.includes("could not find a unique") || details.includes("no unique or exclusion constraint") || hint.includes("no unique or exclusion constraint");
+}
+
 function requireConfirmedReason(formData: FormData, path: string) {
   if (clean(formData.get("confirm_action")) !== "yes") fail(path, "Confirmation is required.");
   const reason = clean(formData.get("reason"));
@@ -145,8 +152,33 @@ async function reverseOutstandingPickedStock(
   }
 
   if (reversalMovements.length) {
-    const { error } = await supabase.from("inventory_movements").upsert(reversalMovements, { onConflict: "idempotency_key", ignoreDuplicates: true });
-    if (error) throw error;
+    const upsertResult = await supabase.from("inventory_movements").upsert(reversalMovements, { onConflict: "idempotency_key", ignoreDuplicates: true });
+    if (!upsertResult.error) {
+      // no-op
+    } else if (!isMissingOnConflictConstraint(upsertResult.error)) {
+      throw upsertResult.error;
+    } else {
+      console.warn("[routes] inventory_movements upsert missing unique conflict target; falling back to insert", {
+        routeId,
+        row_count: reversalMovements.length,
+        error: upsertResult.error,
+      });
+      const keys = Array.from(new Set(reversalMovements.map((movement) => String((movement as any).idempotency_key ?? "")).filter(Boolean)));
+      let existingKeys = new Set<string>();
+      if (keys.length) {
+        const existingResult = await supabase.from("inventory_movements").select("idempotency_key").in("idempotency_key", keys);
+        if (existingResult.error) throw existingResult.error;
+        existingKeys = new Set((existingResult.data ?? []).map((row: any) => String(row.idempotency_key ?? "")));
+      }
+      const rowsToInsert = reversalMovements.filter((movement) => {
+        const key = String((movement as any).idempotency_key ?? "");
+        return !key || !existingKeys.has(key);
+      });
+      if (rowsToInsert.length) {
+        const insertResult = await supabase.from("inventory_movements").insert(rowsToInsert);
+        if (insertResult.error) throw insertResult.error;
+      }
+    }
   }
 
   for (const update of returnedUpdates) {
