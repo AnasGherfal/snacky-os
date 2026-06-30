@@ -2625,6 +2625,8 @@ export async function completeStop({
 
     if (refillHistoryResult.error) throwActionError(refillHistoryResult.error, "Could not save the machine refill proof.");
 
+    const refillHistory = refillHistoryResult.data ?? null;
+
     // Update stop status
     const { error: stopUpdateError } = await supabase
       .from("route_stops")
