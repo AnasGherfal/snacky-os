@@ -299,6 +299,7 @@ export async function createStockMovement(formData: FormData) {
   const fromLocation = from as { type: EntityType; id: string | null };
   const toLocation = to as { type: EntityType; id: string | null };
   const normalizedMovementType = movementType === "storage_adjustment" ? "stock_count_correction" : movementType;
+  const dbReason = movementReason(movementType as MovementType);
 
   switch (normalizedMovementType) {
     case "storage_to_route":
@@ -386,10 +387,10 @@ export async function createStockMovement(formData: FormData) {
     from_entity_id: fromLocation.id,
     to_entity_type: toLocation.type,
     to_entity_id: toLocation.id,
-    reason: movementReason(normalizedMovementType as MovementType),
+    reason: dbReason,
     idempotency_key: inventoryMovementIdempotencyKey(
       "inventory-movement",
-      movementReason(normalizedMovementType as MovementType),
+      dbReason,
       productId,
       fromLocation.type,
       fromLocation.id ?? "",
