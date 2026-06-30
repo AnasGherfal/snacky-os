@@ -59,6 +59,9 @@ export async function POST(
   { params }: { params: Promise<{ id: string; stopId: string }> },
 ) {
   const { id: routeId, stopId } = await params;
+  if (!isUuid(routeId) || !isUuid(stopId)) {
+    return NextResponse.json({ success: false, code: "INVALID_ROUTE_SCOPE", error: "Invalid route or stop id." }, { status: 400 });
+  }
   const accessToken = await getAuthAccessToken();
   const profile = await getCurrentProfile();
   const supabase = getSupabaseServerClient(accessToken);
@@ -88,7 +91,13 @@ export async function POST(
   const rawAdjustmentId = clean(payload.adjustmentId);
   const adjustmentId = isUuid(rawAdjustmentId) ? rawAdjustmentId : "";
   const productId = clean(payload.productId);
+  if (!isUuid(productId)) {
+    return NextResponse.json({ success: false, code: "INVALID_PRODUCT_ID", error: "Invalid product id." }, { status: 400 });
+  }
   const machineId = clean(payload.machineId);
+  if (!isUuid(machineId)) {
+    return NextResponse.json({ success: false, code: "INVALID_MACHINE_ID", error: "Invalid machine id." }, { status: 400 });
+  }
   const quantity = quantityValue(payload.quantity);
   const reason = clean(payload.reason);
   const notes = clean(payload.notes);

@@ -150,6 +150,10 @@ function payloadByteSize(text: string, fallbackHeader: string | null) {
   return new TextEncoder().encode(text).length;
 }
 
+function isUuid(value: unknown) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value ?? "").trim());
+}
+
 type CompleteStopArgs = Parameters<typeof completeStop>[0];
 type CompleteStopPayload = Partial<CompleteStopArgs> & { clientSubmissionId?: unknown };
 
@@ -170,6 +174,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string; stopId: string }> }
 ) {
   const { id: routeId, stopId } = await params;
+  if (!isUuid(routeId) || !isUuid(stopId)) {
+    return NextResponse.json({ success: false, code: "INVALID_ROUTE_SCOPE", error: "Invalid route or stop id." }, { status: 400, headers: jsonHeaders() });
+  }
   const accessToken = await getAuthAccessToken();
   const supabase = getSupabaseServerClient(accessToken);
   const profile = await getCurrentProfile();
@@ -606,6 +613,9 @@ export async function POST(
   { params }: { params: Promise<{ id: string; stopId: string }> },
 ) {
   const { id: routeId, stopId } = await params;
+  if (!isUuid(routeId) || !isUuid(stopId)) {
+    return NextResponse.json({ success: false, code: "INVALID_ROUTE_SCOPE", error: "Invalid route or stop id." }, { status: 400, headers: jsonHeaders() });
+  }
   const requestTimestamp = new Date().toISOString();
   const userAgent = request.headers.get("user-agent") ?? "";
   const contentType = request.headers.get("content-type") ?? "";
@@ -674,6 +684,13 @@ export async function POST(
     }
 
     const machineId = String(payload.machineId ?? "").trim();
+    if (!isUuid(machineId)) {
+      statusCode = 400;
+      return NextResponse.json(
+        { success: false, code: "INVALID_MACHINE_ID", error: "Invalid machine id." },
+        { status: statusCode, headers: jsonHeaders() },
+      );
+    }
     const filledItems: CompleteStopArgs["filledItems"] = Array.isArray(payload.filledItems) ? payload.filledItems : [];
     const extraItems: NonNullable<CompleteStopArgs["extraItems"]> = Array.isArray(payload.extraItems) ? payload.extraItems : [];
     const missingProducts: NonNullable<CompleteStopArgs["missingProducts"]> = Array.isArray(payload.missingProducts) ? payload.missingProducts : [];

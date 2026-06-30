@@ -196,6 +196,14 @@ function stableUuid(seed: string) {
   ].join("-");
 }
 
+function routeSourceUuid(value: unknown, fallbackSeed: string) {
+  const text = String(value ?? "").trim();
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(text)) {
+    return text;
+  }
+  return stableUuid(fallbackSeed);
+}
+
 function machineFillDelta(movement: any) {
   const qty = unitQuantity(movement?.quantity);
   if (movement?.reason === "manual_correction" && movement?.from_entity_type === "machine" && movement?.to_entity_type === "operator_bag") {
@@ -1138,7 +1146,7 @@ export async function confirmPickList(
         related_pickup_batch_id: pickupBatchId,
         idempotency_key: inventoryMovementIdempotencyKey("route-pickup", routeId, pickupSubmissionScope, item.productId, item.locationId, route.operator_id ?? "", item.quantity),
         source_type: "route_pickup_batch",
-        source_id: pickupBatchId ?? routeId,
+        source_id: routeSourceUuid(pickupBatchId, `route-pickup:${routeId}:${pickupSubmissionScope}`),
         created_by: route.operator_id,
         notes: pickupBatchId ? `Picked for route ${routeId} batch ${pickupBatchId}` : `Picked for route ${routeId}`,
       })),
@@ -1161,7 +1169,7 @@ export async function confirmPickList(
             related_pickup_batch_id: pickupBatchId,
             idempotency_key: inventoryMovementIdempotencyKey("route-pickup-return", routeId, pickupSubmissionScope, productId, pickedLocation.storageId, pickedLocation.operatorId ?? route.operator_id ?? "", returnedQty),
             source_type: "route_pickup_batch",
-            source_id: pickupBatchId ?? routeId,
+            source_id: routeSourceUuid(pickupBatchId, `route-pickup:${routeId}:${pickupSubmissionScope}`),
             created_by: route.operator_id,
             notes: `Pickup quantity reduced for route ${routeId}`,
           });
@@ -2373,7 +2381,7 @@ export async function completeStop({
           related_machine_id: machineId,
           idempotency_key: inventoryMovementIdempotencyKey("route-stop-fill", routeId, stopId, machineId, productId, delta, stopSubmissionId),
           source_type: "route_stop_completion",
-          source_id: stopSubmissionId,
+          source_id: routeSourceUuid(stopSubmissionId, `route-stop-completion:${routeId}:${stopId}:${stopSubmissionId}`),
           created_by: route.operator_id,
           notes: `Filled at machine ${machineId}`,
         }];
@@ -2392,7 +2400,7 @@ export async function completeStop({
           related_machine_id: machineId,
           idempotency_key: inventoryMovementIdempotencyKey("route-stop-fill-correction", routeId, stopId, machineId, productId, Math.abs(delta), stopSubmissionId),
           source_type: "route_stop_completion",
-          source_id: stopSubmissionId,
+          source_id: routeSourceUuid(stopSubmissionId, `route-stop-completion:${routeId}:${stopId}:${stopSubmissionId}`),
           created_by: route.operator_id,
           notes: `Reduced filled quantity at machine ${machineId}`,
         }];
@@ -2859,7 +2867,7 @@ export async function recordLeftovers({
           related_pickup_batch_id: null,
           idempotency_key: inventoryMovementIdempotencyKey("route-leftovers", routeId, leftoversSubmissionId, productId, storageId, route.operator_id ?? "", remainingQuantity),
           source_type: "route_leftovers",
-          source_id: leftoversSubmissionId,
+          source_id: routeSourceUuid(leftoversSubmissionId, `route-leftovers:${routeId}:${leftoversSubmissionId}`),
           created_by: route.operator_id,
           notes: `Leftovers returned from route ${routeId}`,
         };
