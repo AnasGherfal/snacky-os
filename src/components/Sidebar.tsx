@@ -205,13 +205,12 @@ function SidebarContent({ role, roles, onNavigate }: { role: AppRole; roles?: Ap
   const { dictionary } = useLanguage();
   const sections = sectionsForRoles(role, roles);
   const [optimisticHref, setOptimisticHref] = useState<string | null>(null);
-  const activePathname = optimisticHref ? pathWithoutQuery(optimisticHref) : pathname;
-  const activeSearchParams = new URLSearchParams(optimisticHref ? searchFromHref(optimisticHref) : currentSearch);
+  const [optimisticOriginHref, setOptimisticOriginHref] = useState<string | null>(null);
+  const currentHref = currentSearch ? `${pathname}?${currentSearch}` : pathname;
+  const useOptimisticHref = Boolean(optimisticHref && optimisticOriginHref === currentHref);
+  const activePathname = useOptimisticHref && optimisticHref ? pathWithoutQuery(optimisticHref) : pathname;
+  const activeSearchParams = new URLSearchParams(useOptimisticHref && optimisticHref ? searchFromHref(optimisticHref) : currentSearch);
   const moduleParam = activeSearchParams.get("module") ?? (roles?.includes("finance") && matchesPath(activePathname, "/purchases") ? "finance" : null);
-
-  useEffect(() => {
-    setOptimisticHref(null);
-  }, [pathname, currentSearch]);
 
   useEffect(() => {
     sections.forEach((section) => {
@@ -256,6 +255,7 @@ function SidebarContent({ role, roles, onNavigate }: { role: AppRole; roles?: Ap
                     prefetch={true}
                     onClick={(event) => {
                       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+                      setOptimisticOriginHref(currentHref);
                       setOptimisticHref(item.href);
                       onNavigate?.();
                     }}

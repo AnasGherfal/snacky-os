@@ -24,14 +24,15 @@ type I18nContextValue = {
 const I18nContext = createContext<I18nContextValue | null>(null);
 
 export function I18nProvider({ children, initialLocale = defaultLocale }: { children: ReactNode; initialLocale?: SupportedLocale }) {
-  const [locale, setLocaleState] = useState<SupportedLocale>(initialLocale);
-
-  useEffect(() => {
-    const storedLocale = window.localStorage.getItem(languageStorageKey);
-    if (isSupportedLocale(storedLocale) && storedLocale !== locale) {
-      setLocaleState(storedLocale);
+  const [locale, setLocaleState] = useState<SupportedLocale>(() => {
+    if (typeof window !== "undefined") {
+      const storedLocale = window.localStorage.getItem(languageStorageKey);
+      if (isSupportedLocale(storedLocale)) return storedLocale;
     }
-  }, [locale]);
+    return initialLocale;
+  });
+
+
 
   useEffect(() => {
     const direction = getTextDirection(locale);

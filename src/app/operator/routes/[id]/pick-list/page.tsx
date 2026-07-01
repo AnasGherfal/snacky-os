@@ -249,7 +249,6 @@ export default function PickListPage() {
   const [selectedStopIds, setSelectedStopIds] = useState<string[]>([]);
   const [productOptions, setProductOptions] = useState<ProductOption[]>([]);
   const [extras, setExtras] = useState<ExtraPickItem[]>([]);
-  const [alreadyConfirmed, setAlreadyConfirmed] = useState(false);
   const [routeItemCount, setRouteItemCount] = useState(0);
   const [locked, setLocked] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -381,8 +380,6 @@ export default function PickListPage() {
         throw new Error(message || "Could not load pickup list. Please retry.");
       }
 
-      const confirmed = Boolean(data.confirmed);
-      setAlreadyConfirmed(confirmed);
       setLocked(Boolean(data.locked));
       setRouteItemCount(Number(data.routeItemCount ?? 0));
       setError('');

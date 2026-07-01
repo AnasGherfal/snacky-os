@@ -798,6 +798,7 @@ async function SalesDashboardPageContent({
   const profileRole = String((profile as { role?: unknown }).role ?? "unknown");
   const canViewProfit = isOwnerAdminRole(profile);
   const canFinalizeOrderDetailsFiles = isOwnerAdminRole(profile);
+  const { t } = await getServerI18n();
 
   if (!supabase) {
     return (
