@@ -115,7 +115,6 @@ export async function GET(
   const accessToken = await getAuthAccessToken();
   const supabase = getSupabaseServerClient(accessToken);
   const profile = await getCurrentProfile();
-  const routeAccessProfile = await buildOperatorRouteAccessContext(supabase, profile);
 
   if (!supabase) {
     return NextResponse.json({ error: "Database not available" }, { status: 500 });
@@ -125,133 +124,403 @@ export async function GET(
     return NextResponse.json({ error: "Route id is required" }, { status: 400 });
   }
 
+  const routeAccessProfile = await buildOperatorRouteAccessContext(supabase, profile);
+  let route: any = null;
+  let routeExists = false;
+  let operatorHasAccess = false;
+  let failingStep = "load_route";
+  let failingResource: string | null = "routes";
+  let routeItemCount = 0;
+  let pickupItemCount = 0;
+  let stopCount = 0;
+  let pendingStopCount = 0;
+  let itemSource = "route_stop_items";
+  let fallbackUsed = false;
+
+  const logContext = (extra: Record<string, unknown> = {}) => ({
+    route_id: routeId,
+    current_user_id: profile?.id ?? null,
+    current_user_role: profile?.role ?? null,
+    current_user_roles: profile?.roles ?? [],
+    operator_profile_id: profile?.team_member_id ?? null,
+    route_exists: routeExists,
+    operator_has_access: operatorHasAccess,
+    route_status: route?.status ?? null,
+    assigned_operator_id: route?.operator_id ?? null,
+    route_item_count: routeItemCount,
+    pickup_item_count: pickupItemCount,
+    stop_count: stopCount,
+    pending_stop_count: pendingStopCount,
+    item_source: itemSource,
+    fallback_used: fallbackUsed,
+    ...extra,
+  });
+
+  const logOptionalFailure = ({
+    step,
+    resource,
+    error,
+    extra = {},
+  }: {
+    step: string;
+    resource: string;
+    error: unknown;
+    extra?: Record<string, unknown>;
+  }) => {
+    const summary = supabaseErrorSummary(error);
+    console.warn("[operator:pick-list] Optional pick list data failed", logContext({
+      loader_step: step,
+      loader_resource: resource,
+      optional_data_failed: true,
+      db_error_code: summary.code ?? null,
+      db_error_message: summary.message ?? null,
+      db_error_details: summary.details ?? null,
+      db_error_hint: summary.hint ?? null,
+      ...extra,
+    }));
+  };
+
   try {
-    const { data: route, error: routeError } = await supabase.from("routes").select("id, operator_id, status").eq("id", routeId).maybeSingle();
+    failingStep = "load_route";
+    failingResource = "routes";
+    const { data: routeData, error: routeError } = await supabase
+      .from("routes")
+      .select("id, operator_id, status")
+      .eq("id", routeId)
+      .maybeSingle();
     if (routeError) throw routeError;
+    route = routeData;
+    routeExists = Boolean(route);
+
     if (!route) {
       return NextResponse.json({ error: "Route not found" }, { status: 404 });
     }
-    if (!canAccessOperatorRoute(routeAccessProfile, route.operator_id)) {
+
+    operatorHasAccess = canAccessOperatorRoute(routeAccessProfile, route.operator_id);
+    if (!operatorHasAccess) {
       return NextResponse.json({ error: "This route is not assigned to you" }, { status: 403 });
     }
+
     const readClient = getSupabaseAdminClient() ?? supabase;
 
-    const { data: stops, error: stopsError } = await supabase
+    failingStep = "load_route_stops";
+    failingResource = "route_stops";
+    const { data: stopsData, error: stopsError } = await readClient
       .from("route_stops")
-      .select("id, machine_id, stop_order, status, machine:machines(id, name, machine_code, display_name, location:locations(id, name))")
+      .select("id, machine_id, stop_order, status")
       .eq("route_id", routeId)
       .order("stop_order", { ascending: true });
     if (stopsError) throw stopsError;
 
+    const stops = stopsData ?? [];
+    stopCount = stops.length;
+    pendingStopCount = stops.filter((stop: any) => String(stop.status ?? "") === ROUTE_STOP_PENDING_STATUS).length;
+
     const stopById = new Map<string, any>();
     const stopByMachine = new Map<string, any>();
-    (stops ?? []).forEach((stop: any) => {
+    stops.forEach((stop: any) => {
       const stopId = String(stop.id ?? "");
       const machineId = String(stop.machine_id ?? "");
       if (stopId) stopById.set(stopId, stop);
       if (machineId) stopByMachine.set(machineId, stop);
     });
-    const pendingStopIds = new Set((stops ?? []).filter((stop: any) => String(stop.status ?? "") === ROUTE_STOP_PENDING_STATUS).map((stop: any) => String(stop.id)));
 
-    let { data: stopItems, error: stopItemsError }: { data: any[] | null; error: any } = await supabase
-      .from("route_stop_items")
-      .select(
-        `id,
-        route_stop_id,
-        machine_id,
-        machine:machines(id, name, machine_code, display_name, location:locations(id, name)),
-        product_id,
-        planned_quantity,
-        is_checked,
-        checked_at,
-        checked_by,
-        source,
-        product:products(id, name, sku, category)`
-      )
-      .eq("route_id", routeId);
+    const pendingStopIds = new Set(
+      stops
+        .filter((stop: any) => String(stop.status ?? "") === ROUTE_STOP_PENDING_STATUS)
+        .map((stop: any) => String(stop.id ?? ""))
+        .filter(Boolean),
+    );
+    const relevantStopIds = pendingStopIds.size
+      ? pendingStopIds
+      : new Set(stops.map((stop: any) => String(stop.id ?? "")).filter(Boolean));
 
-    if (stopItemsError && isMissingColumn(stopItemsError, ["is_checked", "checked_at", "checked_by", "category"])) {
-      const fallback = await supabase
-        .from("route_stop_items")
-        .select(
-          `id,
-          route_stop_id,
-          machine_id,
-          machine:machines(id, name, machine_code, display_name, location:locations(id, name)),
-          product_id,
-          planned_quantity,
-          source,
-          product:products(id, name, sku)`
-        )
-        .eq("route_id", routeId);
-      stopItems = fallback.data;
-      stopItemsError = fallback.error;
-    }
-
-    if (stopItemsError) {
-      if (!isMissingTable(stopItemsError, "route_stop_items")) throw stopItemsError;
-      const fallback = await supabase
+    const loadStopItemsFromRefillOrders = async (reason: string) => {
+      failingStep = "load_refill_order_lines_fallback";
+      failingResource = "refill_orders";
+      const fallback = await readClient
         .from("refill_orders")
         .select(
           `id,
           machine_id,
-          machine:machines(id, name, machine_code, display_name, location:locations(id, name)),
           refill_order_lines(
             id,
             machine_slot_id,
             product_id,
             final_qty_to_take,
             suggested_qty,
-            source,
-            product:products(id, name, sku)
+            source
           )`
         )
         .eq("route_id", routeId);
       if (fallback.error) throw fallback.error;
-      stopItems = (fallback.data ?? []).flatMap((order: any) =>
+      const fallbackRows = (fallback.data ?? []).flatMap((order: any) =>
         (order.refill_order_lines ?? []).map((line: any) => ({
           id: line.id,
           route_stop_id: stopByMachine.get(String(order.machine_id ?? ""))?.id ?? null,
           machine_id: order.machine_id,
-          machine: order.machine,
           product_id: line.product_id,
           planned_quantity: Number(line.final_qty_to_take ?? line.suggested_qty ?? 0),
+          is_checked: false,
+          checked_at: null,
+          checked_by: null,
           source: line.source ?? (line.machine_slot_id ? "refill_recommendation" : "manual_admin_assignment"),
-          product: line.product,
         })),
       );
+      fallbackUsed = true;
+      itemSource = "refill_order_lines";
+      console.info("[operator:pick-list] Using refill order fallback for route items", logContext({
+        loader_step: failingStep,
+        loader_resource: failingResource,
+        fallback_reason: reason,
+        fallback_item_count: fallbackRows.length,
+      }));
+      return fallbackRows;
+    };
+
+    let stopItems: any[] = [];
+    let stopItemsError: any = null;
+    failingStep = "load_route_stop_items";
+    failingResource = "route_stop_items";
+    const stopItemsResponse = await readClient
+      .from("route_stop_items")
+      .select("id, route_stop_id, machine_id, product_id, planned_quantity, is_checked, checked_at, checked_by, source")
+      .eq("route_id", routeId);
+    stopItems = stopItemsResponse.data ?? [];
+    stopItemsError = stopItemsResponse.error;
+
+    if (stopItemsError && isMissingColumn(stopItemsError, ["is_checked", "checked_at", "checked_by"])) {
+      const fallback = await readClient
+        .from("route_stop_items")
+        .select("id, route_stop_id, machine_id, product_id, planned_quantity, source")
+        .eq("route_id", routeId);
+      stopItems = (fallback.data ?? []).map((item: any) => ({
+        ...item,
+        is_checked: false,
+        checked_at: null,
+        checked_by: null,
+      }));
+      stopItemsError = fallback.error;
     }
 
-    let { data: pickListItems, error: pickListError }: { data: any[] | null; error: any } = await supabase
+    if (stopItemsError) {
+      logOptionalFailure({
+        step: "load_route_stop_items",
+        resource: "route_stop_items",
+        error: stopItemsError,
+        extra: {
+          fallback_reason: isMissingTable(stopItemsError, "route_stop_items") ? "route_stop_items_missing" : "route_stop_items_query_failed",
+        },
+      });
+      try {
+        stopItems = await loadStopItemsFromRefillOrders(
+          isMissingTable(stopItemsError, "route_stop_items") ? "route_stop_items_missing" : "route_stop_items_query_failed",
+        );
+      } catch (fallbackError) {
+        logOptionalFailure({
+          step: "load_refill_order_lines_fallback",
+          resource: "refill_orders",
+          error: fallbackError,
+          extra: {
+            fallback_reason: isMissingTable(stopItemsError, "route_stop_items") ? "route_stop_items_missing" : "route_stop_items_query_failed",
+          },
+        });
+        stopItems = [];
+      }
+    } else if (!stopItems.length) {
+      try {
+        const fallbackStopItems = await loadStopItemsFromRefillOrders("route_stop_items_empty");
+        if (fallbackStopItems.length) stopItems = fallbackStopItems;
+      } catch (fallbackError) {
+        logOptionalFailure({
+          step: "load_refill_order_lines_fallback",
+          resource: "refill_orders",
+          error: fallbackError,
+          extra: { fallback_reason: "route_stop_items_empty" },
+        });
+      }
+    }
+    routeItemCount = stopItems.length;
+
+    let pickListItems: any[] = [];
+    failingStep = "load_route_pick_list_items";
+    failingResource = "route_pick_list_items";
+    const pickListResponse = await readClient
       .from("route_pick_list_items")
       .select("id, route_stop_id, route_stop_item_id, machine_id, product_id, picked_qty, planned_qty, action_type, reason, notes, is_checked")
       .eq("route_id", routeId);
+    pickListItems = pickListResponse.data ?? [];
+    let pickListError: any = pickListResponse.error;
+
     if (pickListError && isMissingColumn(pickListError, ["is_checked"])) {
-      const fallback = await supabase
+      const fallback = await readClient
         .from("route_pick_list_items")
         .select("id, route_stop_id, route_stop_item_id, machine_id, product_id, picked_qty, planned_qty, action_type, reason, notes")
         .eq("route_id", routeId);
-      pickListItems = fallback.data;
+      pickListItems = (fallback.data ?? []).map((item: any) => ({ ...item, is_checked: false }));
       pickListError = fallback.error;
     }
     if (pickListError && isMissingColumn(pickListError, ["route_stop_id", "route_stop_item_id", "machine_id"])) {
-      const fallback = await supabase
+      const fallback = await readClient
         .from("route_pick_list_items")
         .select("id, product_id, picked_qty, planned_qty, action_type, reason, notes")
         .eq("route_id", routeId);
-      pickListItems = fallback.data;
+      pickListItems = (fallback.data ?? []).map((item: any) => ({
+        ...item,
+        route_stop_id: null,
+        route_stop_item_id: null,
+        machine_id: null,
+        is_checked: false,
+      }));
       pickListError = fallback.error;
     }
-    if (pickListError && !isMissingTable(pickListError, "route_pick_list_items")) throw pickListError;
+    if (pickListError) {
+      logOptionalFailure({
+        step: "load_route_pick_list_items",
+        resource: "route_pick_list_items",
+        error: pickListError,
+      });
+      pickListItems = [];
+    }
+    pickupItemCount = pickListItems.length;
+
+    if (!stopItems.length && pickListItems.length) {
+      stopItems = pickListItems
+        .filter((line: any) => {
+          if (!line.product_id) return false;
+          if (String(line.action_type ?? "") === "extra_product") return false;
+          return unitQuantity(line.planned_qty ?? line.picked_qty) > 0;
+        })
+        .map((line: any, index: number) => ({
+          id: line.route_stop_item_id ?? `legacy-pick:${String(line.id ?? index)}`,
+          route_stop_id: line.route_stop_id ?? null,
+          machine_id: line.machine_id ?? stopById.get(String(line.route_stop_id ?? ""))?.machine_id ?? null,
+          product_id: line.product_id,
+          planned_quantity: Number(line.planned_qty ?? line.picked_qty ?? 0),
+          is_checked: Boolean(line.is_checked),
+          checked_at: null,
+          checked_by: null,
+          source: "route_pick_list_items_fallback",
+        }));
+      if (stopItems.length) {
+        fallbackUsed = true;
+        itemSource = "route_pick_list_items";
+        routeItemCount = stopItems.length;
+        console.info("[operator:pick-list] Using route pick list items fallback for route items", logContext({
+          loader_step: "load_route_pick_list_items",
+          loader_resource: "route_pick_list_items",
+          fallback_reason: "route_items_missing_but_pick_list_exists",
+          fallback_item_count: stopItems.length,
+        }));
+      }
+    }
+
+    const machineIds = Array.from(new Set([
+      ...stops.map((stop: any) => String(stop.machine_id ?? "")).filter(Boolean),
+      ...stopItems.map((item: any) => String(item.machine_id ?? "")).filter(Boolean),
+    ]));
+    const productIds = Array.from(new Set([
+      ...stopItems.map((item: any) => String(item.product_id ?? "")).filter(Boolean),
+      ...pickListItems.map((item: any) => String(item.product_id ?? "")).filter(Boolean),
+    ]));
+
+    const machineById = new Map<string, any>();
+    const locationById = new Map<string, any>();
+    let productRows: any[] = [];
+
+    if (machineIds.length) {
+      failingStep = "load_machines";
+      failingResource = "machines";
+      let machinesResponse: any = await readClient
+        .from("machines")
+        .select("id, name, machine_code, display_name, location_id")
+        .in("id", machineIds);
+
+      if (machinesResponse.error && isMissingColumn(machinesResponse.error, ["display_name", "location_id"])) {
+        machinesResponse = await readClient
+          .from("machines")
+          .select("id, name, machine_code")
+          .in("id", machineIds);
+      }
+
+      if (machinesResponse.error) {
+        logOptionalFailure({ step: "load_machines", resource: "machines", error: machinesResponse.error });
+      } else {
+        (machinesResponse.data ?? []).forEach((machine: any) => {
+          machineById.set(String(machine.id), machine);
+        });
+      }
+    }
+
+    const locationIds = Array.from(new Set(
+      Array.from(machineById.values())
+        .map((machine: any) => String(machine.location_id ?? ""))
+        .filter(Boolean),
+    ));
+    if (locationIds.length) {
+      failingStep = "load_locations";
+      failingResource = "locations";
+      const locationsResponse = await readClient
+        .from("locations")
+        .select("id, name")
+        .in("id", locationIds);
+      if (locationsResponse.error) {
+        logOptionalFailure({ step: "load_locations", resource: "locations", error: locationsResponse.error });
+      } else {
+        (locationsResponse.data ?? []).forEach((location: any) => {
+          locationById.set(String(location.id), location);
+        });
+      }
+    }
+
+    if (productIds.length) {
+      failingStep = "load_products_for_route_items";
+      failingResource = "products";
+      let productsResponse: any = await readClient
+        .from("products")
+        .select("id, name, sku, category")
+        .in("id", productIds);
+
+      if (productsResponse.error && isMissingColumn(productsResponse.error, ["category"])) {
+        productsResponse = await readClient
+          .from("products")
+          .select("id, name, sku")
+          .in("id", productIds);
+      }
+      if (productsResponse.error && isMissingColumn(productsResponse.error, ["sku"])) {
+        productsResponse = await readClient
+          .from("products")
+          .select("id, name")
+          .in("id", productIds);
+      }
+
+      if (productsResponse.error) {
+        logOptionalFailure({ step: "load_products_for_route_items", resource: "products", error: productsResponse.error });
+      } else {
+        productRows = (productsResponse.data ?? []).map((product: any) => ({
+          ...product,
+          sku: product?.sku ?? null,
+          category: product?.category ?? null,
+        }));
+      }
+    }
+
+    const productById = new Map(productRows.map((product: any) => [String(product.id), product]));
+
+    const includesRelevantStop = (routeStopId: string | null | undefined) => {
+      if (!routeStopId) return true;
+      if (!relevantStopIds.size) return true;
+      return relevantStopIds.has(String(routeStopId));
+    };
 
     const pickedByStopItem = new Map<string, { quantity: number; reason: string | null; notes: string | null; isChecked: boolean }>();
     const pickedByStopProduct = new Map<string, { quantity: number; reason: string | null; notes: string | null; isChecked: boolean }>();
     const legacyPickedByProduct = new Map<string, { quantity: number; reason: string | null; notes: string | null; isChecked: boolean }>();
     const pickedByProduct = new Map<string, number>();
-    const extraItems = (pickListItems ?? [])
+    const extraItems = pickListItems
       .filter((line: any) => {
         if (line.action_type !== "extra_product" || !line.product_id || line.route_stop_item_id) return false;
-        return !line.route_stop_id || pendingStopIds.has(String(line.route_stop_id));
+        return includesRelevantStop(line.route_stop_id ? String(line.route_stop_id) : null);
       })
       .map((line: any) => {
         const productId = String(line.product_id ?? "").trim();
@@ -267,13 +536,13 @@ export async function GET(
         };
       });
 
-    (pickListItems ?? []).forEach((line: any) => {
+    pickListItems.forEach((line: any) => {
       const actionType = String(line.action_type ?? "");
       if (actionType !== "planned_pick" && !(actionType === "extra_product" && line.route_stop_item_id)) return;
       const productId = String(line.product_id ?? "").trim();
       if (!productId) return;
       const lineStopId = line.route_stop_id ? String(line.route_stop_id) : null;
-      if (lineStopId && !pendingStopIds.has(lineStopId)) return;
+      if (!includesRelevantStop(lineStopId)) return;
       const quantity = unitQuantity(line.picked_qty);
       pickedByProduct.set(productId, (pickedByProduct.get(productId) ?? 0) + quantity);
       const next = { quantity, reason: line.reason ?? null, notes: line.notes ?? null, isChecked: Boolean(line.is_checked) };
@@ -288,8 +557,8 @@ export async function GET(
         });
         return;
       }
-      if (line.route_stop_id) {
-        const key = routeStopProductKey(String(line.route_stop_id), productId);
+      if (lineStopId) {
+        const key = routeStopProductKey(lineStopId, productId);
         const current = pickedByStopProduct.get(key);
         pickedByStopProduct.set(key, {
           quantity: (current?.quantity ?? 0) + quantity,
@@ -308,7 +577,7 @@ export async function GET(
       });
     });
 
-    const sortedStopItems = [...(stopItems ?? [])].sort((a: any, b: any) => {
+    const sortedStopItems = [...stopItems].sort((a: any, b: any) => {
       const aStop = stopById.get(String(a.route_stop_id ?? "")) ?? stopByMachine.get(String(a.machine_id ?? ""));
       const bStop = stopById.get(String(b.route_stop_id ?? "")) ?? stopByMachine.get(String(b.machine_id ?? ""));
       const stopOrderDiff = Number(aStop?.stop_order ?? 9999) - Number(bStop?.stop_order ?? 9999);
@@ -336,23 +605,95 @@ export async function GET(
       });
     });
 
-    const plannedByProduct = new Map<string, any>();
+    let productOptionsData: any[] = [];
+    failingStep = "load_product_options";
+    failingResource = "products";
+    {
+      let productOptionsResponse: any = await readClient
+        .from("products")
+        .select("id, sku, barcode, name, category, brand, image_url, active")
+        .eq("active", true)
+        .order("name");
+
+      if (productOptionsResponse.error && isMissingColumn(productOptionsResponse.error, ["category", "brand", "image_url"])) {
+        productOptionsResponse = await readClient
+          .from("products")
+          .select("id, sku, barcode, name, active")
+          .eq("active", true)
+          .order("name");
+      }
+
+      if (productOptionsResponse.error) {
+        logOptionalFailure({ step: "load_product_options", resource: "products", error: productOptionsResponse.error });
+        productOptionsData = productRows.map((product: any) => ({
+          ...product,
+          barcode: null,
+          brand: null,
+          image_url: null,
+          active: true,
+        }));
+      } else {
+        productOptionsData = (productOptionsResponse.data ?? []).map((product: any) => ({
+          ...product,
+          category: product?.category ?? null,
+          brand: product?.brand ?? null,
+          image_url: product?.image_url ?? null,
+        }));
+      }
+    }
+
+    const storageProductIds = Array.from(new Set([
+      ...productIds,
+      ...productOptionsData.map((product: any) => String(product.id ?? "")).filter(Boolean),
+      ...Array.from(pickedByProduct.keys()),
+    ].filter(Boolean)));
+    const storageByProduct = new Map<string, number>();
+    let storageAvailabilityLoaded = false;
+
+    if (storageProductIds.length) {
+      failingStep = "load_storage_availability";
+      failingResource = "current_inventory_by_location";
+      const storageResult = await readClient
+        .from("current_inventory_by_location")
+        .select("product_id, quantity_on_hand")
+        .eq("location_type", "storage")
+        .in("product_id", storageProductIds);
+      if (storageResult.error) {
+        logOptionalFailure({ step: "load_storage_availability", resource: "current_inventory_by_location", error: storageResult.error });
+      } else {
+        storageAvailabilityLoaded = true;
+        (storageResult.data ?? []).forEach((row: any) => {
+          const productId = String(row.product_id ?? "").trim();
+          if (!productId) return;
+          storageByProduct.set(productId, (storageByProduct.get(productId) ?? 0) + unitQuantity(row.quantity_on_hand));
+        });
+      }
+    }
+
+    const availableStorageQtyForProduct = (productId: string, fallbackQty = 0) => {
+      const alreadyPicked = pickedByProduct.get(productId) ?? 0;
+      if (storageAvailabilityLoaded) return (storageByProduct.get(productId) ?? 0) + alreadyPicked;
+      return Math.max(fallbackQty, alreadyPicked);
+    };
+
     const stopGroupsById = new Map<string, any>();
-    (stops ?? []).forEach((stop: any) => {
-      const machine = firstRelation(stop.machine);
-      const location = firstRelation((machine as any)?.location);
+    stops.forEach((stop: any) => {
+      const machine = machineById.get(String(stop.machine_id ?? "")) ?? null;
+      const location = machine?.location_id ? locationById.get(String(machine.location_id)) ?? null : null;
+      const locationName = location?.name ?? "Unknown location";
       stopGroupsById.set(String(stop.id), {
         route_stop_id: stop.id,
         machine_id: stop.machine_id,
         stop_status: stop.status,
-        machine_name: formatMachineDisplayName(machine as any, { includeArea: true }),
-        machine_code: (machine as any)?.machine_code ?? "-",
-        location_name: (location as any)?.name ?? "Unknown location",
+        machine_name: formatMachineDisplayName({ ...machine, location_name: locationName }, { includeArea: true }),
+        machine_code: machine?.machine_code ?? "-",
+        location_name: locationName,
         stop_order: Number(stop.stop_order ?? 0),
         items: [],
       });
     });
 
+    const plannedByProduct = new Map<string, any>();
     sortedStopItems.forEach((line: any) => {
       const productId = String(line.product_id ?? "").trim();
       const plannedQty = unitQuantity(line.planned_quantity);
@@ -360,35 +701,38 @@ export async function GET(
       const routeStopId = line.route_stop_id ? String(line.route_stop_id) : null;
       const routeStopItemId = String(line.id ?? "");
       const stop = routeStopId ? stopById.get(routeStopId) : stopByMachine.get(String(line.machine_id ?? ""));
-      if (String(stop?.status ?? "") !== ROUTE_STOP_PENDING_STATUS) return;
-      const machine = firstRelation(stop?.machine) ?? firstRelation(line.machine);
-      const location = firstRelation((machine as any)?.location);
-      const product = firstRelation(line.product);
+      if (pendingStopIds.size && stop && String(stop.status ?? "") !== ROUTE_STOP_PENDING_STATUS) return;
+
+      const machineId = String(line.machine_id ?? stop?.machine_id ?? "");
+      const machine = machineById.get(machineId) ?? null;
+      const location = machine?.location_id ? locationById.get(String(machine.location_id)) ?? null : null;
+      const locationName = location?.name ?? "Unknown location";
+      const product = productById.get(productId) ?? null;
       const savedPick =
         (routeStopItemId ? pickedByStopItem.get(routeStopItemId) : undefined) ??
         pickedByStopProduct.get(routeStopProductKey(routeStopId, productId)) ??
         (routeStopItemId ? legacyAllocationByStopItem.get(routeStopItemId) : undefined) ??
         null;
 
-      const groupId = routeStopId ?? `machine:${String(line.machine_id ?? "")}`;
+      const groupId = routeStopId ?? `machine:${machineId}`;
       const group = stopGroupsById.get(groupId) ?? {
         route_stop_id: routeStopId,
-        machine_id: line.machine_id,
+        machine_id: machineId || null,
         stop_status: stop?.status ?? null,
-        machine_name: formatMachineDisplayName(machine as any, { includeArea: true }),
-        machine_code: (machine as any)?.machine_code ?? "-",
-        location_name: (location as any)?.name ?? "Unknown location",
+        machine_name: formatMachineDisplayName({ ...machine, location_name: locationName }, { includeArea: true }),
+        machine_code: machine?.machine_code ?? "-",
+        location_name: locationName,
         stop_order: Number(stop?.stop_order ?? 0),
         items: [],
       };
       group.items.push({
         route_stop_item_id: routeStopItemId,
         route_stop_id: routeStopId,
-        machine_id: line.machine_id,
+        machine_id: machineId || null,
         product_id: productId,
-        product_name: (product as any)?.name || "Unknown Product",
-        sku: (product as any)?.sku ?? null,
-        category: (product as any)?.category ?? null,
+        product_name: product?.name || "Unknown product",
+        sku: product?.sku ?? null,
+        category: product?.category ?? "Other",
         planned_qty: plannedQty,
         picked_qty: savedPick ? savedPick.quantity : null,
         is_checked: Boolean(line.is_checked ?? savedPick?.isChecked ?? false),
@@ -402,9 +746,9 @@ export async function GET(
 
       const current = plannedByProduct.get(productId) ?? {
         product_id: productId,
-        product_name: (product as any)?.name || "Unknown Product",
-        sku: (product as any)?.sku ?? null,
-        category: (product as any)?.category ?? null,
+        product_name: product?.name || "Unknown product",
+        sku: product?.sku ?? null,
+        category: product?.category ?? "Other",
         planned_qty: 0,
         picked_qty: 0,
         has_picked_qty: false,
@@ -418,10 +762,10 @@ export async function GET(
       current.machine_items.push({
         route_stop_item_id: routeStopItemId,
         route_stop_id: routeStopId,
-        machine_id: line.machine_id,
-        machine_name: formatMachineDisplayName(machine as any, { includeArea: true }),
-        machine_code: (machine as any)?.machine_code ?? "-",
-        location_name: (location as any)?.name ?? "Unknown location",
+        machine_id: machineId || null,
+        machine_name: formatMachineDisplayName({ ...machine, location_name: locationName }, { includeArea: true }),
+        machine_code: machine?.machine_code ?? "-",
+        location_name: locationName,
         planned_qty: plannedQty,
         picked_qty: savedPick ? savedPick.quantity : null,
         is_checked: Boolean(line.is_checked ?? savedPick?.isChecked ?? false),
@@ -432,119 +776,31 @@ export async function GET(
       plannedByProduct.set(productId, current);
     });
 
-    let productOptionsData: any[] = [];
-    {
-      const productOptionsResponse = await readClient
-        .from("products")
-        .select("id, sku, barcode, name, category, brand, image_url, active")
-        .eq("active", true)
-        .order("name");
-
-      if (productOptionsResponse.error && isMissingColumn(productOptionsResponse.error, ["category", "brand", "image_url"])) {
-        const fallback = await readClient
-          .from("products")
-          .select("id, sku, barcode, name, active")
-          .eq("active", true)
-          .order("name");
-
-        if (fallback.error) {
-          console.warn("[operator:pick-list] Failed to load product options, using an empty fallback", {
-            route_id: routeId,
-            error: supabaseErrorSummary(fallback.error),
-          });
-          productOptionsData = [];
-        } else {
-          productOptionsData = (fallback.data ?? []).map((product: any) => ({
-            ...product,
-            category: null,
-            brand: null,
-            image_url: null,
-          }));
-        }
-      } else if (productOptionsResponse.error) {
-        console.warn("[operator:pick-list] Failed to load product options, using an empty fallback", {
-          route_id: routeId,
-          error: supabaseErrorSummary(productOptionsResponse.error),
-        });
-        productOptionsData = [];
-      } else {
-        productOptionsData = productOptionsResponse.data ?? [];
-      }
-    }
-
-    const productIds = Array.from(new Set([
-      ...Array.from(plannedByProduct.keys()),
-      ...Array.from(pickedByProduct.keys()),
-      ...(productOptionsData ?? []).map((product: any) => product.id),
-    ].filter(Boolean)));
-
-    const [storageResult, productNamesResult] = await Promise.all([
-      productIds.length
-        ? readClient
-            .from("current_inventory_by_location")
-            .select("product_id, quantity_on_hand")
-            .eq("location_type", "storage")
-            .in("product_id", productIds)
-        : Promise.resolve({ data: [], error: null }),
-      productIds.length
-        ? readClient
-            .from("products")
-            .select("id, name, sku")
-            .in("id", productIds)
-        : Promise.resolve({ data: [], error: null }),
-    ]);
-
-    if (storageResult.error) {
-      console.warn("[operator:pick-list] Could not load storage availability, defaulting to zero", {
-        route_id: routeId,
-        error: supabaseErrorSummary(storageResult.error),
-      });
-    }
-    if (productNamesResult.error) {
-      console.warn("[operator:pick-list] Could not reload product names, keeping route item names", {
-        route_id: routeId,
-        error: supabaseErrorSummary(productNamesResult.error),
-      });
-    }
-
-    const productById = new Map((productNamesResult.data ?? []).map((product: any) => [String(product.id), product]));
-    plannedByProduct.forEach((line: any, productId) => {
-      const product = productById.get(productId);
-      if (product?.name) line.product_name = product.name;
-      if (product?.sku !== undefined) line.sku = product.sku;
-    });
-
-    const storageByProduct = new Map<string, number>();
-    (storageResult.data ?? []).forEach((row: any) => {
-      const productId = String(row.product_id ?? "").trim();
-      if (!productId) return;
-      storageByProduct.set(productId, (storageByProduct.get(productId) ?? 0) + unitQuantity(row.quantity_on_hand));
-    });
-
     const stopGroups = Array.from(stopGroupsById.values())
       .map((group: any) => ({
         ...group,
         items: (group.items ?? []).map((line: any) => ({
           ...line,
-          available_storage_qty: (storageByProduct.get(String(line.product_id)) ?? 0) + (pickedByProduct.get(String(line.product_id)) ?? 0),
+          available_storage_qty: availableStorageQtyForProduct(String(line.product_id), unitQuantity(line.planned_qty)),
         })),
       }))
       .filter((group: any) => group.items.length > 0)
       .sort((a: any, b: any) => Number(a.stop_order ?? 0) - Number(b.stop_order ?? 0));
 
-    const { data: pickMovements, error: pickMovementError } = await supabase
+    let confirmed = false;
+    failingStep = "load_pickup_confirmation_state";
+    failingResource = "inventory_movements";
+    const pickMovementsResult = await readClient
       .from("inventory_movements")
       .select("id")
       .eq("related_route_id", routeId)
       .in("reason", ["storage_to_operator_bag"])
       .limit(1);
-    if (pickMovementError) {
-      console.warn("[operator:pick-list] Could not verify pickup confirmation state", {
-        route_id: routeId,
-        error: supabaseErrorSummary(pickMovementError),
-      });
+    if (pickMovementsResult.error) {
+      logOptionalFailure({ step: "load_pickup_confirmation_state", resource: "inventory_movements", error: pickMovementsResult.error });
+    } else {
+      confirmed = Boolean(pickMovementsResult.data?.length);
     }
-    const confirmed = Boolean(pickMovements?.length);
 
     const items = Array.from(plannedByProduct.values()).map((line: any) => ({
       product_id: line.product_id,
@@ -552,19 +808,19 @@ export async function GET(
       sku: line.sku ?? null,
       planned_qty: unitQuantity(line.planned_qty),
       picked_qty: line.has_picked_qty ? unitQuantity(line.picked_qty) : null,
-      available_storage_qty: (storageByProduct.get(String(line.product_id)) ?? 0) + (pickedByProduct.get(String(line.product_id)) ?? 0),
+      available_storage_qty: availableStorageQtyForProduct(String(line.product_id), unitQuantity(line.planned_qty)),
       machine_items: Array.isArray(line.machine_items) ? line.machine_items : [],
     }));
 
-    const productOptions = (productOptionsData ?? []).map((product: any) => ({
+    const productOptions = productOptionsData.map((product: any) => ({
       id: product.id,
-      sku: product.sku,
-      barcode: product.barcode,
-      name: product.name,
-      category: product.category,
-      brand: product.brand,
-      imageUrl: product.image_url,
-      availableStorageQty: (storageByProduct.get(String(product.id)) ?? 0) + (pickedByProduct.get(String(product.id)) ?? 0),
+      sku: product.sku ?? null,
+      barcode: product.barcode ?? null,
+      name: product.name ?? "Unnamed product",
+      category: product.category ?? "Other",
+      brand: product.brand ?? null,
+      imageUrl: product.image_url ?? null,
+      availableStorageQty: availableStorageQtyForProduct(String(product.id ?? ""), 0),
     }));
 
     return NextResponse.json({
@@ -576,25 +832,43 @@ export async function GET(
       confirmed,
       locked: isTerminalRouteStatus(route.status),
       routeStatus: route.status,
-      pendingStopCount: (stops ?? []).filter((stop: any) => String(stop.status ?? "") === ROUTE_STOP_PENDING_STATUS).length,
+      pendingStopCount,
+      routeItemCount,
+      pickupItemCount,
+      itemSource,
       debug: process.env.NODE_ENV === "development"
-        ? { routeId, routeStopItemsCount: stopItems?.length ?? 0, aggregatedPickListCount: items.length, routePickListItemsCount: pickListItems?.length ?? 0, productOptionsCount: productOptions.length, operatorTeamMemberId: profile?.team_member_id ?? null }
+        ? {
+            routeId,
+            routeExists,
+            operatorHasAccess,
+            routeStatus: route.status ?? null,
+            routeStopItemsCount: routeItemCount,
+            routePickListItemsCount: pickupItemCount,
+            stopCount,
+            pendingStopCount,
+            itemSource,
+            productOptionsCount: productOptions.length,
+            operatorTeamMemberId: profile?.team_member_id ?? null,
+          }
         : undefined,
     });
   } catch (error) {
-    console.error("[operator:pick-list] Error fetching pick list", {
-      route_id: routeId,
-      user_id: profile?.id ?? null,
-      user_roles: profile?.roles ?? [],
+    const summary = supabaseErrorSummary(error);
+    console.error("[operator:pick-list] Error fetching pick list", logContext({
+      loader_step: failingStep,
+      loader_resource: failingResource,
+      db_error_code: summary.code ?? null,
+      db_error_message: summary.message ?? null,
+      db_error_details: summary.details ?? null,
+      db_error_hint: summary.hint ?? null,
       error,
-    });
+    }));
     return NextResponse.json(
       { error: "Failed to fetch pick list", details: errorMessage(error) },
       { status: 500 }
     );
   }
 }
-
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }

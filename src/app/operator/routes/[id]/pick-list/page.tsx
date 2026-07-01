@@ -248,6 +248,7 @@ export default function PickListPage() {
   const [productOptions, setProductOptions] = useState<ProductOption[]>([]);
   const [extras, setExtras] = useState<ExtraPickItem[]>([]);
   const [alreadyConfirmed, setAlreadyConfirmed] = useState(false);
+  const [routeItemCount, setRouteItemCount] = useState(0);
   const [locked, setLocked] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -374,13 +375,15 @@ export default function PickListPage() {
       const response = await fetch(`/api/operator/routes/${routeId}/pick-list`);
       const data = await response.json();
       if (!response.ok) {
-        const message = process.env.NODE_ENV === "development" && data.details ? `${data.error}: ${data.details}` : data.error;
-        throw new Error(message || "Failed to fetch pick list");
+        const message = process.env.NODE_ENV === "development" && data.details ? `${data.error}: ${data.details}` : "Could not load pickup list. Please retry.";
+        throw new Error(message || "Could not load pickup list. Please retry.");
       }
 
       const confirmed = Boolean(data.confirmed);
       setAlreadyConfirmed(confirmed);
       setLocked(Boolean(data.locked));
+      setRouteItemCount(Number(data.routeItemCount ?? 0));
+      setError('');
       const responseStopGroups = Array.isArray(data.stopGroups) ? (data.stopGroups as PickListApiStopGroup[]) : [];
       const responseProductOptions = Array.isArray(data.productOptions) ? (data.productOptions as PickListApiProductOption[]) : [];
       const responseExtraItems = Array.isArray(data.extraItems) ? (data.extraItems as PickListApiExtraItem[]) : [];
@@ -458,7 +461,7 @@ export default function PickListPage() {
         extras: nextExtras,
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load pick list");
+      setError(process.env.NODE_ENV === "development" && err instanceof Error && err.message.trim() ? err.message : "Could not load pickup list. Please retry.");
     } finally {
       setLoading(false);
     }
@@ -852,7 +855,11 @@ export default function PickListPage() {
         ) : null}
 
         {stopGroups.length === 0 ? (
-          <EmptyState title="No pending pickup items" body="All machine stops are already picked, completed, or skipped. Continue active stops from the route page." />
+          routeItemCount === 0 ? (
+            <EmptyState title="No pickup items found for this route." body="No pickup items found for this route." />
+          ) : (
+            <EmptyState title="No pending pickup items" body="All machine stops are already picked, completed, or skipped. Continue active stops from the route page." />
+          )
         ) : selectedStopGroups.length === 0 ? (
           <EmptyState title="No stops selected" body="Choose at least one pending machine stop for this pickup batch." />
         ) : (
