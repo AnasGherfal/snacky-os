@@ -128,7 +128,7 @@ export default async function OperatorRoutesPage() {
     route_status_filter: "assigned|available|completed",
     assignment_filter: canManageAllRoutes ? "all_routes" : "accessible_operator_ids",
   };
-  const routeSelect = "id, route_date, status, operator_id, route_stops(id, status, stop_order, machine_id)";
+  const routeSelect = "id, route_date, status, operator_id";
 
   const assignedQuery = canManageAllRoutes
     ? routeReadClient.from("routes").select(routeSelect).not("operator_id", "is", null).order("route_date", { ascending: false })
@@ -174,10 +174,41 @@ export default async function OperatorRoutesPage() {
     );
   }
 
-  const assignedRoutes = assignedRoutesError ? [] : ((assignedResult.data ?? []) as OperatorRoutePreviewRow[]);
-  const availableRoutes = availableRoutesError
+  const baseAssignedRoutes = assignedRoutesError ? [] : ((assignedResult.data ?? []) as OperatorRoutePreviewRow[]);
+  const baseAvailableRoutes = availableRoutesError
     ? []
     : ((availableResult.data ?? []) as OperatorRoutePreviewRow[]).filter((route) => isOperatorVisibleRouteStatus(route.status));
+  const routeIds = Array.from(new Set([...baseAssignedRoutes, ...baseAvailableRoutes].map((route) => route.id).filter(Boolean)));
+  const { data: stopRows, error: stopsError } = routeIds.length
+    ? await routeReadClient
+        .from("route_stops")
+        .select("id, route_id, status, stop_order, machine_id")
+        .in("route_id", routeIds)
+        .order("stop_order", { ascending: true })
+    : { data: [], error: null };
+  if (stopsError) {
+    logRouteLoaderIssue({
+      step: "load_route_stop_summaries",
+      query: "route_stops",
+      error: stopsError,
+      context: { ...loaderContext, route_ids: routeIds },
+      optional: true,
+    });
+  }
+  const stopsByRouteId = new Map<string, OperatorRoutePreviewStopRow[]>();
+  if (!stopsError) {
+    ((stopRows ?? []) as (OperatorRoutePreviewStopRow & { route_id?: string | null })[]).forEach((stop) => {
+      const routeId = String(stop.route_id ?? "");
+      if (!routeId) return;
+      stopsByRouteId.set(routeId, [...(stopsByRouteId.get(routeId) ?? []), stop]);
+    });
+  }
+  const attachStops = (route: OperatorRoutePreviewRow): OperatorRoutePreviewRow => ({
+    ...route,
+    route_stops: stopsByRouteId.get(String(route.id)) ?? [],
+  });
+  const assignedRoutes = baseAssignedRoutes.map(attachStops);
+  const availableRoutes = baseAvailableRoutes.map(attachStops);
   const assignedOpenRoutes = assignedRoutes.filter((route) => !isTerminalRouteStatus(route.status));
   const completedRoutes = assignedRoutes
     .filter((route) => isTerminalRouteStatus(route.status))

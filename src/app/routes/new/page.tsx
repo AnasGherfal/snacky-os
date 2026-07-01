@@ -191,10 +191,10 @@ type StorageInventoryRow = {
 };
 
 type ReservedStockRow = {
+  route_id?: string | null;
   product_id: string;
   planned_qty: unknown;
   picked_qty: unknown;
-  routes?: { status?: string | null } | null;
 };
 
 type RecentMovementRow = {
@@ -288,7 +288,7 @@ export default async function NewRoutePage() {
       .order("product_name"),
     supabase
       .from("route_stock_lines")
-      .select("product_id, planned_qty, picked_qty, routes!inner(status)"),
+      .select("route_id, product_id, planned_qty, picked_qty"),
     supabase.from("products").select("id, sku, barcode, name, category, brand, image_url, active").eq("active", true).order("name"),
     supabase.from("inventory_movements").select("product_id, created_at").order("created_at", { ascending: false }).limit(80),
     safeSupabaseQuery<VmsDashboardBatch>({
@@ -354,14 +354,10 @@ export default async function NewRoutePage() {
         })
       : null,
     reservedError
-      ? logRouteBuilderQueryError({
-          key: "reservations",
-          label: "Could not load route reservations",
-          table: "route_stock_lines",
-          error: reservedError,
-          profile,
-          params: { route_statuses: [...ROUTE_RESERVATION_STATUSES] },
-        })
+      ? (console.warn("[routes:new] Could not load route reservations; route builder will continue and creation API will revalidate stock.", {
+          supabase_error: supabaseErrorPayload(reservedError),
+          route_statuses: [...ROUTE_RESERVATION_STATUSES],
+        }), null)
       : null,
     productsError
       ? logRouteBuilderQueryError({
@@ -436,8 +432,30 @@ export default async function NewRoutePage() {
       quantity_on_hand: (current?.quantity_on_hand ?? 0) + signedQuantity(row.quantity_on_hand),
     });
   });
+  const reservedRows = reservedError ? [] : (reservedStock ?? []) as ReservedStockRow[];
+  const reservedRouteIds = Array.from(new Set(reservedRows.map((row) => String(row.route_id ?? "")).filter(Boolean)));
+  const routeStatusById = new Map<string, string | null>();
+  if (reservedRouteIds.length) {
+    const { data: reservationRoutes, error: reservationRoutesError } = await supabase
+      .from("routes")
+      .select("id, status")
+      .in("id", reservedRouteIds);
+    if (reservationRoutesError) {
+      console.warn("[routes:new] Could not load route statuses for reservation filtering; treating route stock rows as reserved.", {
+        route_ids: reservedRouteIds,
+        supabase_error: supabaseErrorPayload(reservationRoutesError),
+      });
+    } else {
+      (reservationRoutes ?? []).forEach((route: { id?: unknown; status?: unknown }) => routeStatusById.set(String(route.id), String(route.status ?? "")));
+    }
+  }
   const reservedByProduct = new Map<string, number>();
-  ((reservedStock ?? []) as ReservedStockRow[]).filter((row) => isRouteReservationStatus(row.routes?.status)).forEach((row) => {
+  reservedRows.filter((row) => {
+    const routeId = String(row.route_id ?? "");
+    if (!routeId) return true;
+    if (!routeStatusById.size) return true;
+    return isRouteReservationStatus(routeStatusById.get(routeId));
+  }).forEach((row) => {
     const reserved = Math.max(0, unitQuantity(row.planned_qty) - unitQuantity(row.picked_qty));
     reservedByProduct.set(row.product_id, (reservedByProduct.get(row.product_id) ?? 0) + reserved);
   });

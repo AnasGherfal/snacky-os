@@ -42,6 +42,10 @@ export const ROUTE_CANCELED_STATUS = ROUTE_STATUSES.CANCELLED;
 
 export const ROUTE_AVAILABLE_STATUS = "available";
 
+const LEGACY_AVAILABLE_ROUTE_STATUSES = ["available", "ready"] as const;
+const LEGACY_ACTIVE_ROUTE_STATUSES = ["started", "filling", "machine_filling", "partially_completed", "stop_completed"] as const;
+const LEGACY_TERMINAL_ROUTE_STATUSES = ["canceled", "archived", "deleted"] as const;
+
 export const ROUTE_DATABASE_WRITE_STATUSES = ROUTE_STATUS_VALUES;
 export type RouteDatabaseWriteStatus = RouteStatus;
 
@@ -191,19 +195,19 @@ export function isRouteStatusEnumMismatch(error: unknown, status?: string | null
 }
 
 export function isAvailableRouteStatus(status: string | null | undefined) {
-  return includesStatus(UNSTARTED_ROUTE_STATUSES, status);
+  return includesStatus(UNSTARTED_ROUTE_STATUSES, status) || includesStatus(LEGACY_AVAILABLE_ROUTE_STATUSES, status);
 }
 
 export function isOperatorVisibleRouteStatus(status: string | null | undefined) {
-  return includesStatus(OPERATOR_VISIBLE_ROUTE_STATUSES, status);
+  return includesStatus(OPERATOR_VISIBLE_ROUTE_STATUSES, status) || includesStatus(LEGACY_AVAILABLE_ROUTE_STATUSES, status);
 }
 
 export function isActiveRouteStatus(status: string | null | undefined) {
-  return includesStatus(ACTIVE_ROUTE_STATUSES, status);
+  return includesStatus(ACTIVE_ROUTE_STATUSES, status) || includesStatus(LEGACY_ACTIVE_ROUTE_STATUSES, status);
 }
 
 export function isTerminalRouteStatus(status: string | null | undefined) {
-  return includesStatus(TERMINAL_ROUTE_STATUSES, status);
+  return includesStatus(TERMINAL_ROUTE_STATUSES, status) || includesStatus(LEGACY_TERMINAL_ROUTE_STATUSES, status);
 }
 
 export function isCompletedRouteStatus(status: string | null | undefined) {
@@ -211,7 +215,7 @@ export function isCompletedRouteStatus(status: string | null | undefined) {
 }
 
 export function isRouteReservationStatus(status: string | null | undefined) {
-  return includesStatus(ROUTE_RESERVATION_STATUSES, status);
+  return includesStatus(ROUTE_RESERVATION_STATUSES, status) || includesStatus(LEGACY_AVAILABLE_ROUTE_STATUSES, status) || includesStatus(LEGACY_ACTIVE_ROUTE_STATUSES, status);
 }
 
 export function isPickupConfirmedStatus(status: string | null | undefined) {

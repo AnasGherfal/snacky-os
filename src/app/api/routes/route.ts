@@ -197,7 +197,7 @@ async function validateRouteStock(
 
   let reservedQuery = supabase
     .from("route_stock_lines")
-    .select("route_id, product_id, planned_qty, picked_qty, routes!inner(status)")
+    .select("route_id, product_id, planned_qty, picked_qty")
     .in("product_id", productIds);
   if (excludeRouteId) reservedQuery = reservedQuery.neq("route_id", excludeRouteId);
 
@@ -234,16 +234,38 @@ async function validateRouteStock(
     storageByProduct.set(productId, (storageByProduct.get(productId) ?? 0) + signedQuantity(row.quantity_on_hand));
   });
 
+  const reservedRows = (reservedResult.data ?? []) as { route_id?: string | null; product_id?: string | null; planned_qty?: unknown; picked_qty?: unknown }[];
+  const reservedRouteIds = Array.from(new Set(reservedRows.map((row) => String(row.route_id ?? "")).filter(Boolean)));
+  const routeStatusById = new Map<string, string | null>();
+  if (reservedRouteIds.length) {
+    const routeStatusResult = await supabase
+      .from("routes")
+      .select("id, status")
+      .in("id", reservedRouteIds);
+    if (routeStatusResult.error) {
+      console.warn("[routes:create] Failed to load route statuses for reservation filtering; treating matching stock lines as reserved", {
+        route_ids: reservedRouteIds,
+        error: routeStatusResult.error,
+      });
+    } else {
+      (routeStatusResult.data ?? []).forEach((route: { id?: unknown; status?: unknown }) => routeStatusById.set(String(route.id), String(route.status ?? "")));
+    }
+  }
+
   const reservedByProduct = new Map<string, number>();
-  ((reservedResult.data ?? []) as { product_id?: string | null; planned_qty?: unknown; picked_qty?: unknown; routes?: { status?: string | null } | null }[])
-    .filter((row) => isRouteReservationStatus(row.routes?.status))
+  reservedRows
+    .filter((row) => {
+      const routeId = String(row.route_id ?? "");
+      if (!routeId) return true;
+      if (!routeStatusById.size) return true;
+      return isRouteReservationStatus(routeStatusById.get(routeId));
+    })
     .forEach((row) => {
       const productId = String(row.product_id ?? "");
       if (!productId) return;
       const reserved = Math.max(0, planQuantity(row.planned_qty) - planQuantity(row.picked_qty));
       reservedByProduct.set(productId, (reservedByProduct.get(productId) ?? 0) + reserved);
     });
-
   const productNameById = new Map(((productsResult.data ?? []) as { id?: string | null; name?: string | null }[]).map((product) => [String(product.id), String(product.name ?? "Unknown product")]));
   const issues: StockValidationIssue[] = [];
 

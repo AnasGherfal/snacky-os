@@ -122,11 +122,17 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
       stopsByRouteId.set(stop.route_id, (stopsByRouteId.get(stop.route_id) ?? 0) + 1);
     });
   }
-  const groups = [
+  const initialGroups = [
     { title: "Unassigned / Available", rows: routeRows.filter((route: any) => !route.operator_id && !isTerminalRouteStatus(route.status)) },
     { title: "In progress", rows: routeRows.filter((route: any) => isActiveRouteStatus(route.status)) },
     { title: "Assigned routes", rows: routeRows.filter((route: any) => route.operator_id && !isActiveRouteStatus(route.status) && !isTerminalRouteStatus(route.status)) },
     { title: "Completed", rows: routeRows.filter((route: any) => isCompletedRouteStatus(route.status)) },
+  ];
+  const groupedRouteIds = new Set(initialGroups.flatMap((group) => group.rows.map((route: any) => route.id)));
+  const otherRoutes = routeRows.filter((route: any) => !groupedRouteIds.has(route.id));
+  const groups = [
+    ...initialGroups,
+    { title: "Cancelled / Other statuses", rows: otherRoutes },
   ].filter((group) => group.rows.length);
 
   const renderRouteCards = (rows: any[]) => (

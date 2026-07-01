@@ -130,6 +130,59 @@ function errorMessage(error: unknown) {
   return "Unknown database error";
 }
 
+function errorSummary(error: unknown) {
+  if (!error || typeof error !== "object") return null;
+  const row = error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown };
+  return {
+    code: row.code ?? null,
+    message: row.message ?? null,
+    details: row.details ?? null,
+    hint: row.hint ?? null,
+  };
+}
+
+function logOptionalStopDataIssue({
+  step,
+  query,
+  routeId,
+  stopId,
+  profile,
+  route,
+  stop,
+  error,
+}: {
+  step: string;
+  query: string;
+  routeId: string;
+  stopId: string;
+  profile: Awaited<ReturnType<typeof getCurrentProfile>>;
+  route?: { operator_id?: string | null; status?: string | null } | null;
+  stop?: { route_id?: string | null; machine_id?: string | null; status?: string | null } | null;
+  error: unknown;
+}) {
+  const summary = errorSummary(error);
+  console.warn("[operator:stop-data] Optional route stop data failed", {
+    loader_step: step,
+    loader_query: query,
+    optional_data_failed: true,
+    route_id: routeId,
+    stop_id: stopId,
+    current_user_id: profile?.id ?? null,
+    current_user_role: profile?.role ?? null,
+    current_user_roles: profile?.roles ?? [],
+    operator_profile_id: profile?.team_member_id ?? null,
+    route_status: route?.status ?? null,
+    assigned_operator_id: route?.operator_id ?? null,
+    stop_status: stop?.status ?? null,
+    stop_route_id: stop?.route_id ?? null,
+    machine_id: stop?.machine_id ?? null,
+    db_error_code: summary?.code ?? null,
+    db_error_message: summary?.message ?? null,
+    db_error_details: summary?.details ?? null,
+    db_error_hint: summary?.hint ?? null,
+  });
+}
+
 function responseStatusForCompleteStop(result: { success: boolean; error?: string; code?: string }) {
   if (result.success) return 200;
   const code = String(result.code ?? "");
@@ -293,8 +346,8 @@ export async function GET(
       .eq("id", stop.machine_id)
       .maybeSingle();
 
-    if (machineError) throw machineError;
-    const machineRow = machine as MachineRow | null;
+    if (machineError) logOptionalStopDataIssue({ step: "load_machine", query: "machines", routeId, stopId, profile, route, stop, error: machineError });
+    const machineRow = machineError ? null : machine as MachineRow | null;
     const location = firstRelation(machineRow?.location);
     const locationName = location?.name || "Unknown Location";
 
@@ -351,9 +404,10 @@ export async function GET(
       .from("machine_slots")
       .select("id, slot_code, product_id")
       .eq("machine_id", stop.machine_id);
-    if (slotsError) throw slotsError;
+    if (slotsError) logOptionalStopDataIssue({ step: "load_machine_slots", query: "machine_slots", routeId, stopId, profile, route, stop, error: slotsError });
+    const slotRows = slotsError ? [] : (slots ?? []);
 
-    const slotMap = new Map((slots ?? []).map((slot) => [String(slot.product_id ?? ""), slot.slot_code ?? ""]));
+    const slotMap = new Map(slotRows.map((slot) => [String(slot.product_id ?? ""), slot.slot_code ?? ""]));
 
     const plannedByProduct = new Map<string, PlannedProductLine>();
     (stopPlanItems ?? []).forEach((line) => {
@@ -384,10 +438,12 @@ export async function GET(
       .from("route_stop_fill_lines")
       .select("product_id, action_type, actual_qty, reason, notes, assigned_product_id")
       .eq("route_stop_id", stopId);
-    if (existingFillLinesError && !isMissingTable(existingFillLinesError, "route_stop_fill_lines")) throw existingFillLinesError;
+    if (existingFillLinesError && !isMissingTable(existingFillLinesError, "route_stop_fill_lines")) {
+      logOptionalStopDataIssue({ step: "load_existing_fill_lines", query: "route_stop_fill_lines", routeId, stopId, profile, route, stop, error: existingFillLinesError });
+    }
 
     const existingAssignedFillByProduct = new Map<string, { quantity: number; reason?: string | null; notes?: string | null }>();
-    const fillLineRows = (existingFillLines ?? []) as FillLineRow[];
+    const fillLineRows = existingFillLinesError ? [] : (existingFillLines ?? []) as FillLineRow[];
     const existingExtraItems = fillLineRows
       .filter((line) => line.action_type === "extra_product" && line.product_id)
       .map((line) => ({
@@ -475,10 +531,23 @@ export async function GET(
         .neq("status", "cancelled")
         .order("created_at", { ascending: false }),
     ]);
-    if (movementError) throw movementError;
-    if (fillMovementsError) throw fillMovementsError;
-    if (productsError) throw productsError;
-    if (refillHistoryError) throw refillHistoryError;
+    if (movementError) logOptionalStopDataIssue({ step: "load_route_movements", query: "inventory_movements", routeId, stopId, profile, route, stop, error: movementError });
+    if (fillMovementsError) logOptionalStopDataIssue({ step: "load_fill_movements", query: "inventory_movements", routeId, stopId, profile, route, stop, error: fillMovementsError });
+    let productRows = productsError ? [] : (products ?? []) as ProductOptionRow[];
+    if (productsError) {
+      if (isMissingColumn(productsError, ["sku", "barcode", "category", "brand", "image_url"])) {
+        const fallbackProducts = await supabase.from("products").select("id, name").eq("active", true).order("name");
+        if (fallbackProducts.error) {
+          logOptionalStopDataIssue({ step: "load_products_fallback", query: "products", routeId, stopId, profile, route, stop, error: fallbackProducts.error });
+        } else {
+          productRows = (fallbackProducts.data ?? []) as ProductOptionRow[];
+        }
+      } else {
+        logOptionalStopDataIssue({ step: "load_products", query: "products", routeId, stopId, profile, route, stop, error: productsError });
+      }
+    }
+    const refillHistoryRow = refillHistoryError ? null : refillHistory;
+    if (refillHistoryError) logOptionalStopDataIssue({ step: "load_refill_history", query: "machine_refill_history", routeId, stopId, profile, route, stop, error: refillHistoryError });
     if (latestStockResult.error && !isMissingTable(latestStockResult.error, "latest_vms_stock_by_slot")) {
       console.warn("[operator:stop-data] Could not load latest VMS stock products for picker priority", { routeId, stopId, error: latestStockResult.error });
     }
@@ -486,12 +555,13 @@ export async function GET(
       console.warn("[operator:stop-data] Could not load recent machine sales products for picker priority", { routeId, stopId, error: recentSalesResult.error });
     }
     if (adjustmentsResult.error && !isMissingTable(adjustmentsResult.error, "inventory_adjustments")) {
-      throw adjustmentsResult.error;
+      logOptionalStopDataIssue({ step: "load_inventory_adjustments", query: "inventory_adjustments", routeId, stopId, profile, route, stop, error: adjustmentsResult.error });
     }
 
     const filledByProduct = new Map<string, number>();
     const currentStopFilledByProduct = new Map<string, number>();
-    ((fillMovements ?? []) as MovementRow[]).forEach((movement) => {
+    const fillMovementRows = fillMovementsError ? [] : (fillMovements ?? []) as MovementRow[];
+    fillMovementRows.forEach((movement) => {
       const productId = String(movement.product_id);
       const qty = machineFillDelta(movement);
       filledByProduct.set(productId, (filledByProduct.get(productId) ?? 0) + qty);
@@ -499,7 +569,8 @@ export async function GET(
     });
 
     const bagBalanceByProduct = new Map<string, number>();
-    ((routeMovements ?? []) as MovementRow[]).forEach((movement) => {
+    const routeMovementRows = movementError ? [] : (routeMovements ?? []) as MovementRow[];
+    routeMovementRows.forEach((movement) => {
       const productId = String(movement.product_id ?? "");
       const qty = movementQuantity(movement.quantity);
       if (!productId || qty <= 0) return;
@@ -528,13 +599,13 @@ export async function GET(
       if (!existing || rank < existing.rank) productPriority.set(key, { rank, label });
     };
 
-    (slots ?? []).forEach((slot) => markProductPriority(slot.product_id, 1, "Machine products"));
+    slotRows.forEach((slot) => markProductPriority(slot.product_id, 1, "Machine products"));
     lineItems.forEach((item) => markProductPriority(item.productId, 2, "Route pickup list"));
     ((latestStockResult.data ?? []) as MachineProductSignalRow[]).forEach((row) => markProductPriority(row.product_id, 3, "Latest VMS stock"));
     ((recentSalesResult.data ?? []) as MachineProductSignalRow[]).forEach((row) => markProductPriority(row.product_id, 4, "Known machine product"));
 
     const refillItems = lineItems;
-    const productOptions = ((products ?? []) as ProductOptionRow[]).map((product) => ({
+    const productOptions = productRows.map((product) => ({
       id: product.id,
       sku: product.sku,
       barcode: product.barcode,
@@ -550,7 +621,8 @@ export async function GET(
       .sort((a, b) => a[1].rank - b[1].rank || (productOptionById.get(a[0])?.name ?? "").localeCompare(productOptionById.get(b[0])?.name ?? ""))
       .map(([productId]) => productOptionById.get(productId))
       .filter((product): product is (typeof productOptions)[number] => Boolean(product));
-    const adjustments = ((adjustmentsResult.data ?? []) as AdjustmentRow[]).map((adjustment) => {
+    const adjustmentRows = adjustmentsResult.error ? [] : (adjustmentsResult.data ?? []) as AdjustmentRow[];
+    const adjustments = adjustmentRows.map((adjustment) => {
       const product = firstRelation(adjustment.product);
       return {
         id: adjustment.id,
@@ -580,7 +652,7 @@ export async function GET(
       productOptions,
       machineProductOptions,
       adjustments,
-      hasCompletionPhoto: Boolean(refillHistory?.machine_photo_url || refillHistory?.machine_photo_path),
+      hasCompletionPhoto: Boolean(refillHistoryRow?.machine_photo_url || refillHistoryRow?.machine_photo_path),
       debug: buildDebugDetails({ profile, routeId, stopId, route, stop }),
     });
   } catch (error) {

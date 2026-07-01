@@ -57,12 +57,13 @@ export function formatSiteLabel(
   return siteName ?? area ?? fallback;
 }
 
-export function machineBaseLabel(value: Pick<MachineLike, "display_name" | "machine_display_name" | "machine_code" | "name">) {
-  return textValue(value.display_name) ?? textValue(value.machine_display_name) ?? textValue(value.machine_code) ?? textValue(value.name) ?? "Unknown machine";
+export function machineBaseLabel(value: Pick<MachineLike, "display_name" | "machine_display_name" | "machine_code" | "name"> | null | undefined) {
+  const machine = value ?? {};
+  return textValue(machine.display_name) ?? textValue(machine.machine_display_name) ?? textValue(machine.machine_code) ?? textValue(machine.name) ?? "Unknown machine";
 }
 
 export function machineSiteLabel(
-  value: Pick<MachineLike, "location_name" | "location" | "locations">,
+  value: Pick<MachineLike, "location_name" | "location" | "locations"> | null | undefined,
   {
     includeArea = true,
     fallback = "بدون موقع",
@@ -71,14 +72,15 @@ export function machineSiteLabel(
     fallback?: string;
   } = {},
 ) {
+  const machine = value ?? {};
   return (
-    textValue(value.location_name)
-    ?? formatSiteLabel(value.location ?? value.locations ?? null, { includeArea, fallback })
+    textValue(machine.location_name)
+    ?? formatSiteLabel(machine.location ?? machine.locations ?? null, { includeArea, fallback })
   );
 }
 
 export function formatMachineDisplayName(
-  value: MachineLike,
+  value: MachineLike | null | undefined,
   {
     includeArea = true,
     fallbackSite = "Unknown machine",
@@ -87,12 +89,13 @@ export function formatMachineDisplayName(
     fallbackSite?: string;
   } = {},
 ) {
-  const displayName = textValue(value.display_name) ?? textValue(value.machine_display_name);
+  const machine = value ?? {};
+  const displayName = textValue(machine.display_name) ?? textValue(machine.machine_display_name);
   if (displayName) return displayName;
 
-  const machineCode = textValue(value.machine_code);
-  const siteLabel = textValue(value.location_name) ?? formatSiteLabel(value.location ?? value.locations ?? null, { includeArea, fallback: "" });
-  const machineName = textValue(value.name);
+  const machineCode = textValue(machine.machine_code);
+  const siteLabel = textValue(machine.location_name) ?? formatSiteLabel(machine.location ?? machine.locations ?? null, { includeArea, fallback: "" });
+  const machineName = textValue(machine.name);
 
   if (machineCode && siteLabel) return `${machineCode} - ${siteLabel}`;
   if (machineCode && machineName && machineName !== machineCode) return `${machineCode} - ${machineName}`;

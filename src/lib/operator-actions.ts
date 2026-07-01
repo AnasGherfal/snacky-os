@@ -1211,7 +1211,7 @@ export async function confirmPickList(
         const pickedQty = Math.max(0, Number(item.quantity ?? 0));
         const actionType = item.actionType ?? "planned_pick";
         return {
-          id: stableUuid(`pickup-list-row:${pickupSubmissionScope}:planned:${item.routeStopItemId ?? item.productId}:${item.productId}:${pickedQty}:${actionType}:${item.routeStopId ?? ""}:${item.reason ?? ""}:${item.notes ?? ""}`),
+          id: stableUuid(`pickup-list-row:${pickupSubmissionScope}:planned:${item.id ?? item.productId}:${item.productId}:${pickedQty}:${actionType}:${item.routeStopId ?? ""}:${item.reason ?? ""}:${item.notes ?? ""}`),
           route_id: routeId,
           route_stop_id: item.routeStopId,
           route_stop_item_id: item.id || null,
@@ -2714,24 +2714,37 @@ export async function completeStop({
         .select("id")
         .eq("legacy_refill_id", `route_stop:${stopId}`)
         .maybeSingle();
-      if (existingRefillHistory.error) throwActionError(existingRefillHistory.error, "Could not save the machine refill proof.");
-      refillHistoryResult = existingRefillHistory.data?.id
-        ? await supabase
-            .from("machine_refill_history")
-            .update(refillHistoryPayload)
-            .eq("id", existingRefillHistory.data.id)
-            .select(refillHistorySelect)
-            .single()
-        : await supabase
-            .from("machine_refill_history")
-            .insert(refillHistoryPayload)
-            .select(refillHistorySelect)
-            .single();
+      if (existingRefillHistory.error) {
+        console.warn("[operator:complete-stop] machine_refill_history lookup failed; continuing without optional refill proof", {
+          routeId,
+          stopId,
+          error: existingRefillHistory.error,
+        });
+        refillHistoryResult = { data: null, error: null, count: null, status: 200, statusText: "OK" } as unknown as typeof refillHistoryResult;
+      } else {
+        refillHistoryResult = existingRefillHistory.data?.id
+          ? await supabase
+              .from("machine_refill_history")
+              .update(refillHistoryPayload)
+              .eq("id", existingRefillHistory.data.id)
+              .select(refillHistorySelect)
+              .single()
+          : await supabase
+              .from("machine_refill_history")
+              .insert(refillHistoryPayload)
+              .select(refillHistorySelect)
+              .single();
+      }
+    }
+    if (refillHistoryResult.error) {
+      console.warn("[operator:complete-stop] machine_refill_history save failed; continuing without optional refill proof", {
+        routeId,
+        stopId,
+        error: refillHistoryResult.error,
+      });
     }
 
-    if (refillHistoryResult.error) throwActionError(refillHistoryResult.error, "Could not save the machine refill proof.");
-
-    const refillHistory = refillHistoryResult.data ?? null;
+    const refillHistory = refillHistoryResult.error ? null : refillHistoryResult.data ?? null;
 
     // Update stop status
     const { error: stopUpdateError } = await supabase

@@ -71,6 +71,19 @@ function missingDbObjectName(error: unknown) {
   return relation ?? column;
 }
 
+function errorText(error: unknown) {
+  if (!error || typeof error !== "object") return String(error ?? "");
+  const row = error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown };
+  return [row.code, row.message, row.details, row.hint].map((value) => String(value ?? "")).filter(Boolean).join(" ");
+}
+
+function isMissingColumn(error: unknown, columns: string[]) {
+  const text = errorText(error).toLowerCase();
+  const code = String((error as { code?: unknown } | null)?.code ?? "");
+  if (!["42703", "PGRST204"].includes(code) && !text.includes("schema cache") && !text.includes("column")) return false;
+  return columns.some((column) => text.includes(column.toLowerCase()));
+}
+
 function logRouteLoaderIssue({
   step,
   query,
@@ -251,7 +264,23 @@ export default async function OperatorRouteDetailPage({
   ]);
   if (operatorError) logRouteLoaderIssue({ step: 'load_route_operator', query: 'team_members', error: operatorError, context: loaderContext, optional: true });
   if (stopsError) logRouteLoaderIssue({ step: 'load_route_stops', query: 'route_stops', error: stopsError, context: loaderContext });
-  if (routeStockError) logRouteLoaderIssue({ step: 'load_route_stock_lines', query: 'route_stock_lines', error: routeStockError, context: loaderContext });
+  let routeStockRows = (routeStock ?? []) as OperatorRouteStockLineRow[];
+  if (routeStockError && isMissingColumn(routeStockError, ["category"])) {
+    const fallbackRouteStock = await routeReadClient
+      .from("route_stock_lines")
+      .select("id, product_id, planned_qty, picked_qty, returned_qty, product:products(name)")
+      .eq("route_id", routeId);
+    if (fallbackRouteStock.error) {
+      logRouteLoaderIssue({ step: 'load_route_stock_lines_fallback', query: 'route_stock_lines', error: fallbackRouteStock.error, context: loaderContext, optional: true });
+      routeStockRows = [];
+    } else {
+      routeStockRows = (fallbackRouteStock.data ?? []) as OperatorRouteStockLineRow[];
+      logRouteLoaderIssue({ step: 'load_route_stock_lines_optional_column_missing', query: 'route_stock_lines', error: routeStockError, context: loaderContext, optional: true });
+    }
+  } else if (routeStockError) {
+    logRouteLoaderIssue({ step: 'load_route_stock_lines', query: 'route_stock_lines', error: routeStockError, context: loaderContext, optional: true });
+    routeStockRows = [];
+  }
   if (adjustmentsError) logRouteLoaderIssue({ step: 'load_inventory_adjustments', query: 'inventory_adjustments', error: adjustmentsError, context: loaderContext, optional: true });
   if (!canAccess) {
     console.error("[operator:route] Route access denied by app permission check", {
@@ -278,12 +307,12 @@ export default async function OperatorRouteDetailPage({
     );
   }
 
-  if (stopsError || routeStockError) {
+  if (stopsError) {
     return (
       <>
         <ErrorState
           title="Route details unavailable"
-          body="Some required route data could not load. Refresh this page and try again. If it keeps happening, ask a supervisor to check the route data."
+          body="The route stops could not load. Refresh this page and try again. If it keeps happening, ask a supervisor to check the route data."
           action={<SecondaryButton href="/operator/routes">Back to routes</SecondaryButton>}
         />
       </>
@@ -304,7 +333,7 @@ export default async function OperatorRouteDetailPage({
   const returnedAdjustmentQty = returnedAdjustmentRows.reduce((sum, adjustment) => sum + Number(adjustment.quantity ?? 0), 0);
   const doneStops = routeStops.filter((s) => isRouteStopDoneStatus(s.status)).length;
   const totalStops = routeStops.length;
-  const pickItems = (routeStock ?? []) as OperatorRouteStockLineRow[];
+  const pickItems = routeStockRows;
   const hasPickup = pickItems.some((item) => Number(item.picked_qty ?? 0) > 0);
   const sortedPickItems = sortPickupProductRows(
     pickItems.map((item) => ({
