@@ -13,10 +13,21 @@ type AdjustmentPayload = {
   machineId?: unknown;
   quantity?: unknown;
   reason?: unknown;
+  selectedReason?: unknown;
   notes?: unknown;
   photoUrl?: unknown;
   clientSubmissionId?: unknown;
 };
+
+const defaultAdjustmentReasonByType: Record<AdjustmentType, string> = {
+  damaged: "Damaged during transport",
+  returned_from_machine: "Removed from machine",
+};
+
+function defaultAdjustmentReason(adjustmentType: AdjustmentType) {
+  return defaultAdjustmentReasonByType[adjustmentType] ?? "Other";
+}
+
 
 function clean(value: unknown) {
   return String(value ?? "").trim();
@@ -99,7 +110,8 @@ export async function POST(
     return NextResponse.json({ success: false, code: "INVALID_MACHINE_ID", error: "Invalid machine id." }, { status: 400 });
   }
   const quantity = quantityValue(payload.quantity);
-  const reason = clean(payload.reason);
+  const directReason = clean(payload.reason);
+  const legacySelectedReason = clean(payload.selectedReason);
   const notes = clean(payload.notes);
   const photoUrl = clean(payload.photoUrl);
   const clientSubmissionId = clean(payload.clientSubmissionId);
@@ -107,6 +119,25 @@ export async function POST(
   if (!["damaged", "returned_from_machine"].includes(adjustmentType)) {
     return NextResponse.json({ success: false, code: "INVALID_ADJUSTMENT_TYPE", error: "Choose damaged or returned product." }, { status: 400 });
   }
+  const reason = directReason || legacySelectedReason || defaultAdjustmentReason(adjustmentType);
+  if (!directReason && legacySelectedReason) {
+    console.warn("[operator:inventory-adjustment] Using legacy selectedReason payload field", {
+      ...requestContext,
+      adjustment_type: adjustmentType,
+      product_id: productId,
+      machine_id: machineId,
+      reason: legacySelectedReason,
+    });
+  } else if (!directReason) {
+    console.warn("[operator:inventory-adjustment] Missing adjustment reason in payload, using default", {
+      ...requestContext,
+      adjustment_type: adjustmentType,
+      product_id: productId,
+      machine_id: machineId,
+      fallback_reason: reason,
+    });
+  }
+
   if (!productId) {
     return NextResponse.json({ success: false, code: "MISSING_PRODUCT", error: "Product is required." }, { status: 400 });
   }
@@ -115,9 +146,6 @@ export async function POST(
   }
   if (quantity <= 0) {
     return NextResponse.json({ success: false, code: "INVALID_QUANTITY", error: "Quantity must be greater than 0." }, { status: 400 });
-  }
-  if (!reason) {
-    return NextResponse.json({ success: false, code: "MISSING_REASON", error: "Reason is required." }, { status: 400 });
   }
 
   if (rawAdjustmentId && !adjustmentId) {

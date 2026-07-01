@@ -24,6 +24,7 @@ const reasonOptions = [
   "Other",
 ];
 
+type InventoryAdjustmentType = "damaged" | "returned_from_machine";
 const damagedReasonOptions = [
   "Damaged during transport",
   "Broken / opened",
@@ -35,6 +36,7 @@ const damagedReasonOptions = [
 ];
 
 const returnedReasonOptions = [
+  "Removed from machine",
   "Product replaced",
   "Slow moving item removed",
   "Expired soon",
@@ -43,6 +45,11 @@ const returnedReasonOptions = [
   "Customer complaint",
   "Other",
 ];
+
+const defaultAdjustmentReasonByType: Record<InventoryAdjustmentType, string> = {
+  damaged: "Damaged during transport",
+  returned_from_machine: "Removed from machine",
+};
 
 interface StopRefillItem {
   refillOrderLineId?: string | null;
@@ -73,7 +80,7 @@ interface ProductOption {
 
 interface InventoryAdjustmentRow {
   id: string;
-  adjustmentType: "damaged" | "returned_from_machine" | string;
+  adjustmentType: InventoryAdjustmentType | string;
   productId: string | null;
   productName: string;
   quantity: number;
@@ -153,6 +160,13 @@ type StopDraft = {
 function newClientId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
+
+function defaultAdjustmentReason(adjustmentType: InventoryAdjustmentType, options: string[]) {
+  const preferred = defaultAdjustmentReasonByType[adjustmentType];
+  if (options.includes(preferred)) return preferred;
+  return options[0] ?? "Other";
+}
+
 
 function adjustmentSubmitErrorMessage(error: unknown) {
   if (error instanceof Error && error.message.trim()) return error.message;
@@ -1438,7 +1452,7 @@ function InventoryAdjustmentForm({
   submitLabel,
   onSaved,
 }: {
-  adjustmentType: "damaged" | "returned_from_machine";
+  adjustmentType: InventoryAdjustmentType;
   title: string;
   description: string;
   routeId: string;
@@ -1453,7 +1467,8 @@ function InventoryAdjustmentForm({
   const [sourceMode, setSourceMode] = useState<"machine" | "all">("machine");
   const [productId, setProductId] = useState("");
   const [quantity, setQuantity] = useState(1);
-  const [reason, setReason] = useState(reasonOptions[0] ?? "Other");
+  const defaultReason = defaultAdjustmentReason(adjustmentType, reasonOptions);
+  const [reason, setReason] = useState(defaultReason);
   const [notes, setNotes] = useState("");
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
@@ -1463,7 +1478,7 @@ function InventoryAdjustmentForm({
   const submissionIdRef = useRef(newClientId());
   const productChoices = sourceMode === "machine" ? machineProducts : allProducts;
   const selectedProduct = allProducts.find((product) => product.id === productId) ?? machineProducts.find((product) => product.id === productId) ?? null;
-  const selectedReason = reasonOptions.includes(reason) ? reason : (reasonOptions[0] ?? "Other");
+  const selectedReason = reasonOptions.includes(reason) ? reason : defaultReason;
 
 
   async function handleSave() {
@@ -1512,7 +1527,7 @@ function InventoryAdjustmentForm({
           productId,
           machineId,
           quantity,
-          selectedReason,
+          reason: selectedReason,
           notes: notes.trim(),
           photoUrl,
           clientSubmissionId,
@@ -1553,7 +1568,7 @@ function InventoryAdjustmentForm({
       submissionIdRef.current = newClientId();
       setProductId("");
       setQuantity(1);
-      setReason(reasonOptions[0] ?? "Other");
+      setReason(defaultReason);
       setNotes("");
       setPhotoFile(null);
       setPhotoInputKey(newClientId());
@@ -1665,6 +1680,5 @@ function InventoryAdjustmentForm({
     </article>
   );
 }
-
 
 
