@@ -8,6 +8,7 @@ import { canViewFinancials, hasPermission } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { activateProduct, archiveProduct, deleteProduct, getProductHistoryCounts, productHasBusinessHistory } from "@/lib/product-actions";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { formatMachineDisplayName } from "@/lib/machine-site-display";
 
 export const dynamic = "force-dynamic";
 
@@ -89,7 +90,7 @@ export default async function ProductHistoryPage({
       .limit(200),
     supabase
       .from("vms_sales_snapshots")
-      .select("id, machine_id, sold_qty, sales_amount, cash_sales_amount, card_sales_amount, period_start, period_end, machine:machines(name, machine_code)")
+      .select("id, machine_id, sold_qty, sales_amount, cash_sales_amount, card_sales_amount, period_start, period_end, machine:machines(name, machine_code, display_name, location:locations(id, name))")
       .eq("product_id", id)
       .eq("import_row_status", "imported")
       .order("period_end", { ascending: false })
@@ -312,7 +313,7 @@ export default async function ProductHistoryPage({
             {sales.map((sale: any) => (
               <tr key={sale.id}>
                 <td>{formatDate(sale.period_end)}</td>
-                <td>{sale.machine?.name ?? "-"}{sale.machine?.machine_code ? <div className="text-xs text-slate-500">{sale.machine.machine_code}</div> : null}</td>
+                <td>{formatMachineDisplayName(sale.machine as any, { includeArea: true })}{sale.machine?.machine_code ? <div className="text-xs text-slate-500">{sale.machine.machine_code}</div> : null}</td>
                 <td>{sale.sold_qty}</td>
                 <td>{formatMoney(sale.sales_amount)}</td>
                 <td>{formatMoney(sale.cash_sales_amount)}</td>

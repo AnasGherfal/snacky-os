@@ -7,6 +7,7 @@ import { canAccessOperatorRoute, canExecuteRoutes } from "@/lib/authz";
 import { buildOperatorRouteAccessContext, loadAccessibleOperatorIds } from "@/lib/operator-route-access";
 import { type OperatorRoutePreviewRow, type OperatorRoutePreviewStopRow } from "@/lib/operator-route-types";
 import { sortPickupProductRows } from "@/lib/route-pickup-checklist";
+import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isPickupConfirmedStatus, isRouteStopActiveStatus, isRouteStopDoneStatus, isRouteStopPendingStatus, nextOperatorRouteHref, routeDisplayStatus, ROUTE_STOP_COMPLETED_STATUS } from "@/lib/route-workflow";
 import { skipStop } from "@/lib/operator-actions";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
@@ -20,6 +21,8 @@ type OperatorRouteMachineRow = {
   id: string;
   name?: string | null;
   machine_code?: string | null;
+  display_name?: string | null;
+  location?: { id?: string | null; name?: string | null } | null;
 };
 
 type OperatorRouteStockLineRow = {
@@ -290,7 +293,7 @@ export default async function OperatorRouteDetailPage({
   const routeStops = (stops ?? []) as OperatorRoutePreviewStopRow[];
   const machineIds = routeStops.map((stop) => stop.machine_id).filter(Boolean);
   const { data: machines, error: machinesError } = machineIds.length
-    ? await routeReadClient.from("machines").select("id, name, machine_code").in("id", machineIds)
+    ? await routeReadClient.from("machines").select("id, name, machine_code, display_name, location:locations(id, name)").in("id", machineIds)
     : { data: [], error: null };
   if (machinesError) logRouteLoaderIssue({ step: 'load_route_machines', query: 'machines', error: machinesError, context: loaderContext, optional: true });
   const machineById = new Map(((machines ?? []) as OperatorRouteMachineRow[]).map((machine) => [machine.id, machine]));
@@ -415,7 +418,7 @@ export default async function OperatorRouteDetailPage({
                     </div>
                     <div className="text-xs text-slate-500">
                       <div>{adjustment.created_at ? new Date(adjustment.created_at).toLocaleString("en-US") : "-"}</div>
-                      <div className="mt-1 font-medium text-slate-700">{machineById.get(adjustment.machine_id ?? "")?.name ?? "Unknown machine"}</div>
+                      <div className="mt-1 font-medium text-slate-700">{formatMachineDisplayName(machineById.get(adjustment.machine_id ?? "") ?? null, { includeArea: true })}</div>
                     </div>
                   </div>
                 </article>
@@ -486,7 +489,7 @@ export default async function OperatorRouteDetailPage({
                         {stop.stop_order}
                       </div>
                       <div className="min-w-0">
-                        <h3 className="break-words font-semibold text-slate-900">{machine?.name ?? "Unknown machine"}</h3>
+                        <h3 className="break-words font-semibold text-slate-900">{formatMachineDisplayName(machine ?? null, { includeArea: true })}</h3>
                         <p className="text-sm text-slate-500">
                           Code: {machine?.machine_code ?? "-"}
                         </p>

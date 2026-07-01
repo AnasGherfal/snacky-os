@@ -8,6 +8,7 @@ import { appPermissions, getEffectivePermissions, isOwnerAdminRole, normalizeRol
 import { lyd } from "@/lib/format";
 import { isCompletedRouteStatus } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { deactivateTeamMember } from "@/lib/team-actions";
 
 export const dynamic = "force-dynamic";
@@ -65,13 +66,13 @@ export default async function TeamMemberActivityPage({
       .limit(100),
     supabase
       .from("cash_collections")
-      .select("id, route_id, machine_id, actual_cash_collected, variance, review_status, collected_at, machine:machines(name)")
+      .select("id, route_id, machine_id, actual_cash_collected, variance, review_status, collected_at, machine:machines(id, name, machine_code, display_name, location:locations(id, name))")
       .eq("operator_id", id)
       .order("collected_at", { ascending: false })
       .limit(100),
     supabase
       .from("issues")
-      .select("id, issue_type, priority, status, created_at, machine:machines(name)")
+      .select("id, issue_type, priority, status, created_at, machine:machines(id, name, machine_code, display_name, location:locations(id, name))")
       .eq("reported_by", id)
       .order("created_at", { ascending: false })
       .limit(100),
@@ -182,7 +183,7 @@ export default async function TeamMemberActivityPage({
           <h2 className="mb-4 text-lg font-semibold text-slate-900">Cash variances</h2>
           {!cash?.length ? <EmptyState title="No cash collections" body="Cash collection records entered by this user will appear here." /> : (
             <DataTable headers={["Date", "Machine", "Actual", "Variance", "Status"]}>
-              {cash.map((row: any) => <tr key={row.id}><td>{formatDate(row.collected_at)}</td><td>{row.machine?.name ?? "-"}</td><td>{row.actual_cash_collected === null ? "-" : lyd(Number(row.actual_cash_collected ?? 0))}</td><td>{row.variance === null ? "-" : lyd(Number(row.variance ?? 0))}</td><td><StatusBadge status={String(row.review_status ?? "").replaceAll("_", " ")} /></td></tr>)}
+              {cash.map((row: any) => <tr key={row.id}><td>{formatDate(row.collected_at)}</td><td>{formatMachineDisplayName(row.machine as any, { includeArea: true })}</td><td>{row.actual_cash_collected === null ? "-" : lyd(Number(row.actual_cash_collected ?? 0))}</td><td>{row.variance === null ? "-" : lyd(Number(row.variance ?? 0))}</td><td><StatusBadge status={String(row.review_status ?? "").replaceAll("_", " ")} /></td></tr>)}
             </DataTable>
           )}
         </div>
@@ -190,7 +191,7 @@ export default async function TeamMemberActivityPage({
           <h2 className="mb-4 text-lg font-semibold text-slate-900">Issues reported</h2>
           {!issues?.length ? <EmptyState title="No issues reported" body="Machine issues reported by this user will appear here." /> : (
             <DataTable headers={["Date", "Machine", "Type", "Priority", "Status"]}>
-              {issues.map((issue: any) => <tr key={issue.id}><td>{formatDate(issue.created_at)}</td><td>{issue.machine?.name ?? "-"}</td><td>{issue.issue_type}</td><td><StatusBadge status={issue.priority} /></td><td><StatusBadge status={issue.status} /></td></tr>)}
+              {issues.map((issue: any) => <tr key={issue.id}><td>{formatDate(issue.created_at)}</td><td>{formatMachineDisplayName(issue.machine as any, { includeArea: true })}</td><td>{issue.issue_type}</td><td><StatusBadge status={issue.priority} /></td><td><StatusBadge status={issue.status} /></td></tr>)}
             </DataTable>
           )}
         </div>

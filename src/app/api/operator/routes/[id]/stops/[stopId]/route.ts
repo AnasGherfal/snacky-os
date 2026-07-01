@@ -5,6 +5,7 @@ import { canAccessOperatorRoute, getEffectivePermissions } from "@/lib/authz";
 import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 import { completeStop } from "@/lib/operator-actions";
 import { ROUTE_STOP_PENDING_STATUS } from "@/lib/route-workflow";
+import { formatMachineDisplayName } from "@/lib/machine-site-display";
 
 function buildDebugDetails({
   profile,
@@ -34,7 +35,7 @@ function buildDebugDetails({
 type DbErrorLike = { code?: unknown; message?: unknown; details?: unknown; hint?: unknown };
 type LegacyPickupRow = { id?: string | null; route_stop_id?: string | null; route_stop_item_id?: string | null; machine_id?: string | null; picked_qty?: unknown };
 type MachineLocationRow = { id?: string | null; name?: string | null };
-type MachineRow = { id?: string | null; name?: string | null; machine_code?: string | null; location?: MachineLocationRow | MachineLocationRow[] | null };
+type MachineRow = { id?: string | null; name?: string | null; machine_code?: string | null; display_name?: string | null; location?: MachineLocationRow | MachineLocationRow[] | null };
 type ProductRelationRow = { id?: string | null; name?: string | null };
 type StopPlanItemRow = {
   id?: string | null;
@@ -288,7 +289,7 @@ export async function GET(
 
     const { data: machine, error: machineError } = await supabase
       .from("machines")
-      .select("id, name, machine_code, location:locations(id, name)")
+      .select("id, name, machine_code, display_name, location:locations(id, name)")
       .eq("id", stop.machine_id)
       .maybeSingle();
 
@@ -569,7 +570,7 @@ export async function GET(
       stopId,
       routeId,
       machineId: stop.machine_id,
-      machineName: machine?.name ?? "Unknown machine",
+      machineName: formatMachineDisplayName(machineRow ?? null, { includeArea: true }),
       machineCode: machine?.machine_code ?? "-",
       location: locationName,
       stopStatus: stop.status,

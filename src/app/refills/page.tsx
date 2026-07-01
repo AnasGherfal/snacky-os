@@ -4,6 +4,7 @@ import { DataTable, EmptyState, MobileCardList, MobileField, MobileRecordCard, P
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
+import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { queryVmsDashboardBatches, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
 
 export const dynamic = "force-dynamic";
@@ -195,7 +196,7 @@ async function RefillsPageContent({ searchParams }: { searchParams: Promise<Sear
           .eq("import_row_status", "imported"),
         supabase
           .from("machine_refill_history")
-          .select("id, legacy_refill_id, refill_at, machine_name, operator_email, fill_status, issues_found, issue_notes, machine_photo_url, machine_photo_path, linked_issue_id, machine:machines(name, machine_code), operator:team_members(full_name, email)")
+          .select("id, legacy_refill_id, refill_at, machine_name, operator_email, fill_status, issues_found, issue_notes, machine_photo_url, machine_photo_path, linked_issue_id, machine:machines(name, machine_code, display_name, location:locations(id, name)), operator:team_members(full_name, email)")
           .order("refill_at", { ascending: false })
           .range(from, to),
         supabase
@@ -317,7 +318,7 @@ async function RefillsPageContent({ searchParams }: { searchParams: Promise<Sear
                     <MobileRecordCard key={row.id}>
                       <div className="mb-3 flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <h3 className="break-words font-semibold text-slate-900">{row.machine?.name ?? row.machine_name}</h3>
+                          <h3 className="break-words font-semibold text-slate-900">{formatMachineDisplayName(row.machine as any, { includeArea: true }) === "Unknown machine" ? row.machine_name ?? "Unknown machine" : formatMachineDisplayName(row.machine as any, { includeArea: true })}</h3>
                           <p className="mt-1 text-sm text-slate-500">{row.refill_at ? new Date(row.refill_at).toLocaleString("en-US") : "-"}</p>
                         </div>
                         <StatusBadge status={row.fill_status || "unknown"} />
@@ -339,7 +340,7 @@ async function RefillsPageContent({ searchParams }: { searchParams: Promise<Sear
                   {historyRows.map((row) => (
                     <tr key={row.id}>
                       <td>{row.refill_at ? new Date(row.refill_at).toLocaleString("en-US") : "-"}</td>
-                      <td className="font-medium">{row.machine?.name ?? row.machine_name}</td>
+                      <td className="font-medium">{formatMachineDisplayName(row.machine as any, { includeArea: true }) === "Unknown machine" ? row.machine_name ?? "Unknown machine" : formatMachineDisplayName(row.machine as any, { includeArea: true })}</td>
                       <td>{row.operator?.full_name ?? row.operator_email ?? "-"}</td>
                       <td><StatusBadge status={row.fill_status || "unknown"} /></td>
                       <td>{row.issues_found ? <StatusBadge status="review" /> : <StatusBadge status="ok" />}{row.issue_notes ? <div className="mt-1 max-w-xs text-xs text-slate-500">{row.issue_notes}</div> : null}</td>

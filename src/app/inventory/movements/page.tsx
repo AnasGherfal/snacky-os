@@ -7,6 +7,7 @@ import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/a
 import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
 import { createInventoryMovementCorrection } from "@/lib/inventory-actions";
 import { cleanSearchParams, getPagination, SearchParamsRecord, supabaseLikePattern } from "@/lib/pagination";
+import { formatMachineDisplayName } from "@/lib/machine-site-display";
 
 export const dynamic = "force-dynamic";
 
@@ -46,7 +47,7 @@ function entityLabel(
   if (!type || !id) return "-";
   if (type === "machine") {
     const machine = labelMaps.machineById.get(id);
-    return machine ? machine.name : shortId(id);
+    return machine ? formatMachineDisplayName(machine, { includeArea: true }) : shortId(id);
   }
   if (type === "storage") {
     const storage = labelMaps.storageById.get(id);
@@ -74,7 +75,7 @@ function purchaseLabel(id: string | null | undefined, purchaseById: Map<string, 
 function machineLabel(id: string | null | undefined, machineById: Map<string, any>) {
   if (!id) return "-";
   const machine = machineById.get(id);
-  return machine ? `${machine.name}${machine.machine_code ? ` (${machine.machine_code})` : ""}` : shortId(id);
+  return machine ? formatMachineDisplayName(machine, { includeArea: true }) : shortId(id);
 }
 
 export default async function InventoryMovementsPage({
@@ -128,7 +129,7 @@ export default async function InventoryMovementsPage({
     supabase.from("team_members").select("id, full_name").order("full_name").limit(500),
     supabase.from("routes").select("id, route_date").order("route_date", { ascending: false }).limit(200),
     supabase.from("purchase_orders").select("id, receipt_number, order_date").order("order_date", { ascending: false }).limit(200),
-    supabase.from("machines").select("id, name, machine_code").order("name").limit(500),
+    supabase.from("machines").select("id, name, machine_code, display_name, location:locations(id, name)").order("name").limit(500),
     supabase.from("storage_locations").select("id, name").order("name").limit(500),
   ]);
 
@@ -233,7 +234,7 @@ export default async function InventoryMovementsPage({
           </select>
           <select name="machine_id" defaultValue={params.machine_id ?? ""} className="field-input">
             <option value="">All machines</option>
-            {machines?.map((machine: any) => <option key={machine.id} value={machine.id}>{machine.name}{machine.machine_code ? ` (${machine.machine_code})` : ""}</option>)}
+            {machines?.map((machine: any) => <option key={machine.id} value={machine.id}>{formatMachineDisplayName(machine, { includeArea: true })}</option>)}
           </select>
           <input name="date_from" type="date" defaultValue={params.date_from ?? ""} className="field-input" />
           <input name="date_to" type="date" defaultValue={params.date_to ?? ""} className="field-input" />

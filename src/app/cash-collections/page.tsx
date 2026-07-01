@@ -7,6 +7,7 @@ import { createMissingCashFinanceLinks } from "@/lib/cash-actions";
 import { canAccessPath, canViewFinancials } from "@/lib/authz";
 import { getCashCollectionStatus, isCriticalCashVariance, isLargeCashVariance } from "@/lib/cash-collections";
 import { lyd } from "@/lib/format";
+import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 
 const statusOptions = ["pending_collection", "collected_pending_count", "counted_confirmed", "variance_review", "voided"];
@@ -63,7 +64,7 @@ export default async function CashCollectionsPage({
   }
 
   const [{ data: machines, error: machinesError }, { data: operators, error: operatorsError }] = await Promise.all([
-    supabase.from("machines").select("id, name, machine_code").order("name"),
+    supabase.from("machines").select("id, name, machine_code, display_name, location:locations(id, name)").order("name"),
     supabase.from("team_members").select("id, full_name").order("full_name"),
   ]);
   const filterLoadError = machinesError ?? operatorsError;
@@ -79,7 +80,7 @@ export default async function CashCollectionsPage({
   let query = supabase
     .from("cash_collections")
     .select(
-      "id, route_id, machine_id, operator_id, collected_at, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, counted_at, notes, machine:machines(id, name, machine_code), operator:team_members!cash_collections_operator_id_fkey(id, full_name), route:routes(id, route_date)",
+      "id, route_id, machine_id, operator_id, collected_at, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, counted_at, notes, machine:machines(id, name, machine_code, display_name, location:locations(id, name)), operator:team_members!cash_collections_operator_id_fkey(id, full_name), route:routes(id, route_date)",
       { count: "exact" },
     )
     .order("collected_at", { ascending: false });
@@ -162,7 +163,7 @@ export default async function CashCollectionsPage({
           </select>
           <select name="machine_id" defaultValue={params.machine_id ?? ""} className="field-input">
             <option value="">All machines</option>
-            {machines?.map((machine: any) => <option key={machine.id} value={machine.id}>{machine.name}{machine.machine_code ? ` (${machine.machine_code})` : ""}</option>)}
+            {machines?.map((machine: any) => <option key={machine.id} value={machine.id}>{formatMachineDisplayName(machine, { includeArea: true })}</option>)}
           </select>
           <select name="operator_id" defaultValue={params.operator_id ?? ""} className="field-input">
             <option value="">All operators</option>
@@ -202,7 +203,7 @@ export default async function CashCollectionsPage({
                 <MobileRecordCard key={collection.id} className={status === "variance_review" ? "border-amber-200 bg-amber-50/50" : undefined}>
                   <div className="mb-3 flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <h2 className="break-words text-base font-semibold text-slate-900">{collection.machine?.name ?? "Unknown machine"}</h2>
+                      <h2 className="break-words text-base font-semibold text-slate-900">{formatMachineDisplayName(collection.machine ?? null, { includeArea: true })}</h2>
                       <p className="mt-1 text-xs text-slate-500">{collection.machine?.machine_code ?? "-"} - {formatDate(collection.collected_at)}</p>
                     </div>
                     <StatusBadge status={status.replaceAll("_", " ")} />
@@ -235,7 +236,7 @@ export default async function CashCollectionsPage({
               return (
                 <tr key={collection.id} className={status === "variance_review" ? "bg-amber-50/60" : undefined}>
                   <td>
-                    <div className="font-medium text-slate-900">{collection.machine?.name ?? "Unknown machine"}</div>
+                    <div className="font-medium text-slate-900">{formatMachineDisplayName(collection.machine ?? null, { includeArea: true })}</div>
                     <div className="text-xs text-slate-500">{collection.machine?.machine_code ?? "-"}</div>
                   </td>
                   <td>{collection.route?.id ? <Link href={`/routes/${collection.route.id}`} className="link-secondary">{collection.route.route_date}</Link> : "-"}</td>

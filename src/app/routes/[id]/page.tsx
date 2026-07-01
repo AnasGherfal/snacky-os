@@ -5,6 +5,7 @@ import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/a
 import { canAccessPath, canExecuteRoutes, isAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { moneyLabel } from "@/lib/payroll";
+import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { privateStorageObjectUrl, REFILL_PHOTO_BUCKET } from "@/lib/storage-buckets";
 import { ROUTE_CANCELED_STATUS, isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isPickupConfirmedStatus, isRouteStopDoneStatus, isTerminalRouteStatus, nextOperatorRouteHref, routeDisplayStatus } from "@/lib/route-workflow";
 import { RouteCreatedToast } from "@/app/routes/[id]/RouteCreatedToast";
@@ -176,7 +177,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     ...routePickListItems.flatMap((line: any) => [line.product_id, line.substituted_for_product_id]),
   ].filter(Boolean)));
   const [{ data: machines }, { data: products }, { data: movements }, { data: cashCollections }, { data: issues }, { data: routePayBreakdown, error: routePayError }] = await Promise.all([
-    machineIds.length ? supabase.from("machines").select("id, name, machine_code").in("id", machineIds) : Promise.resolve({ data: [] }),
+    machineIds.length ? supabase.from("machines").select("id, name, machine_code, display_name, location:locations(id, name)").in("id", machineIds) : Promise.resolve({ data: [] }),
     productIds.length ? supabase.from("products").select("id, name").in("id", productIds) : Promise.resolve({ data: [] }),
     supabase
       .from("inventory_movements")
@@ -249,7 +250,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   });
   const completionImageStops: RouteCompletionStop[] = routeStops.map((stop: any) => ({
     id: String(stop.id),
-    title: machineById.get(stop.machine_id)?.name ?? "Unknown machine",
+    title: formatMachineDisplayName(machineById.get(stop.machine_id) ?? null, { includeArea: true }),
     subtitle: `Stop ${stop.stop_order || "-"} - ${machineById.get(stop.machine_id)?.machine_code ?? "-"}`,
     images: completionProofsByStopId.get(String(stop.id)) ?? [],
   }));
@@ -448,7 +449,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
               {routeStops.map((stop: any) => (
                 <tr key={stop.id}>
                   <td>{stop.stop_order}</td>
-                  <td>{machineById.get(stop.machine_id)?.name ?? "Unknown machine"}</td>
+                  <td>{formatMachineDisplayName(machineById.get(stop.machine_id) ?? null, { includeArea: true })}</td>
                   <td>{machineById.get(stop.machine_id)?.machine_code ?? "-"}</td>
                   <td><StatusBadge status={stop.status} /></td>
                 </tr>
@@ -498,7 +499,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
                   <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <div className="text-sm text-slate-500">Machine</div>
-                      <div className="font-medium">{machineById.get(stop.machine_id)?.name ?? "Unknown machine"}</div>
+                      <div className="font-medium">{formatMachineDisplayName(machineById.get(stop.machine_id) ?? null, { includeArea: true })}</div>
                       <div className="text-sm text-slate-500">{machineById.get(stop.machine_id)?.machine_code ?? "-"}</div>
                     </div>
                     <StatusBadge status={stop.status} />
@@ -597,7 +598,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
             <DataTable headers={["Machine", "Type", "Planned product", "Actual product", "Assigned", "Actual", "Diff", "Review", "Reason"]}>
               {fillLines.map((line: any) => (
                 <tr key={line.id}>
-                  <td>{machineById.get(line.machine_id)?.name ?? "Unknown machine"}</td>
+                  <td>{formatMachineDisplayName(machineById.get(line.machine_id) ?? null, { includeArea: true })}</td>
                   <td><StatusBadge status={line.action_type} /></td>
                   <td>{line.missing_product_name ?? productById.get(line.assigned_product_id)?.name ?? "-"}</td>
                   <td>{productById.get(line.product_id)?.name ?? productById.get(line.substitute_product_id)?.name ?? "-"}</td>
@@ -652,7 +653,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
               <DataTable headers={["Machine", "Expected", "Counted", "Variance", "Status"]}>
                 {cashCollections.map((cash: any) => (
                   <tr key={cash.id}>
-                    <td>{machineById.get(cash.machine_id)?.name ?? "Unknown machine"}</td>
+                    <td>{formatMachineDisplayName(machineById.get(cash.machine_id) ?? null, { includeArea: true })}</td>
                     <td>{cash.vms_expected_cash === null ? "-" : lyd(cash.vms_expected_cash)}</td>
                     <td>{cash.actual_cash_collected === null ? "-" : lyd(cash.actual_cash_collected)}</td>
                     <td>{cash.variance === null ? "-" : lyd(cash.variance)}</td>
@@ -671,7 +672,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
               <DataTable headers={["Machine", "Type", "Priority", "Status"]}>
                 {issues.map((issue: any) => (
                   <tr key={issue.id}>
-                    <td>{machineById.get(issue.machine_id)?.name ?? "Unknown machine"}</td>
+                    <td>{formatMachineDisplayName(machineById.get(issue.machine_id) ?? null, { includeArea: true })}</td>
                     <td>{issue.issue_type}</td>
                     <td><StatusBadge status={issue.priority} /></td>
                     <td><StatusBadge status={issue.status} /></td>

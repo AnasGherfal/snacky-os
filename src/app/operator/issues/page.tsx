@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { EmptyState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
+import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { isOperatorRole } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -16,7 +17,7 @@ export default async function OperatorIssuesPage() {
   const supabase = getSupabaseServerClient();
   let query = supabase
     ?.from("issues")
-    .select("id, issue_type, priority, status, description, created_at, sla_due_at, machine:machines(name, machine_code)")
+    .select("id, issue_type, priority, status, description, created_at, sla_due_at, machine:machines(id, name, machine_code, display_name, location:locations(id, name))")
     .order("created_at", { ascending: false });
 
   if (query && isOperatorRole(profile)) {
@@ -43,7 +44,7 @@ export default async function OperatorIssuesPage() {
                 <div className="min-w-0">
                   <div className="text-xs text-slate-500">{formatDate(issue.created_at)}</div>
                   <h2 className="mt-1 font-semibold text-slate-900">{issue.issue_type}</h2>
-                  <div className="mt-1 text-sm text-slate-500">{issue.machine?.name ?? "Unknown machine"} - {issue.machine?.machine_code ?? "-"}</div>
+                  <div className="mt-1 text-sm text-slate-500">{formatMachineDisplayName(issue.machine ?? null, { includeArea: true })}</div>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <StatusBadge status={issue.priority} />

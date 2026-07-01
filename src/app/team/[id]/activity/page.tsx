@@ -7,6 +7,7 @@ import { isOwnerAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { isCompletedRouteStatus } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { formatMachineDisplayName } from "@/lib/machine-site-display";
 
 export const dynamic = "force-dynamic";
 
@@ -82,13 +83,13 @@ export default async function TeamMemberActivityPage({
       .limit(200),
     supabase
       .from("cash_collections")
-      .select("id, route_id, machine_id, vms_expected_cash, actual_cash_collected, variance, review_status, collected_at, machine:machines(id, name, machine_code), route:routes(id, route_date)")
+      .select("id, route_id, machine_id, vms_expected_cash, actual_cash_collected, variance, review_status, collected_at, machine:machines(id, name, machine_code, display_name, location:locations(id, name)), route:routes(id, route_date)")
       .eq("operator_id", id)
       .order("collected_at", { ascending: false })
       .limit(200),
     supabase
       .from("issues")
-      .select("id, machine_id, issue_type, priority, status, description, created_at, resolved_at, machine:machines(id, name, machine_code)")
+      .select("id, machine_id, issue_type, priority, status, description, created_at, resolved_at, machine:machines(id, name, machine_code, display_name, location:locations(id, name))")
       .eq("reported_by", id)
       .order("created_at", { ascending: false })
       .limit(200),
@@ -204,7 +205,7 @@ export default async function TeamMemberActivityPage({
               {cashRows.map((cash: any) => (
                 <tr key={cash.id}>
                   <td>{formatDateTime(cash.collected_at)}</td>
-                  <td>{cash.machine?.name ?? "-"}</td>
+                  <td>{formatMachineDisplayName(cash.machine as any, { includeArea: true })}</td>
                   <td>{cash.vms_expected_cash === null ? "-" : lyd(Number(cash.vms_expected_cash ?? 0))}</td>
                   <td>{cash.actual_cash_collected === null ? "-" : lyd(Number(cash.actual_cash_collected ?? 0))}</td>
                   <td>{cash.variance === null ? "-" : lyd(Number(cash.variance ?? 0))}</td>
@@ -224,7 +225,7 @@ export default async function TeamMemberActivityPage({
               {issueRows.map((issue: any) => (
                 <tr key={issue.id}>
                   <td>{formatDateTime(issue.created_at)}</td>
-                  <td>{issue.machine?.name ?? "-"}</td>
+                  <td>{formatMachineDisplayName(issue.machine as any, { includeArea: true })}</td>
                   <td>{issue.issue_type}</td>
                   <td><StatusBadge status={issue.priority} /></td>
                   <td><StatusBadge status={issue.status} /></td>

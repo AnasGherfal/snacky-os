@@ -29,10 +29,12 @@ import {
   type RouteStatus,
 } from "@/lib/route-workflow";
 import { ISSUE_PHOTO_BUCKET, REFILL_PHOTO_BUCKET } from "@/lib/storage-buckets";
+import { formatMachineDisplayName } from "@/lib/machine-site-display";
+import { summarizeRouteInventoryMovements } from "@/lib/route-inventory-summary";
 
 const REFILL_PHOTO_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"];
 const REFILL_PHOTO_MAX_SIZE = 10 * 1024 * 1024;
-const PICKUP_CONFIRMATION_FALLBACK_ERROR = "Pickup confirmation failed before a specific database reason was returned.";
+const PICKUP_CONFIRMATION_FALLBACK_ERROR = "Could not confirm pickup. Please try again.";
 
 function isMissingTable(error: any, tableName: string) {
   return error?.code === "PGRST205" && String(error?.message ?? "").includes(tableName);
@@ -121,26 +123,26 @@ function pickupPublicError(error: unknown) {
     return "User does not have permission to confirm pickup.";
   }
   if (code === "42883" || code === "PGRST202" || (text.includes("function") && (text.includes("confirm_route_pickup_batch") || text.includes("validate_route_workflow_schema")))) {
-    return "Pickup confirmation could not be saved. Please contact admin.";
+    return "Could not confirm pickup. Please try again.";
   }
   if (code === "42703" || code === "PGRST204" || text.includes("schema cache") || text.includes("column")) {
-    return "Pickup confirmation could not be saved. Please contact admin.";
+    return "Could not confirm pickup. Please try again.";
   }
   if (text.includes("invalid input value for enum route_status")) {
-    return "Pickup confirmation could not be saved. Please contact admin.";
+    return "Could not confirm pickup. Please try again.";
   }
   if (text.includes("invalid input value for enum route_stop_status")) {
-    return "Pickup confirmation could not be saved. Please contact admin.";
+    return "Could not confirm pickup. Please try again.";
   }
   if (code === "23503") {
-    return "Pickup confirmation could not be saved because some linked data is missing.";
+    return PICKUP_CONFIRMATION_FALLBACK_ERROR;
   }
   if (code === "23514" || text.includes("movement_quantity_positive")) {
-    return "Pickup confirmation could not be saved because one quantity or status is invalid.";
+    return PICKUP_CONFIRMATION_FALLBACK_ERROR;
   }
-  if (text.includes("inventory movement")) return message;
+  if (text.includes("inventory movement")) return PICKUP_CONFIRMATION_FALLBACK_ERROR;
 
-  return "Could not confirm pickup. Please contact admin.";
+  return PICKUP_CONFIRMATION_FALLBACK_ERROR;
 }
 
 function isMissingOptionalPickupChecklistColumn(error: unknown) {
@@ -294,6 +296,26 @@ function positiveRouteBagBalances(movements: any[] | null | undefined) {
   return Array.from(routeBagBalanceFromMovements(movements).entries())
     .map(([productId, quantity]) => ({ productId, quantity: Math.max(0, quantity) }))
     .filter((item) => item.quantity > 0);
+}
+
+function routeInventorySummaryByProduct(movements: any[] | null | undefined) {
+  return new Map(summarizeRouteInventoryMovements(movements ?? []).map((row) => [row.productId, row]));
+}
+
+function routeMovementLogRows(movements: any[] | null | undefined) {
+  return (movements ?? [])
+    .map((movement: any) => ({
+      product_id: String(movement?.product_id ?? ""),
+      quantity: unitQuantity(movement?.quantity),
+      reason: String(movement?.reason ?? ""),
+      from_entity_type: String(movement?.from_entity_type ?? ""),
+      from_entity_id: movement?.from_entity_id ?? null,
+      to_entity_type: String(movement?.to_entity_type ?? ""),
+      to_entity_id: movement?.to_entity_id ?? null,
+      related_route_stop_id: movement?.related_route_stop_id ?? null,
+      related_machine_id: movement?.related_machine_id ?? null,
+    }))
+    .filter((row) => row.product_id && row.quantity > 0);
 }
 
 function routeCompletionPublicError(error: unknown) {
@@ -619,6 +641,9 @@ export async function confirmPickList(
   const logStorageAvailability: Record<string, unknown>[] = [];
   let logInventoryMovementPayload: Record<string, unknown>[] = [];
   let logPayload: Record<string, unknown> = {};
+  let logPickupConfirmationContext: Record<string, unknown> = {};
+  let logPickupRpcRowCount: number | null = null;
+  let logPickupRpcUsedFallback = false;
 
   try {
     const profile = await getCurrentProfile();
@@ -1330,7 +1355,27 @@ export async function confirmPickList(
       remaining_pending_stop_count: remainingPendingStopCount,
     };
 
-    const { data: pickupRpcRows, error: pickupRpcError } = await supabase.rpc("confirm_route_pickup_batch", {
+    logPickupConfirmationContext = {
+      route_id: routeId,
+      current_user_id: profile.id ?? null,
+      current_role: profile.role ?? null,
+      operator_id: route.operator_id ?? null,
+      profile_id: profile.id ?? null,
+      route_status_before: route.status ?? null,
+      route_status_after: nextRouteStatus,
+      pickup_item_count: logSubmittedPickupItems.length,
+      pickup_payload_items: logSubmittedPickupItems,
+      inventory_movement_count: movements.length,
+      selected_stop_ids: selectedStopIds,
+    };
+
+    console.info("[operator:pick-list] Pickup confirmation attempt", {
+      action_step: "confirm_pick_list.rpc_attempt",
+      table_or_rpc: "rpc.confirm_route_pickup_batch",
+      ...logPickupConfirmationContext,
+    });
+
+    const pickupRpcArgs = {
       p_route_id: routeId,
       p_expected_route_status: route.status,
       p_next_route_status: nextRouteStatus,
@@ -1339,19 +1384,76 @@ export async function confirmPickList(
       p_pickup_batch: pickupBatchPayload,
       p_batch_stop_ids: batchMode ? selectedStopIds : [],
       p_new_stop_item_rows: newRouteStopItemRows,
-      p_inventory_movements: movements,
       p_pick_list_rows: pickListRows,
       p_stock_line_rows: stockLineRows,
       p_stop_item_picks: stopItemPickRows,
       p_refill_line_picks: refillLinePickRows,
       p_selected_stop_ids: selectedStopIds,
       p_selected_machine_ids: selectedMachineIds,
-    });
+    };
+
+    let pickupRpcRows: any[] | null = null;
+    let pickupRpcError: any = null;
+
+    ({ data: pickupRpcRows, error: pickupRpcError } = await supabase.rpc("confirm_route_pickup_batch", {
+      ...pickupRpcArgs,
+      p_inventory_movements: movements,
+    }));
+
+    if (pickupRpcError) {
+      const pickupRpcErrorInfo = serializeActionError(pickupRpcError);
+      console.warn("[operator:pick-list] Pickup confirmation RPC failed; retrying without inventory movements", {
+        action_step: "confirm_pick_list.rpc_retry_without_inventory_movements",
+        table_or_rpc: "rpc.confirm_route_pickup_batch",
+        ...logPickupConfirmationContext,
+        exact_supabase_postgres_error_code: pickupRpcErrorInfo.code,
+        exact_supabase_postgres_error_message: pickupRpcErrorInfo.message,
+        exact_supabase_postgres_error_details: pickupRpcErrorInfo.details,
+        exact_supabase_postgres_error_hint: pickupRpcErrorInfo.hint,
+      });
+
+      logPickupRpcUsedFallback = true;
+      ({ data: pickupRpcRows, error: pickupRpcError } = await supabase.rpc("confirm_route_pickup_batch", {
+        ...pickupRpcArgs,
+        p_inventory_movements: [],
+      }));
+    }
 
     if (pickupRpcError) throwActionError(pickupRpcError, PICKUP_CONFIRMATION_FALLBACK_ERROR);
+
+    logPickupRpcRowCount = Array.isArray(pickupRpcRows) ? pickupRpcRows.length : pickupRpcRows ? 1 : 0;
     const rpcPickupBatch = Array.isArray(pickupRpcRows) ? pickupRpcRows[0]?.pickup_batch_id : null;
     pickupBatchId = pickupBatchId ?? (rpcPickupBatch ? String(rpcPickupBatch) : null);
     logPickupBatchId = pickupBatchId;
+
+    if (logPickupRpcUsedFallback && movements.length) {
+      console.info("[operator:pick-list] Syncing inventory movements after pickup confirmation", {
+        action_step: "confirm_pick_list.inventory_movements_best_effort",
+        table_or_rpc: "inventory_movements.upsert",
+        ...logPickupConfirmationContext,
+        returned_row_count: logPickupRpcRowCount,
+      });
+      try {
+        await upsertInventoryMovementsWithFallback({
+          supabase,
+          rows: movements,
+          routeId,
+          operationLabel: "sync pickup inventory movements",
+        });
+      } catch (inventoryMovementError) {
+        const inventoryMovementErrorInfo = serializeActionError(inventoryMovementError);
+        console.warn("[operator:pick-list] Inventory movements could not be synced after pickup confirmation", {
+          action_step: "confirm_pick_list.inventory_movements_best_effort_failed",
+          table_or_rpc: "inventory_movements.upsert",
+          ...logPickupConfirmationContext,
+          returned_row_count: logPickupRpcRowCount,
+          exact_supabase_postgres_error_code: inventoryMovementErrorInfo.code,
+          exact_supabase_postgres_error_message: inventoryMovementErrorInfo.message,
+          exact_supabase_postgres_error_details: inventoryMovementErrorInfo.details,
+          exact_supabase_postgres_error_hint: inventoryMovementErrorInfo.hint,
+        });
+      }
+    }
 
     const checklistRows = pickListRows.filter((row) => row.route_stop_item_id);
     if (checklistRows.length) {
@@ -1395,13 +1497,12 @@ export async function confirmPickList(
     });
 
     console.info("[operator:pick-list] Pickup confirmed", {
-      action: "confirm_pick_list",
-      route_id: routeId,
-      user_id: profile?.id ?? null,
-      route_status_before: route.status ?? null,
-      route_status_after: nextRouteStatus,
-      selected_stop_ids: selectedStopIds,
+      action_step: "confirm_pick_list.rpc_success",
+      table_or_rpc: "rpc.confirm_route_pickup_batch",
+      ...logPickupConfirmationContext,
       pickup_batch_id: pickupBatchId,
+      returned_row_count: logPickupRpcRowCount,
+      used_inventory_fallback: logPickupRpcUsedFallback,
       redirect_path: operatorRouteDetailPath(routeId),
     });
 
@@ -1410,10 +1511,13 @@ export async function confirmPickList(
   } catch (error) {
     const errorInfo = serializeActionError(error);
     console.error("[operator:pick-list] Error confirming pick list", {
+      action_step: "confirm_pick_list.catch",
+      table_or_rpc: "rpc.confirm_route_pickup_batch",
       route_id: routeId,
       pickup_batch_id: logPickupBatchId,
       selected_stop_ids: logSelectedStopIds,
       product_ids: logProductIds,
+      ...logPickupConfirmationContext,
       user_id: logProfile?.id ?? null,
       user_role: logProfile?.role ?? null,
       user_roles: logProfile?.roles ?? [],
@@ -1425,6 +1529,8 @@ export async function confirmPickList(
       warehouse_storage_stock_available: logStorageAvailability,
       inventory_movement_payload: logInventoryMovementPayload,
       rpc_payload: logPayload,
+      returned_row_count: logPickupRpcRowCount,
+      pickup_rpc_used_fallback: logPickupRpcUsedFallback,
       exact_supabase_postgres_error_code: errorInfo.code,
       exact_supabase_postgres_error_message: errorInfo.message,
       exact_supabase_postgres_error_details: errorInfo.details,
@@ -1596,7 +1702,7 @@ async function buildPendingStopRefreshPlan(
 ): Promise<PendingStopRefreshPlan> {
   const { data: stops, error: stopsError } = await supabase
     .from("route_stops")
-    .select("id, route_id, machine_id, stop_order, status, machine:machines(id, name, machine_code)")
+    .select("id, route_id, machine_id, stop_order, status, machine:machines(id, name, machine_code, display_name, location:locations(id, name))")
     .eq("route_id", routeId)
     .order("stop_order", { ascending: true });
   if (stopsError) throwActionError(stopsError, "Could not load route stops.");
@@ -1709,7 +1815,7 @@ async function buildPendingStopRefreshPlan(
       return {
         routeStopId,
         machineId: String(stop.machine_id ?? ""),
-        machineName: (machine as any)?.name ?? "Unknown machine",
+        machineName: formatMachineDisplayName(machine as any, { includeArea: true }),
         machineCode: (machine as any)?.machine_code ?? "-",
         stopOrder: Number(stop.stop_order ?? 0),
         changes,
@@ -2194,7 +2300,7 @@ export async function completeStop({
     const [{ data: machine, error: machineError }, { data: operatorMember, error: operatorError }] = await Promise.all([
       supabase
         .from("machines")
-        .select("id, name, machine_code")
+        .select("id, name, machine_code, display_name, location:locations(id, name)")
         .eq("id", machineId)
         .maybeSingle(),
       route.operator_id
@@ -2548,7 +2654,7 @@ export async function completeStop({
       }
     }
 
-    const machineLabel = machine?.name ?? machine?.machine_code ?? machineId;
+    const machineLabel = formatMachineDisplayName(machine as any, { includeArea: true });
     const savedPhotoUrl = completionPhotoUrl?.trim() || existingProof?.machine_photo_url || null;
     const savedPhotoPath = completionPhotoPath?.trim() || completionPhotoOriginalName?.trim() || existingProof?.machine_photo_path || null;
     const refillHistorySelect = "id, legacy_refill_id, refill_at, machine_id, machine_name, operator_id, fill_status, issues_found, machine_photo_url, machine_photo_path, linked_issue_id";
@@ -2762,7 +2868,7 @@ export async function recordLeftovers({
   clientSubmissionId,
 }: {
   routeId: string;
-  leftoverItems: { productId: string; quantity: number }[];
+  leftoverItems: { productId: string; quantity: number; finalRemainingQty?: number | null; currentRemainingQty?: number | null; productName?: string | null }[];
   clientSubmissionId?: string | null;
 }) {
   const supabase = await getAuthenticatedSupabaseServerClient();
@@ -2771,7 +2877,6 @@ export async function recordLeftovers({
   try {
     const profile = await getCurrentProfile();
     const routeAccessProfile = await buildOperatorRouteAccessContext(supabase, profile);
-    // Get route to find operator
     const { data: route, error: routeError } = await supabase
       .from("routes")
       .select("id, operator_id, status")
@@ -2784,7 +2889,7 @@ export async function recordLeftovers({
     if (!canAccessOperatorRoute(routeAccessProfile, route.operator_id)) {
       throw new Error("You are not authorized to return leftovers for this route");
     }
-    // Get storage location
+
     const { data: storages } = await supabase
       .from("storage_locations")
       .select("id")
@@ -2798,33 +2903,29 @@ export async function recordLeftovers({
     if (!storageId) throw new Error("No active storage location found");
     const leftoversSubmissionId = String(clientSubmissionId ?? "").trim() || routeId;
 
-    // Create inventory movements: operator_bag -> storage
-    const leftoversByProduct = new Map<string, number>();
-    leftoverItems.forEach((item) => {
-      const productId = String(item.productId);
-      const quantity = Math.max(0, Number(item.quantity ?? 0));
-      if (productId && quantity > 0) leftoversByProduct.set(productId, (leftoversByProduct.get(productId) ?? 0) + quantity);
-    });
-
     const { data: routeStockLines, error: routeStockError } = await supabase
       .from("route_stock_lines")
       .select("id, product_id, picked_qty, returned_qty")
       .eq("route_id", routeId);
     if (routeStockError) throwActionError(routeStockError, "Could not load route stock.");
 
-    const [{ data: routeMovements, error: movementBalanceError }, { data: filledMovements, error: filledError }, { data: returnMovements, error: returnError }] = await Promise.all([
+    const [
+      { data: routeMovements, error: movementBalanceError },
+      { data: filledMovements, error: filledError },
+      { data: returnMovements, error: returnError },
+    ] = await Promise.all([
       supabase
         .from("inventory_movements")
-        .select("product_id, quantity, reason, from_entity_type, from_entity_id, to_entity_type, to_entity_id")
+        .select("product_id, quantity, reason, from_entity_type, from_entity_id, to_entity_type, to_entity_id, related_route_stop_id, related_machine_id")
         .eq("related_route_id", routeId),
       supabase
         .from("inventory_movements")
-        .select("product_id, quantity, reason, from_entity_type, to_entity_type")
+        .select("product_id, quantity, reason, from_entity_type, from_entity_id, to_entity_type, to_entity_id, related_route_stop_id, related_machine_id")
         .eq("related_route_id", routeId)
         .in("reason", ["operator_bag_to_machine", "manual_correction"]),
       supabase
         .from("inventory_movements")
-        .select("product_id, quantity")
+        .select("product_id, quantity, reason, from_entity_type, from_entity_id, to_entity_type, to_entity_id, related_route_stop_id, related_machine_id")
         .eq("related_route_id", routeId)
         .in("reason", ["operator_bag_to_storage"]),
     ]);
@@ -2832,48 +2933,110 @@ export async function recordLeftovers({
     if (filledError) throwActionError(filledError, "Could not verify filled route stock.");
     if (returnError) throwActionError(returnError, "Could not verify returned route stock.");
 
-    const filledByProduct = new Map<string, number>();
-    (filledMovements ?? []).forEach((movement: any) => {
-      const productId = String(movement.product_id);
-      filledByProduct.set(productId, (filledByProduct.get(productId) ?? 0) + machineFillDelta(movement));
-    });
-    const returnedByProduct = productQuantitiesFromMovements(returnMovements);
+    const routeSummaryByProduct = routeInventorySummaryByProduct(routeMovements);
+    const routeMovementSources = routeMovementLogRows(routeMovements);
+    const filledMovementSources = routeMovementLogRows(filledMovements);
+    const returnMovementSources = routeMovementLogRows(returnMovements);
     const bagBalanceByProduct = routeBagBalanceFromMovements(routeMovements);
+    const routeStockLineByProduct = new Map<string, any>();
+    (routeStockLines ?? []).forEach((line: any) => {
+      const productId = String(line.product_id ?? "");
+      if (!productId) return;
+      routeStockLineByProduct.set(productId, line);
+    });
 
     const routeProductIds = new Set([
-      ...(routeStockLines ?? []).map((line: any) => String(line.product_id)),
-      ...bagBalanceByProduct.keys(),
-    ]);
-    for (const productId of leftoversByProduct.keys()) {
+      ...(routeStockLines ?? []).map((line: any) => String(line.product_id ?? "")),
+      ...Array.from(bagBalanceByProduct.keys()),
+      ...Array.from(routeSummaryByProduct.keys()),
+    ].filter(Boolean));
+
+    const productIds = Array.from(new Set([
+      ...Array.from(routeProductIds),
+      ...leftoverItems.map((item) => String(item.productId ?? "").trim()).filter(Boolean),
+    ]));
+    const { data: products, error: productsError } = productIds.length
+      ? await supabase.from("products").select("id, name").in("id", productIds)
+      : { data: [], error: null };
+    if (productsError) throwActionError(productsError, "Could not load product names for route leftovers.");
+    const productById = new Map((products ?? []).map((product: any) => [String(product.id), String(product.name ?? "Unknown product")]));
+
+    const leftoverPlans = new Map<string, {
+      productName: string;
+      returnQty: number;
+      currentRemainingQty: number;
+      userFinalRemainingQty: number | null;
+      finalRemainingQtyUsed: number;
+      calculatedRemainingQty: number;
+    }>();
+
+    leftoverItems.forEach((item) => {
+      const productId = String(item.productId ?? "").trim();
+      if (!productId) return;
       if (!routeProductIds.has(productId)) throw new Error("Returned product is not part of this route stock.");
-    }
 
-    for (const productId of leftoversByProduct.keys()) {
-      const returnQty = leftoversByProduct.get(productId) ?? 0;
-      const available = Math.max(0, bagBalanceByProduct.get(productId) ?? 0);
-      if (returnQty > available) throw new Error("Returned quantity cannot exceed remaining operator bag stock.");
-    }
+      const summary = routeSummaryByProduct.get(productId);
+      const currentRemainingQty = Math.max(0, Number(item.currentRemainingQty ?? summary?.remainingQty ?? bagBalanceByProduct.get(productId) ?? 0));
+      const hasUserFinalRemaining = item.finalRemainingQty !== null && item.finalRemainingQty !== undefined;
+      const userFinalRemainingQty = hasUserFinalRemaining ? Math.max(0, Number(item.finalRemainingQty)) : null;
+      const returnQty = hasUserFinalRemaining
+        ? Math.max(0, currentRemainingQty - (userFinalRemainingQty ?? 0))
+        : Math.max(0, Number(item.quantity ?? 0));
+      const calculatedRemainingQty = Math.max(0, currentRemainingQty - returnQty);
+      const finalRemainingQtyUsed = userFinalRemainingQty ?? calculatedRemainingQty;
+      const productName = productById.get(productId) ?? item.productName ?? "Unknown product";
 
-    const movements = Array.from(leftoversByProduct.entries())
-      .map(([productId, desiredQuantity]) => {
-        const remainingQuantity = Math.max(0, desiredQuantity - (returnedByProduct.get(productId) ?? 0));
-        return {
-          product_id: productId,
-          quantity: remainingQuantity,
-          from_entity_type: "operator_bag" as const,
-          from_entity_id: route.operator_id,
-          to_entity_type: "storage" as const,
-          to_entity_id: storageId,
-          reason: "operator_bag_to_storage" as const,
-          related_route_id: routeId,
-          related_pickup_batch_id: null,
-          idempotency_key: inventoryMovementIdempotencyKey("route-leftovers", routeId, leftoversSubmissionId, productId, storageId, route.operator_id ?? "", remainingQuantity),
-          source_type: "route_leftovers",
-          source_id: routeSourceUuid(leftoversSubmissionId, `route-leftovers:${routeId}:${leftoversSubmissionId}`),
-          created_by: route.operator_id,
-          notes: `Leftovers returned from route ${routeId}`,
-        };
-      })
+      if (returnQty > 0) {
+        leftoverPlans.set(productId, {
+          productName,
+          returnQty,
+          currentRemainingQty,
+          userFinalRemainingQty,
+          finalRemainingQtyUsed,
+          calculatedRemainingQty,
+        });
+      }
+
+      console.info("[operator:route-leftovers] Calculated leftover return quantity", {
+        route_id: routeId,
+        product_id: productId,
+        product_name: productName,
+        picked_up_quantity: summary?.loadedQty ?? Number((routeStockLineByProduct.get(productId) as any)?.picked_qty ?? 0),
+        filled_quantity: summary?.filledQty ?? 0,
+        returned_quantity: summary?.returnedQty ?? 0,
+        damaged_quantity: summary?.damagedQty ?? 0,
+        extra_quantity: summary?.adjustmentInQty ?? 0,
+        previous_remaining_quantity: currentRemainingQty,
+        user_final_remaining_quantity: userFinalRemainingQty,
+        calculated_remaining_quantity: calculatedRemainingQty,
+        final_remaining_quantity_used: finalRemainingQtyUsed,
+        return_quantity_to_record: returnQty,
+        source_rows_used: {
+          route_stock_line: routeStockLineByProduct.get(productId) ?? null,
+          route_movements: routeMovementSources.filter((row) => row.product_id === productId),
+          filled_movements: filledMovementSources.filter((row) => row.product_id === productId),
+          return_movements: returnMovementSources.filter((row) => row.product_id === productId),
+        },
+      });
+    });
+
+    const movements = Array.from(leftoverPlans.entries())
+      .map(([productId, plan]) => ({
+        product_id: productId,
+        quantity: plan.returnQty,
+        from_entity_type: "operator_bag" as const,
+        from_entity_id: route.operator_id,
+        to_entity_type: "storage" as const,
+        to_entity_id: storageId,
+        reason: "operator_bag_to_storage" as const,
+        related_route_id: routeId,
+        related_pickup_batch_id: null,
+        idempotency_key: inventoryMovementIdempotencyKey("route-leftovers", routeId, leftoversSubmissionId, productId, storageId, route.operator_id ?? "", plan.returnQty),
+        source_type: "route_leftovers",
+        source_id: routeSourceUuid(leftoversSubmissionId, "route-leftovers:" + routeId + ":" + leftoversSubmissionId),
+        created_by: route.operator_id,
+        notes: "Leftovers returned from route " + routeId,
+      }))
       .filter((movement) => movement.quantity > 0);
 
     if (movements.length > 0) {
@@ -2885,13 +3048,32 @@ export async function recordLeftovers({
       });
     }
 
+    const { data: refreshedRouteMovements, error: refreshedMovementError } = await supabase
+      .from("inventory_movements")
+      .select("product_id, quantity, reason, from_entity_type, from_entity_id, to_entity_type, to_entity_id, related_route_stop_id, related_machine_id")
+      .eq("related_route_id", routeId)
+      .limit(5000);
+    if (refreshedMovementError) throwActionError(refreshedMovementError, "Could not reload saved route summary after returning leftovers.");
+
+    const refreshedSummaryByProduct = routeInventorySummaryByProduct(refreshedRouteMovements);
+    console.info("[operator:route-leftovers] Reloaded saved route summary from DB", {
+      route_id: routeId,
+      summary_rows: Array.from(refreshedSummaryByProduct.values()).map((row) => ({
+        product_id: row.productId,
+        product_name: productById.get(row.productId) ?? "Unknown product",
+        loaded_qty: row.loadedQty,
+        filled_qty: row.filledQty,
+        returned_qty: row.returnedQty,
+        damaged_qty: row.damagedQty,
+        adjustment_in_qty: row.adjustmentInQty,
+        adjustment_out_qty: row.adjustmentOutQty,
+        remaining_qty: row.remainingQty,
+      })),
+    });
+
     for (const line of routeStockLines ?? []) {
-      const productId = String(line.product_id);
-      const returnQty = Math.max(
-        Number(line.returned_qty ?? 0),
-        leftoversByProduct.get(productId) ?? 0,
-        returnedByProduct.get(productId) ?? 0,
-      );
+      const productId = String(line.product_id ?? "");
+      const returnQty = Math.max(0, refreshedSummaryByProduct.get(productId)?.returnedQty ?? 0);
       const { error: stockLineError } = await supabase
         .from("route_stock_lines")
         .update({ returned_qty: returnQty, updated_at: new Date().toISOString() })
@@ -2906,19 +3088,18 @@ export async function recordLeftovers({
     const linesByProduct = new Map<string, any[]>();
     routeOrders?.forEach((order: any) => {
       order.refill_order_lines?.forEach((line: any) => {
-        const key = String(line.product_id);
+        const key = String(line.product_id ?? "");
+        if (!key) return;
         linesByProduct.set(key, [...(linesByProduct.get(key) ?? []), line]);
       });
     });
 
     if (routeOrders?.length) {
-      for (const [productId, desiredQuantity] of leftoversByProduct.entries()) {
-        let remaining = desiredQuantity;
-        const lines = linesByProduct.get(productId) ?? [];
-
+      for (const [productId, lines] of linesByProduct.entries()) {
+        let remaining = Math.max(0, refreshedSummaryByProduct.get(productId)?.returnedQty ?? 0);
         for (const line of lines) {
           const available = Math.max(0, Number(line.picked_qty ?? 0) - Number(line.filled_qty ?? 0));
-          const returnedQty = Math.max(Number(line.returned_qty ?? 0), Math.min(remaining, available));
+          const returnedQty = Math.max(0, Math.min(remaining, available));
           remaining = Math.max(0, remaining - returnedQty);
 
           const { error: lineError } = await supabase
@@ -2936,13 +3117,13 @@ export async function recordLeftovers({
       action: "return_leftovers",
       entityType: "route",
       entityId: routeId,
-      entityLabel: `Route ${routeId.slice(0, 8)}`,
+      entityLabel: "Route " + routeId.slice(0, 8),
       afterData: {
-        returned_items: Array.from(leftoversByProduct.entries()).map(([productId, quantity]) => ({ product_id: productId, quantity })),
+        returned_items: Array.from(leftoverPlans.entries()).map(([productId, plan]) => ({ product_id: productId, quantity: plan.returnQty })),
         movement_count: movements.length,
       },
       metadata: { operator_id: route.operator_id, storage_id: storageId },
-      summary: movements.length ? `Returned leftovers with ${movements.length} inventory movement rows` : "Confirmed no leftover stock to return",
+      summary: movements.length ? "Returned leftovers with " + movements.length + " inventory movement rows" : "Confirmed no leftover stock to return",
     });
 
     revalidateRouteWorkflow(routeId);
@@ -2961,7 +3142,6 @@ export async function recordLeftovers({
     });
   }
 }
-
 /**
  * Completes entire route
  * Updates route status to completed
@@ -2976,6 +3156,7 @@ export async function completeRoute(routeId: string) {
   let logRouteStockLineCount = 0;
   let logMovementCount = 0;
   let attemptedRouteUpdatePayload: Record<string, unknown> | null = null;
+  let completionWarning: string | null = null;
 
   try {
     const profile = await getCurrentProfile();
@@ -3044,7 +3225,6 @@ export async function completeRoute(routeId: string) {
     logRouteStockLineCount = routeStockLines?.length ?? 0;
     logMovementCount = routeMovements?.length ?? 0;
     const returnedByProduct = productQuantitiesFromMovements(returnMovements);
-    const remainingBagStock = positiveRouteBagBalances(routeMovements);
 
     for (const line of routeStockLines ?? []) {
       const productId = String(line.product_id);
@@ -3059,25 +3239,8 @@ export async function completeRoute(routeId: string) {
       }
     }
 
-    let completionWarning: string | null = null;
-    if (remainingBagStock.length) {
-      const productIds = remainingBagStock.map((item) => item.productId);
-      const { data: products } = productIds.length
-        ? await supabase.from("products").select("id, name").in("id", productIds)
-        : { data: [] };
-      const productById = new Map((products ?? []).map((product: any) => [String(product.id), product.name ?? "Unknown product"]));
-      completionWarning = `Calculated remaining operator bag inventory: ${remainingBagStock.map((item) => `${productById.get(item.productId) ?? "Unknown product"} ${item.quantity}`).join(", ")}. Review leftovers and stock reconciliation.`;
-      console.warn("[operator:complete-route] Completing route with calculated remaining operator bag stock", {
-        route_id: routeId,
-        remaining_bag_stock: remainingBagStock.map((item) => ({
-          product_id: item.productId,
-          product_name: productById.get(item.productId) ?? "Unknown product",
-          quantity: item.quantity,
-        })),
-      });
-    }
-
     const completedAt = new Date().toISOString();
+
     const actorTeamMemberId = profile?.team_member_id ?? null;
     attemptedRouteUpdatePayload = {
       status: ROUTE_COMPLETED_STATUS,
@@ -3099,6 +3262,66 @@ export async function completeRoute(routeId: string) {
     }
 
     if (updateResult.error) throwActionError(updateResult.error, "Could not complete this route.");
+
+    try {
+      const { data: refreshedRouteMovements, error: refreshedMovementError } = await supabase
+        .from("inventory_movements")
+        .select("product_id, quantity, reason, from_entity_type, from_entity_id, to_entity_type, to_entity_id, related_route_stop_id, related_machine_id")
+        .eq("related_route_id", routeId)
+        .limit(5000);
+
+      if (refreshedMovementError) {
+        console.warn("[operator:complete-route] Could not reload saved route summary after completion", {
+          route_id: routeId,
+          error: refreshedMovementError,
+        });
+        completionWarning = null;
+      } else {
+        const refreshedSummaryByProduct = routeInventorySummaryByProduct(refreshedRouteMovements);
+        const refreshedMovementSources = routeMovementLogRows(refreshedRouteMovements);
+        const remainingBagStock = Array.from(refreshedSummaryByProduct.values()).filter((row) => row.remainingQty > 0);
+
+        if (remainingBagStock.length) {
+          const productIds = remainingBagStock.map((item) => item.productId);
+          const { data: products, error: productError } = productIds.length
+            ? await supabase.from("products").select("id, name").in("id", productIds)
+            : { data: [], error: null };
+
+          if (productError) {
+            console.warn("[operator:complete-route] Could not load product names for route completion summary", {
+              route_id: routeId,
+              error: productError,
+            });
+            completionWarning = null;
+          } else {
+            const productById = new Map((products ?? []).map((product: any) => [String(product.id), String(product.name ?? "Unknown product")]));
+            completionWarning = "Calculated remaining operator bag inventory: " + remainingBagStock.map((item) => (productById.get(item.productId) ?? "Unknown product") + " " + item.remainingQty).join(", ") + ". Review leftovers and stock reconciliation.";
+            console.warn("[operator:complete-route] Completing route with calculated remaining operator bag stock", {
+              route_id: routeId,
+              route_inventory_summary: remainingBagStock.map((item) => ({
+                product_id: item.productId,
+                product_name: productById.get(item.productId) ?? "Unknown product",
+                loaded_qty: item.loadedQty,
+                filled_qty: item.filledQty,
+                returned_qty: item.returnedQty,
+                damaged_qty: item.damagedQty,
+                extra_qty: item.adjustmentInQty,
+                remaining_qty: item.remainingQty,
+                source_rows_used: refreshedMovementSources.filter((row) => row.product_id === item.productId),
+              })),
+            });
+          }
+        } else {
+          completionWarning = null;
+        }
+      }
+    } catch (summaryError) {
+      console.warn("[operator:complete-route] Could not reload saved route summary after completion", {
+        route_id: routeId,
+        error: summaryError,
+      });
+      completionWarning = null;
+    }
     await logActivity({
       profile,
       action: "update",
@@ -3122,6 +3345,7 @@ export async function completeRoute(routeId: string) {
       route_status_before: route.status ?? null,
       route_status_after: ROUTE_COMPLETED_STATUS,
       stop_count: logStopCount,
+      completion_warning: completionWarning,
       redirect_path: operatorRouteDetailPath(routeId),
     });
     revalidateRouteWorkflow(routeId);

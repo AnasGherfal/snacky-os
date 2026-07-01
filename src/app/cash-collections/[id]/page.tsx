@@ -9,6 +9,7 @@ import { canAccessPath, canViewFinancials } from "@/lib/authz";
 import { getCashCollectionStatus, isCriticalCashVariance, isLargeCashVariance } from "@/lib/cash-collections";
 import { confirmCashCollectionCount, voidCashCollection } from "@/lib/cash-actions";
 import { lyd } from "@/lib/format";
+import { formatMachineDisplayName } from "@/lib/machine-site-display";
 
 function formatDate(value: string | null) {
   if (!value) return "-";
@@ -57,7 +58,7 @@ export default async function CashCollectionDetailPage({
     supabase
       .from("cash_collections")
       .select(
-        "id, route_id, machine_id, operator_id, collected_at, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, counted_at, counted_by, voided_at, void_reason, notes, machine:machines(id, name, machine_code), operator:team_members!cash_collections_operator_id_fkey(id, full_name), counted_by_member:team_members!cash_collections_counted_by_fkey(id, full_name), route:routes(id, route_date, status)",
+        "id, route_id, machine_id, operator_id, collected_at, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, counted_at, counted_by, voided_at, void_reason, notes, machine:machines(id, name, machine_code, display_name, location:locations(id, name)), operator:team_members!cash_collections_operator_id_fkey(id, full_name), counted_by_member:team_members!cash_collections_counted_by_fkey(id, full_name), route:routes(id, route_date, status)",
       )
       .eq("id", id)
       .single(),
@@ -82,11 +83,11 @@ export default async function CashCollectionDetailPage({
       <div className="space-y-6">
         <PageHeader
           title="Cash Collection"
-          subtitle={`${collectionRow.machine?.name ?? "Machine"} collected on ${formatDate(collectionRow.collected_at)}`}
+          subtitle={`${formatMachineDisplayName(collectionRow.machine ?? null, { includeArea: true })} collected on ${formatDate(collectionRow.collected_at)}`}
           breadcrumbs={[
             { label: "Finance", href: "/finance" },
             { label: "Cash Collections", href: "/cash-collections" },
-            { label: collectionRow.machine?.name ?? "Collection" },
+            { label: formatMachineDisplayName(collectionRow.machine ?? null, { includeArea: true }) },
           ]}
           action={
             <div className="flex flex-wrap gap-2">
@@ -130,7 +131,7 @@ export default async function CashCollectionDetailPage({
           <SectionCard>
             <h2 className="mb-4 text-lg font-semibold">Collection details</h2>
             <dl className="grid gap-4 sm:grid-cols-2">
-              <DetailItem label="Machine">{collectionRow.machine?.name ?? "Unknown machine"}<div className="text-sm text-slate-500">{collectionRow.machine?.machine_code ?? "-"}</div></DetailItem>
+              <DetailItem label="Machine">{formatMachineDisplayName(collectionRow.machine ?? null, { includeArea: true })}<div className="text-sm text-slate-500">{collectionRow.machine?.machine_code ?? "-"}</div></DetailItem>
               <DetailItem label="Collected by">{collectionRow.operator?.full_name ?? "Unassigned"}</DetailItem>
               <DetailItem label="Route">{collectionRow.route?.id ? <Link href={`/routes/${collectionRow.route.id}`} className="link-secondary">{collectionRow.route.route_date}</Link> : "-"}</DetailItem>
               <DetailItem label="Route status">{collectionRow.route?.status ? <StatusBadge status={collectionRow.route.status} /> : "-"}</DetailItem>

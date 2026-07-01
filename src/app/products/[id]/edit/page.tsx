@@ -107,7 +107,7 @@ export default async function EditProductPage({ params, searchParams }: { params
       .limit(100),
     s
       .from("vms_sales_snapshots")
-      .select("id, sold_qty, sales_amount, cash_sales_amount, card_sales_amount, period_end, machine:machines(name)")
+      .select("id, sold_qty, sales_amount, cash_sales_amount, card_sales_amount, period_end, machine:machines(name, machine_code, display_name, location:locations(id, name))")
       .eq("product_id", id)
       .eq("import_row_status", "imported")
       .order("period_end", { ascending: false })
@@ -250,7 +250,7 @@ export default async function EditProductPage({ params, searchParams }: { params
           <h2 className="mb-4 text-lg font-semibold text-slate-900">Sales</h2>
           {!sales?.length ? <EmptyState title="No VMS sales snapshots" body="Sales history appears after VMS sales CSV imports for this product." /> : (
             <DataTable headers={["Period", "Machine", "Units sold", "Sales", "Cash", "Card"]}>
-              {sales.map((row: any) => <tr key={row.id}><td>{new Date(row.period_end).toLocaleDateString("en-US")}</td><td>{row.machine?.name ?? "-"}</td><td>{row.sold_qty}</td><td>{lyd(Number(row.sales_amount ?? 0))}</td><td>{lyd(Number(row.cash_sales_amount ?? 0))}</td><td>{lyd(Number(row.card_sales_amount ?? 0))}</td></tr>)}
+              {sales.map((row: any) => <tr key={row.id}><td>{new Date(row.period_end).toLocaleDateString("en-US")}</td><td>{formatMachineDisplayName(row.machine as any, { includeArea: true })}</td><td>{row.sold_qty}</td><td>{lyd(Number(row.sales_amount ?? 0))}</td><td>{lyd(Number(row.cash_sales_amount ?? 0))}</td><td>{lyd(Number(row.card_sales_amount ?? 0))}</td></tr>)}
             </DataTable>
           )}
         </section>

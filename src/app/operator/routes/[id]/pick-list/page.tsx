@@ -679,9 +679,7 @@ export default function PickListPage() {
       }
       localDraft.clearDraft();
       pickupSubmissionIdRef.current = crypto.randomUUID();
-      const successMessage = selectedStopIds.length === 1
-        ? "Pickup batch saved for 1 stop."
-        : `Pickup batch saved for ${selectedStopIds.length} stops.`;
+      const successMessage = "Pickup confirmed.";
       console.info("[operator:route-nav] Redirecting after pickup confirmation", {
         action: "confirm_pick_list",
         routeId,
@@ -689,7 +687,7 @@ export default function PickListPage() {
       });
       router.push(`${routeHref}?success=${encodeURIComponent(successMessage)}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to confirm pick list");
+      setError(err instanceof Error && err.message.trim() ? err.message : "Could not confirm pickup. Please try again.");
       setSubmitting(false);
     }
   };

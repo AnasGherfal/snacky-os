@@ -98,13 +98,38 @@ export default function LeftoversPage() {
     setProgressMessage("Checking returned stock...");
     setError("");
     try {
-      // Record leftovers
+      const finalRemainingByProduct = new Map(items.map((item) => [item.productId, Math.max(0, Number(leftoverQtys[item.productId] ?? 0))]));
       const leftoverItems = items
-        .filter((item) => (leftoverQtys[item.productId] || 0) > 0)
-        .map((item) => ({
-          productId: item.productId,
-          quantity: leftoverQtys[item.productId] || 0,
-        }));
+        .map((item) => {
+          const currentRemainingQty = Math.max(0, Number(item.quantity ?? 0));
+          const userFinalRemainingQty = finalRemainingByProduct.get(item.productId) ?? 0;
+          const returnQty = Math.max(0, currentRemainingQty - userFinalRemainingQty);
+          return {
+            productId: item.productId,
+            quantity: returnQty,
+            finalRemainingQty: userFinalRemainingQty,
+            currentRemainingQty,
+            productName: item.productName,
+          };
+        })
+        .filter((item) => item.quantity > 0);
+
+      console.info("[operator:route-leftovers] Prepared final remaining quantities", {
+        action_step: "complete_route.prepare_leftover_returns",
+        route_id: routeId,
+        current_user_id: null,
+        product_rows: items.map((item) => {
+          const currentRemainingQty = Math.max(0, Number(item.quantity ?? 0));
+          const userFinalRemainingQty = finalRemainingByProduct.get(item.productId) ?? 0;
+          return {
+            product_id: item.productId,
+            product_name: item.productName,
+            current_remaining_quantity: currentRemainingQty,
+            user_final_remaining_quantity: userFinalRemainingQty,
+            calculated_return_quantity: Math.max(0, currentRemainingQty - userFinalRemainingQty),
+          };
+        }),
+      });
 
       setProgressMessage("Creating return movements...");
       const leftoversResult = await recordLeftovers({ routeId, leftoverItems, clientSubmissionId: leftoversSubmissionIdRef.current });
@@ -151,7 +176,7 @@ export default function LeftoversPage() {
     );
   }
 
-  const totalLeftovers = Object.values(leftoverQtys).reduce((a, b) => a + b, 0);
+  const totalFinalRemaining = Object.values(leftoverQtys).reduce((a, b) => a + Number(b ?? 0), 0);
   const applyCalculatedRemaining = () => setLeftoverQtys(suggestedLeftoverQuantities(items, reconciliation));
   const clearLeftovers = () => setLeftoverQtys(items.reduce<Record<string, number>>((totals, item) => {
     totals[item.productId] = 0;
@@ -163,7 +188,7 @@ export default function LeftoversPage() {
       <div className="space-y-6 max-w-2xl">
         <PageHeader
           title="Return Leftovers"
-          subtitle="Enter quantities of each product you're returning to storage."
+          subtitle="Enter the final remaining quantity for each product after you return stock to storage."
           action={<SecondaryButton href={routeHref}>Back</SecondaryButton>}
         />
 
@@ -219,8 +244,8 @@ export default function LeftoversPage() {
 
         {items.length === 0 ? (
           <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-6 text-center">
-            <p className="font-medium text-emerald-800">No items to return</p>
-            <p className="mt-1 text-sm text-emerald-700">You used all the stock you picked.</p>
+            <p className="font-medium text-emerald-800">No stock left to review</p>
+            <p className="mt-1 text-sm text-emerald-700">You returned or used all the stock you picked.</p>
             <button
               onClick={handleCompleteRoute}
               disabled={submitting}
@@ -232,7 +257,7 @@ export default function LeftoversPage() {
         ) : (
           <>
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-              <strong>Instructions:</strong> Enter the quantity of each item you are returning to storage. If you already returned everything, set the leftovers to 0 and Snacky OS will still let you complete the route while showing any remaining bag-stock warning for review.
+              <strong>Instructions:</strong> Enter the final remaining quantity for each product after you return stock to storage. If you returned everything, set the remaining quantity to 0 and Snacky OS will complete the route without a leftover warning for that product.
               <div className="mt-3 flex flex-wrap gap-2">
                 <button type="button" onClick={applyCalculatedRemaining} className="btn-secondary">
                   Use calculated remaining
@@ -254,12 +279,12 @@ export default function LeftoversPage() {
                       </p>
                     </div>
                     <div className="w-full sm:w-44">
-                      <div className="mb-1 text-xs font-medium text-slate-500">Return units</div>
+                      <div className="mb-1 text-xs font-medium text-slate-500">Final remaining</div>
                       <QuantityStepper
-                        value={leftoverQtys[item.productId] || 0}
+                        value={leftoverQtys[item.productId] ?? 0}
                         max={item.quantity}
                         onChange={(quantity) => setLeftoverQtys((prev) => ({ ...prev, [item.productId]: quantity }))}
-                        inputLabel={`${item.productName} leftover quantity`}
+                        inputLabel={`${item.productName} final remaining quantity`}
                       />
                     </div>
                   </div>
@@ -269,8 +294,8 @@ export default function LeftoversPage() {
 
             <SectionCard>
               <div className="p-4">
-                <div className="text-sm text-slate-500 mb-1">Total leftovers to return</div>
-                <div className="text-3xl font-bold text-slate-900">{totalLeftovers}</div>
+                <div className="text-sm text-slate-500 mb-1">Total final remaining</div>
+                <div className="text-3xl font-bold text-slate-900">{totalFinalRemaining}</div>
                 <p className="text-xs text-slate-600 mt-2">units</p>
               </div>
             </SectionCard>

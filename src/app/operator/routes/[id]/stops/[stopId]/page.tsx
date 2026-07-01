@@ -765,7 +765,7 @@ export default function MachineStopPage() {
         filledItems: stopData.refillItems.map((item) => ({
           refillOrderLineId: item.refillOrderLineId ?? null,
           productId: item.productId,
-          quantity: filledQtys[item.productId] || 0,
+          quantity: filledQtys[item.productId] ?? 0,
           assignedQty: Number(item.assignedQty ?? item.parQty ?? 0),
           reason: unavailableProducts[item.productId] ? "Product not in operator bag" : undefined,
           notes: lineNotes[item.productId] || undefined,
@@ -926,7 +926,7 @@ export default function MachineStopPage() {
             <div className="divide-y divide-slate-200">
               {stopData.refillItems.map((item) => {
                 const assignedQty = Number(item.assignedQty ?? item.parQty ?? 0);
-                const actualQty = filledQtys[item.productId] || 0;
+                const actualQty = filledQtys[item.productId] ?? 0;
                 const difference = actualQty - assignedQty;
                 const maxQty = remainingBagQty(item.productId, actualQty);
                 return (

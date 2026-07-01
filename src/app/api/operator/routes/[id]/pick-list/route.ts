@@ -4,6 +4,7 @@ import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute } from "@/lib/authz";
 import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 import { isTerminalRouteStatus, ROUTE_STOP_PENDING_STATUS } from "@/lib/route-workflow";
+import { formatMachineDisplayName } from "@/lib/machine-site-display";
 
 function isMissingTable(error: any, tableName: string) {
   return error?.code === "PGRST205" && String(error?.message ?? "").includes(tableName);
@@ -137,7 +138,7 @@ export async function GET(
 
     const { data: stops, error: stopsError } = await supabase
       .from("route_stops")
-      .select("id, machine_id, stop_order, status, machine:machines(id, name, machine_code, location:locations(id, name))")
+      .select("id, machine_id, stop_order, status, machine:machines(id, name, machine_code, display_name, location:locations(id, name))")
       .eq("route_id", routeId)
       .order("stop_order", { ascending: true });
     if (stopsError) throw stopsError;
@@ -158,7 +159,7 @@ export async function GET(
         `id,
         route_stop_id,
         machine_id,
-        machine:machines(id, name, machine_code),
+        machine:machines(id, name, machine_code, display_name, location:locations(id, name)),
         product_id,
         planned_quantity,
         is_checked,
@@ -176,7 +177,7 @@ export async function GET(
           `id,
           route_stop_id,
           machine_id,
-          machine:machines(id, name, machine_code),
+          machine:machines(id, name, machine_code, display_name, location:locations(id, name)),
           product_id,
           planned_quantity,
           source,
@@ -194,7 +195,7 @@ export async function GET(
         .select(
           `id,
           machine_id,
-          machine:machines(id, name, machine_code),
+          machine:machines(id, name, machine_code, display_name, location:locations(id, name)),
           refill_order_lines(
             id,
             machine_slot_id,
@@ -344,7 +345,7 @@ export async function GET(
         route_stop_id: stop.id,
         machine_id: stop.machine_id,
         stop_status: stop.status,
-        machine_name: (machine as any)?.name ?? "Unknown machine",
+        machine_name: formatMachineDisplayName(machine as any, { includeArea: true }),
         machine_code: (machine as any)?.machine_code ?? "-",
         location_name: (location as any)?.name ?? "Unknown location",
         stop_order: Number(stop.stop_order ?? 0),
@@ -374,7 +375,7 @@ export async function GET(
         route_stop_id: routeStopId,
         machine_id: line.machine_id,
         stop_status: stop?.status ?? null,
-        machine_name: (machine as any)?.name ?? "Unknown machine",
+        machine_name: formatMachineDisplayName(machine as any, { includeArea: true }),
         machine_code: (machine as any)?.machine_code ?? "-",
         location_name: (location as any)?.name ?? "Unknown location",
         stop_order: Number(stop?.stop_order ?? 0),
@@ -418,7 +419,7 @@ export async function GET(
         route_stop_item_id: routeStopItemId,
         route_stop_id: routeStopId,
         machine_id: line.machine_id,
-        machine_name: (machine as any)?.name ?? "Unknown machine",
+        machine_name: formatMachineDisplayName(machine as any, { includeArea: true }),
         machine_code: (machine as any)?.machine_code ?? "-",
         location_name: (location as any)?.name ?? "Unknown location",
         planned_qty: plannedQty,

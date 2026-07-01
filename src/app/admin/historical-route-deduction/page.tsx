@@ -7,6 +7,7 @@ import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
 import { applyHistoricalRouteDeduction, cancelHistoricalRouteDeduction, previewHistoricalRouteDeduction } from "@/lib/historical-route-deduction-actions";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { formatMachineDisplayName } from "@/lib/machine-site-display";
 
 export const dynamic = "force-dynamic";
 
@@ -53,7 +54,8 @@ function productLabel(line: any) {
 
 function machineLabel(line: any) {
   const machine = Array.isArray(line.machine) ? line.machine[0] : line.machine;
-  return machine?.name ?? line.machine_alias ?? line.section_name ?? "Unknown machine";
+  const machineName = formatMachineDisplayName(machine as any, { includeArea: true });
+  return machineName === "Unknown machine" ? line.machine_alias ?? line.section_name ?? machineName : machineName;
 }
 
 function storageLabel(line: any) {
@@ -139,7 +141,7 @@ export default async function HistoricalRouteDeductionPage({ searchParams }: { s
     params.batchId
       ? supabase
           .from("historical_route_deduction_lines")
-          .select("id, line_number, section_name, machine_alias, machine_id, product_alias, product_id, quantity, original_text, status, review_reason, storage_qty_before, storage_qty_after, storage_negative_warning, movement_id, applied_at, product:products(id, name, sku), machine:machines(id, name, machine_code), storage:storage_locations(id, name)")
+          .select("id, line_number, section_name, machine_alias, machine_id, product_alias, product_id, quantity, original_text, status, review_reason, storage_qty_before, storage_qty_after, storage_negative_warning, movement_id, applied_at, product:products(id, name, sku), machine:machines(id, name, machine_code, display_name, location:locations(id, name)), storage:storage_locations(id, name)")
           .eq("import_batch_id", params.batchId)
           .order("line_number", { ascending: true })
       : Promise.resolve({ data: [], error: null }),

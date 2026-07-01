@@ -7,7 +7,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { RouteRecommendationDiagnostics } from "@/app/routes/new/types";
 import { FormField, FormSection, SecondaryButton } from "@/components/ui";
-import { machineBaseLabel } from "@/lib/machine-site-display";
+import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { comparePickupProductRows, groupRouteItemsForDisplay } from "@/lib/route-pickup-checklist";
 
 type Operator = {
@@ -161,7 +161,7 @@ function locationLabel(value: string | null | undefined) {
 
 function machineLabel(machine: Machine | null | undefined) {
   if (!machine) return "Unknown machine";
-  return String(machine.display_name ?? machineBaseLabel(machine)).trim() || machine.machine_code || "Unknown machine";
+  return formatMachineDisplayName(machine, { includeArea: true });
 }
 
 function recommendationReasonSummary(group: RecommendationGroup) {
@@ -1307,7 +1307,7 @@ export function RouteCreateForm({
                       const exceeds = Boolean(stockIssue) || unitQuantity(item.quantity) > available;
                       return (
                         <tr key={`${item.machineId}-${item.productId}`} className={`border-t border-slate-200 ${stockIssue ? "bg-rose-50" : ""}`}>
-                          <td className="px-3 py-2">{machine?.name ?? "Unknown machine"}</td>
+                          <td className="px-3 py-2">{machineLabel(machine)}</td>
                           <td className="px-3 py-2">
                             <div className="flex items-center gap-3">
                               <ProductThumbnail imageUrl={product?.imageUrl} name={product?.name} size="md" />
@@ -1823,7 +1823,7 @@ export function RouteCreateForm({
                   disabled={saving}
                 />
                 <span>
-                  {machineLabel(machine)} <span className="text-slate-500">({machine.machine_code})</span>
+                  {machineLabel(machine)}
                   <span className="block text-xs text-slate-500">{locationLabel(machine.location_name)}</span>
                 </span>
               </label>

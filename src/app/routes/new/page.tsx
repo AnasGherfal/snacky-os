@@ -5,7 +5,7 @@ import { ROUTE_RESERVATION_STATUSES, isRouteReservationStatus } from "@/lib/rout
 import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
 import { activeStockBatches, queryVmsDashboardBatches, sourceFileName, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
 import { RouteCreateForm } from "@/app/routes/new/RouteCreateForm";
-import { formatSiteLabel, machineBaseLabel } from "@/lib/machine-site-display";
+import { formatSiteLabel, formatMachineDisplayName } from "@/lib/machine-site-display";
 import type {
   RouteRecommendationDiagnosticReasonCode,
   RouteRecommendationDiagnostics,
@@ -44,6 +44,7 @@ type MachineRow = {
   id: string;
   name: string;
   machine_code: string;
+  display_name?: string | null;
   machine_display_name?: string | null;
   vms_machine_id?: string | null;
   location?: Record<string, unknown> | Record<string, unknown>[] | null;
@@ -450,7 +451,7 @@ export default async function NewRoutePage() {
     return {
       id: machine.id,
       name: machine.name,
-      display_name: machineBaseLabel(machine),
+      display_name: machine.display_name ?? machine.machine_display_name ?? null,
       machine_code: machine.machine_code,
       location_name: formatSiteLabel(location ?? null, { includeArea: true }),
     };
@@ -553,7 +554,7 @@ export default async function NewRoutePage() {
     };
     return {
       machineId: machine.id,
-      machineName: machineBaseLabel(machine),
+      machineName: formatMachineDisplayName(machine, { includeArea: true }),
       machineCode: machine.machine_code,
       locationName: formatSiteLabel(location ?? null, { includeArea: true }),
       machineMapped: Boolean(machine.vms_machine_id),

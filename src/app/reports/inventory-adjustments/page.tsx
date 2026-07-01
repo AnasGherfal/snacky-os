@@ -2,6 +2,7 @@ import Link from "next/link";
 import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
+import { formatMachineDisplayName } from "@/lib/machine-site-display";
 
 export const dynamic = "force-dynamic";
 
@@ -78,7 +79,7 @@ export default async function InventoryAdjustmentsReportPage({
   let query = supabase
     .from("inventory_adjustments")
     .select(
-      "id, adjustment_type, product_id, product_name, quantity, unit_cost_lyd, total_cost_lyd, reason, notes, photo_url, status, created_at, route_id, route_stop_id, machine_id, location_id, operator_id, route:routes(id, route_date), machine:machines(id, name, machine_code), location:locations(id, name), operator:team_members(id, full_name), product:products(id, name, sku)",
+      "id, adjustment_type, product_id, product_name, quantity, unit_cost_lyd, total_cost_lyd, reason, notes, photo_url, status, created_at, route_id, route_stop_id, machine_id, location_id, operator_id, route:routes(id, route_date), machine:machines(id, name, machine_code, display_name, location:locations(id, name)), location:locations(id, name), operator:team_members(id, full_name), product:products(id, name, sku)",
     )
     .order("created_at", { ascending: false })
     .limit(500);
@@ -114,7 +115,7 @@ export default async function InventoryAdjustmentsReportPage({
       row.status,
       row.adjustment_type,
       row.route?.route_date,
-      row.machine?.name,
+      formatMachineDisplayName(row.machine ?? null, { includeArea: true }),
       row.machine?.machine_code,
       row.location?.name,
       row.operator?.full_name,
@@ -199,7 +200,7 @@ export default async function InventoryAdjustmentsReportPage({
               <td>{numberValue(row.quantity)}</td>
               <td>{row.route?.route_date ? `Route ${row.route.route_date}` : row.route_id ? `Route ${row.route_id.slice(0, 8)}` : "-"}</td>
               <td>
-                <div className="font-medium text-slate-900">{displayName(row.machine?.name, "Unknown machine")}</div>
+                <div className="font-medium text-slate-900">{formatMachineDisplayName(row.machine ?? null, { includeArea: true })}</div>
                 <div className="text-xs text-slate-500">
                   {row.machine?.machine_code ?? row.location?.name ?? "Unknown location"}
                 </div>

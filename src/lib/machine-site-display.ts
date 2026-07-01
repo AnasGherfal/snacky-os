@@ -8,6 +8,7 @@ type SiteLike = {
 };
 
 type MachineLike = {
+  display_name?: unknown;
   machine_code?: unknown;
   machine_display_name?: unknown;
   name?: unknown;
@@ -56,8 +57,8 @@ export function formatSiteLabel(
   return siteName ?? area ?? fallback;
 }
 
-export function machineBaseLabel(value: Pick<MachineLike, "machine_display_name" | "machine_code" | "name">) {
-  return textValue(value.machine_display_name) ?? textValue(value.machine_code) ?? textValue(value.name) ?? "Unknown machine";
+export function machineBaseLabel(value: Pick<MachineLike, "display_name" | "machine_display_name" | "machine_code" | "name">) {
+  return textValue(value.display_name) ?? textValue(value.machine_display_name) ?? textValue(value.machine_code) ?? textValue(value.name) ?? "Unknown machine";
 }
 
 export function machineSiteLabel(
@@ -80,11 +81,22 @@ export function formatMachineDisplayName(
   value: MachineLike,
   {
     includeArea = true,
-    fallbackSite = "بدون موقع",
+    fallbackSite = "Unknown machine",
   }: {
     includeArea?: boolean;
     fallbackSite?: string;
   } = {},
 ) {
-  return `${machineBaseLabel(value)} — ${machineSiteLabel(value, { includeArea, fallback: fallbackSite })}`;
+  const displayName = textValue(value.display_name) ?? textValue(value.machine_display_name);
+  if (displayName) return displayName;
+
+  const machineCode = textValue(value.machine_code);
+  const siteLabel = textValue(value.location_name) ?? formatSiteLabel(value.location ?? value.locations ?? null, { includeArea, fallback: "" });
+  const machineName = textValue(value.name);
+
+  if (machineCode && siteLabel) return `${machineCode} - ${siteLabel}`;
+  if (machineCode && machineName && machineName !== machineCode) return `${machineCode} - ${machineName}`;
+  if (machineCode) return machineCode;
+  if (machineName) return machineName;
+  return "Unknown machine";
 }
