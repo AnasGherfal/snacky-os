@@ -84,7 +84,7 @@ async function reverseOutstandingPickedStock(
   const [{ data: routeStockLines, error: stockError }, { data: fillMovements, error: fillError }, { data: pickMovements, error: pickError }] = await Promise.all([
     supabase.from("route_stock_lines").select("id, product_id, picked_qty, returned_qty").eq("route_id", routeId),
     supabase.from("inventory_movements").select("product_id, quantity, reason, from_entity_type, to_entity_type").eq("related_route_id", routeId).in("reason", ["operator_bag_to_machine", "manual_correction"]),
-    supabase.from("inventory_movements").select("product_id, quantity, from_entity_id, to_entity_id").eq("related_route_id", routeId).in("reason", ["storage_to_operator_bag", "storage_to_route"]).order("created_at", { ascending: true }),
+    supabase.from("inventory_movements").select("product_id, quantity, from_entity_id, to_entity_id").eq("related_route_id", routeId).in("reason", ["storage_to_operator_bag"]).order("created_at", { ascending: true }),
   ]);
 
   if (stockError) throw stockError;

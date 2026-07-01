@@ -169,7 +169,7 @@ export async function GET(
       )
       .eq("route_id", routeId);
 
-    if (stopItemsError && isMissingColumn(stopItemsError, ["is_checked", "checked_at", "checked_by"])) {
+    if (stopItemsError && isMissingColumn(stopItemsError, ["is_checked", "checked_at", "checked_by", "category"])) {
       const fallback = await supabase
         .from("route_stop_items")
         .select(
@@ -180,7 +180,7 @@ export async function GET(
           product_id,
           planned_quantity,
           source,
-          product:products(id, name, sku, category)`
+          product:products(id, name, sku)`
         )
         .eq("route_id", routeId);
       stopItems = fallback.data;
@@ -431,12 +431,45 @@ export async function GET(
       plannedByProduct.set(productId, current);
     });
 
-    const { data: productOptionsData, error: productOptionsError } = await readClient
-      .from("products")
-      .select("id, sku, barcode, name, category, brand, image_url, active")
-      .eq("active", true)
-      .order("name");
-    if (productOptionsError) throw productOptionsError;
+    let productOptionsData: any[] = [];
+    {
+      const productOptionsResponse = await readClient
+        .from("products")
+        .select("id, sku, barcode, name, category, brand, image_url, active")
+        .eq("active", true)
+        .order("name");
+
+      if (productOptionsResponse.error && isMissingColumn(productOptionsResponse.error, ["category", "brand", "image_url"])) {
+        const fallback = await readClient
+          .from("products")
+          .select("id, sku, barcode, name, active")
+          .eq("active", true)
+          .order("name");
+
+        if (fallback.error) {
+          console.warn("[operator:pick-list] Failed to load product options, using an empty fallback", {
+            route_id: routeId,
+            error: supabaseErrorSummary(fallback.error),
+          });
+          productOptionsData = [];
+        } else {
+          productOptionsData = (fallback.data ?? []).map((product: any) => ({
+            ...product,
+            category: null,
+            brand: null,
+            image_url: null,
+          }));
+        }
+      } else if (productOptionsResponse.error) {
+        console.warn("[operator:pick-list] Failed to load product options, using an empty fallback", {
+          route_id: routeId,
+          error: supabaseErrorSummary(productOptionsResponse.error),
+        });
+        productOptionsData = [];
+      } else {
+        productOptionsData = productOptionsResponse.data ?? [];
+      }
+    }
 
     const productIds = Array.from(new Set([
       ...Array.from(plannedByProduct.keys()),
@@ -460,8 +493,18 @@ export async function GET(
         : Promise.resolve({ data: [], error: null }),
     ]);
 
-    if (storageResult.error) throw storageResult.error;
-    if (productNamesResult.error) throw productNamesResult.error;
+    if (storageResult.error) {
+      console.warn("[operator:pick-list] Could not load storage availability, defaulting to zero", {
+        route_id: routeId,
+        error: supabaseErrorSummary(storageResult.error),
+      });
+    }
+    if (productNamesResult.error) {
+      console.warn("[operator:pick-list] Could not reload product names, keeping route item names", {
+        route_id: routeId,
+        error: supabaseErrorSummary(productNamesResult.error),
+      });
+    }
 
     const productById = new Map((productNamesResult.data ?? []).map((product: any) => [String(product.id), product]));
     plannedByProduct.forEach((line: any, productId) => {
@@ -492,9 +535,14 @@ export async function GET(
       .from("inventory_movements")
       .select("id")
       .eq("related_route_id", routeId)
-      .in("reason", ["storage_to_operator_bag", "storage_to_route"])
+      .in("reason", ["storage_to_operator_bag"])
       .limit(1);
-    if (pickMovementError) throw pickMovementError;
+    if (pickMovementError) {
+      console.warn("[operator:pick-list] Could not verify pickup confirmation state", {
+        route_id: routeId,
+        error: supabaseErrorSummary(pickMovementError),
+      });
+    }
     const confirmed = Boolean(pickMovements?.length);
 
     const items = Array.from(plannedByProduct.values()).map((line: any) => ({
@@ -693,3 +741,5 @@ export async function PATCH(
     );
   }
 }
+
+

@@ -2826,7 +2826,7 @@ export async function recordLeftovers({
         .from("inventory_movements")
         .select("product_id, quantity")
         .eq("related_route_id", routeId)
-        .in("reason", ["operator_bag_to_storage", "route_to_storage_return"]),
+        .in("reason", ["operator_bag_to_storage"]),
     ]);
     if (movementBalanceError) throwActionError(movementBalanceError, "Could not calculate route operator bag inventory.");
     if (filledError) throwActionError(filledError, "Could not verify filled route stock.");
