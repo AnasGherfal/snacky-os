@@ -3,7 +3,8 @@ import { headers } from "next/headers";
 import { isPublicShellPath, RootAppShell } from "@/components/AppShell";
 import { I18nProvider } from "@/components/I18nProvider";
 import { PwaRegister } from "@/components/PwaRegister";
-import { getAppLocale, getTextDirection } from "@/lib/i18n";
+import { getTextDirection } from "@/lib/i18n";
+import { getRequestLocale } from "@/lib/i18n/server";
 import "./globals.css";
 
 function getMetadataBase() {
@@ -50,7 +51,7 @@ export const viewport: Viewport = {
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const locale = getAppLocale();
+  const locale = await getRequestLocale();
   const headerStore = await headers();
   const pathname = headerStore.get("x-pathname");
   const content =

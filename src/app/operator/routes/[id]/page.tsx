@@ -4,6 +4,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge, SectionCard } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute, canExecuteRoutes } from "@/lib/authz";
+import { getServerI18n } from "@/lib/i18n/server";
 import { buildOperatorRouteAccessContext, loadAccessibleOperatorIds } from "@/lib/operator-route-access";
 import { type OperatorRoutePreviewRow, type OperatorRoutePreviewStopRow } from "@/lib/operator-route-types";
 import { sortPickupProductRows } from "@/lib/route-pickup-checklist";
@@ -132,6 +133,7 @@ export default async function OperatorRouteDetailPage({
 }) {
   const { id: routeId } = await params;
   const { success, error } = await searchParams;
+  const { t } = await getServerI18n();
   const supabase = await getAuthenticatedSupabaseServerClient();
   const profile = await getCurrentProfile();
   if (!profile || !canExecuteRoutes(profile)) redirect("/unauthorized");
@@ -139,9 +141,9 @@ export default async function OperatorRouteDetailPage({
     return (
       <>
         <ErrorState
-          title="Route unavailable"
-          body="Snacky OS could not connect to the database to load this route."
-          action={<SecondaryButton href="/operator/routes">Back to routes</SecondaryButton>}
+          title={t("Route unavailable")}
+          body={t("Snacky OS could not connect to the database to load this route.")}
+          action={<SecondaryButton href="/operator/routes">{t("Back to routes")}</SecondaryButton>}
         />
       </>
     );
@@ -299,9 +301,9 @@ export default async function OperatorRouteDetailPage({
     return (
       <>
         <ErrorState
-          title="Route unavailable"
-          body="This route is not assigned to you."
-          action={<SecondaryButton href="/operator/routes">Back to routes</SecondaryButton>}
+          title={t("Route unavailable")}
+          body={t("This route is not assigned to you.")}
+          action={<SecondaryButton href="/operator/routes">{t("Back to routes")}</SecondaryButton>}
         />
       </>
     );
@@ -311,9 +313,9 @@ export default async function OperatorRouteDetailPage({
     return (
       <>
         <ErrorState
-          title="Route details unavailable"
-          body="The route stops could not load. Refresh this page and try again. If it keeps happening, ask a supervisor to check the route data."
-          action={<SecondaryButton href="/operator/routes">Back to routes</SecondaryButton>}
+          title={t("Route details unavailable")}
+          body={t("The route stops could not load. Refresh this page and try again. If it keeps happening, ask a supervisor to check the route data.")}
+          action={<SecondaryButton href="/operator/routes">{t("Back to routes")}</SecondaryButton>}
         />
       </>
     );
@@ -347,24 +349,27 @@ export default async function OperatorRouteDetailPage({
     ? {
         href: continueHref,
         label: isAvailableRouteStatus(routeRow.status)
-          ? (routeRow.operator_id ? "Start Route" : "Claim & Start")
-          : "Continue Route",
+          ? (routeRow.operator_id ? t("Start Route") : t("Claim & Start"))
+          : t("Continue Route"),
       }
     : null;
+  const routeStatus = routeDisplayStatus(routeRow.status, routeRow.operator_id);
+  const translatedSuccess = success ? t(success, success) : null;
+  const translatedError = error ? t(error, error) : null;
 
   return (
     <>
       <div className="space-y-6">
         <PageHeader
-          title={`Route for ${routeRow.route_date}`}
-          subtitle={`${operator?.full_name ?? "Available to claim"} - ${totalStops} machine stops`}
-          action={<SecondaryButton href="/operator/routes">Back to routes</SecondaryButton>}
+          title={`${t("Route for")} ${routeRow.route_date}`}
+          subtitle={`${operator?.full_name ?? t("Available to claim")} - ${totalStops} ${t("machine stops")}`}
+          action={<SecondaryButton href="/operator/routes">{t("Back to routes")}</SecondaryButton>}
         />
-        {success ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900">{success}</div> : null}
-        {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{error}</div> : null}
+        {translatedSuccess ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900">{translatedSuccess}</div> : null}
+        {translatedError ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{translatedError}</div> : null}
         {operatorError || machinesError || adjustmentsError ? (
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-            Some route details could not load. The route is still available, but a few non-critical details may be missing.
+{t("Some route details could not load. The route is still available, but a few non-critical details may be missing.")}
           </div>
         ) : null}
 
@@ -372,13 +377,13 @@ export default async function OperatorRouteDetailPage({
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <SectionCard>
             <div className="p-4">
-              <div className="text-sm text-slate-500 mb-1">Status</div>
-              <StatusBadge status={routeDisplayStatus(routeRow.status, routeRow.operator_id)} />
+              <div className="text-sm text-slate-500 mb-1">{t("Status")}</div>
+              <StatusBadge status={routeStatus} label={t(routeStatus, routeStatus)} />
             </div>
           </SectionCard>
           <SectionCard>
             <div className="p-4">
-              <div className="text-sm text-slate-500 mb-1">Progress</div>
+              <div className="text-sm text-slate-500 mb-1">{t("Progress")}</div>
               <div className="font-semibold text-lg">
                 {doneStops}/{totalStops}
               </div>
@@ -386,24 +391,24 @@ export default async function OperatorRouteDetailPage({
           </SectionCard>
           <SectionCard>
             <div className="p-4">
-              <div className="mb-1 text-sm text-slate-500">Stops</div>
+              <div className="mb-1 text-sm text-slate-500">{t("Stops")}</div>
               <div className="font-semibold text-lg text-slate-900">
                 {totalStops}
               </div>
               <div className="mt-1 text-xs text-slate-500">
-                Machine stops on this route.
+{t("Machine stops on this route.")}
               </div>
             </div>
           </SectionCard>
           <SectionCard>
             <div className="p-4">
-              <div className="text-sm text-slate-500 mb-1">Action</div>
+              <div className="text-sm text-slate-500 mb-1">{t("Action")}</div>
               {primaryAction ? (
                 <Link href={primaryAction.href} className="btn-primary w-full text-base">
                   {primaryAction.label}
                 </Link>
               ) : (
-                <div className="text-sm text-slate-600">Route completed</div>
+                <div className="text-sm text-slate-600">{t("Route completed")}</div>
               )}
             </div>
           </SectionCard>
@@ -413,22 +418,22 @@ export default async function OperatorRouteDetailPage({
           <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <h2 className="text-lg font-semibold">Inventory adjustments</h2>
-                <p className="mt-1 text-sm text-slate-500">Damaged products and products returned from the machine are recorded here.</p>
+                <h2 className="text-lg font-semibold">{t("Inventory adjustments")}</h2>
+                <p className="mt-1 text-sm text-slate-500">{t("Damaged products and products returned from the machine are recorded here.")}</p>
               </div>
-              <StatusBadge status={damagedAdjustmentRows.length ? "damaged" : "returned_from_machine"} />
+              <StatusBadge status={damagedAdjustmentRows.length ? "damaged" : "returned_from_machine"} label={damagedAdjustmentRows.length ? t("damaged", "damaged") : t("returned_from_machine", "returned_from_machine")} />
             </div>
             <div className="mt-4 grid gap-3 sm:grid-cols-3">
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">Damaged units</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">{t("Damaged units")}</div>
                 <div className="mt-1 text-2xl font-semibold text-amber-950">{damagedAdjustmentQty}</div>
               </div>
               <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-emerald-800">Returned units</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-emerald-800">{t("Returned units")}</div>
                 <div className="mt-1 text-2xl font-semibold text-emerald-950">{returnedAdjustmentQty}</div>
               </div>
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Adjustment rows</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("Adjustment rows")}</div>
                 <div className="mt-1 text-2xl font-semibold text-slate-900">{adjustmentRows.length}</div>
               </div>
             </div>
@@ -438,11 +443,11 @@ export default async function OperatorRouteDetailPage({
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <StatusBadge status={adjustment.adjustment_type} />
-                        <span className="font-semibold text-slate-900">{adjustment.product_name ?? "Unknown product"}</span>
+                        <StatusBadge status={adjustment.adjustment_type} label={t(String(adjustment.adjustment_type ?? "unknown"), String(adjustment.adjustment_type ?? "unknown"))} />
+                        <span className="font-semibold text-slate-900">{adjustment.product_name ?? t("Unknown product")}</span>
                         <span className="text-sm text-slate-500">x{adjustment.quantity ?? 0}</span>
                       </div>
-                      <p className="mt-1 text-sm text-slate-600">{adjustment.reason ?? "No reason added"}</p>
+                      <p className="mt-1 text-sm text-slate-600">{adjustment.reason ?? t("No reason added")}</p>
                       {adjustment.notes ? <p className="mt-1 text-sm text-slate-500">{adjustment.notes}</p> : null}
                     </div>
                     <div className="text-xs text-slate-500">
@@ -456,27 +461,27 @@ export default async function OperatorRouteDetailPage({
           </section>
         ) : (
           <section className="rounded-lg border border-dashed border-slate-300 bg-white p-4 md:p-6">
-            <h2 className="text-lg font-semibold text-slate-900">Inventory adjustments</h2>
-            <p className="mt-1 text-sm text-slate-500">No damaged or returned products have been recorded for this route yet.</p>
+            <h2 className="text-lg font-semibold text-slate-900">{t("Inventory adjustments")}</h2>
+            <p className="mt-1 text-sm text-slate-500">{t("No damaged or returned products have been recorded for this route yet")}</p>
           </section>
         )}
 
         {/* Pick List Section */}
         <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
-          <h2 className="text-lg font-semibold mb-4">Pick list</h2>
+          <h2 className="text-lg font-semibold mb-4">{t("Pick list")}</h2>
           {isAvailableRouteStatus(routeRow.status) ? (
             <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-              <strong>Ready to start?</strong> Click {routeRow.operator_id ? "Start Route" : "Claim & Start"} above to view your pick list and begin picking stock from storage.
+              <strong>{t("Ready to start") + "?"}</strong> {t("Click")} {routeRow.operator_id ? t("Start Route") : t("Claim & Start")} {t("above to view your pick list and begin picking stock from storage.")}
             </div>
           ) : null}
           {!pickItems.length ? (
-            <EmptyState title="No pick list yet" body="This route has no products assigned to pick from storage." />
+            <EmptyState title={t("No pick list yet")} body={t("This route has no products assigned to pick from storage.")} />
           ) : (
             <div className="mb-4 space-y-2">
               {sortedPickItems.map((item) => (
                 <div key={item.id} className="flex flex-col gap-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-                  <span className="min-w-0 break-words font-medium text-slate-900">{item.product?.name ?? "Unknown product"}</span>
-                  <span className="shrink-0 text-slate-600">{item.picked_qty || item.planned_qty} / {item.planned_qty} picked</span>
+                  <span className="min-w-0 break-words font-medium text-slate-900">{item.product?.name ?? t("Unknown product")}</span>
+                  <span className="shrink-0 text-slate-600">{item.picked_qty || item.planned_qty} / {item.planned_qty} {t("picked")}</span>
                 </div>
               ))}
             </div>
@@ -485,25 +490,25 @@ export default async function OperatorRouteDetailPage({
             href={`/operator/routes/${routeId}/pick-list`}
             className="btn-secondary w-full sm:w-auto"
           >
-            View Pick List
+            {t("View Pick List")}
           </Link>
         </section>
 
         {isPickupConfirmedStatus(routeRow.status) ? (
           <div className="rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
-            Pick any prepared machine below. The default stop order is only a suggestion, so you can fill stops in the order that works best.
+{t("Pick any prepared machine below. The default stop order is only a suggestion, so you can fill stops in the order that works best")}
           </div>
         ) : null}
 
         {/* Machine Stops */}
         <section className="rounded-lg border border-slate-200 bg-white overflow-hidden">
           <div className="p-4 md:p-6 border-b border-slate-200">
-            <h2 className="text-lg font-semibold">Machine Stops ({totalStops})</h2>
+            <h2 className="text-lg font-semibold">{t("Machine Stops")} ({totalStops})</h2>
           </div>
           {!routeStops.length ? (
             <EmptyState
-              title="No stops"
-              body="This route currently has no machine stops."
+              title={t("No stops")}
+              body={t("This route currently has no machine stops.")}
             />
           ) : (
             <div className="divide-y divide-slate-200">
@@ -520,12 +525,12 @@ export default async function OperatorRouteDetailPage({
                       <div className="min-w-0">
                         <h3 className="break-words font-semibold text-slate-900">{formatMachineDisplayName(machine ?? null, { includeArea: true })}</h3>
                         <p className="text-sm text-slate-500">
-                          Code: {machine?.machine_code ?? "-"}
+                          {t("Code")}: {machine?.machine_code ?? "-"}
                         </p>
                       </div>
                     </div>
                     <div className="shrink-0">
-                      <StatusBadge status={stop.status} />
+                      <StatusBadge status={stop.status} label={t(String(stop.status ?? "unknown"), String(stop.status ?? "unknown"))} />
                     </div>
                   </div>
 
@@ -533,28 +538,28 @@ export default async function OperatorRouteDetailPage({
                     <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                       {isRouteStopPendingStatus(stop.status) ? (
                         <Link href={`/operator/routes/${routeId}/pick-list`} className="btn-primary w-full text-base sm:w-auto">
-                          Pick this stop
+                          {t("Pick this stop")}
                         </Link>
                       ) : isRouteStopActiveStatus(stop.status) || stop.status === ROUTE_STOP_COMPLETED_STATUS ? (
                         <Link
                           href={`/operator/routes/${routeId}/stops/${stop.id}`}
                           className="btn-primary w-full text-base sm:w-auto"
                         >
-                          {stop.status === ROUTE_STOP_COMPLETED_STATUS ? "Edit stop" : "Continue filling"}
+                          {stop.status === ROUTE_STOP_COMPLETED_STATUS ? t("Edit stop") : t("Continue filling")}
                         </Link>
                       ) : null}
                       {!isRouteStopDoneStatus(stop.status) ? (
                         <ConfirmDialog
                           action={skipStop}
-                          triggerLabel="Skip stop"
-                          title="Skip this machine?"
-                          description="Skipped stops count as finished for route closure, but any picked stock must still be returned on the leftovers screen."
-                          confirmLabel="Skip stop"
+                          triggerLabel={t("Skip stop")}
+                          title={t("Skip this machine") + "?"}
+                          description={t("Skipped stops count as finished for route closure, but any picked stock must still be returned on the leftovers screen.")}
+                          confirmLabel={t("Skip stop")}
                           buttonClassName="btn-secondary w-full sm:w-auto"
                           confirmButtonClassName="btn-danger"
                           hiddenFields={[{ name: "route_id", value: routeId }, { name: "stop_id", value: stop.id }]}
-                          reasonLabel="Skip reason"
-                          reasonPlaceholder="Machine inaccessible, closed location, or another reason."
+                          reasonLabel={t("Skip reason")}
+                          reasonPlaceholder={t("Machine inaccessible, closed location, or another reason.")}
                         />
                       ) : null}
                     </div>

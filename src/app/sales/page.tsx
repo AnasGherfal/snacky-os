@@ -4,6 +4,7 @@ import { FormSubmitButton } from "@/components/FormSubmitButton";
 import { BarList, KpiSection } from "@/components/KpiDashboard";
 import { DataTable, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
+import { getServerI18n } from "@/lib/i18n/server";
 import { isOwnerAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { formatInteger } from "@/lib/kpi";
@@ -802,10 +803,10 @@ async function SalesDashboardPageContent({
     return (
       <>
         <PageHeader
-          title="Sales Dashboard"
-          subtitle="Sales are calculated from imported VMS Order Details for the selected business dates."
+          title={t("Sales Dashboard")}
+          subtitle={t("Sales are calculated from imported VMS Order Details for the selected business dates.")}
         />
-        <EmptyState title="Connect Supabase to activate sales analytics" body="Add environment variables and restart the app." />
+        <EmptyState title={t("Connect Supabase to activate sales analytics")} body={t("Add environment variables and restart the app.")} />
       </>
     );
   }
@@ -1330,7 +1331,7 @@ async function SalesDashboardPageContent({
   return (
     <>
       <PageHeader
-        title="Sales Dashboard"
+        title={t("Sales Dashboard")}
         subtitle={pageSubtitle}
       />
 
@@ -1338,45 +1339,43 @@ async function SalesDashboardPageContent({
         <section className="surface-card space-y-4">
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Selected range</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("Selected range")}</div>
               <div className="mt-2 text-base font-semibold text-slate-900">{selectedRangeLabel}</div>
               <div className="mt-1 text-sm leading-6 text-slate-500">{selectedRange.helperText}</div>
             </div>
             <div className={`rounded-2xl border p-4 ${dataStatusToneClass}`}>
-              <div className="text-xs font-semibold uppercase tracking-wide">Data status</div>
+              <div className="text-xs font-semibold uppercase tracking-wide">{t("Data status")}</div>
               <div className="mt-2 text-base font-semibold">{dataStatusText}</div>
               <div className="mt-1 text-sm leading-6 opacity-90">{dataStatusReason}</div>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Source used</div>
-              <div className="mt-2 text-base font-semibold text-slate-900">Using {salesDashboardSourceLabel(sourceMode)}.</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("Source used")}</div>
+              <div className="mt-2 text-base font-semibold text-slate-900">{t("Using")} {t(salesDashboardSourceLabel(sourceMode), salesDashboardSourceLabel(sourceMode))}.</div>
               <div className="mt-1 text-sm leading-6 text-slate-500">{sourceStatusText}</div>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Last updated</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("Last updated")}</div>
               <div className="mt-2 text-base font-semibold text-slate-900">{formatVmsDateTime(lastUpdatedAt)}</div>
-              <div className="mt-1 text-sm leading-6 text-slate-500">Latest imported or updated source batch.</div>
+              <div className="mt-1 text-sm leading-6 text-slate-500">{t("Latest imported or updated source batch.")}</div>
             </div>
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <Link href="/reports/sales-coverage" className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900">
-              Open coverage page
-            </Link>
+            <Link href="/reports/sales-coverage" className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900">{t("Open coverage page")}</Link>
             <Link href="#data-sources" className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900">
-              Coverage details
+              {t("Coverage details")}
             </Link>
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <FilterPresetLink active={selectedRange.key === "default"} href="/sales" label="Latest" />
-            <FilterPresetLink active={selectedRange.key === "today"} href="/sales?range=today" label="Today" />
-            <FilterPresetLink active={selectedRange.key === "yesterday"} href="/sales?range=yesterday" label="Yesterday" />
-            <FilterPresetLink active={selectedRange.key === "this_week"} href="/sales?range=this_week" label="This week" />
-            <FilterPresetLink active={selectedRange.key === "this_month"} href="/sales?range=this_month" label="This month" />
-            <FilterPresetLink active={selectedRange.key === "last_month"} href="/sales?range=last_month" label="Last month" />
-            <FilterPresetLink active={selectedRange.key === "this_year"} href="/sales?range=this_year" label="This year" />
-            <FilterPresetLink active={selectedRange.key === "all_time"} href="/sales?range=all_time" label="All time" />
+            <FilterPresetLink active={selectedRange.key === "default"} href="/sales" label={t("Latest")} />
+            <FilterPresetLink active={selectedRange.key === "today"} href="/sales?range=today" label={t("Today")} />
+            <FilterPresetLink active={selectedRange.key === "yesterday"} href="/sales?range=yesterday" label={t("Yesterday")} />
+            <FilterPresetLink active={selectedRange.key === "this_week"} href="/sales?range=this_week" label={t("This week")} />
+            <FilterPresetLink active={selectedRange.key === "this_month"} href="/sales?range=this_month" label={t("This month")} />
+            <FilterPresetLink active={selectedRange.key === "last_month"} href="/sales?range=last_month" label={t("Last month")} />
+            <FilterPresetLink active={selectedRange.key === "this_year"} href="/sales?range=this_year" label={t("This year")} />
+            <FilterPresetLink active={selectedRange.key === "all_time"} href="/sales?range=all_time" label={t("All time")} />
           </div>
 
           <div className="grid gap-3 xl:grid-cols-[1.15fr_0.85fr_1fr_1.25fr]">
@@ -1408,7 +1407,7 @@ async function SalesDashboardPageContent({
             </form>
 
             <details className="rounded-2xl border border-slate-200 bg-slate-50 p-3" open={selectedRange.key === "custom"}>
-              <summary className="cursor-pointer text-sm font-semibold text-slate-900">Custom date</summary>
+              <summary className="cursor-pointer text-sm font-semibold text-slate-900">{t("Custom date")}</summary>
               <form className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
                 <input type="hidden" name="range" value="custom" />
                 <input name="date_from" type="date" defaultValue={selectedRange.dateFromValue} className="field-input h-10 min-w-0" />
@@ -1464,22 +1463,22 @@ async function SalesDashboardPageContent({
         ) : (
           <>
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              <MetricCard label="Revenue" value={<MetricValue>{lyd(summary.revenueAmount)}</MetricValue>} />
+              <MetricCard label={t("Revenue")} value={<MetricValue>{lyd(summary.revenueAmount)}</MetricValue>} />
               {canViewProfit ? (
                 <MetricCard
-                  label="Gross Profit"
+                  label={t("Gross Profit")}
                   value={<MetricValue>{summary.grossProfitAmount === null ? "Not available" : lyd(summary.grossProfitAmount)}</MetricValue>}
                   helper={summary.grossProfitAmount === null ? "Cost is not available for this range yet." : undefined}
                 />
               ) : null}
               {canViewProfit ? (
                 <MetricCard
-                  label="Gross Margin %"
+                  label={t("Gross Margin %")}
                   value={<MetricValue>{formatMarginPercent(summary.grossMarginPercent)}</MetricValue>}
                   helper={summary.grossMarginPercent === null ? "Profit is hidden for your role." : undefined}
                 />
               ) : null}
-              <MetricCard label="Units Sold" value={<MetricValue>{formatInteger(summary.successfulUnitsSold)}</MetricValue>} />
+              <MetricCard label={t("Units Sold")} value={<MetricValue>{formatInteger(summary.successfulUnitsSold)}</MetricValue>} />
 
               {canViewProfit ? (
                 <MetricCard
@@ -1488,7 +1487,7 @@ async function SalesDashboardPageContent({
                   helper={summary.cogsAmount === null ? "Cost is not available for this range yet." : undefined}
                 />
               ) : null}
-              <MetricCard label="Average Transaction" value={<MetricValue>{lyd(summary.averageTransaction)}</MetricValue>} />
+              <MetricCard label={t("Average Transaction")} value={<MetricValue>{lyd(summary.averageTransaction)}</MetricValue>} />
               <MetricCard label="Failed Vend Amount" value={<MetricValue>{lyd(summary.failedVendAmount)}</MetricValue>} />
               <MetricCard label="Refund Amount" value={<MetricValue>{lyd(summary.refundAmount)}</MetricValue>} />
 
@@ -1529,7 +1528,7 @@ async function SalesDashboardPageContent({
                 )}
               </KpiSection>
 
-              <KpiSection title="Sales by machine" subtitle="Top machines ranked by revenue.">
+              <KpiSection title={t("Sales by machine")} subtitle={t("Top machines ranked by revenue.")}>
                 {machineBreakdownResult.error ? (
                   <SectionInlineMessage title="Sales by machine could not load." body="Please contact admin if this keeps happening." />
                 ) : machineBreakdownRows.length ? (
@@ -1539,7 +1538,7 @@ async function SalesDashboardPageContent({
                 )}
               </KpiSection>
 
-              <KpiSection title="Sales by location" subtitle="Top locations ranked by revenue.">
+              <KpiSection title={t("Sales by location")} subtitle={t("Top locations ranked by revenue.")}>
                 {locationBreakdownResult.error ? (
                   <SectionInlineMessage title="Sales by location could not load." body="Please contact admin if this keeps happening." />
                 ) : locationBreakdownRows.length ? (
@@ -1549,13 +1548,13 @@ async function SalesDashboardPageContent({
                 )}
               </KpiSection>
 
-              <KpiSection title="Sales mix" subtitle={paymentMethodText}>
+              <KpiSection title={t("Sales mix")} subtitle={t(paymentMethodText, paymentMethodText)}>
                 {summary.paymentMethodAvailable ? (
                   <BarList
                     rows={[
-                      { label: "Cash", value: summary.cashPaymentAmount, detail: `${formatInteger(summary.cashPaymentCount)} sales` },
-                      { label: "Card", value: summary.cardPaymentAmount, detail: `${formatInteger(summary.cardPaymentCount)} sales` },
-                      { label: "Unknown", value: summary.unknownPaymentAmount, detail: `${formatInteger(summary.unknownPaymentCount)} sales` },
+                      { label: t("Cash"), value: summary.cashPaymentAmount, detail: `${formatInteger(summary.cashPaymentCount)} ${t("sales")}` },
+                      { label: t("Card"), value: summary.cardPaymentAmount, detail: `${formatInteger(summary.cardPaymentCount)} ${t("sales")}` },
+                      { label: t("Unknown"), value: summary.unknownPaymentAmount, detail: `${formatInteger(summary.unknownPaymentCount)} ${t("sales")}` },
                     ]}
                     valueFormatter={lyd}
                   />
@@ -1565,11 +1564,11 @@ async function SalesDashboardPageContent({
               </KpiSection>
             </div>
 
-            <KpiSection title="Sales by product" subtitle="Top products ranked by revenue.">
+            <KpiSection title={t("Sales by product")} subtitle={t("Top products ranked by revenue.")}>
               {productBreakdownResult.error ? (
                 <SectionInlineMessage title="Sales by product could not load." body="Please contact admin if this keeps happening." />
               ) : topProductSalesRows.length ? (
-                <DataTable headers={["Product", "Units sold", "Revenue"]}>
+                <DataTable headers={[t("Product"), t("Units sold"), t("Revenue")]}>
                   {topProductSalesRows.map((row) => (
                     <tr key={row.bucketLabel}>
                       <td className="font-medium">{row.bucketLabel}</td>
@@ -1584,11 +1583,11 @@ async function SalesDashboardPageContent({
             </KpiSection>
 
             {canViewProfit ? (
-              <KpiSection title="Product profit" subtitle={profitSectionSubtitle}>
+              <KpiSection title={t("Product profit")} subtitle={t(profitSectionSubtitle, profitSectionSubtitle)}>
                 {productProfitResult.error ? (
                   <SectionInlineMessage title="Product profit could not load." body="Please contact admin if this keeps happening." />
                 ) : productProfitRows.length ? (
-                  <DataTable headers={["Product", "Units sold", "Revenue", "Cost", "Gross profit", "Margin %", "Cost status"]}>
+                  <DataTable headers={[t("Product"), t("Units sold"), t("Revenue"), t("Cost"), t("Gross profit"), t("Margin %"), t("Cost status")]}>
                     {productProfitRows.slice(0, 20).map((row) => (
                       <tr key={row.bucketKey}>
                         <td className="font-medium">{row.bucketLabel}</td>
@@ -1609,11 +1608,11 @@ async function SalesDashboardPageContent({
 
             {canViewProfit ? (
               <div className="grid gap-4 xl:grid-cols-2">
-                <KpiSection title="Profit by machine" subtitle={sourceMode === "monthly" ? "Top machines ranked by gross profit from the monthly profit report." : "Top machines ranked by gross profit."}>
+                <KpiSection title={t("Profit by machine")} subtitle={sourceMode === "monthly" ? t("Top machines ranked by gross profit from the monthly profit report.") : t("Top machines ranked by gross profit.")}>
                   {machineProfitResult.error ? (
                     <SectionInlineMessage title="Machine profit could not load." body="Please contact admin if this keeps happening." />
                   ) : machineProfitRows.length ? (
-                    <DataTable headers={["Machine", "Revenue", "Cost", "Gross profit", "Margin %", "Units sold"]}>
+                    <DataTable headers={[t("Machine"), t("Revenue"), t("Cost"), t("Gross profit"), t("Margin %"), t("Units sold")]}>
                       {machineProfitRows.slice(0, 12).map((row) => (
                         <tr key={row.bucketKey}>
                           <td className="font-medium">{row.bucketLabel}</td>
@@ -1630,11 +1629,11 @@ async function SalesDashboardPageContent({
                   )}
                 </KpiSection>
 
-                <KpiSection title="Profit by location" subtitle={sourceMode === "monthly" ? "Top locations ranked by gross profit from the monthly profit report." : "Top locations ranked by gross profit."}>
+                <KpiSection title={t("Profit by location")} subtitle={sourceMode === "monthly" ? t("Top locations ranked by gross profit from the monthly profit report.") : t("Top locations ranked by gross profit.")}>
                   {locationProfitResult.error ? (
                     <SectionInlineMessage title="Location profit could not load." body="Please contact admin if this keeps happening." />
                   ) : locationProfitRows.length ? (
-                    <DataTable headers={["Location", "Revenue", "Cost", "Gross profit", "Margin %", "Units sold"]}>
+                    <DataTable headers={[t("Location"), t("Revenue"), t("Cost"), t("Gross profit"), t("Margin %"), t("Units sold")]}>
                       {locationProfitRows.slice(0, 12).map((row) => (
                         <tr key={row.bucketKey}>
                           <td className="font-medium">{row.bucketLabel}</td>
@@ -1656,7 +1655,7 @@ async function SalesDashboardPageContent({
         )}
 
         <details id="data-sources" className="surface-card">
-          <summary className="cursor-pointer text-base font-semibold text-slate-900">Coverage details</summary>
+          <summary className="cursor-pointer text-base font-semibold text-slate-900">{t("Coverage details")}</summary>
           <div className="mt-4 space-y-4">
             {sourceLoadFailed ? (
               <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900">
@@ -1666,19 +1665,19 @@ async function SalesDashboardPageContent({
 
             <div className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
               <div>
-                <div className="font-semibold text-slate-900">Selected range</div>
+                <div className="font-semibold text-slate-900">{t("Selected range")}</div>
                 <div>{selectedRangeLabel}</div>
               </div>
               <div>
-                <div className="font-semibold text-slate-900">Files contributing</div>
+                <div className="font-semibold text-slate-900">{t("Files contributing")}</div>
                 <div>{formatInteger(contributingFiles.length)}</div>
               </div>
               <div>
-                <div className="font-semibold text-slate-900">Ignored files</div>
+                <div className="font-semibold text-slate-900">{t("Ignored files")}</div>
                 <div>{formatInteger(ignoredFiles.length)}</div>
               </div>
               <div>
-                <div className="font-semibold text-slate-900">Last updated</div>
+                <div className="font-semibold text-slate-900">{t("Last updated")}</div>
                 <div>{formatVmsDateTime(lastUpdatedAt)}</div>
               </div>
               <div>
@@ -1815,8 +1814,8 @@ export default async function SalesDashboardPage({
     return (
       <>
         <PageHeader
-          title="Sales Dashboard"
-          subtitle="Sales are calculated from imported VMS Order Details for the selected business dates."
+          title={t("Sales Dashboard")}
+          subtitle={t("Sales are calculated from imported VMS Order Details for the selected business dates.")}
         />
         <EmptyState title="Something did not load" body="Snacky OS recovered from a sales dashboard load error. Please retry, and contact admin if the issue keeps happening." />
       </>

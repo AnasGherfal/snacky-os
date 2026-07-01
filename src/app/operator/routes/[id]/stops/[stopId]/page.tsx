@@ -6,6 +6,7 @@ import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from 
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { QuantityStepper } from "@/components/QuantityStepper";
 import { EmptyState, ErrorState, LoadingState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
+import { useLanguage } from "@/components/I18nProvider";
 import { markStopInProgress, uploadInventoryAdjustmentPhoto, uploadRefillProofPhoto } from "@/lib/operator-actions";
 import { ROUTE_STOP_COMPLETED_STATUS, ROUTE_STOP_IN_PROGRESS_STATUS, ROUTE_STOP_PICKED_STATUS } from "@/lib/route-workflow";
 
@@ -466,6 +467,7 @@ function comparableStopDraft(draft: StopDraft) {
 
 export default function MachineStopPage() {
   const router = useRouter();
+  const { t } = useLanguage();
   const params = useParams<{ id?: string | string[]; stopId?: string | string[] }>();
   const rawRouteId = params?.id;
   const rawStopId = params?.stopId;
@@ -875,9 +877,9 @@ export default function MachineStopPage() {
       <>
         <div className="space-y-4">
           <ErrorState
-            title={loadError?.title ?? "Stop could not be loaded"}
-            body={loadError?.body ?? "Failed to load machine stop details."}
-            action={<SecondaryButton href={routeHref}>Back to route</SecondaryButton>}
+            title={t(loadError?.title ?? "Stop could not be loaded", loadError?.title ?? "Stop could not be loaded")}
+            body={t(loadError?.body ?? "Failed to load machine stop details.", loadError?.body ?? "Failed to load machine stop details.")}
+            action={<SecondaryButton href={routeHref}>{t("Back to route")}</SecondaryButton>}
           />
         </div>
       </>
@@ -893,48 +895,48 @@ export default function MachineStopPage() {
         <PageHeader
           title={stopData.machineName}
           subtitle={`${stopData.machineCode} - ${stopData.location}`}
-          action={<SecondaryButton href={routeHref}>Back</SecondaryButton>}
+          action={<SecondaryButton href={routeHref}>{t("Back")}</SecondaryButton>}
         />
 
         <DraftRestoreBanner pendingDraft={localDraft.pendingDraft} onRestore={localDraft.restoreDraft} onDiscard={localDraft.discardDraft} />
         {!localDraft.pendingDraft ? <DraftSaveStatus status={localDraft.status} /> : null}
         {error && (
           <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-            <p>{error}</p>
+            <p>{t(error, error)}</p>
             <button type="button" onClick={() => void refreshMobileApp()} className="mt-3 rounded-md border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-700">
-              Refresh App
+              {t("Refresh App")}
             </button>
           </div>
         )}
 
         <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          <Metric label="Assigned units" value={stopExecutionSummary.assignedUnits} />
-          <Metric label="Filled now" value={stopExecutionSummary.filledUnits} />
-          <Metric label="Shortage to explain" value={stopExecutionSummary.shortageUnits} tone={stopExecutionSummary.shortageUnits > 0 ? "warn" : "neutral"} />
-          <Metric label="Extra units added" value={stopExecutionSummary.extraUnits} />
-          <Metric label="Inventory adjustments" value={stopExecutionSummary.adjustmentCount} />
-          <Metric label="Proof photo" value={stopExecutionSummary.proofReady ? "Ready" : "Needed"} tone={stopExecutionSummary.proofReady ? "neutral" : "warn"} />
+          <Metric label={t("Assigned units")} value={stopExecutionSummary.assignedUnits} />
+          <Metric label={t("Filled now")} value={stopExecutionSummary.filledUnits} />
+          <Metric label={t("Shortage to explain")} value={stopExecutionSummary.shortageUnits} tone={stopExecutionSummary.shortageUnits > 0 ? "warn" : "neutral"} />
+          <Metric label={t("Extra units added")} value={stopExecutionSummary.extraUnits} />
+          <Metric label={t("Inventory adjustments")} value={stopExecutionSummary.adjustmentCount} />
+          <Metric label={t("Proof photo")} value={stopExecutionSummary.proofReady ? t("Ready") : t("Needed")} tone={stopExecutionSummary.proofReady ? "neutral" : "warn"} />
         </section>
 
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-          Record what you actually filled, then finish the stop. Leftovers are handled later on the route leftovers screen, so you do not need to invent fake leftover numbers here.
+{t("Record what you actually filled, then finish the stop. Leftovers are handled later on the route leftovers screen, so you do not need to invent fake leftover numbers here.")}
         </div>
 
         <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
           <div className="border-b border-slate-200 bg-slate-50 p-4 md:p-6">
-            <h2 className="text-lg font-semibold">Assigned products</h2>
-            <p className="mt-1 text-sm text-slate-500">Record actual quantities. Differences from the plan are tracked for review.</p>
+            <h2 className="text-lg font-semibold">{t("Assigned products")}</h2>
+            <p className="mt-1 text-sm text-slate-500">{t("Record actual quantities. Differences from the plan are tracked for review.")}</p>
             <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <Metric label="Unavailable lines" value={stopExecutionSummary.unavailableCount} tone={stopExecutionSummary.unavailableCount > 0 ? "warn" : "neutral"} />
-              <Metric label="Missing product reports" value={stopExecutionSummary.missingReportCount} tone={stopExecutionSummary.missingReportCount > 0 ? "warn" : "neutral"} />
-              <Metric label="Cash status" value={cashCollected ? "Collected" : "No cash"} />
-              <Metric label="Refill result" value={fillStatusPreview === "full" ? "Full refill" : "Partial refill"} tone={fillStatusPreview === "full" ? "neutral" : "warn"} />
+              <Metric label={t("Unavailable lines")} value={stopExecutionSummary.unavailableCount} tone={stopExecutionSummary.unavailableCount > 0 ? "warn" : "neutral"} />
+              <Metric label={t("Missing product reports")} value={stopExecutionSummary.missingReportCount} tone={stopExecutionSummary.missingReportCount > 0 ? "warn" : "neutral"} />
+              <Metric label={t("Cash status")} value={cashCollected ? t("Collected") : t("No cash")} />
+              <Metric label={t("Refill result")} value={fillStatusPreview === "full" ? t("Full refill") : t("Partial refill")} tone={fillStatusPreview === "full" ? "neutral" : "warn"} />
             </div>
           </div>
 
           {stopData.refillItems.length === 0 ? (
             <div className="p-4 md:p-6">
-              <EmptyState title="No refill items assigned to this stop." body="You can still add extra products, collect cash, report issues, and complete the stop." />
+              <EmptyState title={t("No refill items assigned to this stop")} body={t("You can still add extra products, collect cash, report issues, and complete the stop.")} />
             </div>
           ) : (
             <div className="divide-y divide-slate-200">
@@ -957,7 +959,7 @@ export default function MachineStopPage() {
                     </div>
                     <div className="grid gap-3 md:grid-cols-[220px_1fr]">
                       <label className="block">
-                        <span className="mb-1 block text-sm font-medium text-slate-800">Actual filled qty</span>
+                        <span className="mb-1 block text-sm font-medium text-slate-800">{t("Filled quantity")}</span>
                         <QuantityStepper
                           value={actualQty}
                           max={maxQty}
@@ -967,12 +969,12 @@ export default function MachineStopPage() {
                         />
                       </label>
                       <label className="block">
-                        <span className="mb-1 block text-sm font-medium text-slate-800">Notes for change</span>
+                        <span className="mb-1 block text-sm font-medium text-slate-800">{t("Notes for change")}</span>
                         <input
                           value={lineNotes[item.productId] ?? ""}
                           onChange={(event) => setLineNotes((prev) => ({ ...prev, [item.productId]: event.target.value }))}
                           className="field-input"
-                          placeholder="Explain shortage, overfill, or condition"
+                          placeholder={t("Explain shortage, overfill, or condition")}
                         />
                       </label>
                     </div>
@@ -986,7 +988,7 @@ export default function MachineStopPage() {
                           if (checked) setFilledQtys((prev) => ({ ...prev, [item.productId]: 0 }));
                         }}
                       />
-                      Mark assigned product as unavailable
+                      {t("Mark assigned product as unavailable")}
                     </label>
                   </div>
                 );
@@ -998,12 +1000,12 @@ export default function MachineStopPage() {
         <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <h2 className="text-lg font-semibold">Products added at machine</h2>
-              <p className="mt-1 text-sm text-slate-500">Add unplanned products from the operator bag. These lines are saved when you complete the stop.</p>
+              <h2 className="text-lg font-semibold">{t("Products added at machine")}</h2>
+              <p className="mt-1 text-sm text-slate-500">{t("Add unplanned products from the operator bag. These lines are saved when you complete the stop.")}</p>
             </div>
             <div className="grid gap-2 sm:flex sm:flex-wrap">
-              <button type="button" onClick={addExtraProduct} className="btn-secondary w-full sm:w-auto">Add product</button>
-              <button type="button" onClick={addMissingReport} className="btn-secondary w-full sm:w-auto">Report missing</button>
+              <button type="button" onClick={addExtraProduct} className="btn-secondary w-full sm:w-auto">{t("Add product")}</button>
+              <button type="button" onClick={addMissingReport} className="btn-secondary w-full sm:w-auto">{t("Report missing")}</button>
             </div>
           </div>
 
@@ -1019,7 +1021,7 @@ export default function MachineStopPage() {
                     <ReasonSelect value={line.reason} onChange={(reason) => updateExtra(line.id, { reason })} />
                   </div>
                   <input value={line.notes} onChange={(event) => updateExtra(line.id, { notes: event.target.value })} className="field-input mt-3" placeholder={`Notes${selected ? ` for ${selected.name}` : ""}`} />
-                  <button type="button" onClick={() => setExtraProducts((prev) => prev.filter((item) => item.id !== line.id))} className="mt-2 text-sm font-medium text-rose-700">Remove</button>
+                  <button type="button" onClick={() => setExtraProducts((prev) => prev.filter((item) => item.id !== line.id))} className="mt-2 text-sm font-medium text-rose-700">{t("Remove")}</button>
                 </div>
               );
             })}
@@ -1033,8 +1035,8 @@ export default function MachineStopPage() {
                   </label>
                   <ReasonSelect value={line.reason} onChange={(reason) => updateMissingReport(line.id, { reason })} />
                 </div>
-                <input value={line.notes} onChange={(event) => updateMissingReport(line.id, { notes: event.target.value })} className="field-input mt-3" placeholder="Notes" />
-                <button type="button" onClick={() => setMissingReports((prev) => prev.filter((item) => item.id !== line.id))} className="mt-2 text-sm font-medium text-rose-700">Remove</button>
+                <input value={line.notes} onChange={(event) => updateMissingReport(line.id, { notes: event.target.value })} className="field-input mt-3" placeholder={t("Notes")} />
+                <button type="button" onClick={() => setMissingReports((prev) => prev.filter((item) => item.id !== line.id))} className="mt-2 text-sm font-medium text-rose-700">{t("Remove")}</button>
               </div>
             ))}
 
@@ -1078,11 +1080,11 @@ export default function MachineStopPage() {
         <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <h2 className="text-lg font-semibold">Refill proof</h2>
-              <p className="mt-1 text-sm text-slate-500">Take the photo after filling the machine and cleaning the glass.</p>
+              <h2 className="text-lg font-semibold">{t("Refill proof")}</h2>
+              <p className="mt-1 text-sm text-slate-500">{t("Take the photo after filling the machine and cleaning the glass.")}</p>
             </div>
             <div className={fillStatusPreview === "full" ? "rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm font-semibold text-green-800" : "rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800"}>
-              {fillStatusPreview === "full" ? "Full refill" : "Partial refill"}
+              {fillStatusPreview === "full" ? t("Full refill") : t("Partial refill")}
             </div>
           </div>
           <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_260px]">
@@ -1115,11 +1117,11 @@ export default function MachineStopPage() {
         </section>
 
         <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
-          <h2 className="mb-4 text-lg font-semibold">Cleaning and final check</h2>
+          <h2 className="mb-4 text-lg font-semibold">{t("Cleaning and final check")}</h2>
           <button type="button" onClick={() => setShowCleaningChecklist(!showCleaningChecklist)} className="w-full rounded-lg border border-slate-200 bg-slate-50 p-4 text-left transition hover:bg-slate-100">
             <div className="flex items-center justify-between">
-              <span className="font-medium text-slate-900">Checklist</span>
-              <span className={cleaningDone ? "font-semibold text-green-600" : "text-slate-600"}>{cleaningDone ? "Completed" : "Open"}</span>
+              <span className="font-medium text-slate-900">{t("Checklist")}</span>
+              <span className={cleaningDone ? "font-semibold text-green-600" : "text-slate-600"}>{cleaningDone ? t("Completed") : t("Open")}</span>
             </div>
           </button>
           {showCleaningChecklist && (
@@ -1143,13 +1145,13 @@ export default function MachineStopPage() {
 
         <div className="sticky bottom-3 z-10 -mx-3 flex flex-col gap-2 border-t border-slate-200 bg-slate-100/95 px-3 py-3 backdrop-blur sm:mx-0 sm:flex-row sm:border-0 sm:bg-transparent sm:p-0">
           <button onClick={handleCompleteStop} disabled={!canSubmitStop} className="btn-primary w-full flex-1 disabled:cursor-not-allowed disabled:opacity-50">
-            {submitting ? "Saving..." : isEditingCompletedStop ? "Save Stop Changes" : "Complete Stop"}
+            {submitting ? `${t("Saving")}...` : isEditingCompletedStop ? t("Save Stop Changes") : t("Complete Stop")}
           </button>
-          <SecondaryButton href={routeHref} type="button">Cancel</SecondaryButton>
+          <SecondaryButton href={routeHref} type="button">{t("Cancel")}</SecondaryButton>
         </div>
 
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-          <strong>Reminder:</strong> This page is for physical execution at the machine: actual filled quantities, shortage reasons, cash, issues, and the final photo after cleaning. Leftovers are returned later from the dedicated leftovers screen.
+          <strong>{t("Reminder")}:</strong> {t("This page is for physical execution at the machine: actual filled quantities, shortage reasons, cash, issues, and the final photo after cleaning. Leftovers are returned later from the dedicated leftovers screen.")}
         </div>
 
       </div>
@@ -1167,6 +1169,7 @@ function Metric({ label, value, tone = "neutral" }: { label: string; value: numb
 }
 
 function ProductPicker({ products, value, onChange, label = "Existing product" }: { products: ProductOption[]; value: string; onChange: (productId: string) => void; label?: string }) {
+  const { t } = useLanguage();
   const [query, setQuery] = useState("");
   const selected = products.find((product) => product.id === value);
   const filtered = useMemo(() => {
@@ -1183,12 +1186,12 @@ function ProductPicker({ products, value, onChange, label = "Existing product" }
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           className="min-h-12 w-full rounded-md border-0 px-2 py-2 text-base outline-none ring-0 md:text-sm"
-          placeholder={selected ? `${selected.name} - ${selected.sku ?? "No SKU"}` : "Search name, SKU, barcode, category, or brand"}
+          placeholder={selected ? `${selected.name} - ${selected.sku ?? t("No SKU")}` : t("Search name, SKU, barcode, category, or brand")}
         />
         <div className="mt-2 max-h-56 space-y-1 overflow-y-auto">
           {selected && !query.trim() ? (
             <div className="rounded-md bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
-              Selected: {selected.name} - Bag {selected.availableQty}
+              {t("Selected")}: {selected.name} - {t("Bag available")}: {selected.availableQty}
             </div>
           ) : null}
         {filtered.map((product) => (
@@ -1205,12 +1208,12 @@ function ProductPicker({ products, value, onChange, label = "Existing product" }
               <ProductThumbnail imageUrl={product.imageUrl} name={product.name} />
               <span className="min-w-0">
                 <span className="block truncate font-medium">{product.name}</span>
-                <span className={`block truncate ${product.id === value ? "text-white/80" : "text-slate-500"}`}>{product.sku ?? "No SKU"} - Bag {product.availableQty}</span>
+                <span className={`block truncate ${product.id === value ? "text-white/80" : "text-slate-500"}`}>{product.sku ?? t("No SKU")} - {t("Bag available")}: {product.availableQty}</span>
               </span>
             </span>
           </button>
         ))}
-          {!filtered.length ? <p className="px-3 py-2 text-sm text-slate-500">No products found.</p> : null}
+          {!filtered.length ? <p className="px-3 py-2 text-sm text-slate-500">{t("No products found")}</p> : null}
         </div>
       </div>
     </div>
@@ -1218,21 +1221,23 @@ function ProductPicker({ products, value, onChange, label = "Existing product" }
 }
 
 function QuantityInput({ value, max, onChange }: { value: number; max: number; onChange: (quantity: number) => void }) {
+  const { t } = useLanguage();
   return (
     <label className="block">
-      <span className="mb-1 block text-sm font-medium text-slate-800">Quantity</span>
-      <QuantityStepper value={value} max={max} onChange={onChange} inputLabel="Quantity" />
-      <span className="mt-1 block text-xs text-slate-500">Bag available: {max}</span>
+      <span className="mb-1 block text-sm font-medium text-slate-800">{t("Quantity")}</span>
+      <QuantityStepper value={value} max={max} onChange={onChange} inputLabel={t("Quantity")} />
+      <span className="mt-1 block text-xs text-slate-500">{t("Bag available")}: {max}</span>
     </label>
   );
 }
 
 function ReasonSelect({ value, onChange, options = reasonOptions }: { value: string; onChange: (reason: string) => void; options?: string[] }) {
+  const { t } = useLanguage();
   return (
     <label className="block">
-      <span className="mb-1 block text-sm font-medium text-slate-800">Reason</span>
+      <span className="mb-1 block text-sm font-medium text-slate-800">{t("Reason")}</span>
       <select value={value} onChange={(event) => onChange(event.target.value)} className="field-input">
-        {options.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
+        {options.map((reason) => <option key={reason} value={reason}>{t(reason, reason)}</option>)}
       </select>
     </label>
   );
@@ -1265,13 +1270,14 @@ function CashAndIssueSections({
   issueDescription: string;
   setIssueDescription: (value: string) => void;
 }) {
+  const { t } = useLanguage();
   return (
     <>
       <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
-        <h2 className="mb-4 text-lg font-semibold">Cash Collection</h2>
+        <h2 className="mb-4 text-lg font-semibold">{t("Cash Collection")}</h2>
         <div className="space-y-4">
           <div>
-            <span className="mb-2 block text-sm font-medium text-slate-800">Cash collected from machine</span>
+            <span className="mb-2 block text-sm font-medium text-slate-800">{t("Cash collected from machine")}</span>
             <div className="grid grid-cols-2 gap-2">
               <button type="button" onClick={() => setCashCollected(true)} className={cashCollected ? "btn-primary" : "btn-secondary"}>
                 Yes
@@ -1280,43 +1286,43 @@ function CashAndIssueSections({
                 No
               </button>
             </div>
-            <p className="mt-2 text-xs text-slate-500">Operators only mark collection. Finance counts the envelope later.</p>
+            <p className="mt-2 text-xs text-slate-500">{t("Operators only mark collection. Finance counts the envelope later")}</p>
           </div>
           <div className={cashCollected ? "rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900" : "rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700"}>
             {cashCollected
-              ? "Cash is marked as collected. If you have an envelope or bag ID, enter it below so Finance can reconcile it faster."
-              : "No cash collected at this stop. Leave the envelope field blank unless you are carrying a cash bag anyway."}
+              ? t("Cash is marked as collected. If you have an envelope or bag ID, enter it below so Finance can reconcile it faster.")
+              : t("No cash collected at this stop. Leave the envelope field blank unless you are carrying a cash bag anyway")}
           </div>
           <label className="block">
-            <span className="mb-1 block text-sm font-medium text-slate-800">Cash bag / envelope ID</span>
-            <input value={cashBagId} onChange={(event) => setCashBagId(event.target.value)} className="field-input" placeholder="Envelope ID optional" />
+            <span className="mb-1 block text-sm font-medium text-slate-800">{t("Cash bag / envelope ID")}</span>
+            <input value={cashBagId} onChange={(event) => setCashBagId(event.target.value)} className="field-input" placeholder={t("Envelope ID optional")} />
           </label>
           <label className="block">
-            <span className="mb-1 block text-sm font-medium text-slate-800">Stop notes</span>
-            <textarea value={notes} onChange={(event) => setNotes(event.target.value)} className="field-input" rows={3} placeholder="Any notes about this stop?" />
+            <span className="mb-1 block text-sm font-medium text-slate-800">{t("Stop notes")}</span>
+            <textarea value={notes} onChange={(event) => setNotes(event.target.value)} className="field-input" rows={3} placeholder={t("Any notes about this stop?")} />
           </label>
         </div>
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
-        <h2 className="mb-4 text-lg font-semibold">Issue Report</h2>
+        <h2 className="mb-4 text-lg font-semibold">{t("Issue Report")}</h2>
         <div className="grid gap-4 md:grid-cols-2">
           <label className="block">
-            <span className="mb-1 block text-sm font-medium text-slate-800">Issue type</span>
-            <input value={issueType} onChange={(event) => setIssueType(event.target.value)} className="field-input" placeholder="e.g. cash jam, display error, cooling issue" />
+            <span className="mb-1 block text-sm font-medium text-slate-800">{t("Issue type")}</span>
+            <input value={issueType} onChange={(event) => setIssueType(event.target.value)} className="field-input" placeholder={t("e.g. cash jam, display error, cooling issue")} />
           </label>
           <label className="block">
-            <span className="mb-1 block text-sm font-medium text-slate-800">Priority</span>
+            <span className="mb-1 block text-sm font-medium text-slate-800">{t("Priority")}</span>
             <select value={issuePriority} onChange={(event) => setIssuePriority(event.target.value as typeof issuePriority)} className="field-input">
-              <option value="normal">Normal</option>
-              <option value="low">Low</option>
-              <option value="high">High</option>
-              <option value="critical">Critical</option>
+              <option value="normal">{t("Normal")}</option>
+              <option value="low">{t("Low")}</option>
+              <option value="high">{t("High")}</option>
+              <option value="critical">{t("Critical")}</option>
             </select>
           </label>
           <label className="block md:col-span-2">
-            <span className="mb-1 block text-sm font-medium text-slate-800">Description</span>
-            <textarea value={issueDescription} onChange={(event) => setIssueDescription(event.target.value)} className="field-input" rows={3} placeholder="Describe the problem only if there is an issue to report." />
+            <span className="mb-1 block text-sm font-medium text-slate-800">{t("Description")}</span>
+            <textarea value={issueDescription} onChange={(event) => setIssueDescription(event.target.value)} className="field-input" rows={3} placeholder={t("Describe the problem only if there is an issue to report.")} />
           </label>
         </div>
       </section>
@@ -1325,6 +1331,7 @@ function CashAndIssueSections({
 }
 
 function InventoryAdjustmentsSection({
+
   routeId,
   stopId,
   machineId,
@@ -1345,6 +1352,7 @@ function InventoryAdjustmentsSection({
   adjustments: InventoryAdjustmentRow[];
   onSaved: (adjustment: InventoryAdjustmentRow) => void;
 }) {
+  const { t } = useLanguage();
   const damagedAdjustments = adjustments.filter((adjustment) => adjustment.adjustmentType === "damaged");
   const returnedAdjustments = adjustments.filter((adjustment) => adjustment.adjustmentType === "returned_from_machine");
   const damagedQuantity = damagedAdjustments.reduce((sum, adjustment) => sum + Number(adjustment.quantity ?? 0), 0);
@@ -1354,47 +1362,47 @@ function InventoryAdjustmentsSection({
     <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 className="text-lg font-semibold">Inventory adjustments</h2>
+          <h2 className="text-lg font-semibold">{t("Inventory adjustments")}</h2>
           <p className="mt-1 text-sm text-slate-500">
-            Record damaged products and products returned from this machine without leaving the stop screen.
+            {t("Record damaged products and products returned from this machine without leaving the stop screen.")}
           </p>
           <p className="mt-2 text-xs text-slate-500">
-            Machine: <span className="font-medium text-slate-700">{machineName}</span> {machineCode ? `(${machineCode})` : ""}.
+            {t("Machine")}: <span className="font-medium text-slate-700">{machineName}</span> {machineCode ? `(${machineCode})` : ""}.
           </p>
         </div>
       </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
-        <Metric label="Damaged units" value={damagedQuantity} tone={damagedQuantity > 0 ? "warn" : "neutral"} />
-        <Metric label="Returned units" value={returnedQuantity} tone={returnedQuantity > 0 ? "neutral" : "neutral"} />
-        <Metric label="Adjustment rows" value={adjustments.length} />
+        <Metric label={t("Damaged units")} value={damagedQuantity} tone={damagedQuantity > 0 ? "warn" : "neutral"} />
+        <Metric label={t("Returned units")} value={returnedQuantity} tone={returnedQuantity > 0 ? "neutral" : "neutral"} />
+        <Metric label={t("Adjustment rows")} value={adjustments.length} />
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-2">
         <InventoryAdjustmentForm
           adjustmentType="damaged"
-          title="Add damaged product"
-          description="Record items that broke, expired, melted, or cannot be sold."
+          title={t("Add damaged product")}
+          description={t("Record items that broke, expired, melted, or cannot be sold.")}
           routeId={routeId}
           stopId={stopId}
           machineId={machineId}
           machineProducts={machineProducts}
           allProducts={allProducts}
           reasonOptions={damagedReasonOptions}
-          submitLabel="Save damaged product"
+          submitLabel={t("Save damaged product")}
           onSaved={onSaved}
         />
         <InventoryAdjustmentForm
           adjustmentType="returned_from_machine"
-          title="Add returned product"
-          description="Record products removed from the machine and brought back."
+          title={t("Add returned product")}
+          description={t("Record products removed from the machine and brought back.")}
           routeId={routeId}
           stopId={stopId}
           machineId={machineId}
           machineProducts={machineProducts}
           allProducts={allProducts}
           reasonOptions={returnedReasonOptions}
-          submitLabel="Save returned product"
+          submitLabel={t("Save returned product")}
           onSaved={onSaved}
         />
       </div>
@@ -1402,10 +1410,10 @@ function InventoryAdjustmentsSection({
       <div className="mt-6">
         <div className="mb-3 flex items-center justify-between gap-2">
           <div>
-            <h3 className="text-base font-semibold text-slate-900">Recent adjustments</h3>
-            <p className="text-sm text-slate-500">Saved adjustments for this stop appear here immediately.</p>
+            <h3 className="text-base font-semibold text-slate-900">{t("Recent adjustments")}</h3>
+            <p className="text-sm text-slate-500">{t("Saved adjustments for this stop appear here immediately.")}</p>
           </div>
-          <StatusBadge status={adjustments.length ? "confirmed" : "pending"} />
+          <StatusBadge status={adjustments.length ? "confirmed" : "pending"} label={adjustments.length ? t("confirmed", "confirmed") : t("pending", "pending")} />
         </div>
         {adjustments.length ? (
           <div className="space-y-3">
@@ -1422,8 +1430,8 @@ function InventoryAdjustmentsSection({
                     {adjustment.notes ? <p className="mt-1 text-sm text-slate-500">{adjustment.notes}</p> : null}
                   </div>
                   <div className="text-xs text-slate-500">
-                    {adjustment.createdAt ? new Date(adjustment.createdAt).toLocaleString("en-US") : "Just now"}
-                    {adjustment.photoUrl ? <div className="mt-1 font-medium text-emerald-700">Photo attached</div> : null}
+                    {adjustment.createdAt ? new Date(adjustment.createdAt).toLocaleString("en-US") : t("Just now")}
+                    {adjustment.photoUrl ? <div className="mt-1 font-medium text-emerald-700">{t("Photo attached")}</div> : null}
                   </div>
                 </div>
               </article>
@@ -1431,7 +1439,7 @@ function InventoryAdjustmentsSection({
           </div>
         ) : (
           <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">
-            No damaged or returned items have been recorded for this stop yet.
+            {t("No damaged or returned items have been recorded for this stop yet")}
           </p>
         )}
       </div>
@@ -1464,6 +1472,7 @@ function InventoryAdjustmentForm({
   submitLabel: string;
   onSaved: (adjustment: InventoryAdjustmentRow) => void;
 }) {
+  const { t } = useLanguage();
   const [sourceMode, setSourceMode] = useState<"machine" | "all">("machine");
   const [productId, setProductId] = useState("");
   const [quantity, setQuantity] = useState(1);
@@ -1600,23 +1609,19 @@ function InventoryAdjustmentForm({
           type="button"
           onClick={() => setSourceMode("machine")}
           className={sourceMode === "machine" ? "btn-primary" : "btn-secondary"}
-        >
-          Machine products
-        </button>
+        >{t("Machine products")}</button>
         <button
           type="button"
           onClick={() => setSourceMode("all")}
           className={sourceMode === "all" ? "btn-primary" : "btn-secondary"}
-        >
-          Search all products
-        </button>
+        >{t("Search all products")}</button>
       </div>
 
       <div className="mt-4">
         <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800">
           {sourceMode === "machine"
-            ? "Showing products already linked to this machine first."
-            : "Search the full product catalog if the item is not in this machine list."}
+            ? t("Showing products already linked to this machine first.")
+            : t("Search the full product catalog if the item is not in this machine list.")}
         </div>
       </div>
 
@@ -1626,7 +1631,7 @@ function InventoryAdjustmentForm({
           products={productChoices}
           value={productId}
           onChange={setProductId}
-          label={sourceMode === "machine" ? "Machine products" : "Search all products"}
+          label={sourceMode === "machine" ? t("Machine products") : t("Search all products")}
         />
 
         <div className="grid gap-4 md:grid-cols-[160px_1fr]">
@@ -1635,18 +1640,18 @@ function InventoryAdjustmentForm({
         </div>
 
         <label className="block">
-          <span className="mb-1 block text-sm font-medium text-slate-800">Notes</span>
+          <span className="mb-1 block text-sm font-medium text-slate-800">{t("Notes")}</span>
           <textarea
             value={notes}
             onChange={(event) => setNotes(event.target.value)}
             className="field-input"
             rows={3}
-            placeholder="Optional context about this adjustment"
+            placeholder={t("Optional context about this adjustment")}
           />
         </label>
 
         <label className="block">
-          <span className="mb-1 block text-sm font-medium text-slate-800">Photo</span>
+          <span className="mb-1 block text-sm font-medium text-slate-800">{t("Photo")}</span>
           <input
             key={photoInputKey}
             type="file"
@@ -1655,7 +1660,7 @@ function InventoryAdjustmentForm({
             onChange={(event) => setPhotoFile(event.target.files?.[0] ?? null)}
             className="field-input"
           />
-          <span className="mt-1 block text-xs text-slate-500">Optional. Use a photo if the item is damaged or the return needs proof.</span>
+          <span className="mt-1 block text-xs text-slate-500">{t("Optional. Use a photo if the item is damaged or the return needs proof.")}</span>
         </label>
 
         {selectedProduct ? (
@@ -1665,8 +1670,8 @@ function InventoryAdjustmentForm({
           </div>
         ) : null}
 
-        {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-800">{error}</div> : null}
-        {success ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-medium text-emerald-900">{success}</div> : null}
+        {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-800">{t(error, error)}</div> : null}
+        {success ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-medium text-emerald-900">{t(success, success)}</div> : null}
 
         <button
           type="button"
@@ -1674,7 +1679,7 @@ function InventoryAdjustmentForm({
           disabled={saving}
           className="btn-primary w-full disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {saving ? "Saving..." : submitLabel}
+          {saving ? `${t("Saving")}...` : submitLabel}
         </button>
       </div>
     </article>

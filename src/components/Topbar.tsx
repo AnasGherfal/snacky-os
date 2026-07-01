@@ -1,10 +1,12 @@
 "use client";
+
 import Image from "next/image";
 import Link from "next/link";
 import { Menu, UserCircle } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
-import { useI18n } from "@/components/I18nProvider";
+import { useLanguage } from "@/components/I18nProvider";
+import type { Dictionary, SupportedLocale } from "@/lib/i18n";
 import { AppRole } from "@/lib/authz";
 
 type TopbarProfile = {
@@ -13,7 +15,7 @@ type TopbarProfile = {
   roles?: AppRole[] | null;
 };
 
-const titleKeys: Record<string, keyof ReturnType<typeof useI18n>["dictionary"]["nav"]> = {
+const titleKeys: Record<string, keyof Dictionary["nav"]> = {
   "/dashboard": "dashboard",
   "/sales": "sales",
   "/products-dashboard": "productsDashboard",
@@ -56,8 +58,10 @@ export function Topbar({ profile, onMenuClick }: { profile: TopbarProfile; onMen
   const pathname = usePathname();
   const router = useRouter();
   const [loggingOut, setLoggingOut] = useState(false);
-  const { locale, dictionary, setLocale } = useI18n();
+  const { locale, dictionary, setLocale } = useLanguage();
   const titleKey = titleKeys[pathname];
+  const nextLocale: SupportedLocale = locale === "ar" ? "en" : "ar";
+  const nextLocaleLabel = nextLocale === "ar" ? dictionary.language.arabic : dictionary.language.english;
 
   const logout = async () => {
     setLoggingOut(true);
@@ -77,7 +81,7 @@ export function Topbar({ profile, onMenuClick }: { profile: TopbarProfile; onMen
             type="button"
             onClick={onMenuClick}
             className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 md:hidden"
-            aria-label="Open navigation"
+            aria-label={dictionary.shell.openNavigation}
           >
             <Menu className="h-5 w-5" />
           </button>
@@ -90,21 +94,29 @@ export function Topbar({ profile, onMenuClick }: { profile: TopbarProfile; onMen
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setLocale(nextLocale)}
+            className="inline-flex h-11 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 sm:hidden"
+            aria-label={`${dictionary.shell.switchLanguage}: ${nextLocaleLabel}`}
+          >
+            {nextLocaleLabel}
+          </button>
           <Link
             href="/account"
             className="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 sm:hidden"
-            aria-label="Account"
+            aria-label={dictionary.shell.account}
           >
             <UserCircle className="h-5 w-5" />
           </Link>
-          <div className="hidden text-right sm:block">
+          <div className="hidden text-start sm:block">
             <div className="text-xs font-medium text-slate-900">{profile.full_name}</div>
             <div className="text-xs text-slate-500">{(profile.roles?.length ? profile.roles : [profile.role]).join(", ")}</div>
           </div>
           <Link href="/account" className="btn-secondary hidden sm:inline-flex">
-            Account
+            {dictionary.shell.account}
           </Link>
-          <div className="hidden w-fit rounded-lg border border-slate-200 bg-slate-50 p-1 sm:inline-flex" aria-label="Language">
+          <div className="hidden w-fit rounded-lg border border-slate-200 bg-slate-50 p-1 sm:inline-flex" aria-label={dictionary.shell.switchLanguage}>
             <button
               type="button"
               onClick={() => setLocale("en")}
@@ -121,7 +133,7 @@ export function Topbar({ profile, onMenuClick }: { profile: TopbarProfile; onMen
             </button>
           </div>
           <button type="button" onClick={logout} disabled={loggingOut} className="btn-secondary hidden sm:inline-flex disabled:opacity-60">
-            {loggingOut ? "Signing out" : "Logout"}
+            {loggingOut ? dictionary.shell.signingOut : dictionary.shell.logout}
           </button>
         </div>
       </div>

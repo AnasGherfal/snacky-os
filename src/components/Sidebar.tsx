@@ -18,10 +18,11 @@ import {
   X,
 } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useI18n } from "@/components/I18nProvider";
+import { useLanguage } from "@/components/I18nProvider";
 import { AppRole, hasAnyRole, hasPermission, hasRole, isOperatorRole, isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
+import type { Dictionary } from "@/lib/i18n";
 
-type NavLabelKey = keyof ReturnType<typeof useI18n>["dictionary"]["nav"];
+type NavLabelKey = keyof Dictionary["nav"];
 type NavItem = {
   labelKey: NavLabelKey;
   href: string;
@@ -201,7 +202,7 @@ function SidebarContent({ role, roles, onNavigate }: { role: AppRole; roles?: Ap
   const router = useRouter();
   const searchParams = useSearchParams();
   const currentSearch = searchParams.toString();
-  const { dictionary } = useI18n();
+  const { dictionary } = useLanguage();
   const sections = sectionsForRoles(role, roles);
   const [optimisticHref, setOptimisticHref] = useState<string | null>(null);
   const activePathname = optimisticHref ? pathWithoutQuery(optimisticHref) : pathname;
@@ -230,7 +231,7 @@ function SidebarContent({ role, roles, onNavigate }: { role: AppRole; roles?: Ap
         </div>
       </div>
 
-      <nav className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain pr-1" aria-label="Sidebar">
+      <nav className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain pr-1" aria-label={dictionary.shell.navigation}>
         {sections.map((section, sectionIndex) => (
           <div key={`${section.titleKey ?? "primary"}-${sectionIndex}`}>
             {section.titleKey ? (
@@ -276,6 +277,7 @@ function SidebarContent({ role, roles, onNavigate }: { role: AppRole; roles?: Ap
 }
 
 export function Sidebar({ role, roles, mobileOpen = false, onMobileClose }: { role: AppRole; roles?: AppRole[] | null; mobileOpen?: boolean; onMobileClose?: () => void }) {
+  const { dictionary } = useLanguage();
   return (
     <>
       <aside className="app-sidebar sticky top-0 hidden h-dvh w-72 shrink-0 overflow-hidden border-r border-slate-200 bg-white md:flex md:flex-col">
@@ -290,16 +292,16 @@ export function Sidebar({ role, roles, mobileOpen = false, onMobileClose }: { ro
             type="button"
             className="absolute inset-0 bg-slate-950/40"
             onClick={onMobileClose}
-            aria-label="Close navigation overlay"
+            aria-label={dictionary.shell.closeNavigationOverlay}
           />
           <aside className="app-sidebar relative flex h-full min-h-0 w-[min(20rem,86vw)] flex-col overflow-hidden border-r border-slate-200 bg-white p-5 shadow-xl">
             <div className="mb-4 flex shrink-0 items-center justify-between gap-3">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Navigation</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">{dictionary.shell.navigation}</div>
               <button
                 type="button"
                 onClick={onMobileClose}
                 className="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700"
-                aria-label="Close navigation"
+                aria-label={dictionary.shell.closeNavigation}
               >
                 <X className="h-5 w-5" />
               </button>

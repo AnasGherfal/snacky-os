@@ -2,11 +2,12 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { EmptyState, ErrorState, PageHeader, SectionCard, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
-import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { canExecuteRoutes, canManageOperations } from "@/lib/authz";
+import { getServerI18n } from "@/lib/i18n/server";
 import { loadAccessibleOperatorIds } from "@/lib/operator-route-access";
 import { type OperatorRoutePreviewRow, type OperatorRoutePreviewStopRow } from "@/lib/operator-route-types";
 import { isOperatorVisibleRouteStatus, isRouteStopDoneStatus, isTerminalRouteStatus, routeDisplayStatus } from "@/lib/route-workflow";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 
 function errorSummary(error: unknown) {
   if (!error || typeof error !== "object") return null;
@@ -55,7 +56,6 @@ function logRouteLoaderIssue({
   (optional ? console.warn : console.error)("[operator:routes] " + step + " failed", payload);
 }
 
-
 function routeProgress(route: OperatorRoutePreviewRow) {
   const completedStops = route.route_stops?.filter((stop: OperatorRoutePreviewStopRow) => isRouteStopDoneStatus(stop.status)).length ?? 0;
   const totalStops = route.route_stops?.length ?? 0;
@@ -66,11 +66,14 @@ function routeProgress(route: OperatorRoutePreviewRow) {
 function RouteCard({
   route,
   subtitle,
+  t,
 }: {
   route: OperatorRoutePreviewRow;
   subtitle: string;
+  t: (key: string, fallback?: string) => string;
 }) {
   const { completedStops, totalStops, progress } = routeProgress(route);
+  const routeStatus = routeDisplayStatus(route.status, route.operator_id);
 
   return (
     <Link
@@ -83,13 +86,13 @@ function RouteCard({
           <p className="text-sm text-slate-500">{subtitle}</p>
         </div>
         <div className="shrink-0">
-          <StatusBadge status={routeDisplayStatus(route.status, route.operator_id)} />
+          <StatusBadge status={routeStatus} label={t(routeStatus, routeStatus)} />
         </div>
       </div>
 
       <div className="mb-3">
         <div className="mb-1 flex items-center justify-between">
-          <span className="text-xs text-slate-600">Progress</span>
+          <span className="text-xs text-slate-600">{t("Progress")}</span>
           <span className="text-xs font-semibold text-slate-700">{progress}%</span>
         </div>
         <div className="h-2 w-full rounded-full bg-slate-200">
@@ -98,23 +101,20 @@ function RouteCard({
       </div>
 
       <div className="text-sm text-slate-600">
-        {completedStops}/{totalStops} completed or skipped
+        {completedStops}/{totalStops} {t("completed or skipped")}
       </div>
     </Link>
   );
 }
 
 export default async function OperatorRoutesPage() {
+  const { t } = await getServerI18n();
   const supabase = await getAuthenticatedSupabaseServerClient();
   const profile = await getCurrentProfile();
   if (!profile || !canExecuteRoutes(profile)) redirect("/unauthorized");
 
   if (!supabase) {
-    return (
-      <>
-        <ErrorState title="Routes unavailable" body="Supabase is not configured, so Snacky OS cannot load operator routes." />
-      </>
-    );
+    return <ErrorState title={t("Routes unavailable")} body={t("Supabase is not configured, so Snacky OS cannot load operator routes.")} />;
   }
 
   const canManageAllRoutes = canManageOperations(profile);
@@ -141,10 +141,7 @@ export default async function OperatorRoutesPage() {
     .is("operator_id", null)
     .order("route_date", { ascending: true });
 
-  const [assignedResult, availableResult] = await Promise.all([
-    assignedQuery,
-    availableQuery,
-  ]);
+  const [assignedResult, availableResult] = await Promise.all([assignedQuery, availableQuery]);
 
   const assignedRoutesError = assignedResult.error ?? null;
   const availableRoutesError = availableResult.error ?? null;
@@ -167,11 +164,7 @@ export default async function OperatorRoutesPage() {
     });
   }
   if (assignedRoutesError && availableRoutesError) {
-    return (
-      <>
-        <ErrorState title="Could not load routes" body="Snacky OS could not load the operator route list." />
-      </>
-    );
+    return <ErrorState title={t("Could not load routes")} body={t("Snacky OS could not load the operator route list.")} />;
   }
 
   const baseAssignedRoutes = assignedRoutesError ? [] : ((assignedResult.data ?? []) as OperatorRoutePreviewRow[]);
@@ -215,107 +208,106 @@ export default async function OperatorRoutesPage() {
     .sort((a, b) => String(b.route_date ?? "").localeCompare(String(a.route_date ?? "")));
 
   return (
-    <>
-      <div className="space-y-6">
-        <PageHeader
-          title="Operator Routes"
-          subtitle={canManageAllRoutes ? "Assigned, unassigned, and completed routes across the team." : "See your assigned work, open routes you can claim, and completed history in one place."}
-        />
+    <div className="space-y-6">
+      <PageHeader
+        title={canManageAllRoutes ? t("Operator Routes") : t("My routes")}
+        subtitle={
+          canManageAllRoutes
+            ? t("Assigned, unassigned, and completed routes across the team.")
+            : t("See your assigned work, open routes you can claim, and completed history in one place.")
+        }
+      />
 
-        {assignedRoutesError || availableRoutesError ? (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-            Some route buckets are unavailable right now. Routes that loaded are still shown.
-          </div>
-        ) : null}
+      {assignedRoutesError || availableRoutesError ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          {t("Some route buckets are unavailable right now. Routes that loaded are still shown.")}
+        </div>
+      ) : null}
 
-        <SectionCard>
-          <div className="grid gap-4 p-4 sm:grid-cols-3">
-            <div>
-              <div className="text-sm text-slate-500">Open assigned</div>
-              <div className="mt-2 text-3xl font-semibold text-slate-900">{assignedOpenRoutes.length}</div>
-              <div className="mt-1 text-sm text-slate-500">Routes already assigned and still waiting on completion.</div>
-            </div>
-            <div>
-              <div className="text-sm text-slate-500">Available</div>
-              <div className="mt-2 text-3xl font-semibold text-slate-900">{availableRoutes.length}</div>
-              <div className="mt-1 text-sm text-slate-500">Open routes you can claim when the team leaves them unassigned.</div>
-            </div>
-            <div>
-              <div className="text-sm text-slate-500">Completed</div>
-              <div className="mt-2 text-3xl font-semibold text-slate-900">{completedRoutes.length}</div>
-              <div className="mt-1 text-sm text-slate-500">Finished routes stay visible for history and follow-up.</div>
-            </div>
-          </div>
-        </SectionCard>
-
-        <section className="space-y-4">
+      <SectionCard>
+        <div className="grid gap-4 p-4 sm:grid-cols-3">
           <div>
-            <h2 className="text-base font-semibold text-slate-900">{canManageAllRoutes ? "Assigned routes" : "Assigned to me"}</h2>
-            <p className="mt-1 text-sm text-slate-500">
-              {canManageAllRoutes ? "Routes already assigned across the team." : "Routes already assigned to your linked operator identity."}
-            </p>
+            <div className="text-sm text-slate-500">{t("Open assigned")}</div>
+            <div className="mt-2 text-3xl font-semibold text-slate-900">{assignedOpenRoutes.length}</div>
+            <div className="mt-1 text-sm text-slate-500">{t("Routes already assigned and still waiting on completion.")}</div>
           </div>
-          {!assignedOpenRoutes.length ? (
-            <EmptyState title="No assigned open routes" body="Assigned routes will appear here when they are ready to start or continue." />
-          ) : (
-            <div className="space-y-4">
-              {assignedOpenRoutes.map((route) => {
-                return (
-                  <RouteCard
-                    key={route.id}
-                    route={route}
-                    subtitle={`${route.route_stops?.length ?? 0} machine stops`}
-                  />
-                );
-              })}
-            </div>
-          )}
-        </section>
-
-        <section className="space-y-4">
           <div>
-            <h2 className="text-base font-semibold text-slate-900">Unassigned</h2>
-            <p className="mt-1 text-sm text-slate-500">Open routes you can claim when the route is left available.</p>
+            <div className="text-sm text-slate-500">{t("Available")}</div>
+            <div className="mt-2 text-3xl font-semibold text-slate-900">{availableRoutes.length}</div>
+            <div className="mt-1 text-sm text-slate-500">{t("Open routes you can claim when the team leaves them unassigned.")}</div>
           </div>
-          {!availableRoutes.length ? (
-            <EmptyState title="No unassigned routes" body="Available routes will appear here when admin leaves them open." />
-          ) : (
-            <div className="space-y-4">
-              {availableRoutes.map((route) => {
-                return (
-                  <RouteCard
-                    key={route.id}
-                    route={route}
-                    subtitle={`${route.route_stops?.length ?? 0} machine stops - ready to claim`}
-                  />
-                );
-              })}
-            </div>
-          )}
-        </section>
-
-        <section className="space-y-4">
           <div>
-            <h2 className="text-base font-semibold text-slate-900">Completed routes</h2>
-            <p className="mt-1 text-sm text-slate-500">Finished routes stay visible here for history and follow-up.</p>
+            <div className="text-sm text-slate-500">{t("Completed")}</div>
+            <div className="mt-2 text-3xl font-semibold text-slate-900">{completedRoutes.length}</div>
+            <div className="mt-1 text-sm text-slate-500">{t("Finished routes stay visible for history and follow-up.")}</div>
           </div>
-          {!completedRoutes.length ? (
-            <EmptyState title="No completed routes yet" body="Completed routes will stay visible here after route closure." />
-          ) : (
-            <div className="space-y-4">
-              {completedRoutes.map((route) => {
-                return (
-                  <RouteCard
-                    key={route.id}
-                    route={route}
-                    subtitle={`${route.route_stops?.length ?? 0} machine stops`}
-                  />
-                );
-              })}
-            </div>
-          )}
-        </section>
-      </div>
-    </>
+        </div>
+      </SectionCard>
+
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-base font-semibold text-slate-900">{canManageAllRoutes ? t("Assigned routes") : t("Assigned to me")}</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            {canManageAllRoutes ? t("Routes already assigned across the team.") : t("Routes already assigned to your linked operator identity.")}
+          </p>
+        </div>
+        {!assignedOpenRoutes.length ? (
+          <EmptyState title={t("No assigned open routes")} body={t("Assigned routes will appear here when they are ready to start or continue.")} />
+        ) : (
+          <div className="space-y-4">
+            {assignedOpenRoutes.map((route) => (
+              <RouteCard
+                key={route.id}
+                route={route}
+                subtitle={`${route.route_stops?.length ?? 0} ${t("machine stops")}`}
+                t={t}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-base font-semibold text-slate-900">{t("Unassigned")}</h2>
+          <p className="mt-1 text-sm text-slate-500">{t("Open routes you can claim when the route is left available.")}</p>
+        </div>
+        {!availableRoutes.length ? (
+          <EmptyState title={t("No unassigned routes")} body={t("Available routes will appear here when admin leaves them open.")} />
+        ) : (
+          <div className="space-y-4">
+            {availableRoutes.map((route) => (
+              <RouteCard
+                key={route.id}
+                route={route}
+                subtitle={`${route.route_stops?.length ?? 0} ${t("machine stops")} - ${t("ready to claim")}`}
+                t={t}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-base font-semibold text-slate-900">{t("Completed routes")}</h2>
+          <p className="mt-1 text-sm text-slate-500">{t("Finished routes stay visible here for history and follow-up.")}</p>
+        </div>
+        {!completedRoutes.length ? (
+          <EmptyState title={t("No completed routes yet")} body={t("Completed routes will stay visible here after route closure.")} />
+        ) : (
+          <div className="space-y-4">
+            {completedRoutes.map((route) => (
+              <RouteCard
+                key={route.id}
+                route={route}
+                subtitle={`${route.route_stops?.length ?? 0} ${t("machine stops")}`}
+                t={t}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
   );
 }

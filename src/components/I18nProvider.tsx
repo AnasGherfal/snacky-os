@@ -8,13 +8,16 @@ import {
   defaultLocale,
   getTextDirection,
   isSupportedLocale,
+  languageCookieKey,
   languageStorageKey,
+  translateDictionaryEntry,
 } from "@/lib/i18n";
 
 type I18nContextValue = {
   locale: SupportedLocale;
   direction: "ltr" | "rtl";
   dictionary: Dictionary;
+  t: (key: string, fallback?: string) => string;
   setLocale: (locale: SupportedLocale) => void;
 };
 
@@ -25,27 +28,29 @@ export function I18nProvider({ children, initialLocale = defaultLocale }: { chil
 
   useEffect(() => {
     const storedLocale = window.localStorage.getItem(languageStorageKey);
-    if (isSupportedLocale(storedLocale)) {
+    if (isSupportedLocale(storedLocale) && storedLocale !== locale) {
       setLocaleState(storedLocale);
     }
-  }, []);
+  }, [locale]);
 
   useEffect(() => {
     const direction = getTextDirection(locale);
     document.documentElement.lang = locale;
     document.documentElement.dir = direction;
     window.localStorage.setItem(languageStorageKey, locale);
+    document.cookie = `${languageCookieKey}=${locale}; path=/; max-age=31536000; samesite=lax`;
   }, [locale]);
 
-  const value = useMemo<I18nContextValue>(
-    () => ({
+  const value = useMemo<I18nContextValue>(() => {
+    const dictionary = dictionaries[locale];
+    return {
       locale,
       direction: getTextDirection(locale),
-      dictionary: dictionaries[locale],
+      dictionary,
+      t: (key: string, fallback?: string) => translateDictionaryEntry(dictionary, key, fallback),
       setLocale: setLocaleState,
-    }),
-    [locale],
-  );
+    };
+  }, [locale]);
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }
@@ -58,3 +63,5 @@ export function useI18n() {
 
   return context;
 }
+
+export const useLanguage = useI18n;

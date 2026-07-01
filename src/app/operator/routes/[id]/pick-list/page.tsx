@@ -6,6 +6,7 @@ import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from 
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { QuantityStepper } from "@/components/QuantityStepper";
 import { EmptyState, ErrorState, LoadingState, PageHeader, SecondaryButton, SectionCard } from "@/components/ui";
+import { useLanguage } from "@/components/I18nProvider";
 import { applyPendingStopRecommendationRefresh, confirmPickList, previewPendingStopRecommendationRefresh, startRoute, type PendingStopRefreshComparison } from "@/lib/operator-actions";
 import { comparePickupProductRows, groupRouteItemsForDisplay, pickupProductPriorityGroup, sortPickupProductRows } from "@/lib/route-pickup-checklist";
 import { ROUTE_STOP_PENDING_STATUS } from "@/lib/route-workflow";
@@ -235,6 +236,7 @@ function writeLocalPickupChecklist(routeId: string, state: LocalPickupChecklistS
 
 export default function PickListPage() {
   const router = useRouter();
+  const { t } = useLanguage();
   const params = useParams<{ id?: string | string[] }>();
   const searchParams = useSearchParams();
   const rawRouteId = params?.id;
@@ -703,9 +705,9 @@ export default function PickListPage() {
     return (
       <>
         <ErrorState
-          title="Route id missing"
-          body="This pick-list page was opened without a valid route id."
-          action={<SecondaryButton href="/operator">Back to operator home</SecondaryButton>}
+          title={t("Route id missing")}
+          body={t("This pick-list page was opened without a valid route id.")}
+          action={<SecondaryButton href="/operator">{t("Back to operator home")}</SecondaryButton>}
         />
       </>
     );
@@ -714,25 +716,25 @@ export default function PickListPage() {
   return (
     <>
       <div className="max-w-5xl space-y-6">
-        <PageHeader title="Storage Pickup" subtitle="Pack products by machine before leaving storage." action={<SecondaryButton href={routeHref}>Cancel</SecondaryButton>} />
+        <PageHeader title={t("Storage Pickup")} subtitle={t("Pack products by machine before leaving storage.")} action={<SecondaryButton href={routeHref}>{t("Cancel")}</SecondaryButton>} />
 
         <DraftRestoreBanner pendingDraft={localDraft.pendingDraft} onRestore={localDraft.restoreDraft} onDiscard={localDraft.discardDraft} />
         {!localDraft.pendingDraft ? <DraftSaveStatus status={localDraft.status} /> : null}
-        {notice ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">{notice}</div> : null}
-        {error ? <div ref={errorRef} className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div> : null}
+        {notice ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">{t(notice, notice)}</div> : null}
+        {error ? <div ref={errorRef} className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{t(error, error)}</div> : null}
 
         <section className="rounded-lg border border-slate-200 bg-white p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <h2 className="font-semibold text-slate-900">Pending stop recommendations</h2>
-              <p className="mt-1 text-sm text-slate-500">Refresh pending machines before confirming this pickup batch.</p>
+              <h2 className="font-semibold text-slate-900">{t("Pending stop recommendations")}</h2>
+              <p className="mt-1 text-sm text-slate-500">{t("Refresh pending machines before confirming this pickup batch.")}</p>
             </div>
             <button type="button" onClick={handlePreviewRefresh} className="btn-secondary w-full sm:w-auto" disabled={locked || refreshPreview.loading || refreshPreview.applying}>
-              {refreshPreview.loading ? "Checking..." : "Refresh recommendations for pending stops"}
+              {refreshPreview.loading ? `${t("Checking")}...` : t("Refresh recommendations for pending stops")}
             </button>
           </div>
-          {refreshPreview.error ? <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{refreshPreview.error}</div> : null}
-          {refreshPreview.message ? <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{refreshPreview.message}</div> : null}
+          {refreshPreview.error ? <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{t(refreshPreview.error, refreshPreview.error)}</div> : null}
+          {refreshPreview.message ? <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{t(refreshPreview.message, refreshPreview.message)}</div> : null}
           {refreshPreview.comparisons.length ? (
             <div className="mt-4 space-y-3">
               {refreshPreview.comparisons.map((machine) => (
@@ -752,10 +754,10 @@ export default function PickListPage() {
               ))}
               <div className="flex flex-col gap-2 sm:flex-row">
                 <button type="button" onClick={handleApplyRefresh} className="btn-primary w-full sm:w-auto" disabled={refreshPreview.applying}>
-                  {refreshPreview.applying ? "Applying..." : "Accept Updates"}
+                  {refreshPreview.applying ? `${t("Applying")}...` : t("Accept Updates")}
                 </button>
                 <button type="button" onClick={() => setRefreshPreview({ loading: false, applying: false, comparisons: [], message: "Current plan kept.", error: "" })} className="btn-secondary w-full sm:w-auto" disabled={refreshPreview.applying}>
-                  Keep Current Plan
+                  {t("Keep Current Plan")}
                 </button>
               </div>
             </div>
@@ -765,8 +767,8 @@ export default function PickListPage() {
         <div className="grid gap-3 sm:grid-cols-3">
           <SectionCard>
             <div className="p-4">
-              <p className="mb-1 text-xs text-slate-500">Checklist</p>
-              <p className="text-2xl font-bold text-slate-900">Picked {checkedItemCount} of {allStopItems.length} items</p>
+              <p className="mb-1 text-xs text-slate-500">{t("Checklist")}</p>
+              <p className="text-2xl font-bold text-slate-900">{t("Picked")} {checkedItemCount} {t("of")} {allStopItems.length} {t("items")}</p>
               <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
                 <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${checklistProgress}%` }} />
               </div>
@@ -774,35 +776,35 @@ export default function PickListPage() {
           </SectionCard>
           <SectionCard>
             <div className="p-4">
-              <p className="mb-1 text-xs text-slate-500">Selected stops</p>
+              <p className="mb-1 text-xs text-slate-500">{t("Selected stops")}</p>
               <p className="text-2xl font-bold text-slate-900">{selectedStopIds.length} / {stopGroups.length}</p>
-              <p className="mt-2 text-xs text-slate-500">{selectedLocationCount} locations in this pickup batch</p>
+              <p className="mt-2 text-xs text-slate-500">{selectedLocationCount} {t("locations in this pickup batch")}</p>
             </div>
           </SectionCard>
           <SectionCard>
             <div className="p-4">
-              <p className="mb-1 text-xs text-slate-500">Units left</p>
+              <p className="mb-1 text-xs text-slate-500">{t("Units left")}</p>
               <p className="text-2xl font-bold text-slate-900">{remainingUnitCount}</p>
-              <p className="mt-2 text-xs text-slate-500">{remainingItemCount} checklist rows still to pick</p>
+              <p className="mt-2 text-xs text-slate-500">{remainingItemCount} {t("checklist rows still to pick")}</p>
             </div>
           </SectionCard>
         </div>
 
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
-          <div className="font-semibold">Pickup progress saves on this phone immediately.</div>
-          <div className="mt-1">If the backend is slow or offline, your checklist stays locally saved and sync can catch up later.</div>
+          <div className="font-semibold">{t("Pickup progress saves on this phone immediately")}</div>
+          <div className="mt-1">{t("If the backend is slow or offline, your checklist stays locally saved and sync can catch up later.")}</div>
         </div>
 
         {stopGroups.length ? (
           <section className="rounded-lg border border-slate-200 bg-white p-4">
             <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h2 className="font-semibold text-slate-900">Select stops for this pickup batch</h2>
-                <p className="text-sm text-slate-500">Only selected machines are deducted from storage and added to your bag.</p>
+                <h2 className="font-semibold text-slate-900">{t("Select stops for this pickup batch")}</h2>
+                <p className="text-sm text-slate-500">{t("Only selected machines are deducted from storage and added to your bag.")}</p>
               </div>
               <div className="flex gap-2">
-                <button type="button" className="btn-secondary text-xs" onClick={() => setSelectedStopIds(stopGroups.map((group) => group.routeStopId).filter((id): id is string => Boolean(id)))}>Select all</button>
-                <button type="button" className="btn-secondary text-xs" onClick={() => setSelectedStopIds([])}>Clear</button>
+                <button type="button" className="btn-secondary text-xs" onClick={() => setSelectedStopIds(stopGroups.map((group) => group.routeStopId).filter((id): id is string => Boolean(id)))}>{t("Select all")}</button>
+                <button type="button" className="btn-secondary text-xs" onClick={() => setSelectedStopIds([])}>{t("Clear")}</button>
               </div>
             </div>
             <div className="mb-4 h-2 overflow-hidden rounded-full bg-slate-200">
@@ -824,7 +826,7 @@ export default function PickListPage() {
                       </div>
                       <div className="flex gap-2">
                         <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => toggleLocationSelection(locationStopIds, true)} disabled={!locationStopIds.length || allSelected}>Select location</button>
-                        <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => toggleLocationSelection(locationStopIds, false)} disabled={!selectedCount}>Clear</button>
+                        <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => toggleLocationSelection(locationStopIds, false)} disabled={!selectedCount}>{t("Clear")}</button>
                       </div>
                     </div>
                     <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
@@ -856,25 +858,25 @@ export default function PickListPage() {
 
         {stopGroups.length === 0 ? (
           routeItemCount === 0 ? (
-            <EmptyState title="No pickup items found for this route." body="No pickup items found for this route." />
+            <EmptyState title={t("No pickup items found for this route")} body={t("No pickup items found for this route")} />
           ) : (
-            <EmptyState title="No pending pickup items" body="All machine stops are already picked, completed, or skipped. Continue active stops from the route page." />
+            <EmptyState title={t("No pending pickup items")} body={t("All machine stops are already picked, completed, or skipped. Continue active stops from the route page.")} />
           )
         ) : selectedStopGroups.length === 0 ? (
-          <EmptyState title="No stops selected" body="Choose at least one pending machine stop for this pickup batch." />
+          <EmptyState title={t("No stops selected")} body={t("Choose at least one pending machine stop for this pickup batch.")} />
         ) : (
           <section className="rounded-lg border border-slate-200 bg-white">
             <div className="border-b border-slate-200 p-4">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <h2 className="font-semibold text-slate-900">Warehouse checklist</h2>
-                  <p className="text-sm text-slate-500">Tap a product row after you physically pick it from storage.</p>
+                  <h2 className="font-semibold text-slate-900">{t("Warehouse checklist")}</h2>
+                  <p className="text-sm text-slate-500">{t("Tap a product row after you physically pick it from storage.")}</p>
                 </div>
                 <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900">
-                  Picked {checkedItemCount} of {allStopItems.length}
+                  {t("Picked")} {checkedItemCount} {t("of")} {allStopItems.length}
                 </div>
               </div>
-              {checklistSyncError ? <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Pickup checklist save issue: {checklistSyncError}</div> : null}
+              {checklistSyncError ? <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{t("Pickup checklist save issue")}: {t(checklistSyncError, checklistSyncError)}</div> : null}
               <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
                 <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${checklistProgress}%` }} />
               </div>
@@ -1093,11 +1095,11 @@ export default function PickListPage() {
             <div className="font-semibold text-slate-900">{checkedItemCount} of {allStopItems.length} items checked</div>
             <div className="mt-1 text-xs text-slate-500">{selectedStopIds.length} stops selected · {totalPickedUnits} total units in this pickup batch</div>
           </div>
-          {error ? <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 sm:hidden">{error}</div> : null}
+          {error ? <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 sm:hidden">{t(error, error)}</div> : null}
           <button type="button" onClick={handleConfirmPick} disabled={submitting || (!locked && selectedStopIds.length === 0)} className="btn-primary w-full flex-1 disabled:cursor-not-allowed disabled:opacity-50">
-            {locked ? "Back to Route" : submitting ? "Saving..." : alreadyConfirmed ? "Confirm Pickup List" : "Confirm Pickup List"}
+            {locked ? t("Back to Route") : submitting ? `${t("Saving")}...` : t("Confirm Pickup List")}
           </button>
-          <SecondaryButton href={routeHref} type="button">Cancel</SecondaryButton>
+          <SecondaryButton href={routeHref} type="button">{t("Cancel")}</SecondaryButton>
         </div>
       </div>
     </>
