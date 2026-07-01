@@ -3,16 +3,21 @@ type RelationRecord<T extends Record<string, unknown>> = T | T[] | null | undefi
 type SiteLike = {
   name?: unknown;
   site_name?: unknown;
+  location_name?: unknown;
   area?: unknown;
   city?: unknown;
 };
 
 type MachineLike = {
   display_name?: unknown;
-  machine_code?: unknown;
   machine_display_name?: unknown;
+  machine_name?: unknown;
+  machine_code?: unknown;
+  code?: unknown;
   name?: unknown;
   location_name?: unknown;
+  site_name?: unknown;
+  area?: unknown;
   location?: RelationRecord<SiteLike>;
   locations?: RelationRecord<SiteLike>;
 };
@@ -33,19 +38,19 @@ export function relationRecord<T extends Record<string, unknown>>(value: Relatio
 
 export function locationSiteName(value: RelationRecord<SiteLike>) {
   const record = relationRecord(value);
-  return textValue(record?.site_name) ?? textValue(record?.name);
+  return textValue(record?.site_name) ?? textValue(record?.location_name) ?? textValue(record?.name);
 }
 
 export function locationAreaName(value: RelationRecord<SiteLike>) {
   const record = relationRecord(value);
-  return textValue(record?.area);
+  return textValue(record?.area) ?? textValue(record?.city);
 }
 
 export function formatSiteLabel(
   value: RelationRecord<SiteLike>,
   {
     includeArea = false,
-    fallback = "بدون موقع",
+    fallback = "Unknown location",
   }: {
     includeArea?: boolean;
     fallback?: string;
@@ -57,16 +62,26 @@ export function formatSiteLabel(
   return siteName ?? area ?? fallback;
 }
 
-export function machineBaseLabel(value: Pick<MachineLike, "display_name" | "machine_display_name" | "machine_code" | "name"> | null | undefined) {
+export function machineBaseLabel(
+  value: Pick<MachineLike, "display_name" | "machine_display_name" | "machine_name" | "machine_code" | "code" | "name"> | null | undefined,
+) {
   const machine = value ?? {};
-  return textValue(machine.display_name) ?? textValue(machine.machine_display_name) ?? textValue(machine.machine_code) ?? textValue(machine.name) ?? "Unknown machine";
+  return (
+    textValue(machine.machine_display_name)
+    ?? textValue(machine.machine_name)
+    ?? textValue(machine.name)
+    ?? textValue(machine.machine_code)
+    ?? textValue(machine.code)
+    ?? textValue(machine.display_name)
+    ?? "Unknown machine"
+  );
 }
 
 export function machineSiteLabel(
-  value: Pick<MachineLike, "location_name" | "location" | "locations"> | null | undefined,
+  value: Pick<MachineLike, "location_name" | "site_name" | "area" | "location" | "locations"> | null | undefined,
   {
     includeArea = true,
-    fallback = "بدون موقع",
+    fallback = "Unknown location",
   }: {
     includeArea?: boolean;
     fallback?: string;
@@ -75,6 +90,8 @@ export function machineSiteLabel(
   const machine = value ?? {};
   return (
     textValue(machine.location_name)
+    ?? textValue(machine.site_name)
+    ?? textValue(machine.area)
     ?? formatSiteLabel(machine.location ?? machine.locations ?? null, { includeArea, fallback })
   );
 }
@@ -90,16 +107,18 @@ export function formatMachineDisplayName(
   } = {},
 ) {
   const machine = value ?? {};
-  const displayName = textValue(machine.display_name) ?? textValue(machine.machine_display_name);
-  if (displayName) return displayName;
-
-  const machineCode = textValue(machine.machine_code);
-  const siteLabel = textValue(machine.location_name) ?? formatSiteLabel(machine.location ?? machine.locations ?? null, { includeArea, fallback: "" });
-  const machineName = textValue(machine.name);
+  const displayName = (
+    textValue(machine.machine_display_name)
+    ?? textValue(machine.machine_name)
+    ?? textValue(machine.name)
+    ?? textValue(machine.display_name)
+  );
+  const machineCode = textValue(machine.machine_code) ?? textValue(machine.code);
+  const siteLabel = machineSiteLabel(machine, { includeArea, fallback: "" });
 
   if (machineCode && siteLabel) return `${machineCode} - ${siteLabel}`;
-  if (machineCode && machineName && machineName !== machineCode) return `${machineCode} - ${machineName}`;
+  if (displayName && siteLabel && displayName !== siteLabel) return `${displayName} - ${siteLabel}`;
+  if (displayName) return displayName;
   if (machineCode) return machineCode;
-  if (machineName) return machineName;
-  return "Unknown machine";
+  return fallbackSite;
 }

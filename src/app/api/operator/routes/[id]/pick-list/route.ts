@@ -433,10 +433,10 @@ export async function GET(
       failingResource = "machines";
       let machinesResponse: any = await readClient
         .from("machines")
-        .select("id, name, machine_code, display_name, location_id")
+        .select("id, name, machine_code, location_id")
         .in("id", machineIds);
 
-      if (machinesResponse.error && isMissingColumn(machinesResponse.error, ["display_name", "location_id"])) {
+      if (machinesResponse.error && isMissingColumn(machinesResponse.error, ["location_id"])) {
         machinesResponse = await readClient
           .from("machines")
           .select("id, name, machine_code")

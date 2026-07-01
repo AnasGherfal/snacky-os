@@ -1702,7 +1702,7 @@ async function buildPendingStopRefreshPlan(
 ): Promise<PendingStopRefreshPlan> {
   const { data: stops, error: stopsError } = await supabase
     .from("route_stops")
-    .select("id, route_id, machine_id, stop_order, status, machine:machines(id, name, machine_code, display_name, location:locations(id, name))")
+    .select("id, route_id, machine_id, stop_order, status, machine:machines(id, name, machine_code, location:locations(id, name))")
     .eq("route_id", routeId)
     .order("stop_order", { ascending: true });
   if (stopsError) throwActionError(stopsError, "Could not load route stops.");
@@ -2300,7 +2300,7 @@ export async function completeStop({
     const [{ data: machine, error: machineError }, { data: operatorMember, error: operatorError }] = await Promise.all([
       supabase
         .from("machines")
-        .select("id, name, machine_code, display_name, location:locations(id, name)")
+        .select("id, name, machine_code, location:locations(id, name)")
         .eq("id", machineId)
         .maybeSingle(),
       route.operator_id

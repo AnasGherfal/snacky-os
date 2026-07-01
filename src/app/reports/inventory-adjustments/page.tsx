@@ -79,7 +79,7 @@ export default async function InventoryAdjustmentsReportPage({
   let query = supabase
     .from("inventory_adjustments")
     .select(
-      "id, adjustment_type, product_id, product_name, quantity, unit_cost_lyd, total_cost_lyd, reason, notes, photo_url, status, created_at, route_id, route_stop_id, machine_id, location_id, operator_id, route:routes(id, route_date), machine:machines(id, name, machine_code, display_name, location:locations(id, name)), location:locations(id, name), operator:team_members(id, full_name), product:products(id, name, sku)",
+      "id, adjustment_type, product_id, product_name, quantity, unit_cost_lyd, total_cost_lyd, reason, notes, photo_url, status, created_at, route_id, route_stop_id, machine_id, location_id, operator_id, route:routes(id, route_date), machine:machines(id, name, machine_code, location:locations(id, name)), location:locations(id, name), operator:team_members(id, full_name), product:products(id, name, sku)",
     )
     .order("created_at", { ascending: false })
     .limit(500);

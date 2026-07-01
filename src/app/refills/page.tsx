@@ -196,7 +196,7 @@ async function RefillsPageContent({ searchParams }: { searchParams: Promise<Sear
           .eq("import_row_status", "imported"),
         supabase
           .from("machine_refill_history")
-          .select("id, legacy_refill_id, refill_at, machine_name, operator_email, fill_status, issues_found, issue_notes, machine_photo_url, machine_photo_path, linked_issue_id, machine:machines(name, machine_code, display_name, location:locations(id, name)), operator:team_members(full_name, email)")
+          .select("id, legacy_refill_id, refill_at, machine_name, operator_email, fill_status, issues_found, issue_notes, machine_photo_url, machine_photo_path, linked_issue_id, machine:machines(name, machine_code, location:locations(id, name)), operator:team_members(full_name, email)")
           .order("refill_at", { ascending: false })
           .range(from, to),
         supabase

@@ -21,7 +21,7 @@ type OperatorRouteMachineRow = {
   id: string;
   name?: string | null;
   machine_code?: string | null;
-  display_name?: string | null;
+  machine_display_name?: string | null;
   location?: { id?: string | null; name?: string | null } | null;
 };
 
@@ -322,7 +322,7 @@ export default async function OperatorRouteDetailPage({
   const routeStops = (stops ?? []) as OperatorRoutePreviewStopRow[];
   const machineIds = routeStops.map((stop) => stop.machine_id).filter(Boolean);
   const { data: machines, error: machinesError } = machineIds.length
-    ? await routeReadClient.from("machines").select("id, name, machine_code, display_name, location:locations(id, name)").in("id", machineIds)
+    ? await routeReadClient.from("machines").select("id, name, machine_code, location:locations(id, name)").in("id", machineIds)
     : { data: [], error: null };
   if (machinesError) logRouteLoaderIssue({ step: 'load_route_machines', query: 'machines', error: machinesError, context: loaderContext, optional: true });
   const machineById = new Map(((machines ?? []) as OperatorRouteMachineRow[]).map((machine) => [machine.id, machine]));

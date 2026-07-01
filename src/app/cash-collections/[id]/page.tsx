@@ -58,7 +58,7 @@ export default async function CashCollectionDetailPage({
     supabase
       .from("cash_collections")
       .select(
-        "id, route_id, machine_id, operator_id, collected_at, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, counted_at, counted_by, voided_at, void_reason, notes, machine:machines(id, name, machine_code, display_name, location:locations(id, name)), operator:team_members!cash_collections_operator_id_fkey(id, full_name), counted_by_member:team_members!cash_collections_counted_by_fkey(id, full_name), route:routes(id, route_date, status)",
+        "id, route_id, machine_id, operator_id, collected_at, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, counted_at, counted_by, voided_at, void_reason, notes, machine:machines(id, name, machine_code, location:locations(id, name)), operator:team_members!cash_collections_operator_id_fkey(id, full_name), counted_by_member:team_members!cash_collections_counted_by_fkey(id, full_name), route:routes(id, route_date, status)",
       )
       .eq("id", id)
       .single(),

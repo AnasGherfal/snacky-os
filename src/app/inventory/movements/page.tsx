@@ -129,7 +129,7 @@ export default async function InventoryMovementsPage({
     supabase.from("team_members").select("id, full_name").order("full_name").limit(500),
     supabase.from("routes").select("id, route_date").order("route_date", { ascending: false }).limit(200),
     supabase.from("purchase_orders").select("id, receipt_number, order_date").order("order_date", { ascending: false }).limit(200),
-    supabase.from("machines").select("id, name, machine_code, display_name, location:locations(id, name)").order("name").limit(500),
+    supabase.from("machines").select("id, name, machine_code, location:locations(id, name)").order("name").limit(500),
     supabase.from("storage_locations").select("id, name").order("name").limit(500),
   ]);
 

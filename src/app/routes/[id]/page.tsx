@@ -177,7 +177,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     ...routePickListItems.flatMap((line: any) => [line.product_id, line.substituted_for_product_id]),
   ].filter(Boolean)));
   const [{ data: machines }, { data: products }, { data: movements }, { data: cashCollections }, { data: issues }, { data: routePayBreakdown, error: routePayError }] = await Promise.all([
-    machineIds.length ? supabase.from("machines").select("id, name, machine_code, display_name, location:locations(id, name)").in("id", machineIds) : Promise.resolve({ data: [] }),
+    machineIds.length ? supabase.from("machines").select("id, name, machine_code, location:locations(id, name)").in("id", machineIds) : Promise.resolve({ data: [] }),
     productIds.length ? supabase.from("products").select("id, name").in("id", productIds) : Promise.resolve({ data: [] }),
     supabase
       .from("inventory_movements")

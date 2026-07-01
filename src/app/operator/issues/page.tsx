@@ -17,7 +17,7 @@ export default async function OperatorIssuesPage() {
   const supabase = getSupabaseServerClient();
   let query = supabase
     ?.from("issues")
-    .select("id, issue_type, priority, status, description, created_at, sla_due_at, machine:machines(id, name, machine_code, display_name, location:locations(id, name))")
+    .select("id, issue_type, priority, status, description, created_at, sla_due_at, machine:machines(id, name, machine_code, location:locations(id, name))")
     .order("created_at", { ascending: false });
 
   if (query && isOperatorRole(profile)) {

@@ -44,7 +44,6 @@ type MachineRow = {
   id: string;
   name: string;
   machine_code: string;
-  display_name?: string | null;
   machine_display_name?: string | null;
   vms_machine_id?: string | null;
   location?: Record<string, unknown> | Record<string, unknown>[] | null;
@@ -469,7 +468,7 @@ export default async function NewRoutePage() {
     return {
       id: machine.id,
       name: machine.name,
-      display_name: machine.display_name ?? machine.machine_display_name ?? null,
+      machine_display_name: machine.machine_display_name ?? null,
       machine_code: machine.machine_code,
       location_name: formatSiteLabel(location ?? null, { includeArea: true }),
     };

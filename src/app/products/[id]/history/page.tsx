@@ -90,7 +90,7 @@ export default async function ProductHistoryPage({
       .limit(200),
     supabase
       .from("vms_sales_snapshots")
-      .select("id, machine_id, sold_qty, sales_amount, cash_sales_amount, card_sales_amount, period_start, period_end, machine:machines(name, machine_code, display_name, location:locations(id, name))")
+      .select("id, machine_id, sold_qty, sales_amount, cash_sales_amount, card_sales_amount, period_start, period_end, machine:machines(name, machine_code, location:locations(id, name))")
       .eq("product_id", id)
       .eq("import_row_status", "imported")
       .order("period_end", { ascending: false })

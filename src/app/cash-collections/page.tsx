@@ -64,7 +64,7 @@ export default async function CashCollectionsPage({
   }
 
   const [{ data: machines, error: machinesError }, { data: operators, error: operatorsError }] = await Promise.all([
-    supabase.from("machines").select("id, name, machine_code, display_name, location:locations(id, name)").order("name"),
+    supabase.from("machines").select("id, name, machine_code, location:locations(id, name)").order("name"),
     supabase.from("team_members").select("id, full_name").order("full_name"),
   ]);
   const filterLoadError = machinesError ?? operatorsError;
@@ -80,7 +80,7 @@ export default async function CashCollectionsPage({
   let query = supabase
     .from("cash_collections")
     .select(
-      "id, route_id, machine_id, operator_id, collected_at, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, counted_at, notes, machine:machines(id, name, machine_code, display_name, location:locations(id, name)), operator:team_members!cash_collections_operator_id_fkey(id, full_name), route:routes(id, route_date)",
+      "id, route_id, machine_id, operator_id, collected_at, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, counted_at, notes, machine:machines(id, name, machine_code, location:locations(id, name)), operator:team_members!cash_collections_operator_id_fkey(id, full_name), route:routes(id, route_date)",
       { count: "exact" },
     )
     .order("collected_at", { ascending: false });

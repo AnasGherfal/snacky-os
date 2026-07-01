@@ -211,7 +211,7 @@ export async function loadFinanceHealthDiagnostics(supabase: SupabaseLike): Prom
       .order("order_date", { ascending: false }),
     supabase
       .from("cash_collections")
-      .select("id, collected_at, review_status, actual_cash_collected, vms_expected_cash, cash_bag_id, route_id, machine_id, machine:machines(name, machine_code, display_name, location:locations(id, name))")
+      .select("id, collected_at, review_status, actual_cash_collected, vms_expected_cash, cash_bag_id, route_id, machine_id, machine:machines(name, machine_code, location:locations(id, name))")
       .order("collected_at", { ascending: false }),
     supabase
       .from("financial_transactions")

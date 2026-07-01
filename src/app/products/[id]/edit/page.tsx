@@ -107,7 +107,7 @@ export default async function EditProductPage({ params, searchParams }: { params
       .limit(100),
     s
       .from("vms_sales_snapshots")
-      .select("id, sold_qty, sales_amount, cash_sales_amount, card_sales_amount, period_end, machine:machines(name, machine_code, display_name, location:locations(id, name))")
+      .select("id, sold_qty, sales_amount, cash_sales_amount, card_sales_amount, period_end, machine:machines(name, machine_code, location:locations(id, name))")
       .eq("product_id", id)
       .eq("import_row_status", "imported")
       .order("period_end", { ascending: false })

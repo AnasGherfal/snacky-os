@@ -19,7 +19,7 @@ type Operator = {
 type Machine = {
   id: string;
   name: string;
-  display_name?: string | null;
+  machine_display_name?: string | null;
   machine_code: string;
   location_name?: string | null;
 };

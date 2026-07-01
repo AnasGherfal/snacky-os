@@ -141,7 +141,7 @@ export default async function HistoricalRouteDeductionPage({ searchParams }: { s
     params.batchId
       ? supabase
           .from("historical_route_deduction_lines")
-          .select("id, line_number, section_name, machine_alias, machine_id, product_alias, product_id, quantity, original_text, status, review_reason, storage_qty_before, storage_qty_after, storage_negative_warning, movement_id, applied_at, product:products(id, name, sku), machine:machines(id, name, machine_code, display_name, location:locations(id, name)), storage:storage_locations(id, name)")
+          .select("id, line_number, section_name, machine_alias, machine_id, product_alias, product_id, quantity, original_text, status, review_reason, storage_qty_before, storage_qty_after, storage_negative_warning, movement_id, applied_at, product:products(id, name, sku), machine:machines(id, name, machine_code, location:locations(id, name)), storage:storage_locations(id, name)")
           .eq("import_batch_id", params.batchId)
           .order("line_number", { ascending: true })
       : Promise.resolve({ data: [], error: null }),

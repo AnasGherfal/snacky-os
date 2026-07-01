@@ -24,7 +24,7 @@ export default async function NewCashCollectionPage({ searchParams }: { searchPa
     );
   }
   const [{ data: machines, error: machinesError }, { data: routes, error: routesError }, { data: operators, error: operatorsError }] = await Promise.all([
-    supabase.from("machines").select("id, name, machine_code, display_name, location:locations(id, name), status").order("name"),
+    supabase.from("machines").select("id, name, machine_code, location:locations(id, name), status").order("name"),
     supabase.from("routes").select("id, route_date, status").order("route_date", { ascending: false }).limit(200),
     supabase.from("team_members").select("id, full_name, role, active").eq("active", true).order("full_name"),
   ]);

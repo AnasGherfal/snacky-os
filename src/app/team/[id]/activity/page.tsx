@@ -83,13 +83,13 @@ export default async function TeamMemberActivityPage({
       .limit(200),
     supabase
       .from("cash_collections")
-      .select("id, route_id, machine_id, vms_expected_cash, actual_cash_collected, variance, review_status, collected_at, machine:machines(id, name, machine_code, display_name, location:locations(id, name)), route:routes(id, route_date)")
+      .select("id, route_id, machine_id, vms_expected_cash, actual_cash_collected, variance, review_status, collected_at, machine:machines(id, name, machine_code, location:locations(id, name)), route:routes(id, route_date)")
       .eq("operator_id", id)
       .order("collected_at", { ascending: false })
       .limit(200),
     supabase
       .from("issues")
-      .select("id, machine_id, issue_type, priority, status, description, created_at, resolved_at, machine:machines(id, name, machine_code, display_name, location:locations(id, name))")
+      .select("id, machine_id, issue_type, priority, status, description, created_at, resolved_at, machine:machines(id, name, machine_code, location:locations(id, name))")
       .eq("reported_by", id)
       .order("created_at", { ascending: false })
       .limit(200),
