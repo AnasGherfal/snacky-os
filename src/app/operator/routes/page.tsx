@@ -8,6 +8,54 @@ import { loadAccessibleOperatorIds } from "@/lib/operator-route-access";
 import { type OperatorRoutePreviewRow, type OperatorRoutePreviewStopRow } from "@/lib/operator-route-types";
 import { isOperatorVisibleRouteStatus, isRouteStopDoneStatus, isTerminalRouteStatus, routeDisplayStatus } from "@/lib/route-workflow";
 
+function errorSummary(error: unknown) {
+  if (!error || typeof error !== "object") return null;
+  const row = error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown };
+  return {
+    code: row.code ?? null,
+    message: row.message ?? null,
+    details: row.details ?? null,
+    hint: row.hint ?? null,
+  };
+}
+
+function missingDbObjectName(error: unknown) {
+  const summary = errorSummary(error);
+  const text = [summary?.code, summary?.message, summary?.details, summary?.hint]
+    .map((value) => String(value ?? ""))
+    .join(" ");
+  return text.match(/relation "([^"]+)"/i)?.[1] ?? text.match(/column "([^"]+)"/i)?.[1] ?? null;
+}
+
+function logRouteLoaderIssue({
+  step,
+  query,
+  error,
+  context,
+  optional = false,
+}: {
+  step: string;
+  query: string;
+  error: unknown;
+  context: Record<string, unknown>;
+  optional?: boolean;
+}) {
+  const summary = errorSummary(error);
+  const payload = {
+    ...context,
+    loader_step: step,
+    loader_query: query,
+    optional_data_failed: optional,
+    db_error_code: summary?.code ?? null,
+    db_error_message: summary?.message ?? null,
+    db_error_details: summary?.details ?? null,
+    db_error_hint: summary?.hint ?? null,
+    missing_relation_or_column: missingDbObjectName(error),
+  };
+  (optional ? console.warn : console.error)("[operator:routes] " + step + " failed", payload);
+}
+
+
 function routeProgress(route: OperatorRoutePreviewRow) {
   const completedStops = route.route_stops?.filter((stop: OperatorRoutePreviewStopRow) => isRouteStopDoneStatus(stop.status)).length ?? 0;
   const totalStops = route.route_stops?.length ?? 0;
@@ -72,6 +120,14 @@ export default async function OperatorRoutesPage() {
   const canManageAllRoutes = canManageOperations(profile);
   const accessibleOperatorIds = await loadAccessibleOperatorIds(supabase, profile);
   const routeReadClient = getSupabaseAdminClient() ?? supabase;
+  const loaderContext = {
+    page_module: "src/app/operator/routes/page.tsx",
+    current_user_id: profile.id,
+    current_user_role: profile.role,
+    operator_profile_id: profile.team_member_id ?? null,
+    route_status_filter: "assigned|available|completed",
+    assignment_filter: canManageAllRoutes ? "all_routes" : "accessible_operator_ids",
+  };
   const routeSelect = "id, route_date, status, operator_id, route_stops(id, status, stop_order, machine_id)";
 
   const assignedQuery = canManageAllRoutes
@@ -90,13 +146,27 @@ export default async function OperatorRoutesPage() {
     availableQuery,
   ]);
 
-  const error = assignedResult.error ?? availableResult.error;
-  if (error) {
-    console.error("[operator:routes] Failed to load operator routes", {
-      error,
-      authUserId: profile.id,
-      linkedOperatorIds: accessibleOperatorIds,
+  const assignedRoutesError = assignedResult.error ?? null;
+  const availableRoutesError = availableResult.error ?? null;
+  if (assignedRoutesError) {
+    logRouteLoaderIssue({
+      step: "load_assigned_routes",
+      query: "routes",
+      error: assignedRoutesError,
+      context: { ...loaderContext, route_bucket: "assigned" },
+      optional: !availableRoutesError,
     });
+  }
+  if (availableRoutesError) {
+    logRouteLoaderIssue({
+      step: "load_available_routes",
+      query: "routes",
+      error: availableRoutesError,
+      context: { ...loaderContext, route_bucket: "available" },
+      optional: !assignedRoutesError,
+    });
+  }
+  if (assignedRoutesError && availableRoutesError) {
     return (
       <>
         <ErrorState title="Could not load routes" body="Snacky OS could not load the operator route list." />
@@ -104,8 +174,10 @@ export default async function OperatorRoutesPage() {
     );
   }
 
-  const assignedRoutes = (assignedResult.data ?? []) as OperatorRoutePreviewRow[];
-  const availableRoutes = ((availableResult.data ?? []) as OperatorRoutePreviewRow[]).filter((route) => isOperatorVisibleRouteStatus(route.status));
+  const assignedRoutes = assignedRoutesError ? [] : ((assignedResult.data ?? []) as OperatorRoutePreviewRow[]);
+  const availableRoutes = availableRoutesError
+    ? []
+    : ((availableResult.data ?? []) as OperatorRoutePreviewRow[]).filter((route) => isOperatorVisibleRouteStatus(route.status));
   const assignedOpenRoutes = assignedRoutes.filter((route) => !isTerminalRouteStatus(route.status));
   const completedRoutes = assignedRoutes
     .filter((route) => isTerminalRouteStatus(route.status))
@@ -118,6 +190,12 @@ export default async function OperatorRoutesPage() {
           title="Operator Routes"
           subtitle={canManageAllRoutes ? "Assigned, unassigned, and completed routes across the team." : "See your assigned work, open routes you can claim, and completed history in one place."}
         />
+
+        {assignedRoutesError || availableRoutesError ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            Some route buckets are unavailable right now. Routes that loaded are still shown.
+          </div>
+        ) : null}
 
         <SectionCard>
           <div className="grid gap-4 p-4 sm:grid-cols-3">
@@ -210,4 +288,3 @@ export default async function OperatorRoutesPage() {
     </>
   );
 }
-
