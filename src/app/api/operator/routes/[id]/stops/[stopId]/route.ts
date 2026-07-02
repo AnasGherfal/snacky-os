@@ -6,6 +6,7 @@ import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 import { completeStop } from "@/lib/operator-actions";
 import { ROUTE_STOP_PENDING_STATUS } from "@/lib/route-workflow";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
+import { normalizeRouteManualSale, type RouteManualSaleRow } from "@/lib/manual-route-sales";
 
 function buildDebugDetails({
   profile,
@@ -60,8 +61,7 @@ type RefillOrderFallbackRow = { refill_order_lines?: RefillOrderLineRow[] | null
 type SlotRow = { id?: string | null; slot_code?: string | null; product_id?: string | null };
 type FillLineRow = { product_id?: string | null; action_type?: string | null; actual_qty?: unknown; reason?: string | null; notes?: string | null; assigned_product_id?: string | null };
 type MovementRow = { product_id?: string | null; quantity?: unknown; related_route_stop_id?: string | null; reason?: string | null; from_entity_type?: string | null; to_entity_type?: string | null };
-type RouteStockLineRow = { product_id?: string | null; picked_qty?: unknown; returned_qty?: unknown };
-type ProductOptionRow = { id: string; sku?: string | null; barcode?: string | null; name: string; category?: string | null; brand?: string | null; image_url?: string | null };
+type ProductOptionRow = { id: string; sku?: string | null; barcode?: string | null; name: string; category?: string | null; brand?: string | null; image_url?: string | null; selling_price?: number | null; current_selling_price_lyd?: number | null; vms_selling_price_lyd?: number | null };
 type MachineProductSignalRow = { product_id?: string | null };
 type AdjustmentRow = {
   id: string;
@@ -490,6 +490,8 @@ export async function GET(
       latestStockResult,
       recentSalesResult,
       adjustmentsResult,
+      manualSalesResult,
+      manualMachineSalesResult,
     ] = await Promise.all([
       supabase
         .from("inventory_movements")
@@ -503,7 +505,7 @@ export async function GET(
         .in("reason", ["operator_bag_to_machine", "manual_correction"]),
       supabase
         .from("products")
-        .select("id, sku, barcode, name, category, brand, image_url")
+        .select("id, sku, barcode, name, category, brand, image_url, selling_price, current_selling_price_lyd, vms_selling_price_lyd")
         .eq("active", true)
         .order("name"),
       supabase
@@ -530,12 +532,25 @@ export async function GET(
         .eq("route_stop_id", stopId)
         .neq("status", "cancelled")
         .order("created_at", { ascending: false }),
+      supabase
+        .from("route_manual_sales")
+        .select("id, route_id, route_stop_id, machine_id, location_id, operator_id, product_id, product_name, quantity, unit_sale_price_lyd, total_amount_lyd, payment_method, notes, sale_time, status, client_submission_id, inventory_movement_id, cash_collection_id, cancellation_reason, cancelled_at, cancelled_by_user_id")
+        .eq("route_stop_id", stopId)
+        .order("sale_time", { ascending: false })
+        .limit(200),
+      supabase
+        .from("route_manual_sales")
+        .select("product_id, unit_sale_price_lyd, sale_time, status")
+        .eq("machine_id", stop.machine_id)
+        .eq("status", "confirmed")
+        .order("sale_time", { ascending: false })
+        .limit(200),
     ]);
     if (movementError) logOptionalStopDataIssue({ step: "load_route_movements", query: "inventory_movements", routeId, stopId, profile, route, stop, error: movementError });
     if (fillMovementsError) logOptionalStopDataIssue({ step: "load_fill_movements", query: "inventory_movements", routeId, stopId, profile, route, stop, error: fillMovementsError });
     let productRows = productsError ? [] : (products ?? []) as ProductOptionRow[];
     if (productsError) {
-      if (isMissingColumn(productsError, ["sku", "barcode", "category", "brand", "image_url"])) {
+      if (isMissingColumn(productsError, ["sku", "barcode", "category", "brand", "image_url", "selling_price", "current_selling_price_lyd", "vms_selling_price_lyd"])) {
         const fallbackProducts = await supabase.from("products").select("id, name").eq("active", true).order("name");
         if (fallbackProducts.error) {
           logOptionalStopDataIssue({ step: "load_products_fallback", query: "products", routeId, stopId, profile, route, stop, error: fallbackProducts.error });
@@ -556,6 +571,12 @@ export async function GET(
     }
     if (adjustmentsResult.error && !isMissingTable(adjustmentsResult.error, "inventory_adjustments")) {
       logOptionalStopDataIssue({ step: "load_inventory_adjustments", query: "inventory_adjustments", routeId, stopId, profile, route, stop, error: adjustmentsResult.error });
+    }
+    if (manualSalesResult.error && !isMissingTable(manualSalesResult.error, "route_manual_sales")) {
+      logOptionalStopDataIssue({ step: "load_manual_route_sales", query: "route_manual_sales", routeId, stopId, profile, route, stop, error: manualSalesResult.error });
+    }
+    if (manualMachineSalesResult.error && !isMissingTable(manualMachineSalesResult.error, "route_manual_sales")) {
+      logOptionalStopDataIssue({ step: "load_manual_machine_sales", query: "route_manual_sales", routeId, stopId, profile, route, stop, error: manualMachineSalesResult.error });
     }
 
     const filledByProduct = new Map<string, number>();
@@ -591,6 +612,15 @@ export async function GET(
       item.availableQty = availableByProduct.get(String(item.productId)) ?? 0;
     });
 
+    const manualMachineSaleRows = manualMachineSalesResult.error ? [] : (manualMachineSalesResult.data ?? []) as Array<{ product_id?: string | null; unit_sale_price_lyd?: number | string | null; sale_time?: string | null; status?: string | null }>;
+    const lastKnownSalePriceByProduct = new Map<string, number>();
+    manualMachineSaleRows.forEach((row) => {
+      const productId = String(row.product_id ?? "");
+      const price = Number(row.unit_sale_price_lyd ?? 0);
+      if (!productId || !Number.isFinite(price) || price <= 0 || lastKnownSalePriceByProduct.has(productId)) return;
+      lastKnownSalePriceByProduct.set(productId, price);
+    });
+
     const productPriority = new Map<string, { rank: number; label: string }>();
     const markProductPriority = (productId: unknown, rank: number, label: string) => {
       const key = String(productId ?? "");
@@ -604,6 +634,22 @@ export async function GET(
     ((latestStockResult.data ?? []) as MachineProductSignalRow[]).forEach((row) => markProductPriority(row.product_id, 3, "Latest VMS stock"));
     ((recentSalesResult.data ?? []) as MachineProductSignalRow[]).forEach((row) => markProductPriority(row.product_id, 4, "Known machine product"));
 
+    const manualSaleProductPriority = new Map<string, { rank: number; label: string }>();
+    const markManualSalePriority = (productId: unknown, rank: number, label: string) => {
+      const key = String(productId ?? "");
+      if (!key) return;
+      const existing = manualSaleProductPriority.get(key);
+      if (!existing || rank < existing.rank) manualSaleProductPriority.set(key, { rank, label });
+    };
+
+    bagBalanceByProduct.forEach((quantity, productId) => {
+      if (quantity > 0) markManualSalePriority(productId, 1, "Picked up for this route");
+    });
+    lineItems.forEach((item) => markManualSalePriority(item.productId, 2, "Assigned to this machine"));
+    slotRows.forEach((slot) => markManualSalePriority(slot.product_id, 2, "Assigned to this machine"));
+    ((latestStockResult.data ?? []) as MachineProductSignalRow[]).forEach((row) => markManualSalePriority(row.product_id, 3, "Latest VMS stock"));
+    ((recentSalesResult.data ?? []) as MachineProductSignalRow[]).forEach((row) => markManualSalePriority(row.product_id, 4, "Known machine product"));
+
     const refillItems = lineItems;
     const productOptions = productRows.map((product) => ({
       id: product.id,
@@ -615,12 +661,21 @@ export async function GET(
       imageUrl: product.image_url,
       availableQty: availableByProduct.get(String(product.id)) ?? 0,
       sourceLabel: productPriority.get(String(product.id))?.label ?? null,
+      currentSellingPriceLyd: product.current_selling_price_lyd ?? null,
+      sellingPrice: product.selling_price ?? null,
+      vmsSellingPriceLyd: product.vms_selling_price_lyd ?? null,
+      lastKnownSalePriceLyd: lastKnownSalePriceByProduct.get(String(product.id)) ?? null,
     }));
     const productOptionById = new Map(productOptions.map((product) => [product.id, product]));
     const machineProductOptions = Array.from(productPriority.entries())
       .sort((a, b) => a[1].rank - b[1].rank || (productOptionById.get(a[0])?.name ?? "").localeCompare(productOptionById.get(b[0])?.name ?? ""))
       .map(([productId]) => productOptionById.get(productId))
       .filter((product): product is (typeof productOptions)[number] => Boolean(product));
+    const manualSaleProductOptions = Array.from(manualSaleProductPriority.entries())
+      .sort((a, b) => a[1].rank - b[1].rank || (productOptionById.get(a[0])?.name ?? "").localeCompare(productOptionById.get(b[0])?.name ?? ""))
+      .map(([productId]) => productOptionById.get(productId))
+      .filter((product): product is (typeof productOptions)[number] => Boolean(product));
+    const manualSales = (manualSalesResult.error ? [] : ((manualSalesResult.data ?? []) as RouteManualSaleRow[])).map((sale) => normalizeRouteManualSale(sale));
     const adjustmentRows = adjustmentsResult.error ? [] : (adjustmentsResult.data ?? []) as AdjustmentRow[];
     const adjustments = adjustmentRows.map((adjustment) => {
       const product = firstRelation(adjustment.product);
@@ -651,6 +706,8 @@ export async function GET(
       extraItems: existingExtraItems,
       productOptions,
       machineProductOptions,
+      manualSaleProductOptions,
+      manualSales,
       adjustments,
       hasCompletionPhoto: Boolean(refillHistoryRow?.machine_photo_url || refillHistoryRow?.machine_photo_path),
       debug: buildDebugDetails({ profile, routeId, stopId, route, stop }),
@@ -847,3 +904,5 @@ export async function POST(
     );
   }
 }
+
+

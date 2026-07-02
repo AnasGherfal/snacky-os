@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge, SectionCard } from "@/components/ui";
+import { lyd } from "@/lib/format";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute, canExecuteRoutes } from "@/lib/authz";
 import { getServerI18n } from "@/lib/i18n/server";
@@ -33,6 +34,17 @@ type OperatorRouteStockLineRow = {
   picked_qty?: number | string | null;
   returned_qty?: number | string | null;
   product?: { name?: string | null; category?: string | null } | null;
+};
+
+type OperatorRouteManualSaleRow = {
+  id: string;
+  product_name?: string | null;
+  quantity?: number | string | null;
+  total_amount_lyd?: number | string | null;
+  payment_method?: string | null;
+  sale_time?: string | null;
+  status?: string | null;
+  machine_id?: string | null;
 };
 
 type OperatorRouteAdjustmentRow = {
@@ -244,7 +256,7 @@ export default async function OperatorRouteDetailPage({
     });
   }
 
-  const [{ data: operator, error: operatorError }, { data: stops, error: stopsError }, { data: routeStock, error: routeStockError }, { data: routeAdjustments, error: adjustmentsError }] = await Promise.all([
+  const [{ data: operator, error: operatorError }, { data: stops, error: stopsError }, { data: routeStock, error: routeStockError }, { data: routeAdjustments, error: adjustmentsError }, { data: routeManualSales, error: manualSalesError }] = await Promise.all([
     routeRow.operator_id
       ? routeReadClient.from("team_members").select("id, full_name").eq("id", routeRow.operator_id).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
@@ -263,6 +275,11 @@ export default async function OperatorRouteDetailPage({
       .eq("route_id", routeId)
       .neq("status", "cancelled")
       .order("created_at", { ascending: false }),
+    routeReadClient
+      .from("route_manual_sales")
+      .select("id, product_name, quantity, total_amount_lyd, payment_method, sale_time, status, machine_id")
+      .eq("route_id", routeId)
+      .order("sale_time", { ascending: false }),
   ]);
   if (operatorError) logRouteLoaderIssue({ step: 'load_route_operator', query: 'team_members', error: operatorError, context: loaderContext, optional: true });
   if (stopsError) logRouteLoaderIssue({ step: 'load_route_stops', query: 'route_stops', error: stopsError, context: loaderContext });
@@ -284,6 +301,7 @@ export default async function OperatorRouteDetailPage({
     routeStockRows = [];
   }
   if (adjustmentsError) logRouteLoaderIssue({ step: 'load_inventory_adjustments', query: 'inventory_adjustments', error: adjustmentsError, context: loaderContext, optional: true });
+  if (manualSalesError && !errorText(manualSalesError).toLowerCase().includes("route_manual_sales")) logRouteLoaderIssue({ step: 'load_manual_route_sales', query: 'route_manual_sales', error: manualSalesError, context: loaderContext, optional: true });
   if (!canAccess) {
     console.error("[operator:route] Route access denied by app permission check", {
       route_id: routeId,
@@ -329,6 +347,11 @@ export default async function OperatorRouteDetailPage({
   if (machinesError) logRouteLoaderIssue({ step: 'load_route_machines', query: 'machines', error: machinesError, context: loaderContext, optional: true });
   const machineById = new Map(((machines ?? []) as OperatorRouteMachineRow[]).map((machine) => [machine.id, machine]));
   const adjustmentRows = adjustmentsError ? [] : (routeAdjustments ?? []) as OperatorRouteAdjustmentRow[];
+  const manualSaleRows = manualSalesError ? [] : (routeManualSales ?? []) as OperatorRouteManualSaleRow[];
+  const confirmedManualSales = manualSaleRows.filter((sale) => String(sale.status ?? "confirmed").toLowerCase() === "confirmed");
+  const manualSalesTotal = confirmedManualSales.reduce((sum, sale) => sum + Number(sale.total_amount_lyd ?? 0), 0);
+  const manualCashSalesTotal = confirmedManualSales.filter((sale) => String(sale.payment_method ?? "").toLowerCase() === "cash").reduce((sum, sale) => sum + Number(sale.total_amount_lyd ?? 0), 0);
+  const manualCardSalesTotal = confirmedManualSales.filter((sale) => String(sale.payment_method ?? "").toLowerCase() === "card").reduce((sum, sale) => sum + Number(sale.total_amount_lyd ?? 0), 0);
   const damagedAdjustmentRows = adjustmentRows.filter((adjustment) => adjustment.adjustment_type === "damaged");
   const returnedAdjustmentRows = adjustmentRows.filter((adjustment) => adjustment.adjustment_type === "returned_from_machine");
   const damagedAdjustmentQty = damagedAdjustmentRows.reduce((sum, adjustment) => sum + Number(adjustment.quantity ?? 0), 0);
@@ -413,6 +436,58 @@ export default async function OperatorRouteDetailPage({
             </div>
           </SectionCard>
         </div>
+
+        {manualSaleRows.length ? (
+          <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold">{t("Manual Route Sales")}</h2>
+                <p className="mt-1 text-sm text-slate-500">{t("Manual sales entered during filling are kept separate from VMS sales and cash collection.")}</p>
+              </div>
+              <StatusBadge status="confirmed" label={t("confirmed", "confirmed")} />
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("Manual sales")}</div>
+                <div className="mt-1 text-2xl font-semibold text-slate-900">{confirmedManualSales.length}</div>
+              </div>
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-emerald-800">{t("Manual cash sales")}</div>
+                <div className="mt-1 text-2xl font-semibold text-emerald-950">{lyd(manualCashSalesTotal)}</div>
+              </div>
+              <div className="rounded-lg border border-sky-200 bg-sky-50 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-sky-800">{t("Manual sales total")}</div>
+                <div className="mt-1 text-2xl font-semibold text-sky-950">{lyd(manualSalesTotal)}</div>
+                {manualCardSalesTotal > 0 ? <div className="mt-1 text-xs text-sky-800">{t("Card")}: {lyd(manualCardSalesTotal)}</div> : null}
+              </div>
+            </div>
+            <div className="mt-4 space-y-3">
+              {manualSaleRows.map((sale) => (
+                <article key={sale.id} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <StatusBadge status={sale.status} label={t(String(sale.status ?? "confirmed"), String(sale.status ?? "confirmed"))} />
+                        <span className="font-semibold text-slate-900">{sale.product_name ?? t("Unknown product")}</span>
+                        <span className="text-sm text-slate-500">x{sale.quantity ?? 0}</span>
+                      </div>
+                      <p className="mt-1 text-sm text-slate-600">{lyd(Number(sale.total_amount_lyd ?? 0))} - {t(String(sale.payment_method ?? "cash"), String(sale.payment_method ?? "cash"))}</p>
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      <div>{sale.sale_time ? new Date(sale.sale_time).toLocaleString("en-US") : "-"}</div>
+                      <div className="mt-1 font-medium text-slate-700">{formatMachineDisplayName(machineById.get(sale.machine_id ?? "") ?? null, { includeArea: true })}</div>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : (
+          <section className="rounded-lg border border-dashed border-slate-300 bg-white p-4 md:p-6">
+            <h2 className="text-lg font-semibold text-slate-900">{t("Manual Route Sales")}</h2>
+            <p className="mt-1 text-sm text-slate-500">{t("No manual sales have been recorded for this route yet")}</p>
+          </section>
+        )}
 
         {adjustmentRows.length ? (
           <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">

@@ -1,4 +1,4 @@
-const CACHE_NAME = "snacky-os-offline-v1";
+﻿const CACHE_NAME = "snacky-os-offline-v1";
 const OFFLINE_URL = "/offline.html";
 const CORE_ASSETS = [
   OFFLINE_URL,
@@ -10,6 +10,22 @@ const CORE_ASSETS = [
   "/icons/icon-512.png",
   "/icons/maskable-icon-512.png"
 ];
+
+function getNotificationTargetUrl(data) {
+  if (!data || typeof data !== "object") return "/operator/routes";
+  const target = typeof data.url === "string" && data.url.trim() ? data.url.trim() : "";
+  if (target) return target;
+  const routeId = typeof data.routeId === "string" && data.routeId.trim() ? data.routeId.trim() : "";
+  return routeId ? `/operator/routes/${routeId}` : "/operator/routes";
+}
+
+function getNotificationPayload(event) {
+  try {
+    return event.data ? event.data.json() : {};
+  } catch {
+    return {};
+  }
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -49,4 +65,56 @@ self.addEventListener("fetch", (event) => {
       })
     );
   }
+});
+
+self.addEventListener("push", (event) => {
+  const payload = getNotificationPayload(event);
+  const title = typeof payload.title === "string" && payload.title.trim() ? payload.title.trim() : "Snacky OS";
+  const body = typeof payload.body === "string" && payload.body.trim() ? payload.body.trim() : typeof payload.message === "string" ? payload.message.trim() : "";
+  const data = {
+    url: getNotificationTargetUrl(payload),
+    routeId: typeof payload.routeId === "string" ? payload.routeId : null,
+    type: typeof payload.type === "string" ? payload.type : null,
+  };
+
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body,
+      icon: "/icons/icon-192.png",
+      badge: "/icons/favicon-32.png",
+      data,
+      tag: typeof payload.type === "string" && typeof data.routeId === "string" ? `${payload.type}:${data.routeId}` : undefined,
+      renotify: true,
+    })
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const targetUrl = getNotificationTargetUrl(event.notification.data);
+
+  event.waitUntil(
+    (async () => {
+      const clientsList = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      for (const client of clientsList) {
+        if (!("focus" in client)) continue;
+
+        try {
+          const clientUrl = new URL(client.url);
+          const target = new URL(targetUrl, self.location.origin);
+          if (clientUrl.origin === target.origin) {
+            await client.focus();
+            if ("navigate" in client && clientUrl.href !== target.href) {
+              await client.navigate(target.href);
+            }
+            return;
+          }
+        } catch {
+          // Fall through to open a new window.
+        }
+      }
+
+      await self.clients.openWindow(targetUrl);
+    })()
+  );
 });

@@ -1,18 +1,30 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { EmptyState, FormField, FormSection, PageHeader, SectionCard, StatusBadge } from "@/components/ui";
-import { accessTokenCookie, getCurrentProfile, refreshTokenCookie } from "@/lib/auth";
+import { accessTokenCookie, getAuthenticatedSupabaseServerClient, getCurrentProfile, refreshTokenCookie } from "@/lib/auth";
+import { deactivatePushSubscriptionsForUser } from "@/lib/notification-delivery";
 import { isOwnerAdminRole } from "@/lib/authz";
 
 async function logout() {
   "use server";
+
+  const profile = await getCurrentProfile();
+  const supabase = await getAuthenticatedSupabaseServerClient();
+  if (profile && supabase) {
+    const result = await deactivatePushSubscriptionsForUser(supabase, profile.id, "manual_logout");
+    if (!result.updated) {
+      console.warn("[settings] Failed to deactivate push subscriptions on logout", {
+        user_id: profile.id,
+        reason: result.reason,
+      });
+    }
+  }
 
   const cookieStore = await cookies();
   cookieStore.delete(accessTokenCookie);
   cookieStore.delete(refreshTokenCookie);
   redirect("/login");
 }
-
 export default async function SettingsPage() {
   const profile = await getCurrentProfile();
   if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
@@ -86,3 +98,6 @@ export default async function SettingsPage() {
     </>
   );
 }
+
+
+

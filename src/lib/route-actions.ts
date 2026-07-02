@@ -1,4 +1,4 @@
-"use server";
+﻿"use server";
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -16,6 +16,7 @@ import {
   isTerminalRouteStatus,
 } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { notifyRouteAssigned } from "@/lib/notification-delivery";
 
 function clean(value: FormDataEntryValue | null) {
   return String(value ?? "").trim();
@@ -370,6 +371,22 @@ export async function assignRoute(formData: FormData) {
     summary: operatorId ? `Assigned route for ${route.route_date}` : `Marked route for ${route.route_date} as available`,
   });
 
+  if (operatorId && operatorId !== route.operator_id) {
+    try {
+      await notifyRouteAssigned(supabase, {
+        routeId: id,
+        routeDate: String(route.route_date ?? ""),
+        operatorTeamMemberId: operatorId,
+        assignedBy: profile.full_name,
+        stopCount: null,
+      });
+    } catch (error) {
+      console.warn("[routes] Failed to dispatch route assignment notification", { routeId: id, operatorId, error });
+    }
+  }
+
   revalidateRoutePaths(id);
   redirect(path);
 }
+
+

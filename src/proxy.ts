@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 const accessTokenCookie = "snacky-auth-access-token";
+const refreshTokenCookie = "snacky-auth-refresh-token";
 
 const publicPrefixes = ["/login", "/unauthorized", "/_next", "/favicon.ico"];
 
@@ -18,7 +19,8 @@ export function proxy(request: NextRequest) {
   }
 
   const accessToken = request.cookies.get(accessTokenCookie)?.value;
-  if (!accessToken) {
+  const refreshToken = request.cookies.get(refreshTokenCookie)?.value;
+  if (!accessToken && !refreshToken) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("next", pathname);

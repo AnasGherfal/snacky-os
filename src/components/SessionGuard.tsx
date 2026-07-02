@@ -9,10 +9,9 @@ type SessionState = {
   secondsUntilExpiry: number;
 };
 
-const warningThresholdSeconds = 5 * 60;
+const sessionRefreshThresholdSeconds = 5 * 60;
 const activityRefreshThresholdSeconds = 10 * 60;
 const activityRefreshCooldownMs = 60 * 1000;
-const recentRefreshWarningSuppressMs = 60 * 1000;
 
 function validExpiresAt(value: unknown) {
   const expiresAt = Number(value);
@@ -47,12 +46,10 @@ export function SessionGuard() {
   const [warningOpen, setWarningOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const lastActivityRefreshAt = useRef(0);
-  const lastSessionRefreshAt = useRef(0);
   const sessionRef = useRef<SessionState | null>(null);
-  const warningOpenRef = useRef(false);
   const warningTimerRef = useRef<number | null>(null);
-  const logoutTimerRef = useRef<number | null>(null);
-  const countdownIntervalRef = useRef<number | null>(null);
+  const expiryTimerRef = useRef<number | null>(null);
+  const pollTimerRef = useRef<number | null>(null);
   const redirectTimerRef = useRef<number | null>(null);
 
   const loginAgain = useCallback(() => {
@@ -65,13 +62,9 @@ export function SessionGuard() {
       window.clearTimeout(warningTimerRef.current);
       warningTimerRef.current = null;
     }
-    if (logoutTimerRef.current !== null) {
-      window.clearTimeout(logoutTimerRef.current);
-      logoutTimerRef.current = null;
-    }
-    if (countdownIntervalRef.current !== null) {
-      window.clearInterval(countdownIntervalRef.current);
-      countdownIntervalRef.current = null;
+    if (expiryTimerRef.current !== null) {
+      window.clearTimeout(expiryTimerRef.current);
+      expiryTimerRef.current = null;
     }
     if (redirectTimerRef.current !== null) {
       window.clearTimeout(redirectTimerRef.current);
@@ -79,137 +72,121 @@ export function SessionGuard() {
     }
   }, []);
 
-  const setWarningVisible = useCallback((visible: boolean) => {
-    warningOpenRef.current = visible;
-    setWarningOpen(visible);
-  }, []);
-
-  const startCountdown = useCallback((expiresAt: number) => {
-    if (countdownIntervalRef.current !== null) {
-      window.clearInterval(countdownIntervalRef.current);
-    }
-
-    const tick = () => {
-      const nextSeconds = secondsUntil(expiresAt);
-      setSession((current) => {
-        if (!current || current.expiresAt !== expiresAt) return current;
-        return { ...current, secondsUntilExpiry: nextSeconds };
-      });
-    };
-
-    tick();
-    countdownIntervalRef.current = window.setInterval(tick, 1000);
-  }, []);
-
-  const scheduleSessionTimers = useCallback((nextSession: SessionState | null) => {
-    clearSessionTimers();
-
-    if (!nextSession?.authenticated || !nextSession.expiresAt) {
-      setWarningVisible(false);
-      return;
-    }
-
-    const expiresAt = nextSession.expiresAt;
-    const msUntilExpiry = expiresAt - Date.now();
-    if (msUntilExpiry <= 0) {
-      setSession((current) => (current ? { ...current, secondsUntilExpiry: 0 } : current));
-      setErrorMessage("Your session expired. Sign in again and Snacky OS will reopen this page.");
-      setWarningVisible(true);
-      redirectTimerRef.current = window.setTimeout(loginAgain, 1200);
-      return;
-    }
-
-    const openWarning = () => {
-      warningTimerRef.current = null;
-      const current = sessionRef.current;
-      if (!current?.authenticated || current.expiresAt !== expiresAt) return;
-
-      const suppressForMs = recentRefreshWarningSuppressMs - (Date.now() - lastSessionRefreshAt.current);
-      if (suppressForMs > 0) {
-        warningTimerRef.current = window.setTimeout(openWarning, suppressForMs);
-        return;
-      }
-
-      if (warningOpenRef.current) return;
-      setErrorMessage("");
-      setWarningVisible(true);
-      startCountdown(expiresAt);
-    };
-
-    warningTimerRef.current = window.setTimeout(openWarning, Math.max(0, msUntilExpiry - warningThresholdSeconds * 1000));
-    logoutTimerRef.current = window.setTimeout(() => {
-      logoutTimerRef.current = null;
-      if (countdownIntervalRef.current !== null) {
-        window.clearInterval(countdownIntervalRef.current);
-        countdownIntervalRef.current = null;
-      }
-      setSession((current) => (current ? { ...current, secondsUntilExpiry: 0 } : current));
-      setErrorMessage("Your session expired. Sign in again and Snacky OS will reopen this page.");
-      setWarningVisible(true);
-      redirectTimerRef.current = window.setTimeout(loginAgain, 1200);
-    }, msUntilExpiry);
-  }, [clearSessionTimers, loginAgain, setWarningVisible, startCountdown]);
-
-  const applySession = useCallback((nextSession: SessionState | null) => {
-    sessionRef.current = nextSession;
-    setSession(nextSession);
-    scheduleSessionTimers(nextSession);
-  }, [scheduleSessionTimers]);
-
-  const loadSession = useCallback(async () => {
+  const loadSession = useCallback(async ({ silent = false, allowError = false }: { silent?: boolean; allowError?: boolean } = {}) => {
     const response = await fetch("/api/auth/session", { cache: "no-store" });
-    if (!response.ok) return;
     const payload = await response.json().catch(() => null);
     const nextSession = sessionFromPayload(payload);
-    if (!nextSession) return;
-    applySession(nextSession);
-  }, [applySession]);
 
-  const continueSession = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
+    if (!response.ok || !nextSession?.authenticated || !nextSession.expiresAt) {
+      if (allowError) {
+        clearSessionTimers();
+        sessionRef.current = null;
+        setSession(null);
+        setErrorMessage("Your session expired. Sign in again and Snacky OS will reopen this page.");
+        setWarningOpen(true);
+        redirectTimerRef.current = window.setTimeout(loginAgain, 1200);
+      }
+      return null;
+    }
+
+    sessionRef.current = nextSession;
+    setSession(nextSession);
+    setWarningOpen(false);
+    setErrorMessage("");
+    if (!silent) router.refresh();
+    return nextSession;
+  }, [clearSessionTimers, loginAgain, router]);
+
+  const continueSession = useCallback(async () => {
     setRefreshing(true);
     setErrorMessage("");
     try {
       const response = await fetch("/api/auth/session", { method: "POST" });
       const payload = await response.json().catch(() => null);
-      if (!response.ok || !payload?.ok) {
-        clearSessionTimers();
-        setErrorMessage("Could not continue session. Please save your work and log in again.");
-        setWarningVisible(true);
-        return;
-      }
       const refreshedSession = sessionFromPayload(payload);
-      if (!refreshedSession?.authenticated || !refreshedSession.expiresAt) {
+      if (!response.ok || !payload?.ok || !refreshedSession?.authenticated || !refreshedSession.expiresAt) {
         clearSessionTimers();
         setErrorMessage("Could not continue session. Please save your work and log in again.");
-        setWarningVisible(true);
+        setWarningOpen(true);
         return;
       }
 
-      lastSessionRefreshAt.current = Date.now();
       lastActivityRefreshAt.current = Date.now();
-      setWarningVisible(false);
-      applySession(refreshedSession);
-      if (!silent) router.refresh();
+      sessionRef.current = refreshedSession;
+      setSession(refreshedSession);
+      setWarningOpen(false);
+      setErrorMessage("");
+      router.refresh();
     } catch {
       clearSessionTimers();
       setErrorMessage("Could not continue session. Please save your work and log in again.");
-      setWarningVisible(true);
+      setWarningOpen(true);
     } finally {
       setRefreshing(false);
     }
-  }, [applySession, clearSessionTimers, router, setWarningVisible]);
+  }, [clearSessionTimers, router]);
 
   useEffect(() => {
-    const initialLoadTimer = window.setTimeout(() => void loadSession(), 0);
+    sessionRef.current = session;
+    clearSessionTimers();
+
+    if (!session?.authenticated || !session.expiresAt) {
+      return;
+    }
+
+    const msUntilExpiry = session.expiresAt - Date.now();
+    if (msUntilExpiry <= 0) {
+      window.setTimeout(() => {
+        void loadSession({ allowError: true });
+      }, 0);
+      return;
+    }
+
+    warningTimerRef.current = window.setTimeout(() => {
+      void loadSession({ silent: true });
+    }, Math.max(60 * 1000, msUntilExpiry - sessionRefreshThresholdSeconds * 1000));
+
+    expiryTimerRef.current = window.setTimeout(() => {
+      void loadSession({ allowError: true });
+    }, msUntilExpiry);
+
+    return () => {
+      clearSessionTimers();
+    };
+  }, [clearSessionTimers, loadSession, session]);
+
+  useEffect(() => {
+    const initialLoadTimer = window.setTimeout(() => {
+      void loadSession({ silent: true });
+    }, 0);
+
+    const onVisibilityChange = () => {
+      if (!document.hidden) {
+        void loadSession({ silent: true });
+      }
+    };
+
+    pollTimerRef.current = window.setInterval(() => {
+      if (!document.hidden) {
+        void loadSession({ silent: true });
+      }
+    }, 5 * 60 * 1000);
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
     return () => {
       window.clearTimeout(initialLoadTimer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      if (pollTimerRef.current !== null) {
+        window.clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
       clearSessionTimers();
     };
   }, [clearSessionTimers, loadSession]);
 
   useEffect(() => {
     const onActivity = () => {
-      if (warningOpenRef.current) return;
       const currentSession = sessionRef.current;
       if (!currentSession?.authenticated || !currentSession.expiresAt) return;
       const seconds = secondsUntil(currentSession.expiresAt);
@@ -217,7 +194,7 @@ export function SessionGuard() {
       const now = Date.now();
       if (now - lastActivityRefreshAt.current < activityRefreshCooldownMs) return;
       lastActivityRefreshAt.current = now;
-      void continueSession({ silent: true });
+      void loadSession({ silent: true });
     };
 
     window.addEventListener("pointerdown", onActivity, { passive: true });
@@ -228,7 +205,7 @@ export function SessionGuard() {
       window.removeEventListener("keydown", onActivity);
       window.removeEventListener("input", onActivity);
     };
-  }, [continueSession]);
+  }, [loadSession]);
 
   if (!warningOpen && !errorMessage) return null;
 
@@ -242,7 +219,7 @@ export function SessionGuard() {
         <p className="mt-2 text-xs font-medium text-slate-700">Time remaining: {Math.floor(session.secondsUntilExpiry / 60)}m {session.secondsUntilExpiry % 60}s</p>
       ) : null}
       <div className="mt-3 flex flex-wrap gap-2">
-        <button type="button" onClick={() => continueSession()} disabled={refreshing} className="btn-primary">
+        <button type="button" onClick={() => void continueSession()} disabled={refreshing} className="btn-primary">
           {refreshing ? "Continuing..." : "Continue Session"}
         </button>
         {errorMessage || (session && session.secondsUntilExpiry <= 30) ? (
@@ -252,3 +229,6 @@ export function SessionGuard() {
     </div>
   );
 }
+
+
+

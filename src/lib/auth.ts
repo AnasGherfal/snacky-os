@@ -8,6 +8,7 @@ import { AppRole, canAccessPath, getDefaultPathForRole, normalizeRoles, parseApp
 
 export const accessTokenCookie = "snacky-auth-access-token";
 export const refreshTokenCookie = "snacky-auth-refresh-token";
+const sessionRefreshThresholdMs = 5 * 60 * 1000;
 
 export type UserProfile = {
   id: string;
@@ -55,18 +56,94 @@ type TeamMemberRow = {
   must_change_password?: boolean | null;
 };
 
-export async function getAuthAccessToken() {
+type ResolvedAuthSession = {
+  accessToken: string | null;
+  refreshToken: string | null;
+  expiresAt: number | null;
+  secondsUntilExpiry: number;
+  refreshed: boolean;
+};
+
+function jwtExpiresAt(token: string | null) {
+  if (!token) return null;
+  try {
+    const [, payload] = token.split(".");
+    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { exp?: number };
+    return typeof decoded.exp === "number" ? decoded.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+function secondsUntilExpiry(expiresAt: number | null) {
+  if (!expiresAt) return 0;
+  return Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
+}
+
+export async function refreshAuthSession(refreshToken: string): Promise<ResolvedAuthSession | null> {
+  const supabase = getSupabaseServerClient();
+  if (!supabase) return null;
+
+  const { data, error } = await supabase.auth.refreshSession({ refresh_token: refreshToken });
+  if (error || !data.session?.access_token) {
+    console.warn("[auth] Failed to refresh session", error);
+    return null;
+  }
+
+  const accessToken = data.session.access_token;
+  const expiresAt = jwtExpiresAt(accessToken);
+
+  return {
+    accessToken,
+    refreshToken: data.session.refresh_token ?? refreshToken,
+    expiresAt,
+    secondsUntilExpiry: secondsUntilExpiry(expiresAt),
+    refreshed: true,
+  };
+}
+
+export async function resolveAuthSession(options?: { forceRefresh?: boolean }): Promise<ResolvedAuthSession | null> {
   const cookieStore = await cookies();
-  return cookieStore.get(accessTokenCookie)?.value ?? null;
+  const accessToken = cookieStore.get(accessTokenCookie)?.value ?? null;
+  const refreshToken = cookieStore.get(refreshTokenCookie)?.value ?? null;
+  const expiresAt = jwtExpiresAt(accessToken);
+  const hasUsableAccessToken = Boolean(accessToken) && (expiresAt === null || expiresAt > Date.now());
+  const shouldRefresh =
+    Boolean(refreshToken) &&
+    (options?.forceRefresh || !hasUsableAccessToken || !expiresAt || expiresAt - Date.now() <= sessionRefreshThresholdMs);
+
+  if (shouldRefresh && refreshToken) {
+    const refreshed = await refreshAuthSession(refreshToken);
+    if (refreshed) return refreshed;
+  }
+
+  if (!hasUsableAccessToken) return null;
+
+  return {
+    accessToken,
+    refreshToken,
+    expiresAt,
+    secondsUntilExpiry: secondsUntilExpiry(expiresAt),
+    refreshed: false,
+  };
+}
+
+export const getResolvedAuthSession = cache(async function getResolvedAuthSession() {
+  return resolveAuthSession();
+});
+
+export async function getAuthAccessToken() {
+  return (await getResolvedAuthSession())?.accessToken ?? null;
 }
 
 export async function getAuthenticatedSupabaseServerClient() {
-  const accessToken = await getAuthAccessToken();
-  return getSupabaseServerClient(accessToken);
+  const session = await getResolvedAuthSession();
+  return getSupabaseServerClient(session?.accessToken ?? null);
 }
 
 export const getCurrentProfile = cache(async function getCurrentProfile(): Promise<UserProfile | null> {
-  const accessToken = await getAuthAccessToken();
+  const session = await getResolvedAuthSession();
+  const accessToken = session?.accessToken ?? null;
   if (!accessToken) return null;
 
   const supabase = getSupabaseServerClient(accessToken);
@@ -80,7 +157,6 @@ export const getCurrentProfile = cache(async function getCurrentProfile(): Promi
 
   return loadCanonicalProfile(userData.user, accessToken);
 });
-
 function getAuthLookupClient(accessToken?: string | null) {
   return getSupabaseAdminClient() ?? getSupabaseServerClient(accessToken);
 }
@@ -289,3 +365,7 @@ export async function requireCurrentProfileForPath(pathname: string): Promise<Us
   }
   return profile;
 }
+
+
+
+

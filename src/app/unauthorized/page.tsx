@@ -1,16 +1,30 @@
 import { cookies } from "next/headers";
 import Link from "next/link";
-import { accessTokenCookie, getCurrentProfile, refreshTokenCookie } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { accessTokenCookie, getAuthenticatedSupabaseServerClient, getCurrentProfile, refreshTokenCookie } from "@/lib/auth";
 import { getDefaultPathForRole } from "@/lib/authz";
+import { deactivatePushSubscriptionsForUser } from "@/lib/notification-delivery";
 
 async function logout() {
   "use server";
 
+  const profile = await getCurrentProfile();
+  const supabase = await getAuthenticatedSupabaseServerClient();
+  if (profile && supabase) {
+    const result = await deactivatePushSubscriptionsForUser(supabase, profile.id, "manual_logout");
+    if (!result.updated) {
+      console.warn("[unauthorized] Failed to deactivate push subscriptions on logout", {
+        user_id: profile.id,
+        reason: result.reason,
+      });
+    }
+  }
+
   const cookieStore = await cookies();
   cookieStore.delete(accessTokenCookie);
   cookieStore.delete(refreshTokenCookie);
+  redirect("/login");
 }
-
 export default async function UnauthorizedPage() {
   const profile = await getCurrentProfile();
   const homeHref = getDefaultPathForRole(profile);
@@ -37,3 +51,8 @@ export default async function UnauthorizedPage() {
     </main>
   );
 }
+
+
+
+
+

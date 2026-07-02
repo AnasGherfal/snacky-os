@@ -1,4 +1,4 @@
-# Snacky OS Security Checklist
+﻿# Snacky OS Security Checklist
 
 Use this checklist before staging or production deployments.
 
@@ -15,7 +15,9 @@ Use this checklist before staging or production deployments.
 
 - `NEXT_PUBLIC_SUPABASE_URL` is public and must point to the correct Supabase project for the environment.
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY` is public and must be the Supabase anon/publishable key only.
+- `NEXT_PUBLIC_VAPID_PUBLIC_KEY` is public browser configuration for push subscriptions.
 - `SUPABASE_SERVICE_ROLE_KEY` is server-only. Never expose it in client components, browser code, screenshots, commits, mobile clients, or any `NEXT_PUBLIC_*` variable.
+- `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` are server-only. Never expose them in client components, browser code, screenshots, commits, mobile clients, or any `NEXT_PUBLIC_*` variable.
 - `NEXT_PUBLIC_APP_URL` must match the deployed app origin, such as `https://snacky-os.example.com`.
 - Production and staging must use cloud Supabase URLs and cloud app URLs, not `localhost`, `127.0.0.1`, or local Supabase URLs.
 - Store production values in the hosting provider environment settings. Do not commit real `.env.local` values.
@@ -114,3 +116,4 @@ Do not add a strict Content Security Policy until all image, storage, PWA, and S
 - Confirm the search results are server-only code, scripts, or docs, and not client components.
 - Confirm `.env.local` is ignored and real secrets are not committed.
 - Confirm Supabase Auth Site URL matches `NEXT_PUBLIC_APP_URL`.
+

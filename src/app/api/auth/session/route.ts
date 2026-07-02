@@ -1,57 +1,50 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { accessTokenCookie, refreshTokenCookie } from "@/lib/auth";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { accessTokenCookie, refreshAuthSession, refreshTokenCookie, resolveAuthSession } from "@/lib/auth";
 
-function jwtExpiresAt(token: string | null) {
-  if (!token) return null;
-  try {
-    const [, payload] = token.split(".");
-    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { exp?: number };
-    return decoded.exp ? decoded.exp * 1000 : null;
-  } catch {
-    return null;
+function setSessionCookies(cookieStore: Awaited<ReturnType<typeof cookies>>, session: { accessToken: string | null; refreshToken: string | null; expiresAt: number | null }) {
+  if (!session.accessToken) return;
+  const maxAge = session.expiresAt ? Math.max(60, Math.floor((session.expiresAt - Date.now()) / 1000)) : 60 * 60;
+  cookieStore.set(accessTokenCookie, session.accessToken, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge,
+  });
+  if (session.refreshToken) {
+    cookieStore.set(refreshTokenCookie, session.refreshToken, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: 60 * 60 * 24 * 30,
+    });
   }
 }
 
-type RefreshedSession = {
-  access_token: string;
-  refresh_token: string;
-  expires_in: number;
-  expires_at?: number | null;
-};
-
-function sessionExpiresAt(session: Pick<RefreshedSession, "access_token" | "expires_at">) {
-  return typeof session.expires_at === "number" && Number.isFinite(session.expires_at) ? session.expires_at * 1000 : jwtExpiresAt(session.access_token);
-}
-
-function setSessionCookies(cookieStore: Awaited<ReturnType<typeof cookies>>, session: RefreshedSession) {
-  cookieStore.set(accessTokenCookie, session.access_token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: session.expires_in,
-  });
-  cookieStore.set(refreshTokenCookie, session.refresh_token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: 60 * 60 * 24 * 30,
-  });
+function clearSessionCookies(cookieStore: Awaited<ReturnType<typeof cookies>>) {
+  cookieStore.delete(accessTokenCookie);
+  cookieStore.delete(refreshTokenCookie);
 }
 
 export async function GET() {
   const cookieStore = await cookies();
-  const accessToken = cookieStore.get(accessTokenCookie)?.value ?? null;
-  const expiresAt = jwtExpiresAt(accessToken);
-  const secondsUntilExpiry = expiresAt ? Math.max(0, Math.floor((expiresAt - Date.now()) / 1000)) : 0;
+  const session = await resolveAuthSession();
+
+  if (!session?.accessToken) {
+    clearSessionCookies(cookieStore);
+    return NextResponse.json({ authenticated: false, expiresAt: null, secondsUntilExpiry: 0 }, { status: 401 });
+  }
+
+  if (session.refreshed && session.refreshToken) {
+    setSessionCookies(cookieStore, session);
+  }
 
   return NextResponse.json({
-    authenticated: Boolean(accessToken),
-    expiresAt,
-    secondsUntilExpiry,
+    authenticated: true,
+    expiresAt: session.expiresAt,
+    secondsUntilExpiry: session.secondsUntilExpiry,
   });
 }
 
@@ -59,28 +52,25 @@ export async function POST() {
   const cookieStore = await cookies();
   const refreshToken = cookieStore.get(refreshTokenCookie)?.value ?? null;
   if (!refreshToken) {
+    clearSessionCookies(cookieStore);
     return NextResponse.json({ error: "No refresh token" }, { status: 401 });
   }
 
-  const supabase = getSupabaseServerClient();
-  if (!supabase) {
-    return NextResponse.json({ error: "Supabase is not configured" }, { status: 503 });
-  }
-
-  const { data, error } = await supabase.auth.refreshSession({ refresh_token: refreshToken });
-  if (error || !data.session) {
-    cookieStore.delete(accessTokenCookie);
-    cookieStore.delete(refreshTokenCookie);
+  const session = await refreshAuthSession(refreshToken);
+  if (!session?.accessToken || !session.refreshToken) {
+    clearSessionCookies(cookieStore);
     return NextResponse.json({ error: "Session expired" }, { status: 401 });
   }
 
-  setSessionCookies(cookieStore, data.session);
-  const expiresAt = sessionExpiresAt(data.session);
+  setSessionCookies(cookieStore, session);
 
   return NextResponse.json({
     ok: true,
     authenticated: true,
-    expiresAt,
-    secondsUntilExpiry: expiresAt ? Math.max(0, Math.floor((expiresAt - Date.now()) / 1000)) : data.session.expires_in,
+    expiresAt: session.expiresAt,
+    secondsUntilExpiry: session.secondsUntilExpiry,
   });
 }
+
+
+

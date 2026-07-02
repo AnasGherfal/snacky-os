@@ -1,6 +1,7 @@
-import Link from "next/link";
+﻿import Link from "next/link";
 import { redirect } from "next/navigation";
 import { EmptyState, ErrorState, PageHeader, SectionCard, StatusBadge } from "@/components/ui";
+import { NotificationCenter } from "@/components/NotificationCenter";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canExecuteRoutes, canManageOperations } from "@/lib/authz";
 import { getServerI18n } from "@/lib/i18n/server";
@@ -216,6 +217,7 @@ export default async function OperatorRoutesPage() {
             ? t("Assigned, unassigned, and completed routes across the team.")
             : t("See your assigned work, open routes you can claim, and completed history in one place.")
         }
+        action={<div className="hidden md:block"><NotificationCenter label={t("Notifications", "Notifications")} /></div>}
       />
 
       {assignedRoutesError || availableRoutesError ? (

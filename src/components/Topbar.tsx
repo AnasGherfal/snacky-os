@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Image from "next/image";
 import Link from "next/link";
@@ -6,10 +6,12 @@ import { Menu, UserCircle } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { useLanguage } from "@/components/I18nProvider";
+import { NotificationCenter } from "@/components/NotificationCenter";
 import type { Dictionary, SupportedLocale } from "@/lib/i18n";
-import { AppRole } from "@/lib/authz";
+import { AppRole, canExecuteRoutes } from "@/lib/authz";
 
 type TopbarProfile = {
+  id: string;
   full_name: string;
   role: AppRole;
   roles?: AppRole[] | null;
@@ -62,6 +64,7 @@ export function Topbar({ profile, onMenuClick }: { profile: TopbarProfile; onMen
   const titleKey = titleKeys[pathname];
   const nextLocale: SupportedLocale = locale === "ar" ? "en" : "ar";
   const nextLocaleLabel = nextLocale === "ar" ? dictionary.language.arabic : dictionary.language.english;
+  const canSeeNotifications = canExecuteRoutes(profile);
 
   const logout = async () => {
     setLoggingOut(true);
@@ -94,6 +97,11 @@ export function Topbar({ profile, onMenuClick }: { profile: TopbarProfile; onMen
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {canSeeNotifications ? (
+            <div className="md:hidden">
+              <NotificationCenter compact />
+            </div>
+          ) : null}
           <button
             type="button"
             onClick={() => setLocale(nextLocale)}
@@ -140,3 +148,4 @@ export function Topbar({ profile, onMenuClick }: { profile: TopbarProfile; onMen
     </header>
   );
 }
+

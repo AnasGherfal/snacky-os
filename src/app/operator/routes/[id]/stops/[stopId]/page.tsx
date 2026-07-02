@@ -3,11 +3,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from "@/components/LocalDraft";
+import { ManualRouteSalesSection, type ManualRouteSaleProductOption } from "@/components/operator/ManualRouteSalesSection";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { QuantityStepper } from "@/components/QuantityStepper";
 import { EmptyState, ErrorState, LoadingState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { useLanguage } from "@/components/I18nProvider";
 import { markStopInProgress, uploadInventoryAdjustmentPhoto, uploadRefillProofPhoto } from "@/lib/operator-actions";
+import type { NormalizedRouteManualSale } from "@/lib/manual-route-sales";
 import { ROUTE_STOP_COMPLETED_STATUS, ROUTE_STOP_IN_PROGRESS_STATUS, ROUTE_STOP_PICKED_STATUS } from "@/lib/route-workflow";
 
 const STOP_REQUEST_TIMEOUT_MS = 45_000;
@@ -77,6 +79,10 @@ interface ProductOption {
   imageUrl?: string | null;
   availableQty: number;
   sourceLabel?: string | null;
+  currentSellingPriceLyd?: number | null;
+  sellingPrice?: number | null;
+  vmsSellingPriceLyd?: number | null;
+  lastKnownSalePriceLyd?: number | null;
 }
 
 interface InventoryAdjustmentRow {
@@ -105,6 +111,8 @@ interface StopData {
   extraItems?: ExtraProductLine[];
   productOptions: ProductOption[];
   machineProductOptions?: ProductOption[];
+  manualSaleProductOptions?: ManualRouteSaleProductOption[];
+  manualSales?: NormalizedRouteManualSale[];
   adjustments?: InventoryAdjustmentRow[];
   hasCompletionPhoto?: boolean;
   debug?: StopDebugDetails;
@@ -714,6 +722,16 @@ export default function MachineStopPage() {
     return Math.max(0, available - reserved + excluding);
   };
 
+  const updateProductAvailability = (products: ProductOption[] | undefined, productId: string | null, delta: number) => {
+    if (!products?.length || !productId || delta === 0) return products;
+    return products.map((product) => product.id === productId
+      ? { ...product, availableQty: Math.max(0, Number(product.availableQty ?? 0) + delta) }
+      : product);
+  };
+
+  const mergeManualSale = (sales: NormalizedRouteManualSale[] | undefined, sale: NormalizedRouteManualSale) => [sale, ...(sales ?? []).filter((existing) => existing.id !== sale.id)]
+    .sort((left, right) => new Date(right.saleTime ?? right.id).getTime() - new Date(left.saleTime ?? left.id).getTime());
+
   const setAssignedQty = (item: StopRefillItem, quantity: number) => {
     const current = filledQtys[item.productId] ?? 0;
     const max = remainingBagQty(item.productId, current);
@@ -997,7 +1015,37 @@ export default function MachineStopPage() {
           )}
         </section>
 
-        <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
+                <ManualRouteSalesSection
+          routeId={routeId}
+          stopId={stopId}
+          machineId={stopData.machineId}
+          machineName={stopData.machineName}
+          locationName={stopData.location}
+          routeStatus={stopData.routeStatus}
+          preferredProducts={stopData.manualSaleProductOptions ?? stopData.machineProductOptions ?? stopData.productOptions}
+          allProducts={stopData.productOptions}
+          sales={stopData.manualSales ?? []}
+          onSaved={(sale, options) => {
+            setStopData((current) => current ? {
+              ...current,
+              manualSales: mergeManualSale(current.manualSales, sale),
+              productOptions: updateProductAvailability(current.productOptions, sale.productId, options.inventoryMovementCreated ? -sale.quantity : 0) ?? current.productOptions,
+              machineProductOptions: updateProductAvailability(current.machineProductOptions, sale.productId, options.inventoryMovementCreated ? -sale.quantity : 0),
+              manualSaleProductOptions: updateProductAvailability(current.manualSaleProductOptions as ProductOption[] | undefined, sale.productId, options.inventoryMovementCreated ? -sale.quantity : 0) as ManualRouteSaleProductOption[] | undefined,
+            } : current);
+          }}
+          onCancelled={(sale, options) => {
+            setStopData((current) => current ? {
+              ...current,
+              manualSales: mergeManualSale(current.manualSales, sale),
+              productOptions: updateProductAvailability(current.productOptions, sale.productId, options.inventoryReversed ? sale.quantity : 0) ?? current.productOptions,
+              machineProductOptions: updateProductAvailability(current.machineProductOptions, sale.productId, options.inventoryReversed ? sale.quantity : 0),
+              manualSaleProductOptions: updateProductAvailability(current.manualSaleProductOptions as ProductOption[] | undefined, sale.productId, options.inventoryReversed ? sale.quantity : 0) as ManualRouteSaleProductOption[] | undefined,
+            } : current);
+          }}
+        />
+
+<section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h2 className="text-lg font-semibold">{t("Products added at machine")}</h2>

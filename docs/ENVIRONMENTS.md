@@ -1,4 +1,4 @@
-# Snacky OS Environments
+﻿# Snacky OS Environments
 
 Snacky OS should run in three clearly separated environments: local development, staging, and production. Each environment must point to the matching Supabase project and app domain.
 
@@ -57,6 +57,9 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-or-publishable-key
 SUPABASE_SERVICE_ROLE_KEY=your-server-only-service-role-or-secret-key
 NEXT_PUBLIC_APP_URL=https://your-snacky-os-domain.example
 NEXT_PUBLIC_APP_LOCALE=en
+NEXT_PUBLIC_VAPID_PUBLIC_KEY=your-web-push-public-key
+VAPID_PRIVATE_KEY=your-server-only-web-push-private-key
+VAPID_SUBJECT=mailto:ops@snacky.example
 ```
 
 Rules:
@@ -64,6 +67,8 @@ Rules:
 - `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` are public browser values, but still must point to the correct environment.
 - `SUPABASE_SERVICE_ROLE_KEY` is server-only and must never be exposed through `NEXT_PUBLIC_*`.
 - `NEXT_PUBLIC_APP_URL` must match the Vercel domain for the environment.
+- `NEXT_PUBLIC_VAPID_PUBLIC_KEY` is public browser configuration for push subscriptions.
+- `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` are server-only and must never be exposed through `NEXT_PUBLIC_*`.
 - Staging and production must not use local Supabase URLs.
 
 Optional server-only provider variables:
@@ -162,3 +167,4 @@ Finance and warehouse negative checks:
 - Finance cannot access `/activity`, `/admin`, `/team`, `/settings`, or `/vms-import`.
 - Warehouse cannot access `/finance`, `/activity`, `/admin`, `/team`, `/settings`, or `/vms-import`.
 - Both roles should land on the polished Unauthorized page for blocked pages.
+

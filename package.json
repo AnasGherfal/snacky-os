@@ -37,10 +37,12 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "latest",
+    "@types/web-push": "^3.6.4",
     "lucide-react": "latest",
     "next": "latest",
     "react": "latest",
     "react-dom": "latest",
+    "web-push": "^3.6.7",
     "xlsx": "^0.18.5",
     "zod": "latest"
   },

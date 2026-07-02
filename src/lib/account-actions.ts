@@ -5,8 +5,9 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@supabase/supabase-js";
 import { logActivity } from "@/lib/activity-log";
-import { accessTokenCookie, getCurrentProfile, refreshTokenCookie } from "@/lib/auth";
+import { accessTokenCookie, getAuthenticatedSupabaseServerClient, getCurrentProfile, refreshTokenCookie } from "@/lib/auth";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { deactivatePushSubscriptionsForUser } from "@/lib/notification-delivery";
 
 function getAuthenticatedSupabaseClient(accessToken: string, refreshToken: string | null) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -54,6 +55,7 @@ export async function changeOwnPassword(formData: FormData) {
 
 export async function logoutFromAccount() {
   const profile = await getCurrentProfile();
+  const supabase = await getAuthenticatedSupabaseServerClient();
   if (profile) {
     await logActivity({
       profile,
@@ -63,9 +65,19 @@ export async function logoutFromAccount() {
       entityLabel: profile.full_name,
       summary: `${profile.full_name} logged out`,
     });
+    if (supabase) {
+      const result = await deactivatePushSubscriptionsForUser(supabase, profile.id, "manual_logout");
+      if (!result.updated) {
+        console.warn("[account] Failed to deactivate push subscriptions on logout", {
+          user_id: profile.id,
+          reason: result.reason,
+        });
+      }
+    }
   }
   const cookieStore = await cookies();
   cookieStore.delete(accessTokenCookie);
   cookieStore.delete(refreshTokenCookie);
   redirect("/login");
 }
+

@@ -1,8 +1,9 @@
-import Link from "next/link";
+﻿import Link from "next/link";
 import { EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
+import { NotificationCenter } from "@/components/NotificationCenter";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canExecuteRoutes, canManageOperations } from "@/lib/authz";
-import { loadAccessibleOperatorIds, preferredOperatorViewerId } from "@/lib/operator-route-access";
+import { loadAccessibleOperatorIds } from "@/lib/operator-route-access";
 import { type OperatorRoutePreviewRow, type OperatorRoutePreviewStopRow } from "@/lib/operator-route-types";
 import { isOperatorVisibleRouteStatus, isRouteStopDoneStatus, isTerminalRouteStatus, routeDisplayStatus } from "@/lib/route-workflow";
 
@@ -43,7 +44,7 @@ export default async function OperatorPage() {
           .select(routeSelect)
           .in("operator_id", accessibleOperatorIds)
           .order("route_date", { ascending: false })
-      : Promise.resolve({ data: [], error: null }),
+        : Promise.resolve({ data: [], error: null }),
     supabase
       .from("routes")
       .select(routeSelect)
@@ -77,7 +78,7 @@ export default async function OperatorPage() {
         <PageHeader
           title="Operator"
           subtitle="Assigned refill routes and daily execution workflow."
-          action={<PrimaryButton href="/operator/routes">All my routes</PrimaryButton>}
+          action={<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end"><div className="hidden md:block"><NotificationCenter label="Notifications" /></div><PrimaryButton href="/operator/routes">All my routes</PrimaryButton></div>}
         />
 
         <SectionCard>
@@ -180,3 +181,4 @@ export default async function OperatorPage() {
     </>
   );
 }
+

@@ -11,6 +11,7 @@ import {
   type RouteStatus,
 } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { notifyRouteAssigned } from "@/lib/notification-delivery";
 
 type CreateRoutePayload = {
   routeDate?: string;
@@ -792,8 +793,23 @@ export async function POST(request: Request) {
       ? `Created assigned route for ${routeDate} with ${selectedMachineIds.length} stops`
       : `Created available route for ${routeDate} with ${selectedMachineIds.length} stops`,
   });
+  if (operatorId) {
+    try {
+      await notifyRouteAssigned(supabase, {
+        routeId,
+        routeDate,
+        operatorTeamMemberId: operatorId,
+        assignedBy: profile.full_name,
+        stopCount: selectedMachineIds.length,
+      });
+    } catch (error) {
+      console.warn("[routes:create] Failed to dispatch route assignment notification", { routeId, operatorId, error });
+    }
+  }
 
   revalidatePath("/routes");
+  revalidatePath("/operator");
+  revalidatePath("/operator/routes");
   revalidatePath(`/routes/${routeId}`);
 
   return NextResponse.json({ routeId });
