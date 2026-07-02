@@ -114,7 +114,8 @@ export function ManualRouteSalesSection({
   onSaved,
   onCancelled,
 }: ManualRouteSalesSectionProps) {
-  const { t } = useLanguage();
+  const { t, locale } = useLanguage();
+  const tr = (en: string, ar: string) => t(en, locale === "ar" ? ar : en);
   const [expanded, setExpanded] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [sourceMode, setSourceMode] = useState<"preferred" | "all">("preferred");
@@ -283,26 +284,26 @@ export function ManualRouteSalesSection({
         className="flex w-full items-center justify-between gap-3 text-left"
       >
         <div>
-          <h2 className="text-lg font-semibold">{t("Manual Route Sales", "Manual Route Sales")}</h2>
+          <h2 className="text-lg font-semibold">{tr("Manual Route Sales", "??? ???? ????? ??????")}</h2>
           <p className="mt-1 text-sm text-slate-500">{t("Optional sales recorded during filling without blocking stop completion.", "Optional sales recorded during filling without blocking stop completion.")}</p>
         </div>
         <div className="flex items-center gap-2">
-          <StatusBadge status={confirmedCount ? "confirmed" : "pending"} label={confirmedCount ? String(confirmedCount) : t("Optional", "Optional")} />
-          <span className="text-sm font-medium text-slate-600">{expanded ? t("Hide", "Hide") : t("Show", "Show")}</span>
+          <StatusBadge status={confirmedCount ? "confirmed" : "pending"} label={confirmedCount ? String(confirmedCount) : tr("Optional", "???????")} />
+          <span className="text-sm font-medium text-slate-600">{expanded ? tr("Hide", "?????") : tr("Show", "???")}</span>
         </div>
       </button>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-          <div className="text-xs text-slate-500">{t("Manual sales", "Manual sales")}</div>
+          <div className="text-xs text-slate-500">{tr("Manual sales", "?????? ?????")}</div>
           <div className="mt-1 text-lg font-semibold text-slate-900">{confirmedCount}</div>
         </div>
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
-          <div className="text-xs text-emerald-700">{t("Manual cash sales", "Manual cash sales")}</div>
+          <div className="text-xs text-emerald-700">{tr("Manual cash sales", "?????? ????? ???")}</div>
           <div className="mt-1 text-lg font-semibold text-emerald-950">{money(confirmedCashTotal)}</div>
         </div>
         <div className="rounded-lg border border-sky-200 bg-sky-50 p-3">
-          <div className="text-xs text-sky-700">{t("Manual sales total", "Manual sales total")}</div>
+          <div className="text-xs text-sky-700">{tr("Manual sales total", "?????? ???????? ???????")}</div>
           <div className="mt-1 text-lg font-semibold text-sky-950">{money(confirmedTotal)}</div>
           {confirmedCardTotal > 0 ? <div className="mt-1 text-xs text-sky-800">{t("Card", "Card")}: {money(confirmedCardTotal)}</div> : null}
         </div>
@@ -325,7 +326,7 @@ export function ManualRouteSalesSection({
           {!routeLocked ? (
             <div className="flex flex-wrap gap-2">
               <button type="button" onClick={() => setShowForm((current) => !current)} className={showForm ? "btn-primary" : "btn-secondary"}>
-                {showForm ? t("Hide form", "Hide form") : t("Add manual sale", "Add manual sale")}
+                {showForm ? tr("Hide form", "????? ???????") : tr("Add manual sale", "????? ??? ????")}
               </button>
             </div>
           ) : null}
@@ -334,10 +335,10 @@ export function ManualRouteSalesSection({
             <div className="space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
               <div className="flex flex-wrap gap-2">
                 <button type="button" onClick={() => setSourceMode("preferred")} className={sourceMode === "preferred" ? "btn-primary" : "btn-secondary"}>
-                  {t("Priority products", "Priority products")}
+                  {tr("Priority products", "?????? ??????") }
                 </button>
                 <button type="button" onClick={() => setSourceMode("all")} className={sourceMode === "all" ? "btn-primary" : "btn-secondary"}>
-                  {t("Other storage products", "Other storage products")}
+                  {tr("Other storage products", "?????? ???? ?? ??????")}
                 </button>
               </div>
 
@@ -345,16 +346,16 @@ export function ManualRouteSalesSection({
                 products={productChoices}
                 value={productId}
                 onChange={handleSelectProduct}
-                label={sourceMode === "preferred" ? t("Product", "Product") : t("Other storage products", "Other storage products")}
+                label={sourceMode === "preferred" ? tr("Product", "??????") : tr("Other storage products", "?????? ???? ?? ??????")}
               />
 
               <label className="block">
-                <span className="mb-1 block text-sm font-medium text-slate-800">{t("Product name if not found", "Product name if not found")}</span>
+                <span className="mb-1 block text-sm font-medium text-slate-800">{tr("Product name if not found", "??? ?????? ??? ?? ??? ???????")}</span>
                 <input
                   value={fallbackProductName}
                   onChange={(event) => setFallbackProductName(event.target.value)}
                   className="field-input"
-                  placeholder={t("Use only if the product is not in the list", "Use only if the product is not in the list")}
+                  placeholder={tr("Use only if the product is not in the list", "??????? ??? ??? ?? ??? ?????? ??????? ?? ???????")}
                 />
               </label>
 
@@ -365,7 +366,7 @@ export function ManualRouteSalesSection({
                     {selectedProduct.sku ? <span className="text-slate-500"> - {selectedProduct.sku}</span> : null}
                   </div>
                   <div className="mt-1 text-xs text-slate-500">
-                    {t("Bag available", "Bag available")}: {selectedProduct.availableQty}
+                    {tr("Bag available", "?????? ?? ???????")}: {selectedProduct.availableQty}
                     {selectedProduct.sourceLabel ? ` - ${t(selectedProduct.sourceLabel, selectedProduct.sourceLabel)}` : ""}
                   </div>
                 </div>
@@ -373,11 +374,11 @@ export function ManualRouteSalesSection({
 
               <div className="grid gap-4 md:grid-cols-[180px_1fr_1fr]">
                 <label className="block">
-                  <span className="mb-1 block text-sm font-medium text-slate-800">{t("Quantity", "Quantity")}</span>
-                  <QuantityStepper value={quantity} max={999} onChange={setQuantity} inputLabel={t("Quantity", "Quantity")} />
+                  <span className="mb-1 block text-sm font-medium text-slate-800">{tr("Quantity", "??????")}</span>
+                  <QuantityStepper value={quantity} max={999} onChange={setQuantity} inputLabel={tr("Quantity", "??????")} />
                 </label>
                 <label className="block">
-                  <span className="mb-1 block text-sm font-medium text-slate-800">{t("Unit price", "Unit price")}</span>
+                  <span className="mb-1 block text-sm font-medium text-slate-800">{tr("Unit price", "??? ??????")}</span>
                   <input
                     value={unitSalePriceLyd}
                     onChange={(event) => {
@@ -389,25 +390,25 @@ export function ManualRouteSalesSection({
                     step="0.01"
                     className="field-input"
                   />
-                  <span className="mt-1 block text-xs text-slate-500">{priceSourceLabel ? t(priceSourceLabel, priceSourceLabel) : t("Manual input", "Manual input")}</span>
+                  <span className="mt-1 block text-xs text-slate-500">{priceSourceLabel ? t(priceSourceLabel, priceSourceLabel) : tr("Manual input", "????? ????")}</span>
                 </label>
                 <label className="block">
-                  <span className="mb-1 block text-sm font-medium text-slate-800">{t("Payment method", "Payment method")}</span>
+                  <span className="mb-1 block text-sm font-medium text-slate-800">{tr("Payment method", "????? ?????")}</span>
                   <select value={paymentMethod} onChange={(event) => setPaymentMethod(parseRouteManualSalePaymentMethod(event.target.value))} className="field-input">
-                    <option value="cash">{t("Cash", "Cash")}</option>
-                    <option value="card">{t("Card", "Card")}</option>
-                    <option value="other">{t("Other", "Other")}</option>
+                    <option value="cash">{tr("Cash", "???")}</option>
+                    <option value="card">{tr("Card", "?????")}</option>
+                    <option value="other">{tr("Other", "????")}</option>
                   </select>
                 </label>
               </div>
 
               <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700">
-                <span className="font-medium text-slate-900">{t("Total", "Total")}: </span>
+                <span className="font-medium text-slate-900">{tr("Total", "????????")}: </span>
                 {money(totalAmount)}
               </div>
 
               <label className="block">
-                <span className="mb-1 block text-sm font-medium text-slate-800">{t("Notes", "Notes")}</span>
+                <span className="mb-1 block text-sm font-medium text-slate-800">{tr("Notes", "???????")}</span>
                 <textarea
                   value={notes}
                   onChange={(event) => setNotes(event.target.value)}
@@ -422,7 +423,7 @@ export function ManualRouteSalesSection({
               {warning ? <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">{t(warning, warning)}</div> : null}
 
               <button type="button" onClick={handleSave} disabled={saving} className="btn-primary w-full disabled:cursor-not-allowed disabled:opacity-60">
-                {saving ? `${t("Saving", "Saving")}...` : t("Save sale", "Save sale")}
+                {saving ? `${tr("Saving", "???? ?????")}...` : tr("Save sale", "??? ?????")}
               </button>
             </div>
           ) : null}
@@ -430,7 +431,7 @@ export function ManualRouteSalesSection({
           <div>
             <div className="mb-3 flex items-center justify-between gap-2">
               <div>
-                <h3 className="text-base font-semibold text-slate-900">{t("Saved manual sales", "Saved manual sales")}</h3>
+                <h3 className="text-base font-semibold text-slate-900">{tr("Saved manual sales", "???????? ??????? ????????")}</h3>
                 <p className="text-sm text-slate-500">{t("Manual sales entered for this stop appear here immediately.", "Manual sales entered for this stop appear here immediately.")}</p>
               </div>
             </div>
@@ -464,7 +465,7 @@ export function ManualRouteSalesSection({
                               disabled={cancellingId === sale.id}
                               className="text-sm font-medium text-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
                             >
-                              {cancellingId === sale.id ? `${t("Saving", "Saving")}...` : t("Cancel sale", "Cancel sale")}
+                              {cancellingId === sale.id ? `${tr("Saving", "???? ?????")}...` : tr("Cancel sale", "????? ?????")}
                             </button>
                           ) : null}
                         </div>
@@ -518,7 +519,7 @@ function ManualSaleProductPicker({
         <div className="mt-2 max-h-56 space-y-1 overflow-y-auto">
           {selected && !query.trim() ? (
             <div className="rounded-md bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
-              {t("Selected", "Selected")}: {selected.name} - {t("Bag available", "Bag available")}: {selected.availableQty}
+              {t("Selected", "Selected")}: {selected.name} - {tr("Bag available", "?????? ?? ???????")}: {selected.availableQty}
             </div>
           ) : null}
           {filtered.map((product) => (
@@ -536,7 +537,7 @@ function ManualSaleProductPicker({
                 <span className="min-w-0">
                   <span className="block truncate font-medium">{product.name}</span>
                   <span className={`block truncate ${product.id === value ? "text-white/80" : "text-slate-500"}`}>
-                    {product.sku ?? t("No SKU", "No SKU")} - {t("Bag available", "Bag available")}: {product.availableQty}
+                    {product.sku ?? t("No SKU", "No SKU")} - {tr("Bag available", "?????? ?? ???????")}: {product.availableQty}
                     {product.sourceLabel ? ` - ${t(product.sourceLabel, product.sourceLabel)}` : ""}
                   </span>
                 </span>

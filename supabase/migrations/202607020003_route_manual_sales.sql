@@ -123,5 +123,39 @@ to authenticated
 using (public.snacky_current_profile_has_any_role(array['owner', 'admin', 'supervisor']))
 with check (public.snacky_current_profile_has_any_role(array['owner', 'admin', 'supervisor']));
 
+drop policy if exists "snacky_route_manual_sales_update_by_route_access" on public.route_manual_sales;
+create policy "snacky_route_manual_sales_update_by_route_access"
+on public.route_manual_sales for update
+to authenticated
+using (
+  route_id is not null
+  and public.snacky_operator_can_access_route(route_id)
+  and exists (
+    select 1
+    from public.routes route_row
+    where route_row.id = route_id
+      and (
+        route_row.status is null
+        or route_row.status::text not in ('completed', 'cancelled', 'canceled')
+      )
+  )
+)
+with check (
+  route_id is not null
+  and public.snacky_operator_can_access_route(route_id)
+  and status in ('confirmed', 'cancelled')
+  and exists (
+    select 1
+    from public.routes route_row
+    where route_row.id = route_id
+      and (
+        route_row.status is null
+        or route_row.status::text not in ('completed', 'cancelled', 'canceled')
+      )
+  )
+);
+
+
+
 
 
