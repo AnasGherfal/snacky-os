@@ -133,7 +133,18 @@ export default function LeftoversPage() {
 
       setProgressMessage("Creating return movements...");
       const leftoversResult = await recordLeftovers({ routeId, leftoverItems, clientSubmissionId: leftoversSubmissionIdRef.current });
-      if (!leftoversResult.success) throw new Error(leftoversResult.error);
+      const leftoverWarning = leftoversResult.success
+        ? String((leftoversResult as { warning?: unknown }).warning ?? "") || null
+        : "Some inventory reconciliation needs admin review.";
+
+      if (!leftoversResult.success) {
+        console.warn("[operator:route-nav] Leftover reconciliation failed but route completion will continue", {
+          action: "complete_route",
+          routeId,
+          error: leftoversResult.error,
+          code: leftoversResult.code ?? null,
+        });
+      }
 
       // Complete the route
       setProgressMessage("Finalizing route...");
@@ -143,9 +154,11 @@ export default function LeftoversPage() {
       localDraft.clearDraft();
       leftoversSubmissionIdRef.current = crypto.randomUUID();
       const completionWarning = "warning" in completionResult ? completionResult.warning : null;
-      const successMessage = completionWarning
-        ? `Route completed. ${completionWarning}`
-        : "Route completed successfully.";
+      const successMessage = leftoverWarning
+        ? "Route completed. Some inventory reconciliation needs admin review."
+        : completionWarning
+          ? `Route completed. ${completionWarning}`
+          : "Route completed successfully.";
       console.info("[operator:route-nav] Redirecting after route completion", {
         action: "complete_route",
         routeId,

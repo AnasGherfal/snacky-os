@@ -336,6 +336,20 @@ function routeCompletionPublicError(error: unknown) {
   return message || "Could not complete this route.";
 }
 
+function routeLeftoversPublicError(error: unknown) {
+  const info = serializeActionError(error);
+  const message = String(info.message ?? "");
+  const code = String(info.code ?? "");
+  const text = [code, message, info.details, info.hint].map((value) => String(value ?? "")).join(" ").toLowerCase();
+
+  if (text.includes("route not found")) return message;
+  if (text.includes("not authorized")) return message;
+  if (code === "42501" || text.includes("row-level security") || text.includes("permission")) return "Could not record leftover inventory. Please try again.";
+  if (code === "42703" || code === "PGRST204" || text.includes("schema cache") || text.includes("column")) return "Could not record leftover inventory. Please try again.";
+  if (code === "23503" || code === "23514") return "Could not record leftover inventory. Please try again.";
+  return message || "Could not record leftover inventory. Please try again.";
+}
+
 function isMissingCompletionAuditColumn(error: unknown) {
   const info = serializeActionError(error);
   const text = [info.code, info.message, info.details, info.hint].map((value) => String(value ?? "")).join(" ").toLowerCase();
@@ -2903,16 +2917,19 @@ export async function recordLeftovers({
       throw new Error("You are not authorized to return leftovers for this route");
     }
 
-    const { data: storages } = await supabase
-      .from("storage_locations")
-      .select("id")
-      .eq("active", true)
-      .in("location_type", ["main_storage", "vehicle", "temporary", "other"])
-      .order("location_type")
-      .order("name")
-      .limit(1);
+    console.info("[operator:route-leftovers] Looking up storage destination", {
+      action_step: "record_leftovers.storage_lookup_rpc",
+      route_id: routeId,
+      route_operator_id: route.operator_id ?? null,
+      route_status_before: route.status ?? null,
+      current_user_id: profile?.id ?? null,
+      current_user_role: profile?.role ?? null,
+      operator_profile_id: profile?.team_member_id ?? null,
+      rpc: "snacky_route_leftover_storage_location_id",
+    });
 
-    const storageId = storages?.[0]?.id;
+    const { data: storageId, error: storageLookupError } = await supabase.rpc("snacky_route_leftover_storage_location_id", { p_route_id: routeId });
+    if (storageLookupError) throwActionError(storageLookupError, "Could not load storage location for route leftovers.");
     if (!storageId) throw new Error("No active storage location found");
     const leftoversSubmissionId = String(clientSubmissionId ?? "").trim() || routeId;
 
@@ -3145,11 +3162,18 @@ export async function recordLeftovers({
     console.error("[operator:route-leftovers] Error recording leftovers", {
       route_id: routeId,
       leftover_items: leftoverItems,
-      error_message: getErrorMessage(error, "Could not record route leftovers."),
+      action_step: "record_leftovers",
+      storage_lookup_rpc: "snacky_route_leftover_storage_location_id",
+      inventory_movement_table: "inventory_movements",
+      route_stock_lines_table: "route_stock_lines",
+      refill_order_lines_table: "refill_order_lines",
+      supabase_error_code: errorField(error, "code") ?? null,
+      supabase_error_message: errorField(error, "message") ?? getErrorMessage(error, "Could not record route leftovers."),
+      rls_error: String(errorField(error, "code") ?? "") === "42501" || String(errorField(error, "message") ?? "").toLowerCase().includes("row-level security") || String(errorField(error, "message") ?? "").toLowerCase().includes("permission"),
       error_stack: error instanceof Error ? error.stack : null,
       error,
     });
-    return actionFailure(getErrorMessage(error, "Could not record route leftovers."), {
+    return actionFailure(routeLeftoversPublicError(error), {
       routeId,
       code: String(errorField(error, "code") ?? "ROUTE_LEFTOVERS_FAILED"),
     });
@@ -3355,6 +3379,10 @@ export async function completeRoute(routeId: string) {
       action: "complete_route",
       route_id: routeId,
       user_id: profile?.id ?? null,
+      current_user_role: profile?.role ?? null,
+      operator_profile_id: profile?.team_member_id ?? null,
+      route_update_table: "routes",
+      inventory_movement_table: "inventory_movements",
       route_status_before: route.status ?? null,
       route_status_after: ROUTE_COMPLETED_STATUS,
       stop_count: logStopCount,
@@ -3365,9 +3393,24 @@ export async function completeRoute(routeId: string) {
     return actionSuccess({ routeId, completedAt, warning: completionWarning });
   } catch (error) {
     const publicError = routeCompletionPublicError(error);
+    let routeStatusAfter = logRoute?.status ?? null;
+    try {
+      const { data: routeAfter } = await supabase
+        .from("routes")
+        .select("status, completed_at")
+        .eq("id", routeId)
+        .maybeSingle();
+      routeStatusAfter = routeAfter?.status ?? routeStatusAfter;
+    } catch (reloadError) {
+      console.warn("[operator:complete-route] Could not reload route status after failure", {
+        route_id: routeId,
+        error: reloadError,
+      });
+    }
     console.error("[operator:complete-route] Error completing route", {
       route_id: routeId,
       current_route_status: logRoute?.status ?? null,
+      route_status_after: routeStatusAfter,
       stop_count: logStopCount,
       refill_lines_count: logRouteStockLineCount,
       inventory_movement_count_attempted: logMovementCount,
@@ -3376,8 +3419,12 @@ export async function completeRoute(routeId: string) {
       supabase_error_message: errorField(error, "message") ?? getErrorMessage(error, "Could not complete this route."),
       stack: error instanceof Error ? error.stack : errorField(error, "stack"),
       current_user_id: logProfile?.id ?? null,
+      current_user_role: logProfile?.role ?? null,
+      operator_profile_id: logProfile?.team_member_id ?? null,
       effective_permissions: logProfile ? getEffectivePermissions(logProfile) : [],
       route_update_payload: attemptedRouteUpdatePayload,
+      route_update_table: "routes",
+      inventory_movement_table: "inventory_movements",
       error,
     });
 
