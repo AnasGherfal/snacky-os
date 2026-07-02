@@ -2,12 +2,12 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { RouteCompletionImages, type RouteCompletionStop } from "@/components/RouteCompletionImages";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
-import { canAccessPath, canExecuteRoutes, isAdminRole } from "@/lib/authz";
+import { canAccessPath, canExecuteRoutes, isAdminRole, isOwnerAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { moneyLabel } from "@/lib/payroll";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { privateStorageObjectUrl, REFILL_PHOTO_BUCKET } from "@/lib/storage-buckets";
-import { ROUTE_CANCELED_STATUS, isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isPickupConfirmedStatus, isRouteStopDoneStatus, isTerminalRouteStatus, nextOperatorRouteHref, routeDisplayStatus } from "@/lib/route-workflow";
+import { ROUTE_CANCELED_STATUS, isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isPickupConfirmedStatus, isRouteItemsEditableStatus, isRouteStopDoneStatus, isTerminalRouteStatus, nextOperatorRouteHref, routeDisplayStatus } from "@/lib/route-workflow";
 import { RouteCreatedToast } from "@/app/routes/[id]/RouteCreatedToast";
 import { assignRoute, cancelRoute, deleteDraftRoute } from "@/lib/route-actions";
 import { repairRouteCompletion } from "@/lib/operator-actions";
@@ -255,6 +255,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     images: completionProofsByStopId.get(String(stop.id)) ?? [],
   }));
   const canManageRouteAssignment = isAdminRole(profile);
+  const canEditRouteItems = isOwnerAdminRole(profile) && isRouteItemsEditableStatus(routeRow.status);
   const hasPickMovements = Boolean(movements?.some((movement: any) => movement.reason === "storage_to_operator_bag"));
   const hasReturnMovements = Boolean(movements?.some((movement: any) => movement.reason === "operator_bag_to_storage"));
   const canStartRoute = canExecuteRoutes(profile) && Boolean(profile.team_member_id) && isAvailableRouteStatus(routeRow.status);
@@ -341,6 +342,11 @@ export default async function RouteDetailPage({ params, searchParams }: { params
           action={
             <div className="flex flex-wrap gap-2">
               <SecondaryButton href="/routes">Back to routes</SecondaryButton>
+              {canEditRouteItems ? (
+                <Link href={`/routes/${id}/edit`} className="btn-secondary">
+                  Edit route items
+                </Link>
+              ) : null}
               {continueHref ? (
                 <Link href={continueHref} className="btn-primary">
                   {canStartRoute ? (routeRow.operator_id ? "Start Route" : "Claim & Start") : "Continue Route"}

@@ -25,6 +25,7 @@ import {
   isRouteStopDoneStatus,
   isRouteStatusEnumMismatch,
   isTerminalRouteStatus,
+  isRouteItemsEditableStatus,
   missingRouteWorkflowStatuses,
   nextOperatorRouteHref,
   routeDisplayStatus,
@@ -62,6 +63,13 @@ test("route status groups describe one consistent workflow", () => {
   assert.equal(isOperatorVisibleRouteStatus(ROUTE_AVAILABLE_STATUS), false);
   assert.equal(isActiveRouteStatus("assigned"), false);
   assert.equal(isOperatorVisibleRouteStatus("assigned"), false);
+});
+
+test("route item edits stay open for non-terminal routes only", () => {
+  assert.equal(isRouteItemsEditableStatus("draft"), true);
+  assert.equal(isRouteItemsEditableStatus("pickup_confirmed"), true);
+  assert.equal(isRouteItemsEditableStatus("completed"), false);
+  assert.equal(isRouteItemsEditableStatus("cancelled"), false);
 });
 
 test("route creation and display statuses use database statuses only", () => {
@@ -181,17 +189,17 @@ test("route pickup checklist prioritizes Mr Crunch, then Doritos, then other pro
   const sorted = sortPickupProductRows([
     { productName: "Water 500ml" },
     { productName: "Doritos Nacho" },
-    { productName: "طربوش Cheese" },
+    { productName: "Ã˜Â·Ã˜Â±Ã˜Â¨Ã™Ë†Ã˜Â´ Cheese" },
     { productName: "Chips Classic" },
     { productName: "Mr Crunch Tarboouch" },
-    { productName: "دوريتوس Green Hot" },
+    { productName: "Ã˜Â¯Ã™Ë†Ã˜Â±Ã™Å Ã˜ÂªÃ™Ë†Ã˜Â³ Green Hot" },
   ]);
 
   assert.deepEqual(sorted.map((row) => row.productName), [
     "Mr Crunch Tarboouch",
-    "طربوش Cheese",
+    "Ã˜Â·Ã˜Â±Ã˜Â¨Ã™Ë†Ã˜Â´ Cheese",
     "Doritos Nacho",
-    "دوريتوس Green Hot",
+    "Ã˜Â¯Ã™Ë†Ã˜Â±Ã™Å Ã˜ÂªÃ™Ë†Ã˜Â³ Green Hot",
     "Chips Classic",
     "Water 500ml",
   ]);

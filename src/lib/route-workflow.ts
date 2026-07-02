@@ -210,6 +210,10 @@ export function isTerminalRouteStatus(status: string | null | undefined) {
   return includesStatus(TERMINAL_ROUTE_STATUSES, status) || includesStatus(LEGACY_TERMINAL_ROUTE_STATUSES, status);
 }
 
+export function isRouteItemsEditableStatus(status: string | null | undefined) {
+  return Boolean(String(status ?? "").trim()) && !isTerminalRouteStatus(status);
+}
+
 export function isCompletedRouteStatus(status: string | null | undefined) {
   return includesStatus(COMPLETED_ROUTE_STATUSES, status);
 }

@@ -67,6 +67,7 @@ interface StopRefillItem {
   filledQty: number | null;
   reason?: string | null;
   notes?: string | null;
+  sourceLabel?: string | null;
 }
 
 interface ProductOption {
@@ -970,6 +971,11 @@ export default function MachineStopPage() {
                         <p className="text-xs text-slate-500">Product</p>
                         <p className="break-words font-semibold text-slate-900">{item.productName}</p>
                         <p className="text-sm text-slate-500">Slot {item.slotCode}</p>
+                        {item.sourceLabel ? (
+                          <span className="mt-1 inline-flex rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800">
+                            {item.sourceLabel}
+                          </span>
+                        ) : null}
                       </div>
                       <Metric label="Assigned" value={assignedQty} />
                       <Metric label="Bag available" value={item.availableQty ?? 0} />

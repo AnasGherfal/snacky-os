@@ -45,6 +45,7 @@ type StopPlanItemRow = {
   product_id?: string | null;
   planned_quantity?: unknown;
   source?: string | null;
+  created_at?: string | null;
   product?: ProductRelationRow | ProductRelationRow[] | null;
 };
 type RefillOrderLineRow = {
@@ -55,6 +56,7 @@ type RefillOrderLineRow = {
   final_qty_to_take?: unknown;
   suggested_qty?: unknown;
   source?: string | null;
+  created_at?: string | null;
   product?: ProductRelationRow | ProductRelationRow[] | null;
 };
 type RefillOrderFallbackRow = { refill_order_lines?: RefillOrderLineRow[] | null };
@@ -87,6 +89,8 @@ type PlannedProductLine = {
   assignedQty: number;
   parQty: number;
   filledQty: number | null;
+  source?: string | null;
+  createdAt?: string | null;
   availableQty?: number;
 };
 type RefillLineItem = {
@@ -102,6 +106,8 @@ type RefillLineItem = {
   filledQty: number | null;
   reason: string | null;
   notes: string | null;
+  sourceLabel?: string | null;
+  createdAt?: string | null;
   availableQty?: number;
 };
 
@@ -240,13 +246,13 @@ export async function GET(
     return NextResponse.json({ error: "Database not available" }, { status: 500 });
   }
 
-  let route: { id: string; operator_id: string | null; status?: string | null } | null = null;
+  let route: { id: string; operator_id: string | null; status?: string | null; started_at?: string | null } | null = null;
   let stop: { id: string; route_id: string; machine_id: string; stop_order: number; status: string } | null = null;
 
   try {
     const { data: routeRow, error: routeError } = await supabase
       .from("routes")
-      .select("id, operator_id, status")
+      .select("id, operator_id, status, started_at")
       .eq("id", routeId)
       .maybeSingle();
     if (routeError) throw routeError;
@@ -360,6 +366,7 @@ export async function GET(
         product_id,
         planned_quantity,
         source,
+        created_at,
         product:products(id, name)`
       )
       .eq("route_stop_id", stopId);
@@ -394,6 +401,7 @@ export async function GET(
           product_id: line.product_id,
           planned_quantity: Number(line.final_qty_to_take ?? line.suggested_qty ?? 0),
           source: line.source ?? (line.machine_slot_id ? "refill_recommendation" : "manual_admin_assignment"),
+          created_at: line.created_at ?? null,
           product: line.product,
         })),
       );
@@ -427,10 +435,19 @@ export async function GET(
         assignedQty: 0,
         parQty: 0,
         filledQty: 0,
+        source: line.source ?? null,
+        createdAt: line.created_at ?? null,
       };
       current.slotCodes.add(slotCode);
       current.assignedQty += assignedQty;
       current.parQty += assignedQty;
+      if (line.source === "manual_admin_assignment") current.source = "manual_admin_assignment";
+      else if (!current.source) current.source = line.source ?? null;
+      if (line.created_at) {
+        const currentCreatedAt = current.createdAt ? new Date(current.createdAt).getTime() : 0;
+        const nextCreatedAt = new Date(line.created_at).getTime();
+        if (!current.createdAt || nextCreatedAt >= currentCreatedAt) current.createdAt = line.created_at;
+      }
       plannedByProduct.set(productId, current);
     });
 
@@ -466,6 +483,7 @@ export async function GET(
 
     const lineItems: RefillLineItem[] = Array.from(plannedByProduct.values()).map((line) => {
       const existingFill = existingAssignedFillByProduct.get(String(line.productId));
+      const sourceLabel = line.source === "manual_admin_assignment" && route?.started_at && line.createdAt && new Date(line.createdAt).getTime() > new Date(route.started_at).getTime() ? "New added item" : null;
       return ({
       refillOrderLineId: line.refillOrderLineId,
       routeStopItemId: line.routeStopItemId,
@@ -479,6 +497,8 @@ export async function GET(
       filledQty: existingFill ? existingFill.quantity : null,
       reason: existingFill?.reason ?? null,
       notes: existingFill?.notes ?? null,
+      sourceLabel,
+      createdAt: line.createdAt ?? null,
     });
     });
 
@@ -608,7 +628,8 @@ export async function GET(
       availableByProduct.set(productId, Math.max(0, (bagBalanceByProduct.get(productId) ?? 0) + (currentStopFilledByProduct.get(productId) ?? 0)));
     });
 
-    lineItems.forEach((item) => {
+    const activeLineItems = lineItems.filter((item) => item.assignedQty > 0);
+    activeLineItems.forEach((item) => {
       item.availableQty = availableByProduct.get(String(item.productId)) ?? 0;
     });
 
@@ -630,7 +651,7 @@ export async function GET(
     };
 
     slotRows.forEach((slot) => markProductPriority(slot.product_id, 1, "Machine products"));
-    lineItems.forEach((item) => markProductPriority(item.productId, 2, "Route pickup list"));
+    activeLineItems.forEach((item) => markProductPriority(item.productId, 2, "Route pickup list"));
     ((latestStockResult.data ?? []) as MachineProductSignalRow[]).forEach((row) => markProductPriority(row.product_id, 3, "Latest VMS stock"));
     ((recentSalesResult.data ?? []) as MachineProductSignalRow[]).forEach((row) => markProductPriority(row.product_id, 4, "Known machine product"));
 
@@ -645,12 +666,12 @@ export async function GET(
     bagBalanceByProduct.forEach((quantity, productId) => {
       if (quantity > 0) markManualSalePriority(productId, 1, "Picked up for this route");
     });
-    lineItems.forEach((item) => markManualSalePriority(item.productId, 2, "Assigned to this machine"));
+    activeLineItems.forEach((item) => markManualSalePriority(item.productId, 2, "Assigned to this machine"));
     slotRows.forEach((slot) => markManualSalePriority(slot.product_id, 2, "Assigned to this machine"));
     ((latestStockResult.data ?? []) as MachineProductSignalRow[]).forEach((row) => markManualSalePriority(row.product_id, 3, "Latest VMS stock"));
     ((recentSalesResult.data ?? []) as MachineProductSignalRow[]).forEach((row) => markManualSalePriority(row.product_id, 4, "Known machine product"));
 
-    const refillItems = lineItems;
+    const refillItems = activeLineItems;
     const productOptions = productRows.map((product) => ({
       id: product.id,
       sku: product.sku,
