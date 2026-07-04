@@ -437,11 +437,16 @@ export default async function OperatorRouteDetailPage({
           </SectionCard>
         </div>
 
+        {manualSalesError ? (
+          <section className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
+            {t("manualSales.loadError", "Manual sales could not load. The rest of the route is still available.")}
+          </section>
+        ) : null}
         {manualSaleRows.length ? (
           <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <h2 className="text-lg font-semibold">{t("Manual Route Sales")}</h2>
+                <h2 className="text-lg font-semibold">{t("manualSales.title", "Manual Route Sales")}</h2>
                 <p className="mt-1 text-sm text-slate-500">{t("Manual sales entered during filling are kept separate from VMS sales and cash collection.")}</p>
               </div>
               <StatusBadge status="confirmed" label={t("confirmed", "confirmed")} />
@@ -482,10 +487,10 @@ export default async function OperatorRouteDetailPage({
               ))}
             </div>
           </section>
-        ) : (
+        ) : manualSalesError ? null : (
           <section className="rounded-lg border border-dashed border-slate-300 bg-white p-4 md:p-6">
-            <h2 className="text-lg font-semibold text-slate-900">{t("Manual Route Sales")}</h2>
-            <p className="mt-1 text-sm text-slate-500">{t("No manual sales have been recorded for this route yet")}</p>
+            <h2 className="text-lg font-semibold text-slate-900">{t("manualSales.title", "Manual Route Sales")}</h2>
+            <p className="mt-1 text-sm text-slate-500">{t("manualSales.empty", "No manual sales have been recorded yet.")}</p>
           </section>
         )}
 

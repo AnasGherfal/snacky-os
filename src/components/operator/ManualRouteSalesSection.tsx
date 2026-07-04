@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useMemo, useRef, useState } from "react";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
@@ -46,6 +46,7 @@ type ManualRouteSalesSectionProps = {
   sales: NormalizedRouteManualSale[];
   onSaved: (sale: NormalizedRouteManualSale, options: { inventoryMovementCreated: boolean; warning: string | null }) => void;
   onCancelled: (sale: NormalizedRouteManualSale, options: { inventoryReversed: boolean; warning: string | null }) => void;
+  loadError?: boolean;
 };
 
 type ParsedPayload = {
@@ -113,10 +114,11 @@ export function ManualRouteSalesSection({
   sales,
   onSaved,
   onCancelled,
+  loadError,
 }: ManualRouteSalesSectionProps) {
   const { t, locale } = useLanguage();
   const tr = (en: string, ar: string) => t(en, locale === "ar" ? ar : en);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(Boolean(loadError));
   const [showForm, setShowForm] = useState(false);
   const [sourceMode, setSourceMode] = useState<"preferred" | "all">("preferred");
   const [productId, setProductId] = useState("");
@@ -323,6 +325,12 @@ export function ManualRouteSalesSection({
             </div>
           ) : null}
 
+          {loadError ? (
+            <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-800">
+              {t("manualSales.loadError", "Manual sales could not load. The rest of the route is still available.")}
+            </div>
+          ) : null}
+
           {!routeLocked ? (
             <div className="flex flex-wrap gap-2">
               <button type="button" onClick={() => setShowForm((current) => !current)} className={showForm ? "btn-primary" : "btn-secondary"}>
@@ -474,9 +482,9 @@ export function ManualRouteSalesSection({
                   );
                 })}
               </div>
-            ) : (
+            ) : loadError ? null : (
               <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">
-                {t("No manual sales have been recorded for this stop yet.", "No manual sales have been recorded for this stop yet.")}
+                {t("manualSales.empty", "No manual sales have been recorded yet.")}
               </p>
             )}
           </div>
@@ -497,7 +505,8 @@ function ManualSaleProductPicker({
   onChange: (productId: string) => void;
   label: string;
 }) {
-  const { t } = useLanguage();
+  const { t, locale } = useLanguage();
+  const tr = (en: string, ar: string) => t(en, locale === "ar" ? ar : en);
   const [query, setQuery] = useState("");
   const selected = products.find((product) => product.id === value) ?? null;
   const filtered = useMemo(() => {

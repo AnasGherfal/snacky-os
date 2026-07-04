@@ -770,6 +770,7 @@ export async function GET(
       machineStorageProductOptions,
       manualSaleProductOptions,
       manualSales,
+      manualSalesLoadError: Boolean(manualSalesResult.error),
       machineStorageStock: machineStorageStockRows ?? [],
       adjustments,
       hasCompletionPhoto: Boolean(refillHistoryRow?.machine_photo_url || refillHistoryRow?.machine_photo_path),

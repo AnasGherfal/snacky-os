@@ -151,6 +151,7 @@ interface StopData {
   manualSaleProductOptions?: ManualRouteSaleProductOption[];
   machineStorageStock?: MachineStorageStockRow[];
   manualSales?: NormalizedRouteManualSale[];
+  manualSalesLoadError?: boolean;
   adjustments?: InventoryAdjustmentRow[];
   hasCompletionPhoto?: boolean;
   debug?: StopDebugDetails;
@@ -1071,6 +1072,7 @@ export default function MachineStopPage() {
           preferredProducts={stopData.manualSaleProductOptions ?? stopData.machineProductOptions ?? stopData.productOptions}
           allProducts={stopData.productOptions}
           sales={stopData.manualSales ?? []}
+          loadError={Boolean(stopData.manualSalesLoadError)}
           onSaved={(sale, options) => {
             setStopData((current) => current ? {
               ...current,
