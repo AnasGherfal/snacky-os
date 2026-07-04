@@ -292,6 +292,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         action={
           <div className="flex flex-wrap gap-2">
             <SecondaryButton href="/restock-priority">Restock Priority</SecondaryButton>
+            <SecondaryButton href="/inventory/machine-storage">Machine Storage</SecondaryButton>
             <SecondaryButton href="/inventory/movements">Movement Log</SecondaryButton>
             <PrimaryButton href="/inventory/movements/new">New Stock Movement</PrimaryButton>
           </div>

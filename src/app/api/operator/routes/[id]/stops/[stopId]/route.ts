@@ -1,4 +1,4 @@
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 import { NextResponse } from "next/server";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute, getEffectivePermissions } from "@/lib/authz";
@@ -78,6 +78,18 @@ type AdjustmentRow = {
   created_at?: string | null;
   product?: ProductOptionRow | ProductOptionRow[] | null;
 };
+type MachineStorageStockRow = {
+  id?: string | null;
+  machine_id?: string | null;
+  location_id?: string | null;
+  product_id?: string | null;
+  product_name?: string | null;
+  quantity?: unknown;
+  notes?: string | null;
+  updated_at?: string | null;
+  created_at?: string | null;
+};
+
 type PlannedProductLine = {
   refillOrderLineId: string | null;
   routeStopItemId?: string | null;
@@ -599,6 +611,16 @@ export async function GET(
       logOptionalStopDataIssue({ step: "load_manual_machine_sales", query: "route_manual_sales", routeId, stopId, profile, route, stop, error: manualMachineSalesResult.error });
     }
 
+    const storageStockClient = getSupabaseAdminClient() ?? supabase;
+    const { data: machineStorageStockRows, error: machineStorageStockError } = await storageStockClient
+      .from("machine_storage_stock")
+      .select("id, machine_id, location_id, product_id, product_name, quantity, notes, updated_at, created_at")
+      .eq("machine_id", stop.machine_id)
+      .order("updated_at", { ascending: false })
+      .limit(200);
+    if (machineStorageStockError && !isMissingTable(machineStorageStockError, "machine_storage_stock")) {
+      logOptionalStopDataIssue({ step: "load_machine_storage_stock", query: "machine_storage_stock", routeId, stopId, profile, route, stop, error: machineStorageStockError });
+    }
     const filledByProduct = new Map<string, number>();
     const currentStopFilledByProduct = new Map<string, number>();
     const fillMovementRows = fillMovementsError ? [] : (fillMovements ?? []) as MovementRow[];
@@ -696,6 +718,24 @@ export async function GET(
       .sort((a, b) => a[1].rank - b[1].rank || (productOptionById.get(a[0])?.name ?? "").localeCompare(productOptionById.get(b[0])?.name ?? ""))
       .map(([productId]) => productOptionById.get(productId))
       .filter((product): product is (typeof productOptions)[number] => Boolean(product));
+
+    const machineStorageProductPriority = new Map<string, { rank: number; label: string }>();
+    const markMachineStoragePriority = (productId: unknown, rank: number, label: string) => {
+      const key = String(productId ?? "");
+      if (!key) return;
+      const existing = machineStorageProductPriority.get(key);
+      if (!existing || rank < existing.rank) machineStorageProductPriority.set(key, { rank, label });
+    };
+
+    bagBalanceByProduct.forEach((quantity, productId) => {
+      if (quantity > 0) markMachineStoragePriority(productId, 1, "In operator bag");
+    });
+    activeLineItems.forEach((item) => markMachineStoragePriority(item.productId, 2, "Picked up for this route"));
+    slotRows.forEach((slot) => markMachineStoragePriority(slot.product_id, 3, "Assigned to this machine/stop"));
+    const machineStorageProductOptions = Array.from(machineStorageProductPriority.entries())
+      .sort((a, b) => a[1].rank - b[1].rank || (productOptionById.get(a[0])?.name ?? "").localeCompare(productOptionById.get(b[0])?.name ?? ""))
+      .map(([productId]) => productOptionById.get(productId))
+      .filter((product): product is (typeof productOptions)[number] => Boolean(product));
     const manualSales = (manualSalesResult.error ? [] : ((manualSalesResult.data ?? []) as RouteManualSaleRow[])).map((sale) => normalizeRouteManualSale(sale));
     const adjustmentRows = adjustmentsResult.error ? [] : (adjustmentsResult.data ?? []) as AdjustmentRow[];
     const adjustments = adjustmentRows.map((adjustment) => {
@@ -727,8 +767,10 @@ export async function GET(
       extraItems: existingExtraItems,
       productOptions,
       machineProductOptions,
+      machineStorageProductOptions,
       manualSaleProductOptions,
       manualSales,
+      machineStorageStock: machineStorageStockRows ?? [],
       adjustments,
       hasCompletionPhoto: Boolean(refillHistoryRow?.machine_photo_url || refillHistoryRow?.machine_photo_path),
       debug: buildDebugDetails({ profile, routeId, stopId, route, stop }),
@@ -925,5 +967,6 @@ export async function POST(
     );
   }
 }
+
 
 

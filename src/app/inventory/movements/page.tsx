@@ -6,6 +6,7 @@ import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, Secondary
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
 import { createInventoryMovementCorrection } from "@/lib/inventory-actions";
+import { inventoryMovementReasonLabel } from "@/lib/inventory-movement";
 import { cleanSearchParams, getPagination, SearchParamsRecord, supabaseLikePattern } from "@/lib/pagination";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 
@@ -24,6 +25,11 @@ const movementReasons = [
   "manual_correction",
   "product_substitution",
   "historical_route_deduction",
+  "extra_stock_left_at_machine",
+  "avoid_return_to_storage",
+  "small_quantity",
+  "next_refill_backup",
+  "other",
 ] as const;
 
 function formatDate(value: string) {
@@ -48,6 +54,10 @@ function entityLabel(
   if (type === "machine") {
     const machine = labelMaps.machineById.get(id);
     return machine ? formatMachineDisplayName(machine, { includeArea: true }) : shortId(id);
+  }
+  if (type === "machine_storage") {
+    const machine = labelMaps.machineById.get(id);
+    return machine ? "Machine storage: " + formatMachineDisplayName(machine, { includeArea: true }) : "Machine storage: " + shortId(id);
   }
   if (type === "storage") {
     const storage = labelMaps.storageById.get(id);
@@ -158,7 +168,7 @@ export default async function InventoryMovementsPage({
 
   let movementQuery = supabase
     ?.from("inventory_movements")
-    .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, related_route_id, related_route_stop_id, related_purchase_id, related_purchase_line_id, related_machine_id, reversed_movement_id, correction_reason, notes, created_by, created_at, product:products(id, sku, name), created_by_member:team_members(id, full_name)", { count: "exact" })
+    .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, movement_type, related_route_id, related_route_stop_id, related_purchase_id, related_purchase_line_id, related_machine_id, reversed_movement_id, correction_reason, notes, created_by, created_at, product:products(id, sku, name), created_by_member:team_members(id, full_name)", { count: "exact" })
     .order("created_at", { ascending: false });
 
   if (movementQuery && params.product_id) movementQuery = movementQuery.eq("product_id", params.product_id);
@@ -171,7 +181,7 @@ export default async function InventoryMovementsPage({
   if (movementQuery && params.date_to) movementQuery = movementQuery.lte("created_at", `${params.date_to}T23:59:59`);
   if (movementQuery && search) {
     const pattern = supabaseLikePattern(search.replaceAll(",", " "));
-    const clauses = [`notes.ilike.${pattern}`, `correction_reason.ilike.${pattern}`];
+    const clauses = [`notes.ilike.${pattern}`, `correction_reason.ilike.${pattern}`, `movement_type.ilike.${pattern}`];
     if (matchingProductIds.length) clauses.push(`product_id.in.(${matchingProductIds.join(",")})`);
     movementQuery = movementQuery.or(clauses.join(","));
   }
@@ -218,7 +228,7 @@ export default async function InventoryMovementsPage({
           </select>
           <select name="reason" defaultValue={params.reason ?? ""} className="field-input">
             <option value="">All reasons</option>
-            {movementReasons.map((reason) => <option key={reason} value={reason}>{reason.replaceAll("_", " ")}</option>)}
+            {movementReasons.map((reason) => <option key={reason} value={reason}>{inventoryMovementReasonLabel(reason)}</option>)}
           </select>
           <select name="user_id" defaultValue={params.user_id ?? ""} className="field-input">
             <option value="">All users</option>
@@ -289,6 +299,7 @@ export default async function InventoryMovementsPage({
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <StatusBadge status={String(movement.reason).replaceAll("_", " ")} />
+                  {movement.movement_type ? <StatusBadge status={String(movement.movement_type).replaceAll("_", " ")} /> : null}
                   {movement.related_route_id ? <Link href={`/routes/${movement.related_route_id}`} className="link-secondary">{routeLabel(movement.related_route_id, routeById)}</Link> : null}
                   {movement.related_purchase_id ? <Link href={`/purchases/${movement.related_purchase_id}`} className="link-secondary">{purchaseLabel(movement.related_purchase_id, purchaseById)}</Link> : null}
                 </div>
@@ -315,7 +326,7 @@ export default async function InventoryMovementsPage({
             ))}
           </div>
           <div className="hidden xl:block">
-            <DataTable headers={["Date / Time", "Product", "SKU", "Qty", "From type", "From label", "To type", "To label", "Reason", "Route", "Purchase", "Machine", "User", "Notes", "Actions"]}>
+            <DataTable headers={["Date / Time", "Product", "SKU", "Qty", "From type", "From label", "To type", "To label", "Reason", "Movement type", "Route", "Purchase", "Machine", "User", "Notes", "Actions"]}>
               {movementRows.map((movement: any) => (
                 <tr key={movement.id}>
                   <td>{formatDate(movement.created_at)}</td>
@@ -335,6 +346,7 @@ export default async function InventoryMovementsPage({
                   <td><StatusBadge status={entityTypeLabel(movement.to_entity_type)} /></td>
                   <td>{entityLabel(movement.to_entity_type, movement.to_entity_id, labelMaps)}</td>
                   <td><StatusBadge status={String(movement.reason).replaceAll("_", " ")} /></td>
+                  <td>{movement.movement_type ? <StatusBadge status={String(movement.movement_type).replaceAll("_", " ")} /> : "-"}</td>
                   <td>{movement.related_route_id ? <Link href={`/routes/${movement.related_route_id}`} className="link-secondary">{routeLabel(movement.related_route_id, routeById)}</Link> : "-"}</td>
                   <td>{movement.related_purchase_id ? <Link href={`/purchases/${movement.related_purchase_id}`} className="link-secondary">{purchaseLabel(movement.related_purchase_id, purchaseById)}</Link> : "-"}</td>
                   <td>{machineLabel(movement.related_machine_id, machineById)}</td>
@@ -366,3 +378,4 @@ export default async function InventoryMovementsPage({
     </>
   );
 }
+

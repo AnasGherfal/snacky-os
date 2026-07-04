@@ -1,4 +1,4 @@
-export type InventoryEntityType = "storage" | "operator_bag" | "machine" | "waste" | "adjustment";
+﻿export type InventoryEntityType = "storage" | "operator_bag" | "machine" | "machine_storage" | "waste" | "adjustment";
 
 export type InventoryMovementOption = {
   value: string;
@@ -29,6 +29,13 @@ export const INVENTORY_MOVEMENT_OPTIONS: InventoryMovementOption[] = [
     helper: "Move carried stock from the route bag into a machine.",
     dbReason: "operator_bag_to_machine",
     availableInForm: true,
+  },
+  {
+    value: "route_to_machine_storage",
+    label: "Route bag to machine storage",
+    helper: "Move extra route stock into machine storage for the next refill.",
+    dbReason: "extra_stock_left_at_machine",
+    availableInForm: false,
   },
   {
     value: "route_to_storage_return",
@@ -107,6 +114,13 @@ export const INVENTORY_MOVEMENT_OPTIONS: InventoryMovementOption[] = [
     dbReason: "historical_route_deduction",
     availableInForm: false,
   },
+  {
+    value: "other",
+    label: "Other",
+    helper: "Generic inventory movement reason.",
+    dbReason: "other",
+    availableInForm: false,
+  },
 ];
 
 const movementReasonByValue = new Map(INVENTORY_MOVEMENT_OPTIONS.map((option) => [option.value, option.dbReason]));
@@ -128,7 +142,7 @@ export function inventoryMovementReasonLabel(value: string | null | undefined) {
 
 export function normalizeInventoryEntityType(value: string | null | undefined): InventoryEntityType {
   const normalized = String(value ?? "").trim().toLowerCase().replaceAll("-", "_");
-  if (["storage", "operator_bag", "machine", "waste", "adjustment"].includes(normalized)) {
+  if (["storage", "operator_bag", "machine", "machine_storage", "waste", "adjustment"].includes(normalized)) {
     return normalized as InventoryEntityType;
   }
   if (["route", "route_bag", "bag", "operator", "operatorbag"].includes(normalized)) return "operator_bag";

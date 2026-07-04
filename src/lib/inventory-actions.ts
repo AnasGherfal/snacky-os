@@ -27,7 +27,7 @@ const movementTypes = Array.from(new Set([
   "purchase_received",
 ]));
 type MovementType = (typeof movementTypes)[number];
-type EntityType = "storage" | "operator_bag" | "machine" | "waste" | "adjustment";
+type EntityType = "storage" | "operator_bag" | "machine" | "machine_storage" | "waste" | "adjustment";
 type SimpleAdjustmentType = "set_exact" | "add" | "remove";
 
 const simpleAdjustmentReasons = new Map([

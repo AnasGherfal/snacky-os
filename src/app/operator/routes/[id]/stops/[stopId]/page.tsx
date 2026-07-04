@@ -27,7 +27,30 @@ const reasonOptions = [
   "Other",
 ];
 
+const machineStorageReasonOptions = [
+  "extra_stock_left_at_machine",
+  "avoid_return_to_storage",
+  "small_quantity",
+  "next_refill_backup",
+  "other",
+] as const;
+
 type InventoryAdjustmentType = "damaged" | "returned_from_machine";
+
+function formatReasonLabel(value: string) {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  if (text.includes("_") || text.includes("-")) {
+    return text
+      .replaceAll("_", " ")
+      .replaceAll("-", " ")
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((word) => (word.length <= 2 ? word.toUpperCase() : `${word.charAt(0).toUpperCase()}${word.slice(1).toLowerCase()}`))
+      .join(" ");
+  }
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
 const damagedReasonOptions = [
   "Damaged during transport",
   "Broken / opened",
@@ -99,6 +122,18 @@ interface InventoryAdjustmentRow {
   createdAt: string | null;
 }
 
+interface MachineStorageStockRow {
+  id: string;
+  machineId: string | null;
+  locationId: string | null;
+  productId: string | null;
+  productName: string | null;
+  quantity: number;
+  notes: string | null;
+  updatedAt: string | null;
+  createdAt: string | null;
+}
+
 interface StopData {
   stopId: string;
   routeId: string;
@@ -112,7 +147,9 @@ interface StopData {
   extraItems?: ExtraProductLine[];
   productOptions: ProductOption[];
   machineProductOptions?: ProductOption[];
+  machineStorageProductOptions?: ProductOption[];
   manualSaleProductOptions?: ManualRouteSaleProductOption[];
+  machineStorageStock?: MachineStorageStockRow[];
   manualSales?: NormalizedRouteManualSale[];
   adjustments?: InventoryAdjustmentRow[];
   hasCompletionPhoto?: boolean;
@@ -166,7 +203,6 @@ type StopDraft = {
   finalPhotoName: string;
   hasFinalPhotoMetadata: boolean;
 };
-
 function newClientId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
@@ -499,6 +535,7 @@ export default function MachineStopPage() {
   const [lineNotes, setLineNotes] = useState<Record<string, string>>({});
   const [unavailableProducts, setUnavailableProducts] = useState<Record<string, boolean>>({});
   const [extraProducts, setExtraProducts] = useState<ExtraProductLine[]>([]);
+  const [machineStorageOpen, setMachineStorageOpen] = useState(false);
   const [missingReports, setMissingReports] = useState<MissingProductReport[]>([]);
   const [showCleaningChecklist, setShowCleaningChecklist] = useState(false);
   const [cleaningDone, setCleaningDone] = useState(false);
@@ -551,7 +588,7 @@ export default function MachineStopPage() {
       setFilledQtys(draft.filledQtys ?? {});
       setLineNotes(draft.lineNotes ?? {});
       setUnavailableProducts(draft.unavailableProducts ?? {});
-      setExtraProducts((draft.extraProducts ?? []).map((line) => ({ ...line, id: line.id || newClientId() })));
+      setExtraProducts((draft.extraProducts ?? []).map((line) => ({ ...line, id: line.id || newClientId(), reason: line.reason || "extra_stock_left_at_machine" })));
       setMissingReports((draft.missingReports ?? []).map((line) => ({ ...line, id: line.id || newClientId() })));
       setCashCollected(Boolean(draft.cashCollected));
       setCashBagId(draft.cashBagId ?? "");
@@ -567,6 +604,9 @@ export default function MachineStopPage() {
   });
 
   const productById = useMemo(() => new Map((stopData?.productOptions ?? []).map((product) => [product.id, product])), [stopData]);
+  const machineStorageStockRows = stopData?.machineStorageStock ?? [];
+  const machineStorageProducts = stopData?.machineStorageProductOptions ?? stopData?.productOptions ?? [];
+  const machineStorageStockUnits = machineStorageStockRows.reduce((sum, row) => sum + Number(row.quantity ?? 0), 0);
   const assignedByProduct = useMemo(() => new Map((stopData?.refillItems ?? []).map((item) => [item.productId, item])), [stopData]);
   const reservedByProduct = useMemo(() => {
     const reserved = new Map<string, number>();
@@ -684,7 +724,7 @@ export default function MachineStopPage() {
         setFilledQtys(initialQtys);
         setLineNotes(initialNotes);
         setUnavailableProducts(initialUnavailable);
-        const initialExtraProducts = (stopPayload.extraItems ?? []).map((item: ExtraProductLine) => ({ ...item, id: newClientId() }));
+        const initialExtraProducts = (stopPayload.extraItems ?? []).map((item: ExtraProductLine) => ({ ...item, id: newClientId(), reason: item.reason || "extra_stock_left_at_machine" }));
         setExtraProducts(initialExtraProducts);
         const initialFinalPhotoName = stopPayload.hasCompletionPhoto ? "Existing proof photo saved" : "";
         setFinalPhotoName(initialFinalPhotoName);
@@ -741,7 +781,7 @@ export default function MachineStopPage() {
   };
 
   const addExtraProduct = () => {
-    setExtraProducts((prev) => [...prev, { id: newClientId(), productId: "", quantity: 0, reason: "Customer demand", notes: "" }]);
+    setExtraProducts((prev) => [...prev, { id: newClientId(), productId: "", quantity: 0, reason: "extra_stock_left_at_machine", notes: "" }]);
   };
 
   const addMissingReport = () => {
@@ -932,7 +972,7 @@ export default function MachineStopPage() {
           <Metric label={t("Assigned units")} value={stopExecutionSummary.assignedUnits} />
           <Metric label={t("Filled now")} value={stopExecutionSummary.filledUnits} />
           <Metric label={t("Shortage to explain")} value={stopExecutionSummary.shortageUnits} tone={stopExecutionSummary.shortageUnits > 0 ? "warn" : "neutral"} />
-          <Metric label={t("Extra units added")} value={stopExecutionSummary.extraUnits} />
+          <Metric label={t("Machine storage units")} value={stopExecutionSummary.extraUnits} />
           <Metric label={t("Inventory adjustments")} value={stopExecutionSummary.adjustmentCount} />
           <Metric label={t("Proof photo")} value={stopExecutionSummary.proofReady ? t("Ready") : t("Needed")} tone={stopExecutionSummary.proofReady ? "neutral" : "warn"} />
         </section>
@@ -1051,55 +1091,138 @@ export default function MachineStopPage() {
           }}
         />
 
-<section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <section className="rounded-lg border border-slate-200 bg-white">
+          <button
+            type="button"
+            onClick={() => setMachineStorageOpen((current) => !current)}
+            className="flex w-full items-center justify-between gap-3 border-b border-slate-200 p-4 text-left transition hover:bg-slate-50 md:p-6"
+          >
             <div>
-              <h2 className="text-lg font-semibold">{t("Products added at machine")}</h2>
-              <p className="mt-1 text-sm text-slate-500">{t("Add unplanned products from the operator bag. These lines are saved when you complete the stop.")}</p>
+              <h2 className="text-lg font-semibold">{t("Machine storage")}</h2>
+              <p className="mt-1 text-sm text-slate-500">
+                {t("Keep extra products at the machine instead of returning them to storage.")}
+              </p>
             </div>
-            <div className="grid gap-2 sm:flex sm:flex-wrap">
-              <button type="button" onClick={addExtraProduct} className="btn-secondary w-full sm:w-auto">{t("Add product")}</button>
-              <button type="button" onClick={addMissingReport} className="btn-secondary w-full sm:w-auto">{t("Report missing")}</button>
+            <div className="flex items-center gap-2">
+              <span className={machineStorageOpen ? "rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700" : "rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600"}>
+                {machineStorageOpen ? t("Open") : t("Collapsed")}
+              </span>
+              <span className="text-sm font-medium text-slate-600">{machineStorageOpen ? t("Hide") : t("Show")}</span>
             </div>
+          </button>
+
+          <div className="grid gap-3 border-b border-slate-200 bg-slate-50 p-4 sm:grid-cols-2 xl:grid-cols-4 md:p-6">
+            <Metric label={t("Current stock units")} value={machineStorageStockUnits} />
+            <Metric label={t("Draft units")} value={stopExecutionSummary.extraUnits} />
+            <Metric label={t("Saved rows")} value={machineStorageStockRows.length} />
+            <Metric label={t("Missing reports")} value={stopExecutionSummary.missingReportCount} tone={stopExecutionSummary.missingReportCount > 0 ? "warn" : "neutral"} />
           </div>
 
-          <div className="mt-4 space-y-3">
-            {extraProducts.map((line) => {
-              const selected = productById.get(line.productId);
-              const maxQty = line.productId ? remainingBagQty(line.productId, line.quantity) : 0;
-              return (
-                <div key={line.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <div className="grid gap-3 md:grid-cols-[1fr_160px_1fr]">
-                    <ProductPicker products={stopData.productOptions} value={line.productId} onChange={(productId) => updateExtra(line.id, { productId, quantity: 0 })} label="Extra product" />
-                    <QuantityInput value={line.quantity} max={maxQty} onChange={(quantity) => updateExtra(line.id, { quantity })} />
-                    <ReasonSelect value={line.reason} onChange={(reason) => updateExtra(line.id, { reason })} />
+          {machineStorageOpen ? (
+            <div className="space-y-5 p-4 md:p-6">
+              <div className="space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-900">{t("Current machine storage")}</h3>
+                    <p className="mt-1 text-sm text-slate-500">{t("Read-only machine storage stock is shown here for reference.")}</p>
                   </div>
-                  <input value={line.notes} onChange={(event) => updateExtra(line.id, { notes: event.target.value })} className="field-input mt-3" placeholder={`Notes${selected ? ` for ${selected.name}` : ""}`} />
-                  <button type="button" onClick={() => setExtraProducts((prev) => prev.filter((item) => item.id !== line.id))} className="mt-2 text-sm font-medium text-rose-700">{t("Remove")}</button>
+                  <span className="text-sm text-slate-500">{machineStorageStockRows.length} {t("rows")}</span>
                 </div>
-              );
-            })}
-
-            {missingReports.map((line) => (
-              <div key={line.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <div className="grid gap-3 md:grid-cols-2">
-                  <label className="block">
-                    <span className="mb-1 block text-sm font-medium text-slate-800">Missing product name</span>
-                    <input value={line.productName} onChange={(event) => updateMissingReport(line.id, { productName: event.target.value })} className="field-input" placeholder="Type product name from machine" />
-                  </label>
-                  <ReasonSelect value={line.reason} onChange={(reason) => updateMissingReport(line.id, { reason })} />
-                </div>
-                <input value={line.notes} onChange={(event) => updateMissingReport(line.id, { notes: event.target.value })} className="field-input mt-3" placeholder={t("Notes")} />
-                <button type="button" onClick={() => setMissingReports((prev) => prev.filter((item) => item.id !== line.id))} className="mt-2 text-sm font-medium text-rose-700">{t("Remove")}</button>
+                {machineStorageStockRows.length ? (
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {machineStorageStockRows.map((row) => (
+                      <div key={row.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="break-words font-semibold text-slate-900">{row.productName ?? t("Unknown product")}</p>
+                            <p className="text-xs text-slate-500">{row.updatedAt ? new Date(row.updatedAt).toLocaleString() : t("No update time")}</p>
+                          </div>
+                          <span className="rounded-full bg-slate-900 px-2.5 py-1 text-xs font-semibold text-white">{row.quantity}</span>
+                        </div>
+                        {row.notes ? <p className="mt-2 break-words text-sm text-slate-600">{row.notes}</p> : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">
+                    {t("No machine storage stock has been recorded yet.")}
+                  </div>
+                )}
               </div>
-            ))}
 
-            {!extraProducts.length && !missingReports.length ? (
-              <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">No extra products or missing product reports added.</p>
-            ) : null}
-          </div>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h3 className="text-base font-semibold text-slate-900">{t("Add machine storage lines")}</h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {t("Choose a product from the operator bag first. Search all products only if you need to find a specific item.")}
+                  </p>
+                </div>
+                <div className="grid gap-2 sm:flex sm:flex-wrap">
+                  <button type="button" onClick={addExtraProduct} className="btn-secondary w-full sm:w-auto">{t("Add product")}</button>
+                  <button type="button" onClick={addMissingReport} className="btn-secondary w-full sm:w-auto">{t("Report missing")}</button>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {extraProducts.map((line) => {
+                  const selected = machineStorageProducts.find((product) => product.id === line.productId) ?? stopData.productOptions.find((product) => product.id === line.productId);
+                  const maxQty = line.productId ? remainingBagQty(line.productId, line.quantity) : 0;
+                  const bagAvailable = line.productId ? remainingBagQty(line.productId) : 0;
+                  const notInBag = Boolean(line.productId) && bagAvailable <= 0;
+                  return (
+                    <div key={line.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_160px_1fr]">
+                        <ProductPicker products={machineStorageProducts} allProducts={stopData.productOptions} value={line.productId} onChange={(productId) => updateExtra(line.id, { productId, quantity: 0 })} label={t("Machine storage product")} />
+                        <QuantityInput value={line.quantity} max={maxQty} onChange={(quantity) => updateExtra(line.id, { quantity })} availabilityLabel={t("Operator bag available")} />
+                        <ReasonSelect value={line.reason} onChange={(reason) => updateExtra(line.id, { reason })} options={[...machineStorageReasonOptions]} />
+                      </div>
+                      {notInBag ? (
+                        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                          {t("This product is not currently in the operator bag. Keep the quantity at 0 unless an owner/admin override exists.")}
+                        </div>
+                      ) : selected ? (
+                        <div className="mt-3 text-xs text-slate-500">
+                          {t("Selected")}: {selected.name}
+                          {selected.sourceLabel ? <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-700">{selected.sourceLabel}</span> : null}
+                        </div>
+                      ) : null}
+                      <input value={line.notes} onChange={(event) => updateExtra(line.id, { notes: event.target.value })} className="field-input mt-3" placeholder={selected ? `${t("Notes")} ${selected.name}` : t("Notes")} />
+                      <button type="button" onClick={() => setExtraProducts((prev) => prev.filter((item) => item.id !== line.id))} className="mt-2 text-sm font-medium text-rose-700">{t("Remove")}</button>
+                    </div>
+                  );
+                })}
+
+                {missingReports.length ? (
+                  <div className="border-t border-slate-200 pt-4">
+                    <div className="mb-3">
+                      <h3 className="text-base font-semibold text-slate-900">{t("Missing products")}</h3>
+                      <p className="mt-1 text-sm text-slate-500">{t("Use this when the machine is missing a product but there is no extra stock line to keep.")}</p>
+                    </div>
+                    <div className="space-y-3">
+                      {missingReports.map((line) => (
+                        <div key={line.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <label className="block">
+                              <span className="mb-1 block text-sm font-medium text-slate-800">{t("Missing product name")}</span>
+                              <input value={line.productName} onChange={(event) => updateMissingReport(line.id, { productName: event.target.value })} className="field-input" placeholder={t("Type product name from machine")} />
+                            </label>
+                            <ReasonSelect value={line.reason} onChange={(reason) => updateMissingReport(line.id, { reason })} />
+                          </div>
+                          <input value={line.notes} onChange={(event) => updateMissingReport(line.id, { notes: event.target.value })} className="field-input mt-3" placeholder={t("Notes")} />
+                          <button type="button" onClick={() => setMissingReports((prev) => prev.filter((item) => item.id !== line.id))} className="mt-2 text-sm font-medium text-rose-700">{t("Remove")}</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                {!extraProducts.length && !missingReports.length ? (
+                  <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">{t("No machine storage lines or missing product reports added.")}</p>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
         </section>
-
         <InventoryAdjustmentsSection
           routeId={routeId}
           stopId={stopId}
@@ -1205,7 +1328,7 @@ export default function MachineStopPage() {
         </div>
 
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-          <strong>{t("Reminder")}:</strong> {t("This page is for physical execution at the machine: actual filled quantities, shortage reasons, cash, issues, and the final photo after cleaning. Leftovers are returned later from the dedicated leftovers screen.")}
+          <strong>{t("Reminder")}:</strong> {t("This page is for physical execution at the machine: actual filled quantities, shortage reasons, machine storage, cash, issues, and the final photo after cleaning.")}
         </div>
 
       </div>
@@ -1222,81 +1345,134 @@ function Metric({ label, value, tone = "neutral" }: { label: string; value: numb
   );
 }
 
-function ProductPicker({ products, value, onChange, label = "Existing product" }: { products: ProductOption[]; value: string; onChange: (productId: string) => void; label?: string }) {
+function ProductPicker({ products, allProducts, value, onChange, label = "Existing product" }: { products: ProductOption[]; allProducts?: ProductOption[]; value: string; onChange: (productId: string) => void; label?: string }) {
   const { t } = useLanguage();
   const [query, setQuery] = useState("");
-  const selected = products.find((product) => product.id === value);
+  const [sourceMode, setSourceMode] = useState<"priority" | "all">("priority");
+  const priorityProducts = products;
+  const showAllToggle = Boolean(allProducts?.length);
+  const selected = (allProducts ?? priorityProducts).find((product) => product.id === value) ?? priorityProducts.find((product) => product.id === value);
+  const activeProducts = showAllToggle && sourceMode === "all" ? (allProducts ?? []) : priorityProducts;
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) return products.slice(0, 8);
-    return products.filter((product) => [product.name, product.sku, product.barcode, product.category, product.brand].some((field) => String(field ?? "").toLowerCase().includes(needle))).slice(0, 8);
-  }, [products, query]);
+    if (!needle) return activeProducts.slice(0, 8);
+    return activeProducts
+      .filter((product) => [product.name, product.sku, product.barcode, product.category, product.brand, product.sourceLabel].some((field) => String(field ?? "").toLowerCase().includes(needle)))
+      .slice(0, 8);
+  }, [activeProducts, query]);
+
+  useEffect(() => {
+    if (!showAllToggle) {
+      setSourceMode("priority");
+      return;
+    }
+    if (!value) return;
+    const inPriority = priorityProducts.some((product) => product.id === value);
+    if (!inPriority) setSourceMode("all");
+  }, [priorityProducts, showAllToggle, value]);
 
   return (
     <div>
-      <span className="mb-1 block text-sm font-medium text-slate-800">{label}</span>
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="block text-sm font-medium text-slate-800">{label}</span>
+        {showAllToggle ? (
+          <button
+            type="button"
+            onClick={() => {
+              setSourceMode((current) => current === "priority" ? "all" : "priority");
+              setQuery("");
+            }}
+            className="text-xs font-semibold uppercase tracking-wide text-slate-500 transition hover:text-slate-900"
+          >
+            {sourceMode === "priority" ? t("Search all products") : t("Priority products")}
+          </button>
+        ) : null}
+      </div>
+      {showAllToggle ? (
+        <p className="mb-2 text-xs text-slate-500">
+          {sourceMode === "priority"
+            ? t("Priority order: operator bag, picked up for this route, assigned to this machine/stop.")
+            : t("Search the full product catalog if the priority list does not include what you need.")}
+        </p>
+      ) : null}
       <div className="rounded-lg border border-slate-200 bg-white p-2">
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           className="min-h-12 w-full rounded-md border-0 px-2 py-2 text-base outline-none ring-0 md:text-sm"
-          placeholder={selected ? `${selected.name} - ${selected.sku ?? t("No SKU")}` : t("Search name, SKU, barcode, category, or brand")}
+          placeholder={selected
+            ? `${selected.name} - ${selected.sku ?? t("No SKU")}`
+            : sourceMode === "priority"
+              ? t("Search priority products by name, SKU, barcode, category, or brand")
+              : t("Search all products by name, SKU, barcode, category, or brand")}
         />
         <div className="mt-2 max-h-56 space-y-1 overflow-y-auto">
           {selected && !query.trim() ? (
             <div className="rounded-md bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
               {t("Selected")}: {selected.name} - {t("Bag available")}: {selected.availableQty}
+              {selected.availableQty <= 0 ? (
+                <div className="mt-1 text-xs font-normal text-amber-800">
+                  {t("This product is not currently in the operator bag. Keep the quantity at 0 unless an owner/admin override exists.")}
+                </div>
+              ) : null}
             </div>
           ) : null}
-        {filtered.map((product) => (
-          <button
-            key={product.id}
-            type="button"
-            onClick={() => {
-              onChange(product.id);
-              setQuery("");
-            }}
-            className={`min-h-14 w-full rounded-md px-3 py-2 text-left text-sm transition ${product.id === value ? "brand-selected" : "hover:bg-slate-100"}`}
-          >
-            <span className="flex items-center gap-3">
-              <ProductThumbnail imageUrl={product.imageUrl} name={product.name} />
-              <span className="min-w-0">
-                <span className="block truncate font-medium">{product.name}</span>
-                <span className={`block truncate ${product.id === value ? "text-white/80" : "text-slate-500"}`}>{product.sku ?? t("No SKU")} - {t("Bag available")}: {product.availableQty}</span>
+          {filtered.map((product) => (
+            <button
+              key={product.id}
+              type="button"
+              onClick={() => {
+                onChange(product.id);
+                setQuery("");
+              }}
+              className={`min-h-14 w-full rounded-md px-3 py-2 text-left text-sm transition ${product.id === value ? "brand-selected" : "hover:bg-slate-100"}`}
+            >
+              <span className="flex items-center gap-3">
+                <ProductThumbnail imageUrl={product.imageUrl} name={product.name} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{product.name}</span>
+                  <span className={`block truncate ${product.id === value ? "text-white/80" : "text-slate-500"}`}>
+                    {product.sku ?? t("No SKU")} - {t("Bag available")}: {product.availableQty}
+                  </span>
+                  {product.sourceLabel ? (
+                    <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${product.id === value ? "bg-white/15 text-white" : "bg-slate-200 text-slate-700"}`}>
+                      {product.sourceLabel}
+                    </span>
+                  ) : null}
+                </span>
               </span>
-            </span>
-          </button>
-        ))}
+            </button>
+          ))}
           {!filtered.length ? <p className="px-3 py-2 text-sm text-slate-500">{t("No products found")}</p> : null}
         </div>
       </div>
     </div>
   );
 }
-
-function QuantityInput({ value, max, onChange }: { value: number; max: number; onChange: (quantity: number) => void }) {
+function QuantityInput({ value, max, onChange, availabilityLabel = "Bag available" }: { value: number; max: number; onChange: (quantity: number) => void; availabilityLabel?: string }) {
   const { t } = useLanguage();
   return (
     <label className="block">
       <span className="mb-1 block text-sm font-medium text-slate-800">{t("Quantity")}</span>
       <QuantityStepper value={value} max={max} onChange={onChange} inputLabel={t("Quantity")} />
-      <span className="mt-1 block text-xs text-slate-500">{t("Bag available")}: {max}</span>
+      <span className="mt-1 block text-xs text-slate-500">{t(availabilityLabel)}: {max}</span>
     </label>
   );
 }
 
-function ReasonSelect({ value, onChange, options = reasonOptions }: { value: string; onChange: (reason: string) => void; options?: string[] }) {
+function ReasonSelect({ value, onChange, options = reasonOptions }: { value: string; onChange: (reason: string) => void; options?: readonly string[] }) {
   const { t } = useLanguage();
+  const reasonValues = useMemo(() => Array.from(new Set([...(options ?? []), String(value ?? "").trim()].filter(Boolean))), [options, value]);
   return (
     <label className="block">
       <span className="mb-1 block text-sm font-medium text-slate-800">{t("Reason")}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)} className="field-input">
-        {options.map((reason) => <option key={reason} value={reason}>{t(reason, reason)}</option>)}
+      <select value={value || ""} onChange={(event) => onChange(event.target.value)} className="field-input">
+        <option value="">{t("Select reason")}</option>
+        {reasonValues.map((reason) => <option key={reason} value={reason}>{formatReasonLabel(reason)}</option>)}
       </select>
     </label>
   );
 }
-
 function CashAndIssueSections({
   cashCollected,
   setCashCollected,
@@ -1739,5 +1915,7 @@ function InventoryAdjustmentForm({
     </article>
   );
 }
+
+
 
 

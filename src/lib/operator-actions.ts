@@ -206,6 +206,25 @@ function routeSourceUuid(value: unknown, fallbackSeed: string) {
   return stableUuid(fallbackSeed);
 }
 
+const MACHINE_STORAGE_REASON_VALUES = new Set([
+  "extra_stock_left_at_machine",
+  "avoid_return_to_storage",
+  "small_quantity",
+  "next_refill_backup",
+  "other",
+]);
+
+function normalizeMachineStorageReason(value: unknown) {
+  const reason = String(value ?? "").trim().toLowerCase().replaceAll(" ", "_");
+  if (!reason) return "extra_stock_left_at_machine";
+  if (MACHINE_STORAGE_REASON_VALUES.has(reason)) return reason;
+  return "other";
+}
+
+function machineStorageMovementReason(reason: string) {
+  return reason === "other" ? "other" : "extra_stock_left_at_machine";
+}
+
 function machineFillDelta(movement: any) {
   const qty = unitQuantity(movement?.quantity);
   if (movement?.reason === "manual_correction" && movement?.from_entity_type === "machine" && movement?.to_entity_type === "operator_bag") {
@@ -2168,7 +2187,7 @@ function normalizeCompleteStopItems(
         ...item,
         productId,
         quantity,
-        reason: item.reason?.trim() || "Other",
+        reason: normalizeMachineStorageReason(item.reason),
         notes: item.notes?.trim() || undefined,
       };
     })
@@ -2535,6 +2554,60 @@ export async function completeStop({
         routeId,
         operationLabel: 'create machine fill inventory movements',
       });
+    }
+
+    const machineStorageMovementByProduct = new Map<string, { quantity: number; reasons: Set<string>; notes: string[] }>();
+    normalizedExtraItems.forEach((item) => {
+      const productId = String(item.productId ?? "");
+      const quantity = Math.max(0, Number(item.quantity ?? 0));
+      if (!productId || quantity <= 0) return;
+      const current = machineStorageMovementByProduct.get(productId) ?? { quantity: 0, reasons: new Set<string>(), notes: [] };
+      current.quantity += quantity;
+      current.reasons.add(normalizeMachineStorageReason(item.reason));
+      const note = String(item.notes ?? "").trim();
+      if (note) current.notes.push(note);
+      machineStorageMovementByProduct.set(productId, current);
+    });
+    const machineStorageMovementRows = Array.from(machineStorageMovementByProduct.entries()).map(([productId, entry]) => {
+      const reason = machineStorageMovementReason(Array.from(entry.reasons)[0] ?? "other");
+      const reasonSummary = Array.from(entry.reasons).map((itemReason) => itemReason.replaceAll("_", " ")).join(", ");
+      return {
+        product_id: productId,
+        quantity: entry.quantity,
+        from_entity_type: "operator_bag" as const,
+        from_entity_id: route.operator_id,
+        to_entity_type: "machine_storage" as const,
+        to_entity_id: machineId,
+        reason,
+        movement_type: "route_to_machine_storage",
+        related_route_id: routeId,
+        related_route_stop_id: stopId,
+        related_machine_id: machineId,
+        idempotency_key: inventoryMovementIdempotencyKey("route-stop-machine-storage", routeId, stopId, machineId, productId, entry.quantity, stopSubmissionId),
+        source_type: "route_stop_completion",
+        source_id: routeSourceUuid(stopSubmissionId, "route-stop-completion:" + routeId + ":" + stopId + ":" + stopSubmissionId),
+        created_by: route.operator_id,
+        notes: [reasonSummary ? "Reason: " + reasonSummary : null, entry.notes.join(" | ") || null].filter(Boolean).join(" - "),
+      };
+    });
+
+    if (machineStorageMovementRows.length) {
+      try {
+        await upsertInventoryMovementsWithFallback({
+          supabase,
+          rows: machineStorageMovementRows,
+          routeId,
+          operationLabel: 'create machine storage inventory movements',
+        });
+      } catch (error) {
+        console.warn("[operator:complete-stop] Machine storage inventory movement save failed; continuing route completion", {
+          route_id: routeId,
+          route_stop_id: stopId,
+          machine_id: machineId,
+          client_submission_id: stopSubmissionId,
+          error,
+        });
+      }
     }
 
     const { error: auditDeleteError } = await supabase.from("route_stop_fill_lines").delete().eq("route_stop_id", stopId);
