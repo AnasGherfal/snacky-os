@@ -414,6 +414,41 @@ function summarizeVmsTransactionRawRowForLog(row: Record<string, unknown> | unde
   };
 }
 
+function detailedTransactionRawValueType(value: unknown) {
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  if (Array.isArray(value)) return "array";
+  if (value instanceof Date) return "date";
+  return typeof value;
+}
+
+function detailedTransactionRawValuePreview(value: unknown) {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "string") {
+    if (value.length <= 48) return value;
+    return `${value.slice(0, 24)}...${value.slice(-8)}`;
+  }
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) return `[array(${value.length})]`;
+  if (typeof value === "object") return "[object]";
+  return String(value);
+}
+
+function stripDetailedTransactionRawBusinessDate(row: Record<string, unknown>) {
+  const rest: Record<string, unknown> = { ...row };
+  delete rest["business_date"];
+  return rest;
+}
+
+function isMissingDetailedTransactionRawBusinessDateColumn(error: unknown) {
+  const issue = extractVmsSchemaIssue(error, "vms_transactions_raw.upsert");
+  if (issue?.type === "missing_column" && issue.column === "business_date") return true;
+  const supabaseError = supabaseMutationError(error);
+  const text = `${supabaseError?.code ?? ""} ${supabaseError?.message ?? ""} ${supabaseError?.details ?? ""} ${supabaseError?.hint ?? ""}`.toLowerCase();
+  return text.includes("business_date") && (text.includes("column") || text.includes("schema cache") || text.includes("does not exist"));
+}
+
 function importStepErrorWithBatchContext({
   step,
   error,
@@ -2909,11 +2944,41 @@ async function runVmsImport({
             firstChunkRow: summarizeVmsTransactionRawRowForLog(firstChunkRow),
           });
 
-          const { data, error } = await supabase
+          let insertRows = chunk;
+          let retriedWithoutBusinessDate = false;
+          let initialInsertError: unknown | null = null;
+          let finalInsertResult = await supabase
             .from("vms_transactions_raw")
-            .upsert(chunk, { onConflict: "duplicate_hash", ignoreDuplicates: true })
+            .upsert(insertRows, { onConflict: "duplicate_hash", ignoreDuplicates: true })
             .select("duplicate_hash");
-          if (!error) {
+
+          if (finalInsertResult.error && isMissingDetailedTransactionRawBusinessDateColumn(finalInsertResult.error)) {
+            initialInsertError = finalInsertResult.error;
+            retriedWithoutBusinessDate = true;
+            insertRows = chunk.map((row) => stripDetailedTransactionRawBusinessDate(row));
+            console.warn("[vms-import] Detailed transaction raw insert retried without business_date", {
+              ...detailedTransactionInsertContext,
+              chunkStart: index,
+              chunkSize: chunk.length,
+              schemaIssue: extractVmsSchemaIssue(initialInsertError, "vms_transactions_raw.upsert"),
+              errorCode: supabaseMutationError(initialInsertError)?.code ?? null,
+              errorMessage: supabaseMutationError(initialInsertError)?.message ?? null,
+              errorDetails: supabaseMutationError(initialInsertError)?.details ?? null,
+              errorHint: supabaseMutationError(initialInsertError)?.hint ?? null,
+              payloadColumns: Object.keys(firstChunkRow ?? {}).sort(),
+              fallbackPayloadColumns: Object.keys(insertRows[0] ?? {}).sort(),
+              failingColumn: "business_date",
+              failingValueType: detailedTransactionRawValueType((firstChunkRow as Record<string, unknown> | null)?.business_date),
+              failingValuePreview: detailedTransactionRawValuePreview((firstChunkRow as Record<string, unknown> | null)?.business_date),
+            });
+            finalInsertResult = await supabase
+              .from("vms_transactions_raw")
+              .upsert(insertRows, { onConflict: "duplicate_hash", ignoreDuplicates: true })
+              .select("duplicate_hash");
+          }
+
+          if (!finalInsertResult.error) {
+            const data = finalInsertResult.data;
             const insertedRowsCount = Array.isArray(data) ? data.length : chunk.length;
             const skippedDuplicateCount = Math.max(0, chunk.length - insertedRowsCount);
             detailedTransactionRowsInserted += insertedRowsCount;
@@ -2924,14 +2989,21 @@ async function runVmsImport({
               chunkSize: chunk.length,
               rowsInserted: insertedRowsCount,
               rowsSkippedDuplicateOnInsert: skippedDuplicateCount,
+              rowsSkippedTotal: duplicateRows + detailedTransactionRowsSkippedDuplicateOnInsert,
+              retriedWithoutBusinessDate,
+              initialInsertErrorCode: initialInsertError ? supabaseMutationError(initialInsertError)?.code ?? null : null,
+              initialInsertErrorMessage: initialInsertError ? supabaseMutationError(initialInsertError)?.message ?? null : null,
             });
             continue;
           }
 
           detailedTransactionRowsFailed += chunk.length;
           const sampleRow = chunk[0];
+          const error = finalInsertResult.error;
           const schemaIssue = extractVmsSchemaIssue(error, "vms_transactions_raw.upsert");
           const supabaseError = error && typeof error === "object" ? error as { code?: string; message?: string; details?: string; hint?: string } : null;
+          const failingColumn = schemaIssue?.type === "missing_column" ? schemaIssue.column : null;
+          const failingValue = failingColumn ? sampleRow?.[failingColumn] : null;
           console.error("[vms-import] Transaction raw row upsert failed", {
             ...detailedTransactionInsertContext,
             chunkStart: index,
@@ -2940,13 +3012,19 @@ async function runVmsImport({
             rowsFailed: detailedTransactionRowsFailed,
             rowsSkippedDuplicateOnInsert: detailedTransactionRowsSkippedDuplicateOnInsert,
             rowsAttemptedInChunk: chunk.length,
+            rowsSkippedTotal: duplicateRows + detailedTransactionRowsSkippedDuplicateOnInsert,
             payloadColumns: Object.keys(sampleRow ?? {}).sort(),
             sampleRow: summarizeVmsTransactionRawRowForLog(sampleRow),
+            retriedWithoutBusinessDate,
             errorCode: supabaseError?.code ?? null,
             errorMessage: supabaseError?.message ?? null,
             errorDetails: supabaseError?.details ?? null,
             errorHint: supabaseError?.hint ?? null,
-            failingColumn: schemaIssue?.type === "missing_column" ? schemaIssue.column : null,
+            failingColumn,
+            failingValueType: detailedTransactionRawValueType(failingValue),
+            failingValuePreview: detailedTransactionRawValuePreview(failingValue),
+            initialInsertErrorCode: initialInsertError ? supabaseMutationError(initialInsertError)?.code ?? null : null,
+            initialInsertErrorMessage: initialInsertError ? supabaseMutationError(initialInsertError)?.message ?? null : null,
             schemaIssue,
             error,
           });
@@ -6560,9 +6638,4 @@ export async function reprocessVmsImportBatch(formData: FormData) {
     batch: batch as SavedVmsImportBatchRow,
   });
 }
-
-
-
-
-
 
