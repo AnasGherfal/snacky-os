@@ -1,4 +1,4 @@
-"use server";
+﻿"use server";
 
 import { createHash } from "node:crypto";
 import { redirect } from "next/navigation";
@@ -392,6 +392,9 @@ function summarizeVmsTransactionRawRowForLog(row: Record<string, unknown> | unde
   if (!row) return null;
   return {
     row_number: row.row_number ?? null,
+    business_date: row.business_date ?? null,
+    merchant_id: row.merchant_id ?? null,
+    merchant_name: row.merchant_name ?? null,
     order_number: row.order_number ?? null,
     third_party_transaction_number: row.third_party_transaction_number ?? null,
     third_party_order_no: row.third_party_order_no ?? null,
@@ -404,6 +407,8 @@ function summarizeVmsTransactionRawRowForLog(row: Record<string, unknown> | unde
     delivery_time: row.delivery_time ?? null,
     refund_time: row.refund_time ?? null,
     quantity: row.quantity ?? null,
+    mapped_machine_id: row.mapped_machine_id ?? null,
+    mapped_product_id: row.mapped_product_id ?? null,
     transaction_status: row.transaction_status ?? null,
     duplicate_hash: row.duplicate_hash ?? null,
   };
@@ -432,6 +437,15 @@ function safeStorageFileName(fileName: string) {
     .replace(/[^a-zA-Z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 120) || "vms-import";
+}
+
+function ensureVmsFileNameExtension(fileName: string, fileType: string | null | undefined) {
+  const trimmed = String(fileName ?? "").trim();
+  if (!trimmed) return "vms-import.csv";
+  if (/\.(csv|xls|xlsx)$/i.test(trimmed)) return trimmed;
+  const normalizedType = String(fileType ?? "").trim().toLowerCase();
+  if (["csv", "xls", "xlsx"].includes(normalizedType)) return `${trimmed}.${normalizedType}`;
+  return trimmed;
 }
 
 function numberValue(input: string) {
@@ -2861,32 +2875,93 @@ async function runVmsImport({
           summary.resultMessage = "Imported as a new active dashboard source. Matching deleted or inactive batches were ignored.";
         }
 
+        const firstPreparedRow = rowsToSave[0] ?? null;
+        const rowsPreparedForInsert = rowsToSave.length;
+        const detailedTransactionInsertContext = {
+          batchId: batch.id,
+          fileName,
+          reportType,
+          parsedRowCount: transactionRawRows.length,
+          rowsPreparedForInsert,
+          insertChunkSize: VMS_TRANSACTION_SAVE_CHUNK_SIZE,
+          rowsSkippedDuplicateDetected: duplicateRows,
+          rowsSkippedDuplicateWithinFile: duplicateRowsWithinFile,
+          rowsSkippedValidation: summary.invalidRows,
+          rowsNeedingMapping: summary.needsProductMappingRows,
+          rowsUnknownMachine: summary.unknownMachineRows,
+          firstPreparedRowPayloadKeys: Object.keys(firstPreparedRow ?? {}).sort(),
+          firstPreparedRow: summarizeVmsTransactionRawRowForLog(firstPreparedRow),
+        };
+        console.info("[vms-import] Detailed transaction raw insert prepared", detailedTransactionInsertContext);
+
+        let detailedTransactionRowsInserted = 0;
+        let detailedTransactionRowsSkippedDuplicateOnInsert = 0;
+        let detailedTransactionRowsFailed = 0;
+
         for (let index = 0; index < rowsToSave.length; index += VMS_TRANSACTION_SAVE_CHUNK_SIZE) {
           const chunk = rowsToSave.slice(index, index + VMS_TRANSACTION_SAVE_CHUNK_SIZE);
-          const { error } = await supabase
-            .from("vms_transactions_raw")
-            .upsert(chunk, { onConflict: "duplicate_hash", ignoreDuplicates: true });
-          if (!error) continue;
+          const firstChunkRow = chunk[0] ?? null;
+          console.info("[vms-import] Detailed transaction raw insert chunk starting", {
+            ...detailedTransactionInsertContext,
+            chunkStart: index,
+            chunkSize: chunk.length,
+            firstChunkRowPayloadKeys: Object.keys(firstChunkRow ?? {}).sort(),
+            firstChunkRow: summarizeVmsTransactionRawRowForLog(firstChunkRow),
+          });
 
+          const { data, error } = await supabase
+            .from("vms_transactions_raw")
+            .upsert(chunk, { onConflict: "duplicate_hash", ignoreDuplicates: true })
+            .select("duplicate_hash");
+          if (!error) {
+            const insertedRowsCount = Array.isArray(data) ? data.length : chunk.length;
+            const skippedDuplicateCount = Math.max(0, chunk.length - insertedRowsCount);
+            detailedTransactionRowsInserted += insertedRowsCount;
+            detailedTransactionRowsSkippedDuplicateOnInsert += skippedDuplicateCount;
+            console.info("[vms-import] Detailed transaction raw insert chunk completed", {
+              ...detailedTransactionInsertContext,
+              chunkStart: index,
+              chunkSize: chunk.length,
+              rowsInserted: insertedRowsCount,
+              rowsSkippedDuplicateOnInsert: skippedDuplicateCount,
+            });
+            continue;
+          }
+
+          detailedTransactionRowsFailed += chunk.length;
           const sampleRow = chunk[0];
+          const schemaIssue = extractVmsSchemaIssue(error, "vms_transactions_raw.upsert");
+          const supabaseError = error && typeof error === "object" ? error as { code?: string; message?: string; details?: string; hint?: string } : null;
           console.error("[vms-import] Transaction raw row upsert failed", {
-            batchId: batch.id,
-            reportType,
+            ...detailedTransactionInsertContext,
+            chunkStart: index,
+            chunkSize: chunk.length,
+            rowsInserted: detailedTransactionRowsInserted,
+            rowsFailed: detailedTransactionRowsFailed,
+            rowsSkippedDuplicateOnInsert: detailedTransactionRowsSkippedDuplicateOnInsert,
             rowsAttemptedInChunk: chunk.length,
             payloadColumns: Object.keys(sampleRow ?? {}).sort(),
             sampleRow: summarizeVmsTransactionRawRowForLog(sampleRow),
-            schemaIssue: extractVmsSchemaIssue(error, "vms_transactions_raw.upsert"),
+            errorCode: supabaseError?.code ?? null,
+            errorMessage: supabaseError?.message ?? null,
+            errorDetails: supabaseError?.details ?? null,
+            errorHint: supabaseError?.hint ?? null,
+            failingColumn: schemaIssue?.type === "missing_column" ? schemaIssue.column : null,
+            schemaIssue,
             error,
           });
-          summary.errors.push(importStepErrorWithBatchContext({
-            step: "Detailed transaction save to vms_transactions_raw",
-            error,
-            batchId: batch.id,
-            row: sampleRow,
-          }));
+          summary.errors.push(DETAILED_TRANSACTION_SAVE_ERROR_MESSAGE);
+          summary.failedTargets = Array.from(new Set([...summary.failedTargets, "Sales dashboard"]));
           fatalImportError = true;
           break;
         }
+
+        console.info("[vms-import] Detailed transaction raw insert summary", {
+          ...detailedTransactionInsertContext,
+          rowsInserted: detailedTransactionRowsInserted,
+          rowsSkippedDuplicateOnInsert: detailedTransactionRowsSkippedDuplicateOnInsert,
+          rowsFailed: detailedTransactionRowsFailed,
+        });
       }
     }
   }
@@ -3424,6 +3499,7 @@ const VMS_PREVIEW_ROW_INSERT_LIMIT = 500;
 const VMS_SAVE_QUERY_TIMEOUT_MS = 30000;
 const VMS_TRANSACTION_DUPLICATE_LOOKUP_CHUNK_SIZE = 50;
 const VMS_TRANSACTION_SAVE_CHUNK_SIZE = 250;
+const DETAILED_TRANSACTION_SAVE_ERROR_MESSAGE = "Detailed VMS transaction rows were not saved to vms_transactions_raw. Reprocess this batch after the import fix is deployed.";
 
 type SoftTimeoutResult<T> =
   | { timedOut: true }
@@ -6156,6 +6232,8 @@ type SavedVmsImportBatchRow = {
   file_type: string | null;
   sheet_name: string | null;
   report_type: string | null;
+  report_start_date?: string | null;
+  report_end_date?: string | null;
   column_mapping: unknown;
   notes: string | null;
   original_file_name: string | null;
@@ -6163,6 +6241,246 @@ type SavedVmsImportBatchRow = {
   storage_bucket: string | null;
   storage_path: string | null;
 };
+
+type SavedImportRow = {
+  row_number?: number | null;
+  raw_data?: unknown;
+  normalized_data?: unknown;
+};
+
+type DetailedOrderDetailsReplaySource = {
+  fileName: string;
+  fileType: string;
+  sheetName: string;
+  headerNames: string[];
+  rows: Record<string, string>[];
+  originalRows: Record<string, string>[];
+  sourceRowNumbers: number[];
+  source: "stored_file" | "saved_rows";
+};
+
+function savedImportRowNumber(row: SavedImportRow, index: number) {
+  const rowNumber = Number(row.row_number ?? 0);
+  return Number.isFinite(rowNumber) && rowNumber > 0 ? rowNumber : index + 2;
+}
+
+function mimeTypeForVmsFileType(fileType: string | null | undefined) {
+  switch (String(fileType ?? "").trim().toLowerCase()) {
+    case "csv":
+      return "text/csv";
+    case "xls":
+      return "application/vnd.ms-excel";
+    case "xlsx":
+      return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+function pickDetailedOrderDetailsSheet(parsed: Awaited<ReturnType<typeof parseVmsUpload>>, preferredSheetName: string | null | undefined) {
+  if (!parsed.sheets.length) return null;
+  const preferred = String(preferredSheetName ?? "").trim();
+  if (preferred) {
+    const exactMatch = parsed.sheets.find((candidate) => candidate.name === preferred);
+    if (exactMatch) return exactMatch;
+  }
+  return parsed.sheets[0] ?? null;
+}
+
+async function loadSavedImportRowsForReprocess({
+  supabase,
+  batchId,
+}: {
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  batchId: string;
+}) {
+  const pageSize = 1000;
+  const runSelect = async (offset: number) => {
+    return supabase
+      .from("vms_import_rows")
+      .select("row_number, raw_data, normalized_data", { count: offset === 0 ? "exact" : undefined })
+      .eq("import_batch_id", batchId)
+      .order("row_number", { ascending: true })
+      .range(offset, offset + pageSize - 1);
+  };
+
+  const firstPage = await runSelect(0);
+  if (firstPage.error) {
+    console.error("[vms-import:reprocess] Raw row lookup failed", {
+      batchId,
+      code: firstPage.error.code,
+      message: firstPage.error.message,
+      details: firstPage.error.details,
+      hint: firstPage.error.hint,
+      schemaIssue: extractVmsSchemaIssue(firstPage.error, "vms_import_rows.for_batch"),
+    });
+    return null;
+  }
+
+  const firstRows = (firstPage.data ?? []) as SavedImportRow[];
+  const totalCount = Number(firstPage.count ?? firstRows.length);
+  const rows = [...firstRows];
+
+  for (let offset = firstRows.length; offset < totalCount; offset += pageSize) {
+    const pageResult = await runSelect(offset);
+    if (pageResult.error) {
+      console.error("[vms-import:reprocess] Raw row page lookup failed", {
+        batchId,
+        offset,
+        code: pageResult.error.code,
+        message: pageResult.error.message,
+        details: pageResult.error.details,
+        hint: pageResult.error.hint,
+        schemaIssue: extractVmsSchemaIssue(pageResult.error, "vms_import_rows.for_batch"),
+      });
+      return null;
+    }
+
+    const pageRows = (pageResult.data ?? []) as SavedImportRow[];
+    if (!pageRows.length) break;
+    rows.push(...pageRows);
+    if (pageRows.length < pageSize) break;
+  }
+
+  return rows;
+}
+
+async function loadDetailedOrderDetailsReplaySourceFromStoredFile({
+  supabase,
+  batch,
+  reportType,
+}: {
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  batch: SavedVmsImportBatchRow;
+  reportType: NonNullable<ReturnType<typeof parseReportType>>;
+}): Promise<DetailedOrderDetailsReplaySource | null> {
+  if (reportType !== "vms_order_details_weekly") return null;
+  const storageBucket = String(batch.storage_bucket ?? "").trim();
+  const storagePath = String(batch.storage_path ?? "").trim();
+  const batchMapping = jsonRecord(batch.column_mapping);
+  if (!storageBucket || !storagePath || !Object.values(batchMapping).some((value) => Boolean(String(value ?? "").trim()))) return null;
+
+  const downloadResult = await withSoftTimeout(
+    supabase.storage.from(storageBucket).download(storagePath),
+    VMS_SAVE_QUERY_TIMEOUT_MS,
+  );
+  if (downloadResult.timedOut) {
+    console.warn("[vms-import:reprocess] Stored file download timed out", { batchId: batch.id, storageBucket, storagePath });
+    return null;
+  }
+  if ("error" in downloadResult) {
+    console.warn("[vms-import:reprocess] Stored file download threw", {
+      batchId: batch.id,
+      storageBucket,
+      storagePath,
+      error: downloadResult.error instanceof Error ? downloadResult.error.message : String(downloadResult.error),
+    });
+    return null;
+  }
+
+  const blob = downloadResult.value.data;
+  if (!blob) {
+    console.warn("[vms-import:reprocess] Stored file download returned no content", { batchId: batch.id, storageBucket, storagePath });
+    return null;
+  }
+
+  const fileCtor = globalThis.File;
+  if (typeof fileCtor !== "function") {
+    console.warn("[vms-import:reprocess] File constructor is unavailable for stored file replay", { batchId: batch.id });
+    return null;
+  }
+
+  const fileName = ensureVmsFileNameExtension(batch.original_file_name ?? batch.file_name ?? "VMS import", batch.file_type ?? null);
+  const replayFile = new fileCtor([Buffer.from(await blob.arrayBuffer())], fileName, { type: mimeTypeForVmsFileType(batch.file_type) });
+
+  let parsed;
+  try {
+    parsed = await parseVmsUpload(replayFile);
+  } catch (error) {
+    console.warn("[vms-import:reprocess] Stored file parse failed", {
+      batchId: batch.id,
+      storageBucket,
+      storagePath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+
+  const sheet = pickDetailedOrderDetailsSheet(parsed, batch.sheet_name);
+  if (!sheet) {
+    console.warn("[vms-import:reprocess] Stored file replay found no readable sheets", { batchId: batch.id, storageBucket, storagePath });
+    return null;
+  }
+
+  const headerRowIndex = detectHeaderRowIndex(sheet.rows, reportType);
+  const { headers, records } = sheetRowsToRecords(sheet.rows, { reportType, headerRowIndex });
+  const rows = applyColumnMapping(records, batchMapping);
+  if (!rows.length) {
+    console.warn("[vms-import:reprocess] Stored file replay produced no usable rows", { batchId: batch.id, storageBucket, storagePath, sheetName: sheet.name });
+    return null;
+  }
+
+  return {
+    fileName: replayFile.name,
+    fileType: parsed.fileType,
+    sheetName: sheet.name,
+    headerNames: headers,
+    rows,
+    originalRows: records,
+    sourceRowNumbers: records.map((_, index) => headerRowIndex + 2 + index),
+    source: "stored_file",
+  };
+}
+
+async function loadDetailedOrderDetailsReplaySource({
+  supabase,
+  batchId,
+  batch,
+  reportType,
+}: {
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+  batchId: string;
+  batch: SavedVmsImportBatchRow;
+  reportType: NonNullable<ReturnType<typeof parseReportType>>;
+}): Promise<DetailedOrderDetailsReplaySource | null> {
+  const storedFileSource = await loadDetailedOrderDetailsReplaySourceFromStoredFile({ supabase, batch, reportType });
+  if (storedFileSource) {
+    console.info("[vms-import:reprocess] Reprocessing from stored file", {
+      batchId,
+      reportType,
+      source: storedFileSource.source,
+      fileName: storedFileSource.fileName,
+      sheetName: storedFileSource.sheetName,
+      rows: storedFileSource.rows.length,
+    });
+    return storedFileSource;
+  }
+
+  const savedRows = await loadSavedImportRowsForReprocess({ supabase, batchId });
+  if (!savedRows?.length) return null;
+
+  const rows = savedRows.map((row) => jsonRecord(row.normalized_data));
+  const originalRows = savedRows.map((row) => jsonRecord(row.raw_data));
+  const sourceRowNumbers = savedRows.map((row, index) => savedImportRowNumber(row, index));
+  const headerNames: string[] = [];
+  console.info("[vms-import:reprocess] Reprocessing from saved parsed rows", {
+    batchId,
+    reportType,
+    source: "saved_rows",
+    rows: rows.length,
+  });
+
+  return {
+    fileName: batch.original_file_name ?? batch.file_name ?? "VMS import",
+    fileType: batch.file_type ?? "csv",
+    sheetName: batch.sheet_name ?? "Sheet",
+    headerNames,
+    rows,
+    originalRows,
+    sourceRowNumbers,
+    source: "saved_rows",
+  };
+}
 
 async function rerunSavedVmsImportBatch({
   supabase,
@@ -6177,25 +6495,10 @@ async function rerunSavedVmsImportBatch({
 }) {
   const reportType = parseReportType(batch.report_type);
   if (!reportType) redirect(`/vms-import/${batchId}?error=That%20batch%20does%20not%20have%20a%20valid%20report%20type.`);
-  type SavedImportRow = {
-    row_number?: number | null;
-    raw_data?: unknown;
-    normalized_data?: unknown;
-  };
 
-  const { data: rawRows, error: rawRowsError } = await supabase
-    .from("vms_import_rows")
-    .select("row_number, raw_data, normalized_data")
-    .eq("import_batch_id", batchId)
-    .order("row_number", { ascending: true });
-
-  if (rawRowsError) {
-    console.error("[vms-import:reprocess] Raw row lookup failed", rawRowsError);
-    redirect(`/vms-import/${batchId}?error=Could%20not%20load%20raw%20rows%20for%20that%20batch.`);
-  }
-
-  if (!rawRows?.length) {
-    redirect(`/vms-import/${batchId}?error=This%20batch%20does%20not%20have%20saved%20raw%20rows.%20Upload%20the%20file%20again%20once%20to%20enable%20reprocessing.`);
+  const replaySource = await loadDetailedOrderDetailsReplaySource({ supabase, batchId, batch, reportType });
+  if (!replaySource) {
+    redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Please reupload the file because original file content is not stored.")}`);
   }
 
   let previousSummary: Partial<ImportSummary> = {};
@@ -6210,20 +6513,21 @@ async function rerunSavedVmsImportBatch({
     profile,
     existingBatchId: batchId,
     reportType,
-    fileName: batch.file_name ?? "VMS import",
-    fileType: batch.file_type ?? "csv",
-    sheetName: batch.sheet_name ?? "Sheet",
-    originalFileName: batch.original_file_name ?? batch.file_name ?? "VMS import",
+    fileName: replaySource.fileName,
+    fileType: replaySource.fileType,
+    sheetName: replaySource.sheetName,
+    originalFileName: batch.original_file_name ?? replaySource.fileName,
     fileHash: batch.file_hash ?? null,
     storageBucket: batch.storage_bucket ?? null,
     storagePath: batch.storage_path ?? null,
-    rows: (rawRows as SavedImportRow[]).map((row) => jsonRecord(row.normalized_data)),
-    originalRows: (rawRows as SavedImportRow[]).map((row) => jsonRecord(row.raw_data)),
+    headerNames: replaySource.headerNames,
+    rows: replaySource.rows,
+    originalRows: replaySource.originalRows,
     columnMapping: jsonRecord(batch.column_mapping),
-    sourceRowNumbers: (rawRows as SavedImportRow[]).map((row) => Number(row.row_number)),
+    sourceRowNumbers: replaySource.sourceRowNumbers,
     salesReportPeriod: previousSummary.salesReportPeriod ?? null,
-    reportStartDate: previousSummary.orderDetailsReportPeriod?.reportStartDate ?? previousSummary.salesReportPeriod?.reportStartDate ?? null,
-    reportEndDate: previousSummary.orderDetailsReportPeriod?.reportEndDate ?? previousSummary.salesReportPeriod?.reportEndDate ?? null,
+    reportStartDate: batch.report_start_date ?? previousSummary.orderDetailsReportPeriod?.reportStartDate ?? previousSummary.salesReportPeriod?.reportStartDate ?? null,
+    reportEndDate: batch.report_end_date ?? previousSummary.orderDetailsReportPeriod?.reportEndDate ?? previousSummary.salesReportPeriod?.reportEndDate ?? null,
     autoCreateMissingProducts: previousSummary.autoCreateMissingProducts ?? true,
     updateCostFromVms: previousSummary.updateCostFromVms ?? false,
   });
@@ -6240,7 +6544,7 @@ export async function reprocessVmsImportBatch(formData: FormData) {
 
   const { data: batch, error: batchError } = await supabase
     .from("vms_import_batches")
-    .select("id, file_name, file_type, sheet_name, report_type, column_mapping, notes, original_file_name, file_hash, storage_bucket, storage_path")
+    .select("id, file_name, file_type, sheet_name, report_type, report_start_date, report_end_date, column_mapping, notes, original_file_name, file_hash, storage_bucket, storage_path")
     .eq("id", batchId)
     .maybeSingle();
 
@@ -6256,3 +6560,9 @@ export async function reprocessVmsImportBatch(formData: FormData) {
     batch: batch as SavedVmsImportBatchRow,
   });
 }
+
+
+
+
+
+
