@@ -18,6 +18,7 @@ import {
   normalizeSalesBreakdownRows,
   rangesOverlap,
   resolveSalesDashboardRange,
+  resolveSalesDashboardSourceReportType,
   salesCoverageSummary,
   salesBatchReconciliationById,
   salesDashboardPrefersMonthlyProfitSource,
@@ -631,7 +632,7 @@ function buildNoSalesState({
     coverageLabel,
     fileContributions,
     monthlyCoverageRows,
-    sourceMode,
+
     selectedRange,
   });
 }
@@ -846,8 +847,16 @@ async function SalesDashboardPageContent({
   const selectedRangeLabel = formatSalesRangeLabel(selectedRange);
   const monthlyFiles = batches.filter((batch) => batch.report_type === "monthly_product_profit");
   const activeMonthlyFiles = monthlyFiles.filter(isActiveImportedVmsBatch);
-  const useMonthlySource = salesDashboardPrefersMonthlyProfitSource(selectedRange) && activeMonthlyFiles.length > 0;
-  const sourceMode: SalesDashboardSourceMode = useMonthlySource ? "monthly" : "detailed";
+  const sourceReportType = resolveSalesDashboardSourceReportType(batches, selectedRange);
+  const sourceMode: SalesDashboardSourceMode = sourceReportType === "monthly_product_profit" ? "monthly" : "detailed";
+  const useMonthlySource = sourceMode === "monthly";
+  const sourceReportLabel = salesDashboardSourceLabel(sourceMode, sourceReportType);
+  const sourceFileKindLabel = sourceReportType === "monthly_transaction_details"
+    ? "monthly transaction"
+    : sourceMode === "monthly"
+      ? "monthly profit"
+      : "detailed";
+  const detailedReportLabel = sourceReportType === "monthly_transaction_details" ? "Monthly Transaction Report" : "Detailed Order Details";
 
   let salesSummaryResult: LoggedSalesSectionResult<SalesSummaryRow>;
   let dayBreakdownResult: LoggedSalesSectionResult<SalesDashboardBreakdownRow>;
@@ -1179,7 +1188,7 @@ async function SalesDashboardPageContent({
         dateTo: selectedRange.end,
         filterMode: selectedRange.key,
         profileId,
-        promise: supabase.rpc("sales_dashboard_monthly_coverage_truth", { p_report_type: sourceMode === "monthly" ? "monthly_product_profit" : "vms_order_details_weekly" }),
+        promise: supabase.rpc("sales_dashboard_monthly_coverage_truth", { p_report_type: sourceReportType }),
         role: profileRole,
         rpcName: "sales_dashboard_monthly_coverage_truth",
         sectionName: "monthly_coverage",
@@ -1207,11 +1216,11 @@ async function SalesDashboardPageContent({
     batches,
     reconciliationByBatchId: filteredReconciliationByBatchId,
     range: selectedRange,
-    sourceMode,
+
   });
   const contributingFiles = fileContributions.filter((row) => row.included);
   const ignoredFiles = fileContributions.filter((row) => !row.included);
-  const detailedFiles = batches.filter((batch) => batch.report_type === "vms_order_details_weekly");
+  const detailedFiles = batches.filter((batch) => ["vms_order_details_weekly", "monthly_transaction_details"].includes(batch.report_type ?? ""));
   const finalizedMonthlyFiles = monthlyFiles.filter(isActiveImportedVmsBatch);
   const summaryOnlyFiles = fileContributions.filter((row) => row.batch.report_type === "sales");
   const overlappingSummaryFiles = summaryOnlyFiles.filter((row) => {
@@ -1280,7 +1289,7 @@ async function SalesDashboardPageContent({
     coverageLabel: finalizedCoverageLabel,
     fileContributions,
     monthlyCoverageRows,
-    sourceMode,
+
     selectedRange,
   });
   const dataStatusText = summaryLoadFailed || sourceLoadFailed

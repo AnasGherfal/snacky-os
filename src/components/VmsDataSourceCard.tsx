@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { KpiLoadWarning, KpiSection } from "@/components/KpiDashboard";
+import { StatusBadge } from "@/components/ui";
 import {
   activeStockBatches,
   batchDateRangeLabel,
@@ -7,6 +8,7 @@ import {
   batchLastUpdatedAt,
   detailedSalesSourceMessage,
   formatVmsDateTime,
+  preferredDetailedSalesBatches,
   sourceFileName,
   stockSourceMessage,
   vmsCoverageSummary,
@@ -28,13 +30,17 @@ export function VmsDataSourceCard({
   showSales?: boolean;
   showStock?: boolean;
 }) {
-  const coverage = showSales ? vmsCoverageSummary(batches) : null;
+  const salesBatches = showSales ? preferredDetailedSalesBatches(batches) : [];
+  const coverage = showSales ? vmsCoverageSummary(salesBatches) : null;
   const stockBatches = showStock ? activeStockBatches(batches) : [];
   const latestStockBatch = stockBatches[0] ?? null;
   const salesMessage = showSales ? detailedSalesSourceMessage(batches, batches.filter((batch) => batch.report_type === "sales")) : null;
   const stockMessage = showStock ? stockSourceMessage(batches) : null;
   const hasSalesData = Boolean(coverage?.active.length);
   const hasStockData = Boolean(latestStockBatch);
+  const salesSourceLabel = coverage?.active.length
+    ? (salesBatches[0]?.report_type === "monthly_transaction_details" ? "Using Monthly Transaction Report" : "Using Detailed Order Details")
+    : "Monthly Transaction Report not imported yet";
   const salesFiles = coverage?.active.slice(-3).reverse() ?? [];
   const stockFiles = stockBatches.slice(0, 3);
 
@@ -44,7 +50,10 @@ export function VmsDataSourceCard({
 
       {showSales ? (
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Detailed Sales Files</div>
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Detailed Sales Files</div>
+            <StatusBadge status={coverage?.active.length ? "active" : "pending"} label={salesSourceLabel} />
+          </div>
           <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-5">
             <div><div className="font-semibold text-slate-900">Active files</div><div>{coverage?.active.length ?? 0}</div></div>
             <div><div className="font-semibold text-slate-900">Date range</div><div>{coverage?.start && coverage?.end ? `${coverage.start} to ${coverage.end}` : "-"}</div></div>

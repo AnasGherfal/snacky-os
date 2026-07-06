@@ -169,12 +169,14 @@ function coverageState(kind: SalesCoverageStateKind, label: string, title: strin
   return { body, kind, label, title };
 }
 
-function sourceLabelForMode(sourceMode: SalesDashboardSourceMode) {
-  return sourceMode === "monthly" ? "Monthly Profit Report" : "Detailed Order Details";
+function sourceLabelForMode(sourceMode: SalesDashboardSourceMode, sourceReportType?: string | null) {
+  if (sourceMode === "monthly") return "Monthly Profit Report";
+  if (sourceReportType === "monthly_transaction_details") return "Monthly Transaction Report";
+  return "Detailed Order Details";
 }
 
-export function salesDashboardSourceLabel(sourceMode: SalesDashboardSourceMode) {
-  return sourceLabelForMode(sourceMode);
+export function salesDashboardSourceLabel(sourceMode: SalesDashboardSourceMode, sourceReportType?: string | null) {
+  return sourceLabelForMode(sourceMode, sourceReportType);
 }
 
 export function describeSalesDashboardNoDataState({
@@ -195,9 +197,9 @@ export function describeSalesDashboardNoDataState({
   selectedRange: { end: string; start: string };
 }): SalesCoverageState {
   const rangeBounds = { start: selectedRange.start, end: selectedRange.end };
-  const sourceReportType = sourceMode === "monthly" ? "monthly_product_profit" : "vms_order_details_weekly";
+  const effectiveSourceReportType = sourceMode === "monthly" ? "monthly_product_profit" : sourceReportType ?? "vms_order_details_weekly";
   const sourceRowsInRange = fileContributions.filter((row) => {
-    if (row.batch.report_type !== sourceReportType) return false;
+    if (row.batch.report_type !== effectiveSourceReportType) return false;
     if (row.rowsInRange > 0 || row.successfulRowsInRange > 0) return true;
     return Boolean(
       row.actualCoverageStart
@@ -205,7 +207,7 @@ export function describeSalesDashboardNoDataState({
       && rangesOverlap({ start: row.actualCoverageStart, end: row.actualCoverageEnd }, rangeBounds),
     );
   });
-  const sourceLabel = sourceLabelForMode(sourceMode);
+  const sourceLabel = sourceLabelForMode(sourceMode, sourceReportType);
 
   if (contributingFiles.some((row) => row.included)) {
     return coverageState(

@@ -13,6 +13,16 @@ import {
   orderDetailsTransactionStatus,
   orderDetailsValue,
 } from "./vms-order-details.ts";
+import {
+  createVmsMonthlyTransactionDuplicateHash,
+  isTransactionDetailsReportType,
+  monthlyTransactionAliases,
+  monthlyTransactionBusinessDate,
+  monthlyTransactionPaymentAmount,
+  monthlyTransactionRefundAmount,
+  monthlyTransactionTransactionStatus,
+  monthlyTransactionValue,
+} from "./vms-transaction-details.ts";
 
 export type SalesDashboardSearchParams = {
   range?: string;
@@ -51,6 +61,8 @@ export type SalesDateRange = {
 };
 
 export type SalesDashboardSourceMode = "detailed" | "monthly";
+
+export type SalesDashboardSourceReportType = "monthly_product_profit" | "monthly_transaction_details" | "vms_order_details_weekly";
 
 export type SalesBatchReconciliation = {
   batchId: string;
@@ -349,7 +361,7 @@ function batchRowKey(batchId: string, rowNumber: number) {
 
 function finalizedDetailedSalesBatch(batch: VmsDashboardBatch | undefined) {
   if (!batch) return false;
-  if (!["vms_order_details_weekly", "monthly_product_profit"].includes(String(batch.report_type ?? ""))) return false;
+  if (!["vms_order_details_weekly", "monthly_transaction_details", "monthly_product_profit"].includes(String(batch.report_type ?? ""))) return false;
   return isActiveImportedVmsBatch(batch);
 }
 
@@ -470,6 +482,24 @@ export function salesDashboardPrefersMonthlyProfitSource(range: Pick<SalesDateRa
   return ["month", "year", "last_month", "this_year", "all_time"].includes(range.key);
 }
 
+export function resolveSalesDashboardSourceReportType(batches: VmsDashboardBatch[], range: SalesDateRange): SalesDashboardSourceReportType {
+  const activeDetailed = batches.filter((batch) => isActiveImportedVmsBatch(batch) && isTransactionDetailsReportType(String(batch.report_type ?? "")));
+  const activeMonthlyProfit = batches.filter((batch) => isActiveImportedVmsBatch(batch) && String(batch.report_type ?? "") === "monthly_product_profit");
+  const overlaps = (batch: VmsDashboardBatch) => {
+    const coverage = batchCoverageDates(batch);
+    return Boolean(coverage.start && coverage.end && rangesOverlap(coverage, { start: range.start, end: range.end }));
+  };
+  const detailedInRange = activeDetailed.filter(overlaps);
+  const monthlyProfitInRange = activeMonthlyProfit.filter(overlaps);
+
+  if (detailedInRange.some((batch) => batch.report_type === "monthly_transaction_details")) return "monthly_transaction_details";
+  if (detailedInRange.some((batch) => batch.report_type === "vms_order_details_weekly")) return "vms_order_details_weekly";
+  if (monthlyProfitInRange.length || (activeMonthlyProfit.length && salesDashboardPrefersMonthlyProfitSource(range))) return "monthly_product_profit";
+  if (activeDetailed.some((batch) => batch.report_type === "monthly_transaction_details")) return "monthly_transaction_details";
+  if (activeDetailed.some((batch) => batch.report_type === "vms_order_details_weekly")) return "vms_order_details_weekly";
+  return "monthly_product_profit";
+}
+
 export function salesBatchReconciliationById(rows: SalesBatchReconciliation[]) {
   return new Map(rows.map((row) => [row.batchId, row]));
 }
@@ -479,7 +509,7 @@ export function applySalesBatchCoverage(
   reconciliationByBatchId: Map<string, SalesBatchReconciliation>,
 ) {
   return batches.map((batch) => {
-    if (!["vms_order_details_weekly", "monthly_product_profit"].includes(String(batch.report_type ?? ""))) return batch;
+    if (!["vms_order_details_weekly", "monthly_transaction_details", "monthly_product_profit"].includes(String(batch.report_type ?? ""))) return batch;
     const reconciliation = reconciliationByBatchId.get(batch.id);
     if (!reconciliation) return batch;
     return {
@@ -777,13 +807,13 @@ function classifyContribution({
   metadataCoverage,
   reconciliation,
   range,
-  sourceMode,
+  sourceReportType,
 }: {
   batch: VmsDashboardBatch;
   metadataCoverage: ReturnType<typeof batchCoverageDates>;
   reconciliation: SalesBatchReconciliation | null;
   range: SalesDateRange;
-  sourceMode?: SalesDashboardSourceMode;
+  sourceReportType: SalesDashboardSourceReportType;
 }) {
   const reportType = String(batch.report_type ?? "");
   const rawStatus = String(batch.status ?? "").toLowerCase();
@@ -801,19 +831,28 @@ function classifyContribution({
   const rowsInRange = reconciliation?.rangeRowCount ?? 0;
   const successfulRowsInRange = reconciliation?.rangeSuccessfulRows ?? 0;
   const rowsExcludedByStatus = rowsInRange - successfulRowsInRange;
+  const sourceMode: SalesDashboardSourceMode = sourceReportType === "monthly_product_profit" ? "monthly" : "detailed";
 
-  if (sourceMode === "monthly" && reportType === "vms_order_details_weekly") {
+  if (sourceReportType === "monthly_product_profit" && ["vms_order_details_weekly", "monthly_transaction_details"].includes(reportType)) {
     return {
       included: false,
-      reason: "Detailed Order Details file is available for audit only because the dashboard is using the Monthly Profit Report source for this range.",
+      reason: "Sales detail files are available for audit only because the dashboard is using the Monthly Profit Report source for this range.",
       status: "other_source_active",
     };
   }
 
-  if (sourceMode === "detailed" && reportType === "monthly_product_profit") {
+  if (sourceReportType === "monthly_transaction_details" && ["vms_order_details_weekly", "monthly_product_profit"].includes(reportType)) {
     return {
       included: false,
-      reason: "Monthly Profit Report file is available for audit only because the dashboard is using detailed Order Details for this range.",
+      reason: "Other sales files are available for audit only because the dashboard is using the Monthly Transaction Report source for this range.",
+      status: "other_source_active",
+    };
+  }
+
+  if (sourceReportType === "vms_order_details_weekly" && ["monthly_transaction_details", "monthly_product_profit"].includes(reportType)) {
+    return {
+      included: false,
+      reason: "Monthly Transaction Report and Monthly Profit files are available for audit only because the dashboard is using detailed Order Details for this range.",
       status: "other_source_active",
     };
   }
@@ -1061,24 +1100,22 @@ export function buildSalesFileContributions({
   batches,
   reconciliationByBatchId,
   range,
-  sourceMode,
 }: {
   batches: VmsDashboardBatch[];
   reconciliationByBatchId: Map<string, SalesBatchReconciliation>;
   range: SalesDateRange;
-  sourceMode?: SalesDashboardSourceMode;
 }) {
+  const sourceReportType = resolveSalesDashboardSourceReportType(batches, range);
+
   return batches
     .map((batch) => {
       const metadataCoverage = batchCoverageDates(batch);
       const reconciliation = reconciliationByBatchId.get(batch.id) ?? null;
       const actualCoverage = reconciliationCoverageDates(reconciliation);
-      const classification = classifyContribution({ batch, metadataCoverage, reconciliation, range, sourceMode });
-      const importedRowsTotal = batch.report_type === "vms_order_details_weekly"
+      const classification = classifyContribution({ batch, metadataCoverage, reconciliation, range, sourceReportType });
+      const importedRowsTotal = ["vms_order_details_weekly", "monthly_transaction_details", "monthly_product_profit"].includes(String(batch.report_type ?? ""))
         ? reconciliation?.rawRowCountTotal ?? batchImportedRows(batch)
-        : batch.report_type === "monthly_product_profit"
-          ? reconciliation?.rawRowCountTotal ?? batchImportedRows(batch)
-          : batchImportedRows(batch);
+        : batchImportedRows(batch);
 
       return {
         batch,
@@ -1159,7 +1196,7 @@ export async function querySalesRangeReconciliationDiagnostics({
   range: Pick<SalesDateRange, "start" | "end">;
   supabase: unknown;
 }): Promise<SalesRangeReconciliationDiagnostics> {
-  const detailedBatches = batches.filter((batch) => batch.report_type === "vms_order_details_weekly");
+  const detailedBatches = batches.filter((batch) => ["vms_order_details_weekly", "monthly_transaction_details"].includes(String(batch.report_type ?? "")));
   const batchIds = detailedBatches.map((batch) => batch.id).filter(Boolean);
   if (!batchIds.length) {
     return {
@@ -1206,7 +1243,10 @@ export async function querySalesRangeReconciliationDiagnostics({
     const batchId = String(row.import_batch_id ?? "");
     const rowNumber = Number(row.row_number ?? 0);
     const normalized = jsonRecord(row.normalized_data);
-    const duplicateHash = createVmsOrderDetailsDuplicateHash(normalized);
+    const batch = batchById.get(batchId);
+    const duplicateHash = batch?.report_type === "monthly_transaction_details"
+      ? createVmsMonthlyTransactionDuplicateHash(normalized)
+      : createVmsOrderDetailsDuplicateHash(normalized);
     const duplicateKey = `${batchId}:${duplicateHash}`;
     const numbers = duplicateGroups.get(duplicateKey) ?? [];
     numbers.push(rowNumber);
@@ -1225,19 +1265,28 @@ export async function querySalesRangeReconciliationDiagnostics({
     const batchId = String(row.import_batch_id ?? "");
     const batch = batchById.get(batchId);
     if (!batch) continue;
+    const useMonthlyTransactionReport = batch.report_type === "monthly_transaction_details";
 
     const rowNumber = Number(row.row_number ?? 0);
     const normalized = jsonRecord(row.normalized_data);
     const raw = jsonRecord(row.raw_data);
-    const businessDate = orderDetailsBusinessDate(normalized);
-    const normalizedStatus = orderDetailsTransactionStatus(normalized);
-    const parsedAmount = Math.max(0, orderDetailsPaymentAmount(normalized) ?? 0);
-    const rawShippingStatus = orderDetailsValue(normalized, orderDetailsAliases.shippingStatus)
-      || orderDetailsValue(raw, orderDetailsAliases.shippingStatus)
-      || "(blank)";
-    const rawRefundStatus = orderDetailsValue(normalized, orderDetailsAliases.refundStatus)
-      || orderDetailsValue(raw, orderDetailsAliases.refundStatus)
-      || "(blank)";
+    const businessDate = useMonthlyTransactionReport ? monthlyTransactionBusinessDate(normalized) : orderDetailsBusinessDate(normalized);
+    const normalizedStatus = useMonthlyTransactionReport ? monthlyTransactionTransactionStatus(normalized) : orderDetailsTransactionStatus(normalized);
+    const parsedAmount = useMonthlyTransactionReport ? (normalizedStatus === "refunded" ? Math.max(0, monthlyTransactionRefundAmount(normalized)) : Math.max(0, monthlyTransactionPaymentAmount(normalized) ?? 0)) : Math.max(0, orderDetailsPaymentAmount(normalized) ?? 0);
+    const rawShippingStatus = useMonthlyTransactionReport
+      ? monthlyTransactionValue(normalized, monthlyTransactionAliases.modeOfPayment)
+        || monthlyTransactionValue(raw, monthlyTransactionAliases.modeOfPayment)
+        || "(blank)"
+      : orderDetailsValue(normalized, orderDetailsAliases.shippingStatus)
+        || orderDetailsValue(raw, orderDetailsAliases.shippingStatus)
+        || "(blank)";
+    const rawRefundStatus = useMonthlyTransactionReport
+      ? monthlyTransactionValue(normalized, monthlyTransactionAliases.transactionStatus)
+        || monthlyTransactionValue(raw, monthlyTransactionAliases.transactionStatus)
+        || "(blank)"
+      : orderDetailsValue(normalized, orderDetailsAliases.refundStatus)
+        || orderDetailsValue(raw, orderDetailsAliases.refundStatus)
+        || "(blank)";
     const groupKey = `${rawShippingStatus}|${rawRefundStatus}|${normalizedStatus}`;
     const statusGroup = statusGroups.get(groupKey) ?? {
       amount: 0,
@@ -1258,33 +1307,54 @@ export async function querySalesRangeReconciliationDiagnostics({
           businessDate,
           exclusionReason: `status:${normalizedStatus}`,
           machineLabel: String(
-            orderDetailsValue(normalized, orderDetailsAliases.machineName)
-              || orderDetailsValue(normalized, orderDetailsAliases.machineCode)
-              || "Unknown machine",
+            useMonthlyTransactionReport
+              ? monthlyTransactionValue(normalized, monthlyTransactionAliases.machineName)
+                || monthlyTransactionValue(normalized, monthlyTransactionAliases.machineCode)
+                || "Unknown machine"
+              : orderDetailsValue(normalized, orderDetailsAliases.machineName)
+                || orderDetailsValue(normalized, orderDetailsAliases.machineCode)
+                || "Unknown machine",
           ),
           machineMatchStatus: row.machine_match_status ?? null,
           orderId: String(
-            orderDetailsValue(normalized, orderDetailsAliases.orderNumber)
-              || orderDetailsValue(normalized, orderDetailsAliases.thirdPartyTransactionNumber)
-              || orderDetailsValue(normalized, orderDetailsAliases.thirdPartyOrderNo)
-              || "",
+            useMonthlyTransactionReport
+              ? monthlyTransactionValue(normalized, monthlyTransactionAliases.thirdPartyOrderNo)
+                || monthlyTransactionValue(normalized, monthlyTransactionAliases.thirdPartyTransaction)
+                || ""
+              : orderDetailsValue(normalized, orderDetailsAliases.orderNumber)
+                || orderDetailsValue(normalized, orderDetailsAliases.thirdPartyTransactionNumber)
+                || orderDetailsValue(normalized, orderDetailsAliases.thirdPartyOrderNo)
+                || "",
           ) || null,
           parsedAmount,
           productLabel: String(
-            orderDetailsValue(normalized, orderDetailsAliases.productName)
-              || orderDetailsValue(normalized, orderDetailsAliases.productNumber)
-              || "Unknown product",
+            useMonthlyTransactionReport
+              ? monthlyTransactionValue(normalized, monthlyTransactionAliases.productName)
+                || monthlyTransactionValue(normalized, monthlyTransactionAliases.productNumber)
+                || "Unknown product"
+              : orderDetailsValue(normalized, orderDetailsAliases.productName)
+                || orderDetailsValue(normalized, orderDetailsAliases.productNumber)
+                || "Unknown product",
           ),
           productMatchStatus: row.product_match_status ?? null,
-          rawAmount: orderDetailsValue(normalized, orderDetailsAliases.paymentAmount) || null,
-          rawDateTime: orderDetailsValue(raw, orderDetailsAliases.paymentTime)
-            || orderDetailsValue(raw, orderDetailsAliases.deliveryTime)
-            || orderDetailsValue(normalized, orderDetailsAliases.paymentTime)
-            || null,
+          rawAmount: useMonthlyTransactionReport
+            ? monthlyTransactionValue(normalized, monthlyTransactionAliases.paymentAmount) || null
+            : orderDetailsValue(normalized, orderDetailsAliases.paymentAmount) || null,
+          rawDateTime: useMonthlyTransactionReport
+            ? monthlyTransactionValue(raw, monthlyTransactionAliases.paymentTime)
+              || monthlyTransactionValue(raw, monthlyTransactionAliases.refundTime)
+              || monthlyTransactionValue(normalized, monthlyTransactionAliases.paymentTime)
+              || null
+            : orderDetailsValue(raw, orderDetailsAliases.paymentTime)
+              || orderDetailsValue(raw, orderDetailsAliases.deliveryTime)
+              || orderDetailsValue(normalized, orderDetailsAliases.paymentTime)
+              || null,
           rawRefundStatus: rawRefundStatus === "(blank)" ? null : rawRefundStatus,
           rawShippingStatus: rawShippingStatus === "(blank)" ? null : rawShippingStatus,
           rowNumber,
-          slot: orderDetailsValue(normalized, orderDetailsAliases.cargoLaneNumber) || null,
+          slot: useMonthlyTransactionReport
+            ? monthlyTransactionValue(normalized, monthlyTransactionAliases.cargoLane) || null
+            : orderDetailsValue(normalized, orderDetailsAliases.cargoLaneNumber) || null,
           sourceFileName: sourceFileName(batch),
           validationErrors: Array.isArray(row.validation_errors)
             ? row.validation_errors.map((value) => String(value))
@@ -1306,7 +1376,7 @@ export async function querySalesRangeReconciliationDiagnostics({
     if (!row.matched_product_id) parsedMissingProductCount += 1;
 
     const txRow = transactionByBatchRow.get(batchRowKey(batchId, rowNumber));
-    const duplicateHash = createVmsOrderDetailsDuplicateHash(normalized);
+    const duplicateHash = batch.report_type === "monthly_transaction_details" ? createVmsMonthlyTransactionDuplicateHash(normalized) : createVmsOrderDetailsDuplicateHash(normalized);
     const duplicateNumbers = duplicateGroups.get(`${batchId}:${duplicateHash}`) ?? [];
     const exclusionReasons: string[] = [];
 
@@ -1329,33 +1399,54 @@ export async function querySalesRangeReconciliationDiagnostics({
       businessDate,
       exclusionReason: exclusionReasons.join(" | "),
       machineLabel: String(
-        orderDetailsValue(normalized, orderDetailsAliases.machineName)
-          || orderDetailsValue(normalized, orderDetailsAliases.machineCode)
-          || "Unknown machine",
+        useMonthlyTransactionReport
+          ? monthlyTransactionValue(normalized, monthlyTransactionAliases.machineName)
+            || monthlyTransactionValue(normalized, monthlyTransactionAliases.machineCode)
+            || "Unknown machine"
+          : orderDetailsValue(normalized, orderDetailsAliases.machineName)
+            || orderDetailsValue(normalized, orderDetailsAliases.machineCode)
+            || "Unknown machine",
       ),
       machineMatchStatus: row.machine_match_status ?? null,
       orderId: String(
-        orderDetailsValue(normalized, orderDetailsAliases.orderNumber)
-          || orderDetailsValue(normalized, orderDetailsAliases.thirdPartyTransactionNumber)
-          || orderDetailsValue(normalized, orderDetailsAliases.thirdPartyOrderNo)
-          || "",
+        useMonthlyTransactionReport
+          ? monthlyTransactionValue(normalized, monthlyTransactionAliases.thirdPartyOrderNo)
+            || monthlyTransactionValue(normalized, monthlyTransactionAliases.thirdPartyTransaction)
+            || ""
+          : orderDetailsValue(normalized, orderDetailsAliases.orderNumber)
+            || orderDetailsValue(normalized, orderDetailsAliases.thirdPartyTransactionNumber)
+            || orderDetailsValue(normalized, orderDetailsAliases.thirdPartyOrderNo)
+            || "",
       ) || null,
       parsedAmount,
       productLabel: String(
-        orderDetailsValue(normalized, orderDetailsAliases.productName)
-          || orderDetailsValue(normalized, orderDetailsAliases.productNumber)
-          || "Unknown product",
+        useMonthlyTransactionReport
+          ? monthlyTransactionValue(normalized, monthlyTransactionAliases.productName)
+            || monthlyTransactionValue(normalized, monthlyTransactionAliases.productNumber)
+            || "Unknown product"
+          : orderDetailsValue(normalized, orderDetailsAliases.productName)
+            || orderDetailsValue(normalized, orderDetailsAliases.productNumber)
+            || "Unknown product",
       ),
       productMatchStatus: row.product_match_status ?? null,
-      rawAmount: orderDetailsValue(normalized, orderDetailsAliases.paymentAmount) || null,
-      rawDateTime: orderDetailsValue(raw, orderDetailsAliases.paymentTime)
-        || orderDetailsValue(raw, orderDetailsAliases.deliveryTime)
-        || orderDetailsValue(normalized, orderDetailsAliases.paymentTime)
-        || null,
+      rawAmount: useMonthlyTransactionReport
+        ? monthlyTransactionValue(normalized, monthlyTransactionAliases.paymentAmount) || null
+        : orderDetailsValue(normalized, orderDetailsAliases.paymentAmount) || null,
+      rawDateTime: useMonthlyTransactionReport
+        ? monthlyTransactionValue(raw, monthlyTransactionAliases.paymentTime)
+          || monthlyTransactionValue(raw, monthlyTransactionAliases.refundTime)
+          || monthlyTransactionValue(normalized, monthlyTransactionAliases.paymentTime)
+          || null
+        : orderDetailsValue(raw, orderDetailsAliases.paymentTime)
+          || orderDetailsValue(raw, orderDetailsAliases.deliveryTime)
+          || orderDetailsValue(normalized, orderDetailsAliases.paymentTime)
+          || null,
       rawRefundStatus: rawRefundStatus === "(blank)" ? null : rawRefundStatus,
       rawShippingStatus: rawShippingStatus === "(blank)" ? null : rawShippingStatus,
       rowNumber,
-      slot: orderDetailsValue(normalized, orderDetailsAliases.cargoLaneNumber) || null,
+      slot: useMonthlyTransactionReport
+        ? monthlyTransactionValue(normalized, monthlyTransactionAliases.cargoLane) || null
+        : orderDetailsValue(normalized, orderDetailsAliases.cargoLaneNumber) || null,
       sourceFileName: sourceFileName(batch),
       validationErrors: Array.isArray(row.validation_errors)
         ? row.validation_errors.map((value) => String(value))

@@ -80,7 +80,7 @@ function reportLabel(reportType: string | null | undefined) {
 }
 
 function updatedFallbackForReport(reportType: string | null | undefined) {
-  if (reportType === "vms_order_details_weekly") return ["Sales dashboard", "Product sales", "Failed vend report"];
+  if (isDetailedTransactionReportType(reportType)) return ["Sales dashboard", "Product sales", "Failed vend report"];
   if (reportType === "monthly_product_profit") return ["Sales dashboard", "Product profit", "Machine profit"];
   if (reportType === "sales") return ["Reconciliation totals"];
   if (isStockReportType(reportType)) return ["Machine stock", "Recommended refill items"];
@@ -88,7 +88,7 @@ function updatedFallbackForReport(reportType: string | null | undefined) {
 }
 
 function dashboardUsageForReport(reportType: string | null | undefined) {
-  if (reportType === "vms_order_details_weekly") {
+  if (isDetailedTransactionReportType(reportType)) {
     return [
       ["Sales dashboard", true],
       ["Product dashboard", true],
@@ -546,7 +546,7 @@ async function VmsImportBatchDetailPageContent({
     && String(batch.status ?? "") === "previewed"
     && isMachineStockSnapshotReportType(stringValue(batch.report_type));
   const canFinalizeOrderDetailsBatch = isOwnerAdminRole(profile)
-    && stringValue(batch.report_type) === "vms_order_details_weekly"
+    && isDetailedTransactionReportType(stringValue(batch.report_type))
     && Number(transactionsRawCount.count ?? 0) > 0
     && !(isUsableImportStatus(stringValue(batch.status)) && batch.is_active !== false && !batch.deleted_at);
   const finalizeEvidenceCount = Math.max(
@@ -573,7 +573,13 @@ async function VmsImportBatchDetailPageContent({
   const unknownMachineRows = rowList.filter((row) => row.validation_status === "unknown_machine" || row.machine_match_status === "unknown");
   const invalidRows = rowList.filter((row) => row.validation_status === "invalid_row");
   const importedRows = rowList.filter((row) => row.validation_status === "imported");
-  const savedRowsValue = reportType === "vms_order_details_weekly"
+  const detailedTransactionLabel = reportType === "monthly_transaction_details" ? "Monthly Transaction Report" : "Detailed Order Details";
+  const dashboardUsageNote = isDetailedTransactionReportType(reportType)
+    ? `${detailedTransactionLabel} files feed transaction-level dashboards. Only successful_sale rows count as normal sales revenue.`
+    : reportType === "sales"
+      ? "General VMS summary files are retained for reconciliation and are not the main sales dashboard source when detailed transactions exist."
+      : "Machine stock files feed refill and inventory views, not sales revenue.";
+  const savedRowsValue = isDetailedTransactionReportType(reportType)
     ? numberValue(transactionsRawCount.count, 0)
     : isStockReportType(stringValue(batch.report_type))
       ? numberValue(stockSnapshotRowsCount.count, importedRowsCount.count ?? rowList.length)
@@ -657,7 +663,7 @@ async function VmsImportBatchDetailPageContent({
             <StatCard label="Report end" value={textValue(batch.report_end_date)} />
           </div>
         ) : null}
-        {stringValue(batch.report_type) === "vms_order_details_weekly" ? (
+        {isDetailedTransactionReportType(reportType) ? (
           <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
             <StatCard label="Report start" value={textValue(batch.report_start_date, summary?.orderDetailsReportPeriod?.reportStartDate ?? "-")} />
             <StatCard label="Report end" value={textValue(batch.report_end_date, summary?.orderDetailsReportPeriod?.reportEndDate ?? "-")} />
@@ -724,13 +730,7 @@ async function VmsImportBatchDetailPageContent({
             </div>
           ))}
         </div>
-        <p className="mt-4 text-sm text-slate-500">
-          {stringValue(batch.report_type) === "vms_order_details_weekly"
-            ? "Detailed Order Details files feed transaction-level dashboards. Only successful_sale rows count as normal sales revenue."
-            : stringValue(batch.report_type) === "sales"
-              ? "General VMS summary files are retained for reconciliation and are not the main sales dashboard source when detailed transactions exist."
-              : "Machine stock files feed refill and inventory views, not sales revenue."}
-        </p>
+        <p className="mt-4 text-sm text-slate-500">{dashboardUsageNote}</p>
       </section>
 
       <section className="surface-card mb-6">
@@ -875,7 +875,7 @@ async function VmsImportBatchDetailPageContent({
                 <input type="hidden" name="action" value="finalize_import" />
                 <div className="text-sm font-semibold text-amber-900">Finalize file</div>
                 <p className="text-xs text-amber-900/80">
-                  Promotes saved <code>vms_transactions_raw</code> rows into an active imported Order Details batch for dashboards. No rows are re-imported or duplicated.
+                  Promotes saved <code>vms_transactions_raw</code> rows into an active imported {detailedTransactionLabel} batch for dashboards. No rows are re-imported or duplicated.
                 </p>
                 <div className="text-xs text-amber-900/80">
                   Evidence found: transaction rows {transactionsRawCount.count ?? 0}
@@ -893,7 +893,7 @@ async function VmsImportBatchDetailPageContent({
                 <input name="reason" className="field-input" placeholder="Reason" />
                 <FormSubmitButton className="btn-secondary w-full" pendingLabel="Disabling file...">Disable</FormSubmitButton>
               </form>
-            ) : !canFinalizePreviewStockBatch && !(stringValue(batch.report_type) === "vms_order_details_weekly" && Number(transactionsRawCount.count ?? 0) > 0 && stringValue(batch.status) !== "deleted") ? (
+            ) : !canFinalizePreviewStockBatch && !(isDetailedTransactionReportType(reportType) && Number(transactionsRawCount.count ?? 0) > 0 && stringValue(batch.status) !== "deleted") ? (
               <form action={updateVmsImportBatchState} className="space-y-3 rounded-lg border border-slate-200 p-3">
                 <input type="hidden" name="batch_id" value={String(batch.id)} />
                 <input type="hidden" name="action" value={stringValue(batch.status) === "deleted" ? "restore" : "enable"} />
@@ -902,7 +902,7 @@ async function VmsImportBatchDetailPageContent({
                 </div>
                 <p className="text-xs text-slate-500">
                   {stringValue(batch.status) === "deleted"
-                    ? "Restores this deleted Order Details batch as the active dashboard source unless that would double count an already active batch."
+                    ? `Restores this deleted ${detailedTransactionLabel} batch as the active dashboard source unless that would double count an already active batch.`
                     : "Restores active imported status and recalculates dashboard views."}
                 </p>
                 <FormSubmitButton className="btn-secondary w-full" pendingLabel={stringValue(batch.status) === "deleted" ? "Restoring file..." : "Activating file..."}>{stringValue(batch.status) === "deleted" ? "Restore deleted batch" : "Activate file"}</FormSubmitButton>

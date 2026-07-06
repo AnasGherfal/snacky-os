@@ -241,7 +241,7 @@ function SourceActions({
     && String(batch.status ?? "") === "previewed"
     && !batch.deleted_at;
   const canMarkImportedAndActivate = isPreviewStockBatch && stockSnapshotRowCount > 0;
-  const isOrderDetailsBatch = String(batch.report_type ?? batch.source_type) === "vms_order_details_weekly";
+  const isOrderDetailsBatch = ["vms_order_details_weekly", "monthly_transaction_details"].includes(String(batch.report_type ?? batch.source_type));
   const canFinalizeOrderDetails = canManage
     && canFinalizeOrderDetailsFiles
     && isOrderDetailsBatch
@@ -381,7 +381,7 @@ async function VmsDataSourcesPageContent({ searchParams }: { searchParams: Promi
     }
 
     const orderDetailsBatchIds = batches
-      .filter((batch) => String(batch.report_type ?? batch.source_type) === "vms_order_details_weekly" && !batch.deleted_at)
+      .filter((batch) => ["vms_order_details_weekly", "monthly_transaction_details"].includes(String(batch.report_type ?? batch.source_type)) && !batch.deleted_at)
       .map((batch) => batch.id);
     if (orderDetailsBatchIds.length) {
       const transactionRowsResult = await supabase
@@ -390,7 +390,7 @@ async function VmsDataSourcesPageContent({ searchParams }: { searchParams: Promi
         .in("import_batch_id", orderDetailsBatchIds);
 
       if (transactionRowsResult.error) {
-        console.error("[vms-data-sources] Could not load Order Details row counts for data source actions", {
+        console.error("[vms-data-sources] Could not load detailed transaction row counts for data source actions", {
           query: "vms_transactions_raw.order_details_counts",
           batchIds: orderDetailsBatchIds,
           error: transactionRowsResult.error,
@@ -421,7 +421,7 @@ async function VmsDataSourcesPageContent({ searchParams }: { searchParams: Promi
         </div>
       ) : null}
       <div className="mb-5 rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
-        Detailed Order imports are append-only. Snacky keeps older detailed sales files active, skips duplicate transactions, and never replaces prior detailed sales coverage.
+        Detailed transaction imports are append-only. Snacky keeps older detailed sales files active, skips duplicate transactions, and never replaces prior detailed sales coverage.
       </div>
       {schemaNotice ? (
         <div className="mb-5 rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
@@ -436,7 +436,7 @@ async function VmsDataSourcesPageContent({ searchParams }: { searchParams: Promi
           Could not load VMS data sources. {loadError}
         </div>
       ) : !batches.length ? (
-        <EmptyState title="No VMS files imported yet" body="Upload detailed order files for sales dashboards and stock snapshots for refills." />
+        <EmptyState title="No VMS files imported yet" body="Upload detailed transaction files for sales dashboards and stock snapshots for refills." />
       ) : (
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -480,7 +480,7 @@ async function VmsDataSourcesPageContent({ searchParams }: { searchParams: Promi
                     {isMachineStockSnapshotImportType(batch.report_type ?? batch.source_type) && String(batch.status ?? "") === "previewed" && (stockSnapshotRowsByBatchId.get(batch.id) ?? 0) > 0 ? (
                       <div className="text-xs text-emerald-700">Saved stock rows: {stockSnapshotRowsByBatchId.get(batch.id) ?? 0}</div>
                     ) : null}
-                    {String(batch.report_type ?? batch.source_type) === "vms_order_details_weekly" && (transactionRowsByBatchId.get(batch.id) ?? 0) > 0 && !(isUsableImportStatus(batch.status) && batch.is_active !== false) ? (
+                    {["vms_order_details_weekly", "monthly_transaction_details"].includes(String(batch.report_type ?? batch.source_type)) && (transactionRowsByBatchId.get(batch.id) ?? 0) > 0 && !(isUsableImportStatus(batch.status) && batch.is_active !== false) ? (
                       <div className="text-xs text-emerald-700">Saved transaction rows: {transactionRowsByBatchId.get(batch.id) ?? 0}</div>
                     ) : null}
                   </td>

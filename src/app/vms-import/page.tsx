@@ -50,6 +50,14 @@ import {
   orderDetailsTransactionStatus,
 } from "@/lib/vms-order-details";
 import {
+  createVmsMonthlyTransactionDuplicateHash,
+  detectMonthlyTransactionDateRange,
+  isTransactionDetailsReportType,
+  monthlyTransactionPaymentAmount,
+  monthlyTransactionRefundAmount,
+  monthlyTransactionTransactionStatus,
+} from "@/lib/vms-transaction-details";
+import {
   createVmsImportDuplicateContextMap,
   describeVmsImportBatchStatus,
 } from "@/lib/vms-import-status";
@@ -127,7 +135,7 @@ function reportLabel(reportType: string | null | undefined) {
 }
 
 function dashboardUsageForReport(reportType: string | null | undefined) {
-  if (reportType === "vms_order_details_weekly") {
+  if (reportType === "vms_order_details_weekly" || reportType === "monthly_transaction_details") {
     return [
       "Sales dashboard",
       "Product dashboard",
@@ -803,10 +811,11 @@ function UploadCard() {
         <FormField label="VMS file" required hint="Accepted: .xlsx, .xls, .csv">
           <input name="file" type="file" accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required className="field-input" />
         </FormField>
-        <FormField label="Report type" hint="Auto-detect usually identifies the detailed weekly order report. You can change it in the wizard.">
+        <FormField label="Report type" hint="Auto-detect usually identifies the detailed transaction report. You can change it in the wizard.">
           <select name="report_type" defaultValue="" className="field-input">
             <option value="">Auto-detect</option>
             <option value="vms_order_details_weekly">Detailed Order Details - Recommended</option>
+            <option value="monthly_transaction_details">Monthly Transaction Report</option>
             <option value="machine_stock_snapshot">Machine Stock Snapshot</option>
             <option value="stock">Machine Stock Report (legacy)</option>
             <option value="sales">General / Summary Sales Report</option>
@@ -1481,7 +1490,7 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
     effectivePermissions,
   });
   const batchReviewRows = batches.reduce((sum, batch) => sum + Number(batch.rows_needing_review ?? batchMetric(batch, "rowsNeedingReview", batchMetric(batch, "needsProductMappingRows", 0))), 0);
-  const activeDetailedBatches = batches.filter((batch) => batch.report_type === "vms_order_details_weekly" && batch.status === "imported" && batch.is_active !== false && !batch.deleted_at);
+  const activeDetailedBatches = batches.filter((batch) => isTransactionDetailsReportType(batch.report_type) && batch.status === "imported" && batch.is_active !== false && !batch.deleted_at);
   const detailedCoverage = weeklyCoverageGaps(activeDetailedBatches);
   const overlappingActiveBatches = activeDetailedBatches.filter((batch, index) => activeDetailedBatches.some((other, otherIndex) => (
     index !== otherIndex
@@ -1540,6 +1549,7 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
   const mappedPreviewRows = mappedRows.slice(0, 8);
   const previewFields = vmsExpectedFields[selectedReportType].filter((field) => field.required || field.requiredGroup || selectedMapping[field.field]).slice(0, 6);
   const currentStep = clampStep(params.step, Boolean(preview));
+  const isTransactionDetailsReport = isTransactionDetailsReportType(selectedReportType);
   if (preview && !selectedSheet) {
     selectedPreviewNotice = "This import batch has no preview rows. Upload panel and import history are still available.";
     pageIssues.push({
@@ -1586,16 +1596,21 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
   }
 
   const requestedImportMode = parseVmsImportMode(params.importMode);
-  const importMode = selectedReportType === "vms_order_details_weekly" ? VMS_IMPORT_MODES.APPEND_NEW : requestedImportMode;
+  const importMode = isTransactionDetailsReport ? VMS_IMPORT_MODES.APPEND_NEW : requestedImportMode;
   const titleSalesReportPeriod = selectedSheet && (selectedReportType === "sales" || selectedReportType === "monthly_product_profit")
     ? findSalesReportPeriod(selectedSheet.rows, selectedRows.headerRowIndex)
     : null;
   const mappedSalesRange = selectedReportType === "sales" ? findMappedSalesReportRange(mappedRows) : { start: "", end: "" };
-  const orderDetailsRange = selectedReportType === "vms_order_details_weekly" ? detectOrderDetailsDateRange(mappedRows) : { start: "", end: "" };
-  const reportStartDate = params.reportStartDate ?? titleSalesReportPeriod?.reportStartDate ?? (selectedReportType === "vms_order_details_weekly" ? orderDetailsRange.start : selectedReportType === "sales" ? mappedSalesRange.start : "");
-  const reportEndDate = params.reportEndDate ?? titleSalesReportPeriod?.reportEndDate ?? (selectedReportType === "vms_order_details_weekly" ? orderDetailsRange.end : selectedReportType === "sales" ? mappedSalesRange.end : "");
+  const transactionDetailsRange = selectedReportType === "monthly_transaction_details"
+    ? detectMonthlyTransactionDateRange(mappedRows)
+    : selectedReportType === "vms_order_details_weekly"
+      ? detectOrderDetailsDateRange(mappedRows)
+      : { start: "", end: "" };
+  const reportStartDate = params.reportStartDate ?? titleSalesReportPeriod?.reportStartDate ?? (isTransactionDetailsReport ? transactionDetailsRange.start : selectedReportType === "sales" ? mappedSalesRange.start : "");
+  const reportEndDate = params.reportEndDate ?? titleSalesReportPeriod?.reportEndDate ?? (isTransactionDetailsReport ? transactionDetailsRange.end : selectedReportType === "sales" ? mappedSalesRange.end : "");
   const isMonthlyProductProfitReport = selectedReportType === "monthly_product_profit";
   const isSalesLikeReport = selectedReportType === "sales" || isMonthlyProductProfitReport;
+  const transactionDetailsReportLabel = selectedReportType === "monthly_transaction_details" ? "Monthly Transaction Report" : "Detailed Order Details";
   let duplicatePreviewCount = 0;
   if (validation && selectedReportType === "sales" && currentStep >= 6) {
     const sourceKeys = mappedRows
@@ -1631,9 +1646,11 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
       }
     }
   }
-  if (validation && selectedReportType === "vms_order_details_weekly" && currentStep >= 6) {
+  if (validation && isTransactionDetailsReport && currentStep >= 6) {
     const sourceKeys = mappedRows
-      .flatMap((row, index) => validation?.rows[index]?.status === "imported" ? [createVmsOrderDetailsDuplicateHash(row)] : []);
+      .flatMap((row, index) => validation?.rows[index]?.status === "imported"
+        ? [selectedReportType === "monthly_transaction_details" ? createVmsMonthlyTransactionDuplicateHash(row) : createVmsOrderDetailsDuplicateHash(row)]
+        : []);
     const uniqueKeys = Array.from(new Set(sourceKeys));
     if (uniqueKeys.length) {
       try {
@@ -1644,7 +1661,7 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
             .select("duplicate_hash")
             .in("duplicate_hash", chunk);
           if (duplicateError) {
-            if (!["42P01", "42703", "PGRST204", "PGRST205"].includes(duplicateError.code ?? "")) {
+            if (! ["42P01", "42703", "PGRST204", "PGRST205"].includes(duplicateError.code ?? "")) {
               console.warn("[vms-import] Order details duplicate preview lookup failed", duplicateError);
             }
             pageIssues.push(loadIssueFromError("vms_transactions_raw.duplicate_preview", duplicateError));
@@ -1657,31 +1674,37 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
       }
     }
   }
-  const orderDetailsStatusCounts = selectedReportType === "vms_order_details_weekly"
+  const transactionDetailsStatusCounts = isTransactionDetailsReport
     ? mappedRows.reduce((counts, row) => {
-        const status = orderDetailsTransactionStatus(row);
+        const status = selectedReportType === "monthly_transaction_details" ? monthlyTransactionTransactionStatus(row) : orderDetailsTransactionStatus(row);
         counts[status] = (counts[status] ?? 0) + 1;
         return counts;
-      }, {} as Record<ReturnType<typeof orderDetailsTransactionStatus>, number>)
-    : {} as Record<ReturnType<typeof orderDetailsTransactionStatus>, number>;
+      }, {} as Record<string, number>)
+    : {} as Record<string, number>;
   const failedRefundReviewRows =
-    (orderDetailsStatusCounts.failed_vend ?? 0)
-    + (orderDetailsStatusCounts.refunded ?? 0)
-    + (orderDetailsStatusCounts.failed_payment ?? 0)
-    + (orderDetailsStatusCounts.needs_review ?? 0);
-  const failedVendAmount = selectedReportType === "vms_order_details_weekly"
-    ? mappedRows.reduce((sum, row) => orderDetailsTransactionStatus(row) === "failed_vend" ? sum + Math.max(0, orderDetailsPaymentAmount(row) ?? 0) : sum, 0)
-    : 0;
-  const refundAmount = selectedReportType === "vms_order_details_weekly"
-    ? mappedRows.reduce((sum, row) => orderDetailsTransactionStatus(row) === "refunded" ? sum + Math.max(0, orderDetailsPaymentAmount(row) ?? 0) : sum, 0)
-    : 0;
+    (transactionDetailsStatusCounts.failed_vend ?? 0)
+    + (transactionDetailsStatusCounts.refunded ?? 0)
+    + (transactionDetailsStatusCounts.failed_payment ?? 0)
+    + (transactionDetailsStatusCounts.needs_review ?? 0);
+  const failedVendAmount = selectedReportType === "monthly_transaction_details"
+    ? mappedRows.reduce((sum, row) => monthlyTransactionTransactionStatus(row) === "failed_vend" ? sum + Math.max(0, monthlyTransactionPaymentAmount(row) ?? 0) : sum, 0)
+    : isTransactionDetailsReport
+      ? mappedRows.reduce((sum, row) => orderDetailsTransactionStatus(row) === "failed_vend" ? sum + Math.max(0, orderDetailsPaymentAmount(row) ?? 0) : sum, 0)
+      : 0;
+  const refundAmount = selectedReportType === "monthly_transaction_details"
+    ? mappedRows.reduce((sum, row) => monthlyTransactionTransactionStatus(row) === "refunded" ? sum + Math.max(0, monthlyTransactionRefundAmount(row) ?? 0) : sum, 0)
+    : isTransactionDetailsReport
+      ? mappedRows.reduce((sum, row) => orderDetailsTransactionStatus(row) === "refunded" ? sum + Math.max(0, orderDetailsPaymentAmount(row) ?? 0) : sum, 0)
+      : 0;
   const estimatedSalesTotal = selectedReportType === "sales" || isMonthlyProductProfitReport
     ? mappedRows.reduce((sum, row) => sum + (mappedNumber(vmsValue(row, isMonthlyProductProfitReport
       ? ["transaction_amount", "total_transaction_amount", "amount", "total_amount", "revenue", "gross_sales"]
       : ["total_sales_amount", "transaction_amount", "revenue_amount", "sales_amount", "total_sales", "total_sales_lyd", "sale_amount", "amount", "total_amount", "paid_amount", "revenue", "gross_sales", "turnover", "net_sales"])) ?? 0), 0)
-    : selectedReportType === "vms_order_details_weekly"
-      ? orderDetailsSuccessfulSalesAmount(mappedRows)
-      : 0;
+    : selectedReportType === "monthly_transaction_details"
+      ? mappedRows.reduce((sum, row) => monthlyTransactionTransactionStatus(row) === "successful_sale" ? sum + Math.max(0, monthlyTransactionPaymentAmount(row) ?? 0) : sum, 0)
+      : selectedReportType === "vms_order_details_weekly"
+        ? orderDetailsSuccessfulSalesAmount(mappedRows)
+        : 0;
   const machinesFound = validation ? new Set(validation.rows.map((row) => row.machineIdentifier).filter(Boolean)).size : 0;
   const productsFound = validation ? new Set(validation.rows.map((row) => row.productIdentifier || row.productName).filter(Boolean)).size : 0;
   const rowsReadyToImport = validation ? Math.max(0, validation.importedRows - duplicatePreviewCount) : 0;
@@ -1739,18 +1762,18 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
       {!preview ? (
         <section className="surface-card mb-6 space-y-4">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">Detailed VMS Coverage</h2>
-            <p className="mt-1 text-sm text-slate-500">Active weekly Order Details imports are the main sales/dashboard source.</p>
+            <h2 className="text-lg font-semibold text-slate-900">Detailed Sales Coverage</h2>
+            <p className="mt-1 text-sm text-slate-500">Active detailed transaction imports are the main sales/dashboard source. Monthly Transaction Report is preferred when available.</p>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <StatCard label="Active detailed files" value={activeDetailedBatches.length} />
             <StatCard label="Coverage start" value={detailedCoverage.ranges[0]?.start ?? "-"} />
             <StatCard label="Coverage end" value={detailedCoverage.ranges.at(-1)?.end ?? "-"} />
-            <StatCard label="Missing weekly gaps" value={detailedCoverage.gaps.length} />
+            <StatCard label="Missing coverage gaps" value={detailedCoverage.gaps.length} />
           </div>
           {detailedCoverage.gaps.length ? (
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900">
-              Missing detailed VMS sales data from {detailedCoverage.gaps.map((gap) => `${gap.start} to ${gap.end}`).join(", ")}. Dashboards may be incomplete.
+              Missing detailed transaction coverage from {detailedCoverage.gaps.map((gap) => `${gap.start} to ${gap.end}`).join(", ")}. Dashboards may be incomplete.
             </div>
           ) : null}
           {overlappingActiveBatches.length ? (
@@ -1989,7 +2012,7 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
           {validation ? (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
               <StatCard label="Total rows" value={validation.totalRows} />
-              <StatCard label="Rows to import" value={rowsReadyToImport} note={isSalesLikeReport || selectedReportType === "vms_order_details_weekly" ? `${duplicatePreviewCount} duplicates skipped` : undefined} />
+              <StatCard label="Rows to import" value={rowsReadyToImport} note={isSalesLikeReport || isTransactionDetailsReport ? `${duplicatePreviewCount} duplicates skipped` : undefined} />
               <StatCard label="Needs product mapping" value={validation.needsProductMappingRows} note={`${validation.missingProductMappingCount} unique products`} />
               <StatCard label="Unknown machine" value={validation.unknownMachineRows} note={`${validation.unknownMachineCount} unique machines`} />
               <StatCard label="Invalid row" value={validation.invalidRows} />
@@ -2006,9 +2029,9 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
               <StatCard label="Estimated sales" value={lyd(estimatedSalesTotal)} />
             </div>
           ) : null}
-          {selectedReportType === "vms_order_details_weekly" ? (
+          {isTransactionDetailsReport ? (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-              <StatCard label="Report type" value="Order details" />
+              <StatCard label="Report type" value={transactionDetailsReportLabel} />
               <StatCard label="Date range detected" value={reportStartDate && reportEndDate ? `${reportStartDate} to ${reportEndDate}` : "-"} />
               <StatCard label="Successful sales rows" value={orderDetailsStatusCounts.successful_sale ?? 0} />
               <StatCard label="Failed/refund/review rows" value={failedRefundReviewRows} />
@@ -2077,11 +2100,11 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
               <WizardStateInputs step={5} {...baseState} mapping={selectedMapping} />
               <FormSubmitButton className="btn-secondary" pendingLabel="Returning to mapping...">Back to mapping</FormSubmitButton>
             </form>
-            <form className={isSalesLikeReport || selectedReportType === "vms_order_details_weekly" ? "grid gap-3 md:grid-cols-[minmax(220px,1fr)_minmax(160px,auto)_minmax(160px,auto)_auto]" : "grid gap-3 md:grid-cols-[minmax(260px,1fr)_auto]"}>
+            <form className={isSalesLikeReport || isTransactionDetailsReport ? "grid gap-3 md:grid-cols-[minmax(220px,1fr)_minmax(160px,auto)_minmax(160px,auto)_auto]" : "grid gap-3 md:grid-cols-[minmax(260px,1fr)_auto]"}>
               <WizardStateInputs step={7} {...baseState} mapping={selectedMapping} includeImportOptions={false} />
               <input type="hidden" name="autoCreateProducts" value={optionValue(autoCreateProducts)} />
               <input type="hidden" name="updateCostFromVms" value={optionValue(updateCostFromVms)} />
-              {isSalesLikeReport || selectedReportType === "vms_order_details_weekly" ? (
+              {isSalesLikeReport || isTransactionDetailsReport ? (
                 <>
                   {isSalesLikeReport ? (
                     <FormField label="Import mode">
@@ -2092,7 +2115,7 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
                   ) : (
                     <div className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
                       <input type="hidden" name="importMode" value={VMS_IMPORT_MODES.APPEND_NEW} />
-                      Detailed Order files always append new rows. Older detailed sales files stay active, and duplicate transactions are skipped automatically.
+                      Detailed transaction reports always append new rows. Older detailed sales files stay active, and duplicate transactions are skipped automatically.
                     </div>
                   )}
                   <FormField label="Range start">
@@ -2141,7 +2164,7 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
               <StatCard label="Estimated sales from file" value={lyd(estimatedSalesTotal)} />
             </div>
           ) : null}
-          {selectedReportType === "vms_order_details_weekly" ? (
+          {isTransactionDetailsReport ? (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
               <StatCard label="Import mode" value={vmsImportModeLabels[importMode]} />
               <StatCard label="Report period" value={reportStartDate && reportEndDate ? `${reportStartDate} to ${reportEndDate}` : "-"} />

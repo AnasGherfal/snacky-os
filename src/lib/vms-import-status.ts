@@ -47,6 +47,7 @@ export type VmsImportBatchStatus = {
 
 const supportedReportTypes = new Set([
   "vms_order_details_weekly",
+  "monthly_transaction_details",
   "monthly_product_profit",
   "sales",
   "stock",
@@ -95,6 +96,8 @@ export function vmsImportReportTypeLabel(reportType: string | null | undefined) 
   switch (textValue(reportType)) {
     case "vms_order_details_weekly":
       return "Detailed Order Details";
+    case "monthly_transaction_details":
+      return "Monthly Transaction Report";
     case "monthly_product_profit":
       return "Monthly Profit Report";
     case "sales":

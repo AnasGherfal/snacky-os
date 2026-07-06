@@ -188,7 +188,7 @@ export async function queryVmsDashboardBatches(
 }
 
 function fallbackDashboardUsageKeys(reportType: string | null | undefined): VmsDashboardUsageKey[] {
-  if (reportType === "vms_order_details_weekly") return ["dashboard", "sales", "products", "machines", "restock", "failed_vends"];
+  if (reportType === "vms_order_details_weekly" || reportType === "monthly_transaction_details") return ["dashboard", "sales", "products", "machines", "restock", "failed_vends"];
   if (reportType === "monthly_product_profit") return ["dashboard", "sales", "products", "machines", "finance"];
   if (reportType === "sales") return ["reconciliation"];
   if (["stock", "machine_stock_snapshot", "planogram"].includes(String(reportType ?? ""))) return ["dashboard", "inventory", "products", "machines", "refills", "restock", "routes"];
@@ -222,8 +222,21 @@ export function dashboardUsageNames(value: unknown, reportType?: string | null) 
 
 export function activeDetailedBatches(batches: VmsDashboardBatch[]) {
   return batches
-    .filter((batch) => batch.report_type === "vms_order_details_weekly" && isActiveImportedVmsBatch(batch))
+    .filter((batch) => ["vms_order_details_weekly", "monthly_transaction_details"].includes(String(batch.report_type ?? "")) && isActiveImportedVmsBatch(batch))
     .sort((a, b) => String(a.report_start_date ?? "").localeCompare(String(b.report_start_date ?? "")));
+}
+
+function preferredDetailedSalesReportType(batches: VmsDashboardBatch[]) {
+  const active = activeDetailedBatches(batches);
+  if (active.some((batch) => batch.report_type === "monthly_transaction_details")) return "monthly_transaction_details";
+  if (active.some((batch) => batch.report_type === "vms_order_details_weekly")) return "vms_order_details_weekly";
+  return null;
+}
+
+export function preferredDetailedSalesBatches(batches: VmsDashboardBatch[]) {
+  const preferredType = preferredDetailedSalesReportType(batches);
+  if (!preferredType) return [];
+  return activeDetailedBatches(batches).filter((batch) => batch.report_type === preferredType);
 }
 
 export function vmsCoverageSummary(batches: VmsDashboardBatch[]) {
@@ -280,13 +293,15 @@ export function batchDateRangeLabel(batch: VmsDashboardBatch | null | undefined)
 }
 
 export function detailedSalesSourceMessage(batches: VmsDashboardBatch[], summaryFiles: VmsDashboardBatch[] = []) {
-  const coverage = vmsCoverageSummary(batches);
+  const salesBatches = preferredDetailedSalesBatches(batches);
+  const coverage = vmsCoverageSummary(salesBatches);
+  const sourceLabel = preferredDetailedSalesReportType(batches) === "monthly_transaction_details" ? "Monthly Transaction Report" : "Detailed Order Details";
   if (coverage.active.length) {
-    return `Using detailed sales transactions from ${coverage.active.length} active file(s)${coverage.start && coverage.end ? ` covering ${coverage.start} to ${coverage.end}` : ""}. Latest: ${sourceFileName(coverage.latest)}.`;
+    return `Using ${sourceLabel} from ${coverage.active.length} active file(s)${coverage.start && coverage.end ? ` covering ${coverage.start} to ${coverage.end}` : ""}. Latest: ${sourceFileName(coverage.latest)}.`;
   }
   const activeSummary = summaryFiles.filter(isActiveImportedVmsBatch);
-  if (activeSummary.length) return "Using sales summary report for reconciliation only. Detailed sales transactions not imported yet.";
-  return "Detailed sales transactions not imported yet.";
+  if (activeSummary.length) return "Using sales summary report for reconciliation only. Monthly Transaction Report not imported yet.";
+  return "Monthly Transaction Report not imported yet.";
 }
 
 export function activeStockBatches(batches: VmsDashboardBatch[]) {

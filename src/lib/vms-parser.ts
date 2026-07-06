@@ -1,4 +1,4 @@
-export type VmsReportType = "stock" | "machine_stock_snapshot" | "sales" | "monthly_product_profit" | "vms_order_details_weekly" | "product_list" | "machine_status" | "planogram" | "custom";
+export type VmsReportType = "stock" | "machine_stock_snapshot" | "sales" | "monthly_product_profit" | "monthly_transaction_details" | "vms_order_details_weekly" | "product_list" | "machine_status" | "planogram" | "custom";
 
 export type VmsParsedSheet = {
   name: string;
@@ -50,6 +50,7 @@ export const vmsReportTypes: { value: VmsReportType; label: string }[] = [
   { value: "vms_order_details_weekly", label: "Detailed Order Details - Recommended" },
   { value: "sales", label: "General / Summary Sales Report" },
   { value: "monthly_product_profit", label: "Monthly Profit Report" },
+  { value: "monthly_transaction_details", label: "Monthly Transaction Report" },
   { value: "product_list", label: "Product list" },
   { value: "machine_status", label: "Machine status" },
   { value: "planogram", label: "Planogram / selection management" },
@@ -58,17 +59,17 @@ export const vmsReportTypes: { value: VmsReportType; label: string }[] = [
 
 export const vmsExpectedFields: Record<VmsReportType, VmsFieldDef[]> = {
   stock: [
-    { field: "machine_identifier", label: "Machine identifier", required: true, aliases: ["Machine ID", "Machine Code", "Device ID", "Machine", "Machine No", "Vending Machine", "vms_machine_id", "machine_id", "machine_code", "terminal_id", "device_id", "رقم الماكينة", "كود الماكينة"] },
-    { field: "product_identifier", label: "Product identifier", requiredGroup: "product", aliases: ["Product ID", "Product Code", "Goods ID", "Item Code", "SKU", "Barcode", "vms_product_id", "product_id", "product_code", "goods_code", "item_id", "كود المنتج", "رقم المنتج", "الباركود"] },
-    { field: "product_name", label: "Product name", requiredGroup: "product", aliases: ["Product Name", "Goods Name", "Item Name", "Name", "Selection Name", "vms_product_name", "product", "goods", "item", "description", "اسم المنتج", "الصنف", "المنتج"] },
-    { field: "current_qty", label: "Current quantity", required: true, aliases: ["Stock", "Current Stock", "Inventory", "Qty", "Quantity", "Remaining", "Balance", "current_qty", "stock_qty", "remaining_qty", "on_hand", "available_qty", "عدد", "الكمية", "المخزون"] },
-    { field: "machine_name", label: "Machine name", aliases: ["Machine Name", "Device Name", "Location", "machine_name", "اسم الماكينة", "الموقع"] },
-    { field: "slot_code", label: "Slot code", aliases: ["Slot", "Slot No", "Tray", "Tray No", "Selection", "Channel", "Coil", "slot_code", "selection_code", "channel_no", "رقم الخانة", "رقم الرف", "الخانة"] },
-    { field: "tray_number", label: "Tray number", aliases: ["Tray Number", "Tray No", "Tray", "Shelf", "tray_number", "tray_no", "رقم الرف"] },
-    { field: "capacity", label: "Capacity", aliases: ["Capacity", "Max Stock", "Full Qty", "Par", "capacity", "max_qty", "par_qty", "السعة"] },
+    { field: "machine_identifier", label: "Machine identifier", required: true, aliases: ["Machine ID", "Machine Code", "Device ID", "Machine", "Machine No", "Vending Machine", "vms_machine_id", "machine_id", "machine_code", "terminal_id", "device_id", "Ã˜Â±Ã™â€šÃ™â€¦ Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â§Ã™Æ’Ã™Å Ã™â€ Ã˜Â©", "Ã™Æ’Ã™Ë†Ã˜Â¯ Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â§Ã™Æ’Ã™Å Ã™â€ Ã˜Â©"] },
+    { field: "product_identifier", label: "Product identifier", requiredGroup: "product", aliases: ["Product ID", "Product Code", "Goods ID", "Item Code", "SKU", "Barcode", "vms_product_id", "product_id", "product_code", "goods_code", "item_id", "Ã™Æ’Ã™Ë†Ã˜Â¯ Ã˜Â§Ã™â€žÃ™â€¦Ã™â€ Ã˜ÂªÃ˜Â¬", "Ã˜Â±Ã™â€šÃ™â€¦ Ã˜Â§Ã™â€žÃ™â€¦Ã™â€ Ã˜ÂªÃ˜Â¬", "Ã˜Â§Ã™â€žÃ˜Â¨Ã˜Â§Ã˜Â±Ã™Æ’Ã™Ë†Ã˜Â¯"] },
+    { field: "product_name", label: "Product name", requiredGroup: "product", aliases: ["Product Name", "Goods Name", "Item Name", "Name", "Selection Name", "vms_product_name", "product", "goods", "item", "description", "Ã˜Â§Ã˜Â³Ã™â€¦ Ã˜Â§Ã™â€žÃ™â€¦Ã™â€ Ã˜ÂªÃ˜Â¬", "Ã˜Â§Ã™â€žÃ˜ÂµÃ™â€ Ã™Â", "Ã˜Â§Ã™â€žÃ™â€¦Ã™â€ Ã˜ÂªÃ˜Â¬"] },
+    { field: "current_qty", label: "Current quantity", required: true, aliases: ["Stock", "Current Stock", "Inventory", "Qty", "Quantity", "Remaining", "Balance", "current_qty", "stock_qty", "remaining_qty", "on_hand", "available_qty", "Ã˜Â¹Ã˜Â¯Ã˜Â¯", "Ã˜Â§Ã™â€žÃ™Æ’Ã™â€¦Ã™Å Ã˜Â©", "Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â®Ã˜Â²Ã™Ë†Ã™â€ "] },
+    { field: "machine_name", label: "Machine name", aliases: ["Machine Name", "Device Name", "Location", "machine_name", "Ã˜Â§Ã˜Â³Ã™â€¦ Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â§Ã™Æ’Ã™Å Ã™â€ Ã˜Â©", "Ã˜Â§Ã™â€žÃ™â€¦Ã™Ë†Ã™â€šÃ˜Â¹"] },
+    { field: "slot_code", label: "Slot code", aliases: ["Slot", "Slot No", "Tray", "Tray No", "Selection", "Channel", "Coil", "slot_code", "selection_code", "channel_no", "Ã˜Â±Ã™â€šÃ™â€¦ Ã˜Â§Ã™â€žÃ˜Â®Ã˜Â§Ã™â€ Ã˜Â©", "Ã˜Â±Ã™â€šÃ™â€¦ Ã˜Â§Ã™â€žÃ˜Â±Ã™Â", "Ã˜Â§Ã™â€žÃ˜Â®Ã˜Â§Ã™â€ Ã˜Â©"] },
+    { field: "tray_number", label: "Tray number", aliases: ["Tray Number", "Tray No", "Tray", "Shelf", "tray_number", "tray_no", "Ã˜Â±Ã™â€šÃ™â€¦ Ã˜Â§Ã™â€žÃ˜Â±Ã™Â"] },
+    { field: "capacity", label: "Capacity", aliases: ["Capacity", "Max Stock", "Full Qty", "Par", "capacity", "max_qty", "par_qty", "Ã˜Â§Ã™â€žÃ˜Â³Ã˜Â¹Ã˜Â©"] },
     { field: "empty_status", label: "Empty status", aliases: ["Empty Status", "Empty", "Empty Tray", "Empty Slot", "Out of Stock", "Out Of Stock", "Sold Out", "Status", "empty_status", "tray_status", "out_of_stock", "sold_out"] },
-    { field: "updated_at", label: "Updated at", aliases: ["Updated At", "Last Updated", "Date", "Time", "Timestamp", "captured_at", "updated_at", "تاريخ"] },
-    { field: "selling_price", label: "Selling price", aliases: ["Selling Price", "Price", "Unit Price", "Retail Price", "selling_price", "sale_price", "سعر البيع"] },
+    { field: "updated_at", label: "Updated at", aliases: ["Updated At", "Last Updated", "Date", "Time", "Timestamp", "captured_at", "updated_at", "Ã˜ÂªÃ˜Â§Ã˜Â±Ã™Å Ã˜Â®"] },
+    { field: "selling_price", label: "Selling price", aliases: ["Selling Price", "Price", "Unit Price", "Retail Price", "selling_price", "sale_price", "Ã˜Â³Ã˜Â¹Ã˜Â± Ã˜Â§Ã™â€žÃ˜Â¨Ã™Å Ã˜Â¹"] },
   ],
   machine_stock_snapshot: [
     { field: "machine_identifier", label: "Machine code", required: true, aliases: ["Machine code", "Machine Code", "machine_code", "Machine ID", "Device ID", "Machine No", "Vending Machine"] },
@@ -87,19 +88,19 @@ export const vmsExpectedFields: Record<VmsReportType, VmsFieldDef[]> = {
     { field: "capacity", label: "Inventory capacity", aliases: ["Inventory capacity", "Inventory Capacity", "inventory_capacity", "Capacity", "capacity", "Max Stock", "slot_capacity"] },
   ],
   sales: [
-    { field: "machine_identifier", label: "Machine identifier", required: true, aliases: ["Machine ID", "Machine Code", "Device ID", "Machine", "Machine No", "Vending Machine", "vms_machine_id", "machine_id", "machine_code", "terminal_id", "device_id", "رقم الماكينة", "كود الماكينة"] },
-    { field: "product_identifier", label: "Product identifier", requiredGroup: "product", aliases: ["Product ID", "Product Code", "Goods ID", "Item Code", "SKU", "Barcode", "vms_product_id", "product_id", "product_code", "goods_code", "كود المنتج", "رقم المنتج", "الباركود"] },
-    { field: "product_name", label: "Product name", requiredGroup: "product", aliases: ["Product Name", "Goods Name", "Item Name", "Name", "Selection Name", "vms_product_name", "product", "goods", "item", "description", "اسم المنتج", "الصنف", "المنتج"] },
-    { field: "sold_qty", label: "Sold quantity", requiredGroup: "sales_measure", aliases: ["Sold Qty", "Sales Qty", "Quantity Sold", "Vend Count", "Count", "sold_qty", "quantity_sold", "units_sold", "sales_qty", "الكمية المباعة", "عدد المبيعات"] },
-    { field: "total_sales_amount", label: "Total sales amount", requiredGroup: "sales_measure", aliases: ["Sales Amount", "Revenue", "Amount", "Total Sales", "Turnover", "sales_amount", "total_sales", "revenue_amount", "gross_sales", "المبيعات", "الإيراد", "القيمة"] },
-    { field: "machine_name", label: "Machine name", aliases: ["Machine Name", "Device Name", "Location", "machine_name", "اسم الماكينة", "الموقع"] },
-    { field: "sale_date", label: "Sale date", aliases: ["Date", "Sale Date", "Time", "Transaction Date", "period_end", "sales_date", "business_date", "timestamp", "التاريخ"] },
-    { field: "revenue_amount", label: "Revenue amount", aliases: ["Sales Amount", "Revenue", "Amount", "Total Sales", "Turnover", "sales_amount", "total_sales", "المبيعات", "الإيراد", "القيمة"] },
-    { field: "cost_amount", label: "Cost amount", aliases: ["Cost", "Product Cost", "Total Cost", "cost_amount", "cogs", "التكلفة"] },
-    { field: "profit_amount", label: "Profit amount", aliases: ["Profit", "Gross Profit", "profit_amount", "gross_profit", "الربح"] },
+    { field: "machine_identifier", label: "Machine identifier", required: true, aliases: ["Machine ID", "Machine Code", "Device ID", "Machine", "Machine No", "Vending Machine", "vms_machine_id", "machine_id", "machine_code", "terminal_id", "device_id", "Ã˜Â±Ã™â€šÃ™â€¦ Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â§Ã™Æ’Ã™Å Ã™â€ Ã˜Â©", "Ã™Æ’Ã™Ë†Ã˜Â¯ Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â§Ã™Æ’Ã™Å Ã™â€ Ã˜Â©"] },
+    { field: "product_identifier", label: "Product identifier", requiredGroup: "product", aliases: ["Product ID", "Product Code", "Goods ID", "Item Code", "SKU", "Barcode", "vms_product_id", "product_id", "product_code", "goods_code", "Ã™Æ’Ã™Ë†Ã˜Â¯ Ã˜Â§Ã™â€žÃ™â€¦Ã™â€ Ã˜ÂªÃ˜Â¬", "Ã˜Â±Ã™â€šÃ™â€¦ Ã˜Â§Ã™â€žÃ™â€¦Ã™â€ Ã˜ÂªÃ˜Â¬", "Ã˜Â§Ã™â€žÃ˜Â¨Ã˜Â§Ã˜Â±Ã™Æ’Ã™Ë†Ã˜Â¯"] },
+    { field: "product_name", label: "Product name", requiredGroup: "product", aliases: ["Product Name", "Goods Name", "Item Name", "Name", "Selection Name", "vms_product_name", "product", "goods", "item", "description", "Ã˜Â§Ã˜Â³Ã™â€¦ Ã˜Â§Ã™â€žÃ™â€¦Ã™â€ Ã˜ÂªÃ˜Â¬", "Ã˜Â§Ã™â€žÃ˜ÂµÃ™â€ Ã™Â", "Ã˜Â§Ã™â€žÃ™â€¦Ã™â€ Ã˜ÂªÃ˜Â¬"] },
+    { field: "sold_qty", label: "Sold quantity", requiredGroup: "sales_measure", aliases: ["Sold Qty", "Sales Qty", "Quantity Sold", "Vend Count", "Count", "sold_qty", "quantity_sold", "units_sold", "sales_qty", "Ã˜Â§Ã™â€žÃ™Æ’Ã™â€¦Ã™Å Ã˜Â© Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â¨Ã˜Â§Ã˜Â¹Ã˜Â©", "Ã˜Â¹Ã˜Â¯Ã˜Â¯ Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â¨Ã™Å Ã˜Â¹Ã˜Â§Ã˜Âª"] },
+    { field: "total_sales_amount", label: "Total sales amount", requiredGroup: "sales_measure", aliases: ["Sales Amount", "Revenue", "Amount", "Total Sales", "Turnover", "sales_amount", "total_sales", "revenue_amount", "gross_sales", "Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â¨Ã™Å Ã˜Â¹Ã˜Â§Ã˜Âª", "Ã˜Â§Ã™â€žÃ˜Â¥Ã™Å Ã˜Â±Ã˜Â§Ã˜Â¯", "Ã˜Â§Ã™â€žÃ™â€šÃ™Å Ã™â€¦Ã˜Â©"] },
+    { field: "machine_name", label: "Machine name", aliases: ["Machine Name", "Device Name", "Location", "machine_name", "Ã˜Â§Ã˜Â³Ã™â€¦ Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â§Ã™Æ’Ã™Å Ã™â€ Ã˜Â©", "Ã˜Â§Ã™â€žÃ™â€¦Ã™Ë†Ã™â€šÃ˜Â¹"] },
+    { field: "sale_date", label: "Sale date", aliases: ["Date", "Sale Date", "Time", "Transaction Date", "period_end", "sales_date", "business_date", "timestamp", "Ã˜Â§Ã™â€žÃ˜ÂªÃ˜Â§Ã˜Â±Ã™Å Ã˜Â®"] },
+    { field: "revenue_amount", label: "Revenue amount", aliases: ["Sales Amount", "Revenue", "Amount", "Total Sales", "Turnover", "sales_amount", "total_sales", "Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â¨Ã™Å Ã˜Â¹Ã˜Â§Ã˜Âª", "Ã˜Â§Ã™â€žÃ˜Â¥Ã™Å Ã˜Â±Ã˜Â§Ã˜Â¯", "Ã˜Â§Ã™â€žÃ™â€šÃ™Å Ã™â€¦Ã˜Â©"] },
+    { field: "cost_amount", label: "Cost amount", aliases: ["Cost", "Product Cost", "Total Cost", "cost_amount", "cogs", "Ã˜Â§Ã™â€žÃ˜ÂªÃ™Æ’Ã™â€žÃ™ÂÃ˜Â©"] },
+    { field: "profit_amount", label: "Profit amount", aliases: ["Profit", "Gross Profit", "profit_amount", "gross_profit", "Ã˜Â§Ã™â€žÃ˜Â±Ã˜Â¨Ã˜Â­"] },
     { field: "vms_transaction_id", label: "VMS transaction ID", aliases: ["Transaction ID", "Transaction No", "Order ID", "Order No", "Receipt ID", "Receipt No", "Txn ID", "txn_id", "transaction_id", "transaction_no", "order_id", "receipt_id"] },
     { field: "payment_method", label: "Payment method", aliases: ["Payment Method", "Payment", "Tender", "Method", "payment_method"] },
-    { field: "selling_price", label: "Selling price", aliases: ["Selling Price", "Price", "Unit Price", "selling_price", "sale_price", "سعر البيع"] },
+    { field: "selling_price", label: "Selling price", aliases: ["Selling Price", "Price", "Unit Price", "selling_price", "sale_price", "Ã˜Â³Ã˜Â¹Ã˜Â± Ã˜Â§Ã™â€žÃ˜Â¨Ã™Å Ã˜Â¹"] },
   ],
   monthly_product_profit: [
     { field: "merchant_id", label: "Merchant ID", aliases: ["Merchant ID", "merchant_id"] },
@@ -118,6 +119,28 @@ export const vmsExpectedFields: Record<VmsReportType, VmsFieldDef[]> = {
     { field: "cost_price", label: "Cost Price", aliases: ["Cost Price", "cost_price", "Cost price"] },
     { field: "cost_amount", label: "Cost Amount", aliases: ["Cost Amount", "cost_amount", "Cost amount"] },
     { field: "profit_amount", label: "Profits", aliases: ["Profits", "Profit", "profit_amount", "Gross Profit"] },
+  ],
+  monthly_transaction_details: [
+    { field: "merchant_id", label: "Merchant ID", aliases: ["Merchant ID", "merchant_id"] },
+    { field: "merchant_name", label: "Merchant name", aliases: ["Merchant Name", "merchant_name"] },
+    { field: "machine_identifier", label: "Machine code", required: true, aliases: ["Machine code", "Machine Code", "machine_code", "Machine ID", "Machine Id", "machine_id", "Terminal ID", "terminal_id"] },
+    { field: "machine_name", label: "Machine name", aliases: ["Machine name", "Machine Name", "machine_name", "Device Name", "Location"] },
+    { field: "serial_number", label: "Serial number", aliases: ["Serial number", "Serial Number", "serial_number", "Serial No", "Serial No.", "Machine serial number"] },
+    { field: "product_identifier", label: "Product number", requiredGroup: "product", aliases: ["Product Number", "Product number", "product_number", "Product No", "Product No.", "Goods Number", "Commodity Number", "product_identifier"] },
+    { field: "product_name", label: "Product name", requiredGroup: "product", aliases: ["product name", "Product name", "Product Name", "vms_product_name", "Commodity Name", "Goods Name", "product"] },
+    { field: "cargo_lane_number", label: "Cargo lane", aliases: ["Cargo lane", "Cargo Lane", "cargo_lane", "Cargo Lane Number", "cargo_lane_number", "Lane", "Selection", "slot_code"] },
+    { field: "sales_price", label: "Sales price", aliases: ["Sales price", "Sales Price", "sales_price", "Selling Price", "selling_price", "Price", "price", "Unit Price", "unit_price"] },
+    { field: "mode_of_payment", label: "Mode of payment", aliases: ["Mode of payment", "Mode of Payment", "mode_of_payment", "Payment method", "Payment Method", "payment_method", "payment_type", "tender"] },
+    { field: "payment_amount", label: "Payment amount", required: true, aliases: ["Payment amount", "Payment Amount", "payment_amount", "Paid amount", "Amount paid", "Amount", "amount"] },
+    { field: "refund_amount", label: "Refund amount", aliases: ["Refund amount", "Refund Amount", "refund_amount"] },
+    { field: "discount_price", label: "Discount price", aliases: ["Discount price", "Discount Price", "discount_price", "Discounted price", "Discounted Price", "discounted_price"] },
+    { field: "payment_time", label: "Time of payment", requiredGroup: "transaction_time", aliases: ["Time of payment", "Payment time", "Payment Time", "time_of_payment", "payment_time", "Paid time", "Paid Time"] },
+    { field: "refund_time", label: "Refund time", aliases: ["Refund time", "Refund Time", "refund_time"] },
+    { field: "third_party_order_no", label: "Third Party Order No.", aliases: ["Third Party Order No.", "Third Party Order No", "Third party order no", "third_party_order_no", "Third Party Order Number"] },
+    { field: "third_party_transaction", label: "Third Party Transaction", aliases: ["Third Party Transaction", "Third Party Transaction No.", "Third Party Transaction No", "third_party_transaction", "third_party_transaction_number", "Third Party Transaction Number"] },
+    { field: "logic_card_number", label: "Logic card number", aliases: ["Logic card number", "Logic Card Number", "logic_card_number", "Card number", "Card Number", "card_number"] },
+    { field: "quantity", label: "Quantity", aliases: ["Quantity", "Qty", "quantity", "Num", "num"] },
+    { field: "transaction_status", label: "Transaction status", aliases: ["Transaction status", "Transaction Status", "transaction_status", "Status", "status", "Result", "result", "Payment status", "payment_status"] },
   ],
   vms_order_details_weekly: [
     { field: "merchant_id", label: "Merchant ID", aliases: ["Merchant ID", "merchant_id"] },
@@ -144,21 +167,21 @@ export const vmsExpectedFields: Record<VmsReportType, VmsFieldDef[]> = {
     { field: "quantity", label: "Num", aliases: ["Num", "num", "Quantity", "Qty", "quantity"] },
   ],
   product_list: [
-    { field: "product_identifier", label: "Product identifier", requiredGroup: "product", aliases: ["Product ID", "Product Code", "Goods ID", "Goods Code", "Item Code", "SKU", "Barcode", "VMS Product ID", "VMS Product Code", "vms_product_id", "product_id", "product_code", "goods_code", "item_code", "كود المنتج", "رقم المنتج", "الباركود"] },
-    { field: "product_name", label: "Product name", requiredGroup: "product", aliases: ["Product Name", "Goods Name", "Item Name", "Name", "Selection Name", "vms_product_name", "product", "goods", "item", "description", "اسم المنتج", "المنتج", "الصنف"] },
+    { field: "product_identifier", label: "Product identifier", requiredGroup: "product", aliases: ["Product ID", "Product Code", "Goods ID", "Goods Code", "Item Code", "SKU", "Barcode", "VMS Product ID", "VMS Product Code", "vms_product_id", "product_id", "product_code", "goods_code", "item_code", "Ã™Æ’Ã™Ë†Ã˜Â¯ Ã˜Â§Ã™â€žÃ™â€¦Ã™â€ Ã˜ÂªÃ˜Â¬", "Ã˜Â±Ã™â€šÃ™â€¦ Ã˜Â§Ã™â€žÃ™â€¦Ã™â€ Ã˜ÂªÃ˜Â¬", "Ã˜Â§Ã™â€žÃ˜Â¨Ã˜Â§Ã˜Â±Ã™Æ’Ã™Ë†Ã˜Â¯"] },
+    { field: "product_name", label: "Product name", requiredGroup: "product", aliases: ["Product Name", "Goods Name", "Item Name", "Name", "Selection Name", "vms_product_name", "product", "goods", "item", "description", "Ã˜Â§Ã˜Â³Ã™â€¦ Ã˜Â§Ã™â€žÃ™â€¦Ã™â€ Ã˜ÂªÃ˜Â¬", "Ã˜Â§Ã™â€žÃ™â€¦Ã™â€ Ã˜ÂªÃ˜Â¬", "Ã˜Â§Ã™â€žÃ˜ÂµÃ™â€ Ã™Â"] },
     { field: "vms_product_id", label: "VMS product ID", requiredGroup: "product", aliases: ["VMS Product ID", "VMS ID", "Product ID", "Goods ID", "vms_product_id", "product_id", "goods_id"] },
     { field: "product_code", label: "Product code", requiredGroup: "product", aliases: ["Product Code", "Goods Code", "Item Code", "SKU", "product_code", "goods_code", "item_code"] },
-    { field: "barcode", label: "Barcode", aliases: ["Barcode", "EAN", "UPC", "bar_code", "الباركود"] },
-    { field: "category", label: "Category", aliases: ["Category", "Type", "Group", "Product Type", "category", "التصنيف", "النوع"] },
-    { field: "brand", label: "Brand", aliases: ["Brand", "Manufacturer", "brand", "manufacturer", "العلامة التجارية"] },
-    { field: "cost_price", label: "Cost price", aliases: ["Cost", "Cost Price", "Product Cost", "Purchase Price", "cost_price", "unit_cost", "التكلفة", "سعر الشراء"] },
-    { field: "selling_price", label: "Selling price", aliases: ["Selling Price", "Sale Price", "Price", "Retail Price", "Unit Price", "selling_price", "sale_price", "السعر", "سعر البيع"] },
-    { field: "active_status", label: "Active status", aliases: ["Status", "Active", "Enabled", "Active Status", "active_status", "الحالة"] },
+    { field: "barcode", label: "Barcode", aliases: ["Barcode", "EAN", "UPC", "bar_code", "Ã˜Â§Ã™â€žÃ˜Â¨Ã˜Â§Ã˜Â±Ã™Æ’Ã™Ë†Ã˜Â¯"] },
+    { field: "category", label: "Category", aliases: ["Category", "Type", "Group", "Product Type", "category", "Ã˜Â§Ã™â€žÃ˜ÂªÃ˜ÂµÃ™â€ Ã™Å Ã™Â", "Ã˜Â§Ã™â€žÃ™â€ Ã™Ë†Ã˜Â¹"] },
+    { field: "brand", label: "Brand", aliases: ["Brand", "Manufacturer", "brand", "manufacturer", "Ã˜Â§Ã™â€žÃ˜Â¹Ã™â€žÃ˜Â§Ã™â€¦Ã˜Â© Ã˜Â§Ã™â€žÃ˜ÂªÃ˜Â¬Ã˜Â§Ã˜Â±Ã™Å Ã˜Â©"] },
+    { field: "cost_price", label: "Cost price", aliases: ["Cost", "Cost Price", "Product Cost", "Purchase Price", "cost_price", "unit_cost", "Ã˜Â§Ã™â€žÃ˜ÂªÃ™Æ’Ã™â€žÃ™ÂÃ˜Â©", "Ã˜Â³Ã˜Â¹Ã˜Â± Ã˜Â§Ã™â€žÃ˜Â´Ã˜Â±Ã˜Â§Ã˜Â¡"] },
+    { field: "selling_price", label: "Selling price", aliases: ["Selling Price", "Sale Price", "Price", "Retail Price", "Unit Price", "selling_price", "sale_price", "Ã˜Â§Ã™â€žÃ˜Â³Ã˜Â¹Ã˜Â±", "Ã˜Â³Ã˜Â¹Ã˜Â± Ã˜Â§Ã™â€žÃ˜Â¨Ã™Å Ã˜Â¹"] },
+    { field: "active_status", label: "Active status", aliases: ["Status", "Active", "Enabled", "Active Status", "active_status", "Ã˜Â§Ã™â€žÃ˜Â­Ã˜Â§Ã™â€žÃ˜Â©"] },
     { field: "image_url", label: "Image URL", aliases: ["Image URL", "Image", "Photo", "Picture", "image_url", "image"] },
   ],
   machine_status: [
-    { field: "machine_identifier", label: "Machine identifier", required: true, aliases: ["Machine ID", "Machine Code", "Device ID", "Machine", "Machine No", "Vending Machine", "vms_machine_id", "machine_id", "machine_code", "terminal_id", "device_id", "رقم الماكينة", "كود الماكينة"] },
-    { field: "machine_name", label: "Machine name", aliases: ["Machine Name", "Device Name", "Location", "machine_name", "اسم الماكينة", "الموقع"] },
+    { field: "machine_identifier", label: "Machine identifier", required: true, aliases: ["Machine ID", "Machine Code", "Device ID", "Machine", "Machine No", "Vending Machine", "vms_machine_id", "machine_id", "machine_code", "terminal_id", "device_id", "Ã˜Â±Ã™â€šÃ™â€¦ Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â§Ã™Æ’Ã™Å Ã™â€ Ã˜Â©", "Ã™Æ’Ã™Ë†Ã˜Â¯ Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â§Ã™Æ’Ã™Å Ã™â€ Ã˜Â©"] },
+    { field: "machine_name", label: "Machine name", aliases: ["Machine Name", "Device Name", "Location", "machine_name", "Ã˜Â§Ã˜Â³Ã™â€¦ Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â§Ã™Æ’Ã™Å Ã™â€ Ã˜Â©", "Ã˜Â§Ã™â€žÃ™â€¦Ã™Ë†Ã™â€šÃ˜Â¹"] },
     { field: "online_status", label: "Online status", aliases: ["Online Status", "Online", "Offline", "Status", "Connection Status", "Machine Status", "online_status", "network_status"] },
     { field: "temperature", label: "Temperature", aliases: ["Temperature", "Temp", "Cabinet Temperature", "temperature", "temperature_c"] },
     { field: "banknote_balance", label: "Banknote balance", aliases: ["Banknote Balance", "Banknote", "Cash Box", "banknote_balance"] },
@@ -167,14 +190,14 @@ export const vmsExpectedFields: Record<VmsReportType, VmsFieldDef[]> = {
     { field: "error_status", label: "Error status", aliases: ["Error", "Error Status", "Fault", "Alarm", "error_status"] },
   ],
   planogram: [
-    { field: "machine_identifier", label: "Machine identifier", required: true, aliases: ["Machine ID", "Machine Code", "Device ID", "Machine", "Machine No", "Vending Machine", "vms_machine_id", "machine_id", "machine_code", "terminal_id", "device_id", "رقم الماكينة", "كود الماكينة"] },
-    { field: "slot_code", label: "Slot code", required: true, aliases: ["Slot", "Slot No", "Tray", "Tray No", "Selection", "Channel", "Coil", "slot_code", "selection_code", "channel_no", "رقم الخانة", "رقم الرف", "الخانة"] },
-    { field: "product_identifier", label: "Product identifier", requiredGroup: "product", aliases: ["Product ID", "Product Code", "Goods ID", "Item Code", "SKU", "Barcode", "vms_product_id", "product_id", "product_code", "goods_code", "كود المنتج", "رقم المنتج", "الباركود"] },
-    { field: "product_name", label: "Product name", requiredGroup: "product", aliases: ["Product Name", "Goods Name", "Item Name", "Name", "Selection Name", "vms_product_name", "product", "goods", "item", "description", "اسم المنتج", "الصنف", "المنتج"] },
-    { field: "machine_name", label: "Machine name", aliases: ["Machine Name", "Device Name", "Location", "machine_name", "اسم الماكينة", "الموقع"] },
-    { field: "capacity", label: "Capacity", aliases: ["Capacity", "Max Stock", "Full Qty", "Par", "capacity", "max_qty", "par_qty", "السعة"] },
-    { field: "current_qty", label: "Current quantity", aliases: ["Stock", "Current Stock", "Inventory", "Qty", "Quantity", "Remaining", "Balance", "current_qty", "stock_qty", "الكمية", "المخزون"] },
-    { field: "selling_price", label: "Selling price", aliases: ["Selling Price", "Price", "Unit Price", "selling_price", "sale_price", "سعر البيع"] },
+    { field: "machine_identifier", label: "Machine identifier", required: true, aliases: ["Machine ID", "Machine Code", "Device ID", "Machine", "Machine No", "Vending Machine", "vms_machine_id", "machine_id", "machine_code", "terminal_id", "device_id", "Ã˜Â±Ã™â€šÃ™â€¦ Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â§Ã™Æ’Ã™Å Ã™â€ Ã˜Â©", "Ã™Æ’Ã™Ë†Ã˜Â¯ Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â§Ã™Æ’Ã™Å Ã™â€ Ã˜Â©"] },
+    { field: "slot_code", label: "Slot code", required: true, aliases: ["Slot", "Slot No", "Tray", "Tray No", "Selection", "Channel", "Coil", "slot_code", "selection_code", "channel_no", "Ã˜Â±Ã™â€šÃ™â€¦ Ã˜Â§Ã™â€žÃ˜Â®Ã˜Â§Ã™â€ Ã˜Â©", "Ã˜Â±Ã™â€šÃ™â€¦ Ã˜Â§Ã™â€žÃ˜Â±Ã™Â", "Ã˜Â§Ã™â€žÃ˜Â®Ã˜Â§Ã™â€ Ã˜Â©"] },
+    { field: "product_identifier", label: "Product identifier", requiredGroup: "product", aliases: ["Product ID", "Product Code", "Goods ID", "Item Code", "SKU", "Barcode", "vms_product_id", "product_id", "product_code", "goods_code", "Ã™Æ’Ã™Ë†Ã˜Â¯ Ã˜Â§Ã™â€žÃ™â€¦Ã™â€ Ã˜ÂªÃ˜Â¬", "Ã˜Â±Ã™â€šÃ™â€¦ Ã˜Â§Ã™â€žÃ™â€¦Ã™â€ Ã˜ÂªÃ˜Â¬", "Ã˜Â§Ã™â€žÃ˜Â¨Ã˜Â§Ã˜Â±Ã™Æ’Ã™Ë†Ã˜Â¯"] },
+    { field: "product_name", label: "Product name", requiredGroup: "product", aliases: ["Product Name", "Goods Name", "Item Name", "Name", "Selection Name", "vms_product_name", "product", "goods", "item", "description", "Ã˜Â§Ã˜Â³Ã™â€¦ Ã˜Â§Ã™â€žÃ™â€¦Ã™â€ Ã˜ÂªÃ˜Â¬", "Ã˜Â§Ã™â€žÃ˜ÂµÃ™â€ Ã™Â", "Ã˜Â§Ã™â€žÃ™â€¦Ã™â€ Ã˜ÂªÃ˜Â¬"] },
+    { field: "machine_name", label: "Machine name", aliases: ["Machine Name", "Device Name", "Location", "machine_name", "Ã˜Â§Ã˜Â³Ã™â€¦ Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â§Ã™Æ’Ã™Å Ã™â€ Ã˜Â©", "Ã˜Â§Ã™â€žÃ™â€¦Ã™Ë†Ã™â€šÃ˜Â¹"] },
+    { field: "capacity", label: "Capacity", aliases: ["Capacity", "Max Stock", "Full Qty", "Par", "capacity", "max_qty", "par_qty", "Ã˜Â§Ã™â€žÃ˜Â³Ã˜Â¹Ã˜Â©"] },
+    { field: "current_qty", label: "Current quantity", aliases: ["Stock", "Current Stock", "Inventory", "Qty", "Quantity", "Remaining", "Balance", "current_qty", "stock_qty", "Ã˜Â§Ã™â€žÃ™Æ’Ã™â€¦Ã™Å Ã˜Â©", "Ã˜Â§Ã™â€žÃ™â€¦Ã˜Â®Ã˜Â²Ã™Ë†Ã™â€ "] },
+    { field: "selling_price", label: "Selling price", aliases: ["Selling Price", "Price", "Unit Price", "selling_price", "sale_price", "Ã˜Â³Ã˜Â¹Ã˜Â± Ã˜Â§Ã™â€žÃ˜Â¨Ã™Å Ã˜Â¹"] },
   ],
   custom: [
     { field: "machine_identifier", label: "Machine identifier", aliases: ["Machine ID", "Machine Code", "Device ID", "Machine", "Machine No", "Vending Machine"] },
@@ -497,6 +520,24 @@ export function detectVmsReportTypeFromHeaders(headers: string[]): VmsReportType
 
   if (monthlyProfitSignals >= 7) return "monthly_product_profit";
 
+  const monthlyTransactionSignals = [
+    has(["Merchant ID", "merchant_id"]),
+    has(["Merchant Name", "merchant_name"]),
+    has(["Machine code", "Machine Code", "machine_code"]),
+    has(["Machine name", "Machine Name", "machine_name"]),
+    has(["Product Number", "Product number", "product_number"]),
+    has(["product name", "Product name", "Product Name", "product_name"]),
+    has(["Sales price", "Sales Price", "sales_price"]),
+    has(["Mode of payment", "Mode of Payment", "mode_of_payment", "payment_method"]),
+    has(["Payment amount", "Payment Amount", "payment_amount"]),
+    has(["Refund amount", "Refund Amount", "refund_amount"]),
+    has(["Time of payment", "Payment time", "time_of_payment", "payment_time"]),
+    has(["Third Party Order No.", "Third Party Order No", "third_party_order_no"]),
+    has(["Third Party Transaction", "Third Party Transaction No.", "third_party_transaction", "third_party_transaction_number"]),
+  ].filter(Boolean).length;
+
+  if (monthlyTransactionSignals >= 7) return "monthly_transaction_details";
+
   const stockSnapshotSignals = [
     has(["Inventory quantity", "Inventory Quantity", "inventory_quantity"]),
     has(["Out of stock quantity", "Out Of Stock Quantity", "out_of_stock_quantity"]),
@@ -535,6 +576,9 @@ export function detectVmsReportTypeFromRows(rows: unknown[][]): VmsReportType | 
   if (!nonEmptyRows.length) return null;
   const headerRowIndex = detectHeaderRowIndex(nonEmptyRows);
   const metadataRows = nonEmptyRows.slice(0, headerRowIndex);
+  if (metadataRows.some((row) => row.join(" ").toLowerCase().includes("statistical report of transaction details"))) {
+    return "monthly_transaction_details";
+  }
   if (metadataRows.some((row) => row.join(" ").toLowerCase().includes("statistical statement of commodity profit"))) {
     return "monthly_product_profit";
   }

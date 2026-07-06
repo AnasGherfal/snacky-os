@@ -36,6 +36,22 @@ import {
   orderDetailsNumber,
 } from "@/lib/vms-order-details";
 import {
+  createVmsMonthlyTransactionDuplicateHash,
+  detectMonthlyTransactionDateRange,
+  findMonthlyTransactionReportPeriod,
+  isTransactionDetailsReportType,
+  monthlyTransactionAliases,
+  monthlyTransactionBusinessDate,
+  monthlyTransactionPaymentAmount,
+  monthlyTransactionPaymentTime,
+  monthlyTransactionQuantity,
+  monthlyTransactionRefundAmount,
+  monthlyTransactionRefundTime,
+  monthlyTransactionSalesPrice,
+  monthlyTransactionTransactionStatus,
+  monthlyTransactionValue,
+} from "@/lib/vms-transaction-details";
+import {
   VMS_IMPORT_MODES,
   createVmsSalesSourceRowKey,
   parseVmsImportMode,
@@ -133,7 +149,7 @@ function requiredVmsImportTables(reportType: VmsReportType, stage: VmsImportSche
     if (reportType === "monthly_product_profit") {
       tables.add("vms_monthly_product_profit");
     }
-    if (reportType === "vms_order_details_weekly") {
+    if (isTransactionDetailsReportType(reportType)) {
       tables.add("vms_transactions_raw");
     }
     if (reportType === "stock" || reportType === "machine_stock_snapshot") {
@@ -274,7 +290,7 @@ async function buildVmsImportStateRedirectFromFormData(formData: FormData, error
 export { sanitizeVmsImportBatchPayload, buildVmsImportStateRedirectFromFormData };
 
 function vmsSourceUsage(reportType: VmsReportType) {
-  if (reportType === "vms_order_details_weekly") {
+  if (isTransactionDetailsReportType(reportType)) {
     return {
       source_type: "detailed_order_transactions",
       main_sales_source: true,
@@ -330,7 +346,7 @@ function importUpdatedTargets(reportType: VmsReportType, summary: ImportSummary)
     targets.add("Machine stock");
     targets.add("Recommended refill items");
   }
-  if (reportType === "vms_order_details_weekly" && summary.importedRows > 0) {
+  if (isTransactionDetailsReportType(reportType) && summary.importedRows > 0) {
     targets.add("Sales dashboard");
     targets.add("Product sales");
     targets.add("Failed vend report");
@@ -650,11 +666,11 @@ async function upsertRawRows(
 }
 
 function reportRequiresMachine(reportType: VmsReportType) {
-  return ["stock", "machine_stock_snapshot", "sales", "monthly_product_profit", "vms_order_details_weekly", "machine_status", "planogram"].includes(reportType);
+  return ["stock", "machine_stock_snapshot", "sales", "monthly_product_profit", "machine_status", "planogram"].includes(reportType) || isTransactionDetailsReportType(reportType);
 }
 
 function reportRequiresProduct(reportType: VmsReportType) {
-  return ["stock", "machine_stock_snapshot", "sales", "monthly_product_profit", "vms_order_details_weekly", "product_list", "planogram"].includes(reportType);
+  return ["stock", "machine_stock_snapshot", "sales", "monthly_product_profit", "product_list", "planogram"].includes(reportType) || isTransactionDetailsReportType(reportType);
 }
 
 function isMachineStockReport(reportType: VmsReportType) {
@@ -713,6 +729,7 @@ type ExistingOrderDetailsDashboardSourceCandidate = {
     id: string;
     file_name?: string | null;
     original_file_name?: string | null;
+    report_type?: string | null;
     status?: string | null;
     is_active?: boolean | null;
     deleted_at?: string | null;
@@ -732,7 +749,7 @@ function orderDetailsDashboardSourceState(
     id: batch.id,
     file_name: batch.file_name ?? null,
     original_file_name: batch.original_file_name ?? null,
-    report_type: "vms_order_details_weekly",
+    report_type: batch.report_type ?? "vms_order_details_weekly",
     status: batch.status ?? null,
     is_active: batch.is_active ?? null,
     deleted_at: batch.deleted_at ?? null,
@@ -933,11 +950,13 @@ async function loadExistingOrderDetailsDashboardSourceCandidates({
   batchIds,
   fallbackFileHash,
   fallbackFileName,
+  reportType,
 }: {
   supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
   batchIds: string[];
   fallbackFileHash?: string | null;
   fallbackFileName?: string | null;
+  reportType: VmsReportType;
 }): Promise<ExistingOrderDetailsDashboardSourceCandidate[]> {
   const uniqueBatchIds = [...new Set(batchIds.map((value) => String(value ?? "").trim()).filter(Boolean))];
   const candidateRows: ExistingOrderDetailsDashboardSourceCandidate["batch"][] = [];
@@ -945,7 +964,7 @@ async function loadExistingOrderDetailsDashboardSourceCandidates({
   if (uniqueBatchIds.length) {
     const { data: batches, error } = await supabase
     .from("vms_import_batches")
-    .select("id, file_name, original_file_name, status, is_active, deleted_at, imported_at, updated_at")
+    .select("id, file_name, original_file_name, report_type, status, is_active, deleted_at, imported_at, updated_at")
     .in("id", uniqueBatchIds);
 
     if (error) {
@@ -961,8 +980,8 @@ async function loadExistingOrderDetailsDashboardSourceCandidates({
   if ((!candidateRows.length || candidateRows.every((batch) => !batch.id)) && fallbackFileHash) {
     const { data: hashMatches, error: hashError } = await supabase
       .from("vms_import_batches")
-      .select("id, file_name, original_file_name, status, is_active, deleted_at, imported_at, updated_at")
-      .eq("report_type", "vms_order_details_weekly")
+      .select("id, file_name, original_file_name, report_type, status, is_active, deleted_at, imported_at, updated_at")
+      .eq("report_type", reportType)
       .eq("file_hash", fallbackFileHash);
     if (hashError) {
       console.warn("[vms-import] Could not load duplicate Order Details batches by file hash", {
@@ -978,13 +997,13 @@ async function loadExistingOrderDetailsDashboardSourceCandidates({
     const [fileNameMatches, originalFileNameMatches] = await Promise.all([
       supabase
         .from("vms_import_batches")
-        .select("id, file_name, original_file_name, status, is_active, deleted_at, imported_at, updated_at")
-        .eq("report_type", "vms_order_details_weekly")
+        .select("id, file_name, original_file_name, report_type, status, is_active, deleted_at, imported_at, updated_at")
+        .eq("report_type", reportType)
         .eq("file_name", fallbackFileName),
       supabase
         .from("vms_import_batches")
-        .select("id, file_name, original_file_name, status, is_active, deleted_at, imported_at, updated_at")
-        .eq("report_type", "vms_order_details_weekly")
+        .select("id, file_name, original_file_name, report_type, status, is_active, deleted_at, imported_at, updated_at")
+        .eq("report_type", reportType)
         .eq("original_file_name", fallbackFileName),
     ]);
 
@@ -1732,10 +1751,10 @@ async function runVmsImport({
     return;
   }
 
-  const orderDetailsRange = reportType === "vms_order_details_weekly" ? detectOrderDetailsDateRange(rows) : { start: "", end: "" };
-  const effectiveReportStartDate = reportType === "vms_order_details_weekly" ? (reportStartDate || orderDetailsRange.start || null) : reportStartDate;
-  const effectiveReportEndDate = reportType === "vms_order_details_weekly" ? (reportEndDate || orderDetailsRange.end || null) : reportEndDate;
-  const effectiveImportMode = reportType === "vms_order_details_weekly" ? VMS_IMPORT_MODES.APPEND_NEW : importMode;
+  const orderDetailsRange = reportType === "monthly_transaction_details" ? detectMonthlyTransactionDateRange(rows) : reportType === "vms_order_details_weekly" ? detectOrderDetailsDateRange(rows) : { start: "", end: "" };
+  const effectiveReportStartDate = isTransactionDetailsReportType(reportType) ? (reportStartDate || orderDetailsRange.start || null) : reportStartDate;
+  const effectiveReportEndDate = isTransactionDetailsReportType(reportType) ? (reportEndDate || orderDetailsRange.end || null) : reportEndDate;
+  const effectiveImportMode = isTransactionDetailsReportType(reportType) ? VMS_IMPORT_MODES.APPEND_NEW : importMode;
 
   const summary: ImportSummary = {
     reportType,
@@ -1767,7 +1786,7 @@ async function runVmsImport({
     errors: [],
     columnMapping,
     salesReportPeriod,
-    orderDetailsReportPeriod: reportType === "vms_order_details_weekly" && effectiveReportStartDate && effectiveReportEndDate
+    orderDetailsReportPeriod: isTransactionDetailsReportType(reportType) && effectiveReportStartDate && effectiveReportEndDate
       ? { reportStartDate: effectiveReportStartDate, reportEndDate: effectiveReportEndDate }
       : null,
     successfulSalesRows: 0,
@@ -2116,7 +2135,7 @@ async function runVmsImport({
     let mapping: any = null;
     let productId: string | null = null;
     let productNeedsMapping = false;
-    const allowUnmappedOrderDetails = reportType === "vms_order_details_weekly" || reportType === "monthly_product_profit";
+    const allowUnmappedOrderDetails = isTransactionDetailsReportType(reportType) || reportType === "monthly_product_profit";
 
     if (reportRequiresProduct(reportType)) {
       if (!productLabel) {
@@ -2324,29 +2343,29 @@ async function runVmsImport({
       continue;
     }
 
-    if (reportType === "vms_order_details_weekly") {
-      const transactionStatus = orderDetailsTransactionStatus(row);
-      const rawPaymentAmount = orderDetailsPaymentAmount(row);
-      const paymentAmount = rawPaymentAmount === null ? null : Math.max(0, rawPaymentAmount);
-      const grossSalesAmount = Math.max(0, orderDetailsGrossSalesAmount(row) ?? 0);
-      const amountForSummary = paymentAmount ?? grossSalesAmount;
-      const quantity = orderDetailsQuantity(row);
-      const duplicateHash = createVmsOrderDetailsDuplicateHash(row);
-      const businessDate = orderDetailsBusinessDate(row);
-      const paymentTime = orderDetailsDate(orderDetailsValue(row, orderDetailsAliases.paymentTime));
-      const deliveryTime = orderDetailsDate(orderDetailsValue(row, orderDetailsAliases.deliveryTime));
-      const refundTime = orderDetailsDate(orderDetailsValue(row, orderDetailsAliases.refundTime));
+    if (reportType === "monthly_transaction_details") {
+      const transactionStatus = monthlyTransactionTransactionStatus(row);
+      const paymentAmount = monthlyTransactionPaymentAmount(row);
+      const refundAmount = monthlyTransactionRefundAmount(row);
+      const salesPrice = monthlyTransactionSalesPrice(row);
+      const quantity = monthlyTransactionQuantity(row);
+      const duplicateHash = createVmsMonthlyTransactionDuplicateHash(row);
+      const businessDate = monthlyTransactionBusinessDate(row);
+      const paymentTime = monthlyTransactionPaymentTime(row);
+      const refundTime = monthlyTransactionRefundTime(row);
+      const amountForSummary = transactionStatus === "refunded" && refundAmount > 0 ? refundAmount : paymentAmount ?? salesPrice ?? 0;
+      const paymentAmountForRow = transactionStatus === "refunded" && refundAmount > 0 ? refundAmount : paymentAmount;
       const importWarnings: string[] = [];
 
       if (!identifier) {
         importWarnings.push("missing machine id");
       } else if (!machine) {
-        importWarnings.push(`unknown machine: ${identifier}`);
+        importWarnings.push("unknown machine: " + identifier);
       }
       if (!productLabel) {
         importWarnings.push("missing product identifier or name");
       } else if (productNeedsMapping || !productId) {
-        importWarnings.push(`unknown product: ${productLabel}`);
+        importWarnings.push("unknown product: " + productLabel);
       }
 
       if (transactionStatus === "successful_sale") {
@@ -2367,27 +2386,27 @@ async function runVmsImport({
       transactionRawRows.push({
         import_batch_id: batch.id,
         row_number: rowNumber,
-        merchant_id: orderDetailsValue(row, orderDetailsAliases.merchantId) || null,
-        merchant_name: orderDetailsValue(row, orderDetailsAliases.merchantName) || null,
-        machine_code: orderDetailsValue(row, orderDetailsAliases.machineCode) || identifier || null,
-        machine_name: orderDetailsValue(row, orderDetailsAliases.machineName) || machine?.name || null,
-        order_number: orderDetailsValue(row, orderDetailsAliases.orderNumber) || null,
-        cargo_lane_number: orderDetailsValue(row, orderDetailsAliases.cargoLaneNumber) || null,
-        product_number: orderDetailsValue(row, orderDetailsAliases.productNumber) || vmsProductId || null,
-        vms_product_name: orderDetailsValue(row, orderDetailsAliases.productName) || productNameForMapping || null,
-        commodity_price_1: orderDetailsNumber(orderDetailsValue(row, orderDetailsAliases.commodityPrice1)),
-        commodity_price_2: orderDetailsNumber(orderDetailsValue(row, orderDetailsAliases.commodityPrice2)),
-        discounted_price: orderDetailsNumber(orderDetailsValue(row, orderDetailsAliases.discountedPrice)),
-        delivery_time: deliveryTime?.toISOString() ?? null,
-        shipping_status: orderDetailsValue(row, orderDetailsAliases.shippingStatus) || null,
-        purchaser: orderDetailsValue(row, orderDetailsAliases.purchaser) || null,
+        merchant_id: monthlyTransactionValue(row, monthlyTransactionAliases.merchantId) || null,
+        merchant_name: monthlyTransactionValue(row, monthlyTransactionAliases.merchantName) || null,
+        machine_code: monthlyTransactionValue(row, monthlyTransactionAliases.machineCode) || identifier || null,
+        machine_name: monthlyTransactionValue(row, monthlyTransactionAliases.machineName) || machine?.name || null,
+        order_number: monthlyTransactionValue(row, monthlyTransactionAliases.thirdPartyOrderNo) || monthlyTransactionValue(row, monthlyTransactionAliases.thirdPartyTransaction) || null,
+        cargo_lane_number: monthlyTransactionValue(row, monthlyTransactionAliases.cargoLane) || null,
+        product_number: monthlyTransactionValue(row, monthlyTransactionAliases.productNumber) || vmsProductId || null,
+        vms_product_name: monthlyTransactionValue(row, monthlyTransactionAliases.productName) || productNameForMapping || null,
+        commodity_price_1: salesPrice,
+        commodity_price_2: null,
+        discounted_price: salesPrice,
+        delivery_time: refundTime?.toISOString() ?? paymentTime?.toISOString() ?? null,
+        shipping_status: monthlyTransactionValue(row, monthlyTransactionAliases.modeOfPayment) || null,
+        purchaser: monthlyTransactionValue(row, monthlyTransactionAliases.logicCardNumber) || null,
         refund_time: refundTime?.toISOString() ?? null,
-        remarks: orderDetailsValue(row, orderDetailsAliases.remarks) || null,
-        refund_status: orderDetailsValue(row, orderDetailsAliases.refundStatus) || null,
-        third_party_transaction_number: orderDetailsValue(row, orderDetailsAliases.thirdPartyTransactionNumber) || null,
-        third_party_order_no: orderDetailsValue(row, orderDetailsAliases.thirdPartyOrderNo) || null,
-        payment_amount: paymentAmount,
-        payment_time: paymentTime?.toISOString() ?? null,
+        remarks: monthlyTransactionValue(row, monthlyTransactionAliases.transactionStatus) || monthlyTransactionValue(row, monthlyTransactionAliases.modeOfPayment) || null,
+        refund_status: monthlyTransactionValue(row, monthlyTransactionAliases.transactionStatus) || null,
+        third_party_transaction_number: monthlyTransactionValue(row, monthlyTransactionAliases.thirdPartyTransaction) || null,
+        third_party_order_no: monthlyTransactionValue(row, monthlyTransactionAliases.thirdPartyOrderNo) || null,
+        payment_amount: paymentAmountForRow,
+        payment_time: paymentTime?.toISOString() ?? refundTime?.toISOString() ?? null,
         business_date: businessDate,
         quantity,
         raw_row: originalRow,
@@ -2410,7 +2429,7 @@ async function runVmsImport({
       continue;
     }
 
-    if (reportType === "planogram") {
+    if (reportType === "vms_order_details_weekly") {
       const slotCode = value(row, ["slot_code", "slot", "slot_no", "selection", "selection_code", "selection_no", "tray", "tray_code", "channel", "channel_no", "coil"]);
       if (!slotCode) {
         const reason = "missing slot/selection code.";
@@ -2773,7 +2792,7 @@ async function runVmsImport({
     }
   }
 
-  if (transactionRawRows.length && !fatalImportError && isReprocess && reportType === "vms_order_details_weekly") {
+  if (transactionRawRows.length && !fatalImportError && isReprocess && isTransactionDetailsReportType(reportType)) {
     const { error } = await supabase
       .from("vms_transactions_raw")
       .delete()
@@ -2841,7 +2860,7 @@ async function runVmsImport({
       const { data: duplicateBatches, error: duplicateBatchError } = duplicateBatchIds.length
         ? await supabase
           .from("vms_import_batches")
-          .select("id, file_name, original_file_name, status, is_active, deleted_at, imported_at, updated_at")
+          .select("id, file_name, original_file_name, report_type, status, is_active, deleted_at, imported_at, updated_at")
           .in("id", duplicateBatchIds)
         : { data: [], error: null };
 
@@ -3139,7 +3158,7 @@ async function runVmsImport({
   const persistedStockSummary = isMachineStockReport(reportType)
     ? await loadPersistedStockSnapshotBatchSummary({ supabase, batchId: batch.id })
     : null;
-  const persistedOrderDetailsSummary = reportType === "vms_order_details_weekly"
+  const persistedOrderDetailsSummary = isTransactionDetailsReportType(reportType)
     ? await loadPersistedOrderDetailsBatchSummary({ supabase, batchId: batch.id })
     : null;
   if (persistedStockSummary?.error) {
@@ -3173,7 +3192,7 @@ async function runVmsImport({
   const attemptedImportedRows = summary.importedRows;
   const effectiveImportedRows = isMachineStockReport(reportType)
     ? (persistedImportedRowCount > 0 ? persistedImportedRowCount : summary.importedRows)
-    : reportType === "vms_order_details_weekly"
+    : isTransactionDetailsReportType(reportType)
       ? persistedOrderDetailsRowCount
       : summary.importedRows;
   const hasPersistedOrderDetailsRows = persistedOrderDetailsRowCount > 0;
@@ -3183,7 +3202,7 @@ async function runVmsImport({
   const orderDetailsFailedPaymentRowsForMetadata = hasPersistedOrderDetailsRows ? (persistedOrderDetailsSummary?.failedPaymentRowsCount ?? 0) : parsedOrderDetailsFailedPaymentRows;
   const orderDetailsNeedsReviewRowsForMetadata = hasPersistedOrderDetailsRows ? (persistedOrderDetailsSummary?.needsReviewRowsCount ?? 0) : parsedOrderDetailsNeedsReviewRows;
   const orderDetailsTotalSuccessfulSalesForMetadata = hasPersistedOrderDetailsRows ? persistedOrderDetailsTotalSuccessfulSales : parsedOrderDetailsTotalSuccessfulSales;
-  if (reportType === "vms_order_details_weekly") {
+  if (isTransactionDetailsReportType(reportType)) {
     summary.importedRows = effectiveImportedRows;
     summary.successfulSalesRows = orderDetailsSuccessfulRowsForMetadata;
     summary.failedVendRows = orderDetailsFailedVendRowsForMetadata;
@@ -3201,7 +3220,7 @@ async function runVmsImport({
     summary.failedTargets = Array.from(new Set([...summary.failedTargets, "Import metadata"]));
     summary.resultMessage = "Stock snapshot rows were saved and auto-activated for route recommendations.";
   }
-  const missingPersistedOrderDetailsRows = reportType === "vms_order_details_weekly"
+  const missingPersistedOrderDetailsRows = isTransactionDetailsReportType(reportType)
     && attemptedImportedRows > 0
     && effectiveImportedRows <= 0;
   if (missingPersistedOrderDetailsRows) {
@@ -3210,17 +3229,18 @@ async function runVmsImport({
     summary.failedTargets = Array.from(new Set([...summary.failedTargets, "Sales dashboard"]));
     summary.resultMessage = transactionSaveError;
   }
-  const duplicateOnlyOrderDetailsReupload = reportType === "vms_order_details_weekly"
+  const duplicateOnlyOrderDetailsReupload = isTransactionDetailsReportType(reportType)
     && !fatalImportError
     && effectiveImportedRows <= 0
     && attemptedImportedRows <= 0
     && summary.rowsSkippedDuplicate > 0;
   if (duplicateOnlyOrderDetailsReupload) {
-    const dashboardSourceCandidates = await loadExistingOrderDetailsDashboardSourceCandidates({
+        const dashboardSourceCandidates = await loadExistingOrderDetailsDashboardSourceCandidates({
       supabase,
       batchIds: [...existingExternalDuplicateBatchIds],
       fallbackFileHash: fileHash,
       fallbackFileName: fileName,
+      reportType,
     });
     const dashboardSourceCandidate = pickBestOrderDetailsDashboardSourceCandidate(dashboardSourceCandidates);
 
@@ -3284,6 +3304,7 @@ async function runVmsImport({
           rowsFound: dashboardSourceCandidate.summary.rowCount,
           rowCount: dashboardSourceCandidate.summary.rowCount,
           rowsImported: dashboardSourceCandidate.summary.rowCount,
+          reportType,
           reportStartDate: dashboardSourceCandidate.summary.businessDateStart,
           reportEndDate: dashboardSourceCandidate.summary.businessDateEnd,
           detectedMinDatetime: dashboardSourceCandidate.summary.detectedMinDatetime,
@@ -3330,31 +3351,31 @@ async function runVmsImport({
     ? "failed"
     : isMachineStockReport(reportType) && effectiveImportedRows > 0
       ? "imported"
-      : reportType === "vms_order_details_weekly"
+      : isTransactionDetailsReportType(reportType)
         ? (effectiveImportedRows > 0 || duplicateOnlyOrderDetailsReupload ? "imported" : "failed")
         : importResult.status;
   const detectedMinDatetime = isMachineStockReport(reportType)
     ? (persistedStockSummary?.detectedMinDatetime ?? stockDetectedMinDatetime ?? stockFallbackTimestamp)
-    : reportType === "vms_order_details_weekly"
+    : isTransactionDetailsReportType(reportType)
       ? (persistedOrderDetailsSummary?.detectedMinDatetime ?? (effectiveReportStartDate ? startOfDateIso(effectiveReportStartDate) : null))
     : (effectiveReportStartDate ? startOfDateIso(effectiveReportStartDate) : null);
   const detectedMaxDatetime = isMachineStockReport(reportType)
     ? (persistedStockSummary?.detectedMaxDatetime ?? stockDetectedMaxDatetime ?? stockFallbackTimestamp)
-    : reportType === "vms_order_details_weekly"
+    : isTransactionDetailsReportType(reportType)
       ? (persistedOrderDetailsSummary?.detectedMaxDatetime ?? (effectiveReportEndDate ? endOfDateIso(effectiveReportEndDate) : null))
     : (effectiveReportEndDate ? endOfDateIso(effectiveReportEndDate) : null);
   const latestErrorText = status === "imported"
     ? null
     : (summary.errors.length ? summary.errors.join("; ").slice(0, 2000) : null);
-  const finalizedReportStartDate = reportType === "vms_order_details_weekly"
+  const finalizedReportStartDate = isTransactionDetailsReportType(reportType)
     ? (persistedOrderDetailsBusinessDateStart ?? effectiveReportStartDate)
     : effectiveReportStartDate;
-  const finalizedReportEndDate = reportType === "vms_order_details_weekly"
+  const finalizedReportEndDate = isTransactionDetailsReportType(reportType)
     ? (persistedOrderDetailsBusinessDateEnd ?? effectiveReportEndDate)
     : effectiveReportEndDate;
   const batchUpdate = {
     status,
-    is_active: fatalImportError ? false : (isMachineStockReport(reportType) || reportType === "vms_order_details_weekly" ? effectiveImportedRows > 0 : importResult.active),
+    is_active: fatalImportError ? false : (isMachineStockReport(reportType) || isTransactionDetailsReportType(reportType) ? effectiveImportedRows > 0 : importResult.active),
     imported_by: profile.team_member_id ?? profile.id ?? null,
     imported_at: new Date().toISOString(),
     report_type: finalizedReportType,
@@ -3375,18 +3396,18 @@ async function runVmsImport({
     storage_path: storagePath,
     detected_min_datetime: detectedMinDatetime,
     detected_max_datetime: detectedMaxDatetime,
-    total_successful_sales: reportType === "vms_order_details_weekly"
+    total_successful_sales: isTransactionDetailsReportType(reportType)
       ? orderDetailsTotalSuccessfulSalesForMetadata
       : effectiveImportedRows > 0
         ? summary.estimatedSuccessfulSales ?? 0
         : 0,
-    successful_rows_count: reportType === "vms_order_details_weekly"
+    successful_rows_count: isTransactionDetailsReportType(reportType)
       ? orderDetailsSuccessfulRowsForMetadata
       : effectiveImportedRows,
-    failed_rows_count: reportType === "vms_order_details_weekly"
+    failed_rows_count: isTransactionDetailsReportType(reportType)
       ? (orderDetailsFailedVendRowsForMetadata + orderDetailsFailedPaymentRowsForMetadata + orderDetailsNeedsReviewRowsForMetadata)
       : 0,
-    refunded_rows_count: reportType === "vms_order_details_weekly"
+    refunded_rows_count: isTransactionDetailsReportType(reportType)
       ? orderDetailsRefundedRowsForMetadata
       : summary.refundedRows ?? 0,
     rows_imported: effectiveImportedRows,
@@ -3483,7 +3504,7 @@ async function runVmsImport({
     const metadataWarning = `Imported data was preserved, but final batch metadata could not update: ${batchMutationErrorMessage(finalUpdateProblem)}`;
     summary.errors.push(metadataWarning);
     summary.failedTargets = Array.from(new Set([...summary.failedTargets, "Import metadata"]));
-    summary.resultMessage = reportType === "vms_order_details_weekly"
+    summary.resultMessage = isTransactionDetailsReportType(reportType)
       ? "Detailed Order Details rows were saved. Snacky OS repaired the batch state from the imported rows."
       : "Imported data was preserved. Some metadata could not update.";
     const metadataFallbackUpdate = await runVmsImportBatchMutationWithMetadataFallback({
@@ -3555,7 +3576,7 @@ async function runVmsImport({
     detectedMinDatetime,
     detectedMaxDatetime,
   });
-  if (!orderDetailsBatchUsable && reportType === "vms_order_details_weekly" && effectiveImportedRows > 0) {
+  if (!orderDetailsBatchUsable && isTransactionDetailsReportType(reportType) && effectiveImportedRows > 0) {
     errorRedirect("Detailed Order Details rows were saved, but Snacky OS could not finalize the batch metadata automatically. Use Finalize file from the batch page.");
     return;
   }
@@ -3972,6 +3993,7 @@ async function activateOrderDetailsBatchWithCoreMetadata({
   rowsFound,
   rowCount,
   rowsImported,
+  reportType,
   reportStartDate = null,
   reportEndDate = null,
   detectedMinDatetime = null,
@@ -3987,6 +4009,7 @@ async function activateOrderDetailsBatchWithCoreMetadata({
   rowsFound: number;
   rowCount: number;
   rowsImported: number;
+  reportType: VmsReportType;
   reportStartDate?: string | null;
   reportEndDate?: string | null;
   detectedMinDatetime?: string | null;
@@ -4000,7 +4023,7 @@ async function activateOrderDetailsBatchWithCoreMetadata({
   const corePayload = {
     status: "imported",
     is_active: true,
-    report_type: "vms_order_details_weekly",
+    report_type: reportType,
     imported_by: actorId,
     imported_at: now,
     updated_at: now,
@@ -4096,10 +4119,12 @@ async function findActiveOrderDetailsRestoreConflict({
   supabase,
   batchId,
   batch,
+  reportType,
 }: {
   supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>;
   batchId: string;
   batch: Record<string, unknown>;
+  reportType: VmsReportType;
 }) {
   const fileHash = textValue(batch.file_hash);
   const reportStartDate = textValue(batch.report_start_date);
@@ -4107,7 +4132,7 @@ async function findActiveOrderDetailsRestoreConflict({
   let query = supabase
     .from("vms_import_batches")
     .select("id, file_name, original_file_name, file_hash, status, is_active, deleted_at, report_start_date, report_end_date")
-    .eq("report_type", "vms_order_details_weekly")
+    .eq("report_type", reportType)
     .neq("id", batchId)
     .in("status", ["imported", "imported_with_warnings", "partially_imported"])
     .eq("is_active", true)
@@ -4151,7 +4176,7 @@ async function ensureConfirmedOrderDetailsImportBatchIsUsable({
   detectedMinDatetime: string | null;
   detectedMaxDatetime: string | null;
 }) {
-  if (reportType !== "vms_order_details_weekly") return true;
+  if (!isTransactionDetailsReportType(reportType)) return true;
 
   const persistedOrderDetailsSummary = await loadPersistedOrderDetailsBatchSummary({ supabase, batchId });
   if (persistedOrderDetailsSummary.error) {
@@ -4210,10 +4235,10 @@ async function ensureConfirmedOrderDetailsImportBatchIsUsable({
     is_active: true,
     imported_by: actorId,
     imported_at: now,
-    report_type: "vms_order_details_weekly",
+    report_type: reportType,
     updated_at: now,
-    source_usage: vmsSourceUsage("vms_order_details_weekly"),
-    dashboard_usage: vmsSourceUsage("vms_order_details_weekly"),
+    source_usage: vmsSourceUsage(reportType),
+    dashboard_usage: vmsSourceUsage(reportType),
     rows_found: rowsFound,
     row_count: rowCount,
     rows_imported: effectiveImportedRows,
@@ -4288,6 +4313,7 @@ async function ensureConfirmedOrderDetailsImportBatchIsUsable({
       rowsFound,
       rowCount,
       rowsImported: effectiveImportedRows,
+      reportType,
       reportStartDate,
       reportEndDate,
       detectedMinDatetime,
@@ -4385,11 +4411,11 @@ function previewDebugContext({
 }
 
 function detectPreviewImportDateRange(parsed: { sheets: VmsPreviewSheetPayload[] }, reportType: VmsReportType) {
-  if (reportType !== "vms_order_details_weekly") return { start: null as string | null, end: null as string | null };
+  if (reportType !== "monthly_transaction_details" && reportType !== "vms_order_details_weekly") return { start: null as string | null, end: null as string | null };
 
   for (const sheet of parsed.sheets) {
     const records = sheetRowsToRecords(sheet.rows, { reportType }).records;
-    const range = detectOrderDetailsDateRange(records);
+    const range = reportType === "monthly_transaction_details" ? detectMonthlyTransactionDateRange(records) : detectOrderDetailsDateRange(records);
     if (range.start && range.end) return { start: range.start, end: range.end };
   }
 
@@ -4772,7 +4798,7 @@ export async function prepareVmsImport(formData: FormData) {
   const storageBucket = "vms-imports";
   const storagePath = `${profile.team_member_id ?? profile.id ?? "unknown"}/${Date.now()}-${fileHash.slice(0, 12)}-${safeStorageFileName(file.name)}`;
   let savedStoragePath: string | null = null;
-  if (reportType !== "vms_order_details_weekly") {
+  if (!isTransactionDetailsReportType(reportType)) {
     console.info("[vms-import] Original file storage skipped for fast preview", {
       queryName: "storage.vms_imports.upload.skipped",
       fileName: file.name,
@@ -5026,7 +5052,7 @@ export async function completeVmsImport(formData: FormData) {
   const autoCreateMissingProducts = booleanOption(formData.get("auto_create_products"), true);
   const updateCostFromVms = booleanOption(formData.get("update_cost_from_vms"), false);
   const importMode = parseVmsImportMode(formData.get("import_mode"));
-  const effectiveImportMode = reportType === "vms_order_details_weekly" ? VMS_IMPORT_MODES.APPEND_NEW : importMode;
+  const effectiveImportMode = isTransactionDetailsReportType(reportType) ? VMS_IMPORT_MODES.APPEND_NEW : importMode;
   const submittedReportStartDate = String(formData.get("report_start_date") || "").trim() || null;
   const submittedReportEndDate = String(formData.get("report_end_date") || "").trim() || null;
   const submittedImportBatchId = String(formData.get("import_batch_id") || formData.get("importBatchId") || "").trim() || undefined;
@@ -5149,8 +5175,9 @@ export async function completeVmsImport(formData: FormData) {
   if (reportType === "sales" && !salesReportPeriod && !hasSalesRowDate(rows)) {
     await previewRedirect(formData, previewId, sheet.name, reportType, VMS_SALES_DATE_RANGE_ERROR, headerRowIndex, previewBatchId);
   }
-  const resolvedReportStartDate = submittedReportStartDate ?? salesReportPeriod?.reportStartDate ?? null;
-  const resolvedReportEndDate = submittedReportEndDate ?? salesReportPeriod?.reportEndDate ?? null;
+  const monthlyTransactionReportPeriod = reportType === "monthly_transaction_details" ? findMonthlyTransactionReportPeriod(sheet.rows, headerRowIndex) : null;
+  const resolvedReportStartDate = submittedReportStartDate ?? salesReportPeriod?.reportStartDate ?? monthlyTransactionReportPeriod?.reportStartDate ?? null;
+  const resolvedReportEndDate = submittedReportEndDate ?? salesReportPeriod?.reportEndDate ?? monthlyTransactionReportPeriod?.reportEndDate ?? null;
   if (reportType === "monthly_product_profit" && (!resolvedReportStartDate || !resolvedReportEndDate)) {
     redirect(`/vms-import?error=${encodeURIComponent("Select the report start and end date for the Monthly Profit Report.")}`);
     return;
@@ -5520,6 +5547,7 @@ async function ensureConfirmedStockImportBatchIsUsable({
       rowsFound: Math.max(summary.rowsFound, effectiveImportedRows),
       rowCount: Math.max(summary.rowsFound, summary.totalRows, effectiveImportedRows),
       rowsImported: effectiveImportedRows,
+      reportType,
       detectedMinDatetime: repairedDetectedMinDatetime,
       detectedMaxDatetime: repairedDetectedMaxDatetime,
     });
@@ -5562,7 +5590,7 @@ async function finalizeDetailedOrderDetailsImportBatch({
   batch: Record<string, unknown>;
 }) {
   const reportType = parseReportType(textValue(batch.report_type) || null);
-  if (reportType !== "vms_order_details_weekly") {
+  if (!isTransactionDetailsReportType(reportType)) {
     redirect(`/vms-import/${batchId}?error=${encodeURIComponent("Only detailed Order Details imports can be finalized from saved rows.")}`);
   }
   if (!isOwnerAdminRole(profile)) {
@@ -5604,10 +5632,10 @@ async function finalizeDetailedOrderDetailsImportBatch({
     is_active: true,
     imported_by: actorId,
     imported_at: now,
-    report_type: "vms_order_details_weekly",
+    report_type: reportType,
     updated_at: now,
-    source_usage: vmsSourceUsage("vms_order_details_weekly"),
-    dashboard_usage: vmsSourceUsage("vms_order_details_weekly"),
+    source_usage: vmsSourceUsage(reportType),
+    dashboard_usage: vmsSourceUsage(reportType),
     rows_found: rowsFound,
     row_count: rowCount,
     rows_imported: persistedSummary.rowCount,
@@ -5684,6 +5712,7 @@ async function finalizeDetailedOrderDetailsImportBatch({
       rowsFound,
       rowCount,
       rowsImported: persistedSummary.rowCount,
+      reportType,
       reportStartDate: persistedSummary.businessDateStart || textValue(batch.report_start_date) || null,
       reportEndDate: persistedSummary.businessDateEnd || textValue(batch.report_end_date) || persistedSummary.businessDateStart || null,
       detectedMinDatetime: persistedSummary.detectedMinDatetime || textValue(batch.detected_min_datetime) || null,
@@ -6092,13 +6121,14 @@ export async function updateVmsImportBatchState(formData: FormData) {
   const now = new Date().toISOString();
   const beforeReportType = parseReportType(textValue(beforeBatch.report_type) || null);
   const shouldCheckOrderDetailsRestoreConflict = (action === "enable" || action === "restore")
-    && beforeReportType === "vms_order_details_weekly"
+    && isTransactionDetailsReportType(beforeReportType)
     && (String(beforeBatch.status ?? "") === "deleted" || beforeBatch.is_active === false || Boolean(beforeBatch.deleted_at));
   if (shouldCheckOrderDetailsRestoreConflict) {
     const restoreConflictResult = await findActiveOrderDetailsRestoreConflict({
       supabase,
       batchId,
       batch: objectRecord(beforeBatch),
+      reportType: beforeReportType,
     });
     if (restoreConflictResult && "error" in restoreConflictResult && restoreConflictResult.error) {
       console.error("[vms-import] Order Details restore conflict lookup failed", {
@@ -6126,7 +6156,7 @@ export async function updateVmsImportBatchState(formData: FormData) {
     };
     activitySummary = `Disabled VMS import ${beforeBatch.file_name ?? batchId}`;
   } else if (action === "finalize_import") {
-    if (beforeReportType === "vms_order_details_weekly") {
+    if (isTransactionDetailsReportType(beforeReportType)) {
       await finalizeDetailedOrderDetailsImportBatch({
         supabase,
         profile,
@@ -6151,20 +6181,22 @@ export async function updateVmsImportBatchState(formData: FormData) {
       profile,
       batchId,
       batch: objectRecord(beforeBatch),
+      reportType: beforeReportType,
     });
     return;
   } else if ((action === "enable" || action === "restore")
-    && beforeReportType === "vms_order_details_weekly"
+    && isTransactionDetailsReportType(beforeReportType)
     && String(beforeBatch.status ?? "") !== "deleted") {
     await finalizeDetailedOrderDetailsImportBatch({
       supabase,
       profile,
       batchId,
       batch: objectRecord(beforeBatch),
+      reportType: beforeReportType,
     });
     return;
   } else if ((action === "enable" || action === "restore")
-    && beforeReportType === "vms_order_details_weekly"
+    && isTransactionDetailsReportType(beforeReportType)
     && String(beforeBatch.status ?? "") === "deleted") {
     const persistedSummary = await loadPersistedOrderDetailsBatchSummary({ supabase, batchId });
     const restoredRows = persistedSummary.rowCount > 0
@@ -6178,6 +6210,7 @@ export async function updateVmsImportBatchState(formData: FormData) {
       rowsFound: persistedSummary.rowCount > 0 ? persistedSummary.rowCount : wholeNumberValue(beforeBatch.rows_found ?? beforeBatch.row_count),
       rowCount: persistedSummary.rowCount > 0 ? persistedSummary.rowCount : wholeNumberValue(beforeBatch.rows_found ?? beforeBatch.row_count),
       rowsImported: restoredRows,
+      reportType: beforeReportType,
       reportStartDate: persistedSummary.businessDateStart || textValue(beforeBatch.report_start_date) || null,
       reportEndDate: persistedSummary.businessDateEnd || textValue(beforeBatch.report_end_date) || persistedSummary.businessDateStart || null,
       detectedMinDatetime: persistedSummary.detectedMinDatetime || textValue(beforeBatch.detected_min_datetime) || null,
@@ -6475,7 +6508,7 @@ async function loadDetailedOrderDetailsReplaySourceFromStoredFile({
   batch: SavedVmsImportBatchRow;
   reportType: NonNullable<ReturnType<typeof parseReportType>>;
 }): Promise<DetailedOrderDetailsReplaySource | null> {
-  if (reportType !== "vms_order_details_weekly") return null;
+  if (!isTransactionDetailsReportType(reportType)) return null;
   const storageBucket = String(batch.storage_bucket ?? "").trim();
   const storagePath = String(batch.storage_path ?? "").trim();
   const batchMapping = jsonRecord(batch.column_mapping);
