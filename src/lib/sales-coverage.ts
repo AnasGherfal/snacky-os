@@ -185,6 +185,7 @@ export function describeSalesDashboardNoDataState({
   coverageLabel,
   fileContributions,
   monthlyCoverageRows,
+  sourceReportType,
   sourceMode,
   selectedRange,
 }: {
@@ -193,6 +194,7 @@ export function describeSalesDashboardNoDataState({
   coverageLabel: string;
   fileContributions: SalesFileContribution[];
   monthlyCoverageRows: NormalizedSalesMonthlyCoverageRow[];
+  sourceReportType?: string | null;
   sourceMode: SalesDashboardSourceMode;
   selectedRange: { end: string; start: string };
 }): SalesCoverageState {
@@ -406,3 +408,6 @@ export function monthCoverageCoveredDays(
 
   return days;
 }
+
+
+

@@ -491,10 +491,21 @@ export function resolveSalesDashboardSourceReportType(batches: VmsDashboardBatch
   };
   const detailedInRange = activeDetailed.filter(overlaps);
   const monthlyProfitInRange = activeMonthlyProfit.filter(overlaps);
+  const monthlyTransactionInRange = detailedInRange.filter((batch) => batch.report_type === "monthly_transaction_details");
+  const orderDetailsInRange = detailedInRange.filter((batch) => batch.report_type === "vms_order_details_weekly");
+  const prefersMonthlyRollup = salesDashboardPrefersMonthlyProfitSource(range);
 
-  if (detailedInRange.some((batch) => batch.report_type === "monthly_transaction_details")) return "monthly_transaction_details";
-  if (detailedInRange.some((batch) => batch.report_type === "vms_order_details_weekly")) return "vms_order_details_weekly";
-  if (monthlyProfitInRange.length || (activeMonthlyProfit.length && salesDashboardPrefersMonthlyProfitSource(range))) return "monthly_product_profit";
+  if (prefersMonthlyRollup) {
+    if (monthlyTransactionInRange.length) return "monthly_transaction_details";
+    if (monthlyProfitInRange.length) return "monthly_product_profit";
+    if (orderDetailsInRange.length) return "vms_order_details_weekly";
+  } else {
+    if (orderDetailsInRange.length) return "vms_order_details_weekly";
+    if (monthlyTransactionInRange.length) return "monthly_transaction_details";
+    if (monthlyProfitInRange.length) return "monthly_product_profit";
+  }
+
+  if (prefersMonthlyRollup && activeMonthlyProfit.length) return "monthly_product_profit";
   if (activeDetailed.some((batch) => batch.report_type === "monthly_transaction_details")) return "monthly_transaction_details";
   if (activeDetailed.some((batch) => batch.report_type === "vms_order_details_weekly")) return "vms_order_details_weekly";
   return "monthly_product_profit";
@@ -1503,3 +1514,4 @@ export async function querySalesRangeReconciliationDiagnostics({
       .sort((left, right) => right.count - left.count),
   };
 }
+

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  resolveSalesDashboardSourceReportType,
+} from "../src/lib/sales-dashboard.ts";
+import {
   describeSalesCoverageState,
   describeSalesDashboardNoDataState,
   salesDashboardSourceLabel,
@@ -258,3 +261,64 @@ test("vms import status labels and actions stay file-oriented", () => {
   assert.equal(failedStatus.action, "reprocess");
   assert.equal(failedStatus.actionLabel, "Reprocess file");
 });
+
+test("sales dashboard source selection follows monthly and custom range priority", () => {
+  const monthlyTransaction = makeDashboardBatch({
+    id: "monthly-transaction-1",
+    report_type: "monthly_transaction_details",
+    report_start_date: "2026-05-01",
+    report_end_date: "2026-05-31",
+  });
+  const detailed = makeDashboardBatch({
+    id: "details-1",
+    report_type: "vms_order_details_weekly",
+    report_start_date: "2026-05-01",
+    report_end_date: "2026-05-08",
+  });
+  const monthlyProfit = makeDashboardBatch({
+    id: "profit-1",
+    report_type: "monthly_product_profit",
+    report_start_date: "2026-05-01",
+    report_end_date: "2026-05-31",
+  });
+
+  assert.equal(resolveSalesDashboardSourceReportType([monthlyProfit, detailed, monthlyTransaction], {
+    key: "month",
+    label: "May 2026",
+    helperText: "",
+    start: "2026-05-01",
+    end: "2026-05-31",
+    monthValue: "2026-05",
+    yearValue: "2026",
+    dateValue: "2026-05-31",
+    dateFromValue: "2026-05-01",
+    dateToValue: "2026-05-31",
+  }), "monthly_transaction_details");
+
+  assert.equal(resolveSalesDashboardSourceReportType([monthlyProfit, detailed, monthlyTransaction], {
+    key: "custom",
+    label: "May 1-8",
+    helperText: "",
+    start: "2026-05-01",
+    end: "2026-05-08",
+    monthValue: "2026-05",
+    yearValue: "2026",
+    dateValue: "2026-05-08",
+    dateFromValue: "2026-05-01",
+    dateToValue: "2026-05-08",
+  }), "vms_order_details_weekly");
+
+  assert.equal(resolveSalesDashboardSourceReportType([monthlyProfit, detailed], {
+    key: "month",
+    label: "May 2026",
+    helperText: "",
+    start: "2026-05-01",
+    end: "2026-05-31",
+    monthValue: "2026-05",
+    yearValue: "2026",
+    dateValue: "2026-05-31",
+    dateFromValue: "2026-05-01",
+    dateToValue: "2026-05-31",
+  }), "monthly_product_profit");
+});
+

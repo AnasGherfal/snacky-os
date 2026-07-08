@@ -127,7 +127,7 @@ function addDays(value: string, days: number) {
 }
 
 export function isActiveImportedVmsBatch(batch: VmsDashboardBatch) {
-  return ["imported", "imported_with_warnings", "partially_imported"].includes(String(batch.status ?? ""))
+  return ["imported", "imported_active", "needs_mapping_but_imported", "imported_with_warnings", "partially_imported"].includes(String(batch.status ?? ""))
     && batch.is_active !== false
     && !batch.deleted_at;
 }
@@ -320,3 +320,4 @@ export function stockSourceMessage(batches: VmsDashboardBatch[]) {
 export function batchUsageSummary(batch: VmsDashboardBatch | null | undefined) {
   return dashboardUsageNames(batch?.dashboard_usage, batch?.report_type);
 }
+

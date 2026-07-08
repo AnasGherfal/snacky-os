@@ -448,10 +448,8 @@ function salesContributionStatusLabel(status: string) {
 }
 
 function isFinalizedDetailedBatch(batch: VmsDashboardBatch) {
-  return batch.report_type === "vms_order_details_weekly"
-    && ["imported", "imported_with_warnings", "partially_imported"].includes(String(batch.status ?? ""))
-    && batch.is_active !== false
-    && !batch.deleted_at;
+  return ["vms_order_details_weekly", "monthly_transaction_details"].includes(String(batch.report_type ?? ""))
+    && isActiveImportedVmsBatch(batch);
 }
 
 function formatCoverageMonthLabel(value: string | null | undefined) {
@@ -615,6 +613,7 @@ function buildNoSalesState({
   coverageLabel,
   fileContributions,
   monthlyCoverageRows,
+  sourceReportType,
   sourceMode,
   selectedRange,
 }: {
@@ -623,6 +622,7 @@ function buildNoSalesState({
   coverageLabel: string;
   fileContributions: ReturnType<typeof buildSalesFileContributions>;
   monthlyCoverageRows: NormalizedSalesMonthlyCoverageRow[];
+  sourceReportType: string;
   sourceMode: SalesDashboardSourceMode;
   selectedRange: { end: string; start: string };
 }): SalesNoDataState {
@@ -632,7 +632,8 @@ function buildNoSalesState({
     coverageLabel,
     fileContributions,
     monthlyCoverageRows,
-
+    sourceReportType,
+    sourceMode,
     selectedRange,
   });
 }
@@ -820,7 +821,7 @@ async function SalesDashboardPageContent({
       filterMode: String(params.range ?? "default"),
       profileId,
       promise: queryVmsDashboardBatches(supabase, {
-        reportTypes: ["vms_order_details_weekly", "monthly_product_profit", "sales"],
+        reportTypes: ["monthly_transaction_details", "vms_order_details_weekly", "monthly_product_profit", "sales"],
         orderBy: "uploaded_at",
         ascending: false,
       }),
@@ -1289,7 +1290,8 @@ async function SalesDashboardPageContent({
     coverageLabel: finalizedCoverageLabel,
     fileContributions,
     monthlyCoverageRows,
-
+    sourceReportType,
+    sourceMode,
     selectedRange,
   });
   const dataStatusText = summaryLoadFailed || sourceLoadFailed
@@ -1832,3 +1834,7 @@ export default async function SalesDashboardPage({
     );
   }
 }
+
+
+
+
