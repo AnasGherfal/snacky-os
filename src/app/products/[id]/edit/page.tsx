@@ -8,6 +8,7 @@ import { DataTable, EmptyState, FormField, FormPageLayout, FormSection, PageHead
 import { logActivity } from "@/lib/activity-log";
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
+import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { resolveProductImageUrl } from "@/lib/product-images";
 import { isSkuDuplicateError } from "@/lib/product-sku";
 

@@ -28,7 +28,7 @@ import {
   type SalesDashboardBreakdownRow,
   type SalesDashboardSearchParams,
 } from "@/lib/sales-dashboard";
-import { describeSalesDashboardNoDataState, salesDashboardSourceLabel } from "@/lib/sales-coverage";
+import { describeSalesDashboardNoDataState, salesDashboardSourceLabel, type SalesCoverageStateKind } from "@/lib/sales-coverage";
 import {
   batchLastUpdatedAt,
   formatVmsDateTime,
@@ -218,7 +218,7 @@ type NormalizedSalesMonthlyCoverageRow = {
 
 type SalesNoDataState = {
   body: string;
-  kind: "summary_error" | "inactive_batch" | "missing_business_date" | "status_filtered" | "no_rows";
+  kind: SalesCoverageStateKind;
   label: string;
   title: string;
 };
@@ -1823,6 +1823,7 @@ export default async function SalesDashboardPage({
   } catch (error) {
     if (isNextNavigationSignal(error)) throw error;
     console.error("[sales] Page-level render guard caught an unexpected error", error);
+    const { t } = await getServerI18n();
     return (
       <>
         <PageHeader

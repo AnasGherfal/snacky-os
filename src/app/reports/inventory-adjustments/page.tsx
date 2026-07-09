@@ -1,8 +1,9 @@
 import Link from "next/link";
+import Link from "next/link";
 import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
-import { formatMachineDisplayName } from "@/lib/machine-site-display";
+import { formatMachineDisplayName, relationRecord } from "@/lib/machine-site-display";
 
 export const dynamic = "force-dynamic";
 
@@ -24,11 +25,11 @@ type InventoryAdjustmentReportRow = {
   machine_id: string | null;
   location_id: string | null;
   operator_id: string | null;
-  route?: { id?: string | null; route_date?: string | null } | null;
-  machine?: { id?: string | null; name?: string | null; machine_code?: string | null } | null;
-  location?: { id?: string | null; name?: string | null } | null;
-  operator?: { id?: string | null; full_name?: string | null } | null;
-  product?: { id?: string | null; name?: string | null; sku?: string | null } | null;
+  route?: { id?: string | null; route_date?: string | null }[] | null;
+  machine?: { id?: string | null; name?: string | null; machine_code?: string | null; location?: { id?: string | null; name?: string | null }[] | null }[] | null;
+  location?: { id?: string | null; name?: string | null }[] | null;
+  operator?: { id?: string | null; full_name?: string | null }[] | null;
+  product?: { id?: string | null; name?: string | null; sku?: string | null }[] | null;
 };
 
 function formatDateTime(value: string | null | undefined) {
@@ -106,7 +107,13 @@ export default async function InventoryAdjustmentsReportPage({
   }
 
   const search = String(params.q ?? "").trim().toLowerCase();
-  const rows = (data ?? []).filter((row: InventoryAdjustmentReportRow) => {
+  const rows = (data ?? []) as InventoryAdjustmentReportRow[];
+  const filteredRows = rows.filter((row) => {
+    const route = relationRecord(row.route);
+    const machine = relationRecord(row.machine);
+    const location = relationRecord(row.location);
+    const operator = relationRecord(row.operator);
+    const product = relationRecord(row.product);
     if (!search) return true;
     return [
       row.product_name,
@@ -114,19 +121,21 @@ export default async function InventoryAdjustmentsReportPage({
       row.notes,
       row.status,
       row.adjustment_type,
-      row.route?.route_date,
-      formatMachineDisplayName(row.machine ?? null, { includeArea: true }),
-      row.machine?.machine_code,
-      row.location?.name,
-      row.operator?.full_name,
+      route?.route_date,
+      formatMachineDisplayName(machine ?? null, { includeArea: true }),
+      machine?.machine_code,
+      location?.name,
+      operator?.full_name,
+      product?.name,
+      product?.sku,
     ]
       .map((value) => String(value ?? "").toLowerCase())
       .join(" ")
       .includes(search);
   });
 
-  const damagedRows = rows.filter((row) => row.adjustment_type === "damaged");
-  const returnedRows = rows.filter((row) => row.adjustment_type === "returned_from_machine");
+  const damagedRows = filteredRows.filter((row) => row.adjustment_type === "damaged");
+  const returnedRows = filteredRows.filter((row) => row.adjustment_type === "returned_from_machine");
   const damagedQuantity = damagedRows.reduce((sum, row) => sum + numberValue(row.quantity), 0);
   const returnedQuantity = returnedRows.reduce((sum, row) => sum + numberValue(row.quantity), 0);
   const damagedLoss = damagedRows.reduce((sum, row) => sum + numberValue(row.total_cost_lyd), 0);
@@ -182,35 +191,43 @@ export default async function InventoryAdjustmentsReportPage({
         </div>
       </section>
 
-      {!rows.length ? (
+      {!filteredRows.length ? (
         <EmptyState
           title="No inventory adjustments found"
           body="Damaged and returned products will appear here after operators save them during route execution."
         />
       ) : (
         <DataTable headers={["Created", "Type", "Product", "Qty", "Route", "Machine / Location", "Operator", "Reason", "Cost / Loss", "Status"]}>
-          {rows.map((row) => (
-            <tr key={row.id}>
-              <td>{formatDateTime(row.created_at)}</td>
-              <td><StatusBadge status={row.adjustment_type} /></td>
-              <td>
-                <div className="font-medium text-slate-900">{displayName(row.product_name ?? row.product?.name, "Unknown product")}</div>
-                {row.product?.sku ? <div className="text-xs text-slate-500">{row.product.sku}</div> : null}
-              </td>
-              <td>{numberValue(row.quantity)}</td>
-              <td>{row.route?.route_date ? `Route ${row.route.route_date}` : row.route_id ? `Route ${row.route_id.slice(0, 8)}` : "-"}</td>
-              <td>
-                <div className="font-medium text-slate-900">{formatMachineDisplayName(row.machine ?? null, { includeArea: true })}</div>
-                <div className="text-xs text-slate-500">
-                  {row.machine?.machine_code ?? row.location?.name ?? "Unknown location"}
-                </div>
-              </td>
-              <td>{displayName(row.operator?.full_name, "Unknown operator")}</td>
-              <td>{row.reason ?? "-"}</td>
-              <td>{currencyValue(row.total_cost_lyd)}</td>
-              <td><StatusBadge status={row.status} /></td>
-            </tr>
-          ))}
+          {filteredRows.map((row) => {
+            const route = relationRecord(row.route);
+            const machine = relationRecord(row.machine);
+            const location = relationRecord(row.location);
+            const operator = relationRecord(row.operator);
+            const product = relationRecord(row.product);
+
+            return (
+              <tr key={row.id}>
+                <td>{formatDateTime(row.created_at)}</td>
+                <td><StatusBadge status={row.adjustment_type} /></td>
+                <td>
+                  <div className="font-medium text-slate-900">{displayName(row.product_name ?? product?.name, "Unknown product")}</div>
+                  {product?.sku ? <div className="text-xs text-slate-500">{product.sku}</div> : null}
+                </td>
+                <td>{numberValue(row.quantity)}</td>
+                <td>{route?.route_date ? `Route ${route.route_date}` : row.route_id ? `Route ${row.route_id.slice(0, 8)}` : "-"}</td>
+                <td>
+                  <div className="font-medium text-slate-900">{formatMachineDisplayName(machine ?? null, { includeArea: true })}</div>
+                  <div className="text-xs text-slate-500">
+                    {machine?.machine_code ?? location?.name ?? "Unknown location"}
+                  </div>
+                </td>
+                <td>{displayName(operator?.full_name, "Unknown operator")}</td>
+                <td>{row.reason ?? "-"}</td>
+                <td>{currencyValue(row.total_cost_lyd)}</td>
+                <td><StatusBadge status={row.status} /></td>
+              </tr>
+            );
+          })}
         </DataTable>
       )}
     </>
