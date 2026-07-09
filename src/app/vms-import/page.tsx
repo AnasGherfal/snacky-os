@@ -298,6 +298,77 @@ type VmsBatchRow = {
   reprocess_count?: number | null;
 };
 
+function safeString(value: unknown, fallback = "") {
+  const text = String(value ?? "").trim();
+  return text || fallback;
+}
+
+function safeNumber(value: unknown, fallback = 0) {
+  const parsed = Number(value ?? fallback);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function safeBoolean(value: unknown, fallback = false) {
+  if (value === null || value === undefined || value === "") return fallback;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  const text = String(value).toLowerCase();
+  if (["1", "true", "yes", "y", "on"].includes(text)) return true;
+  if (["0", "false", "no", "n", "off"].includes(text)) return false;
+  return fallback;
+}
+
+function normalizeVmsBatchRow(row: unknown, index: number): VmsBatchRow {
+  const value = row && typeof row === "object" ? row as Record<string, unknown> : {};
+  const fallbackId = `batch-${index + 1}`;
+  return {
+    id: safeString(value.id, fallbackId),
+    source_type: safeString(value.source_type, "") || null,
+    file_name: safeString(value.file_name, "") || null,
+    file_type: safeString(value.file_type, "") || null,
+    sheet_name: safeString(value.sheet_name, "") || null,
+    report_type: safeString(value.report_type, "") || null,
+    report_start_date: safeString(value.report_start_date, "") || null,
+    report_end_date: safeString(value.report_end_date, "") || null,
+    uploaded_by: safeString(value.uploaded_by, "") || null,
+    uploaded_at: safeString(value.uploaded_at, "") || null,
+    imported_by: safeString(value.imported_by, "") || null,
+    imported_at: safeString(value.imported_at, "") || null,
+    status: safeString(value.status, "") || null,
+    row_count: safeNumber(value.row_count, 0),
+    rows_found: safeNumber(value.rows_found, 0),
+    rows_imported: safeNumber(value.rows_imported, 0),
+    rows_skipped: safeNumber(value.rows_skipped, 0),
+    rows_skipped_duplicate: safeNumber(value.rows_skipped_duplicate, 0),
+    rows_needing_review: safeNumber(value.rows_needing_review, 0),
+    is_active: typeof value.is_active === "boolean" ? value.is_active : value.is_active === undefined ? null : safeBoolean(value.is_active, false),
+    deleted_at: safeString(value.deleted_at, "") || null,
+    disabled_at: safeString(value.disabled_at, "") || null,
+    delete_reason: safeString(value.delete_reason, "") || null,
+    disable_reason: safeString(value.disable_reason, "") || null,
+    source_usage: value.source_usage,
+    dashboard_usage: value.dashboard_usage,
+    file_hash: safeString(value.file_hash, "") || null,
+    storage_bucket: safeString(value.storage_bucket, "") || null,
+    storage_path: safeString(value.storage_path, "") || null,
+    detected_min_datetime: safeString(value.detected_min_datetime, "") || null,
+    detected_max_datetime: safeString(value.detected_max_datetime, "") || null,
+    total_successful_sales: value.total_successful_sales ?? 0,
+    successful_rows_count: safeNumber(value.successful_rows_count, 0),
+    failed_rows_count: safeNumber(value.failed_rows_count, 0),
+    refunded_rows_count: safeNumber(value.refunded_rows_count, 0),
+    import_mode: safeString(value.import_mode, "") || null,
+    error_count: safeNumber(value.error_count, 0),
+    notes: safeString(value.notes, "") || null,
+    last_reprocessed_at: safeString(value.last_reprocessed_at, "") || null,
+    reprocess_count: safeNumber(value.reprocess_count, 0),
+  };
+}
+
+function normalizeVmsBatchRows(rows: unknown) {
+  return Array.isArray(rows) ? rows.map((row, index) => normalizeVmsBatchRow(row, index)) : [];
+}
+
 type VmsImportPreviewRow = {
   id: string;
   file_name: string | null;
@@ -756,16 +827,44 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
     });
 
     return (
-      <ErrorState
-        title="Something did not load"
-        body="Snacky OS hit an unexpected error while loading VMS Import. Please try again or return to the dashboard."
-        action={
-          <>
-            <Link href="/vms-import" className="btn-primary">Try again</Link>
-            <Link href="/dashboard" className="btn-secondary">Back to dashboard</Link>
-          </>
-        }
-      />
+      <>
+        <PageHeader title="VMS Import" subtitle="Three-step import: upload and detect, review mapping, confirm import." />
+        <div className="space-y-6">
+          <UploadCard />
+          <InlineLoadIssue
+            title="Import history could not load"
+            issue={issue}
+          />
+          <section className="surface-card mb-6 space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Detailed Sales Coverage</h2>
+              <p className="mt-1 text-sm text-slate-500">This section is temporarily unavailable.</p>
+            </div>
+          </section>
+          <section className="surface-card mb-6 space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Inventory Stock Coverage</h2>
+              <p className="mt-1 text-sm text-slate-500">This section is temporarily unavailable.</p>
+            </div>
+          </section>
+          <section className="surface-card mb-6 space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Files Needing Action</h2>
+              <p className="mt-1 text-sm text-slate-500">This section is temporarily unavailable.</p>
+            </div>
+          </section>
+          <ErrorState
+            title="Something did not load"
+            body="Snacky OS recovered from a VMS Import render error. The upload area should still be available, and the failing section will be isolated on the next load."
+            action={
+              <>
+                <Link href="/vms-import" className="btn-primary">Try again</Link>
+                <Link href="/dashboard" className="btn-secondary">Back to dashboard</Link>
+              </>
+            }
+          />
+        </div>
+      </>
     );
   }
 }
@@ -1045,7 +1144,7 @@ async function loadVmsImportBatches({
 
   if (!preferred.error) {
     return {
-      batches: (preferred.data ?? []) as unknown as VmsBatchRow[],
+      batches: normalizeVmsBatchRows(preferred.data),
       batchCount: preferred.count ?? 0,
       error: null,
       schemaNotice: "",
@@ -1095,7 +1194,7 @@ async function loadVmsImportBatches({
   }
 
   return {
-    batches: (fallback.data ?? []) as unknown as VmsBatchRow[],
+    batches: normalizeVmsBatchRows(fallback.data),
     batchCount: fallback.count ?? 0,
     error: null,
     schemaNotice: "VMS import database columns need the latest migration. Showing available legacy import data.",
@@ -1547,7 +1646,8 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
   const missingRequired = selectedSheet ? requiredMissing(selectedMapping, selectedReportType) : [];
   const mappedRows = selectedSheet ? applyColumnMapping(selectedRows.records, selectedMapping) : [];
   const mappedPreviewRows = mappedRows.slice(0, 8);
-  const previewFields = vmsExpectedFields[selectedReportType].filter((field) => field.required || field.requiredGroup || selectedMapping[field.field]).slice(0, 6);
+  const reportFields = vmsExpectedFields[selectedReportType] ?? vmsExpectedFields.custom;
+  const previewFields = reportFields.filter((field) => field.required || field.requiredGroup || selectedMapping[field.field]).slice(0, 6);
   const currentStep = clampStep(params.step, Boolean(preview));
   const isTransactionDetailsReport = isTransactionDetailsReportType(selectedReportType);
   if (preview && !selectedSheet) {
@@ -1937,7 +2037,7 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
               </div>
             ) : null}
             <DataTable headers={["Expected field", "Selected source column", "Required?", "Sample values", "Validation status"]}>
-              {vmsExpectedFields[selectedReportType].map((field) => {
+              {reportFields.map((field) => {
                 const selectedColumn = selectedMapping[field.field] ?? "";
                 const detail = mappingDetection.details.find((item) => item.field === field.field && item.header === selectedColumn);
                 return (
@@ -1951,9 +2051,9 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
                         ))}
                       </select>
                     </td>
-                    <td>{field.required || field.requiredGroup ? <StatusBadge status={field.required ? "required" : "required one of"} /> : <span className="text-slate-500">Optional</span>}<div className="mt-1 text-xs text-slate-500">{requirementLabel(field, vmsExpectedFields[selectedReportType])}</div></td>
+                    <td>{field.required || field.requiredGroup ? <StatusBadge status={field.required ? "required" : "required one of"} /> : <span className="text-slate-500">Optional</span>}<div className="mt-1 text-xs text-slate-500">{requirementLabel(field, reportFields)}</div></td>
                     <td className="max-w-sm text-xs text-slate-600">{sampleList(selectedRows.columnSamples, selectedColumn)}</td>
-                    <td><MappingStatus required={!requirementSatisfied(field, vmsExpectedFields[selectedReportType], selectedMapping)} selectedColumn={selectedColumn} confidence={detail?.confidence} /></td>
+                    <td><MappingStatus required={!requirementSatisfied(field, reportFields, selectedMapping)} selectedColumn={selectedColumn} confidence={detail?.confidence} /></td>
                   </tr>
                 );
               })}
