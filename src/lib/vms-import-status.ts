@@ -193,8 +193,6 @@ export function describeVmsImportBatchStatus(
   const representativeLabel = context.sameFileHashRepresentativeFileName ?? null;
   const isRepresentative = Boolean(representativeId && representativeId === batch.id);
 
-  const isRepresentative = Boolean(representativeId && representativeId === batch.id);
-
   if (status && !knownImportStatuses.has(status)) {
     return {
       action: 'review_mappings',

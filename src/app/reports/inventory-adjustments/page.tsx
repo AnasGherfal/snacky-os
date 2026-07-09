@@ -1,5 +1,4 @@
 import Link from "next/link";
-import Link from "next/link";
 import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
