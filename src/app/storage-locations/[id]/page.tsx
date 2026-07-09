@@ -4,6 +4,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canManageStorageLocations } from "@/lib/authz";
+import { getServerI18n } from "@/lib/i18n/server";
 import { activateStorageLocation, archiveStorageLocation, deleteStorageLocation } from "@/lib/storage-location-actions";
 import {
   InventoryLocationRow,
@@ -15,6 +16,18 @@ import {
 } from "@/lib/storage-locations";
 
 export const dynamic = "force-dynamic";
+
+function storageTypeLabel(value: string | null | undefined, locale: "en" | "ar") {
+  const type = String(value ?? "main_storage");
+  if (locale !== "ar") return storageLocationTypeLabel(type);
+  if (type === "main_storage") return "المخزن الرئيسي";
+  if (type === "operator_bag") return "حقيبة المشغل";
+  if (type === "vehicle") return "مركبة";
+  if (type === "damaged") return "تالف";
+  if (type === "expired") return "منتهي الصلاحية";
+  if (type === "temporary") return "مؤقت";
+  return "أخرى";
+}
 
 function formatDate(value: string | null | undefined) {
   if (!value) return "-";
@@ -39,6 +52,7 @@ export default async function StorageLocationDetailPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ error?: string }>;
 }) {
+  const { locale } = await getServerI18n();
   const profile = await getCurrentProfile();
   if (!profile || !canManageStorageLocations(profile)) redirect("/unauthorized");
 
@@ -48,7 +62,7 @@ export default async function StorageLocationDetailPage({
   if (!supabase) {
     return (
       <>
-        <ErrorState title="Storage location unavailable" body="Supabase is not configured, so Snacky OS cannot load this storage location." />
+        <ErrorState title={locale === "ar" ? "موقع التخزين غير متاح" : "Storage location unavailable"} body={locale === "ar" ? "Supabase غير مهيأ، لذلك لا يستطيع Snacky OS تحميل هذا الموقع." : "Supabase is not configured, so Snacky OS cannot load this storage location."} />
       </>
     );
   }
@@ -75,7 +89,7 @@ export default async function StorageLocationDetailPage({
     console.error("[storage-locations] Failed to load detail page", setupError);
     return (
       <>
-        <ErrorState title="Could not load storage location" body="Snacky OS could not load this location, its inventory, or movement history." />
+        <ErrorState title={locale === "ar" ? "تعذر تحميل موقع التخزين" : "Could not load storage location"} body={locale === "ar" ? "تعذر على Snacky OS تحميل هذا الموقع أو مخزونه أو سجل حركاته." : "Snacky OS could not load this location, its inventory, or movement history."} />
       </>
     );
   }
@@ -83,7 +97,7 @@ export default async function StorageLocationDetailPage({
   if (!location) {
     return (
       <>
-        <EmptyState title="Storage location not found" body="This location may have been deleted or archived from another session." />
+        <EmptyState title={locale === "ar" ? "لم يتم العثور على موقع التخزين" : "Storage location not found"} body={locale === "ar" ? "قد يكون هذا الموقع قد حُذف أو أُرشف من جلسة أخرى." : "This location may have been deleted or archived from another session."} />
       </>
     );
   }
@@ -107,13 +121,13 @@ export default async function StorageLocationDetailPage({
     <>
       <PageHeader
         title={typedLocation.name}
-        subtitle="Storage location inventory, related operator, and ledger movement history."
+        subtitle={locale === "ar" ? "مخزون موقع التخزين، والمشغل المرتبط، وسجل حركات الدفتر." : "Storage location inventory, related operator, and ledger movement history."}
         breadcrumbs={[
-          { label: "Inventory", href: "/inventory" },
-          { label: "Storage Locations", href: "/storage-locations" },
+          { label: locale === "ar" ? "المخزون" : "Inventory", href: "/inventory" },
+          { label: locale === "ar" ? "مواقع التخزين" : "Storage Locations", href: "/storage-locations" },
           { label: typedLocation.name },
         ]}
-        action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/storage-locations">Back</SecondaryButton><SecondaryButton href={`/storage-locations/${typedLocation.id}/edit`}>Edit</SecondaryButton></div>}
+        action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/storage-locations">{locale === "ar" ? "رجوع" : "Back"}</SecondaryButton><SecondaryButton href={`/storage-locations/${typedLocation.id}/edit`}>{locale === "ar" ? "تعديل" : "Edit"}</SecondaryButton></div>}
       />
 
       {query.error ? <div className="mb-5 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{query.error}</div> : null}
@@ -122,47 +136,47 @@ export default async function StorageLocationDetailPage({
         <section className="surface-card">
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Type</div>
-              <div className="mt-1 text-sm font-medium text-slate-900">{storageLocationTypeLabel(typedLocation.location_type)}</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{locale === "ar" ? "النوع" : "Type"}</div>
+              <div className="mt-1 text-sm font-medium text-slate-900">{storageTypeLabel(typedLocation.location_type, locale)}</div>
             </div>
             <div>
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Status</div>
-              <div className="mt-1"><StatusBadge status={storageLocationStatusLabel(typedLocation.active)} /></div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{locale === "ar" ? "الحالة" : "Status"}</div>
+              <div className="mt-1"><StatusBadge status={storageLocationStatusLabel(typedLocation.active)} label={locale === "ar" ? (typedLocation.active ? "نشط" : "مؤرشف") : undefined} /></div>
             </div>
             <div>
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Current Products</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{locale === "ar" ? "المنتجات الحالية" : "Current Products"}</div>
               <div className="mt-1 text-2xl font-semibold text-slate-900">{summary.productCount}</div>
             </div>
             <div>
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Current Units</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{locale === "ar" ? "الوحدات الحالية" : "Current Units"}</div>
               <div className="mt-1 text-2xl font-semibold text-slate-900">{summary.totalUnits}</div>
             </div>
             <div>
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Latitude</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{locale === "ar" ? "خط العرض" : "Latitude"}</div>
               <div className="mt-1 text-sm font-medium text-slate-900">{typedLocation.latitude ?? "-"}</div>
             </div>
             <div>
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Longitude</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{locale === "ar" ? "خط الطول" : "Longitude"}</div>
               <div className="mt-1 text-sm font-medium text-slate-900">{typedLocation.longitude ?? "-"}</div>
             </div>
             <div className="sm:col-span-2">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Address / Notes</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{locale === "ar" ? "العنوان / الملاحظات" : "Address / Notes"}</div>
               <p className="mt-1 text-sm text-slate-600">{typedLocation.address || "-"}</p>
             </div>
           </div>
         </section>
 
         <section className="surface-card">
-          <h2 className="text-base font-semibold text-slate-900">Related Operator</h2>
+          <h2 className="text-base font-semibold text-slate-900">{locale === "ar" ? "المشغل المرتبط" : "Related Operator"}</h2>
           {relatedOperator ? (
             <dl className="mt-4 space-y-3 text-sm">
-              <div><dt className="text-slate-500">Name</dt><dd className="font-medium text-slate-900">{relatedOperator.full_name}</dd></div>
-              <div><dt className="text-slate-500">Email</dt><dd>{relatedOperator.email ?? "-"}</dd></div>
-              <div><dt className="text-slate-500">Phone</dt><dd>{relatedOperator.phone ?? "-"}</dd></div>
-              <div><dt className="text-slate-500">Role</dt><dd>{relatedOperator.role ?? "-"}</dd></div>
+              <div><dt className="text-slate-500">{locale === "ar" ? "الاسم" : "Name"}</dt><dd className="font-medium text-slate-900">{relatedOperator.full_name}</dd></div>
+              <div><dt className="text-slate-500">{locale === "ar" ? "البريد الإلكتروني" : "Email"}</dt><dd>{relatedOperator.email ?? "-"}</dd></div>
+              <div><dt className="text-slate-500">{locale === "ar" ? "الهاتف" : "Phone"}</dt><dd>{relatedOperator.phone ?? "-"}</dd></div>
+              <div><dt className="text-slate-500">{locale === "ar" ? "الدور" : "Role"}</dt><dd>{relatedOperator.role ?? "-"}</dd></div>
             </dl>
           ) : (
-            <p className="mt-3 text-sm text-slate-500">No operator is linked to this location.</p>
+            <p className="mt-3 text-sm text-slate-500">{locale === "ar" ? "لا يوجد مشغل مرتبط بهذا الموقع." : "No operator is linked to this location."}</p>
           )}
         </section>
       </div>
@@ -170,19 +184,19 @@ export default async function StorageLocationDetailPage({
       <section className="surface-card mb-6">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">Current Inventory</h2>
-            <p className="text-sm text-slate-500">Calculated from inventory_movements; stock is not edited directly.</p>
+            <h2 className="text-lg font-semibold text-slate-900">{locale === "ar" ? "المخزون الحالي" : "Current Inventory"}</h2>
+            <p className="text-sm text-slate-500">{locale === "ar" ? "محسوب من inventory_movements؛ لا يتم تعديل المخزون مباشرة." : "Calculated from inventory_movements; stock is not edited directly."}</p>
           </div>
         </div>
         {!locationInventory.length ? (
-          <EmptyState title="No current inventory in this location" body="Inventory will appear when movements put stock into this location." />
+          <EmptyState title={locale === "ar" ? "لا يوجد مخزون حالي في هذا الموقع" : "No current inventory in this location"} body={locale === "ar" ? "سيظهر المخزون عندما تنقل الحركات المخزون إلى هذا الموقع." : "Inventory will appear when movements put stock into this location."} />
         ) : (
-          <DataTable headers={["Product", "Quantity"]}>
+          <DataTable headers={locale === "ar" ? ["المنتج", "الكمية"] : ["Product", "Quantity"]}>
             {locationInventory.map((row) => (
               <tr key={`${row.product_id}-${row.location_id}`}>
                 <td>
                   <Link href={`/products/${row.product_id}`} className="link-secondary font-semibold">
-                    {row.product_name ?? "Unknown product"}
+                    {row.product_name ?? (locale === "ar" ? "منتج غير معروف" : "Unknown product")}
                   </Link>
                 </td>
                 <td className="font-semibold text-slate-900">{Number(row.quantity_on_hand ?? 0)}</td>
@@ -194,17 +208,17 @@ export default async function StorageLocationDetailPage({
 
       <section className="surface-card mb-6">
         <div className="mb-4">
-          <h2 className="text-lg font-semibold text-slate-900">Movement History</h2>
-          <p className="text-sm text-slate-500">Ledger entries that moved stock into or out of this location.</p>
+          <h2 className="text-lg font-semibold text-slate-900">{locale === "ar" ? "سجل الحركات" : "Movement History"}</h2>
+          <p className="text-sm text-slate-500">{locale === "ar" ? "قيود دفتر نقلت المخزون إلى هذا الموقع أو منه." : "Ledger entries that moved stock into or out of this location."}</p>
         </div>
         {!locationMovements.length ? (
-          <EmptyState title="No movement history" body="This location can be hard-deleted while it has no movement history and no current inventory." />
+          <EmptyState title={locale === "ar" ? "لا يوجد سجل حركات" : "No movement history"} body={locale === "ar" ? "يمكن حذف هذا الموقع نهائياً طالما لا يملك سجل حركات ولا مخزوناً حالياً." : "This location can be hard-deleted while it has no movement history and no current inventory."} />
         ) : (
-          <DataTable headers={["Date", "Product", "Qty", "From", "To", "Reason", "User", "Notes"]}>
+          <DataTable headers={locale === "ar" ? ["التاريخ", "المنتج", "الكمية", "من", "إلى", "السبب", "المستخدم", "ملاحظات"] : ["Date", "Product", "Qty", "From", "To", "Reason", "User", "Notes"]}>
             {locationMovements.map((movement: any) => (
               <tr key={movement.id}>
                 <td>{formatDate(movement.created_at)}</td>
-                <td>{movement.product?.name ?? "Unknown product"}<div className="text-xs text-slate-500">{movement.product?.sku ?? "-"}</div></td>
+                <td>{movement.product?.name ?? (locale === "ar" ? "منتج غير معروف" : "Unknown product")}<div className="text-xs text-slate-500">{movement.product?.sku ?? "-"}</div></td>
                 <td className="font-semibold">{movement.quantity}</td>
                 <td><span className="font-medium">{entityTypeLabel(movement.from_entity_type)}</span><div className="text-xs text-slate-500">{entityLabel(movement.from_entity_type, movement.from_entity_id, { storageById, operatorById })}</div></td>
                 <td><span className="font-medium">{entityTypeLabel(movement.to_entity_type)}</span><div className="text-xs text-slate-500">{entityLabel(movement.to_entity_type, movement.to_entity_id, { storageById, operatorById })}</div></td>
@@ -218,39 +232,39 @@ export default async function StorageLocationDetailPage({
       </section>
 
       <section className="surface-card">
-        <h2 className="text-base font-semibold text-slate-900">Location Controls</h2>
-        <p className="mt-1 text-sm text-slate-500">Locations with inventory or movement history are archived instead of hard-deleted.</p>
+        <h2 className="text-base font-semibold text-slate-900">{locale === "ar" ? "عناصر التحكم في الموقع" : "Location Controls"}</h2>
+        <p className="mt-1 text-sm text-slate-500">{locale === "ar" ? "المواقع ذات المخزون أو سجل الحركات تُؤرشف بدلاً من حذفها نهائياً." : "Locations with inventory or movement history are archived instead of hard-deleted."}</p>
         <div className="mt-4 flex flex-wrap gap-2">
           {typedLocation.active ? (
             <ConfirmDialog
               action={archiveStorageLocation}
-              triggerLabel="Archive location"
-              title="Archive storage location?"
-              description="Archived locations stay available in history, but they cannot be selected for new movements."
-              confirmLabel="Archive location"
+              triggerLabel={locale === "ar" ? "أرشفة الموقع" : "Archive location"}
+              title={locale === "ar" ? "أرشفة موقع التخزين؟" : "Archive storage location?"}
+              description={locale === "ar" ? "تظل المواقع المؤرشفة متاحة في السجل، لكنها لا يمكن اختيارها لحركات جديدة." : "Archived locations stay available in history, but they cannot be selected for new movements."}
+              confirmLabel={locale === "ar" ? "أرشفة الموقع" : "Archive location"}
               buttonClassName="btn-secondary"
               hiddenFields={[{ name: "id", value: typedLocation.id }]}
             />
           ) : (
             <form action={activateStorageLocation}>
               <input type="hidden" name="id" value={typedLocation.id} />
-              <button className="btn-secondary">Activate location</button>
+              <button className="btn-secondary">{locale === "ar" ? "تفعيل الموقع" : "Activate location"}</button>
             </form>
           )}
           {canHardDelete ? (
             <ConfirmDialog
               action={deleteStorageLocation}
-              triggerLabel="Delete permanently"
-              title="Delete storage location permanently?"
-              description="This location has no current inventory and no movement history, so it can be removed."
-              confirmLabel="Delete permanently"
+              triggerLabel={locale === "ar" ? "حذف نهائي" : "Delete permanently"}
+              title={locale === "ar" ? "حذف موقع التخزين نهائياً؟" : "Delete storage location permanently?"}
+              description={locale === "ar" ? "هذا الموقع لا يملك مخزوناً حالياً ولا سجل حركات، لذلك يمكن حذفه." : "This location has no current inventory and no movement history, so it can be removed."}
+              confirmLabel={locale === "ar" ? "حذف نهائي" : "Delete permanently"}
               buttonClassName="btn-danger"
               confirmButtonClassName="btn-danger"
               hiddenFields={[{ name: "id", value: typedLocation.id }]}
             />
           ) : (
             <span className="inline-flex min-h-11 items-center rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-medium text-slate-600">
-              Hard delete disabled: inventory or movement history exists.
+              {locale === "ar" ? "الحذف النهائي معطّل: يوجد مخزون أو سجل حركات." : "Hard delete disabled: inventory or movement history exists."}
             </span>
           )}
         </div>

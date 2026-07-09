@@ -7,8 +7,14 @@ import { canAccessPath } from "@/lib/authz";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { isActiveRouteStatus, isCompletedRouteStatus, isTerminalRouteStatus, routeDisplayStatus } from "@/lib/route-workflow";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
+import { getServerI18n } from "@/lib/i18n/server";
 
 export const dynamic = "force-dynamic";
+
+type RoutesI18n = {
+  t: (key: string, fallback?: string) => string;
+  locale: "en" | "ar";
+};
 
 function errorSummary(error: unknown) {
   if (!error || typeof error !== "object") return null;
@@ -57,8 +63,28 @@ function logRouteLoaderIssue({
   (optional ? console.warn : console.error)("[routes] " + step + " failed", payload);
 }
 
+function routeStatusLabel(status: string | null | undefined, locale: RoutesI18n["locale"]) {
+  const value = String(status ?? "").toLowerCase();
+  if (locale !== "ar") {
+    if (value === "in_progress") return "In progress";
+    if (value === "assigned") return "Assigned";
+    if (value === "completed") return "Completed";
+    if (value === "cancelled" || value === "canceled") return "Cancelled";
+    if (value === "available") return "Available";
+    if (value === "draft") return "Draft";
+    return value || "Unknown";
+  }
+  if (value === "in_progress") return "قيد التنفيذ";
+  if (value === "assigned") return "مسندة";
+  if (value === "completed") return "مكتملة";
+  if (value === "cancelled" || value === "canceled") return "ملغاة";
+  if (value === "available") return "متاحة";
+  if (value === "draft") return "مسودة";
+  return "غير معروف";
+}
 
 export default async function RoutesPage({ searchParams }: { searchParams: Promise<SearchParamsRecord> }) {
+  const { t, locale } = await getServerI18n();
   const profile = await getCurrentProfile();
   if (!profile || !canAccessPath({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/routes")) {
     redirect("/unauthorized");
@@ -68,7 +94,7 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
   if (!supabase) {
     return (
       <>
-        <ErrorState title="Routes unavailable" body="Supabase is not configured, so Snacky OS cannot load routes." />
+        <ErrorState title={t("Routes unavailable")} body={t("Supabase is not configured, so Snacky OS cannot load routes.")} />
       </>
     );
   }
@@ -93,7 +119,7 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
     logRouteLoaderIssue({ step: "load_routes", query: "routes", error: routesError, context: loaderContext });
     return (
       <>
-        <ErrorState title="Could not load routes" body="Snacky OS could not load route records from Supabase." action={<SecondaryButton href="/routes">Retry</SecondaryButton>} />
+        <ErrorState title={t("Could not load routes")} body={t("Snacky OS could not load route records from Supabase.")} action={<SecondaryButton href="/routes">{t("Retry")}</SecondaryButton>} />
       </>
     );
   }
@@ -123,16 +149,16 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
     });
   }
   const initialGroups = [
-    { title: "Unassigned / Available", rows: routeRows.filter((route: any) => !route.operator_id && !isTerminalRouteStatus(route.status)) },
-    { title: "In progress", rows: routeRows.filter((route: any) => isActiveRouteStatus(route.status)) },
-    { title: "Assigned routes", rows: routeRows.filter((route: any) => route.operator_id && !isActiveRouteStatus(route.status) && !isTerminalRouteStatus(route.status)) },
-    { title: "Completed", rows: routeRows.filter((route: any) => isCompletedRouteStatus(route.status)) },
+    { title: locale === "ar" ? "غير مسندة / متاحة" : "Unassigned / Available", rows: routeRows.filter((route: any) => !route.operator_id && !isTerminalRouteStatus(route.status)) },
+    { title: locale === "ar" ? "قيد التنفيذ" : "In progress", rows: routeRows.filter((route: any) => isActiveRouteStatus(route.status)) },
+    { title: locale === "ar" ? "الجولات المسندة" : "Assigned routes", rows: routeRows.filter((route: any) => route.operator_id && !isActiveRouteStatus(route.status) && !isTerminalRouteStatus(route.status)) },
+    { title: locale === "ar" ? "مكتملة" : "Completed", rows: routeRows.filter((route: any) => isCompletedRouteStatus(route.status)) },
   ];
   const groupedRouteIds = new Set(initialGroups.flatMap((group) => group.rows.map((route: any) => route.id)));
   const otherRoutes = routeRows.filter((route: any) => !groupedRouteIds.has(route.id));
   const groups = [
     ...initialGroups,
-    { title: "Cancelled / Other statuses", rows: otherRoutes },
+    { title: locale === "ar" ? "ملغاة / حالات أخرى" : "Cancelled / Other statuses", rows: otherRoutes },
   ].filter((group) => group.rows.length);
 
   const renderRouteCards = (rows: any[]) => (
@@ -142,16 +168,16 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
           <div className="mb-3 flex items-start justify-between gap-3">
             <div className="min-w-0">
               <h2 className="break-words text-base font-semibold text-slate-900">{route.route_date}</h2>
-              <p className="mt-1 text-sm text-slate-500">{operatorById.get(route.operator_id)?.full_name ?? "Available"}</p>
+              <p className="mt-1 text-sm text-slate-500">{operatorById.get(route.operator_id)?.full_name ?? (locale === "ar" ? "متاحة" : "Available")}</p>
             </div>
-            <StatusBadge status={routeDisplayStatus(route.status, route.operator_id)} />
+            <StatusBadge status={routeDisplayStatus(route.status, route.operator_id)} label={routeStatusLabel(route.status, locale)} />
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <MobileField label="Stops">{stopsByRouteId.get(route.id) ?? 0}</MobileField>
-            <MobileField label="Performer">{operatorById.get(route.operator_id)?.full_name ?? "Unassigned"}</MobileField>
+            <MobileField label={locale === "ar" ? "المواقع" : "Stops"}>{stopsByRouteId.get(route.id) ?? 0}</MobileField>
+            <MobileField label={locale === "ar" ? "المسؤول" : "Performer"}>{operatorById.get(route.operator_id)?.full_name ?? (locale === "ar" ? "غير مسندة" : "Unassigned")}</MobileField>
           </div>
           <Link className="btn-secondary mt-4 w-full" href={`/routes/${route.id}`}>
-            View route
+            {locale === "ar" ? "عرض الجولة" : "View route"}
           </Link>
         </MobileRecordCard>
       ))}
@@ -159,16 +185,16 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
   );
 
   const renderRouteTable = (rows: any[]) => (
-    <DataTable className="hidden md:block" headers={["Date", "Performer", "Status", "Stops", "Details"]}>
+    <DataTable className="hidden md:block" headers={locale === "ar" ? ["التاريخ", "المسؤول", "الحالة", "المواقع", "التفاصيل"] : ["Date", "Performer", "Status", "Stops", "Details"]}>
       {rows.map((route: any) => (
         <tr key={route.id}>
           <td>{route.route_date}</td>
-          <td>{operatorById.get(route.operator_id)?.full_name ?? "Unassigned"}</td>
-          <td><StatusBadge status={routeDisplayStatus(route.status, route.operator_id)} /></td>
+          <td>{operatorById.get(route.operator_id)?.full_name ?? (locale === "ar" ? "غير مسندة" : "Unassigned")}</td>
+          <td><StatusBadge status={routeDisplayStatus(route.status, route.operator_id)} label={routeStatusLabel(route.status, locale)} /></td>
           <td>{stopsByRouteId.get(route.id) ?? 0}</td>
           <td>
             <Link className="link-secondary" href={`/routes/${route.id}`}>
-              View route
+              {locale === "ar" ? "عرض الجولة" : "View route"}
             </Link>
           </td>
         </tr>
@@ -179,19 +205,19 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
   return (
     <>
       <PageHeader
-        title="Routes"
-        subtitle="Plan refill routes, assign operators, and track machine stops."
-        action={<PrimaryButton href="/routes/new">Create route</PrimaryButton>}
+        title={locale === "ar" ? "الجولات" : "Routes"}
+        subtitle={locale === "ar" ? "خطط جولات التعبئة، وعيّن المشغلين، وتابع مواقع الأجهزة." : "Plan refill routes, assign operators, and track machine stops."}
+        action={<PrimaryButton href="/routes/new">{locale === "ar" ? "إنشاء جولة" : "Create route"}</PrimaryButton>}
       />
       {operatorsError || stopsError ? (
         <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-          Some route summary details are unavailable right now. Routes are still loaded.
+          {locale === "ar" ? "بعض تفاصيل ملخص الجولات غير متاحة الآن. ما زالت الجولات محمّلة." : "Some route summary details are unavailable right now. Routes are still loaded."}
         </div>
       ) : null}
       {!routeRows.length ? (
         <EmptyState
-          title="No routes yet"
-          body="Create your first refill route from recommendations or add machine stops manually."
+          title={locale === "ar" ? "لا توجد جولات بعد" : "No routes yet"}
+          body={locale === "ar" ? "أنشئ أول جولة تعبئة من التوصيات أو أضف مواقع الأجهزة يدوياً." : "Create your first refill route from recommendations or add machine stops manually."}
         />
       ) : (
         <div className="space-y-8">
@@ -205,7 +231,7 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
               {renderRouteTable(group.rows)}
             </section>
           ))}
-          <PaginationControls basePath="/routes" searchParams={params} page={page} pageSize={pageSize} totalCount={count ?? 0} itemLabel="routes" />
+          <PaginationControls basePath="/routes" searchParams={params} page={page} pageSize={pageSize} totalCount={count ?? 0} itemLabel={locale === "ar" ? "جولات" : "routes"} />
         </div>
       )}
     </>
