@@ -854,7 +854,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
             </div>
           </section>
           <ErrorState
-            title="Something did not load"
+            title="VMS import temporarily unavailable"
             body="Snacky OS recovered from a VMS Import render error. The upload area should still be available, and the failing section will be isolated on the next load."
             action={
               <>
