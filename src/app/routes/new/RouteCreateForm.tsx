@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { RouteRecommendationDiagnostics } from "@/app/routes/new/types";
 import { FormField, FormSection, SecondaryButton } from "@/components/ui";
+import { useLanguage } from "@/components/I18nProvider";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { comparePickupProductRows, groupRouteItemsForDisplay } from "@/lib/route-pickup-checklist";
 
@@ -202,6 +203,10 @@ function defaultRecommendationFinalTake(recommendedTotal: number, storageAvailab
   return Math.min(recommendedTotal, storageAvailable);
 }
 
+function tr(locale: "ar" | "en", en: string, ar: string) {
+  return locale === "ar" ? ar : en;
+}
+
 export function RouteCreateForm({
   operators,
   machines,
@@ -223,8 +228,9 @@ export function RouteCreateForm({
   recentProductIds: string[];
   allowAdminOverride: boolean;
   defaultRouteDate: string;
-}) {
+  }) {
   const router = useRouter();
+  const { locale } = useLanguage();
   const saveErrorRef = useRef<HTMLDivElement | null>(null);
   const [routeDate, setRouteDate] = useState(defaultRouteDate);
   const [assignmentMode, setAssignmentMode] = useState<"unassigned" | "assigned">("unassigned");
@@ -1040,7 +1046,7 @@ export function RouteCreateForm({
           {assignmentMode === "assigned" ? (
             <FormField label="Route performer" required>
               <select value={operatorId} onChange={(event) => setOperatorId(event.target.value)} className="field-input" required disabled={saving}>
-                <option value="">Select performer</option>
+                <option value="">{tr(locale, "Select performer", "اختر المنفذ")}</option>
                 {operators.map((operator) => (
                   <option key={operator.id} value={operator.id}>
                     {operator.full_name}{operator.role ? ` (${operator.role})` : ""}
@@ -1050,18 +1056,18 @@ export function RouteCreateForm({
             </FormField>
           ) : (
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 md:col-span-2">
-              This route will be available for an owner, admin, supervisor, or operator to claim when they start it.
+              {tr(locale, "This route will be available for an owner, admin, supervisor, or operator to claim when they start it.", "ستكون هذه الجولة متاحة للمالك أو المدير أو المشرف أو المشغل ليستلمها عند البدء.")}
             </div>
           )}
         </div>
       </FormSection>
 
       <FormSection title="Manual machine refill items">
-        <p className="text-sm text-slate-500">Manual products must be assigned to a machine stop. The route pick list is calculated from these stop plans plus selected recommendations.</p>
+        <p className="text-sm text-slate-500">{tr(locale, "Manual products must be assigned to a machine stop. The route pick list is calculated from these stop plans plus selected recommendations.", "يجب ربط المنتجات اليدوية بموقع جهاز. تُحسب قائمة التحميل من خطط المواقع هذه بالإضافة إلى التوصيات المختارة.")}</p>
 
         {!products.length ? (
           <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
-            No products are available. Add active products before creating a route pick list.
+            {tr(locale, "No products are available. Add active products before creating a route pick list.", "لا توجد منتجات متاحة. أضف منتجات نشطة قبل إنشاء قائمة تحميل للجولة.")}
           </div>
         ) : (
           <div className="space-y-5">
@@ -1076,16 +1082,16 @@ export function RouteCreateForm({
                   className="field-input"
                   disabled={saving}
                 >
-                  <option value="">Choose machine</option>
+                  <option value="">{tr(locale, "Choose machine", "اختر الجهاز")}</option>
                   {machines.map((machine) => (
                     <option key={machine.id} value={machine.id}>{machineLabel(machine)} - {locationLabel(machine.location_name)}</option>
                   ))}
                 </select>
               </FormField>
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                Manual stop sections: <span className="font-semibold text-slate-900">{manualSectionMachineIds.length}</span>
+                {tr(locale, "Manual stop sections:", "أقسام المواقع اليدوية:")} <span className="font-semibold text-slate-900">{manualSectionMachineIds.length}</span>
                 <div className="mt-1 text-xs text-slate-500">
-                  Each machine stop keeps its own product picker so Snacky OS does not mix products across machines.
+                  {tr(locale, "Each machine stop keeps its own product picker so Snacky OS does not mix products across machines.", "كل موقع جهاز يحتفظ بقائمة منتجاته الخاصة حتى لا يخلط Snacky OS المنتجات بين الأجهزة.")}
                 </div>
               </div>
             </div>
@@ -1121,21 +1127,21 @@ export function RouteCreateForm({
               <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
                   <div>
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Machine stop</div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr(locale, "Machine stop", "موقع الجهاز")}</div>
                     <div className="mt-1 text-lg font-semibold text-slate-900">{machineLabel(selectedManualMachine)}</div>
                     <div className="text-sm text-slate-500">{selectedManualMachine.machine_code} - {locationLabel(selectedManualMachine.location_name)}</div>
                   </div>
                   <div className="grid gap-2 text-sm text-slate-600 sm:grid-cols-3">
                     <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
-                      <div className="text-xs uppercase tracking-wide text-slate-500">Planogram products</div>
+                      <div className="text-xs uppercase tracking-wide text-slate-500">{tr(locale, "Planogram products", "منتجات المخطط")}</div>
                       <div className="font-semibold text-slate-900">{selectedManualPlanogramRows.filter((row) => row.product_id).length}</div>
                     </div>
                     <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
-                      <div className="text-xs uppercase tracking-wide text-slate-500">Recommended products</div>
+                      <div className="text-xs uppercase tracking-wide text-slate-500">{tr(locale, "Recommended products", "المنتجات الموصى بها")}</div>
                       <div className="font-semibold text-slate-900">{selectedManualRecommendationGroups.length}</div>
                     </div>
                     <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
-                      <div className="text-xs uppercase tracking-wide text-slate-500">Manual products</div>
+                      <div className="text-xs uppercase tracking-wide text-slate-500">{tr(locale, "Manual products", "المنتجات اليدوية")}</div>
                       <div className="font-semibold text-slate-900">{selectedManualItems.length}</div>
                     </div>
                   </div>
@@ -1149,14 +1155,14 @@ export function RouteCreateForm({
                         setSearch(event.target.value);
                         setNotFoundQuery("");
                       }}
-                      placeholder="Search name, SKU, barcode, category, or brand"
+                      placeholder={tr(locale, "Search name, SKU, barcode, category, or brand", "ابحث بالاسم أو SKU أو الباركود أو الفئة أو العلامة")}
                       className="field-input"
                       disabled={saving}
                     />
                   </FormField>
-                  <FormField label={`Barcode / SKU scan for ${machineLabel(selectedManualMachine)}`}>
+                  <FormField label={`${tr(locale, "Barcode / SKU scan for", "مسح الباركود / SKU لـ")} ${machineLabel(selectedManualMachine)}`}>
                     <div className="flex gap-2">
-                      <input value={barcode} onChange={(event) => setBarcode(event.target.value)} onKeyDown={handleBarcodeKey} placeholder="Scan or type barcode" className="field-input" disabled={saving} />
+                      <input value={barcode} onChange={(event) => setBarcode(event.target.value)} onKeyDown={handleBarcodeKey} placeholder={tr(locale, "Scan or type barcode", "امسح أو اكتب الباركود")} className="field-input" disabled={saving} />
                       <button type="button" onClick={handleBarcodeSelect} className="btn-secondary" disabled={saving}>
                         Add
                       </button>
@@ -1166,14 +1172,14 @@ export function RouteCreateForm({
 
                 {showMissingProduct ? (
                   <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                    <div className="font-semibold">Product not found for this machine picker</div>
-                    <p className="mt-1">Check the barcode, SKU, or product name before adding it to master data.</p>
+                    <div className="font-semibold">{tr(locale, "Product not found for this machine picker", "لم يتم العثور على المنتج لهذا المحدد")}</div>
+                    <p className="mt-1">{tr(locale, "Check the barcode, SKU, or product name before adding it to master data.", "تحقق من الباركود أو SKU أو اسم المنتج قبل إضافته إلى البيانات الأساسية.")}</p>
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Link className="btn-secondary" href="/products/new">
-                        Add product
+                        {tr(locale, "Add product", "إضافة منتج")}
                       </Link>
                       <Link className="btn-secondary" href={`/issues?missing_product=${encodeURIComponent(notFoundQuery || search.trim())}`}>
-                        Report missing product
+                        {tr(locale, "Report missing product", "الإبلاغ عن منتج مفقود")}
                       </Link>
                     </div>
                   </div>
@@ -1182,16 +1188,16 @@ export function RouteCreateForm({
                 <div className="space-y-3">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <div className="text-sm font-semibold text-slate-800">Planogram and recommended products for this machine</div>
-                      <div className="text-xs text-slate-500">Snacky OS keeps this list scoped to {machineLabel(selectedManualMachine)} only.</div>
+                      <div className="text-sm font-semibold text-slate-800">{tr(locale, "Planogram and recommended products for this machine", "منتجات المخطط والمنتجات الموصى بها لهذا الجهاز")}</div>
+                      <div className="text-xs text-slate-500">{tr(locale, "Snacky OS keeps this list scoped to", "يحصر Snacky OS هذه القائمة على")} {machineLabel(selectedManualMachine)} {tr(locale, "only.", "فقط.")}</div>
                     </div>
-                    <div className="text-xs text-slate-500">Enter adds scanned products instantly.</div>
+                    <div className="text-xs text-slate-500">{tr(locale, "Enter adds scanned products instantly.", "زر Enter يضيف المنتجات الممسوحة فورًا.")}</div>
                   </div>
                   {!machineScopedSearchResults.length ? (
                     <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
                       {manualSearchQuery
-                        ? "No planogram or recommended products matched the current search for this machine."
-                        : "This machine does not currently have planogram or recommended products. Use the fallback storage list below if needed."}
+                        ? tr(locale, "No planogram or recommended products matched the current search for this machine.", "لم تطابق أي منتجات من المخطط أو التوصيات البحث الحالي لهذا الجهاز.")
+                        : tr(locale, "This machine does not currently have planogram or recommended products. Use the fallback storage list below if needed.", "لا يملك هذا الجهاز حاليًا منتجات مخطط أو توصيات. استخدم قائمة المخزون البديلة أدناه إذا لزم الأمر.")}
                     </div>
                   ) : (
                     <div className="grid gap-2 md:grid-cols-2">
@@ -1208,7 +1214,7 @@ export function RouteCreateForm({
                             <div className="min-w-0 flex-1">
                               <div className="truncate font-medium text-slate-900">{candidate.product.name}</div>
                               <div className="text-xs text-slate-500">
-                                {candidate.product.sku ?? "No SKU"} - {candidate.product.category ?? "Uncategorized"} {candidate.product.brand ? `- ${candidate.product.brand}` : ""}
+                                {candidate.product.sku ?? tr(locale, "No SKU", "لا يوجد SKU")} - {candidate.product.category ?? tr(locale, "Uncategorized", "غير مصنف")} {candidate.product.brand ? `- ${candidate.product.brand}` : ""}
                               </div>
                               <div className="mt-1 text-xs text-slate-600">
                                 Storage {candidate.product.storageQty} / Available {candidate.product.availableQty}
@@ -1219,7 +1225,7 @@ export function RouteCreateForm({
                                 {candidate.selectedQty > 0 ? <span className="rounded-full bg-amber-100 px-2 py-1 text-amber-900">Selected {candidate.selectedQty}</span> : null}
                                 {candidate.slotCodes.size ? (
                                   <span className="rounded-full bg-sky-100 px-2 py-1 text-sky-800">
-                                    Slots {Array.from(candidate.slotCodes).slice(0, 3).join(", ")}{candidate.slotCodes.size > 3 ? ` +${candidate.slotCodes.size - 3}` : ""}
+                                    {tr(locale, "Slots", "الفتحات")} {Array.from(candidate.slotCodes).slice(0, 3).join(", ")}{candidate.slotCodes.size > 3 ? ` +${candidate.slotCodes.size - 3}` : ""}
                                   </span>
                                 ) : null}
                               </div>
@@ -1233,12 +1239,12 @@ export function RouteCreateForm({
 
                 <div className="space-y-3">
                   <div>
-                    <div className="text-sm font-semibold text-slate-800">Other storage products</div>
-                    <div className="text-xs text-slate-500">Fallback catalog items not currently in this machine’s planogram or recommendation set.</div>
+                    <div className="text-sm font-semibold text-slate-800">{tr(locale, "Other storage products", "منتجات تخزين أخرى")}</div>
+                    <div className="text-xs text-slate-500">{tr(locale, "Fallback catalog items not currently in this machine’s planogram or recommendation set.", "عناصر بديلة من الكتالوج غير موجودة حاليًا في مخطط هذا الجهاز أو مجموعة توصياته.")}</div>
                   </div>
                   {!machineFallbackProducts.length ? (
                     <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
-                      {manualSearchQuery ? "No fallback storage products matched the current search." : "No additional storage products are available right now."}
+                      {manualSearchQuery ? tr(locale, "No fallback storage products matched the current search.", "لا توجد منتجات تخزين بديلة تطابق البحث الحالي.") : tr(locale, "No additional storage products are available right now.", "لا توجد منتجات تخزين إضافية متاحة الآن.")}
                     </div>
                   ) : (
                     <div className="grid gap-2 md:grid-cols-2">
@@ -1255,7 +1261,7 @@ export function RouteCreateForm({
                             <div className="min-w-0 flex-1">
                               <div className="truncate font-medium text-slate-900">{product.name}</div>
                               <div className="text-xs text-slate-500">
-                                {product.sku ?? "No SKU"} - {product.category ?? "Uncategorized"} {product.brand ? `- ${product.brand}` : ""}
+                                {product.sku ?? tr(locale, "No SKU", "لا يوجد SKU")} - {product.category ?? tr(locale, "Uncategorized", "غير مصنف")} {product.brand ? `- ${product.brand}` : ""}
                               </div>
                               <div className="mt-1 text-xs text-slate-600">
                                 Storage {product.storageQty} / Available {product.availableQty}
@@ -1274,8 +1280,8 @@ export function RouteCreateForm({
               <label className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
                 <input type="checkbox" checked={adminOverride} onChange={(event) => setAdminOverride(event.target.checked)} className="mt-1" disabled={saving} />
                 <span>
-                  <span className="block font-semibold">Admin override</span>
-                  Allow quantities above available storage for a supervised count correction.
+                  <span className="block font-semibold">{tr(locale, "Admin override", "تجاوز إداري")}</span>
+                  {tr(locale, "Allow quantities above available storage for a supervised count correction.", "السماح بكميات أعلى من المخزون المتاح لتصحيح عدٍّ تحت الإشراف.")}
                 </span>
               </label>
             ) : null}
@@ -1286,16 +1292,16 @@ export function RouteCreateForm({
                   <tr>
                     <th className="px-3 py-2">Machine</th>
                     <th className="px-3 py-2">Product</th>
-                    <th className="px-3 py-2">Available storage qty</th>
+                    <th className="px-3 py-2">{tr(locale, "Available storage qty", "كمية المخزون المتاحة")}</th>
                     <th className="px-3 py-2">Manual planned qty</th>
-                    <th className="px-3 py-2">Remove</th>
+                    <th className="px-3 py-2">{tr(locale, "Remove", "إزالة")}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {!sortedManualStopItems.length ? (
                     <tr>
                       <td colSpan={5} className="px-3 py-8 text-center text-slate-500">
-                        No manual machine refill items selected yet.
+                        {tr(locale, "No manual machine refill items selected yet.", "لم يتم تحديد أي عناصر تعبئة يدوية للجهاز بعد.")}
                       </td>
                     </tr>
                   ) : (
@@ -1312,9 +1318,9 @@ export function RouteCreateForm({
                             <div className="flex items-center gap-3">
                               <ProductThumbnail imageUrl={product?.imageUrl} name={product?.name} size="md" />
                               <div>
-                                <div className="font-medium text-slate-900">{product?.name ?? "Unknown product"}</div>
-                                <div className="text-xs text-slate-500">{product?.sku ?? "No SKU"}</div>
-                                {stockIssue ? <div className="mt-1 text-xs font-medium text-rose-700">Short {stockIssue.shortage_qty} units across selected route plan.</div> : null}
+                                <div className="font-medium text-slate-900">{product?.name ?? tr(locale, "Unknown product", "منتج غير معروف")}</div>
+                                <div className="text-xs text-slate-500">{product?.sku ?? tr(locale, "No SKU", "لا يوجد SKU")}</div>
+                                {stockIssue ? <div className="mt-1 text-xs font-medium text-rose-700">{tr(locale, "Short", "النقص")} {stockIssue.shortage_qty} {tr(locale, "units across selected route plan.", "وحدة عبر خطة الجولة المحددة.")}</div> : null}
                               </div>
                             </div>
                           </td>
@@ -1340,7 +1346,7 @@ export function RouteCreateForm({
                           </td>
                           <td className="px-3 py-2">
                             <button type="button" onClick={() => setManualStopQty(item.machineId, item.productId, 0)} className="link-secondary" disabled={saving}>
-                              Remove
+                              {tr(locale, "Remove", "إزالة")}
                             </button>
                           </td>
                         </tr>
@@ -1424,7 +1430,7 @@ export function RouteCreateForm({
                 Select all visible
               </button>
               <button type="button" className="btn-secondary text-xs" onClick={clearSelectedRecommendations} disabled={saving || !recommendationKeys.length}>
-                Clear selected
+                {tr(locale, "Clear selected", "مسح المحدد")}
               </button>
               <label className="ml-auto flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700">
                 <input
@@ -1562,7 +1568,7 @@ export function RouteCreateForm({
                                   <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Slots</div>
                                   <div className="mt-1 text-sm text-slate-700">{recommendationGroup.slotsCount} slot{recommendationGroup.slotsCount === 1 ? "" : "s"} in this machine/location group</div>
                                   <div className="mt-1 text-sm text-slate-700">
-                                    {storageUnknown ? `Storage is unknown. Needed quantity stays at ${recommendationGroup.recommendedTotal} until stock is confirmed.` : `Storage available ${storageAvailable} vs recommended ${recommendationGroup.recommendedTotal}`}
+                                    {storageUnknown ? tr(locale, `Storage is unknown. Needed quantity stays at ${recommendationGroup.recommendedTotal} until stock is confirmed.`, `المخزون غير معروف. ستبقى الكمية المطلوبة ${recommendationGroup.recommendedTotal} حتى يتم تأكيد المخزون.`) : tr(locale, `Storage available ${storageAvailable} vs recommended ${recommendationGroup.recommendedTotal}`, `المخزون المتاح ${storageAvailable} مقابل التوصية ${recommendationGroup.recommendedTotal}`)}
                                   </div>
                                 </div>
 
@@ -1582,17 +1588,17 @@ export function RouteCreateForm({
                                     />
                                   </label>
                                   <div className="flex flex-wrap gap-2">
-                                    <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => setRecommendationFinalTake(recommendationGroup, recommendationGroup.recommendedTotal)} disabled={saving || !selected}>Use recommended</button>
-                                    <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => setRecommendationFinalTake(recommendationGroup, Math.ceil(recommendationGroup.recommendedTotal / 2))} disabled={saving || !selected}>Take half</button>
-                                    <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => setRecommendationFinalTake(recommendationGroup, storageAvailable)} disabled={saving || !selected || !storageKnown}>Take max available</button>
-                                    <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => setRecommendationFinalTake(recommendationGroup, 0)} disabled={saving || !selected}>Clear</button>
+                                <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => setRecommendationFinalTake(recommendationGroup, recommendationGroup.recommendedTotal)} disabled={saving || !selected}>{tr(locale, "Use recommended", "استخدم التوصية")}</button>
+                                <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => setRecommendationFinalTake(recommendationGroup, Math.ceil(recommendationGroup.recommendedTotal / 2))} disabled={saving || !selected}>{tr(locale, "Take half", "خذ النصف")}</button>
+                                <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => setRecommendationFinalTake(recommendationGroup, storageAvailable)} disabled={saving || !selected || !storageKnown}>{tr(locale, "Take max available", "خذ الحد الأقصى المتاح")}</button>
+                                <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => setRecommendationFinalTake(recommendationGroup, 0)} disabled={saving || !selected}>{tr(locale, "Clear", "مسح")}</button>
                                   </div>
-                                  {finalIsZero ? <div className="text-xs font-medium text-amber-700">Final take is 0.</div> : null}
-                                  {finalHigherThanRecommended ? <div className="text-xs font-medium text-amber-700">Final take is higher than recommended.</div> : null}
-                                  {finalLowerThanRecommended ? <div className="text-xs text-slate-500">Taking less than recommended.</div> : null}
-                                  {storageUnknown ? <div className="text-xs font-medium text-amber-700">Storage is unknown, so Snacky OS is keeping the full needed quantity visible.</div> : null}
-                                  {noStorageAvailable ? <div className="text-xs font-medium text-amber-700">Storage is currently 0, but this machine still needs {recommendationGroup.recommendedTotal}. Replenish storage or override it after verifying stock.</div> : null}
-                                  {!noStorageAvailable && recommendationShortage > 0 ? <div className="text-xs text-amber-700">Storage has {storageAvailable}; recommendation needs {recommendationGroup.recommendedTotal}. Short by {recommendationShortage}.</div> : null}
+                              {finalIsZero ? <div className="text-xs font-medium text-amber-700">{tr(locale, "Final take is 0.", "الكمية النهائية تساوي 0.")}</div> : null}
+                              {finalHigherThanRecommended ? <div className="text-xs font-medium text-amber-700">{tr(locale, "Final take is higher than recommended.", "الكمية النهائية أعلى من التوصية.")}</div> : null}
+                              {finalLowerThanRecommended ? <div className="text-xs text-slate-500">{tr(locale, "Taking less than recommended.", "يتم أخذ أقل من التوصية.")}</div> : null}
+                              {storageUnknown ? <div className="text-xs font-medium text-amber-700">{tr(locale, "Storage is unknown, so Snacky OS is keeping the full needed quantity visible.", "المخزون غير معروف، لذا يعرض Snacky OS كامل الكمية المطلوبة.")}</div> : null}
+                              {noStorageAvailable ? <div className="text-xs font-medium text-amber-700">{tr(locale, `Storage is currently 0, but this machine still needs ${recommendationGroup.recommendedTotal}. Replenish storage or override it after verifying stock.`, `المخزون حاليًا 0، لكن هذا الجهاز ما زال يحتاج ${recommendationGroup.recommendedTotal}. عبئ المخزن أو تجاوز ذلك بعد التحقق من المخزون.`)}</div> : null}
+                              {!noStorageAvailable && recommendationShortage > 0 ? <div className="text-xs text-amber-700">{tr(locale, `Storage has ${storageAvailable}; recommendation needs ${recommendationGroup.recommendedTotal}. Short by ${recommendationShortage}.`, `المخزون المتاح ${storageAvailable}؛ والتوصية تحتاج ${recommendationGroup.recommendedTotal}. النقص ${recommendationShortage}.`)}</div> : null}
                                   {stockIssue ? <div className="text-xs font-medium text-rose-700">Selected {stockIssue.selected_qty}, available {stockIssue.available_qty}, shortage {stockIssue.shortage_qty}.</div> : null}
                                 </div>
 
@@ -1602,7 +1608,7 @@ export function RouteCreateForm({
                                     className="link-secondary"
                                     onClick={() => setExpandedRecommendationGroups((current) => toggleValue(current, recommendationGroup.groupKey))}
                                   >
-                                    {expanded ? "Hide slot details" : "Show slot details"}
+                                {expanded ? tr(locale, "Hide slot details", "إخفاء تفاصيل الفتحة") : tr(locale, "Show slot details", "عرض تفاصيل الفتحة")}
                                   </button>
                                 </div>
 
@@ -1612,8 +1618,8 @@ export function RouteCreateForm({
                                       <div key={row.recommendation_key} className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
                                         <div className="flex items-start justify-between gap-3">
                                           <div>
-                                            <div className="font-medium text-slate-900">{row.slot_code || "VMS item"}</div>
-                                            <div className="mt-1 text-xs text-slate-500">Current {row.current_qty} / Target {formatRecommendationQty(row.capacity ?? row.par_qty)} / Suggested {recommendationQuantity(row)}</div>
+                                            <div className="font-medium text-slate-900">{row.slot_code || tr(locale, "VMS item", "عنصر VMS")}</div>
+                                            <div className="mt-1 text-xs text-slate-500">{tr(locale, "Current", "الحالي")} {row.current_qty} / {tr(locale, "Target", "الهدف")} {formatRecommendationQty(row.capacity ?? row.par_qty)} / {tr(locale, "Suggested", "المقترح")} {recommendationQuantity(row)}</div>
                                           </div>
                                           <div className="text-xs font-medium text-slate-600">{row.priority ?? "-"}</div>
                                         </div>
@@ -1639,10 +1645,10 @@ export function RouteCreateForm({
                     <th className="px-3 py-2" />
                     <th className="px-3 py-2">Machine</th>
                     <th className="px-3 py-2">Product</th>
-                    <th className="px-3 py-2">Slots count</th>
-                    <th className="px-3 py-2">Current total</th>
-                    <th className="px-3 py-2">Target total</th>
-                    <th className="px-3 py-2">Recommended take</th>
+                    <th className="px-3 py-2">{tr(locale, "Slots count", "عدد الفتحات")}</th>
+                    <th className="px-3 py-2">{tr(locale, "Current total", "الإجمالي الحالي")}</th>
+                    <th className="px-3 py-2">{tr(locale, "Target total", "الإجمالي المستهدف")}</th>
+                    <th className="px-3 py-2">{tr(locale, "Recommended take", "الكمية الموصى بها")}</th>
                     <th className="px-3 py-2">Final Take</th>
                     <th className="px-3 py-2">Storage</th>
                     <th className="px-3 py-2">Priority</th>
@@ -1723,17 +1729,17 @@ export function RouteCreateForm({
                                   disabled={saving || !selected}
                                   aria-label={`Final take for ${group.productName} at ${group.machineName}`}
                                 />
-                                <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, group.recommendedTotal)} disabled={saving || !selected}>Use recommended</button>
-                                <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, Math.ceil(group.recommendedTotal / 2))} disabled={saving || !selected}>Take half</button>
-                                <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, storageAvailable)} disabled={saving || !selected || !storageKnown}>Take max available</button>
-                                <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, 0)} disabled={saving || !selected}>Clear</button>
+                                <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, group.recommendedTotal)} disabled={saving || !selected}>{tr(locale, "Use recommended", "استخدم التوصية")}</button>
+                                <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, Math.ceil(group.recommendedTotal / 2))} disabled={saving || !selected}>{tr(locale, "Take half", "خذ النصف")}</button>
+                                <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, storageAvailable)} disabled={saving || !selected || !storageKnown}>{tr(locale, "Take max available", "خذ الحد الأقصى المتاح")}</button>
+                                <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, 0)} disabled={saving || !selected}>{tr(locale, "Clear", "مسح")}</button>
                               </div>
-                              {finalIsZero ? <div className="mt-1 text-xs font-medium text-amber-700">Final take is 0.</div> : null}
-                              {finalHigherThanRecommended ? <div className="mt-1 text-xs font-medium text-amber-700">Final take is higher than recommended.</div> : null}
-                              {finalLowerThanRecommended ? <div className="mt-1 text-xs text-slate-500">Taking less than recommended.</div> : null}
-                              {storageUnknown ? <div className="mt-1 text-xs font-medium text-amber-700">Storage is unknown, so Snacky OS is keeping the full needed quantity visible.</div> : null}
-                              {noStorageAvailable ? <div className="mt-1 text-xs font-medium text-amber-700">Storage is currently 0, but this machine still needs {group.recommendedTotal}. Replenish storage or override it after verifying stock.</div> : null}
-                              {!noStorageAvailable && recommendationShortage > 0 ? <div className="mt-1 text-xs text-amber-700">Storage has {storageAvailable}; recommendation needs {group.recommendedTotal}. Short by {recommendationShortage}.</div> : null}
+                              {finalIsZero ? <div className="mt-1 text-xs font-medium text-amber-700">{tr(locale, "Final take is 0.", "الكمية النهائية تساوي 0.")}</div> : null}
+                              {finalHigherThanRecommended ? <div className="mt-1 text-xs font-medium text-amber-700">{tr(locale, "Final take is higher than recommended.", "الكمية النهائية أعلى من التوصية.")}</div> : null}
+                              {finalLowerThanRecommended ? <div className="mt-1 text-xs text-slate-500">{tr(locale, "Taking less than recommended.", "يتم أخذ أقل من التوصية.")}</div> : null}
+                              {storageUnknown ? <div className="mt-1 text-xs font-medium text-amber-700">{tr(locale, "Storage is unknown, so Snacky OS is keeping the full needed quantity visible.", "المخزون غير معروف، لذا يعرض Snacky OS كامل الكمية المطلوبة.")}</div> : null}
+                              {noStorageAvailable ? <div className="mt-1 text-xs font-medium text-amber-700">{tr(locale, `Storage is currently 0, but this machine still needs ${group.recommendedTotal}. Replenish storage or override it after verifying stock.`, `المخزون حاليًا 0، لكن هذا الجهاز ما زال يحتاج ${group.recommendedTotal}. عبئ المخزن أو تجاوز ذلك بعد التحقق من المخزون.`)}</div> : null}
+                              {!noStorageAvailable && recommendationShortage > 0 ? <div className="mt-1 text-xs text-amber-700">{tr(locale, `Storage has ${storageAvailable}; recommendation needs ${group.recommendedTotal}. Short by ${recommendationShortage}.`, `المخزون المتاح ${storageAvailable}؛ والتوصية تحتاج ${group.recommendedTotal}. النقص ${recommendationShortage}.`)}</div> : null}
                               {stockIssue ? <div className="mt-1 text-xs font-medium text-rose-700">Selected {stockIssue.selected_qty}, available {stockIssue.available_qty}, shortage {stockIssue.shortage_qty}.</div> : null}
                             </td>
                             <td className={`px-3 py-2 ${(finalExceedsStorage || showStockIssue) && !adminOverride ? "font-semibold text-rose-700" : ""}`}>{storageUnknown ? "Unknown" : storageAvailable}</td>
@@ -1758,7 +1764,7 @@ export function RouteCreateForm({
                                         <th className="px-3 py-2">Slot</th>
                                         <th className="px-3 py-2">Current</th>
                                         <th className="px-3 py-2">Target</th>
-                                        <th className="px-3 py-2">Recommended take</th>
+                                        <th className="px-3 py-2">{tr(locale, "Recommended take", "الكمية الموصى بها")}</th>
                                         <th className="px-3 py-2">Priority</th>
                                       </tr>
                                     </thead>
@@ -1806,10 +1812,10 @@ export function RouteCreateForm({
       </FormSection>
 
       <FormSection title="Add machine stops manually">
-        <p className="text-sm text-slate-500">Choose machines that should be included in the route even if there is no recommendation row.</p>
+        <p className="text-sm text-slate-500">{tr(locale, "Choose machines that should be included in the route even if there is no recommendation row.", "اختر الأجهزة التي يجب تضمينها في الجولة حتى لو لم توجد لها توصية.")}</p>
         {!machines.length ? (
           <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
-            No active machines found. Create a machine first.
+            {tr(locale, "No active machines found. Create a machine first.", "لم يتم العثور على أجهزة نشطة. أنشئ جهازًا أولًا.")}
           </div>
         ) : (
           <div className="grid gap-2">
@@ -1833,9 +1839,9 @@ export function RouteCreateForm({
       </FormSection>
 
       <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
-        Selected stops: <span className="font-semibold text-slate-900">{selectedStopCount}</span>
+        {tr(locale, "Selected stops:", "المواقع المحددة:")} <span className="font-semibold text-slate-900">{selectedStopCount}</span>
         <span className="mx-2 text-slate-300">/</span>
-        Route pick-list products: <span className="font-semibold text-slate-900">{selectedProducts.length}</span>
+        {tr(locale, "Route pick-list products:", "منتجات قائمة التحميل:")} <span className="font-semibold text-slate-900">{selectedProducts.length}</span>
       </div>
 
       {error ? (
@@ -1849,12 +1855,12 @@ export function RouteCreateForm({
           <div className="font-semibold text-slate-900">
             {selectedProducts.length} items selected · {plannedRouteStock.reduce((sum, item) => sum + unitQuantity(item.quantity), 0)} total units
           </div>
-          <div className="mt-1 text-xs text-slate-500">The create button stays visible on phones while you review the route.</div>
+          <div className="mt-1 text-xs text-slate-500">{tr(locale, "The create button stays visible on phones while you review the route.", "يبقى زر الإنشاء ظاهرًا على الهواتف أثناء مراجعة الجولة.")}</div>
         </div>
         <button type="submit" className="btn-primary disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto" disabled={saving}>
-          {saving ? "Creating route..." : "Create route"}
+          {saving ? tr(locale, "Creating route...", "جارٍ إنشاء الجولة...") : tr(locale, "Create route", "إنشاء جولة")}
         </button>
-        <SecondaryButton href="/routes">Cancel</SecondaryButton>
+        <SecondaryButton href="/routes">{tr(locale, "Cancel", "إلغاء")}</SecondaryButton>
       </div>
     </form>
   );

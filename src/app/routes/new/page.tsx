@@ -6,6 +6,7 @@ import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
 import { activeStockBatches, queryVmsDashboardBatches, sourceFileName, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
 import { RouteCreateForm } from "@/app/routes/new/RouteCreateForm";
 import { formatSiteLabel, formatMachineDisplayName } from "@/lib/machine-site-display";
+import { getServerI18n } from "@/lib/i18n/server";
 import type {
   RouteRecommendationDiagnosticReasonCode,
   RouteRecommendationDiagnostics,
@@ -252,6 +253,7 @@ function logRouteBuilderQueryError({
 }
 
 export default async function NewRoutePage() {
+  const { locale } = await getServerI18n();
   const profile = await getCurrentProfile();
   if (!profile || !canAccessPath({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/routes/new")) {
     redirect("/unauthorized");
@@ -261,7 +263,7 @@ export default async function NewRoutePage() {
   if (!supabase) {
     return (
       <>
-        <ErrorState title="Route creation unavailable" body="Supabase is not configured, so Snacky OS cannot create routes." action={<SecondaryButton href="/routes">Back to routes</SecondaryButton>} />
+        <ErrorState title={locale === "ar" ? "إنشاء الجولة غير متاح" : "Route creation unavailable"} body={locale === "ar" ? "لم يتم إعداد Supabase، لذلك لا يمكن لـ Snacky OS إنشاء الجولات." : "Supabase is not configured, so Snacky OS cannot create routes."} action={<SecondaryButton href="/routes">{locale === "ar" ? "العودة إلى الجولات" : "Back to routes"}</SecondaryButton>} />
       </>
     );
   }
@@ -686,7 +688,7 @@ export default async function NewRoutePage() {
   return (
     <>
       <FormPageLayout>
-        <PageHeader title="Create route" subtitle="Build a route with stops, refill recommendations, or a fast manual pick list from storage." />
+        <PageHeader title={locale === "ar" ? "إنشاء جولة" : "Create route"} subtitle={locale === "ar" ? "أنشئ جولة مع المواقع أو توصيات التعبئة أو قائمة تحميل يدوية سريعة من المخزن." : "Build a route with stops, refill recommendations, or a fast manual pick list from storage."} />
         <RouteCreateForm
           operators={operators ?? []}
           machines={machineCatalog}

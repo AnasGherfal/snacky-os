@@ -2,6 +2,7 @@ import { ErrorState, PageHeader, SecondaryButton } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
+import { getServerI18n } from "@/lib/i18n/server";
 import { isActiveRouteStatus, isPickupConfirmedStatus, isRouteItemsEditableStatus } from "@/lib/route-workflow";
 import { RouteItemEditor } from "./RouteItemEditor";
 import { redirect } from "next/navigation";
@@ -25,6 +26,7 @@ function isMissingColumn(error: unknown, columns: string[]) {
 export default async function RouteEditPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string }> }) {
   const { id } = await params;
   const { error = "" } = await searchParams;
+  const { locale } = await getServerI18n();
   const profile = await getCurrentProfile();
   if (!profile || !isOwnerAdminRole(profile) || !canAccessPath({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/routes")) {
     redirect("/unauthorized");
@@ -32,7 +34,7 @@ export default async function RouteEditPage({ params, searchParams }: { params: 
 
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) {
-    return <ErrorState title="Route unavailable" body="Supabase is not configured, so route items cannot be edited." action={<SecondaryButton href="/routes">Back to routes</SecondaryButton>} />;
+    return <ErrorState title={locale === "ar" ? "الجولة غير متاحة" : "Route unavailable"} body={locale === "ar" ? "لم يتم إعداد Supabase، لذلك لا يمكن تعديل عناصر الجولة." : "Supabase is not configured, so route items cannot be edited."} action={<SecondaryButton href="/routes">{locale === "ar" ? "العودة إلى الجولات" : "Back to routes"}</SecondaryButton>} />;
   }
 
   const { data: route, error: routeError } = await supabase
@@ -48,9 +50,9 @@ export default async function RouteEditPage({ params, searchParams }: { params: 
   if (!route) {
     return (
       <ErrorState
-        title="Route not found"
-        body="The route may have been deleted or you may not have permission to edit it."
-        action={<SecondaryButton href="/routes">Back to routes</SecondaryButton>}
+        title={locale === "ar" ? "لم يتم العثور على الجولة" : "Route not found"}
+        body={locale === "ar" ? "قد تكون الجولة حُذفت أو قد لا تملك صلاحية تعديلها." : "The route may have been deleted or you may not have permission to edit it."}
+        action={<SecondaryButton href="/routes">{locale === "ar" ? "العودة إلى الجولات" : "Back to routes"}</SecondaryButton>}
       />
     );
   }
@@ -129,15 +131,15 @@ export default async function RouteEditPage({ params, searchParams }: { params: 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Edit route items"
-        subtitle="Update route items and quantities without creating inventory movements automatically."
-        breadcrumbs={[{ label: "Routes", href: "/routes" }, { label: `Route ${route.route_date}` }, { label: "Edit route items" }]}
-        action={<SecondaryButton href={`/routes/${id}`}>Back to route</SecondaryButton>}
+        title={locale === "ar" ? "تعديل عناصر الجولة" : "Edit route items"}
+        subtitle={locale === "ar" ? "حدّث عناصر الجولة والكميات من دون إنشاء حركات مخزون تلقائيًا." : "Update route items and quantities without creating inventory movements automatically."}
+        breadcrumbs={[{ label: locale === "ar" ? "الجولات" : "Routes", href: "/routes" }, { label: `Route ${route.route_date}` }, { label: locale === "ar" ? "تعديل عناصر الجولة" : "Edit route items" }]}
+        action={<SecondaryButton href={`/routes/${id}`}>{locale === "ar" ? "العودة إلى الجولة" : "Back to route"}</SecondaryButton>}
       />
 
       {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{error}</div> : null}
-      {productsError ? <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Some product details could not load. You can still edit the route items.</div> : null}
-      {stopItemsError ? <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Route items could not be loaded cleanly. Existing data is still shown where possible.</div> : null}
+      {productsError ? <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{locale === "ar" ? "تعذر تحميل بعض تفاصيل المنتجات. يمكنك الاستمرار في تعديل عناصر الجولة." : "Some product details could not load. You can still edit the route items."}</div> : null}
+      {stopItemsError ? <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{locale === "ar" ? "تعذر تحميل عناصر الجولة بشكل كامل. ستظل البيانات الموجودة ظاهرة حيثما أمكن." : "Route items could not be loaded cleanly. Existing data is still shown where possible."}</div> : null}
 
       <RouteItemEditor
         routeId={id}

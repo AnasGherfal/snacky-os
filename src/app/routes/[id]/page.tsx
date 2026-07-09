@@ -11,6 +11,7 @@ import { ROUTE_CANCELED_STATUS, isActiveRouteStatus, isAvailableRouteStatus, isC
 import { RouteCreatedToast } from "@/app/routes/[id]/RouteCreatedToast";
 import { assignRoute, cancelRoute, deleteDraftRoute } from "@/lib/route-actions";
 import { repairRouteCompletion } from "@/lib/operator-actions";
+import { getServerI18n } from "@/lib/i18n/server";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -38,9 +39,121 @@ function firstRelation<T>(value: T | T[] | null | undefined): T | null {
   return value ?? null;
 }
 
+function tr(locale: "ar" | "en", en: string, ar: string) {
+  return locale === "ar" ? ar : en;
+}
+
+function routeBadgeLabel(locale: "ar" | "en", status: string) {
+  const value = String(status ?? "").toLowerCase();
+  if (value === "available") return tr(locale, "Available", "متاحة");
+  if (value === "active" || value === "in_progress" || value === "started" || value === "filling" || value === "machine_filling") return tr(locale, "In progress", "قيد التنفيذ");
+  if (value === "completed") return tr(locale, "Completed", "مكتملة");
+  if (value === "cancelled" || value === "canceled") return tr(locale, "Cancelled", "ملغاة");
+  return tr(locale, value.replaceAll("_", " "), value.replaceAll("_", " "));
+}
+
+function routeStepLabel(locale: "ar" | "en", status: string) {
+  const value = String(status ?? "").toLowerCase();
+  if (value === "completed" || value === "done") return tr(locale, "Completed", "مكتمل");
+  if (value === "pending") return tr(locale, "Pending", "قيد الانتظار");
+  if (value === "active" || value === "in_progress") return tr(locale, "Active", "نشط");
+  if (value === "skipped") return tr(locale, "Skipped", "متخطى");
+  if (value === "available") return tr(locale, "Available", "متاح");
+  return value.replaceAll("_", " ");
+}
+
+function routeActionLabel(locale: "ar" | "en", action: string) {
+  const value = String(action ?? "").toLowerCase();
+  if (value === "storage_to_operator_bag") return tr(locale, "Storage to operator bag", "من المخزن إلى حقيبة المشغل");
+  if (value === "operator_bag_to_storage") return tr(locale, "Operator bag to storage", "من حقيبة المشغل إلى المخزن");
+  if (value === "operator_to_machine") return tr(locale, "Operator to machine", "من المشغل إلى الجهاز");
+  if (value === "manual_admin_assignment") return tr(locale, "Manual admin assignment", "تعيين إداري يدوي");
+  if (value === "refill_recommendation") return tr(locale, "Refill recommendation", "توصية تعبئة");
+  return value.replaceAll("_", " ");
+}
+
+function routeReviewLabel(locale: "ar" | "en", status: string) {
+  const value = String(status ?? "").toLowerCase();
+  if (value === "verified") return tr(locale, "Verified", "مؤكد");
+  if (value === "payroll_pending") return tr(locale, "Payroll pending", "بانتظار الأجور");
+  if (value === "paid") return tr(locale, "Paid", "مدفوع");
+  if (value === "reviewed") return tr(locale, "Reviewed", "تمت المراجعة");
+  if (value === "needs_review") return tr(locale, "Needs review", "يحتاج مراجعة");
+  if (value === "ok") return tr(locale, "OK", "سليم");
+  if (value === "deducted") return tr(locale, "Deducted", "تم الخصم");
+  if (value === "none") return tr(locale, "None", "لا يوجد");
+  return value.replaceAll("_", " ");
+}
+
+function routeEntityLabel(locale: "ar" | "en", entity: string) {
+  const value = String(entity ?? "").toLowerCase();
+  if (value === "storage") return tr(locale, "Storage", "المخزن");
+  if (value === "operator_bag") return tr(locale, "Operator bag", "حقيبة المشغل");
+  if (value === "machine") return tr(locale, "Machine", "الجهاز");
+  if (value === "supplier") return tr(locale, "Supplier", "المورد");
+  if (value === "waste") return tr(locale, "Waste", "هالك");
+  if (value === "cash_collection") return tr(locale, "Cash collection", "تحصيل كاش");
+  if (value === "route_stop") return tr(locale, "Route stop", "موقع الجولة");
+  if (value === "route") return tr(locale, "Route", "الجولة");
+  return value.replaceAll("_", " ");
+}
+
+function routeMovementReasonLabel(locale: "ar" | "en", reason: string | null | undefined) {
+  const value = String(reason ?? "").toLowerCase();
+  if (value === "storage_to_operator_bag") return tr(locale, "Storage to operator bag", "من المخزن إلى حقيبة المشغل");
+  if (value === "operator_bag_to_storage") return tr(locale, "Operator bag to storage", "من حقيبة المشغل إلى المخزن");
+  if (value === "operator_bag_to_machine") return tr(locale, "Operator bag to machine", "من حقيبة المشغل إلى الجهاز");
+  if (value === "machine_to_waste") return tr(locale, "Machine to waste", "من الجهاز إلى الهالك");
+  if (value === "manual_adjustment") return tr(locale, "Manual adjustment", "تسوية يدوية");
+  if (value === "inventory_correction") return tr(locale, "Inventory correction", "تصحيح مخزون");
+  if (value === "damaged") return tr(locale, "Damaged", "تالف");
+  if (value === "expired") return tr(locale, "Expired", "منتهي الصلاحية");
+  return value.replaceAll("_", " ");
+}
+
+function routeIssueTypeLabel(locale: "ar" | "en", issueType: string | null | undefined) {
+  const value = String(issueType ?? "").toLowerCase();
+  if (value === "critical") return tr(locale, "Critical", "حرج");
+  if (value === "high") return tr(locale, "High", "مرتفع");
+  if (value === "medium") return tr(locale, "Medium", "متوسط");
+  if (value === "low") return tr(locale, "Low", "منخفض");
+  if (value === "machine_jam") return tr(locale, "Machine jam", "تعطل الجهاز");
+  if (value === "stock_missing") return tr(locale, "Missing stock", "مخزون مفقود");
+  if (value === "cash_variance") return tr(locale, "Cash variance", "فارق الكاش");
+  if (value === "damaged_item") return tr(locale, "Damaged item", "منتج تالف");
+  if (value === "expired_item") return tr(locale, "Expired item", "منتج منتهي الصلاحية");
+  return value.replaceAll("_", " ");
+}
+
+function routeRoleLabel(locale: "ar" | "en", role: string | null | undefined) {
+  const value = String(role ?? "").toLowerCase();
+  if (value === "owner") return tr(locale, "Owner", "المالك");
+  if (value === "admin") return tr(locale, "Admin", "الإدارة");
+  if (value === "supervisor") return tr(locale, "Supervisor", "مشرف");
+  if (value === "operator") return tr(locale, "Operator", "مشغل");
+  if (value === "finance") return tr(locale, "Finance", "المالية");
+  if (value === "warehouse") return tr(locale, "Warehouse", "المخزن");
+  return value.replaceAll("_", " ");
+}
+
+function routeActivityActionLabel(locale: "ar" | "en", action: string | null | undefined) {
+  const value = String(action ?? "").toLowerCase();
+  if (value === "created") return tr(locale, "Created", "تم الإنشاء");
+  if (value === "updated") return tr(locale, "Updated", "تم التحديث");
+  if (value === "assigned") return tr(locale, "Assigned", "تم التعيين");
+  if (value === "started") return tr(locale, "Started", "بدأ");
+  if (value === "completed") return tr(locale, "Completed", "مكتمل");
+  if (value === "cancelled" || value === "canceled") return tr(locale, "Cancelled", "ملغاة");
+  if (value === "reviewed") return tr(locale, "Reviewed", "تمت المراجعة");
+  if (value === "cash_collected") return tr(locale, "Cash collected", "تم تحصيل الكاش");
+  if (value === "inventory_moved") return tr(locale, "Inventory moved", "تم نقل المخزون");
+  return value.replaceAll("_", " ");
+}
+
 export default async function RouteDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; success?: string }> }) {
   const { id } = await params;
   const { error = "", success = "" } = await searchParams;
+  const { locale } = await getServerI18n();
   const profile = await getCurrentProfile();
   if (!profile || !canAccessPath({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/routes")) {
     redirect("/unauthorized");
@@ -50,7 +163,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   if (!supabase) {
     return (
       <>
-        <ErrorState title="Route unavailable" body="Supabase is not configured, so route details cannot be loaded." action={<SecondaryButton href="/routes">Back to routes</SecondaryButton>} />
+        <ErrorState title={tr(locale, "Route unavailable", "الجولة غير متاحة")} body={tr(locale, "Supabase is not configured, so route details cannot be loaded.", "لم يتم إعداد Supabase، لذلك لا يمكن تحميل تفاصيل الجولة.")} action={<SecondaryButton href="/routes">{tr(locale, "Back to routes", "العودة إلى الجولات")}</SecondaryButton>} />
       </>
     );
   }
@@ -69,15 +182,15 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     return (
       <>
         <PageHeader
-          title="Route details"
-          subtitle="This route could not be loaded."
-          breadcrumbs={[{ label: "Operations", href: "/routes" }, { label: "Routes", href: "/routes" }, { label: "Missing route" }]}
-          action={<SecondaryButton href="/routes">Back to routes</SecondaryButton>}
+          title={tr(locale, "Route details", "تفاصيل الجولة")}
+          subtitle={tr(locale, "This route could not be loaded.", "تعذر تحميل هذه الجولة.")}
+          breadcrumbs={[{ label: tr(locale, "Operations", "العمليات"), href: "/routes" }, { label: tr(locale, "Routes", "الجولات"), href: "/routes" }, { label: tr(locale, "Missing route", "الجولة غير موجودة") }]}
+          action={<SecondaryButton href="/routes">{tr(locale, "Back to routes", "العودة إلى الجولات")}</SecondaryButton>}
         />
         <ErrorState
-          title="Route not found"
-          body="The route may have been deleted, failed to save, or you may not have permission to view it."
-          action={<SecondaryButton href="/routes/new">Create route</SecondaryButton>}
+          title={tr(locale, "Route not found", "لم يتم العثور على الجولة")}
+          body={tr(locale, "The route may have been deleted, failed to save, or you may not have permission to view it.", "قد تكون الجولة حُذفت، أو تعذر حفظها، أو لا تملك صلاحية عرضها.")}
+          action={<SecondaryButton href="/routes/new">{tr(locale, "Create route", "إنشاء جولة")}</SecondaryButton>}
         />
       </>
     );
@@ -244,14 +357,14 @@ export default async function RouteDetailPage({ params, searchParams }: { params
       storagePath: savedPath || null,
       uploadedAt: row.refill_at ?? null,
       uploadedBy: (operator as any)?.full_name ?? row.operator_email ?? (rawRecord as any).operator_name ?? null,
-      label: `${row.machine_name ?? "Machine"} completion image`,
+      label: tr(locale, `${row.machine_name ?? "Machine"} completion image`, `صورة إكمال ${row.machine_name ?? "الجهاز"}`),
     });
     completionProofsByStopId.set(rowStopId, images);
   });
   const completionImageStops: RouteCompletionStop[] = routeStops.map((stop: any) => ({
     id: String(stop.id),
     title: formatMachineDisplayName(machineById.get(stop.machine_id) ?? null, { includeArea: true }),
-    subtitle: `Stop ${stop.stop_order || "-"} - ${machineById.get(stop.machine_id)?.machine_code ?? "-"}`,
+    subtitle: tr(locale, `Stop ${stop.stop_order || "-"} - ${machineById.get(stop.machine_id)?.machine_code ?? "-"}`, `الموقع ${stop.stop_order || "-"} - ${machineById.get(stop.machine_id)?.machine_code ?? "-"}`),
     images: completionProofsByStopId.get(String(stop.id)) ?? [],
   }));
   const canManageRouteAssignment = isAdminRole(profile);
@@ -314,21 +427,21 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     .slice(0, 100);
   const completedStopCount = routeStops.filter((stop: any) => isRouteStopDoneStatus(stop.status)).length;
   const timeline = [
-    { label: "Draft", done: true, detail: `Created ${new Date(routeRow.created_at).toLocaleString("en-US")}` },
-    { label: "Available", done: isAvailableRouteStatus(routeRow.status) || isActiveRouteStatus(routeRow.status) || isCompletedRouteStatus(routeRow.status), detail: operator?.full_name ?? "Unassigned / available" },
-    { label: "Picked", done: hasPickMovements || isPickupConfirmedStatus(routeRow.status), detail: hasPickMovements ? "Storage moved to operator bag" : "Awaiting pick confirmation" },
-    { label: "Stops completed", done: routeStops.length > 0 && completedStopCount === routeStops.length, detail: `${completedStopCount}/${routeStops.length} completed or skipped` },
-    { label: "Cash recorded", done: Boolean(cashCollections?.length), detail: `${cashCollections?.length ?? 0} cash records` },
-    { label: "Leftovers returned", done: hasReturnMovements || isCompletedRouteStatus(routeRow.status), detail: hasReturnMovements ? "Operator bag returned to storage" : "Awaiting leftover return" },
-    { label: "Completed", done: isCompletedRouteStatus(routeRow.status), detail: routeRow.completed_at ? new Date(routeRow.completed_at).toLocaleString("en-US") : "Not completed" },
+    { label: tr(locale, "Draft", "مسودة"), done: true, detail: tr(locale, `Created ${new Date(routeRow.created_at).toLocaleString("en-US")}`, `تم الإنشاء ${new Date(routeRow.created_at).toLocaleString("ar-LY")}`) },
+    { label: tr(locale, "Available", "متاحة"), done: isAvailableRouteStatus(routeRow.status) || isActiveRouteStatus(routeRow.status) || isCompletedRouteStatus(routeRow.status), detail: operator?.full_name ?? tr(locale, "Unassigned / available", "غير مسندة / متاحة") },
+    { label: tr(locale, "Picked", "تم التحميل"), done: hasPickMovements || isPickupConfirmedStatus(routeRow.status), detail: hasPickMovements ? tr(locale, "Storage moved to operator bag", "تم نقل المخزون إلى حقيبة المشغل") : tr(locale, "Awaiting pick confirmation", "بانتظار تأكيد التحميل") },
+    { label: tr(locale, "Stops completed", "المواقع المكتملة"), done: routeStops.length > 0 && completedStopCount === routeStops.length, detail: tr(locale, `${completedStopCount}/${routeStops.length} completed or skipped`, `${completedStopCount}/${routeStops.length} مكتملة أو متخطاة`) },
+    { label: tr(locale, "Cash recorded", "تم تسجيل الكاش"), done: Boolean(cashCollections?.length), detail: tr(locale, `${cashCollections?.length ?? 0} cash records`, `${cashCollections?.length ?? 0} سجل كاش`) },
+    { label: tr(locale, "Leftovers returned", "تمت إعادة المتبقي"), done: hasReturnMovements || isCompletedRouteStatus(routeRow.status), detail: hasReturnMovements ? tr(locale, "Operator bag returned to storage", "تمت إعادة حقيبة المشغل إلى المخزن") : tr(locale, "Awaiting leftover return", "بانتظار إعادة المتبقي") },
+    { label: tr(locale, "Completed", "مكتملة"), done: isCompletedRouteStatus(routeRow.status), detail: routeRow.completed_at ? new Date(routeRow.completed_at).toLocaleString(locale === "ar" ? "ar-LY" : "en-US") : tr(locale, "Not completed", "غير مكتملة") },
     {
-      label: "Payroll verified",
+      label: tr(locale, "Payroll verified", "تم التحقق من الأجور"),
       done: ["verified", "payroll_pending", "paid", "reviewed"].includes(String(routeRow.status ?? "")),
       detail: ["verified", "payroll_pending", "paid"].includes(String(routeRow.status ?? ""))
-        ? "Ready for payroll"
+        ? tr(locale, "Ready for payroll", "جاهزة للأجور")
         : routeRow.status === "reviewed"
-          ? "Legacy reviewed route"
-          : "Pending payroll review",
+          ? tr(locale, "Legacy reviewed route", "جولة مراجعة قديمة")
+          : tr(locale, "Pending payroll review", "بانتظار مراجعة الأجور"),
     },
   ];
   return (
@@ -336,34 +449,34 @@ export default async function RouteDetailPage({ params, searchParams }: { params
       <RouteCreatedToast />
       <div className="space-y-6">
         <PageHeader
-          title="Route details"
-          subtitle={`Route for ${routeRow.route_date}`}
-          breadcrumbs={[{ label: "Operations", href: "/routes" }, { label: "Routes", href: "/routes" }, { label: routeRow.route_date }]}
+          title={tr(locale, "Route details", "تفاصيل الجولة")}
+          subtitle={tr(locale, `Route for ${routeRow.route_date}`, `جولة بتاريخ ${routeRow.route_date}`)}
+          breadcrumbs={[{ label: tr(locale, "Operations", "العمليات"), href: "/routes" }, { label: tr(locale, "Routes", "الجولات"), href: "/routes" }, { label: routeRow.route_date }]}
           action={
             <div className="flex flex-wrap gap-2">
-              <SecondaryButton href="/routes">Back to routes</SecondaryButton>
+              <SecondaryButton href="/routes">{tr(locale, "Back to routes", "العودة إلى الجولات")}</SecondaryButton>
               {canEditRouteItems ? (
                 <Link href={`/routes/${id}/edit`} className="btn-secondary">
-                  Edit route items
+                  {tr(locale, "Edit route items", "تعديل عناصر الجولة")}
                 </Link>
               ) : null}
               {continueHref ? (
                 <Link href={continueHref} className="btn-primary">
-                  {canStartRoute ? (routeRow.operator_id ? "Start Route" : "Claim & Start") : "Continue Route"}
+                  {canStartRoute ? (routeRow.operator_id ? tr(locale, "Start Route", "بدء الجولة") : tr(locale, "Claim & Start", "استلام وبدء")) : tr(locale, "Continue Route", "متابعة الجولة")}
                 </Link>
               ) : null}
               {canStartRoute && !continueHref ? (
                 <Link href={`/operator/routes/${id}/pick-list?start=1`} className="btn-primary">
-                  {routeRow.operator_id ? "Start Route" : "Claim & Start"}
+                  {routeRow.operator_id ? tr(locale, "Start Route", "بدء الجولة") : tr(locale, "Claim & Start", "استلام وبدء")}
                 </Link>
               ) : null}
               {isAvailableRouteStatus(routeRow.status) ? (
                 <ConfirmDialog
                   action={deleteDraftRoute}
-                  triggerLabel="Delete route"
-                  title="Delete route?"
-                  description="Routes can be hard-deleted only before inventory, cash, or finance history exists."
-                  confirmLabel="Delete route"
+                  triggerLabel={tr(locale, "Delete route", "حذف الجولة")}
+                  title={tr(locale, "Delete route?", "حذف الجولة؟")}
+                  description={tr(locale, "Routes can be hard-deleted only before inventory, cash, or finance history exists.", "يمكن حذف الجولة نهائيًا فقط قبل وجود أي سجل للمخزون أو الكاش أو المالية.")}
+                  confirmLabel={tr(locale, "Delete route", "حذف الجولة")}
                   buttonClassName="btn-danger"
                   confirmButtonClassName="btn-danger"
                   hiddenFields={[{ name: "id", value: id }]}
@@ -372,10 +485,10 @@ export default async function RouteDetailPage({ params, searchParams }: { params
               {!isTerminalRouteStatus(routeRow.status) ? (
                 <ConfirmDialog
                   action={cancelRoute}
-                  triggerLabel="Cancel route"
-                  title="Cancel route?"
-                  description="Cancelled routes stay in history with their planned work, movements, and operator activity."
-                  confirmLabel="Cancel route"
+                  triggerLabel={tr(locale, "Cancel route", "إلغاء الجولة")}
+                  title={tr(locale, "Cancel route?", "إلغاء الجولة؟")}
+                  description={tr(locale, "Cancelled routes stay in history with their planned work, movements, and operator activity.", "تبقى الجولات الملغاة في السجل مع العمل المخطط والحركات ونشاط المشغل.")}
+                  confirmLabel={tr(locale, "Cancel route", "إلغاء الجولة")}
                   buttonClassName="btn-danger"
                   confirmButtonClassName="btn-danger"
                   hiddenFields={[{ name: "id", value: id }]}
@@ -384,10 +497,10 @@ export default async function RouteDetailPage({ params, searchParams }: { params
               {canManageRouteAssignment && !isTerminalRouteStatus(routeRow.status) ? (
                 <ConfirmDialog
                   action={repairRouteCompletion}
-                  triggerLabel="Repair & complete"
-                  title="Repair and complete route?"
-                  description="Snacky OS will reuse existing return movements, repair saved returned quantities, and complete the route without duplicating inventory."
-                  confirmLabel="Repair & complete"
+                  triggerLabel={tr(locale, "Repair & complete", "إصلاح وإكمال")}
+                  title={tr(locale, "Repair and complete route?", "إصلاح وإكمال الجولة؟")}
+                  description={tr(locale, "Snacky OS will reuse existing return movements, repair saved returned quantities, and complete the route without duplicating inventory.", "سيعيد Snacky OS استخدام حركات الإرجاع الموجودة، ويصلح الكميات المرتجعة المحفوظة، ويكمل الجولة من دون تكرار المخزون.")}
+                  confirmLabel={tr(locale, "Repair & complete", "إصلاح وإكمال")}
                   buttonClassName="btn-secondary"
                   confirmButtonClassName="btn-primary"
                   hiddenFields={[{ name: "route_id", value: id }]}
@@ -402,19 +515,19 @@ export default async function RouteDetailPage({ params, searchParams }: { params
         <div className="grid gap-4 md:grid-cols-3">
           <SectionCard>
             <div className="space-y-2 p-4">
-              <div className="text-sm text-slate-500">Status</div>
-              <StatusBadge status={routeDisplayStatus(routeRow.status, routeRow.operator_id)} />
+              <div className="text-sm text-slate-500">{tr(locale, "Status", "الحالة")}</div>
+              <StatusBadge status={routeDisplayStatus(routeRow.status, routeRow.operator_id)} label={routeBadgeLabel(locale, routeRow.status)} />
             </div>
           </SectionCard>
           <SectionCard>
             <div className="space-y-2 p-4">
-              <div className="text-sm text-slate-500">Performer</div>
-              <div>{operator?.full_name ?? "Unassigned / Available"}</div>
+              <div className="text-sm text-slate-500">{tr(locale, "Performer", "المسؤول")}</div>
+              <div>{operator?.full_name ?? tr(locale, "Unassigned / Available", "غير مسندة / متاحة")}</div>
             </div>
           </SectionCard>
           <SectionCard>
             <div className="space-y-2 p-4">
-              <div className="text-sm text-slate-500">Stops</div>
+              <div className="text-sm text-slate-500">{tr(locale, "Stops", "المواقع")}</div>
               <div>{routeStops.length}</div>
             </div>
           </SectionCard>
@@ -423,41 +536,41 @@ export default async function RouteDetailPage({ params, searchParams }: { params
         <section className="surface-card p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 className="text-lg font-semibold">Payroll</h2>
-              <p className="mt-1 text-sm text-slate-500">Saved route pay breakdown used for verification and monthly payroll periods.</p>
+              <h2 className="text-lg font-semibold">{tr(locale, "Payroll", "الأجور")}</h2>
+              <p className="mt-1 text-sm text-slate-500">{tr(locale, "Saved route pay breakdown used for verification and monthly payroll periods.", "تفصيل أجر الجولة المحفوظ المستخدم للمراجعة وفترات الأجور الشهرية.")}</p>
             </div>
-            <SecondaryButton href={`/payroll/routes/${id}`}>Open route pay detail</SecondaryButton>
+            <SecondaryButton href={`/payroll/routes/${id}`}>{tr(locale, "Open route pay detail", "فتح تفاصيل أجر الجولة")}</SecondaryButton>
           </div>
           <div className="mt-4 grid gap-4 md:grid-cols-3">
             <div>
-              <div className="text-sm text-slate-500">Route pay</div>
-              <div className="mt-1 text-xl font-semibold text-slate-900">{routePayBreakdown ? moneyLabel(routePayBreakdown.total_pay_lyd) : "Not calculated yet"}</div>
+              <div className="text-sm text-slate-500">{tr(locale, "Route pay", "أجر الجولة")}</div>
+              <div className="mt-1 text-xl font-semibold text-slate-900">{routePayBreakdown ? moneyLabel(routePayBreakdown.total_pay_lyd) : tr(locale, "Not calculated yet", "لم يتم احتسابه بعد")}</div>
             </div>
             <div>
-              <div className="text-sm text-slate-500">Payroll period</div>
+              <div className="text-sm text-slate-500">{tr(locale, "Payroll period", "فترة الأجور")}</div>
               <div className="mt-1 font-medium text-slate-900">
-                {routePayBreakdown?.payroll_period_id ? <Link href={`/payroll/periods/${routePayBreakdown.payroll_period_id}`} className="link-secondary">Open linked period</Link> : "Not linked yet"}
+                {routePayBreakdown?.payroll_period_id ? <Link href={`/payroll/periods/${routePayBreakdown.payroll_period_id}`} className="link-secondary">{tr(locale, "Open linked period", "فتح الفترة المرتبطة")}</Link> : tr(locale, "Not linked yet", "غير مرتبطة بعد")}
               </div>
             </div>
             <div>
-              <div className="text-sm text-slate-500">Last recalculated</div>
-              <div className="mt-1 font-medium text-slate-900">{routePayBreakdown?.recalculated_at ? new Date(routePayBreakdown.recalculated_at).toLocaleString("en-US") : "-"}</div>
+              <div className="text-sm text-slate-500">{tr(locale, "Last recalculated", "آخر إعادة احتساب")}</div>
+              <div className="mt-1 font-medium text-slate-900">{routePayBreakdown?.recalculated_at ? new Date(routePayBreakdown.recalculated_at).toLocaleString(locale === "ar" ? "ar-LY" : "en-US") : "-"}</div>
             </div>
           </div>
         </section>
 
         <section className="surface-card p-4">
-          <h2 className="text-lg font-semibold">Route stops</h2>
+          <h2 className="text-lg font-semibold">{tr(locale, "Route stops", "مواقع الجولة")}</h2>
           {!routeStops.length ? (
-            <EmptyState title="No stops added yet" body="This route was created successfully, but it does not have machine stops yet." />
+            <EmptyState title={tr(locale, "No stops added yet", "لم تتم إضافة مواقع بعد")} body={tr(locale, "This route was created successfully, but it does not have machine stops yet.", "تم إنشاء هذه الجولة بنجاح، لكنها لا تحتوي بعد على مواقع أجهزة.")} />
           ) : (
-            <DataTable headers={["Order", "Machine", "Code", "Stop status"]}>
+            <DataTable headers={[tr(locale, "Order", "الترتيب"), tr(locale, "Machine", "الجهاز"), tr(locale, "Code", "الرمز"), tr(locale, "Stop status", "حالة الموقع")]}>
               {routeStops.map((stop: any) => (
                 <tr key={stop.id}>
                   <td>{stop.stop_order}</td>
                   <td>{formatMachineDisplayName(machineById.get(stop.machine_id) ?? null, { includeArea: true })}</td>
                   <td>{machineById.get(stop.machine_id)?.machine_code ?? "-"}</td>
-                  <td><StatusBadge status={stop.status} /></td>
+                  <td><StatusBadge status={stop.status} label={routeStepLabel(locale, stop.status)} /></td>
                 </tr>
               ))}
             </DataTable>
@@ -467,22 +580,22 @@ export default async function RouteDetailPage({ params, searchParams }: { params
         {routeStops.length ? (
           <section className="surface-card p-4">
             <div className="mb-4">
-              <h2 className="text-lg font-semibold">Completion images</h2>
-              <p className="mt-1 text-sm text-slate-500">Final machine photos uploaded when the operator completes each stop.</p>
+              <h2 className="text-lg font-semibold">{tr(locale, "Completion images", "صور الإكمال")}</h2>
+              <p className="mt-1 text-sm text-slate-500">{tr(locale, "Final machine photos uploaded when the operator completes each stop.", "صور الجهاز النهائية المرفوعة عندما يكمل المشغل كل موقع.")}</p>
             </div>
             <RouteCompletionImages stops={completionImageStops} />
           </section>
         ) : null}
 
         <section className="surface-card p-4">
-          <h2 className="text-lg font-semibold">Route stock</h2>
+          <h2 className="text-lg font-semibold">{tr(locale, "Route stock", "مخزون الجولة")}</h2>
           {!routeStock?.length ? (
-            <EmptyState title="No route stock" body="No storage stock has been planned for this route yet." />
+            <EmptyState title={tr(locale, "No route stock", "لا يوجد مخزون للجولة")} body={tr(locale, "No storage stock has been planned for this route yet.", "لم يتم تخطيط أي مخزون من المخزن لهذه الجولة بعد.")} />
           ) : (
-            <DataTable headers={["Product", "Planned", "Picked", "Returned"]}>
+            <DataTable headers={[tr(locale, "Product", "المنتج"), tr(locale, "Planned", "المخطط"), tr(locale, "Picked", "المسحوب"), tr(locale, "Returned", "المرتجع")]}>
               {routeStock.map((item: any) => (
                 <tr key={item.id}>
-                  <td>{item.product?.name ?? productById.get(item.product_id)?.name ?? "Unknown product"}</td>
+                  <td>{item.product?.name ?? productById.get(item.product_id)?.name ?? tr(locale, "Unknown product", "منتج غير معروف")}</td>
                   <td>{item.planned_qty}</td>
                   <td>{item.picked_qty}</td>
                   <td>{item.returned_qty}</td>
@@ -493,9 +606,9 @@ export default async function RouteDetailPage({ params, searchParams }: { params
         </section>
 
         <section className="surface-card p-4">
-          <h2 className="text-lg font-semibold">Machine-level planned items</h2>
+          <h2 className="text-lg font-semibold">{tr(locale, "Machine-level planned items", "عناصر التخطيط حسب الجهاز")}</h2>
           {!routeStops.length ? (
-            <EmptyState title="No stops added yet" body="Machine-level planned products will appear under each stop." />
+            <EmptyState title={tr(locale, "No stops added yet", "لم تتم إضافة مواقع بعد")} body={tr(locale, "Machine-level planned products will appear under each stop.", "ستظهر المنتجات المخططة لكل جهاز تحت كل موقع.")} />
           ) : (
             <div className="space-y-6">
               {routeStops.map((stop: any) => {
@@ -504,25 +617,25 @@ export default async function RouteDetailPage({ params, searchParams }: { params
                 <div key={stop.id} className="rounded-xl border border-slate-200 bg-white p-4">
                   <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <div className="text-sm text-slate-500">Machine</div>
+                      <div className="text-sm text-slate-500">{tr(locale, "Machine", "الجهاز")}</div>
                       <div className="font-medium">{formatMachineDisplayName(machineById.get(stop.machine_id) ?? null, { includeArea: true })}</div>
                       <div className="text-sm text-slate-500">{machineById.get(stop.machine_id)?.machine_code ?? "-"}</div>
                     </div>
-                    <StatusBadge status={stop.status} />
+                    <StatusBadge status={stop.status} label={routeStepLabel(locale, stop.status)} />
                   </div>
                   {items.length ? (
-                    <DataTable headers={["Slot", "Product", "Planned qty", "Source"]}>
+                    <DataTable headers={[tr(locale, "Slot", "الفتحة"), tr(locale, "Product", "المنتج"), tr(locale, "Planned qty", "الكمية المخططة"), tr(locale, "Source", "المصدر")]}>
                       {items.map((line: any) => (
                         <tr key={line.id}>
                           <td>{line.slot_code ?? "-"}</td>
-                          <td>{productById.get(line.product_id)?.name ?? "Unknown product"}</td>
+                          <td>{productById.get(line.product_id)?.name ?? tr(locale, "Unknown product", "منتج غير معروف")}</td>
                           <td>{line.planned_quantity}</td>
-                          <td>{line.source === "refill_recommendation" ? "Refill recommendation" : "Manual admin assignment"}</td>
+                          <td>{line.source === "refill_recommendation" ? tr(locale, "Refill recommendation", "توصية تعبئة") : tr(locale, "Manual admin assignment", "تعيين يدوي من الإدارة")}</td>
                         </tr>
                       ))}
                     </DataTable>
                   ) : (
-                    <div className="text-sm text-slate-500">No planned products for this machine.</div>
+                    <div className="text-sm text-slate-500">{tr(locale, "No planned products for this machine.", "لا توجد منتجات مخططة لهذا الجهاز.")}</div>
                   )}
                 </div>
               )})}
@@ -531,24 +644,24 @@ export default async function RouteDetailPage({ params, searchParams }: { params
         </section>
 
         <section className="surface-card p-4">
-          <h2 className="text-lg font-semibold">Pickup batches</h2>
+          <h2 className="text-lg font-semibold">{tr(locale, "Pickup batches", "دفعات التحميل")}</h2>
           {!pickupBatches?.length ? (
-            <EmptyState title="No pickup batches yet" body="Each partial storage pickup will appear here after confirmation." />
+            <EmptyState title={tr(locale, "No pickup batches yet", "لا توجد دفعات تحميل بعد")} body={tr(locale, "Each partial storage pickup will appear here after confirmation.", "ستظهر كل دفعة تحميل جزئية من المخزن هنا بعد التأكيد.")} />
           ) : (
-            <DataTable headers={["Confirmed", "Operator", "Stops", "Products", "Storage"]}>
+            <DataTable headers={[tr(locale, "Confirmed", "تم التأكيد"), tr(locale, "Operator", "المشغل"), tr(locale, "Stops", "المواقع"), tr(locale, "Products", "المنتجات"), tr(locale, "Storage", "المخزن")]}>
               {pickupBatches.map((batch: any, index: number) => {
                 const products = Array.isArray(batch.product_summary) ? batch.product_summary : [];
                 return (
                   <tr key={batch.id}>
-                    <td>{batch.confirmed_at ? new Date(batch.confirmed_at).toLocaleString("en-US") : `Batch ${index + 1}`}</td>
+                    <td>{batch.confirmed_at ? new Date(batch.confirmed_at).toLocaleString(locale === "ar" ? "ar-LY" : "en-US") : tr(locale, `Batch ${index + 1}`, `الدفعة ${index + 1}`)}</td>
                     <td>{batch.operator?.full_name ?? "-"}</td>
                     <td>{Array.isArray(batch.selected_stop_ids) ? batch.selected_stop_ids.length : 0}</td>
                     <td>
                       {products.length
-                        ? products.map((product: any) => `${product.product_name ?? "Product"}: ${product.quantity}`).join(", ")
+                        ? products.map((product: any) => `${product.product_name ?? tr(locale, "Product", "منتج")}: ${product.quantity}`).join(", ")
                         : "-"}
                     </td>
-                    <td><StatusBadge status={batch.storage_deducted ? "deducted" : "none"} /></td>
+                    <td><StatusBadge status={batch.storage_deducted ? "deducted" : "none"} label={batch.storage_deducted ? tr(locale, "Deducted", "تم الخصم") : tr(locale, "None", "لا يوجد")} /></td>
                   </tr>
                 );
               })}
@@ -559,27 +672,27 @@ export default async function RouteDetailPage({ params, searchParams }: { params
         <section className="surface-card p-4">
           <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 className="text-lg font-semibold">Confirmed pick list</h2>
-              <p className="text-sm text-slate-500">Actual products picked before the operator left storage.</p>
+              <h2 className="text-lg font-semibold">{tr(locale, "Confirmed pick list", "قائمة التحميل المؤكدة")}</h2>
+              <p className="text-sm text-slate-500">{tr(locale, "Actual products picked before the operator left storage.", "المنتجات الفعلية التي تم تحميلها قبل مغادرة المشغل للمخزن.")}</p>
             </div>
-            <StatusBadge status={routePickListItems.some((line: any) => line.needs_review) ? "needs_review" : "ok"} />
+            <StatusBadge status={routePickListItems.some((line: any) => line.needs_review) ? "needs_review" : "ok"} label={routePickListItems.some((line: any) => line.needs_review) ? tr(locale, "Needs review", "يحتاج مراجعة") : tr(locale, "OK", "سليم")} />
           </div>
           {!routePickListItems.length ? (
-            <EmptyState title="Pick list not confirmed" body="The operator has not confirmed storage-to-bag picking for this route yet." />
+            <EmptyState title={tr(locale, "Pick list not confirmed", "لم يتم تأكيد قائمة التحميل")} body={tr(locale, "The operator has not confirmed storage-to-bag picking for this route yet.", "لم يؤكد المشغل بعد التحميل من المخزن إلى الحقيبة لهذه الجولة.")} />
           ) : (
-            <DataTable headers={["Product", "Type", "Planned", "Picked", "Review", "Reason"]}>
+            <DataTable headers={[tr(locale, "Product", "المنتج"), tr(locale, "Type", "النوع"), tr(locale, "Planned", "المخطط"), tr(locale, "Picked", "المسحوب"), tr(locale, "Review", "المراجعة"), tr(locale, "Reason", "السبب")]}>
               {routePickListItems.map((line: any) => (
                 <tr key={line.id}>
-                  <td>{line.product?.name ?? productById.get(line.product_id)?.name ?? "Unknown product"}</td>
-                  <td><StatusBadge status={line.action_type} /></td>
+                  <td>{line.product?.name ?? productById.get(line.product_id)?.name ?? tr(locale, "Unknown product", "منتج غير معروف")}</td>
+                  <td><StatusBadge status={line.action_type} label={routeActionLabel(locale, line.action_type)} /></td>
                   <td>{line.planned_qty}</td>
                   <td>{line.picked_qty}</td>
-                  <td><StatusBadge status={line.needs_review ? "needs_review" : "ok"} /></td>
+                  <td><StatusBadge status={line.needs_review ? "needs_review" : "ok"} label={line.needs_review ? tr(locale, "Needs review", "يحتاج مراجعة") : tr(locale, "OK", "سليم")} /></td>
                   <td>
                     <div>{line.reason ?? "-"}</div>
                     {line.substituted_for_product_id ? (
                       <div className="mt-1 text-xs text-slate-500">
-                        Substituted for {line.substituted_product?.name ?? productById.get(line.substituted_for_product_id)?.name ?? "unknown product"}
+                        {tr(locale, "Substituted for", "تم الاستبدال بـ")} {line.substituted_product?.name ?? productById.get(line.substituted_for_product_id)?.name ?? tr(locale, "unknown product", "منتج غير معروف")}
                       </div>
                     ) : null}
                     {line.notes ? <div className="mt-1 text-xs text-slate-500">{line.notes}</div> : null}
@@ -593,25 +706,25 @@ export default async function RouteDetailPage({ params, searchParams }: { params
         <section className="surface-card p-4">
           <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 className="text-lg font-semibold">Operator changes</h2>
-              <p className="text-sm text-slate-500">Actual stop fills, shortages, extras, substitutions, and missing product reports.</p>
+              <h2 className="text-lg font-semibold">{tr(locale, "Operator changes", "تغييرات المشغل")}</h2>
+              <p className="text-sm text-slate-500">{tr(locale, "Actual stop fills, shortages, extras, substitutions, and missing product reports.", "عمليات التعبئة الفعلية، والنقص، والزيادة، والاستبدالات، وتقارير المنتجات المفقودة.")}</p>
             </div>
-            <StatusBadge status={(fillLines ?? []).some((line: any) => line.needs_review) ? "needs_review" : "ok"} />
+            <StatusBadge status={(fillLines ?? []).some((line: any) => line.needs_review) ? "needs_review" : "ok"} label={(fillLines ?? []).some((line: any) => line.needs_review) ? tr(locale, "Needs review", "يحتاج مراجعة") : tr(locale, "OK", "سليم")} />
           </div>
           {!fillLines?.length ? (
-            <EmptyState title="No operator changes recorded" body="Completed stop actuals will appear here after the operator finishes a machine stop." />
+            <EmptyState title={tr(locale, "No operator changes recorded", "لم تُسجل أي تغييرات للمشغل")} body={tr(locale, "Completed stop actuals will appear here after the operator finishes a machine stop.", "ستظهر بيانات الموقع المكتمل هنا بعد أن ينهي المشغل موقع الجهاز.")} />
           ) : (
-            <DataTable headers={["Machine", "Type", "Planned product", "Actual product", "Assigned", "Actual", "Diff", "Review", "Reason"]}>
+            <DataTable headers={[tr(locale, "Machine", "الجهاز"), tr(locale, "Type", "النوع"), tr(locale, "Planned product", "المنتج المخطط"), tr(locale, "Actual product", "المنتج الفعلي"), tr(locale, "Assigned", "المسند"), tr(locale, "Actual", "الفعلي"), tr(locale, "Diff", "الفرق"), tr(locale, "Review", "المراجعة"), tr(locale, "Reason", "السبب")]}>
               {fillLines.map((line: any) => (
                 <tr key={line.id}>
                   <td>{formatMachineDisplayName(machineById.get(line.machine_id) ?? null, { includeArea: true })}</td>
-                  <td><StatusBadge status={line.action_type} /></td>
+                  <td><StatusBadge status={line.action_type} label={routeActionLabel(locale, line.action_type)} /></td>
                   <td>{line.missing_product_name ?? productById.get(line.assigned_product_id)?.name ?? "-"}</td>
                   <td>{productById.get(line.product_id)?.name ?? productById.get(line.substitute_product_id)?.name ?? "-"}</td>
                   <td>{line.assigned_qty}</td>
                   <td>{line.actual_qty}</td>
                   <td>{line.difference_qty > 0 ? `+${line.difference_qty}` : line.difference_qty}</td>
-                  <td><StatusBadge status={line.needs_review ? "needs_review" : "ok"} /></td>
+                  <td><StatusBadge status={line.needs_review ? "needs_review" : "ok"} label={line.needs_review ? tr(locale, "Needs review", "يحتاج مراجعة") : tr(locale, "OK", "سليم")} /></td>
                   <td>
                     <div>{line.reason ?? "-"}</div>
                     {line.notes ? <div className="mt-1 text-xs text-slate-500">{line.notes}</div> : null}
@@ -625,23 +738,23 @@ export default async function RouteDetailPage({ params, searchParams }: { params
         <section className="surface-card p-4">
           <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 className="text-lg font-semibold">Inventory movements</h2>
-              <p className="text-sm text-slate-500">Ledger entries generated by this route.</p>
+              <h2 className="text-lg font-semibold">{tr(locale, "Inventory movements", "حركات المخزون")}</h2>
+              <p className="text-sm text-slate-500">{tr(locale, "Ledger entries generated by this route.", "قيود دفتر الحركة الناتجة عن هذه الجولة.")}</p>
             </div>
-            <SecondaryButton href={`/inventory/movements?route_id=${id}`}>Open full log</SecondaryButton>
+            <SecondaryButton href={`/inventory/movements?route_id=${id}`}>{tr(locale, "Open full log", "فتح السجل الكامل")}</SecondaryButton>
           </div>
           {!movements?.length ? (
-            <EmptyState title="No inventory movements yet" body="Pick, fill, and leftover movements for this route will appear here." />
+            <EmptyState title={tr(locale, "No inventory movements yet", "لا توجد حركات مخزون بعد")} body={tr(locale, "Pick, fill, and leftover movements for this route will appear here.", "ستظهر هنا حركات التحميل والتعبئة والمرتجعات لهذه الجولة.")} />
           ) : (
-            <DataTable headers={["Created", "Product", "Qty", "From", "To", "Reason", "User", "Notes"]}>
+            <DataTable headers={[tr(locale, "Created", "الإنشاء"), tr(locale, "Product", "المنتج"), tr(locale, "Qty", "الكمية"), tr(locale, "From", "من"), tr(locale, "To", "إلى"), tr(locale, "Reason", "السبب"), tr(locale, "User", "المستخدم"), tr(locale, "Notes", "الملاحظات")]}>
               {movements.map((movement: any) => (
                 <tr key={movement.id}>
-                  <td>{new Date(movement.created_at).toLocaleString("en-US")}</td>
-                  <td className="font-medium">{movement.product?.name ?? "Unknown product"}</td>
+                  <td>{new Date(movement.created_at).toLocaleString(locale === "ar" ? "ar-LY" : "en-US")}</td>
+                  <td className="font-medium">{movement.product?.name ?? tr(locale, "Unknown product", "منتج غير معروف")}</td>
                   <td>{movement.quantity}</td>
-                  <td><StatusBadge status={movement.from_entity_type} /></td>
-                  <td><StatusBadge status={movement.to_entity_type} /></td>
-                  <td>{movement.reason}</td>
+                  <td><StatusBadge status={movement.from_entity_type} label={routeEntityLabel(locale, movement.from_entity_type)} /></td>
+                  <td><StatusBadge status={movement.to_entity_type} label={routeEntityLabel(locale, movement.to_entity_type)} /></td>
+                  <td>{routeMovementReasonLabel(locale, movement.reason)}</td>
                   <td>{movement.created_by_member?.full_name ?? "-"}</td>
                   <td>{movement.notes ?? "-"}</td>
                 </tr>
@@ -652,18 +765,18 @@ export default async function RouteDetailPage({ params, searchParams }: { params
 
         <div className="grid gap-4 xl:grid-cols-2">
           <section className="surface-card p-4">
-            <h2 className="text-lg font-semibold">Cash collections</h2>
+            <h2 className="text-lg font-semibold">{tr(locale, "Cash collections", "تحصيلات الكاش")}</h2>
             {!cashCollections?.length ? (
-              <EmptyState title="No cash collected yet" body="Cash records are created when operators complete machine stops." />
+              <EmptyState title={tr(locale, "No cash collected yet", "لم يتم تحصيل كاش بعد")} body={tr(locale, "Cash records are created when operators complete machine stops.", "تُنشأ سجلات الكاش عندما يكمل المشغل مواقع الأجهزة.")} />
             ) : (
-              <DataTable headers={["Machine", "Expected", "Counted", "Variance", "Status"]}>
+              <DataTable headers={[tr(locale, "Machine", "الجهاز"), tr(locale, "Expected", "المتوقع"), tr(locale, "Counted", "المعدود"), tr(locale, "Variance", "الفارق"), tr(locale, "Status", "الحالة")]}>
                 {cashCollections.map((cash: any) => (
                   <tr key={cash.id}>
                     <td>{formatMachineDisplayName(machineById.get(cash.machine_id) ?? null, { includeArea: true })}</td>
                     <td>{cash.vms_expected_cash === null ? "-" : lyd(cash.vms_expected_cash)}</td>
                     <td>{cash.actual_cash_collected === null ? "-" : lyd(cash.actual_cash_collected)}</td>
                     <td>{cash.variance === null ? "-" : lyd(cash.variance)}</td>
-                    <td><StatusBadge status={String(cash.review_status ?? "").replaceAll("_", " ")} /></td>
+                    <td><StatusBadge status={String(cash.review_status ?? "").replaceAll("_", " ")} label={routeReviewLabel(locale, String(cash.review_status ?? ""))} /></td>
                   </tr>
                 ))}
               </DataTable>
@@ -671,17 +784,17 @@ export default async function RouteDetailPage({ params, searchParams }: { params
           </section>
 
           <section className="surface-card p-4">
-            <h2 className="text-lg font-semibold">Issues reported</h2>
+            <h2 className="text-lg font-semibold">{tr(locale, "Issues reported", "الأعطال المبلغ عنها")}</h2>
             {!issues?.length ? (
-              <EmptyState title="No issues reported" body="Operator-reported machine issues for this route will appear here." />
+              <EmptyState title={tr(locale, "No issues reported", "لم يتم الإبلاغ عن أعطال")} body={tr(locale, "Operator-reported machine issues for this route will appear here.", "ستظهر أعطال الأجهزة التي يبلغ عنها المشغل هنا.")} />
             ) : (
-              <DataTable headers={["Machine", "Type", "Priority", "Status"]}>
+              <DataTable headers={[tr(locale, "Machine", "الجهاز"), tr(locale, "Type", "النوع"), tr(locale, "Priority", "الأولوية"), tr(locale, "Status", "الحالة")]}>
                 {issues.map((issue: any) => (
                   <tr key={issue.id}>
                     <td>{formatMachineDisplayName(machineById.get(issue.machine_id) ?? null, { includeArea: true })}</td>
-                    <td>{issue.issue_type}</td>
-                    <td><StatusBadge status={issue.priority} /></td>
-                    <td><StatusBadge status={issue.status} /></td>
+                    <td>{routeIssueTypeLabel(locale, issue.issue_type)}</td>
+                    <td><StatusBadge status={issue.priority} label={routeReviewLabel(locale, issue.priority)} /></td>
+                    <td><StatusBadge status={issue.status} label={routeReviewLabel(locale, issue.status)} /></td>
                   </tr>
                 ))}
               </DataTable>
@@ -692,66 +805,66 @@ export default async function RouteDetailPage({ params, searchParams }: { params
         {canManageRouteAssignment && !isTerminalRouteStatus(routeRow.status) ? (
           <section className="surface-card p-4">
             <div className="mb-4">
-              <h2 className="text-lg font-semibold">Route assignment</h2>
-              <p className="mt-1 text-sm text-slate-500">Assign a route performer now, or leave this route available for an eligible user to claim when starting it.</p>
+              <h2 className="text-lg font-semibold">{tr(locale, "Route assignment", "تعيين الجولة")}</h2>
+              <p className="mt-1 text-sm text-slate-500">{tr(locale, "Assign a route performer now, or leave this route available for an eligible user to claim when starting it.", "عيّن منفذ الجولة الآن، أو اتركها متاحة لمستخدم مؤهل ليستلمها عند البدء.")}</p>
             </div>
             <form action={assignRoute} className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
               <input type="hidden" name="id" value={id} />
               <label className="block space-y-1.5">
-                <span className="text-sm font-medium text-slate-800">Performer</span>
+                <span className="text-sm font-medium text-slate-800">{tr(locale, "Performer", "المسؤول")}</span>
                 <select name="operator_id" defaultValue={routeRow.operator_id ?? ""} className="field-input">
-                  <option value="">Leave unassigned / available</option>
+                  <option value="">{tr(locale, "Leave unassigned / available", "اتركها غير مسندة / متاحة")}</option>
                   {(performers ?? []).map((performer: any) => (
-                    <option key={performer.id} value={performer.id}>
-                      {performer.full_name} ({performer.role})
-                    </option>
-                  ))}
-                </select>
+                  <option key={performer.id} value={performer.id}>
+                      {performer.full_name} ({routeRoleLabel(locale, performer.role)})
+                  </option>
+                ))}
+              </select>
               </label>
-              <button type="submit" className="btn-primary">Update assignment</button>
+              <button type="submit" className="btn-primary">{tr(locale, "Update assignment", "تحديث التعيين")}</button>
             </form>
           </section>
         ) : null}
 
         {routeRow.status === ROUTE_CANCELED_STATUS ? (
           <section className="surface-card p-4">
-            <h2 className="text-lg font-semibold">Cancellation</h2>
+            <h2 className="text-lg font-semibold">{tr(locale, "Cancellation", "الإلغاء")}</h2>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
-              <div><div className="text-sm text-slate-500">Cancelled at</div><div className="font-medium">{routeRow.cancelled_at ? new Date(routeRow.cancelled_at).toLocaleString("en-US") : "-"}</div></div>
-              <div><div className="text-sm text-slate-500">Reason</div><div className="font-medium">{routeRow.cancellation_reason ?? "-"}</div></div>
+              <div><div className="text-sm text-slate-500">{tr(locale, "Cancelled at", "تم الإلغاء في")}</div><div className="font-medium">{routeRow.cancelled_at ? new Date(routeRow.cancelled_at).toLocaleString(locale === "ar" ? "ar-LY" : "en-US") : "-"}</div></div>
+              <div><div className="text-sm text-slate-500">{tr(locale, "Reason", "السبب")}</div><div className="font-medium">{routeRow.cancellation_reason ?? "-"}</div></div>
             </div>
           </section>
         ) : null}
 
         <section className="surface-card p-4">
-          <h2 className="text-lg font-semibold">Status timeline</h2>
+          <h2 className="text-lg font-semibold">{tr(locale, "Status timeline", "الخط الزمني للحالة")}</h2>
           <div className="mt-4 grid gap-3 md:grid-cols-4">
             {timeline.map((item) => (
               <div key={item.label} className={`rounded-lg border p-3 ${item.done ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-white"}`}>
                 <div className="text-sm font-semibold text-slate-900">{item.label}</div>
                 <div className="mt-1 text-xs text-slate-600">{item.detail}</div>
-                <div className="mt-2"><StatusBadge status={item.done ? "complete" : "pending"} /></div>
+                <div className="mt-2"><StatusBadge status={item.done ? "complete" : "pending"} label={item.done ? tr(locale, "Complete", "مكتمل") : tr(locale, "Pending", "قيد الانتظار")} /></div>
               </div>
             ))}
           </div>
         </section>
 
         <section className="surface-card p-4">
-          <h2 className="text-lg font-semibold">Route activity</h2>
-          <p className="mt-1 text-sm text-slate-500">Audit trail for route creation, picking, stop completion, cash review, issues, and leftover return.</p>
+          <h2 className="text-lg font-semibold">{tr(locale, "Route activity", "نشاط الجولة")}</h2>
+          <p className="mt-1 text-sm text-slate-500">{tr(locale, "Audit trail for route creation, picking, stop completion, cash review, issues, and leftover return.", "سجل تدقيق لإنشاء الجولة، والتحميل، وإكمال المواقع، ومراجعة الكاش، والأعطال، وإرجاع المتبقي.")}</p>
           {!routeActivityRows.length ? (
             <div className="mt-4">
-              <EmptyState title="No route activity yet" body="Route actions will appear here as operators and admins work through the route." />
+              <EmptyState title={tr(locale, "No route activity yet", "لا يوجد نشاط للجولة بعد")} body={tr(locale, "Route actions will appear here as operators and admins work through the route.", "ستظهر إجراءات الجولة هنا أثناء تنفيذ المشغلين والإداريين للجولة.")} />
             </div>
           ) : (
             <div className="mt-4">
-              <DataTable headers={["Created", "Action", "Entity", "User", "Summary"]}>
+              <DataTable headers={[tr(locale, "Created", "الإنشاء"), tr(locale, "Action", "الإجراء"), tr(locale, "Entity", "العنصر"), tr(locale, "User", "المستخدم"), tr(locale, "Summary", "الملخص")]}>
                 {routeActivityRows.map((activity: any) => (
                   <tr key={activity.id}>
-                    <td>{new Date(activity.created_at).toLocaleString("en-US")}</td>
-                    <td><StatusBadge status={activity.action} /></td>
-                    <td>{String(activity.entity_type ?? "-").replaceAll("_", " ")}</td>
-                    <td>{activity.actor_name ?? activity.actor_role ?? "-"}</td>
+                    <td>{new Date(activity.created_at).toLocaleString(locale === "ar" ? "ar-LY" : "en-US")}</td>
+                    <td><StatusBadge status={activity.action} label={routeActivityActionLabel(locale, activity.action)} /></td>
+                    <td>{routeEntityLabel(locale, activity.entity_type)}</td>
+                    <td>{activity.actor_name ?? routeRoleLabel(locale, activity.actor_role) ?? "-"}</td>
                     <td>{activity.summary ?? activity.entity_label ?? "-"}</td>
                   </tr>
                 ))}

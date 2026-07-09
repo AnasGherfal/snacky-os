@@ -34,8 +34,40 @@ function formatDate(value: string | null | undefined) {
   return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
-function entityTypeLabel(type: string | null | undefined) {
-  return type ? type.replaceAll("_", " ") : "-";
+function entityTypeLabel(type: string | null | undefined, locale: "en" | "ar") {
+  const value = type ? type.replaceAll("_", " ") : "-";
+  if (locale !== "ar") return value;
+  if (type === "storage") return "المخزن";
+  if (type === "operator_bag") return "حقيبة المشغل";
+  if (type === "machine") return "الجهاز";
+  if (type === "supplier") return "المورد";
+  if (type === "waste") return "هالك";
+  return value;
+}
+
+function storageMovementReasonLabel(reason: string | null | undefined, locale: "en" | "ar") {
+  const value = String(reason ?? "").replaceAll("_", " ");
+  if (locale !== "ar") return value;
+  if (reason === "supplier_to_storage") return "من المورد إلى المخزن";
+  if (reason === "storage_to_operator_bag") return "من المخزن إلى حقيبة المشغل";
+  if (reason === "operator_bag_to_storage") return "من حقيبة المشغل إلى المخزن";
+  if (reason === "operator_bag_to_machine") return "من حقيبة المشغل إلى الجهاز";
+  if (reason === "machine_to_waste") return "من الجهاز إلى الهالك";
+  if (reason === "manual_adjustment") return "تسوية يدوية";
+  if (reason === "inventory_correction") return "تصحيح مخزون";
+  return value;
+}
+
+function roleLabel(role: string | null | undefined, locale: "en" | "ar") {
+  const value = String(role ?? "-").toLowerCase();
+  if (locale !== "ar") return value === "-" ? "-" : value.replaceAll("_", " ");
+  if (value === "owner") return "المالك";
+  if (value === "admin") return "الإدارة";
+  if (value === "supervisor") return "مشرف";
+  if (value === "operator") return "مشغل";
+  if (value === "finance") return "المالية";
+  if (value === "warehouse") return "المخزن";
+  return value.replaceAll("_", " ");
 }
 
 function entityLabel(type: string | null | undefined, id: string | null | undefined, maps: { storageById: Map<string, any>; operatorById: Map<string, any> }) {
@@ -173,7 +205,7 @@ export default async function StorageLocationDetailPage({
               <div><dt className="text-slate-500">{locale === "ar" ? "الاسم" : "Name"}</dt><dd className="font-medium text-slate-900">{relatedOperator.full_name}</dd></div>
               <div><dt className="text-slate-500">{locale === "ar" ? "البريد الإلكتروني" : "Email"}</dt><dd>{relatedOperator.email ?? "-"}</dd></div>
               <div><dt className="text-slate-500">{locale === "ar" ? "الهاتف" : "Phone"}</dt><dd>{relatedOperator.phone ?? "-"}</dd></div>
-              <div><dt className="text-slate-500">{locale === "ar" ? "الدور" : "Role"}</dt><dd>{relatedOperator.role ?? "-"}</dd></div>
+              <div><dt className="text-slate-500">{locale === "ar" ? "الدور" : "Role"}</dt><dd>{roleLabel(relatedOperator.role, locale)}</dd></div>
             </dl>
           ) : (
             <p className="mt-3 text-sm text-slate-500">{locale === "ar" ? "لا يوجد مشغل مرتبط بهذا الموقع." : "No operator is linked to this location."}</p>
@@ -220,9 +252,9 @@ export default async function StorageLocationDetailPage({
                 <td>{formatDate(movement.created_at)}</td>
                 <td>{movement.product?.name ?? (locale === "ar" ? "منتج غير معروف" : "Unknown product")}<div className="text-xs text-slate-500">{movement.product?.sku ?? "-"}</div></td>
                 <td className="font-semibold">{movement.quantity}</td>
-                <td><span className="font-medium">{entityTypeLabel(movement.from_entity_type)}</span><div className="text-xs text-slate-500">{entityLabel(movement.from_entity_type, movement.from_entity_id, { storageById, operatorById })}</div></td>
-                <td><span className="font-medium">{entityTypeLabel(movement.to_entity_type)}</span><div className="text-xs text-slate-500">{entityLabel(movement.to_entity_type, movement.to_entity_id, { storageById, operatorById })}</div></td>
-                <td><StatusBadge status={String(movement.reason ?? "").replaceAll("_", " ")} /></td>
+                <td><span className="font-medium">{entityTypeLabel(movement.from_entity_type, locale)}</span><div className="text-xs text-slate-500">{entityLabel(movement.from_entity_type, movement.from_entity_id, { storageById, operatorById })}</div></td>
+                <td><span className="font-medium">{entityTypeLabel(movement.to_entity_type, locale)}</span><div className="text-xs text-slate-500">{entityLabel(movement.to_entity_type, movement.to_entity_id, { storageById, operatorById })}</div></td>
+                <td><StatusBadge status={String(movement.reason ?? "").replaceAll("_", " ")} label={storageMovementReasonLabel(movement.reason, locale)} /></td>
                 <td>{movement.created_by_member?.full_name ?? "-"}</td>
                 <td>{movement.notes ?? "-"}</td>
               </tr>

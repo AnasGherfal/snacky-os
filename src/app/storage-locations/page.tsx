@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PaginationControls } from "@/components/PaginationControls";
-import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
+import { DataTable, EmptyState, ErrorState, PageHeader, PrimaryButton, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canManageStorageLocations } from "@/lib/authz";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
@@ -34,6 +34,22 @@ function storageTypeLabel(value: string | null | undefined, locale: "en" | "ar")
   if (type === "expired") return "منتهي الصلاحية";
   if (type === "temporary") return "مؤقت";
   return "أخرى";
+}
+
+function storageHelperTitle(title: string, locale: "en" | "ar") {
+  if (locale !== "ar") return title;
+  if (title === "Main Storage") return "المخزن الرئيسي";
+  if (title === "Operator Bag") return "حقيبة المشغل";
+  if (title === "Damaged/Expired") return "تالف / منتهي الصلاحية";
+  return title;
+}
+
+function storageHelperBody(title: string, body: string, locale: "en" | "ar") {
+  if (locale !== "ar") return body;
+  if (title === "Main Storage") return "المخزن الرئيسي.";
+  if (title === "Operator Bag") return "مخزون مخصص لمشغل في جولة.";
+  if (title === "Damaged/Expired") return "مخزون أُخرج من المخزون القابل للبيع.";
+  return body;
 }
 
 export default async function StorageLocationsPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
@@ -157,24 +173,8 @@ export default async function StorageLocationsPage({ searchParams }: { searchPar
       <section className="mb-6 grid gap-3 md:grid-cols-3">
         {storageLocationTypeHelpers.map((helper) => (
           <div key={helper.title} className="rounded-lg border border-slate-200 bg-white p-4">
-            <h2 className="text-sm font-semibold text-slate-900">
-              {locale === "ar"
-                ? helper.title === "Main Storage"
-                  ? "المخزن الرئيسي"
-                  : helper.title === "Operator Bag"
-                    ? "حقيبة المشغل"
-                    : "تالف / منتهي الصلاحية"
-                : helper.title}
-            </h2>
-            <p className="mt-1 text-sm text-slate-500">
-              {locale === "ar"
-                ? helper.title === "Main Storage"
-                  ? "المخزن الرئيسي."
-                  : helper.title === "Operator Bag"
-                    ? "مخزون مخصص لمشغل في جولة."
-                    : "مخزون تم إخراجه من المخزون القابل للبيع."
-                : helper.body}
-            </p>
+            <h2 className="text-sm font-semibold text-slate-900">{storageHelperTitle(helper.title, locale)}</h2>
+            <p className="mt-1 text-sm text-slate-500">{storageHelperBody(helper.title, helper.body, locale)}</p>
           </div>
         ))}
       </section>
