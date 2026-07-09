@@ -182,15 +182,15 @@ export function ManualRouteSalesSection({
   async function handleSave() {
     const fallbackName = cleanText(fallbackProductName);
     if (!productId && !fallbackName) {
-      setError("Choose a product or type a product name.");
+      setError("اختر منتجاً أو اكتب اسم المنتج.");
       return;
     }
     if (!Number.isFinite(quantity) || quantity <= 0) {
-      setError("Quantity must be greater than 0.");
+      setError("يجب أن تكون الكمية أكبر من 0.");
       return;
     }
     if (!Number.isFinite(unitSalePriceLyd) || unitSalePriceLyd <= 0) {
-      setError("Unit sale price must be greater than 0.");
+      setError("يجب أن يكون سعر الوحدة أكبر من 0.");
       return;
     }
 
@@ -219,7 +219,7 @@ export function ManualRouteSalesSection({
       });
       const parsed = await parseResponse(response);
       if (!response.ok || parsed.payload?.success === false || !parsed.payload?.sale) {
-        throw new Error(payloadMessage(parsed.payload, parsed.text || "Could not save manual sale."));
+        throw new Error(payloadMessage(parsed.payload, parsed.text || "تعذر حفظ البيع اليدوي."));
       }
 
       const sale = normalizeRouteManualSale(parsed.payload.sale as RouteManualSaleRow);
@@ -231,10 +231,10 @@ export function ManualRouteSalesSection({
       resetForm();
       setExpanded(true);
       setShowForm(false);
-      setSuccess("Manual sale saved.");
+      setSuccess("تم حفظ البيع اليدوي.");
       if (responseWarning) setWarning(responseWarning);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Could not save manual sale.");
+      setError(saveError instanceof Error ? saveError.message : "تعذر حفظ البيع اليدوي.");
     } finally {
       setSaving(false);
     }
@@ -257,7 +257,7 @@ export function ManualRouteSalesSection({
       });
       const parsed = await parseResponse(response);
       if (!response.ok || parsed.payload?.success === false || !parsed.payload?.sale) {
-        throw new Error(payloadMessage(parsed.payload, parsed.text || "Could not cancel manual sale."));
+        throw new Error(payloadMessage(parsed.payload, parsed.text || "تعذر إلغاء البيع اليدوي."));
       }
 
       const sale = normalizeRouteManualSale(parsed.payload.sale as RouteManualSaleRow);
@@ -267,10 +267,10 @@ export function ManualRouteSalesSection({
         warning: responseWarning || null,
       });
       setExpanded(true);
-      setSuccess("Manual sale cancelled.");
+      setSuccess("تم إلغاء البيع اليدوي.");
       if (responseWarning) setWarning(responseWarning);
     } catch (cancelError) {
-      setError(cancelError instanceof Error ? cancelError.message : "Could not cancel manual sale.");
+      setError(cancelError instanceof Error ? cancelError.message : "تعذر إلغاء البيع اليدوي.");
     } finally {
       setCancellingId(null);
     }
@@ -286,26 +286,26 @@ export function ManualRouteSalesSection({
         className="flex w-full items-center justify-between gap-3 text-left"
       >
         <div>
-          <h2 className="text-lg font-semibold">{tr("Manual Route Sales", "??? ???? ????? ??????")}</h2>
+          <h2 className="text-lg font-semibold">{tr("Manual Route Sales", "بيع يدوي أثناء الجولة")}</h2>
           <p className="mt-1 text-sm text-slate-500">{t("Optional sales recorded during filling without blocking stop completion.", "Optional sales recorded during filling without blocking stop completion.")}</p>
         </div>
         <div className="flex items-center gap-2">
-          <StatusBadge status={confirmedCount ? "confirmed" : "pending"} label={confirmedCount ? String(confirmedCount) : tr("Optional", "???????")} />
-          <span className="text-sm font-medium text-slate-600">{expanded ? tr("Hide", "?????") : tr("Show", "???")}</span>
+          <StatusBadge status={confirmedCount ? "confirmed" : "pending"} label={confirmedCount ? String(confirmedCount) : tr("Optional", "اختياري")} />
+          <span className="text-sm font-medium text-slate-600">{expanded ? tr("Hide", "إخفاء") : tr("Show", "عرض")}</span>
         </div>
       </button>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-          <div className="text-xs text-slate-500">{tr("Manual sales", "?????? ?????")}</div>
+          <div className="text-xs text-slate-500">{tr("Manual sales", "المبيعات اليدوية")}</div>
           <div className="mt-1 text-lg font-semibold text-slate-900">{confirmedCount}</div>
         </div>
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
-          <div className="text-xs text-emerald-700">{tr("Manual cash sales", "?????? ????? ???")}</div>
+          <div className="text-xs text-emerald-700">{tr("Manual cash sales", "المبيعات النقدية اليدوية")}</div>
           <div className="mt-1 text-lg font-semibold text-emerald-950">{money(confirmedCashTotal)}</div>
         </div>
         <div className="rounded-lg border border-sky-200 bg-sky-50 p-3">
-          <div className="text-xs text-sky-700">{tr("Manual sales total", "?????? ???????? ???????")}</div>
+          <div className="text-xs text-sky-700">{tr("Manual sales total", "إجمالي المبيعات اليدوية")}</div>
           <div className="mt-1 text-lg font-semibold text-sky-950">{money(confirmedTotal)}</div>
           {confirmedCardTotal > 0 ? <div className="mt-1 text-xs text-sky-800">{t("Card", "Card")}: {money(confirmedCardTotal)}</div> : null}
         </div>
@@ -334,7 +334,7 @@ export function ManualRouteSalesSection({
           {!routeLocked ? (
             <div className="flex flex-wrap gap-2">
               <button type="button" onClick={() => setShowForm((current) => !current)} className={showForm ? "btn-primary" : "btn-secondary"}>
-                {showForm ? tr("Hide form", "????? ???????") : tr("Add manual sale", "????? ??? ????")}
+                {showForm ? tr("Hide form", "إخفاء النموذج") : tr("Add manual sale", "إضافة بيع يدوي")}
               </button>
             </div>
           ) : null}
@@ -343,10 +343,10 @@ export function ManualRouteSalesSection({
             <div className="space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
               <div className="flex flex-wrap gap-2">
                 <button type="button" onClick={() => setSourceMode("preferred")} className={sourceMode === "preferred" ? "btn-primary" : "btn-secondary"}>
-                  {tr("Priority products", "?????? ??????") }
+                  {tr("Priority products", "المنتجات ذات الأولوية") }
                 </button>
                 <button type="button" onClick={() => setSourceMode("all")} className={sourceMode === "all" ? "btn-primary" : "btn-secondary"}>
-                  {tr("Other storage products", "?????? ???? ?? ??????")}
+                  {tr("Other storage products", "منتجات مخزنية أخرى")}
                 </button>
               </div>
 
@@ -354,16 +354,16 @@ export function ManualRouteSalesSection({
                 products={productChoices}
                 value={productId}
                 onChange={handleSelectProduct}
-                label={sourceMode === "preferred" ? tr("Product", "??????") : tr("Other storage products", "?????? ???? ?? ??????")}
+                label={sourceMode === "preferred" ? tr("Product", "المنتج") : tr("Other storage products", "منتجات مخزنية أخرى")}
               />
 
               <label className="block">
-                <span className="mb-1 block text-sm font-medium text-slate-800">{tr("Product name if not found", "??? ?????? ??? ?? ??? ???????")}</span>
+                <span className="mb-1 block text-sm font-medium text-slate-800">{tr("Product name if not found", "اسم المنتج إذا لم يوجد")}</span>
                 <input
                   value={fallbackProductName}
                   onChange={(event) => setFallbackProductName(event.target.value)}
                   className="field-input"
-                  placeholder={tr("Use only if the product is not in the list", "??????? ??? ??? ?? ??? ?????? ??????? ?? ???????")}
+                  placeholder={tr("Use only if the product is not in the list", "استخدمه فقط إذا لم يكن المنتج موجودًا في القائمة")}
                 />
               </label>
 
@@ -374,7 +374,7 @@ export function ManualRouteSalesSection({
                     {selectedProduct.sku ? <span className="text-slate-500"> - {selectedProduct.sku}</span> : null}
                   </div>
                   <div className="mt-1 text-xs text-slate-500">
-                    {tr("Bag available", "?????? ?? ???????")}: {selectedProduct.availableQty}
+                    {tr("Bag available", "المتاح في الحقيبة")}: {selectedProduct.availableQty}
                     {selectedProduct.sourceLabel ? ` - ${t(selectedProduct.sourceLabel, selectedProduct.sourceLabel)}` : ""}
                   </div>
                 </div>
@@ -382,11 +382,11 @@ export function ManualRouteSalesSection({
 
               <div className="grid gap-4 md:grid-cols-[180px_1fr_1fr]">
                 <label className="block">
-                  <span className="mb-1 block text-sm font-medium text-slate-800">{tr("Quantity", "??????")}</span>
-                  <QuantityStepper value={quantity} max={999} onChange={setQuantity} inputLabel={tr("Quantity", "??????")} />
+                  <span className="mb-1 block text-sm font-medium text-slate-800">{tr("Quantity", "الكمية")}</span>
+                  <QuantityStepper value={quantity} max={999} onChange={setQuantity} inputLabel={tr("Quantity", "الكمية")} />
                 </label>
                 <label className="block">
-                  <span className="mb-1 block text-sm font-medium text-slate-800">{tr("Unit price", "??? ??????")}</span>
+                  <span className="mb-1 block text-sm font-medium text-slate-800">{tr("Unit price", "سعر الوحدة")}</span>
                   <input
                     value={unitSalePriceLyd}
                     onChange={(event) => {
@@ -398,25 +398,25 @@ export function ManualRouteSalesSection({
                     step="0.01"
                     className="field-input"
                   />
-                  <span className="mt-1 block text-xs text-slate-500">{priceSourceLabel ? t(priceSourceLabel, priceSourceLabel) : tr("Manual input", "????? ????")}</span>
+                  <span className="mt-1 block text-xs text-slate-500">{priceSourceLabel ? t(priceSourceLabel, priceSourceLabel) : tr("Manual input", "إدخال يدوي")}</span>
                 </label>
                 <label className="block">
-                  <span className="mb-1 block text-sm font-medium text-slate-800">{tr("Payment method", "????? ?????")}</span>
+                  <span className="mb-1 block text-sm font-medium text-slate-800">{tr("Payment method", "طريقة الدفع")}</span>
                   <select value={paymentMethod} onChange={(event) => setPaymentMethod(parseRouteManualSalePaymentMethod(event.target.value))} className="field-input">
-                    <option value="cash">{tr("Cash", "???")}</option>
-                    <option value="card">{tr("Card", "?????")}</option>
-                    <option value="other">{tr("Other", "????")}</option>
+                    <option value="cash">{tr("Cash", "كاش")}</option>
+                    <option value="card">{tr("Card", "بطاقة")}</option>
+                    <option value="other">{tr("Other", "أخرى")}</option>
                   </select>
                 </label>
               </div>
 
               <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700">
-                <span className="font-medium text-slate-900">{tr("Total", "????????")}: </span>
+                <span className="font-medium text-slate-900">{tr("Total", "الإجمالي")}: </span>
                 {money(totalAmount)}
               </div>
 
               <label className="block">
-                <span className="mb-1 block text-sm font-medium text-slate-800">{tr("Notes", "???????")}</span>
+                <span className="mb-1 block text-sm font-medium text-slate-800">{tr("Notes", "ملاحظات")}</span>
                 <textarea
                   value={notes}
                   onChange={(event) => setNotes(event.target.value)}
@@ -431,7 +431,7 @@ export function ManualRouteSalesSection({
               {warning ? <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">{t(warning, warning)}</div> : null}
 
               <button type="button" onClick={handleSave} disabled={saving} className="btn-primary w-full disabled:cursor-not-allowed disabled:opacity-60">
-                {saving ? `${tr("Saving", "???? ?????")}...` : tr("Save sale", "??? ?????")}
+                {saving ? `${tr("Saving", "جارٍ الحفظ")}...` : tr("Save sale", "حفظ البيع")}
               </button>
             </div>
           ) : null}
@@ -439,7 +439,7 @@ export function ManualRouteSalesSection({
           <div>
             <div className="mb-3 flex items-center justify-between gap-2">
               <div>
-                <h3 className="text-base font-semibold text-slate-900">{tr("Saved manual sales", "???????? ??????? ????????")}</h3>
+                <h3 className="text-base font-semibold text-slate-900">{tr("Saved manual sales", "المبيعات اليدوية المحفوظة")}</h3>
                 <p className="text-sm text-slate-500">{t("Manual sales entered for this stop appear here immediately.", "Manual sales entered for this stop appear here immediately.")}</p>
               </div>
             </div>
@@ -473,7 +473,7 @@ export function ManualRouteSalesSection({
                               disabled={cancellingId === sale.id}
                               className="text-sm font-medium text-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
                             >
-                              {cancellingId === sale.id ? `${tr("Saving", "???? ?????")}...` : tr("Cancel sale", "????? ?????")}
+                              {cancellingId === sale.id ? `${tr("Saving", "جارٍ الحفظ")}...` : tr("Cancel sale", "إلغاء البيع")}
                             </button>
                           ) : null}
                         </div>
@@ -528,7 +528,7 @@ function ManualSaleProductPicker({
         <div className="mt-2 max-h-56 space-y-1 overflow-y-auto">
           {selected && !query.trim() ? (
             <div className="rounded-md bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
-              {t("Selected", "Selected")}: {selected.name} - {tr("Bag available", "?????? ?? ???????")}: {selected.availableQty}
+              {t("Selected", "Selected")}: {selected.name} - {tr("Bag available", "المتاح في الحقيبة")}: {selected.availableQty}
             </div>
           ) : null}
           {filtered.map((product) => (
@@ -546,7 +546,7 @@ function ManualSaleProductPicker({
                 <span className="min-w-0">
                   <span className="block truncate font-medium">{product.name}</span>
                   <span className={`block truncate ${product.id === value ? "text-white/80" : "text-slate-500"}`}>
-                    {product.sku ?? t("No SKU", "No SKU")} - {tr("Bag available", "?????? ?? ???????")}: {product.availableQty}
+                    {product.sku ?? t("No SKU", "No SKU")} - {tr("Bag available", "المتاح في الحقيبة")}: {product.availableQty}
                     {product.sourceLabel ? ` - ${t(product.sourceLabel, product.sourceLabel)}` : ""}
                   </span>
                 </span>

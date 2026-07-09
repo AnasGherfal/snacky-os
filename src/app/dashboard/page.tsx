@@ -14,6 +14,7 @@ import {
   loadRestockPriorityData,
   type RestockPriorityLoadResult,
 } from "@/lib/restock-priority-data";
+import { getServerI18n } from "@/lib/i18n/server";
 import { ROUTE_RESERVATION_STATUSES } from "@/lib/route-workflow";
 import {
   activeDetailedBatches,
@@ -116,6 +117,11 @@ type ActionItem = {
   detail: string;
   href: string;
   cta: string;
+};
+
+type DashboardI18n = {
+  t: (key: string, fallback?: string) => string;
+  locale: "en" | "ar";
 };
 
 const HEALTHY_IMPORT_STATUSES = ["imported", "imported_with_warnings", "partially_imported"];
@@ -226,8 +232,8 @@ function sortRefillRows(rows: RefillRow[]) {
   });
 }
 
-function issueMachineName(issue: IssueRow) {
-  return textValue(relationRecord<{ name?: string | null }>(issue.machines)?.name) ?? "Unknown machine";
+function issueMachineName(issue: IssueRow, fallback: string) {
+  return textValue(relationRecord<{ name?: string | null }>(issue.machines)?.name) ?? fallback;
 }
 
 function trimText(value: string | null | undefined, max = 140) {
@@ -237,11 +243,49 @@ function trimText(value: string | null | undefined, max = 140) {
 }
 
 function routeOperatorName(route: RouteRow) {
-  return textValue(relationRecord<{ full_name?: string | null }>(route.operator)?.full_name) ?? "Unassigned";
+  return textValue(relationRecord<{ full_name?: string | null }>(route.operator)?.full_name) ?? "غير مسندة";
 }
 
 function routeIsPending(route: RouteRow) {
   return ROUTE_PENDING_STATUSES.has(String(route.status ?? ""));
+}
+
+function dashboardStatusLabel(status: string | null | undefined, t: DashboardI18n["t"]) {
+  const value = String(status ?? "").toLowerCase();
+  switch (value) {
+    case "critical":
+      return t("Critical");
+    case "high":
+      return t("High");
+    case "normal":
+      return t("Normal");
+    case "open":
+      return t("Open");
+    case "resolved":
+      return t("Resolved");
+    case "closed":
+    case "cancelled":
+    case "canceled":
+      return t("cancelled");
+    case "pending":
+      return t("pending");
+    case "assigned":
+      return t("assigned");
+    case "in_progress":
+      return t("in_progress");
+    case "completed":
+      return t("completed");
+    case "available":
+      return t("available");
+    case "imported":
+      return t("Imported");
+    case "imported_with_warnings":
+      return t("Imported with warnings");
+    case "partially_imported":
+      return t("Partially imported");
+    default:
+      return t("Unknown");
+  }
 }
 
 function routeIsBroken(route: RouteRow, today: string) {
@@ -562,11 +606,11 @@ async function getDashboardData() {
   };
 }
 
-function SectionLoadError({ message }: { message?: string | null }) {
+function SectionLoadError({ message, prefix }: { message?: string | null; prefix: string }) {
   if (!message) return null;
   return (
     <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">
-      This section could not load: {message}
+      {prefix} {message}
     </div>
   );
 }
@@ -580,7 +624,9 @@ function SectionEmpty({ title, body }: { title: string; body: string }) {
   );
 }
 
-function DashboardPageContent({ data }: { data: DashboardData }) {
+function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: DashboardI18n["t"]; locale: DashboardI18n["locale"] }) {
+  const isArabic = locale === "ar";
+  const localize = (en: string, ar: string) => (isArabic ? ar : en);
   const errors = data.errors;
   const revenueRows = data.revenueRows;
   const restockItems = data.restockItems;
@@ -627,82 +673,103 @@ function DashboardPageContent({ data }: { data: DashboardData }) {
   if (!activeDetailedCount) {
     actionItems.push({
       key: "missing-detailed-sales",
-      title: "Import a detailed VMS sales file",
-      detail: "Revenue cards stay flat until at least one active Order Details file is feeding the dashboard.",
+      title: t("Import a detailed VMS sales file"),
+      detail: t("Revenue cards stay flat until at least one active Order Details file is feeding the dashboard."),
       href: "/vms-import",
-      cta: "Open VMS import",
+      cta: t("Open VMS import"),
     });
   }
   if (!activeStockCount) {
     actionItems.push({
       key: "missing-stock-snapshot",
-      title: "Import a stock snapshot",
-      detail: "Route refill signals work best when the latest machine stock snapshot is active.",
+      title: t("Import a stock snapshot"),
+      detail: t("Route refill signals work best when the latest machine stock snapshot is active."),
       href: "/vms-import",
-      cta: "Upload stock file",
+      cta: t("Upload stock file"),
     });
   }
   if (failedImportCount > 0) {
     actionItems.push({
       key: "failed-imports",
-      title: "Review failed imports",
-      detail: `${failedImportCount} VMS import batch${failedImportCount === 1 ? "" : "es"} still need attention.`,
+      title: t("Review failed imports"),
+      detail: localize(
+        `${failedImportCount} VMS import batch${failedImportCount === 1 ? "" : "es"} still need attention.`,
+        `${failedImportCount} دفعة استيراد من VMS لا تزال بحاجة إلى مراجعة.`,
+      ),
       href: "/vms-import/sources",
-      cta: "Review imports",
+      cta: t("Review imports"),
     });
   }
   if (financeGapCount > 0) {
     actionItems.push({
       key: "finance-gaps",
-      title: "Repair finance links",
-      detail: `${financeGapCount} purchase or cash row${financeGapCount === 1 ? "" : "s"} are missing finance coverage.`,
+      title: t("Repair finance links"),
+      detail: localize(
+        `${financeGapCount} purchase or cash row${financeGapCount === 1 ? "" : "s"} are missing finance coverage.`,
+        `${financeGapCount} صف شراء أو كاش لا يملك تغطية مالية.`,
+      ),
       href: "/admin/system-health",
-      cta: "Open system health",
+      cta: t("Open system health"),
     });
   }
   if (data.cashWaitingCount > 0) {
     actionItems.push({
       key: "cash-waiting",
-      title: "Count waiting cash collections",
-      detail: `${data.cashWaitingCount} cash pickup${data.cashWaitingCount === 1 ? "" : "s"} still need finance counting.`,
+      title: t("Count waiting cash collections"),
+      detail: localize(
+        `${data.cashWaitingCount} cash pickup${data.cashWaitingCount === 1 ? "" : "s"} still need finance counting.`,
+        `${data.cashWaitingCount} عملية تحصيل نقد لا تزال بحاجة إلى العد.`,
+      ),
       href: "/cash-collections?status=collected_pending_count",
-      cta: "Open cash queue",
+      cta: t("Open cash queue"),
     });
   }
   if (restockSummary.critical > 0) {
     actionItems.push({
       key: "critical-restock",
-      title: "Buy critical products",
-      detail: `${restockSummary.critical} product${restockSummary.critical === 1 ? "" : "s"} are already at critical restock level.`,
+      title: t("Buy critical products"),
+      detail: localize(
+        `${restockSummary.critical} product${restockSummary.critical === 1 ? "" : "s"} are already at critical restock level.`,
+        `${restockSummary.critical} منتج${restockSummary.critical === 1 ? "" : "ات"} وصلت إلى مستوى تعبئة حرج.`,
+      ),
       href: "/restock-priority?filter=critical",
-      cta: "Open restock priority",
+      cta: t("Open restock priority"),
     });
   }
   if (machinesNeedingRefillCount > 0) {
     actionItems.push({
       key: "refill-routes",
-      title: "Build the next refill route",
-      detail: `${machinesNeedingRefillCount} machine${machinesNeedingRefillCount === 1 ? "" : "s"} have active refill recommendations.`,
+      title: t("Build the next refill route"),
+      detail: localize(
+        `${machinesNeedingRefillCount} machine${machinesNeedingRefillCount === 1 ? "" : "s"} have active refill recommendations.`,
+        `${machinesNeedingRefillCount} جهاز${machinesNeedingRefillCount === 1 ? "" : "ات"} لديه توصيات تعبئة نشطة.`,
+      ),
       href: "/routes/new",
-      cta: "Create route",
+      cta: t("Create route"),
     });
   }
   if (pendingRoutes.length > 0) {
     actionItems.push({
       key: "pending-routes",
-      title: "Close open routes",
-      detail: `${pendingRoutes.length} route${pendingRoutes.length === 1 ? "" : "s"} are still open${overdueRouteCount ? `, including ${overdueRouteCount} overdue` : ""}.`,
+      title: t("Close open routes"),
+      detail: localize(
+        `${pendingRoutes.length} route${pendingRoutes.length === 1 ? "" : "s"} are still open${overdueRouteCount ? `, including ${overdueRouteCount} overdue` : ""}.`,
+        `${pendingRoutes.length} جولة${pendingRoutes.length === 1 ? "" : "ات"} ما زالت مفتوحة${overdueRouteCount ? `، منها ${overdueRouteCount} متأخرة` : ""}.`,
+      ),
       href: "/routes",
-      cta: "Open routes",
+      cta: t("Open routes"),
     });
   }
   if (data.criticalIssueCount > 0) {
     actionItems.push({
       key: "critical-issues",
-      title: "Resolve critical issues",
-      detail: `${data.criticalIssueCount} critical machine issue${data.criticalIssueCount === 1 ? "" : "s"} are still unresolved.`,
+      title: t("Resolve critical issues"),
+      detail: localize(
+        `${data.criticalIssueCount} critical machine issue${data.criticalIssueCount === 1 ? "" : "s"} are still unresolved.`,
+        `${data.criticalIssueCount} عطل جهاز حرِج ما زال غير محلول.`,
+      ),
       href: "/issues",
-      cta: "Open issues",
+      cta: t("Open issues"),
     });
   }
 
@@ -711,24 +778,27 @@ function DashboardPageContent({ data }: { data: DashboardData }) {
   const routesUnavailable = Boolean(errors.routes);
   const refillUnavailable = Boolean(errors.refill);
   const heroRevenueSummary = revenueUnavailable
-    ? "Revenue is waiting for the next healthy detailed VMS sales load."
-    : `Snacky made ${lyd(todayRevenue)} today, ${lyd(weekRevenue)} this week, and ${lyd(monthRevenue)} this month.`;
+    ? t("Revenue is waiting for the next healthy detailed VMS sales load.")
+    : localize(
+      `Snacky made ${lyd(todayRevenue)} today, ${lyd(weekRevenue)} this week, and ${lyd(monthRevenue)} this month.`,
+      `حققت Snacky ${lyd(todayRevenue)} اليوم، و${lyd(weekRevenue)} هذا الأسبوع، و${lyd(monthRevenue)} هذا الشهر.`,
+    );
   const heroAttentionSummary = [
-    data.cashWaitingCount ? `${data.cashWaitingCount} cash pickup${data.cashWaitingCount === 1 ? "" : "s"} waiting` : null,
-    restockSummary.critical ? `${restockSummary.critical} critical product${restockSummary.critical === 1 ? "" : "s"}` : null,
-    pendingRoutes.length ? `${pendingRoutes.length} route${pendingRoutes.length === 1 ? "" : "s"} still open` : null,
-    brokenRouteCount ? `${brokenRouteCount} broken route${brokenRouteCount === 1 ? "" : "s"}` : null,
-  ].filter(Boolean).join(" / ") || "No urgent operational queue is blocking the day right now.";
+    data.cashWaitingCount ? localize(`${data.cashWaitingCount} cash pickup${data.cashWaitingCount === 1 ? "" : "s"} waiting`, `${data.cashWaitingCount} عملية تحصيل نقد في الانتظار`) : null,
+    restockSummary.critical ? localize(`${restockSummary.critical} critical product${restockSummary.critical === 1 ? "" : "s"}`, `${restockSummary.critical} منتج حرِج`) : null,
+    pendingRoutes.length ? localize(`${pendingRoutes.length} route${pendingRoutes.length === 1 ? "" : "s"} still open`, `${pendingRoutes.length} جولة ما زالت مفتوحة`) : null,
+    brokenRouteCount ? localize(`${brokenRouteCount} broken route${brokenRouteCount === 1 ? "" : "s"}`, `${brokenRouteCount} جولة معطوبة`) : null,
+  ].filter(Boolean).join(" / ") || t("No urgent operational queue is blocking the day right now.");
 
   return (
     <>
       <PageHeader
-        title="Dashboard"
-        subtitle="How much money Snacky made, what needs attention, and what should happen next."
+        title={t("Dashboard")}
+        subtitle={t("How much money Snacky made, what needs attention, and what should happen next.")}
         action={(
           <div className="flex flex-wrap gap-2">
-            <PrimaryButton href="/routes/new">Create Route</PrimaryButton>
-            <SecondaryButton href="/restock-priority">Open Restock Priority</SecondaryButton>
+            <PrimaryButton href="/routes/new">{t("Create Route")}</PrimaryButton>
+            <SecondaryButton href="/restock-priority">{t("Open Restock Priority")}</SecondaryButton>
           </div>
         )}
       />
@@ -736,40 +806,72 @@ function DashboardPageContent({ data }: { data: DashboardData }) {
       <section className="mb-6 overflow-hidden rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-emerald-50 p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-3xl">
-            <div className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-700">Snacky Today</div>
+            <div className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-700">{t("Snacky Today")}</div>
             <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">{heroRevenueSummary}</h2>
             <p className="mt-3 text-sm leading-6 text-slate-600">{heroAttentionSummary}</p>
             <div className="mt-3 text-xs text-slate-500">
-              Latest detailed sales date: {latestSaleDate ?? "not available"} / Active stock snapshot files: {activeStockCount}
+              {t("Latest detailed sales date")}: {latestSaleDate ?? t("Not available")} / {t("Active stock snapshot files")}: {activeStockCount}
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <SecondaryButton href="/cash-collections?status=collected_pending_count">Count cash</SecondaryButton>
-            <SecondaryButton href="/admin/system-health">System health</SecondaryButton>
+            <SecondaryButton href="/cash-collections?status=collected_pending_count">{t("Count cash")}</SecondaryButton>
+            <SecondaryButton href="/admin/system-health">{t("System health")}</SecondaryButton>
           </div>
         </div>
       </section>
 
       <section className="mb-6">
         <div className="mb-3">
-          <h2 className="text-lg font-semibold text-slate-900">Top Cards</h2>
-          <p className="mt-1 text-sm text-slate-500">The eight numbers that should explain today&apos;s trading and backlog in one glance.</p>
+          <h2 className="text-lg font-semibold text-slate-900">{t("Top Cards")}</h2>
+          <p className="mt-1 text-sm text-slate-500">{t("The eight numbers that should explain today's trading and backlog in one glance.")}</p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <StatCard label="Revenue today" value={revenueUnavailable ? "-" : lyd(todayRevenue)} note={latestSaleDate ? `Detailed sales through ${latestSaleDate}` : "Waiting for detailed VMS sales"} />
-          <StatCard label="Revenue week" value={revenueUnavailable ? "-" : lyd(weekRevenue)} note={`From ${data.weekStart} to ${data.today}`} />
-          <StatCard label="Revenue month" value={revenueUnavailable ? "-" : lyd(monthRevenue)} note={`From ${data.monthStart} to ${data.today}`} />
-          <StatCard label="Cash collected waiting" value={errors.cashWaiting ? "-" : data.cashWaitingCount.toLocaleString("en-US")} note={errors.cashVariance ? "Variance review unavailable" : `${data.varianceReviewCount} in variance review`} />
-          <StatCard label="Purchases waiting" value={errors.purchaseDrafts || errors.purchaseUnpaid ? "-" : purchasesWaitingCount.toLocaleString("en-US")} note={`Draft ${data.draftPurchaseCount} / unpaid received ${data.unpaidPurchaseCount}`} />
-          <StatCard label="Critical products" value={criticalProductsUnavailable ? "-" : restockSummary.critical.toLocaleString("en-US")} note={criticalProductsUnavailable ? "Restock engine unavailable" : `${restockSummary.low} more low products`} />
-          <StatCard label="Routes pending" value={routesUnavailable ? "-" : pendingRoutes.length.toLocaleString("en-US")} note={routesUnavailable ? "Route queue unavailable" : overdueRouteCount ? `${overdueRouteCount} overdue` : "No overdue routes"} />
-          <StatCard label="Machines needing refill" value={refillUnavailable ? "-" : machinesNeedingRefillCount.toLocaleString("en-US")} note={refillUnavailable ? "Refill recommendations unavailable" : `${recentRefillRows.length} recommendation rows on deck`} />
+          <StatCard
+            label={t("Revenue today")}
+            value={revenueUnavailable ? "-" : lyd(todayRevenue)}
+            note={latestSaleDate ? localize(`Detailed sales through ${latestSaleDate}`, `المبيعات التفصيلية حتى ${latestSaleDate}`) : t("Waiting for detailed VMS sales")}
+          />
+          <StatCard
+            label={t("Revenue week")}
+            value={revenueUnavailable ? "-" : lyd(weekRevenue)}
+            note={localize(`From ${data.weekStart} to ${data.today}`, `من ${data.weekStart} إلى ${data.today}`)}
+          />
+          <StatCard
+            label={t("Revenue month")}
+            value={revenueUnavailable ? "-" : lyd(monthRevenue)}
+            note={localize(`From ${data.monthStart} to ${data.today}`, `من ${data.monthStart} إلى ${data.today}`)}
+          />
+          <StatCard
+            label={t("Cash collected waiting")}
+            value={errors.cashWaiting ? "-" : data.cashWaitingCount.toLocaleString("en-US")}
+            note={errors.cashVariance ? t("Variance review unavailable") : localize(`${data.varianceReviewCount} in variance review`, `${data.varianceReviewCount} قيد مراجعة الفروقات`)}
+          />
+          <StatCard
+            label={t("Purchases waiting")}
+            value={errors.purchaseDrafts || errors.purchaseUnpaid ? "-" : purchasesWaitingCount.toLocaleString("en-US")}
+            note={localize(`Draft ${data.draftPurchaseCount} / unpaid received ${data.unpaidPurchaseCount}`, `مسودات ${data.draftPurchaseCount} / غير مسددة ${data.unpaidPurchaseCount}`)}
+          />
+          <StatCard
+            label={t("Critical products")}
+            value={criticalProductsUnavailable ? "-" : restockSummary.critical.toLocaleString("en-US")}
+            note={criticalProductsUnavailable ? t("Restock engine unavailable") : localize(`${restockSummary.low} more low products`, `${restockSummary.low} منتجات منخفضة إضافية`)}
+          />
+          <StatCard
+            label={t("Routes pending")}
+            value={routesUnavailable ? "-" : pendingRoutes.length.toLocaleString("en-US")}
+            note={routesUnavailable ? t("Route queue unavailable") : overdueRouteCount ? localize(`${overdueRouteCount} overdue`, `${overdueRouteCount} متأخرة`) : t("No overdue routes")}
+          />
+          <StatCard
+            label={t("Machines needing refill")}
+            value={refillUnavailable ? "-" : machinesNeedingRefillCount.toLocaleString("en-US")}
+            note={refillUnavailable ? t("Refill recommendations unavailable") : localize(`${recentRefillRows.length} recommendation rows on deck`, `${recentRefillRows.length} صف توصية جاهز`)}
+          />
         </div>
       </section>
 
       {partialSections.length ? (
         <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-          Dashboard stayed online in partial mode. Some sections could not load:
+          {t("Dashboard stayed online in partial mode. Some sections could not load:")}
           {" "}
           {partialSections.map(([key]) => dashboardSectionLabels[key as DashboardSection]).join(" / ")}.
         </div>
@@ -777,41 +879,41 @@ function DashboardPageContent({ data }: { data: DashboardData }) {
 
       {!errors.restockPriority && restockWarnings.length ? (
         <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-          Some restock inputs are still partial, so critical product counts are based on the signals that are currently healthy.
+          {t("Some restock inputs are still partial, so critical product counts are based on the signals that are currently healthy.")}
         </div>
       ) : null}
 
       <div className="mb-4">
-        <h2 className="text-lg font-semibold text-slate-900">What Needs Attention</h2>
-        <p className="mt-1 text-sm text-slate-500">Operations pressure from issues, refill demand, finance gaps, and import health.</p>
+        <h2 className="text-lg font-semibold text-slate-900">{t("What Needs Attention")}</h2>
+        <p className="mt-1 text-sm text-slate-500">{t("Operations pressure from issues, refill demand, finance gaps, and import health.")}</p>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.65fr)_minmax(320px,1fr)]">
         <div className="space-y-4">
-          <KpiSection title="Recent issues" subtitle="Unresolved issues should stay visible until someone owns the fix.">
-            <SectionLoadError message={errors.recentIssues} />
+          <KpiSection title={t("Recent issues")} subtitle={t("Unresolved issues should stay visible until someone owns the fix.")}>
+            <SectionLoadError message={errors.recentIssues} prefix={t("This section could not load:")} />
             {errors.recentIssues ? null : !recentIssues.length ? (
-              <SectionEmpty title="No open issues" body="Operators have not reported unresolved machine problems yet." />
+              <SectionEmpty title={t("No open issues")} body={t("Operators have not reported unresolved machine problems yet.")} />
             ) : (
               <div className="space-y-3">
                 {recentIssues.map((issue) => (
                   <div key={issue.id} className="rounded-xl border border-slate-200 bg-white p-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div className="min-w-0">
-                        <div className="text-sm font-semibold text-slate-900">{issueMachineName(issue)}</div>
+                          <div className="text-sm font-semibold text-slate-900">{issueMachineName(issue, t("Unknown machine"))}</div>
                         <div className="mt-1 text-xs text-slate-500">
-                          {textValue(issue.issue_type) ?? "Issue"} / logged {formatDateTime(issue.created_at)}
+                          {textValue(issue.issue_type) ?? t("Issue")} / {t("logged")} {formatDateTime(issue.created_at)}
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        <StatusBadge status={issue.priority ?? "unknown"} />
-                        <StatusBadge status={issue.status ?? "unknown"} />
+                        <StatusBadge status={issue.priority ?? "unknown"} label={dashboardStatusLabel(issue.priority, t)} />
+                        <StatusBadge status={issue.status ?? "unknown"} label={dashboardStatusLabel(issue.status, t)} />
                       </div>
                     </div>
                     <p className="mt-3 text-sm leading-6 text-slate-700">{trimText(issue.description)}</p>
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
-                      <div>SLA due: {issue.sla_due_at ? formatDateTime(issue.sla_due_at) : "not set"}</div>
-                      <Link href="/issues" className="font-semibold text-amber-700 hover:text-amber-800">Open issues</Link>
+                      <div>{t("SLA due")}: {issue.sla_due_at ? formatDateTime(issue.sla_due_at) : t("not set")}</div>
+                      <Link href="/issues" className="font-semibold text-amber-700 hover:text-amber-800">{t("Open issues")}</Link>
                     </div>
                   </div>
                 ))}
@@ -819,10 +921,10 @@ function DashboardPageContent({ data }: { data: DashboardData }) {
             )}
           </KpiSection>
 
-          <KpiSection title="Machines needing refill now" subtitle="The route builder should pull from the same live recommendation queue shown here.">
+          <KpiSection title={t("Machines needing refill now")} subtitle={t("The route builder should pull from the same live recommendation queue shown here.")}>
             <SectionLoadError message={errors.refill} />
             {errors.refill ? null : !recentRefillRows.length ? (
-              <SectionEmpty title="No refill pressure" body="No active machine refill recommendations are asking for stock right now." />
+              <SectionEmpty title={t("No refill pressure")} body={t("No active machine refill recommendations are asking for stock right now.")} />
             ) : (
               <div className="space-y-3">
                 {recentRefillRows.map((row, index) => {
@@ -831,25 +933,25 @@ function DashboardPageContent({ data }: { data: DashboardData }) {
                     <div key={`${textValue(row.machine_id) ?? textValue(row.machine_name) ?? "machine"}-${index}`} className="rounded-xl border border-slate-200 bg-white p-4">
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div className="min-w-0">
-                          <div className="text-sm font-semibold text-slate-900">{textValue(row.machine_name) ?? "Unknown machine"}</div>
-                          <div className="mt-1 text-xs text-slate-500">{textValue(row.product_name) ?? "Unknown product"}</div>
+                          <div className="text-sm font-semibold text-slate-900">{textValue(row.machine_name) ?? t("Unknown machine")}</div>
+                          <div className="mt-1 text-xs text-slate-500">{textValue(row.product_name) ?? t("Unknown product")}</div>
                         </div>
                         <div className="flex flex-wrap gap-2">
-                          <StatusBadge status={row.priority ?? "normal"} />
-                          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">Take {refillQty}</span>
+                          <StatusBadge status={row.priority ?? "normal"} label={dashboardStatusLabel(row.priority, t)} />
+                          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{t("Take")} {refillQty}</span>
                         </div>
                       </div>
                       <div className="mt-3 grid gap-3 text-sm text-slate-600 sm:grid-cols-3">
                         <div>
-                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Machine stock</div>
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("Machine stock")}</div>
                           <div className="mt-1">{numberValue(row.current_qty)}</div>
                         </div>
                         <div>
-                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Capacity</div>
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("Capacity")}</div>
                           <div className="mt-1">{numberValue(row.capacity)}</div>
                         </div>
                         <div>
-                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Storage available</div>
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("Storage available")}</div>
                           <div className="mt-1">{numberValue(row.available_storage_qty)}</div>
                         </div>
                       </div>
@@ -857,7 +959,7 @@ function DashboardPageContent({ data }: { data: DashboardData }) {
                   );
                 })}
                 <div className="flex justify-end">
-                  <SecondaryButton href="/routes/new">Create route from recommendations</SecondaryButton>
+                  <SecondaryButton href="/routes/new">{t("Create route from recommendations")}</SecondaryButton>
                 </div>
               </div>
             )}
@@ -865,9 +967,9 @@ function DashboardPageContent({ data }: { data: DashboardData }) {
         </div>
 
         <div className="space-y-4">
-          <KpiSection title="What should I do next?" subtitle="A short operating queue based on the current dashboard signals.">
+          <KpiSection title={t("What should I do next?")} subtitle={t("A short operating queue based on the current dashboard signals.")}>
             {!actionItems.length ? (
-              <SectionEmpty title="No urgent queue" body="The highest-priority queues are clear. Review routes or restock priority when you want the next task." />
+              <SectionEmpty title={t("No urgent queue")} body={t("The highest-priority queues are clear. Review routes or restock priority when you want the next task.")} />
             ) : (
               <div className="space-y-3">
                 {actionItems.map((item) => (
@@ -885,37 +987,37 @@ function DashboardPageContent({ data }: { data: DashboardData }) {
             )}
           </KpiSection>
 
-          <KpiSection title="System health summary" subtitle="Counts that usually send teams into repair mode.">
+          <KpiSection title={t("System health summary")} subtitle={t("Counts that usually send teams into repair mode.")}>
             {errors.financeHealth || errors.routes || errors.missingCost || errors.vmsBatches ? (
               <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                Some health counters are partial right now, but the dashboard kept running.
+                {t("Some health counters are partial right now, but the dashboard kept running.")}
               </div>
             ) : null}
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Failed imports</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("Failed imports")}</div>
                 <div className="mt-2 text-2xl font-semibold text-slate-950">{errors.vmsBatches ? "-" : failedImportCount}</div>
-                <div className="mt-1 text-xs text-slate-500">Warnings: {errors.vmsBatches ? "-" : warningImportCount}</div>
+                <div className="mt-1 text-xs text-slate-500">{t("Warnings")}: {errors.vmsBatches ? "-" : warningImportCount}</div>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Missing finance links</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("Missing finance links")}</div>
                 <div className="mt-2 text-2xl font-semibold text-slate-950">{errors.financeHealth ? "-" : financeGapCount}</div>
-                <div className="mt-1 text-xs text-slate-500">Warnings: {errors.financeHealth ? "-" : financeWarningCount}</div>
+                <div className="mt-1 text-xs text-slate-500">{t("Warnings")}: {errors.financeHealth ? "-" : financeWarningCount}</div>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Broken routes</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("Broken routes")}</div>
                 <div className="mt-2 text-2xl font-semibold text-slate-950">{errors.routes ? "-" : brokenRouteCount}</div>
-                <div className="mt-1 text-xs text-slate-500">Overdue open routes: {errors.routes ? "-" : overdueRouteCount}</div>
+                <div className="mt-1 text-xs text-slate-500">{t("Overdue open routes")}: {errors.routes ? "-" : overdueRouteCount}</div>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Products without cost</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("Products without cost")}</div>
                 <div className="mt-2 text-2xl font-semibold text-slate-950">{errors.missingCost ? "-" : missingCostProducts}</div>
-                <div className="mt-1 text-xs text-slate-500">Critical issues: {errors.criticalIssues ? "-" : data.criticalIssueCount}</div>
+                <div className="mt-1 text-xs text-slate-500">{t("Critical issues")}: {errors.criticalIssues ? "-" : data.criticalIssueCount}</div>
               </div>
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
-              <SecondaryButton href="/admin/system-health">Open System Health</SecondaryButton>
-              <SecondaryButton href="/admin/finance-health">Open Finance Health</SecondaryButton>
+              <SecondaryButton href="/admin/system-health">{t("Open System Health")}</SecondaryButton>
+              <SecondaryButton href="/admin/finance-health">{t("Open Finance Health")}</SecondaryButton>
             </div>
           </KpiSection>
         </div>
@@ -925,8 +1027,8 @@ function DashboardPageContent({ data }: { data: DashboardData }) {
         <VmsDataSourceCard
           batches={data.vmsBatchRows}
           error={errors.vmsBatches}
-          title="VMS Import Status"
-          subtitle="Dashboard totals only use the active detailed sales and stock snapshot files listed below."
+          title={t("VMS Import Status")}
+          subtitle={t("Dashboard totals only use the active detailed sales and stock snapshot files listed below.")}
           showSales
           showStock
         />
@@ -936,10 +1038,10 @@ function DashboardPageContent({ data }: { data: DashboardData }) {
         <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-5">
           <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 className="text-base font-semibold text-slate-900">Latest import status</h2>
-              <p className="mt-1 text-sm text-slate-500">The newest files feeding sales, refill, and inventory logic right now.</p>
+              <h2 className="text-base font-semibold text-slate-900">{t("Latest import status")}</h2>
+              <p className="mt-1 text-sm text-slate-500">{t("The newest files feeding sales, refill, and inventory logic right now.")}</p>
             </div>
-            <SecondaryButton href="/vms-import/sources">Open VMS Data Sources</SecondaryButton>
+            <SecondaryButton href="/vms-import/sources">{t("Open VMS Data Sources")}</SecondaryButton>
           </div>
           <div className="space-y-3">
             {data.vmsBatchRows.slice(0, 4).map((batch) => (
@@ -950,18 +1052,18 @@ function DashboardPageContent({ data }: { data: DashboardData }) {
                       <Link href={`/vms-import/${batch.id}`} className="link-secondary">{sourceFileName(batch)}</Link>
                     </div>
                     <div className="mt-1 text-xs text-slate-500">
-                      {batch.report_type ?? "unknown"} / {batchDateRangeLabel(batch)}
+                      {batch.report_type ?? t("Unknown")} / {batchDateRangeLabel(batch)}
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <StatusBadge status={batch.status ?? "unknown"} />
+                    <StatusBadge status={batch.status ?? "unknown"} label={dashboardStatusLabel(batch.status, t)} />
                     <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700">
-                      {batchImportedRows(batch).toLocaleString("en-US")} rows
+                      {batchImportedRows(batch).toLocaleString("en-US")} {t("rows")}
                     </span>
                   </div>
                 </div>
                 <div className="mt-3 text-xs text-slate-500">
-                  Updated {formatVmsDateTime(batch.imported_at ?? batch.uploaded_at)} / Active: {batch.is_active === false || batch.deleted_at ? "No" : "Yes"}
+                  {t("Updated")} {formatVmsDateTime(batch.imported_at ?? batch.uploaded_at)} / {t("Active")}: {batch.is_active === false || batch.deleted_at ? t("No") : t("Yes")}
                 </div>
               </div>
             ))}
@@ -977,31 +1079,33 @@ function isNextNavigationSignal(error: unknown) {
   return digest.startsWith("NEXT_REDIRECT") || digest.startsWith("NEXT_NOT_FOUND") || digest === "DYNAMIC_SERVER_USAGE";
 }
 
-async function DashboardPageContentLoader() {
+async function DashboardPageContentLoader({ t, locale }: DashboardI18n) {
   const result = await getDashboardData();
 
   if (!result.data) {
     return (
       <>
-        <PageHeader title="Dashboard" subtitle="How much money Snacky made, what needs attention, and what should happen next." />
-        <EmptyState title="Connect Supabase to activate the dashboard" body="Add the Snacky OS environment variables and restart the app." />
+        <PageHeader title={t("Dashboard")} subtitle={t("How much money Snacky made, what needs attention, and what should happen next.")} />
+        <EmptyState title={t("Connect Supabase to activate the dashboard")} body={t("Add the Snacky OS environment variables and restart the app.")} />
       </>
     );
   }
 
-  return <DashboardPageContent data={result.data} />;
+  return <DashboardPageContent data={result.data} t={t} locale={locale} />;
 }
 
 export default async function DashboardPage() {
+  const { t, locale } = await getServerI18n();
   try {
-    return await DashboardPageContentLoader();
+    return await DashboardPageContentLoader({ t, locale });
   } catch (error) {
     if (isNextNavigationSignal(error)) throw error;
     console.error("[dashboard] Page-level render guard caught an unexpected error", error);
     return (
       <>
-        <PageHeader title="Dashboard" subtitle="How much money Snacky made, what needs attention, and what should happen next." />
-        <EmptyState title="Dashboard recovered from an error" body="One of the dashboard render paths failed unexpectedly. Please contact admin if the issue keeps happening." />
+        <PageHeader title={t("Dashboard")} subtitle={t("How much money Snacky made, what needs attention, and what should happen next.")}
+        />
+        <EmptyState title={t("Dashboard recovered from an error")} body={t("One of the dashboard render paths failed unexpectedly. Please contact admin if the issue keeps happening.")} />
       </>
     );
   }
