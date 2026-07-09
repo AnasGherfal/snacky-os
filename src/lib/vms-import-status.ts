@@ -46,15 +46,35 @@ export type VmsImportBatchStatus = {
 };
 
 const supportedReportTypes = new Set([
-  "vms_order_details_weekly",
-  "monthly_transaction_details",
-  "monthly_product_profit",
-  "sales",
-  "stock",
-  "machine_stock_snapshot",
-  "planogram",
-  "product_list",
-  "machine_status",
+  'vms_order_details_weekly',
+  'monthly_transaction_details',
+  'monthly_product_profit',
+  'sales',
+  'stock',
+  'machine_stock_snapshot',
+  'planogram',
+  'product_list',
+  'machine_status',
+]);
+
+const knownImportStatuses = new Set([
+  'uploaded',
+  'parsed',
+  'imported',
+  'imported_active',
+  'imported_inactive',
+  'failed',
+  'deleted',
+  'duplicate_active',
+  'duplicate_deleted',
+  'needs_reprocess',
+  'needs_mapping_but_imported',
+  'unsupported_file',
+  'previewed',
+  'draft',
+  'cancelled',
+  'canceled',
+  'disabled',
 ]);
 
 function textValue(value: unknown) {
@@ -172,6 +192,22 @@ export function describeVmsImportBatchStatus(
   const representativeId = context.sameFileHashRepresentativeId ?? null;
   const representativeLabel = context.sameFileHashRepresentativeFileName ?? null;
   const isRepresentative = Boolean(representativeId && representativeId === batch.id);
+
+  const isRepresentative = Boolean(representativeId && representativeId === batch.id);
+
+  if (status && !knownImportStatuses.has(status)) {
+    return {
+      action: 'review_mappings',
+      actionLabel: 'Review file',
+      activeInDashboard: false,
+      key: 'needs_review',
+      label: 'Needs review',
+      relatedBatchId: null,
+      reason: 'This file needs review because its status is unknown or incomplete.',
+      secondaryAction: 'none',
+      secondaryActionLabel: null,
+    };
+  }
 
   if (unsupported) {
     return {
@@ -373,3 +409,10 @@ export function describeVmsImportBatchStatus(
     secondaryActionLabel: null,
   };
 }
+
+
+
+
+
+
+
