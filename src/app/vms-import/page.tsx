@@ -1499,6 +1499,8 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
 
   if (batchesError) pageIssues.push(loadIssueFromError("vms_import_batches.list", batchesError));
   const duplicateContexts = createVmsImportDuplicateContextMap(batches as VmsBatchRow[]);
+  const selectedImportBatch = selectedImportBatchId ? batches.find((batch) => String(batch.id) === selectedImportBatchId) ?? null : null;
+  const selectedImportBatchStatus = selectedImportBatch ? describeVmsImportBatchStatus(selectedImportBatch, duplicateContexts.get(String(selectedImportBatch.id)) ?? {}) : null;
 
   let preview: VmsImportPreviewRow | null = null;
   let selectedPreviewNotice = "";
@@ -1849,6 +1851,42 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
         <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900" role="status">
           {selectedPreviewNotice}
         </div>
+      ) : null}
+
+      {selectedImportBatchId ? (
+        <section className="surface-card mb-6 space-y-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Latest file status</h2>
+              <p className="mt-1 text-sm text-slate-500">This is the import batch that just finished loading or failed to load.</p>
+            </div>
+            <Link href={selectedImportBatch ? `/vms-import/${selectedImportBatch.id}` : "/vms-import"} className="btn-secondary">
+              {selectedImportBatch ? "Open file details" : "Back to import center"}
+            </Link>
+          </div>
+
+          {selectedImportBatch ? (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <StatCard label="File name" value={selectedImportBatch.file_name ?? selectedImportBatch.original_file_name ?? "Unknown file"} />
+              <StatCard label="Status" value={selectedImportBatchStatus?.label ?? selectedImportBatch.status ?? "Unknown"} />
+              <StatCard label="Report type" value={reportLabel(selectedImportBatch.report_type ?? selectedImportBatch.source_type)} />
+              <StatCard label="Loaded at" value={formatDateTime(selectedImportBatch.imported_at ?? selectedImportBatch.uploaded_at)} />
+              <StatCard label="Rows found" value={selectedImportBatch.rows_found ?? selectedImportBatch.row_count ?? 0} />
+              <StatCard label="Rows imported" value={selectedImportBatch.rows_imported ?? 0} />
+              <StatCard label="Needs review" value={selectedImportBatch.rows_needing_review ?? 0} />
+              <StatCard label="Import mode" value={selectedImportBatch.import_mode ?? "-"} />
+            </div>
+          ) : (
+            <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
+              VMS file record was not found. Please reupload this file if it should still be available.
+            </div>
+          )}
+
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+            <div className="font-semibold text-slate-900">Status note</div>
+            <p className="mt-1">{selectedImportBatch ? (selectedImportBatch.latest_error || selectedImportBatch.last_error || selectedImportBatchStatus?.actionLabel || "The file loaded successfully.") : "The file record is missing or was not returned by the current page of import batches."}</p>
+          </div>
+        </section>
       ) : null}
 
       {isOwnerAdminRole(profile) ? (

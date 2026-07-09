@@ -2038,7 +2038,7 @@ async function runVmsImport({
       summary: `Previewed ${summary.totalRows} ${reportType} rows from VMS ${fileType.toUpperCase()}`,
     });
     revalidatePath("/vms-import");
-    redirect(`/vms-import/${batch.id}`);
+    redirect(`/vms-import?importBatchId=${encodeURIComponent(batch.id)}&success=${encodeURIComponent("VMS preview prepared successfully.")}`);
   }
 
   const [{ data: machines }, { data: mappings }, { data: products }, machineMappingMemory] = await Promise.all([
@@ -3636,7 +3636,7 @@ async function runVmsImport({
   revalidatePath("/products-dashboard");
   revalidatePath("/machines-dashboard");
   revalidatePath("/inventory-dashboard");
-  redirect(`/vms-import/${batch.id}?${status === "failed" ? "error" : "success"}=${encodeURIComponent(summary.resultMessage || (status === "failed" ? "VMS import failed." : existingBatchId && recordReprocess ? "VMS import reprocessed successfully." : "VMS import confirmed successfully."))}`);
+  redirect(`/vms-import?importBatchId=${encodeURIComponent(batch.id)}&${status === "failed" ? "error" : "success"}=${encodeURIComponent(summary.resultMessage || (status === "failed" ? "VMS import failed." : existingBatchId && recordReprocess ? "VMS import reprocessed successfully." : "VMS import confirmed successfully."))}`);
 }
 
 type VmsPreviewSheetPayload = { name: string; rows: string[][] };
