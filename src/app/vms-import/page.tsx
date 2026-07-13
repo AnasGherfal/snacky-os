@@ -1511,6 +1511,8 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
 
   if (batchesError) pageIssues.push(loadIssueFromError("vms_import_batches.list", batchesError));
   const duplicateContexts = createVmsImportDuplicateContextMap(batches as VmsBatchRow[]);
+  const selectedImportBatch = selectedImportBatchId ? batches.find((batch) => String(batch.id) === selectedImportBatchId) ?? null : null;
+  const selectedImportBatchStatus = selectedImportBatch ? describeVmsImportBatchStatus(selectedImportBatch, duplicateContexts.get(String(selectedImportBatch.id)) ?? {}) : null;
 
   let preview: VmsImportPreviewRow | null = null;
   let selectedPreviewNotice = "";
