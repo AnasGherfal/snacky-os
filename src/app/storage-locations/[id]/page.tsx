@@ -18,15 +18,7 @@ import {
 export const dynamic = "force-dynamic";
 
 function storageTypeLabel(value: string | null | undefined, locale: "en" | "ar") {
-  const type = String(value ?? "main_storage");
-  if (locale !== "ar") return storageLocationTypeLabel(type);
-  if (type === "main_storage") return "المخزن الرئيسي";
-  if (type === "operator_bag") return "حقيبة المشغل";
-  if (type === "vehicle") return "مركبة";
-  if (type === "damaged") return "تالف";
-  if (type === "expired") return "منتهي الصلاحية";
-  if (type === "temporary") return "مؤقت";
-  return "أخرى";
+  return storageLocationTypeLabel(String(value ?? "main_storage"), locale);
 }
 
 function formatDate(value: string | null | undefined) {
@@ -173,7 +165,7 @@ export default async function StorageLocationDetailPage({
             </div>
             <div>
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{locale === "ar" ? "الحالة" : "Status"}</div>
-              <div className="mt-1"><StatusBadge status={storageLocationStatusLabel(typedLocation.active)} label={locale === "ar" ? (typedLocation.active ? "نشط" : "مؤرشف") : undefined} /></div>
+              <div className="mt-1"><StatusBadge status={storageLocationStatusLabel(typedLocation.active, locale)} label={storageLocationStatusLabel(typedLocation.active, locale)} /></div>
             </div>
             <div>
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{locale === "ar" ? "المنتجات الحالية" : "Current Products"}</div>

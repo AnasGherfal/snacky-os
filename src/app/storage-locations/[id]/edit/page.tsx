@@ -67,7 +67,7 @@ export default async function EditStorageLocationPage({
           action={<SecondaryButton href={`/storage-locations/${location.id}`}>{locale === "ar" ? "العودة إلى التفاصيل" : "Back to detail"}</SecondaryButton>}
         />
         {query.error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{query.error}</div> : null}
-        <StorageLocationForm action={updateStorageLocation} location={location as StorageLocationRow} operators={operators ?? []} submitLabel={locale === "ar" ? "حفظ التغييرات" : "Save changes"} />
+        <StorageLocationForm action={updateStorageLocation} location={location as StorageLocationRow} operators={operators ?? []} submitLabel={locale === "ar" ? "حفظ التغييرات" : "Save changes"} locale={locale} />
       </FormPageLayout>
     </>
   );

@@ -858,6 +858,11 @@ async function SalesDashboardPageContent({
       ? "monthly profit"
       : "detailed";
   const detailedReportLabel = sourceReportType === "monthly_transaction_details" ? "Monthly Transaction Report" : "Detailed Order Details";
+  const sourceStatusKindLabel = sourceReportType === "monthly_transaction_details"
+    ? "monthly transaction"
+    : sourceMode === "monthly"
+      ? "monthly profit"
+      : "detailed";
 
   let salesSummaryResult: LoggedSalesSectionResult<SalesSummaryRow>;
   let dayBreakdownResult: LoggedSalesSectionResult<SalesDashboardBreakdownRow>;
@@ -1270,13 +1275,15 @@ async function SalesDashboardPageContent({
   );
   const sourceStatusText = contributingFiles.length
     ? missingPeriods.length
-      ? `${formatInteger(contributingFiles.length)} finalized ${sourceMode === "monthly" ? "monthly profit" : "detailed"} file(s) contributing, with coverage gaps in this range`
-      : `${formatInteger(contributingFiles.length)} finalized ${sourceMode === "monthly" ? "monthly profit" : "detailed"} file(s) contributing`
+      ? `${formatInteger(contributingFiles.length)} finalized ${sourceStatusKindLabel} file(s) contributing, with coverage gaps in this range`
+      : `${formatInteger(contributingFiles.length)} finalized ${sourceStatusKindLabel} file(s) contributing`
     : activePrimaryFiles.length
-      ? `No finalized ${sourceMode === "monthly" ? "monthly profit" : "detailed"} files overlap the selected business-date range.`
+      ? `No finalized ${sourceStatusKindLabel} files overlap the selected business-date range.`
       : sourceMode === "monthly"
         ? "Waiting for finalized monthly profit files"
-        : "Waiting for finalized detailed Order Details files";
+        : sourceReportType === "monthly_transaction_details"
+          ? "Waiting for finalized monthly transaction files"
+          : "Waiting for finalized detailed Order Details files";
   const paymentMethodText = summary.paymentMethodAvailable
     ? "Cash and card split is available for this range."
     : sourceMode === "monthly"
@@ -1362,7 +1369,7 @@ async function SalesDashboardPageContent({
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{t("Source used")}</div>
-              <div className="mt-2 text-base font-semibold text-slate-900">{t("Using")} {t(salesDashboardSourceLabel(sourceMode), salesDashboardSourceLabel(sourceMode))}.</div>
+              <div className="mt-2 text-base font-semibold text-slate-900">{t("Using")} {t(sourceReportLabel, sourceReportLabel)}.</div>
               <div className="mt-1 text-sm leading-6 text-slate-500">{sourceStatusText}</div>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">

@@ -1,0 +1,23 @@
+0 verbose cli C:\Program Files\nodejs\node.exe C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js
+1 info using npm@11.16.0
+2 info using node@v24.18.0
+3 silly config load:file:C:\Program Files\nodejs\node_modules\npm\npmrc
+4 silly config load:file:C:\Users\anas2\Documents\dev\snacky-os\.npmrc
+5 silly config load:file:C:\Users\anas2\Documents\dev\snacky-os \.npmrc
+6 silly config load:file:C:\Users\anas2\AppData\Roaming\npm\etc\npmrc
+7 verbose title npm exec supabase@2.109.1 db query --local -f .tmp-query-profiles.sql
+8 verbose argv "exec" "--yes" "--" "supabase@2.109.1" "db" "query" "--local" "-f" ".tmp-query-profiles.sql"
+9 verbose logfile logs-max:10 dir:C:\Users\anas2\Documents\dev\snacky-os\.npm-cache\_logs\2026-07-12T15_56_02_438Z-
+10 verbose logfile C:\Users\anas2\Documents\dev\snacky-os\.npm-cache\_logs\2026-07-12T15_56_02_438Z-debug-0.log
+11 silly logfile done cleaning log files
+12 silly packumentCache heap:4496293888 maxSize:1124073472 maxEntrySize:562036736
+13 http fetch GET 200 https://registry.npmjs.org/supabase 324ms (cache revalidated)
+14 silly packumentCache heap:4496293888 maxSize:1124073472 maxEntrySize:562036736
+15 verbose Could not read global path C:\Users\anas2\AppData\Roaming\npm, ignoring
+16 silly packumentCache heap:4496293888 maxSize:1124073472 maxEntrySize:562036736
+17 verbose cwd C:\Users\anas2\Documents\dev\snacky-os
+18 verbose os Windows_NT 10.0.26200
+19 verbose node v24.18.0
+20 verbose npm  v11.16.0
+21 verbose exit 0
+22 info ok

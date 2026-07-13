@@ -170,8 +170,8 @@ function coverageState(kind: SalesCoverageStateKind, label: string, title: strin
 }
 
 function sourceLabelForMode(sourceMode: SalesDashboardSourceMode, sourceReportType?: string | null) {
-  if (sourceMode === "monthly") return "Monthly Profit Report";
   if (sourceReportType === "monthly_transaction_details") return "Monthly Transaction Report";
+  if (sourceMode === "monthly") return "Monthly Profit Report";
   return "Detailed Order Details";
 }
 
@@ -200,6 +200,7 @@ export function describeSalesDashboardNoDataState({
 }): SalesCoverageState {
   const rangeBounds = { start: selectedRange.start, end: selectedRange.end };
   const effectiveSourceReportType = sourceMode === "monthly" ? "monthly_product_profit" : sourceReportType ?? "vms_order_details_weekly";
+  const sourceBatches = fileContributions.filter((row) => row.batch.report_type === effectiveSourceReportType);
   const sourceRowsInRange = fileContributions.filter((row) => {
     if (row.batch.report_type !== effectiveSourceReportType) return false;
     if (row.rowsInRange > 0 || row.successfulRowsInRange > 0) return true;
@@ -273,14 +274,16 @@ export function describeSalesDashboardNoDataState({
     );
   }
 
-  if (sourceRowsInRange.length === 0) {
+  if (sourceBatches.length === 0) {
     return coverageState(
       "no_source",
       "No source",
       "No VMS sales file uploaded for this range.",
       sourceMode === "monthly"
         ? "Import a monthly profit report file to populate this range."
-        : "Import a detailed Order Details file to populate this range.",
+        : sourceReportType === "monthly_transaction_details"
+          ? "Import a monthly transaction report file to populate this range."
+          : "Import a detailed Order Details file to populate this range.",
     );
   }
 
@@ -289,11 +292,15 @@ export function describeSalesDashboardNoDataState({
     "Missing",
     sourceMode === "monthly"
       ? "No monthly profit rows found for this range."
-      : "No detailed Order Details rows found for this range.",
+      : sourceReportType === "monthly_transaction_details"
+        ? "No monthly transaction rows found for this range."
+        : "No detailed Order Details rows found for this range.",
     coverageLabel === "-"
       ? sourceMode === "monthly"
         ? "Change the date filter or import the matching monthly profit report first."
-        : "Change the date filter or import the matching detailed Order Details file first."
+        : sourceReportType === "monthly_transaction_details"
+          ? "Change the date filter or import the matching monthly transaction report first."
+          : "Change the date filter or import the matching detailed Order Details file first."
       : "Change the date filter. Current finalized coverage runs from " + coverageLabel + ".",
   );
 }

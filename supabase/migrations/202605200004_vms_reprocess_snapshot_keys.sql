@@ -32,7 +32,10 @@ create index if not exists idx_vms_stock_snapshots_import_row_status
 create index if not exists idx_vms_sales_snapshots_import_row_status
   on vms_sales_snapshots(import_row_status);
 
-create or replace view latest_vms_stock_by_slot as
+drop view if exists refill_recommendations;
+drop view if exists latest_vms_stock_by_slot;
+
+create view latest_vms_stock_by_slot as
 with normalized as (
   select
     vss.id,
@@ -91,7 +94,7 @@ select
 from latest
 group by machine_id, stock_item_key;
 
-create or replace view refill_recommendations as
+create view refill_recommendations as
 with storage_stock as (
   select product_id, sum(quantity_on_hand)::integer as available_storage_qty
   from current_inventory_by_location

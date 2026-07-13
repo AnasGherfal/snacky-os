@@ -2,7 +2,7 @@ update public.vms_transactions_raw tx
 set business_date = public.snacky_vms_order_details_business_date(tx.raw_row, tx.normalized_row, tx.payment_time, tx.delivery_time)
 from public.vms_import_batches vib
 where vib.id = tx.import_batch_id
-  and vib.report_type = 'vms_order_details_weekly'
+  and vib.report_type in ('vms_order_details_weekly', 'monthly_transaction_details')
   and tx.business_date is null
   and public.snacky_vms_order_details_business_date(tx.raw_row, tx.normalized_row, tx.payment_time, tx.delivery_time) is not null;
 
@@ -20,7 +20,7 @@ with detailed_batch_coverage as (
     coalesce(sum(greatest(coalesce(tx.payment_amount, 0), 0)) filter (where tx.transaction_status = 'successful_sale'), 0)::numeric(12,2) as total_successful_sales
   from public.vms_transactions_raw tx
   join public.vms_import_batches vib on vib.id = tx.import_batch_id
-  where vib.report_type = 'vms_order_details_weekly'
+  where vib.report_type in ('vms_order_details_weekly', 'monthly_transaction_details')
   group by tx.import_batch_id
 )
 update public.vms_import_batches vib
@@ -52,14 +52,14 @@ set
   updated_at = now()
 from detailed_batch_coverage coverage
 where vib.id = coverage.batch_id
-  and vib.report_type = 'vms_order_details_weekly'
+  and vib.report_type in ('vms_order_details_weekly', 'monthly_transaction_details')
   and vib.deleted_at is null;
 
 update public.vms_import_batches vib
 set
   is_active = true,
   updated_at = now()
-where vib.report_type = 'vms_order_details_weekly'
+where vib.report_type in ('vms_order_details_weekly', 'monthly_transaction_details')
   and vib.status in ('imported', 'imported_with_warnings', 'partially_imported')
   and vib.deleted_at is null
   and coalesce(vib.is_active, false) = false
@@ -102,6 +102,7 @@ with resolved_transactions as (
     tx.raw_row,
     tx.normalized_row,
     tx.transaction_status,
+    vib.report_type,
     vib.report_start_date,
     vib.report_end_date
   from public.vms_transactions_raw tx
@@ -114,7 +115,7 @@ with resolved_transactions as (
       tx.business_date,
       public.snacky_vms_order_details_business_date(tx.raw_row, tx.normalized_row, tx.payment_time, tx.delivery_time)
     ) is not null
-    and vib.report_type = 'vms_order_details_weekly'
+    and vib.report_type in ('vms_order_details_weekly', 'monthly_transaction_details')
     and vib.status in ('imported', 'imported_with_warnings', 'partially_imported')
     and vib.deleted_at is null
 ),
@@ -187,7 +188,7 @@ select
   sales.period_end,
   sales.created_at,
   jsonb_build_object(
-    'source', 'vms_order_details_weekly',
+    'source', coalesce(sales.report_type, 'vms_order_details_weekly'),
     'raw', sales.raw_row,
     'normalized', sales.normalized_row,
     'transaction_status', sales.transaction_status,
@@ -272,7 +273,7 @@ as $$
       public.snacky_vms_normalize_payment_method(tx.raw_row, tx.normalized_row) as payment_method
     from public.vms_transactions_raw tx
     join public.vms_import_batches vib on vib.id = tx.import_batch_id
-    where vib.report_type = 'vms_order_details_weekly'
+      where vib.report_type in ('vms_order_details_weekly', 'monthly_transaction_details')
       and vib.status in ('imported', 'imported_with_warnings', 'partially_imported')
       and vib.deleted_at is null
   ),
@@ -617,7 +618,7 @@ as $$
       greatest(coalesce(tx.payment_amount, 0), 0)::numeric(12,2) as payment_amount
     from public.vms_transactions_raw tx
     join public.vms_import_batches vib on vib.id = tx.import_batch_id
-    where vib.report_type = 'vms_order_details_weekly'
+    where vib.report_type in ('vms_order_details_weekly', 'monthly_transaction_details')
   )
   select
     date_trunc('month', detailed.business_date::timestamp)::date as business_month,

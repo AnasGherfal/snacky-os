@@ -35,7 +35,7 @@ set
   last_error = null
 from order_details_batch_coverage coverage
 where vib.id = coverage.batch_id
-  and vib.report_type = 'vms_order_details_weekly'
+  and vib.report_type in ('vms_order_details_weekly', 'monthly_transaction_details')
   and vib.deleted_at is null
   and coverage.raw_row_count > 0
   and (
@@ -104,7 +104,7 @@ as $$
       public.snacky_vms_normalize_payment_method(tx.raw_row, tx.normalized_row) as payment_method
     from public.vms_transactions_raw tx
     join public.vms_import_batches vib on vib.id = tx.import_batch_id
-    where vib.report_type = 'vms_order_details_weekly'
+    where vib.report_type in ('vms_order_details_weekly', 'monthly_transaction_details')
       and vib.status in ('imported', 'imported_with_warnings', 'partially_imported')
       and coalesce(vib.is_active, false) = true
       and vib.deleted_at is null

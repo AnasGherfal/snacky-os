@@ -394,7 +394,9 @@ after insert or update on public.cash_collections
 for each row
 execute function public.snacky_cash_collection_finance_sync_trigger();
 
-create or replace function public.backfill_missing_finance_transactions()
+drop function if exists public.backfill_missing_finance_transactions();
+
+create function public.backfill_missing_finance_transactions()
 returns jsonb
 language plpgsql
 security definer

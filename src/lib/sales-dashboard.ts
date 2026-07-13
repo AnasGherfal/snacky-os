@@ -487,7 +487,7 @@ export function resolveSalesDashboardSourceReportType(batches: VmsDashboardBatch
   const activeMonthlyProfit = batches.filter((batch) => isActiveImportedVmsBatch(batch) && String(batch.report_type ?? "") === "monthly_product_profit");
   const overlaps = (batch: VmsDashboardBatch) => {
     const coverage = batchCoverageDates(batch);
-    return Boolean(coverage.start && coverage.end && rangesOverlap(coverage, { start: range.start, end: range.end }));
+    return Boolean(coverage.start && coverage.end && rangesOverlap({ start: coverage.start, end: coverage.end }, { start: range.start, end: range.end }));
   };
   const detailedInRange = activeDetailed.filter(overlaps);
   const monthlyProfitInRange = activeMonthlyProfit.filter(overlaps);
@@ -976,7 +976,7 @@ function classifyContribution({
     };
   }
 
-  if (reportType !== "vms_order_details_weekly") {
+  if (!["vms_order_details_weekly", "monthly_transaction_details"].includes(reportType)) {
     return {
       included: false,
       reason: "This VMS file type does not feed the detailed sales dashboard.",
@@ -1017,7 +1017,9 @@ function classifyContribution({
   if (!finalizedDetailedSalesBatch(batch)) {
     return {
       included: false,
-      reason: "This detailed sales batch is not finalized for dashboard use yet.",
+      reason: reportType === "monthly_transaction_details"
+        ? "This monthly transaction batch is not finalized for dashboard use yet."
+        : "This detailed sales batch is not finalized for dashboard use yet.",
       status: "inactive_batch",
     };
   }
@@ -1044,8 +1046,8 @@ function classifyContribution({
     return {
       included: false,
       reason: metadataCoverage.start && metadataCoverage.end
-        ? `Batch metadata says this file covers ${metadataCoverage.start} to ${metadataCoverage.end}, but 0 detailed transaction rows were actually saved in vms_transactions_raw.`
-        : "Batch metadata shows imported rows, but 0 detailed transaction rows were actually saved in vms_transactions_raw.",
+        ? `Batch metadata says this file covers ${metadataCoverage.start} to ${metadataCoverage.end}, but 0 ${reportType === "monthly_transaction_details" ? "monthly transaction" : "detailed transaction"} rows were actually saved in vms_transactions_raw.`
+        : `Batch metadata shows imported rows, but 0 ${reportType === "monthly_transaction_details" ? "monthly transaction" : "detailed transaction"} rows were actually saved in vms_transactions_raw.`,
       status: "metadata_without_raw_rows",
     };
   }

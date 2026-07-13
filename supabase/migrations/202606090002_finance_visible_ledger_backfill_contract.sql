@@ -59,7 +59,9 @@ as $$
      and p_cash.actual_cash_collected is not null
 $$;
 
-create or replace function public.backfill_missing_finance_transactions()
+drop function if exists public.backfill_missing_finance_transactions();
+
+create function public.backfill_missing_finance_transactions()
 returns table (
   purchases_checked integer,
   purchase_transactions_created integer,

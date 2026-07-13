@@ -1,4 +1,4 @@
-﻿do $$ begin
+do $$ begin
   if not exists (
     select 1
     from pg_enum e

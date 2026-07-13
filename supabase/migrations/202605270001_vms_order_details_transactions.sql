@@ -479,7 +479,10 @@ select
 from public.vms_transaction_status_daily
 group by date_trunc('month', sale_date)::date;
 
-create or replace view public.latest_vms_stock_by_slot as
+drop view if exists public.refill_recommendations;
+drop view if exists public.latest_vms_stock_by_slot;
+
+create view public.latest_vms_stock_by_slot as
 with normalized as (
   select
     vss.id,

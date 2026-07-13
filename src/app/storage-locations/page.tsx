@@ -10,11 +10,13 @@ import { activateStorageLocation, archiveStorageLocation, deleteStorageLocation 
 import { getServerI18n } from "@/lib/i18n/server";
 import {
   StorageLocationRow,
+  storageLocationHelperBody,
+  storageLocationHelperTitle,
   inventoryRowBelongsToLocation,
   normalizeStorageLocationType,
   storageLocationStatusLabel,
-  storageLocationTypeHelpers,
   storageLocationTypeLabel,
+  storageLocationTypeHelperCards,
 } from "@/lib/storage-locations";
 
 export const dynamic = "force-dynamic";
@@ -25,31 +27,7 @@ function formatDate(value: string | null) {
 }
 
 function storageTypeLabel(value: string | null | undefined, locale: "en" | "ar") {
-  const type = normalizeStorageLocationType(value);
-  if (locale !== "ar") return storageLocationTypeLabel(type);
-  if (type === "main_storage") return "المخزن الرئيسي";
-  if (type === "operator_bag") return "حقيبة المشغل";
-  if (type === "vehicle") return "مركبة";
-  if (type === "damaged") return "تالف";
-  if (type === "expired") return "منتهي الصلاحية";
-  if (type === "temporary") return "مؤقت";
-  return "أخرى";
-}
-
-function storageHelperTitle(title: string, locale: "en" | "ar") {
-  if (locale !== "ar") return title;
-  if (title === "Main Storage") return "المخزن الرئيسي";
-  if (title === "Operator Bag") return "حقيبة المشغل";
-  if (title === "Damaged/Expired") return "تالف / منتهي الصلاحية";
-  return title;
-}
-
-function storageHelperBody(title: string, body: string, locale: "en" | "ar") {
-  if (locale !== "ar") return body;
-  if (title === "Main Storage") return "المخزن الرئيسي.";
-  if (title === "Operator Bag") return "مخزون مخصص لمشغل في جولة.";
-  if (title === "Damaged/Expired") return "مخزون أُخرج من المخزون القابل للبيع.";
-  return body;
+  return storageLocationTypeLabel(normalizeStorageLocationType(value), locale);
 }
 
 export default async function StorageLocationsPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
@@ -136,7 +114,7 @@ export default async function StorageLocationsPage({ searchParams }: { searchPar
         lastMovementAt: movementSummaryByLocationId.get(location.id)?.lastMovementAt ?? null,
       },
     }))
-    .sort((a, b) => Number(b.location.active) - Number(a.location.active) || storageLocationTypeLabel(a.location.location_type).localeCompare(storageLocationTypeLabel(b.location.location_type)) || a.location.name.localeCompare(b.location.name));
+    .sort((a, b) => Number(b.location.active) - Number(a.location.active) || storageLocationTypeLabel(a.location.location_type, "en").localeCompare(storageLocationTypeLabel(b.location.location_type, "en")) || a.location.name.localeCompare(b.location.name));
 
   const activeCount = activeLocationCount ?? 0;
   const archivedCount = Math.max(0, (count ?? 0) - activeCount);
@@ -171,10 +149,10 @@ export default async function StorageLocationsPage({ searchParams }: { searchPar
       </div>
 
       <section className="mb-6 grid gap-3 md:grid-cols-3">
-        {storageLocationTypeHelpers.map((helper) => (
-          <div key={helper.title} className="rounded-lg border border-slate-200 bg-white p-4">
-            <h2 className="text-sm font-semibold text-slate-900">{storageHelperTitle(helper.title, locale)}</h2>
-            <p className="mt-1 text-sm text-slate-500">{storageHelperBody(helper.title, helper.body, locale)}</p>
+        {storageLocationTypeHelperCards.map((helper) => (
+          <div key={helper.title.en} className="rounded-lg border border-slate-200 bg-white p-4">
+            <h2 className="text-sm font-semibold text-slate-900">{storageLocationHelperTitle(helper.title.en, locale)}</h2>
+            <p className="mt-1 text-sm text-slate-500">{storageLocationHelperBody(helper.title.en, helper.body.en, locale)}</p>
           </div>
         ))}
       </section>
@@ -195,7 +173,7 @@ export default async function StorageLocationsPage({ searchParams }: { searchPar
                     {operator ? <div className="mt-1 text-xs text-slate-500">{operator.full_name}</div> : null}
                   </td>
                   <td>{storageTypeLabel(location.location_type, locale)}</td>
-                  <td><StatusBadge status={storageLocationStatusLabel(location.active)} label={locale === "ar" ? (location.active ? "نشط" : "مؤرشف") : undefined} /></td>
+                  <td><StatusBadge status={storageLocationStatusLabel(location.active, locale)} label={storageLocationStatusLabel(location.active, locale)} /></td>
                   <td>{location.latitude && location.longitude ? `${location.latitude}, ${location.longitude}` : "-"}</td>
                   <td>{summary.productCount}</td>
                   <td className="font-semibold text-slate-900">{summary.totalUnits}</td>

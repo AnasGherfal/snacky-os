@@ -39,7 +39,7 @@ export default async function NewStorageLocationPage({ searchParams }: { searchP
           action={<SecondaryButton href="/storage-locations">{locale === "ar" ? "العودة إلى المواقع" : "Back to locations"}</SecondaryButton>}
         />
         {params.error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{params.error}</div> : null}
-        <StorageLocationForm action={createStorageLocation} operators={operators ?? []} submitLabel={locale === "ar" ? "إنشاء الموقع" : "Create location"} />
+        <StorageLocationForm action={createStorageLocation} operators={operators ?? []} submitLabel={locale === "ar" ? "إنشاء الموقع" : "Create location"} locale={locale} />
       </FormPageLayout>
     </>
   );

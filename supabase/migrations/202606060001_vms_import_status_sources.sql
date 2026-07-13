@@ -204,9 +204,10 @@ select
 from public.vms_transaction_status_daily
 group by date_trunc('month', sale_date)::date;
 
+drop view if exists public.refill_recommendations;
 drop view if exists public.latest_vms_stock_by_slot;
 
-create or replace view public.latest_vms_stock_by_slot as
+create view public.latest_vms_stock_by_slot as
 with normalized as (
   select
     vss.id,
@@ -282,7 +283,7 @@ from latest
 group by machine_id, stock_item_key;
 
 
-create or replace view public.refill_recommendations as
+create view public.refill_recommendations as
 with storage_stock as (
   select product_id, sum(quantity_on_hand)::integer as available_storage_qty
   from current_inventory_by_location

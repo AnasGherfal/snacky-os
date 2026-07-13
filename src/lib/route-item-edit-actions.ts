@@ -394,5 +394,5 @@ export async function saveRouteItemEdits(formData: FormData) {
   });
 
   revalidateRoutePaths(routeId, routeStops.map((stop: any) => String(stop.id ?? "")).filter(Boolean));
-  redirect(`/routes/${routeId}?success=${encodeURIComponent("ØªÙ… Ø­ÙØ¸ Ø§Ù„ØªØ¹Ø¯ÙŠÙ„Ø§Øª")}`);
+  redirect(`/routes/${routeId}?success=${encodeURIComponent("تم حفظ التعديلات")}`);
 }

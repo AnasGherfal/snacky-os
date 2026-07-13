@@ -1,5 +1,6 @@
-import Link from "next/link";
+﻿import Link from "next/link";
 import { redirect } from "next/navigation";
+import type { ReactNode } from "react";
 import { FormSubmitButton } from "@/components/FormSubmitButton";
 import { LocalDraftForm } from "@/components/LocalDraft";
 import { PaginationControls } from "@/components/PaginationControls";
@@ -221,6 +222,25 @@ function formatDateTime(value: string | null | undefined) {
   return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(date);
 }
 
+function renderSectionSafely(
+  sectionName: string,
+  render: () => ReactNode,
+  fallback: ReactNode,
+  context?: Record<string, unknown>,
+) {
+  try {
+    return render();
+  } catch (error) {
+    console.error("[vms-import] Section render failed", {
+      sectionName,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack ?? null : null,
+      ...context,
+    });
+    return fallback;
+  }
+}
+
 function safeDecode(value: string | undefined) {
   if (!value) return "-";
   try {
@@ -353,7 +373,7 @@ function normalizeVmsBatchRow(row: unknown, index: number): VmsBatchRow {
     storage_path: safeString(value.storage_path, "") || null,
     detected_min_datetime: safeString(value.detected_min_datetime, "") || null,
     detected_max_datetime: safeString(value.detected_max_datetime, "") || null,
-    total_successful_sales: value.total_successful_sales ?? 0,
+    total_successful_sales: safeNumber(value.total_successful_sales, 0),
     successful_rows_count: safeNumber(value.successful_rows_count, 0),
     failed_rows_count: safeNumber(value.failed_rows_count, 0),
     refunded_rows_count: safeNumber(value.refunded_rows_count, 0),
@@ -831,10 +851,7 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
         <PageHeader title="VMS Import" subtitle="Three-step import: upload and detect, review mapping, confirm import." />
         <div className="space-y-6">
           <UploadCard />
-          <InlineLoadIssue
-            title="Import history could not load"
-            issue={issue}
-          />
+          <InlineLoadIssue title="Import history could not load" issue={issue} />
           <section className="surface-card mb-6 space-y-4">
             <div>
               <h2 className="text-lg font-semibold text-slate-900">Detailed Sales Coverage</h2>
@@ -853,16 +870,9 @@ export default async function VmsImportPage({ searchParams }: { searchParams: Pr
               <p className="mt-1 text-sm text-slate-500">This section is temporarily unavailable.</p>
             </div>
           </section>
-          <ErrorState
-            title="Something did not load"
-            body="Snacky OS recovered from a VMS Import render error. The upload area should still be available, and the failing section will be isolated on the next load."
-            action={
-              <>
-                <Link href="/vms-import" className="btn-primary">Try again</Link>
-                <Link href="/dashboard" className="btn-secondary">Back to dashboard</Link>
-              </>
-            }
-          />
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            Snacky OS recovered from a VMS Import render error. The upload area is still available, and the failing section will be isolated on the next load.
+          </div>
         </div>
       </>
     );
@@ -1002,10 +1012,12 @@ function OriginalRowData({ row }: { row: Record<string, string> }) {
 
 function InlineLoadIssue({ title, issue }: { title: string; issue?: VmsPageLoadIssue | null }) {
   if (!issue) return null;
+  const details = issue.message || "This section could not load. Please contact admin.";
   return (
     <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900" role="status">
       <div className="font-semibold text-amber-950">{title}</div>
-      <p className="mt-1">This section could not load. Please contact admin.</p>
+      <p className="mt-1">{details}</p>
+      {issue.missing ? <p className="mt-1 text-xs text-amber-800">Missing: {issue.missing}</p> : null}
     </div>
   );
 }
@@ -1579,7 +1591,9 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
       currentUserId: profile?.id ?? null,
       effectivePermissions,
     });
-    pageIssues.push(loadIssueFromError("team_members.importers", importersError));
+    if (!isPermissionError(queryError(importersError)) && !isMissingSchemaError(queryError(importersError))) {
+      pageIssues.push(loadIssueFromError("team_members.importers", importersError));
+    }
   }
   const importerById = new Map(((importers ?? []) as ImporterRow[]).map((member) => [String(member.id), member.full_name]));
   const reviewSummary = await loadVmsReviewSummary({
@@ -1831,7 +1845,12 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
 
       <Stepper currentStep={currentStep} />
 
-      <VmsSchemaRepairPanel schemaHealth={schemaHealth} canRepair={isOwnerAdminRole(profile)} />
+      {renderSectionSafely(
+        "schema-repair-panel",
+        () => <VmsSchemaRepairPanel schemaHealth={schemaHealth} canRepair={isOwnerAdminRole(profile)} />,
+        <section className="surface-card mb-6 space-y-4"><div><h2 className="text-lg font-semibold text-slate-900">Schema repair</h2><p className="mt-1 text-sm text-slate-500">Could not load this section.</p></div></section>,
+        { currentUserId: profile?.id ?? null },
+      )}
 
       {params.error ? (
         <div className="mb-5 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800" role="alert">
@@ -1851,38 +1870,56 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
         </div>
       ) : null}
 
-      {isOwnerAdminRole(profile) ? (
-        <AdminDiagnosticsPanel canView issues={pageIssues} currentUserId={profile?.id ?? null} effectivePermissions={effectivePermissions} />
-      ) : null}
+      {renderSectionSafely(
+        "admin-diagnostics",
+        () => (isOwnerAdminRole(profile) ? <AdminDiagnosticsPanel canView issues={pageIssues} currentUserId={profile?.id ?? null} effectivePermissions={effectivePermissions} /> : null),
+        null,
+        { currentUserId: profile?.id ?? null },
+      )}
 
-      {!preview && canCreateVmsImports(profile) ? <div className="mb-6"><UploadCard /></div> : null}
+      {renderSectionSafely(
+        "upload-area",
+        () => (!preview && canCreateVmsImports(profile) ? <div className="mb-6"><UploadCard /></div> : null),
+        <div className="mb-6"><section className="surface-card"><div className="p-4 text-sm text-slate-500">Upload area could not load.</div></section></div>,
+        { currentUserId: profile?.id ?? null, hasPreview: Boolean(preview) },
+      )}
 
-      {!preview ? <ReviewSummaryCard summary={reviewSummary} batchReviewRows={batchReviewRows} /> : null}
+      {renderSectionSafely(
+        "review-summary",
+        () => (!preview ? <ReviewSummaryCard summary={reviewSummary} batchReviewRows={batchReviewRows} /> : null),
+        <section className="surface-card mb-6 space-y-4"><div><h2 className="text-lg font-semibold text-slate-900">Import summary</h2><p className="mt-1 text-sm text-slate-500">Could not load this section.</p></div></section>,
+        { currentUserId: profile?.id ?? null, hasPreview: Boolean(preview) },
+      )}
 
-      {!preview ? (
-        <section className="surface-card mb-6 space-y-4">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-900">Detailed Sales Coverage</h2>
-            <p className="mt-1 text-sm text-slate-500">Active detailed transaction imports are the main sales/dashboard source. Monthly Transaction Report is preferred when available.</p>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <StatCard label="Active detailed files" value={activeDetailedBatches.length} />
-            <StatCard label="Coverage start" value={detailedCoverage.ranges[0]?.start ?? "-"} />
-            <StatCard label="Coverage end" value={detailedCoverage.ranges.at(-1)?.end ?? "-"} />
-            <StatCard label="Missing coverage gaps" value={detailedCoverage.gaps.length} />
-          </div>
-          {detailedCoverage.gaps.length ? (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900">
-              Missing detailed transaction coverage from {detailedCoverage.gaps.map((gap) => `${gap.start} to ${gap.end}`).join(", ")}. Dashboards may be incomplete.
+      {renderSectionSafely(
+        "detailed-sales-coverage",
+        () => (!preview ? (
+          <section className="surface-card mb-6 space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Detailed Sales Coverage</h2>
+              <p className="mt-1 text-sm text-slate-500">Active detailed transaction imports are the main sales/dashboard source. Monthly Transaction Report is preferred when available.</p>
             </div>
-          ) : null}
-          {overlappingActiveBatches.length ? (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900">
-              {overlappingActiveBatches.length} active detailed import(s) overlap another active VMS import. Duplicates are skipped where detected.
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <StatCard label="Active detailed files" value={activeDetailedBatches.length} />
+              <StatCard label="Coverage start" value={detailedCoverage.ranges[0]?.start ?? "-"} />
+              <StatCard label="Coverage end" value={detailedCoverage.ranges.at(-1)?.end ?? "-"} />
+              <StatCard label="Missing coverage gaps" value={detailedCoverage.gaps.length} />
             </div>
-          ) : null}
-        </section>
-      ) : null}
+            {detailedCoverage.gaps.length ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900">
+                Missing detailed transaction coverage from {detailedCoverage.gaps.map((gap) => `${gap.start} to ${gap.end}`).join(", ")}. Dashboards may be incomplete.
+              </div>
+            ) : null}
+            {overlappingActiveBatches.length ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900">
+                {overlappingActiveBatches.length} active detailed import(s) overlap another active VMS import. Duplicates are skipped where detected.
+              </div>
+            ) : null}
+          </section>
+        ) : null),
+        <section className="surface-card mb-6 space-y-4"><div><h2 className="text-lg font-semibold text-slate-900">Detailed Sales Coverage</h2><p className="mt-1 text-sm text-slate-500">Could not load this section.</p></div></section>,
+        { currentUserId: profile?.id ?? null, hasPreview: Boolean(preview), activeDetailedCount: activeDetailedBatches.length },
+      )}
 
       {preview && selectedSheet && currentStep === 2 ? (
         <section className="surface-card mb-6 space-y-5">
@@ -2133,7 +2170,7 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
               <StatCard label="Report type" value={transactionDetailsReportLabel} />
               <StatCard label="Date range detected" value={reportStartDate && reportEndDate ? `${reportStartDate} to ${reportEndDate}` : "-"} />
-              <StatCard label="Successful sales rows" value={orderDetailsStatusCounts.successful_sale ?? 0} />
+              <StatCard label="Successful sales rows" value={transactionDetailsStatusCounts.successful_sale ?? 0} />
               <StatCard label="Failed/refund/review rows" value={failedRefundReviewRows} />
               <StatCard label="Machines found" value={machinesFound} />
               <StatCard label="Products found" value={productsFound} />
@@ -2141,10 +2178,10 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
               <StatCard label="New machines needing mapping" value={validation?.unknownMachineRows ?? 0} />
               <StatCard label="Duplicates skipped" value={duplicatePreviewCount} />
               <StatCard label="Estimated successful sales" value={lyd(estimatedSalesTotal)} />
-              <StatCard label="Failed vend count" value={orderDetailsStatusCounts.failed_vend ?? 0} note={lyd(failedVendAmount)} />
-              <StatCard label="Refund count" value={orderDetailsStatusCounts.refunded ?? 0} note={lyd(refundAmount)} />
-              <StatCard label="Failed payment count" value={orderDetailsStatusCounts.failed_payment ?? 0} />
-              <StatCard label="Needs review count" value={orderDetailsStatusCounts.needs_review ?? 0} />
+              <StatCard label="Failed vend count" value={transactionDetailsStatusCounts.failed_vend ?? 0} note={lyd(failedVendAmount)} />
+              <StatCard label="Refund count" value={transactionDetailsStatusCounts.refunded ?? 0} note={lyd(refundAmount)} />
+              <StatCard label="Failed payment count" value={transactionDetailsStatusCounts.failed_payment ?? 0} />
+              <StatCard label="Needs review count" value={transactionDetailsStatusCounts.needs_review ?? 0} />
             </div>
           ) : null}
           <div>
@@ -2268,7 +2305,7 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
               <StatCard label="Import mode" value={vmsImportModeLabels[importMode]} />
               <StatCard label="Report period" value={reportStartDate && reportEndDate ? `${reportStartDate} to ${reportEndDate}` : "-"} />
-              <StatCard label="Successful sales rows" value={orderDetailsStatusCounts.successful_sale ?? 0} />
+              <StatCard label="Successful sales rows" value={transactionDetailsStatusCounts.successful_sale ?? 0} />
               <StatCard label="Failed/refund/review rows" value={failedRefundReviewRows} />
               <StatCard label="Estimated successful sales" value={lyd(estimatedSalesTotal)} />
             </div>
@@ -2315,49 +2352,57 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
         </AdminTechnicalDetails>
       ) : null}
 
-      <section className="surface-card">
-        <h2 className="mb-4 text-lg font-semibold text-slate-900">Recent imports</h2>
-        <InlineLoadIssue title="Recent imports could not load" issue={batchesError ? loadIssueFromError("vms_import_batches.list", batchesError) : null} />
-        {!batches?.length ? (
-          <EmptyState title={batchesError ? "Recent imports unavailable" : "No VMS reports imported yet."} body={batchesError ? "Upload is still available. Please contact admin if this keeps happening." : "Upload your first VMS report to start building sales KPIs."} />
-        ) : (
-          <>
-          <DataTable headers={["Status", "Active in dashboard", "File name", "Report type", "Date range", "Used in", "Rows found", "Rows imported", "Duplicates", "Needs review", "Successful sales", "Failed rows", "Refunds", "Uploaded by", "Date", "Notes"]}>
-            {batches.map((batch) => {
-              const statusInfo = describeVmsImportBatchStatus(batch as VmsBatchRow, duplicateContexts.get(batch.id) ?? {});
-              const noteText = batch.delete_reason || batch.disable_reason || statusInfo.reason;
-              return (
-                <tr key={batch.id}>
-                  <td>
-                    <Link href={`/vms-import/${batch.id}`}>
-                      <StatusBadge status={statusInfo.label} />
-                    </Link>
-                    <div className="mt-1 text-xs text-slate-500">{statusInfo.actionLabel ?? "No action needed"}</div>
-                  </td>
-                  <td>{statusInfo.activeInDashboard ? "Yes" : "No"}</td>
-                  <td className="font-medium text-slate-900"><Link className="link-secondary" href={`/vms-import/${batch.id}`}>{batch.file_name ?? "-"}</Link></td>
-                  <td>{reportLabel(batch.report_type ?? batch.source_type)}</td>
-                  <td>{batchDateRange(batch)}</td>
-                  <td className="max-w-xs text-xs text-slate-600">{dashboardUsageForReport(batch.report_type ?? batch.source_type).join(", ")}</td>
-                  <td>{batch.rows_found ?? batch.row_count ?? batchMetric(batch, "totalRows", 0)}</td>
-                  <td>{batch.rows_imported ?? batchMetric(batch, "importedRows", 0)}</td>
-                  <td>{batch.rows_skipped_duplicate ?? batchMetric(batch, "rowsSkippedDuplicate", 0)}</td>
-                  <td>{batch.rows_needing_review ?? batchMetric(batch, "rowsNeedingReview", batchMetric(batch, "needsProductMappingRows", 0))}</td>
-                  <td>{isStockReportType(batch.report_type ?? batch.source_type) ? "N/A" : lyd(Number(batch.total_successful_sales ?? batchMetric(batch, "estimatedSuccessfulSales", 0)))}</td>
-                  <td>{isStockReportType(batch.report_type ?? batch.source_type) ? "N/A" : batch.failed_rows_count ?? batchMetric(batch, "failedVendRows", 0)}</td>
-                  <td>{isStockReportType(batch.report_type ?? batch.source_type) ? "N/A" : batch.refunded_rows_count ?? batchMetric(batch, "refundedRows", 0)}</td>
-                  <td>{batch.uploaded_by || batch.imported_by ? importerById.get(String(batch.uploaded_by ?? batch.imported_by)) ?? "Unknown" : "-"}</td>
-                  <td>{formatDateTime(batch.uploaded_at ?? batch.imported_at)}</td>
-                  <td className="max-w-xs text-xs text-slate-600">{noteText || (batch.report_type === "sales" ? "Reconciliation only" : batch.report_type === "monthly_product_profit" ? "Monthly Profit Report" : "-")}</td>
-                </tr>
-              );
-            })}
-          </DataTable>
-            <PaginationControls basePath="/vms-import" searchParams={paginationParams} page={page} pageSize={pageSize} totalCount={batchCount ?? 0} itemLabel="imports" />
-          </>
-        )}
-      </section>
+      {renderSectionSafely(
+        "recent-imports",
+        () => (
+          <section className="surface-card">
+            <h2 className="mb-4 text-lg font-semibold text-slate-900">Recent imports</h2>
+            <InlineLoadIssue title="Recent imports could not load" issue={batchesError ? loadIssueFromError("vms_import_batches.list", batchesError) : null} />
+            {!batches?.length ? (
+              <EmptyState title={batchesError ? "Recent imports unavailable" : "No VMS reports imported yet."} body={batchesError ? "Upload is still available. Please contact admin if this keeps happening." : "Upload your first VMS report to start building sales KPIs."} />
+            ) : (
+              <>
+                <DataTable headers={["Status", "Active in dashboard", "File name", "Report type", "Date range", "Used in", "Rows found", "Rows imported", "Duplicates", "Needs review", "Successful sales", "Failed rows", "Refunds", "Uploaded by", "Date", "Notes"]}>
+                  {batches.map((batch) => {
+                    const statusInfo = describeVmsImportBatchStatus(batch as VmsBatchRow, duplicateContexts.get(batch.id) ?? {});
+                    const noteText = batch.delete_reason || batch.disable_reason || statusInfo.reason;
+                    return (
+                      <tr key={batch.id}>
+                        <td>
+                          <Link href={`/vms-import/${batch.id}`}>
+                            <StatusBadge status={statusInfo.label} />
+                          </Link>
+                          <div className="mt-1 text-xs text-slate-500">{statusInfo.actionLabel ?? "No action needed"}</div>
+                        </td>
+                        <td>{statusInfo.activeInDashboard ? "Yes" : "No"}</td>
+                        <td className="font-medium text-slate-900"><Link className="link-secondary" href={`/vms-import/${batch.id}`}>{batch.file_name ?? "-"}</Link></td>
+                        <td>{reportLabel(batch.report_type ?? batch.source_type)}</td>
+                        <td>{batchDateRange(batch)}</td>
+                        <td className="max-w-xs text-xs text-slate-600">{dashboardUsageForReport(batch.report_type ?? batch.source_type).join(", ")}</td>
+                        <td>{batch.rows_found ?? batch.row_count ?? batchMetric(batch, "totalRows", 0)}</td>
+                        <td>{batch.rows_imported ?? batchMetric(batch, "importedRows", 0)}</td>
+                        <td>{batch.rows_skipped_duplicate ?? batchMetric(batch, "rowsSkippedDuplicate", 0)}</td>
+                        <td>{batch.rows_needing_review ?? batchMetric(batch, "rowsNeedingReview", batchMetric(batch, "needsProductMappingRows", 0))}</td>
+                        <td>{isStockReportType(batch.report_type ?? batch.source_type) ? "N/A" : lyd(Number(batch.total_successful_sales ?? batchMetric(batch, "estimatedSuccessfulSales", 0)))}</td>
+                        <td>{isStockReportType(batch.report_type ?? batch.source_type) ? "N/A" : batch.failed_rows_count ?? batchMetric(batch, "failedVendRows", 0)}</td>
+                        <td>{isStockReportType(batch.report_type ?? batch.source_type) ? "N/A" : batch.refunded_rows_count ?? batchMetric(batch, "refundedRows", 0)}</td>
+                        <td>{batch.uploaded_by || batch.imported_by ? importerById.get(String(batch.uploaded_by ?? batch.imported_by)) ?? "Unknown" : "-"}</td>
+                        <td>{formatDateTime(batch.uploaded_at ?? batch.imported_at)}</td>
+                        <td className="max-w-xs text-xs text-slate-600">{noteText || (batch.report_type === "sales" ? "Reconciliation only" : batch.report_type === "monthly_product_profit" ? "Monthly Profit Report" : "-")}</td>
+                      </tr>
+                    );
+                  })}
+                </DataTable>
+                <PaginationControls basePath="/vms-import" searchParams={paginationParams} page={page} pageSize={pageSize} totalCount={batchCount ?? 0} itemLabel="imports" />
+              </>
+            )}
+          </section>
+        ),
+        <section className="surface-card"><div className="p-4 text-sm text-slate-500">Could not load recent imports.</div></section>,
+        { currentUserId: profile?.id ?? null, selectedPreviewId },
+      )}
     </>
   );
 }
+
 

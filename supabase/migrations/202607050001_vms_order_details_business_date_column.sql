@@ -1,4 +1,4 @@
-﻿-- Safety migration for detailed VMS Order Details raw inserts.
+-- Safety migration for detailed VMS Order Details raw inserts.
 -- Some production environments are missing business_date on vms_transactions_raw,
 -- which causes the detailed import payload to fail even when the file parsed cleanly.
 

@@ -171,7 +171,7 @@ with detailed_sales as (
     coalesce(tx.payment_time, tx.delivery_time) as period_start,
     coalesce(tx.payment_time, tx.delivery_time) as period_end,
     tx.created_at,
-    jsonb_build_object('source', 'vms_order_details_weekly', 'raw', tx.raw_row, 'normalized', tx.normalized_row, 'transaction_status', tx.transaction_status, 'business_date', tx.business_date) as metadata
+    jsonb_build_object('source', coalesce(vib.report_type, 'vms_order_details_weekly'), 'raw', tx.raw_row, 'normalized', tx.normalized_row, 'transaction_status', tx.transaction_status, 'business_date', tx.business_date) as metadata
   from public.vms_transactions_raw tx
   left join public.vms_import_batches vib on vib.id = tx.import_batch_id
   left join public.machines m on m.id = tx.mapped_machine_id
@@ -293,7 +293,7 @@ as $$
       greatest(coalesce(vib.rows_found, vib.row_count, 0), 0)::integer as metadata_rows_found_total,
       greatest(coalesce(vib.rows_skipped_duplicate, 0), 0)::integer as metadata_duplicate_rows_total
     from public.vms_import_batches vib
-    where vib.report_type = 'vms_order_details_weekly'
+    where vib.report_type in ('vms_order_details_weekly', 'monthly_transaction_details')
   ),
   normalized_rows as (
     select

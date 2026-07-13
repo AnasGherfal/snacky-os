@@ -394,7 +394,7 @@ function resolveCurrency(record: Record<string, string>) {
   if (raw) return { currency: "LYD" as FinanceCurrency, known: false };
 
   const text = normalizedText(record);
-  if (text.includes("$") || text.includes("usd") || text.includes("dollar") || text.includes("دولار") || text.includes("Ø¯ÙˆÙ„Ø§Ø±")) {
+  if (text.includes("$") || text.includes("usd") || text.includes("dollar") || text.includes("دولار")) {
     return { currency: "LYD" as FinanceCurrency, known: false };
   }
   return { currency: "LYD" as FinanceCurrency, known: record.__source_format !== "snacky_transactions" };

@@ -1,6 +1,7 @@
 drop view if exists public.refill_recommendations;
+drop view if exists public.latest_vms_stock_by_slot;
 
-create or replace view public.latest_vms_stock_by_slot as
+create view public.latest_vms_stock_by_slot as
 with latest_batch as (
   select
     vib.id,

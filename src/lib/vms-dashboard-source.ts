@@ -1,4 +1,4 @@
-export type VmsDashboardBatch = {
+﻿export type VmsDashboardBatch = {
   id: string;
   file_name?: string | null;
   report_type?: string | null;
@@ -103,18 +103,18 @@ const legacyVmsDashboardBatchSelect = [
   "error_count",
 ].join(", ");
 
-const dashboardUsageLabels: Record<VmsDashboardUsageKey | "routes", string> = {
-  dashboard: "Overview Dashboard",
-  sales: "Sales Dashboard",
-  products: "Product Dashboard",
-  machines: "Machine Dashboard",
-  inventory: "Inventory Dashboard",
-  refills: "Refill Recommendations",
-  restock: "Restock Priority",
-  reconciliation: "Reconciliation",
-  failed_vends: "Failed Vend / Refund Report",
-  routes: "Route Creation",
-  finance: "Finance Dashboard",
+const dashboardUsageLabels: Record<VmsDashboardUsageKey | "routes", { en: string; ar: string }> = {
+  dashboard: { en: "Overview Dashboard", ar: "لوحة التحكم العامة" },
+  sales: { en: "Sales Dashboard", ar: "لوحة المبيعات" },
+  products: { en: "Product Dashboard", ar: "لوحة المنتجات" },
+  machines: { en: "Machine Dashboard", ar: "لوحة الأجهزة" },
+  inventory: { en: "Inventory Dashboard", ar: "لوحة المخزون" },
+  refills: { en: "Refill Recommendations", ar: "توصيات التعبئة" },
+  restock: { en: "Restock Priority", ar: "أولوية التعبئة" },
+  reconciliation: { en: "Reconciliation", ar: "التسوية" },
+  failed_vends: { en: "Failed Vend / Refund Report", ar: "تقرير البيع الفاشل / الاسترداد" },
+  routes: { en: "Route Creation", ar: "إنشاء جولة" },
+  finance: { en: "Finance Dashboard", ar: "لوحة المالية" },
 };
 
 function dateOnly(date: Date) {
@@ -216,8 +216,12 @@ function titleCaseUsageKey(key: string) {
     .join(" ");
 }
 
-export function dashboardUsageNames(value: unknown, reportType?: string | null) {
-  return dashboardUsageKeys(value, reportType).map((key) => dashboardUsageLabels[key as keyof typeof dashboardUsageLabels] ?? titleCaseUsageKey(key));
+export function dashboardUsageNames(value: unknown, reportType?: string | null, locale: "en" | "ar" = "en") {
+  return dashboardUsageKeys(value, reportType).map((key) => {
+    const label = dashboardUsageLabels[key as keyof typeof dashboardUsageLabels];
+    if (label) return label[locale];
+    return titleCaseUsageKey(key);
+  });
 }
 
 export function activeDetailedBatches(batches: VmsDashboardBatch[]) {
@@ -280,6 +284,10 @@ export function batchLastUpdatedAt(batch: VmsDashboardBatch | null | undefined) 
   return batch?.imported_at ?? batch?.uploaded_at ?? batch?.detected_max_datetime ?? batch?.detected_min_datetime ?? null;
 }
 
+function localeText(locale: "en" | "ar", en: string, ar: string) {
+  return locale === "ar" ? ar : en;
+}
+
 export function batchDateRangeLabel(batch: VmsDashboardBatch | null | undefined) {
   if (!batch) return "-";
   if (batch.report_start_date && batch.report_end_date) return `${batch.report_start_date} to ${batch.report_end_date}`;
@@ -292,16 +300,24 @@ export function batchDateRangeLabel(batch: VmsDashboardBatch | null | undefined)
   return formatVmsDateTime(batch.imported_at ?? batch.uploaded_at);
 }
 
-export function detailedSalesSourceMessage(batches: VmsDashboardBatch[], summaryFiles: VmsDashboardBatch[] = []) {
+export function detailedSalesSourceMessage(batches: VmsDashboardBatch[], summaryFiles: VmsDashboardBatch[] = [], locale: "en" | "ar" = "en") {
   const salesBatches = preferredDetailedSalesBatches(batches);
   const coverage = vmsCoverageSummary(salesBatches);
-  const sourceLabel = preferredDetailedSalesReportType(batches) === "monthly_transaction_details" ? "Monthly Transaction Report" : "Detailed Order Details";
+  const sourceLabel = preferredDetailedSalesReportType(batches) === "monthly_transaction_details"
+    ? localeText(locale, "Monthly Transaction Report", "تقرير المعاملات الشهري")
+    : localeText(locale, "Detailed Order Details", "تفاصيل الطلبات التفصيلية");
   if (coverage.active.length) {
-    return `Using ${sourceLabel} from ${coverage.active.length} active file(s)${coverage.start && coverage.end ? ` covering ${coverage.start} to ${coverage.end}` : ""}. Latest: ${sourceFileName(coverage.latest)}.`;
+    return locale === "ar"
+      ? `يتم استخدام ${sourceLabel} من ${coverage.active.length} ملف/ملفات نشطة${coverage.start && coverage.end ? ` تغطي ${coverage.start} إلى ${coverage.end}` : ""}. الأحدث: ${sourceFileName(coverage.latest)}.`
+      : `Using ${sourceLabel} from ${coverage.active.length} active file(s)${coverage.start && coverage.end ? ` covering ${coverage.start} to ${coverage.end}` : ""}. Latest: ${sourceFileName(coverage.latest)}.`;
   }
   const activeSummary = summaryFiles.filter(isActiveImportedVmsBatch);
-  if (activeSummary.length) return "Using sales summary report for reconciliation only. Monthly Transaction Report not imported yet.";
-  return "Monthly Transaction Report not imported yet.";
+  if (activeSummary.length) {
+    return locale === "ar"
+      ? "يتم استخدام ملخص المبيعات للتسوية فقط. لم يتم استيراد تقرير المعاملات الشهري بعد."
+      : "Using sales summary report for reconciliation only. Monthly Transaction Report not imported yet.";
+  }
+  return locale === "ar" ? "لم يتم استيراد تقرير المعاملات الشهري بعد." : "Monthly Transaction Report not imported yet.";
 }
 
 export function activeStockBatches(batches: VmsDashboardBatch[]) {
@@ -310,14 +326,20 @@ export function activeStockBatches(batches: VmsDashboardBatch[]) {
     .sort((a, b) => String(b.detected_max_datetime ?? b.detected_min_datetime ?? b.uploaded_at ?? b.imported_at ?? "").localeCompare(String(a.detected_max_datetime ?? a.detected_min_datetime ?? a.uploaded_at ?? a.imported_at ?? "")));
 }
 
-export function stockSourceMessage(batches: VmsDashboardBatch[]) {
+export function stockSourceMessage(batches: VmsDashboardBatch[], locale: "en" | "ar" = "en") {
   const latest = activeStockBatches(batches)[0] ?? null;
-  if (!latest) return "Refill recommendations are using manual planogram/storage fallback until a stock snapshot is imported.";
+  if (!latest) {
+    return locale === "ar"
+      ? "تستخدم توصيات التعبئة الآن مخططًا/مخزنًا يدويًا احتياطيًا حتى يتم استيراد لقطة مخزون."
+      : "Refill recommendations are using manual planogram/storage fallback until a stock snapshot is imported.";
+  }
   const snapshot = latest.detected_max_datetime ?? latest.detected_min_datetime ?? latest.uploaded_at ?? latest.imported_at ?? "";
-  return `Refill recommendations are using stock snapshot file ${sourceFileName(latest)}${snapshot ? ` (${new Date(snapshot).toLocaleString("en-US")})` : ""}.`;
+  return locale === "ar"
+    ? `تستخدم توصيات التعبئة ملف لقطة المخزون ${sourceFileName(latest)}${snapshot ? ` (${new Date(snapshot).toLocaleString("en-US")})` : ""}.`
+    : `Refill recommendations are using stock snapshot file ${sourceFileName(latest)}${snapshot ? ` (${new Date(snapshot).toLocaleString("en-US")})` : ""}.`;
 }
 
-export function batchUsageSummary(batch: VmsDashboardBatch | null | undefined) {
-  return dashboardUsageNames(batch?.dashboard_usage, batch?.report_type);
+export function batchUsageSummary(batch: VmsDashboardBatch | null | undefined, locale: "en" | "ar" = "en") {
+  return dashboardUsageNames(batch?.dashboard_usage, batch?.report_type, locale);
 }
 

@@ -1,10 +1,11 @@
-import Link from "next/link";
+﻿import Link from "next/link";
 import { redirect } from "next/navigation";
 import { FormSubmitButton } from "@/components/FormSubmitButton";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canConfirmVmsImports, canViewVmsImports, isOwnerAdminRole } from "@/lib/authz";
+import { getRequestLocale } from "@/lib/i18n/server";
 import { lyd } from "@/lib/format";
 import { cleanSearchParams, getPagination, type SearchParamsRecord } from "@/lib/pagination";
 import { privateStorageObjectUrl } from "@/lib/storage-buckets";
@@ -162,9 +163,9 @@ function batchDateRange(batch: VmsSourceRow) {
   return "-";
 }
 
-function usageText(batch: VmsSourceRow) {
-  const usage = batchUsageSummary(batch);
-  return usage.length ? usage.join(", ") : "Not used until mapped";
+function usageText(batch: VmsSourceRow, locale: "en" | "ar") {
+  const usage = batchUsageSummary(batch, locale);
+  return usage.length ? usage.join(", ") : (locale === "ar" ? "غير مستخدم حتى يتم الربط" : "Not used until mapped");
 }
 
 function isNextNavigationSignal(error: unknown) {
@@ -305,6 +306,7 @@ async function VmsDataSourcesPageContent({ searchParams }: { searchParams: Promi
   const params = await searchParams;
   const profile = await getCurrentProfile();
   if (!profile || !canViewVmsImports(profile)) redirect("/unauthorized");
+  const locale = await getRequestLocale();
 
   const supabase = await getAuthenticatedSupabaseServerClient();
   const { page, pageSize, from, to } = getPagination(params);
@@ -486,7 +488,7 @@ async function VmsDataSourcesPageContent({ searchParams }: { searchParams: Promi
                   </td>
                   <td>{batch.rows_skipped_duplicate ?? 0}</td>
                   <td>{batch.rows_needing_review ?? 0}</td>
-                  <td className="max-w-xs text-xs text-slate-600">{usageText(batch)}</td>
+                  <td className="max-w-xs text-xs text-slate-600">{usageText(batch, locale)}</td>
                   <td className="text-xs text-slate-600">{batch.uploaded_by ?? batch.imported_by ?? "-"}</td>
                   <td className="text-sm">
                     <div>{formatDateTime(batch.uploaded_at ?? batch.imported_at)}</div>

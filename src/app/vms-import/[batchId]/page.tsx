@@ -1,4 +1,4 @@
-import Link from "next/link";
+﻿import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { FormSubmitButton } from "@/components/FormSubmitButton";
 import { AdminTechnicalDetails } from "@/components/TechnicalDetails";
@@ -19,6 +19,7 @@ import {
   type VmsSupabaseError,
 } from "@/lib/vms-schema-diagnostics";
 import { privateStorageObjectUrl } from "@/lib/storage-buckets";
+import { isTransactionDetailsReportType } from "@/lib/vms-transaction-details";
 
 export const dynamic = "force-dynamic";
 
@@ -80,7 +81,7 @@ function reportLabel(reportType: string | null | undefined) {
 }
 
 function updatedFallbackForReport(reportType: string | null | undefined) {
-  if (isDetailedTransactionReportType(reportType)) return ["Sales dashboard", "Product sales", "Failed vend report"];
+  if (isTransactionDetailsReportType(reportType)) return ["Sales dashboard", "Product sales", "Failed vend report"];
   if (reportType === "monthly_product_profit") return ["Sales dashboard", "Product profit", "Machine profit"];
   if (reportType === "sales") return ["Reconciliation totals"];
   if (isStockReportType(reportType)) return ["Machine stock", "Recommended refill items"];
@@ -88,7 +89,7 @@ function updatedFallbackForReport(reportType: string | null | undefined) {
 }
 
 function dashboardUsageForReport(reportType: string | null | undefined) {
-  if (isDetailedTransactionReportType(reportType)) {
+  if (isTransactionDetailsReportType(reportType)) {
     return [
       ["Sales dashboard", true],
       ["Product dashboard", true],
@@ -546,7 +547,7 @@ async function VmsImportBatchDetailPageContent({
     && String(batch.status ?? "") === "previewed"
     && isMachineStockSnapshotReportType(stringValue(batch.report_type));
   const canFinalizeOrderDetailsBatch = isOwnerAdminRole(profile)
-    && isDetailedTransactionReportType(stringValue(batch.report_type))
+    && isTransactionDetailsReportType(stringValue(batch.report_type))
     && Number(transactionsRawCount.count ?? 0) > 0
     && !(isUsableImportStatus(stringValue(batch.status)) && batch.is_active !== false && !batch.deleted_at);
   const finalizeEvidenceCount = Math.max(
@@ -574,12 +575,12 @@ async function VmsImportBatchDetailPageContent({
   const invalidRows = rowList.filter((row) => row.validation_status === "invalid_row");
   const importedRows = rowList.filter((row) => row.validation_status === "imported");
   const detailedTransactionLabel = reportType === "monthly_transaction_details" ? "Monthly Transaction Report" : "Detailed Order Details";
-  const dashboardUsageNote = isDetailedTransactionReportType(reportType)
+  const dashboardUsageNote = isTransactionDetailsReportType(reportType)
     ? `${detailedTransactionLabel} files feed transaction-level dashboards. Only successful_sale rows count as normal sales revenue.`
     : reportType === "sales"
       ? "General VMS summary files are retained for reconciliation and are not the main sales dashboard source when detailed transactions exist."
       : "Machine stock files feed refill and inventory views, not sales revenue.";
-  const savedRowsValue = isDetailedTransactionReportType(reportType)
+  const savedRowsValue = isTransactionDetailsReportType(reportType)
     ? numberValue(transactionsRawCount.count, 0)
     : isStockReportType(stringValue(batch.report_type))
       ? numberValue(stockSnapshotRowsCount.count, importedRowsCount.count ?? rowList.length)
@@ -663,7 +664,7 @@ async function VmsImportBatchDetailPageContent({
             <StatCard label="Report end" value={textValue(batch.report_end_date)} />
           </div>
         ) : null}
-        {isDetailedTransactionReportType(reportType) ? (
+        {isTransactionDetailsReportType(reportType) ? (
           <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
             <StatCard label="Report start" value={textValue(batch.report_start_date, summary?.orderDetailsReportPeriod?.reportStartDate ?? "-")} />
             <StatCard label="Report end" value={textValue(batch.report_end_date, summary?.orderDetailsReportPeriod?.reportEndDate ?? "-")} />
@@ -893,7 +894,7 @@ async function VmsImportBatchDetailPageContent({
                 <input name="reason" className="field-input" placeholder="Reason" />
                 <FormSubmitButton className="btn-secondary w-full" pendingLabel="Disabling file...">Disable</FormSubmitButton>
               </form>
-            ) : !canFinalizePreviewStockBatch && !(isDetailedTransactionReportType(reportType) && Number(transactionsRawCount.count ?? 0) > 0 && stringValue(batch.status) !== "deleted") ? (
+            ) : !canFinalizePreviewStockBatch && !(isTransactionDetailsReportType(reportType) && Number(transactionsRawCount.count ?? 0) > 0 && stringValue(batch.status) !== "deleted") ? (
               <form action={updateVmsImportBatchState} className="space-y-3 rounded-lg border border-slate-200 p-3">
                 <input type="hidden" name="batch_id" value={String(batch.id)} />
                 <input type="hidden" name="action" value={stringValue(batch.status) === "deleted" ? "restore" : "enable"} />
@@ -1055,3 +1056,5 @@ export default async function VmsImportBatchDetailPage(props: {
     );
   }
 }
+
+

@@ -34,20 +34,25 @@ export type InventoryMovementLocationRow = {
   created_at?: string | null;
 };
 
-export const storageLocationTypeLabels: Record<StorageLocationType, string> = {
-  main_storage: "Main Storage",
-  operator_bag: "Operator Bag",
-  vehicle: "Vehicle",
-  damaged: "Damaged",
-  expired: "Expired",
-  temporary: "Temporary",
-  other: "Other",
+export const storageLocationTypeLabels: Record<StorageLocationType, { en: string; ar: string }> = {
+  main_storage: { en: "Main Storage", ar: "المخزن الرئيسي" },
+  operator_bag: { en: "Operator Bag", ar: "حقيبة المشغل" },
+  vehicle: { en: "Vehicle", ar: "مركبة" },
+  damaged: { en: "Damaged", ar: "تالف" },
+  expired: { en: "Expired", ar: "منتهي الصلاحية" },
+  temporary: { en: "Temporary", ar: "مؤقت" },
+  other: { en: "Other", ar: "أخرى" },
 };
 
-export const storageLocationTypeHelpers = [
-  { title: "Main Storage", body: "main warehouse/storage." },
-  { title: "Operator Bag", body: "stock assigned to an operator for a route." },
-  { title: "Damaged/Expired", body: "stock removed from sellable inventory." },
+export type StorageLocationHelperCard = {
+  title: { en: string; ar: string };
+  body: { en: string; ar: string };
+};
+
+export const storageLocationTypeHelperCards: StorageLocationHelperCard[] = [
+  { title: { en: "Main Storage", ar: "المخزن الرئيسي" }, body: { en: "main warehouse/storage.", ar: "المخزن الرئيسي أو المستودع المركزي." } },
+  { title: { en: "Operator Bag", ar: "حقيبة المشغل" }, body: { en: "stock assigned to an operator for a route.", ar: "مخزون مخصص لمشغل أثناء الجولة." } },
+  { title: { en: "Damaged/Expired", ar: "تالف / منتهي الصلاحية" }, body: { en: "stock removed from sellable inventory.", ar: "مخزون أُخرج من المخزون القابل للبيع." } },
 ];
 
 export function normalizeStorageLocationType(value: FormDataEntryValue | string | null | undefined): StorageLocationType {
@@ -55,13 +60,26 @@ export function normalizeStorageLocationType(value: FormDataEntryValue | string 
   return storageLocationTypes.includes(raw as StorageLocationType) ? (raw as StorageLocationType) : "main_storage";
 }
 
-export function storageLocationTypeLabel(value: string | null | undefined) {
+export function storageLocationTypeLabel(value: string | null | undefined, locale: "en" | "ar" = "en") {
   const type = normalizeStorageLocationType(value);
-  return storageLocationTypeLabels[type];
+  return storageLocationTypeLabels[type][locale];
 }
 
-export function storageLocationStatusLabel(active: boolean | null | undefined) {
+export function storageLocationStatusLabel(active: boolean | null | undefined, locale: "en" | "ar" = "en") {
+  if (locale === "ar") return active === false ? "مؤرشف" : "نشط";
   return active === false ? "Archived" : "Active";
+}
+
+export function storageLocationHelperTitle(title: string, locale: "en" | "ar" = "en") {
+  const entry = storageLocationTypeHelperCards.find((helper) => helper.title.en === title || helper.title.ar === title);
+  if (!entry) return title;
+  return entry.title[locale];
+}
+
+export function storageLocationHelperBody(title: string, body: string, locale: "en" | "ar" = "en") {
+  const entry = storageLocationTypeHelperCards.find((helper) => helper.title.en === title || helper.title.ar === title);
+  if (!entry) return body;
+  return entry.body[locale];
 }
 
 export function storageLocationLedgerTarget(location: Pick<StorageLocationRow, "id" | "location_type" | "related_operator_id">) {
