@@ -1495,6 +1495,7 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
   pageIssues.push(...schemaHealth.errors);
 
   const selectedPreviewId = params.previewId ?? null;
+  let selectedImportBatchId = String(params.importBatchId ?? "").trim();
   const {
     batches,
     batchCount,
@@ -1511,12 +1512,9 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
 
   if (batchesError) pageIssues.push(loadIssueFromError("vms_import_batches.list", batchesError));
   const duplicateContexts = createVmsImportDuplicateContextMap(batches as VmsBatchRow[]);
-  const selectedImportBatch = selectedImportBatchId ? batches.find((batch) => String(batch.id) === selectedImportBatchId) ?? null : null;
-  const selectedImportBatchStatus = selectedImportBatch ? describeVmsImportBatchStatus(selectedImportBatch, duplicateContexts.get(String(selectedImportBatch.id)) ?? {}) : null;
 
   let preview: VmsImportPreviewRow | null = null;
   let selectedPreviewNotice = "";
-  let selectedImportBatchId = String(params.importBatchId ?? "").trim();
   if (selectedPreviewId) {
     const { data, error: previewError } = await (async () => {
       try {
@@ -1574,6 +1572,9 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
       }
     }
   }
+
+  const selectedImportBatch = selectedImportBatchId ? batches.find((batch) => String(batch.id) === selectedImportBatchId) ?? null : null;
+  const selectedImportBatchStatus = selectedImportBatch ? describeVmsImportBatchStatus(selectedImportBatch, duplicateContexts.get(String(selectedImportBatch.id)) ?? {}) : null;
 
   const importerIds = [...new Set((batches ?? []).map((batch) => batch.uploaded_by ?? batch.imported_by).filter(Boolean))];
   const { data: importers, error: importersError } = importerIds.length
