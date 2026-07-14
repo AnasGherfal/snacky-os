@@ -91,7 +91,15 @@ export async function getProductHistoryCounts(supabase: SupabaseServer, productI
     countRows(supabase, "inventory_movements", "product_id", productId),
     countRows(supabase, "route_stock_lines", "product_id", productId),
     countRows(supabase, "route_stop_items", "product_id", productId),
-    countRowsOr(supabase, "route_pick_list_items", `product_id.eq.${productId},substituted_for_product_id.eq.${productId}`),
+    (async () => {
+      const { count, error } = await supabase
+        .from("route_pick_list_items")
+        .select("id", { count: "exact", head: true })
+        .or(`product_id.eq.${productId},substituted_for_product_id.eq.${productId}`)
+        .eq("is_active", true);
+      if (error) throw error;
+      return count ?? 0;
+    })(),
     countRowsOr(supabase, "route_stop_fill_lines", `assigned_product_id.eq.${productId},product_id.eq.${productId},substitute_product_id.eq.${productId}`),
     countRows(supabase, "refill_order_lines", "product_id", productId),
     countRows(supabase, "machine_slots", "product_id", productId),

@@ -8,7 +8,10 @@ alter table if exists public.route_pick_list_items
   add column if not exists route_stop_id uuid references public.route_stops(id) on delete set null,
   add column if not exists route_stop_item_id uuid references public.route_stop_items(id) on delete set null,
   add column if not exists machine_id uuid references public.machines(id) on delete set null,
-  add column if not exists pickup_batch_id uuid references public.route_pickup_batches(id) on delete set null;
+  add column if not exists pickup_batch_id uuid references public.route_pickup_batches(id) on delete set null,
+  add column if not exists is_active boolean not null default true,
+  add column if not exists superseded_at timestamptz,
+  add column if not exists superseded_reason text;
 
 alter table if exists public.inventory_movements
   add column if not exists related_pickup_batch_id uuid;
@@ -458,8 +461,14 @@ begin
   end if;
 
   if p_replace_pick_list then
-    delete from public.route_pick_list_items
-    where route_id = p_route_id;
+    update public.route_pick_list_items
+    set
+      is_active = false,
+      superseded_at = now(),
+      superseded_reason = 'route_pick_list_replaced',
+      updated_at = now()
+    where route_id = p_route_id
+      and coalesce(is_active, true) = true;
   end if;
 
   if jsonb_array_length(v_pick_list_rows) > 0 then
@@ -549,7 +558,24 @@ begin
       needs_review boolean,
       created_by uuid
     )
-    on conflict (id) do nothing;
+    on conflict (id) do update set
+      route_id = excluded.route_id,
+      route_stop_id = excluded.route_stop_id,
+      route_stop_item_id = excluded.route_stop_item_id,
+      machine_id = excluded.machine_id,
+      product_id = excluded.product_id,
+      planned_qty = excluded.planned_qty,
+      picked_qty = excluded.picked_qty,
+      action_type = excluded.action_type,
+      pickup_batch_id = excluded.pickup_batch_id,
+      reason = excluded.reason,
+      notes = excluded.notes,
+      needs_review = excluded.needs_review,
+      created_by = excluded.created_by,
+      is_active = true,
+      superseded_at = null,
+      superseded_reason = null,
+      updated_at = now();
   end if;
 
   if jsonb_array_length(v_inventory_movements) > 0 then

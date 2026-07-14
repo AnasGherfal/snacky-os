@@ -347,25 +347,25 @@ export async function GET(
     failingResource = "route_pick_list_items";
     const pickListResponse = await readClient
       .from("route_pick_list_items")
-      .select("id, route_stop_id, route_stop_item_id, machine_id, product_id, picked_qty, planned_qty, action_type, reason, notes, is_checked")
+      .select("id, route_stop_id, route_stop_item_id, machine_id, product_id, picked_qty, planned_qty, action_type, reason, notes, is_checked, is_active")
       .eq("route_id", routeId);
-    pickListItems = pickListResponse.data ?? [];
+    pickListItems = (pickListResponse.data ?? []).filter((item: any) => item.is_active !== false);
     let pickListError: any = pickListResponse.error;
 
     if (pickListError && isMissingColumn(pickListError, ["is_checked"])) {
       const fallback = await readClient
         .from("route_pick_list_items")
-        .select("id, route_stop_id, route_stop_item_id, machine_id, product_id, picked_qty, planned_qty, action_type, reason, notes")
+        .select("id, route_stop_id, route_stop_item_id, machine_id, product_id, picked_qty, planned_qty, action_type, reason, notes, is_active")
         .eq("route_id", routeId);
-      pickListItems = (fallback.data ?? []).map((item: any) => ({ ...item, is_checked: false }));
+      pickListItems = (fallback.data ?? []).filter((item: any) => item.is_active !== false).map((item: any) => ({ ...item, is_checked: false }));
       pickListError = fallback.error;
     }
     if (pickListError && isMissingColumn(pickListError, ["route_stop_id", "route_stop_item_id", "machine_id"])) {
       const fallback = await readClient
         .from("route_pick_list_items")
-        .select("id, product_id, picked_qty, planned_qty, action_type, reason, notes")
+        .select("id, product_id, picked_qty, planned_qty, action_type, reason, notes, is_active")
         .eq("route_id", routeId);
-      pickListItems = (fallback.data ?? []).map((item: any) => ({
+      pickListItems = (fallback.data ?? []).filter((item: any) => item.is_active !== false).map((item: any) => ({
         ...item,
         route_stop_id: null,
         route_stop_item_id: null,

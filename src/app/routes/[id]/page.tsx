@@ -224,7 +224,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
       .order("created_at", { ascending: true }),
     supabase
       .from("route_pick_list_items")
-      .select("id, pickup_batch_id, product_id, planned_qty, picked_qty, action_type, substituted_for_product_id, reason, notes, needs_review, created_at, product:products!route_pick_list_items_product_id_fkey(id, name), substituted_product:products!route_pick_list_items_substituted_for_product_id_fkey(id, name)")
+      .select("id, pickup_batch_id, product_id, planned_qty, picked_qty, action_type, substituted_for_product_id, reason, notes, needs_review, is_active, created_at, product:products!route_pick_list_items_product_id_fkey(id, name), substituted_product:products!route_pick_list_items_substituted_for_product_id_fkey(id, name)")
       .eq("route_id", id)
       .order("created_at", { ascending: true }),
     supabase
@@ -271,7 +271,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   if (pickListItemsError && isMissingColumn(pickListItemsError, ["pickup_batch_id"])) {
     const { data: fallbackPickListItems, error: fallbackPickListItemsError } = await supabase
       .from("route_pick_list_items")
-      .select("id, product_id, planned_qty, picked_qty, action_type, substituted_for_product_id, reason, notes, needs_review, created_at, product:products!route_pick_list_items_product_id_fkey(id, name), substituted_product:products!route_pick_list_items_substituted_for_product_id_fkey(id, name)")
+      .select("id, product_id, planned_qty, picked_qty, action_type, substituted_for_product_id, reason, notes, needs_review, is_active, created_at, product:products!route_pick_list_items_product_id_fkey(id, name), substituted_product:products!route_pick_list_items_substituted_for_product_id_fkey(id, name)")
       .eq("route_id", id)
       .order("created_at", { ascending: true });
     routePickListItems = fallbackPickListItems ?? [];
@@ -282,6 +282,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   if (pickupBatchesError && !isMissingTable(pickupBatchesError, "route_pickup_batches")) console.error("[routes:detail] Failed to load pickup batches", { id, error: pickupBatchesError });
 
   const routeStops = stops ?? [];
+  routePickListItems = routePickListItems.filter((item: any) => item.is_active !== false);
   const machineIds = Array.from(new Set([...routeStops.map((stop: any) => stop.machine_id), ...(stopItems ?? []).map((item: any) => item.machine_id)].filter(Boolean)));
   const productIds = Array.from(new Set([
     ...routeStopItems.map((line: any) => line.product_id),

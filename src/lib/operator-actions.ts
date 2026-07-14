@@ -1499,7 +1499,8 @@ export async function confirmPickList(
             checked_by: row.is_checked ? row.checked_by ?? profile.id : null,
           })
           .eq("route_id", routeId)
-          .eq("route_stop_item_id", row.route_stop_item_id);
+          .eq("route_stop_item_id", row.route_stop_item_id)
+          .eq("is_active", true);
         if (pickupBatchId) query = query.eq("pickup_batch_id", pickupBatchId);
         return query;
       }));

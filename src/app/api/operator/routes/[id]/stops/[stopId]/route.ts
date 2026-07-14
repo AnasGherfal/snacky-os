@@ -34,7 +34,7 @@ function buildDebugDetails({
 }
 
 type DbErrorLike = { code?: unknown; message?: unknown; details?: unknown; hint?: unknown };
-type LegacyPickupRow = { id?: string | null; route_stop_id?: string | null; route_stop_item_id?: string | null; machine_id?: string | null; picked_qty?: unknown };
+type LegacyPickupRow = { id?: string | null; route_stop_id?: string | null; route_stop_item_id?: string | null; machine_id?: string | null; picked_qty?: unknown; is_active?: boolean | null };
 type MachineLocationRow = { id?: string | null; name?: string | null };
 type MachineRow = { id?: string | null; name?: string | null; machine_display_name?: string | null; machine_code?: string | null; location?: MachineLocationRow | MachineLocationRow[] | null };
 type ProductRelationRow = { id?: string | null; name?: string | null };
@@ -325,17 +325,18 @@ export async function GET(
     if (stop.status === ROUTE_STOP_PENDING_STATUS) {
       let { data: legacyPickupRows, error: legacyPickupError }: { data: LegacyPickupRow[] | null; error: DbErrorLike | null } = await supabase
         .from("route_pick_list_items")
-        .select("id, route_stop_id, route_stop_item_id, machine_id, picked_qty")
+        .select("id, route_stop_id, route_stop_item_id, machine_id, picked_qty, is_active")
         .eq("route_id", routeId)
         .gt("picked_qty", 0);
+      legacyPickupRows = (legacyPickupRows ?? []).filter((row) => row.is_active !== false);
 
       if (legacyPickupError && isMissingColumn(legacyPickupError, ["route_stop_id", "route_stop_item_id", "machine_id"])) {
         const fallback = await supabase
           .from("route_pick_list_items")
-          .select("id, picked_qty")
+          .select("id, picked_qty, is_active")
           .eq("route_id", routeId)
           .gt("picked_qty", 0);
-        legacyPickupRows = fallback.data ? fallback.data.map((row: LegacyPickupRow) => ({ ...row, route_stop_id: null, route_stop_item_id: null, machine_id: null })) : null;
+        legacyPickupRows = fallback.data ? fallback.data.filter((row: LegacyPickupRow) => row.is_active !== false).map((row: LegacyPickupRow) => ({ ...row, route_stop_id: null, route_stop_item_id: null, machine_id: null })) : null;
         legacyPickupError = fallback.error;
       }
 

@@ -59,7 +59,10 @@ with detailed_sales as (
     coalesce(tx.payment_time, tx.delivery_time) as period_start,
     coalesce(tx.payment_time, tx.delivery_time) as period_end,
     tx.created_at,
-    jsonb_build_object('source', 'vms_order_details_weekly', 'raw', tx.raw_row, 'normalized', tx.normalized_row, 'transaction_status', tx.transaction_status) as metadata
+    jsonb_build_object('source', 'vms_order_details_weekly', 'raw', tx.raw_row, 'normalized', tx.normalized_row, 'transaction_status', tx.transaction_status) as metadata,
+    null::text as payment_method,
+    'missing_cost'::text as cost_status,
+    false as cost_estimated
   from public.vms_transactions_raw tx
   left join public.vms_import_batches vib on vib.id = tx.import_batch_id
   left join public.machines m on m.id = tx.mapped_machine_id
