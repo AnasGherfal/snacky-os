@@ -17,6 +17,7 @@ import {
   formatSalesRangeLabel,
   normalizeSalesBreakdownRows,
   rangesOverlap,
+  resolveDetailedSalesDashboardSourceReportType,
   resolveSalesDashboardRange,
   resolveSalesDashboardSourceReportType,
   salesCoverageSummary,
@@ -814,7 +815,7 @@ async function SalesDashboardPageContent({
     );
   }
 
-  const [batchResult, fullReconciliationResult] = await Promise.all([
+  const [batchResult, fullReconciliationResult, monthlyProfitTableCheck] = await Promise.all([
     loadSalesQuerySection<VmsDashboardBatch>({
       dateFrom: "",
       dateTo: "",
@@ -838,6 +839,7 @@ async function SalesDashboardPageContent({
       rpcName: "sales_dashboard_batch_reconciliation",
       sectionName: "batch_reconciliation_all",
     }),
+    supabase.from("vms_monthly_product_profit").select("id", { head: true, count: "exact" }).limit(1),
   ]);
 
   const batches = batchResult.data as VmsDashboardBatch[];
@@ -848,7 +850,10 @@ async function SalesDashboardPageContent({
   const selectedRangeLabel = formatSalesRangeLabel(selectedRange);
   const monthlyFiles = batches.filter((batch) => batch.report_type === "monthly_product_profit");
   const activeMonthlyFiles = monthlyFiles.filter(isActiveImportedVmsBatch);
-  const sourceReportType = resolveSalesDashboardSourceReportType(batches, selectedRange);
+  const monthlyProfitTableAvailable = !monthlyProfitTableCheck.error;
+  const sourceReportType = monthlyProfitTableAvailable
+    ? resolveSalesDashboardSourceReportType(batches, selectedRange)
+    : resolveDetailedSalesDashboardSourceReportType(batches, selectedRange);
   const sourceMode: SalesDashboardSourceMode = sourceReportType === "monthly_product_profit" ? "monthly" : "detailed";
   const useMonthlySource = sourceMode === "monthly";
   const sourceReportLabel = salesDashboardSourceLabel(sourceMode, sourceReportType);

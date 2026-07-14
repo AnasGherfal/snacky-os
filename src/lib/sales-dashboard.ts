@@ -482,6 +482,23 @@ export function salesDashboardPrefersMonthlyProfitSource(range: Pick<SalesDateRa
   return ["month", "year", "last_month", "this_year", "all_time"].includes(range.key);
 }
 
+export function resolveDetailedSalesDashboardSourceReportType(batches: VmsDashboardBatch[], range: SalesDateRange): SalesDashboardSourceReportType {
+  const activeDetailed = batches.filter((batch) => isActiveImportedVmsBatch(batch) && isTransactionDetailsReportType(String(batch.report_type ?? "")));
+  const overlaps = (batch: VmsDashboardBatch) => {
+    const coverage = batchCoverageDates(batch);
+    return Boolean(coverage.start && coverage.end && rangesOverlap({ start: coverage.start, end: coverage.end }, { start: range.start, end: range.end }));
+  };
+  const detailedInRange = activeDetailed.filter(overlaps);
+  const monthlyTransactionInRange = detailedInRange.filter((batch) => batch.report_type === "monthly_transaction_details");
+  const orderDetailsInRange = detailedInRange.filter((batch) => batch.report_type === "vms_order_details_weekly");
+
+  if (monthlyTransactionInRange.length) return "monthly_transaction_details";
+  if (orderDetailsInRange.length) return "vms_order_details_weekly";
+  if (activeDetailed.some((batch) => batch.report_type === "monthly_transaction_details")) return "monthly_transaction_details";
+  if (activeDetailed.some((batch) => batch.report_type === "vms_order_details_weekly")) return "vms_order_details_weekly";
+  return "vms_order_details_weekly";
+}
+
 export function resolveSalesDashboardSourceReportType(batches: VmsDashboardBatch[], range: SalesDateRange): SalesDashboardSourceReportType {
   const activeDetailed = batches.filter((batch) => isActiveImportedVmsBatch(batch) && isTransactionDetailsReportType(String(batch.report_type ?? "")));
   const activeMonthlyProfit = batches.filter((batch) => isActiveImportedVmsBatch(batch) && String(batch.report_type ?? "") === "monthly_product_profit");
