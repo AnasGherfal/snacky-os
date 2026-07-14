@@ -115385,3 +115385,1845 @@ Caused by:
   ]
 }
  GET /vms-import?previewId=f89fbeaa-8308-4b64-ac8f-d29447178a7f&importBatchId=5e47a008-d773-4552-a90d-480b876e0e69&sheet=A+breakdown+of+commodity+profit&reportType=monthly_product_profit&step=5&rows=185&headers=Merchant+ID%2CMerchant+Name%2CMachine+code%2CMachine+name%2CProduct+Number%2Cproduct+name%2CCommodity+price%2CNumber+of+transaction%2CTransaction+amount%2CThe+refund+count%2CRefund+amount%2CTotal+Transaction+Quantity%2CTotal+Transaction+Amount%2CCost+Price%2CCost+Amount%2CProfits&detected=monthly_product_profit&uid=0bdefd83-ecad-4632-b0e7-e9f22a3ce065 200 in 4.2s (next.js: 233ms, proxy.ts: 7ms, application-code: 4.0s)
+○ Compiling /api/auth/session ...
+ GET /api/auth/session 200 in 7.9s (next.js: 7.9s, proxy.ts: 16ms, application-code: 41ms)
+[vms-import] Load query failed {
+  queryName: 'team_members.importers',
+  code: '42501',
+  message: 'permission denied for table team_members',
+  details: null,
+  hint: 'Grant the required privileges to the current role with: GRANT SELECT ON public.team_members TO authenticated;',
+  schemaIssue: { type: 'permission', relation: 'team_members' },
+  selectedBatchId: 'f89fbeaa-8308-4b64-ac8f-d29447178a7f',
+  currentUserId: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  effectivePermissions: [
+    'dashboard.view',
+    'operations.manage',
+    'routes.view',
+    'routes.create',
+    'assigned_routes.view',
+    'assigned_machines.view',
+    'refills.view',
+    'refills.create',
+    'issues.view',
+    'issues.create',
+    'products.view',
+    'products.view_limited',
+    'products.create',
+    'products.edit',
+    'products.delete',
+    'inventory.view',
+    'inventory.full_edit',
+    'storage.view',
+    'storage.adjust',
+    'storage.location.manage',
+    'storage.movement.view',
+    'storage.movement.create',
+    'purchase_items.view',
+    'purchases.view',
+    'purchases.create',
+    'purchases.receive',
+    'suppliers.view',
+    'suppliers.manage',
+    'machines.view',
+    'machines.manage',
+    'locations.pipeline.manage',
+    'finance.view',
+    'finance.edit',
+    'reports.view',
+    'team.manage',
+    'activity.view',
+    'vms.import',
+    'vms.mapping.manage',
+    'vms_import.view',
+    'vms_import.create',
+    'vms_import.validate',
+    'vms_import.confirm',
+    'vms_import.manage_mappings',
+    'system.settings'
+  ]
+}
+ GET /vms-import?previewId=f89fbeaa-8308-4b64-ac8f-d29447178a7f&importBatchId=5e47a008-d773-4552-a90d-480b876e0e69&sheet=A+breakdown+of+commodity+profit&reportType=monthly_product_profit&step=5&rows=185&headers=Merchant+ID%2CMerchant+Name%2CMachine+code%2CMachine+name%2CProduct+Number%2Cproduct+name%2CCommodity+price%2CNumber+of+transaction%2CTransaction+amount%2CThe+refund+count%2CRefund+amount%2CTotal+Transaction+Quantity%2CTotal+Transaction+Amount%2CCost+Price%2CCost+Amount%2CProfits&detected=monthly_product_profit&uid=0bdefd83-ecad-4632-b0e7-e9f22a3ce065 200 in 4.9s (next.js: 195ms, proxy.ts: 255ms, application-code: 4.5s)
+ GET /api/notifications?limit=6 200 in 14.9s (next.js: 2.3s, proxy.ts: 7.9s, application-code: 4.7s)
+ GET /api/auth/session 200 in 44ms (next.js: 14ms, proxy.ts: 13ms, application-code: 16ms)
+[vms-import] Load query failed {
+  queryName: 'team_members.importers',
+  code: '42501',
+  message: 'permission denied for table team_members',
+  details: null,
+  hint: 'Grant the required privileges to the current role with: GRANT SELECT ON public.team_members TO authenticated;',
+  schemaIssue: { type: 'permission', relation: 'team_members' },
+  selectedBatchId: 'f89fbeaa-8308-4b64-ac8f-d29447178a7f',
+  currentUserId: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  effectivePermissions: [
+    'dashboard.view',
+    'operations.manage',
+    'routes.view',
+    'routes.create',
+    'assigned_routes.view',
+    'assigned_machines.view',
+    'refills.view',
+    'refills.create',
+    'issues.view',
+    'issues.create',
+    'products.view',
+    'products.view_limited',
+    'products.create',
+    'products.edit',
+    'products.delete',
+    'inventory.view',
+    'inventory.full_edit',
+    'storage.view',
+    'storage.adjust',
+    'storage.location.manage',
+    'storage.movement.view',
+    'storage.movement.create',
+    'purchase_items.view',
+    'purchases.view',
+    'purchases.create',
+    'purchases.receive',
+    'suppliers.view',
+    'suppliers.manage',
+    'machines.view',
+    'machines.manage',
+    'locations.pipeline.manage',
+    'finance.view',
+    'finance.edit',
+    'reports.view',
+    'team.manage',
+    'activity.view',
+    'vms.import',
+    'vms.mapping.manage',
+    'vms_import.view',
+    'vms_import.create',
+    'vms_import.validate',
+    'vms_import.confirm',
+    'vms_import.manage_mappings',
+    'system.settings'
+  ]
+}
+ GET /vms-import?previewId=f89fbeaa-8308-4b64-ac8f-d29447178a7f&importBatchId=5e47a008-d773-4552-a90d-480b876e0e69&sheet=A%20breakdown%20of%20commodity%20profit&reportType=monthly_product_profit&step=5&rows=185&headers=Merchant%20ID%2CMerchant%20Name%2CMachine%20code%2CMachine%20name%2CProduct%20Number%2Cproduct%20name%2CCommodity%20price%2CNumber%20of%20transaction%2CTransaction%20amount%2CThe%20refund%20count%2CRefund%20amount%2CTotal%20Transaction%20Quantity%2CTotal%20Transaction%20Amount%2CCost%20Price%2CCost%20Amount%2CProfits&detected=monthly_product_profit&uid=0bdefd83-ecad-4632-b0e7-e9f22a3ce065 200 in 3.9s (next.js: 3ms, proxy.ts: 5ms, application-code: 3.9s)
+ GET /api/auth/session 200 in 26ms (next.js: 3ms, proxy.ts: 13ms, application-code: 10ms)
+ GET /api/notifications?limit=6 200 in 120ms (next.js: 7ms, proxy.ts: 13ms, application-code: 100ms)
+ GET /api/auth/session 200 in 46ms (next.js: 25ms, proxy.ts: 14ms, application-code: 7ms)
+ GET /admin 200 in 219ms (next.js: 33ms, proxy.ts: 6ms, application-code: 181ms)
+ GET /api/auth/session 200 in 28ms (next.js: 4ms, proxy.ts: 6ms, application-code: 18ms)
+[vms-import] Load query failed {
+  queryName: 'team_members.importers',
+  code: '42501',
+  message: 'permission denied for table team_members',
+  details: null,
+  hint: 'Grant the required privileges to the current role with: GRANT SELECT ON public.team_members TO authenticated;',
+  schemaIssue: { type: 'permission', relation: 'team_members' },
+  selectedBatchId: null,
+  currentUserId: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  effectivePermissions: [
+    'dashboard.view',
+    'operations.manage',
+    'routes.view',
+    'routes.create',
+    'assigned_routes.view',
+    'assigned_machines.view',
+    'refills.view',
+    'refills.create',
+    'issues.view',
+    'issues.create',
+    'products.view',
+    'products.view_limited',
+    'products.create',
+    'products.edit',
+    'products.delete',
+    'inventory.view',
+    'inventory.full_edit',
+    'storage.view',
+    'storage.adjust',
+    'storage.location.manage',
+    'storage.movement.view',
+    'storage.movement.create',
+    'purchase_items.view',
+    'purchases.view',
+    'purchases.create',
+    'purchases.receive',
+    'suppliers.view',
+    'suppliers.manage',
+    'machines.view',
+    'machines.manage',
+    'locations.pipeline.manage',
+    'finance.view',
+    'finance.edit',
+    'reports.view',
+    'team.manage',
+    'activity.view',
+    'vms.import',
+    'vms.mapping.manage',
+    'vms_import.view',
+    'vms_import.create',
+    'vms_import.validate',
+    'vms_import.confirm',
+    'vms_import.manage_mappings',
+    'system.settings'
+  ]
+}
+ GET /vms-import 200 in 360ms (next.js: 9ms, proxy.ts: 9ms, application-code: 341ms)
+ GET /api/auth/me 200 in 2.5s (next.js: 2.3s, proxy.ts: 4ms, application-code: 190ms)
+ GET /api/auth/me 200 in 92ms (next.js: 2ms, proxy.ts: 6ms, application-code: 84ms)
+[vms-import] Reading uploaded VMS file {
+  queryName: 'parseVmsUpload',
+  fileName: 'splr659120260205001140_1.xls',
+  fileType: 'xls',
+  fileSize: 61952,
+  currentUserId: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  effectivePermissions: [
+    'dashboard.view',
+    'operations.manage',
+    'routes.view',
+    'routes.create',
+    'assigned_routes.view',
+    'assigned_machines.view',
+    'refills.view',
+    'refills.create',
+    'issues.view',
+    'issues.create',
+    'products.view',
+    'products.view_limited',
+    'products.create',
+    'products.edit',
+    'products.delete',
+    'inventory.view',
+    'inventory.full_edit',
+    'storage.view',
+    'storage.adjust',
+    'storage.location.manage',
+    'storage.movement.view',
+    'storage.movement.create',
+    'purchase_items.view',
+    'purchases.view',
+    'purchases.create',
+    'purchases.receive',
+    'suppliers.view',
+    'suppliers.manage',
+    'machines.view',
+    'machines.manage',
+    'locations.pipeline.manage',
+    'finance.view',
+    'finance.edit',
+    'reports.view',
+    'team.manage',
+    'activity.view',
+    'vms.import',
+    'vms.mapping.manage',
+    'vms_import.view',
+    'vms_import.create',
+    'vms_import.validate',
+    'vms_import.confirm',
+    'vms_import.manage_mappings',
+    'system.settings'
+  ]
+}
+[vms-import] File parsed for preview {
+  queryName: 'parseVmsUpload',
+  fileName: 'splr659120260205001140_1.xls',
+  elapsedMs: 213
+}
+[vms-import] Parsed VMS file for preview {
+  fileName: 'splr659120260205001140_1.xls',
+  fileType: 'xls',
+  fileSize: 61952,
+  detectedReportType: 'monthly_product_profit',
+  detectedHeaderRowIndex: 1,
+  headersFound: [
+    'Merchant ID',
+    'Merchant Name',
+    'Machine code',
+    'Machine name',
+    'Product Number',
+    'product name',
+    'Commodity price',
+    'Number of transaction',
+    'Transaction amount',
+    'The refund count',
+    'Refund amount',
+    'Total Transaction Quantity',
+    'Total Transaction Amount',
+    'Cost Price',
+    'Cost Amount',
+    'Profits'
+  ],
+  duplicateHeadersFound: [],
+  rowsParsedCount: 185,
+  importBatchId: null,
+  currentUserId: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  effectivePermissions: [
+    'dashboard.view',
+    'operations.manage',
+    'routes.view',
+    'routes.create',
+    'assigned_routes.view',
+    'assigned_machines.view',
+    'refills.view',
+    'refills.create',
+    'issues.view',
+    'issues.create',
+    'products.view',
+    'products.view_limited',
+    'products.create',
+    'products.edit',
+    'products.delete',
+    'inventory.view',
+    'inventory.full_edit',
+    'storage.view',
+    'storage.adjust',
+    'storage.location.manage',
+    'storage.movement.view',
+    'storage.movement.create',
+    'purchase_items.view',
+    'purchases.view',
+    'purchases.create',
+    'purchases.receive',
+    'suppliers.view',
+    'suppliers.manage',
+    'machines.view',
+    'machines.manage',
+    'locations.pipeline.manage',
+    'finance.view',
+    'finance.edit',
+    'reports.view',
+    'team.manage',
+    'activity.view',
+    'vms.import',
+    'vms.mapping.manage',
+    'vms_import.view',
+    'vms_import.create',
+    'vms_import.validate',
+    'vms_import.confirm',
+    'vms_import.manage_mappings',
+    'system.settings'
+  ],
+  queryName: 'loadVmsPreviewFile',
+  requestedReportType: null,
+  sheetCount: 1
+}
+[vms-import] Parse diagnostics {
+  queryName: 'prepareVmsImport.parse_diagnostics',
+  fileName: 'splr659120260205001140_1.xls',
+  fileSize: 61952,
+  detectedHeaders: [
+    'Merchant ID',
+    'Merchant Name',
+    'Machine code',
+    'Machine name',
+    'Product Number',
+    'product name',
+    'Commodity price',
+    'Number of transaction',
+    'Transaction amount',
+    'The refund count',
+    'Refund amount',
+    'Total Transaction Quantity',
+    'Total Transaction Amount',
+    'Cost Price',
+    'Cost Amount',
+    'Profits'
+  ],
+  detectedHeadersCount: 16,
+  parsedRowsCount: 185,
+  detectedReportType: 'monthly_product_profit',
+  currentUserId: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065'
+}
+[vms-import] VMS file hash prepared {
+  queryName: 'prepareVmsImport.hash_file',
+  fileName: 'splr659120260205001140_1.xls',
+  fileSize: 61952,
+  elapsedMs: 2849
+}
+[vms-import] Original file storage skipped for fast preview {
+  queryName: 'storage.vms_imports.upload.skipped',
+  fileName: 'splr659120260205001140_1.xls',
+  reportType: 'monthly_product_profit',
+  fileHash: 'b78b64cf0a0a05b0cb4b75deb9ed68f2d5d3700072c85a1bcc88ce08928529a4',
+  elapsedMs: 2850
+}
+[vms-import] Preview import batch ready {
+  queryName: 'vms_import_batches.insert.preview',
+  importBatchId: '619cd102-a72c-4753-8c7c-3787839e14d8',
+  elapsedMs: 2939
+}
+[vms-import] VMS import preview row created {
+  queryName: 'vms_import_previews.insert.rich',
+  previewId: '20439314-95b4-4ed1-b6d8-89069ba6b2e5',
+  importBatchId: '619cd102-a72c-4753-8c7c-3787839e14d8',
+  elapsedMs: 2953
+}
+[vms-import] Saved VMS preview rows {
+  queryName: 'vms_import_preview_rows.insert',
+  previewId: '20439314-95b4-4ed1-b6d8-89069ba6b2e5',
+  importBatchId: '619cd102-a72c-4753-8c7c-3787839e14d8',
+  rowsInserted: 185,
+  totalRowsAvailable: 185,
+  capped: false
+}
+[vms-import] Prepared VMS import preview {
+  fileName: 'splr659120260205001140_1.xls',
+  fileType: 'xls',
+  fileSize: 61952,
+  detectedReportType: 'monthly_product_profit',
+  detectedHeaderRowIndex: 1,
+  headersFound: [
+    'Merchant ID',
+    'Merchant Name',
+    'Machine code',
+    'Machine name',
+    'Product Number',
+    'product name',
+    'Commodity price',
+    'Number of transaction',
+    'Transaction amount',
+    'The refund count',
+    'Refund amount',
+    'Total Transaction Quantity',
+    'Total Transaction Amount',
+    'Cost Price',
+    'Cost Amount',
+    'Profits'
+  ],
+  duplicateHeadersFound: [],
+  rowsParsedCount: 185,
+  importBatchId: '619cd102-a72c-4753-8c7c-3787839e14d8',
+  currentUserId: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  effectivePermissions: [
+    'dashboard.view',
+    'operations.manage',
+    'routes.view',
+    'routes.create',
+    'assigned_routes.view',
+    'assigned_machines.view',
+    'refills.view',
+    'refills.create',
+    'issues.view',
+    'issues.create',
+    'products.view',
+    'products.view_limited',
+    'products.create',
+    'products.edit',
+    'products.delete',
+    'inventory.view',
+    'inventory.full_edit',
+    'storage.view',
+    'storage.adjust',
+    'storage.location.manage',
+    'storage.movement.view',
+    'storage.movement.create',
+    'purchase_items.view',
+    'purchases.view',
+    'purchases.create',
+    'purchases.receive',
+    'suppliers.view',
+    'suppliers.manage',
+    'machines.view',
+    'machines.manage',
+    'locations.pipeline.manage',
+    'finance.view',
+    'finance.edit',
+    'reports.view',
+    'team.manage',
+    'activity.view',
+    'vms.import',
+    'vms.mapping.manage',
+    'vms_import.view',
+    'vms_import.create',
+    'vms_import.validate',
+    'vms_import.confirm',
+    'vms_import.manage_mappings',
+    'system.settings'
+  ],
+  queryName: 'prepareVmsImport',
+  previewId: '20439314-95b4-4ed1-b6d8-89069ba6b2e5',
+  numberOfMappingsLoaded: null,
+  numberOfProductsLoaded: null,
+  elapsedMs: 3274
+}
+[vms-import] Load query failed {
+  queryName: 'team_members.importers',
+  code: '42501',
+  message: 'permission denied for table team_members',
+  details: null,
+  hint: 'Grant the required privileges to the current role with: GRANT SELECT ON public.team_members TO authenticated;',
+  schemaIssue: { type: 'permission', relation: 'team_members' },
+  selectedBatchId: '20439314-95b4-4ed1-b6d8-89069ba6b2e5',
+  currentUserId: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  effectivePermissions: [
+    'dashboard.view',
+    'operations.manage',
+    'routes.view',
+    'routes.create',
+    'assigned_routes.view',
+    'assigned_machines.view',
+    'refills.view',
+    'refills.create',
+    'issues.view',
+    'issues.create',
+    'products.view',
+    'products.view_limited',
+    'products.create',
+    'products.edit',
+    'products.delete',
+    'inventory.view',
+    'inventory.full_edit',
+    'storage.view',
+    'storage.adjust',
+    'storage.location.manage',
+    'storage.movement.view',
+    'storage.movement.create',
+    'purchase_items.view',
+    'purchases.view',
+    'purchases.create',
+    'purchases.receive',
+    'suppliers.view',
+    'suppliers.manage',
+    'machines.view',
+    'machines.manage',
+    'locations.pipeline.manage',
+    'finance.view',
+    'finance.edit',
+    'reports.view',
+    'team.manage',
+    'activity.view',
+    'vms.import',
+    'vms.mapping.manage',
+    'vms_import.view',
+    'vms_import.create',
+    'vms_import.validate',
+    'vms_import.confirm',
+    'vms_import.manage_mappings',
+    'system.settings'
+  ]
+}
+ GET /vms-import?previewId=20439314-95b4-4ed1-b6d8-89069ba6b2e5&importBatchId=619cd102-a72c-4753-8c7c-3787839e14d8&sheet=A+breakdown+of+commodity+profit&reportType=monthly_product_profit&step=5&rows=185&headers=Merchant+ID%2CMerchant+Name%2CMachine+code%2CMachine+name%2CProduct+Number%2Cproduct+name%2CCommodity+price%2CNumber+of+transaction%2CTransaction+amount%2CThe+refund+count%2CRefund+amount%2CTotal+Transaction+Quantity%2CTotal+Transaction+Amount%2CCost+Price%2CCost+Amount%2CProfits&detected=monthly_product_profit&uid=0bdefd83-ecad-4632-b0e7-e9f22a3ce065 200 in 2.8s (next.js: 7ms, proxy.ts: 7ms, application-code: 2.8s)
+ POST /vms-import 303 in 6.1s (next.js: 44ms, proxy.ts: 6ms, application-code: 6.1s)
+  └─ ƒ prepareVmsImport({}) in 3276ms ..//src/lib/vms-import-actions.ts
+ GET /api/auth/session 200 in 29ms (next.js: 9ms, proxy.ts: 5ms, application-code: 15ms)
+[vms-import] Load query failed {
+  queryName: 'team_members.importers',
+  code: '42501',
+  message: 'permission denied for table team_members',
+  details: null,
+  hint: 'Grant the required privileges to the current role with: GRANT SELECT ON public.team_members TO authenticated;',
+  schemaIssue: { type: 'permission', relation: 'team_members' },
+  selectedBatchId: '20439314-95b4-4ed1-b6d8-89069ba6b2e5',
+  currentUserId: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  effectivePermissions: [
+    'dashboard.view',
+    'operations.manage',
+    'routes.view',
+    'routes.create',
+    'assigned_routes.view',
+    'assigned_machines.view',
+    'refills.view',
+    'refills.create',
+    'issues.view',
+    'issues.create',
+    'products.view',
+    'products.view_limited',
+    'products.create',
+    'products.edit',
+    'products.delete',
+    'inventory.view',
+    'inventory.full_edit',
+    'storage.view',
+    'storage.adjust',
+    'storage.location.manage',
+    'storage.movement.view',
+    'storage.movement.create',
+    'purchase_items.view',
+    'purchases.view',
+    'purchases.create',
+    'purchases.receive',
+    'suppliers.view',
+    'suppliers.manage',
+    'machines.view',
+    'machines.manage',
+    'locations.pipeline.manage',
+    'finance.view',
+    'finance.edit',
+    'reports.view',
+    'team.manage',
+    'activity.view',
+    'vms.import',
+    'vms.mapping.manage',
+    'vms_import.view',
+    'vms_import.create',
+    'vms_import.validate',
+    'vms_import.confirm',
+    'vms_import.manage_mappings',
+    'system.settings'
+  ]
+}
+[vms-import] Validation references loaded {
+  selectedBatchId: '20439314-95b4-4ed1-b6d8-89069ba6b2e5',
+  currentUserId: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  effectivePermissions: [
+    'dashboard.view',
+    'operations.manage',
+    'routes.view',
+    'routes.create',
+    'assigned_routes.view',
+    'assigned_machines.view',
+    'refills.view',
+    'refills.create',
+    'issues.view',
+    'issues.create',
+    'products.view',
+    'products.view_limited',
+    'products.create',
+    'products.edit',
+    'products.delete',
+    'inventory.view',
+    'inventory.full_edit',
+    'storage.view',
+    'storage.adjust',
+    'storage.location.manage',
+    'storage.movement.view',
+    'storage.movement.create',
+    'purchase_items.view',
+    'purchases.view',
+    'purchases.create',
+    'purchases.receive',
+    'suppliers.view',
+    'suppliers.manage',
+    'machines.view',
+    'machines.manage',
+    'locations.pipeline.manage',
+    'finance.view',
+    'finance.edit',
+    'reports.view',
+    'team.manage',
+    'activity.view',
+    'vms.import',
+    'vms.mapping.manage',
+    'vms_import.view',
+    'vms_import.create',
+    'vms_import.validate',
+    'vms_import.confirm',
+    'vms_import.manage_mappings',
+    'system.settings'
+  ],
+  counts: {
+    machines: 8,
+    products: 156,
+    productMappings: 127,
+    machineMappings: 7,
+    headerMappings: 1,
+    previewRows: 185
+  },
+  failedQueries: []
+}
+ GET /vms-import?step=6&importBatchId=619cd102-a72c-4753-8c7c-3787839e14d8&previewId=20439314-95b4-4ed1-b6d8-89069ba6b2e5&sheet=A+breakdown+of+commodity+profit&reportType=monthly_product_profit&headerRow=1&map_merchant_id=Merchant+ID&map_merchant_name=Merchant+Name&map_machine_identifier=Machine+code&map_machine_name=Machine+name&map_product_identifier=Product+Number&map_product_name=product+name&map_commodity_price=Commodity+price&map_transaction_count=Number+of+transaction&map_transaction_amount=Transaction+amount&map_refund_count=The+refund+count&map_refund_amount=Refund+amount&map_total_transaction_count=Total+Transaction+Quantity&map_total_transaction_amount=Total+Transaction+Amount&map_cost_price=Cost+Price&map_cost_amount=Cost+Amount&map_profit_amount=Profits 200 in 4.0s (next.js: 5ms, proxy.ts: 9ms, application-code: 4.0s)
+ GET /api/auth/session 200 in 51ms (next.js: 22ms, proxy.ts: 23ms, application-code: 6ms)
+ GET /api/notifications?limit=6 200 in 156ms (next.js: 15ms, proxy.ts: 23ms, application-code: 118ms)
+[vms-import] Load query failed {
+  queryName: 'team_members.importers',
+  code: '42501',
+  message: 'permission denied for table team_members',
+  details: null,
+  hint: 'Grant the required privileges to the current role with: GRANT SELECT ON public.team_members TO authenticated;',
+  schemaIssue: { type: 'permission', relation: 'team_members' },
+  selectedBatchId: '20439314-95b4-4ed1-b6d8-89069ba6b2e5',
+  currentUserId: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  effectivePermissions: [
+    'dashboard.view',
+    'operations.manage',
+    'routes.view',
+    'routes.create',
+    'assigned_routes.view',
+    'assigned_machines.view',
+    'refills.view',
+    'refills.create',
+    'issues.view',
+    'issues.create',
+    'products.view',
+    'products.view_limited',
+    'products.create',
+    'products.edit',
+    'products.delete',
+    'inventory.view',
+    'inventory.full_edit',
+    'storage.view',
+    'storage.adjust',
+    'storage.location.manage',
+    'storage.movement.view',
+    'storage.movement.create',
+    'purchase_items.view',
+    'purchases.view',
+    'purchases.create',
+    'purchases.receive',
+    'suppliers.view',
+    'suppliers.manage',
+    'machines.view',
+    'machines.manage',
+    'locations.pipeline.manage',
+    'finance.view',
+    'finance.edit',
+    'reports.view',
+    'team.manage',
+    'activity.view',
+    'vms.import',
+    'vms.mapping.manage',
+    'vms_import.view',
+    'vms_import.create',
+    'vms_import.validate',
+    'vms_import.confirm',
+    'vms_import.manage_mappings',
+    'system.settings'
+  ]
+}
+[vms-import] Validation references loaded {
+  selectedBatchId: '20439314-95b4-4ed1-b6d8-89069ba6b2e5',
+  currentUserId: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  effectivePermissions: [
+    'dashboard.view',
+    'operations.manage',
+    'routes.view',
+    'routes.create',
+    'assigned_routes.view',
+    'assigned_machines.view',
+    'refills.view',
+    'refills.create',
+    'issues.view',
+    'issues.create',
+    'products.view',
+    'products.view_limited',
+    'products.create',
+    'products.edit',
+    'products.delete',
+    'inventory.view',
+    'inventory.full_edit',
+    'storage.view',
+    'storage.adjust',
+    'storage.location.manage',
+    'storage.movement.view',
+    'storage.movement.create',
+    'purchase_items.view',
+    'purchases.view',
+    'purchases.create',
+    'purchases.receive',
+    'suppliers.view',
+    'suppliers.manage',
+    'machines.view',
+    'machines.manage',
+    'locations.pipeline.manage',
+    'finance.view',
+    'finance.edit',
+    'reports.view',
+    'team.manage',
+    'activity.view',
+    'vms.import',
+    'vms.mapping.manage',
+    'vms_import.view',
+    'vms_import.create',
+    'vms_import.validate',
+    'vms_import.confirm',
+    'vms_import.manage_mappings',
+    'system.settings'
+  ],
+  counts: {
+    machines: 8,
+    products: 156,
+    productMappings: 127,
+    machineMappings: 7,
+    headerMappings: 1,
+    previewRows: 185
+  },
+  failedQueries: []
+}
+ GET /vms-import?step=7&importBatchId=619cd102-a72c-4753-8c7c-3787839e14d8&previewId=20439314-95b4-4ed1-b6d8-89069ba6b2e5&sheet=A+breakdown+of+commodity+profit&reportType=monthly_product_profit&headerRow=1&map_merchant_id=Merchant+ID&map_merchant_name=Merchant+Name&map_machine_identifier=Machine+code&map_machine_name=Machine+name&map_product_identifier=Product+Number&map_product_name=product+name&map_commodity_price=Commodity+price&map_transaction_count=Number+of+transaction&map_transaction_amount=Transaction+amount&map_refund_count=The+refund+count&map_refund_amount=Refund+amount&map_total_transaction_count=Total+Transaction+Quantity&map_total_transaction_amount=Total+Transaction+Amount&map_cost_price=Cost+Price&map_cost_amount=Cost+Amount&map_profit_amount=Profits&autoCreateProducts=no&updateCostFromVms=no&importMode=append&reportStartDate=2026-01-01&reportEndDate=2026-01-31 200 in 3.7s (next.js: 7ms, proxy.ts: 8ms, application-code: 3.6s)
+ GET /api/auth/session 200 in 29ms (next.js: 10ms, proxy.ts: 14ms, application-code: 5ms)
+ GET /api/notifications?limit=6 200 in 115ms (next.js: 4ms, proxy.ts: 14ms, application-code: 97ms)
+[vms-import] Machine mapping memory load failed {
+  mappingErrorCode: undefined,
+  mappingErrorMessage: undefined,
+  aliasErrorCode: '42501',
+  aliasErrorMessage: 'permission denied for table vms_machine_aliases'
+}
+[vms-import] Product price update failed {
+  productId: 'e1eab68d-40b1-4f79-bda1-32bf2619355a',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '3e94195e-f83c-4e30-ac7f-67821e174159',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '9187a706-792d-41ec-a3f7-f90838c78ab8',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '6e7882c8-e621-4607-a694-d426366a12a6',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '70b315e0-7345-40d0-9970-dc9b07d696db',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'dd24cf52-ff08-400a-9e61-6546cecb8e7f',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '1184eade-f1d4-4e47-b912-3219fae9260f',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'd721fbd2-143a-44f7-a471-f9ce244dcc2e',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'a15c45b5-2e56-4e3c-9566-3fa1cc689a5c',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '6ec3ac27-8143-482d-910f-4677bfb5cf0c',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'e5766daa-7bc4-4493-8738-afa0669955ce',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '1cd7ca22-bc12-4465-8a81-3c5f0239af95',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '797af48f-4d7b-4e49-a508-f53cabb428b8',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '26c37ca1-f7c6-4ed6-854d-020817c3bbf5',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '276539c8-bb6e-4c3c-8f1b-068e3138bac0',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '8ce152de-2b3b-4f9d-b239-af1a85a6ec07',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'b510b4f6-dbd3-42df-8c65-7a65535d46cc',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'a4d22511-e747-43c4-b8a7-406c754c6d7c',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'd8757769-e9c6-4456-be86-b392c06f7073',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '824e2ab3-aff9-46d5-8db8-253467a88731',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '59b1c153-b62a-4a1b-b95a-93d155325da8',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'b0e9a76d-63fa-499c-abab-4ef72b3723a9',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'b0ed1dc4-73b9-48db-88b3-71ac4fac7349',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '7af154b7-4f8d-4794-9292-0183807892ab',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '7e55b9c0-f28c-45d1-a77f-71ca268fc9c8',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '37ea52f5-49bc-4339-93aa-a3405bf26a7e',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '2d8c8cfb-d9a5-4803-85f3-0d95dbde2b85',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '11524aa7-b5bb-441e-93a2-1b303cbde851',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'ddf902b9-9199-4350-ac3f-cae922a79062',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '61e83068-1f28-4f65-8e5a-abdfb2bedf3c',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '591d34c2-f5ab-497f-906e-db28c16c5b8c',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '9aaa8864-d8d7-436f-a3e6-bfca2457c5cf',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'cfe1c61b-d709-4cd5-b63e-aea4cbaab01f',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'a2a02dc0-abc2-4983-876b-0f98a227ee92',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '3785bb73-ac3d-476a-80ab-81a59a888bc2',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '1fcc563d-aeb9-4c50-94ef-95ae9e1bb86c',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'ca9faf68-c66c-40ff-aba8-a35550fd93fd',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '734b67f5-b190-4d1a-b25a-065ee34a2b03',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '93015f3a-c210-44ce-9fb8-7f54a229adf2',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '021e2995-6215-4392-a875-8ace68ba3e24',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '3a8bc8bb-c940-4afc-bd03-a130d2e4345b',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'd4f39991-a6ac-4ef2-ae97-80fec1994684',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'f3325e7c-71b2-46e4-a0f6-d20bdce65ccc',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'c9bdc18b-7f0f-4279-93c1-292f131cbe68',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '7d5fe1d4-0d51-464b-a284-9c67d219815b',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'ef574bcd-9527-4f68-84e0-1cf9ffb39948',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'a006233c-2ad0-4833-920a-9d8df1be463f',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'dcafef05-cf75-47c7-bdda-fbe211a66ec7',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'f9a8c659-57c5-4cd7-9755-69c656966fe8',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'aa70efa8-b566-4c8e-8d2b-8862fde4d5cd',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'f96f42f5-d67e-48ce-9aa2-bc85712a88b0',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '3a5802b7-326f-4c5a-9c29-66745b818f16',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '12ccdad2-ea31-4f03-bc62-cbb46e212a05',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'ca99b9b9-3d70-4f8d-8999-0ff98a16fa89',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '32dcfbef-fa3d-49a9-a631-a4117df44921',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '8102a673-63f0-47ba-b512-9d979c2905d1',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '0c1e1107-12ee-4245-8807-f06e4ed5050a',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '16d9f280-2a50-4e36-8460-59628b971f98',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'dbc37692-ec9b-4066-9511-e2a71123afdf',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '08c0c0cf-66c5-4863-9fd1-40c4fc344206',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '54cde5ae-23f7-4dad-89fc-1f43cc517d9f',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'd22f4634-7dda-4fff-b608-a54e4543dfc3',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: '939afc9c-957d-429e-b349-57462848ed7a',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[vms-import] Product price update failed {
+  productId: 'ba870406-3d50-460a-9919-3e30bfb0bc78',
+  error: {
+    code: '42501',
+    details: null,
+    hint: 'Grant the required privileges to the current role with: GRANT UPDATE ON public.products TO authenticated;',
+    message: 'permission denied for table products'
+  }
+}
+[activity-log] Failed to write activity log {
+  code: '42501',
+  details: null,
+  hint: 'Grant the required privileges to the current role with: GRANT INSERT ON public.system_activity_logs TO anon;',
+  message: 'permission denied for table system_activity_logs'
+}
+[vms-import] Load query failed {
+  queryName: 'team_members.importers',
+  code: '42501',
+  message: 'permission denied for table team_members',
+  details: null,
+  hint: 'Grant the required privileges to the current role with: GRANT SELECT ON public.team_members TO authenticated;',
+  schemaIssue: { type: 'permission', relation: 'team_members' },
+  selectedBatchId: null,
+  currentUserId: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  effectivePermissions: [
+    'dashboard.view',
+    'operations.manage',
+    'routes.view',
+    'routes.create',
+    'assigned_routes.view',
+    'assigned_machines.view',
+    'refills.view',
+    'refills.create',
+    'issues.view',
+    'issues.create',
+    'products.view',
+    'products.view_limited',
+    'products.create',
+    'products.edit',
+    'products.delete',
+    'inventory.view',
+    'inventory.full_edit',
+    'storage.view',
+    'storage.adjust',
+    'storage.location.manage',
+    'storage.movement.view',
+    'storage.movement.create',
+    'purchase_items.view',
+    'purchases.view',
+    'purchases.create',
+    'purchases.receive',
+    'suppliers.view',
+    'suppliers.manage',
+    'machines.view',
+    'machines.manage',
+    'locations.pipeline.manage',
+    'finance.view',
+    'finance.edit',
+    'reports.view',
+    'team.manage',
+    'activity.view',
+    'vms.import',
+    'vms.mapping.manage',
+    'vms_import.view',
+    'vms_import.create',
+    'vms_import.validate',
+    'vms_import.confirm',
+    'vms_import.manage_mappings',
+    'system.settings'
+  ]
+}
+ GET /vms-import?importBatchId=619cd102-a72c-4753-8c7c-3787839e14d8&success=Sales+dashboard+imported.+Some+rows+or+metadata+need+review. 200 in 289ms (next.js: 7ms, proxy.ts: 6ms, application-code: 276ms)
+ POST /vms-import?step=7&importBatchId=619cd102-a72c-4753-8c7c-3787839e14d8&previewId=20439314-95b4-4ed1-b6d8-89069ba6b2e5&sheet=A+breakdown+of+commodity+profit&reportType=monthly_product_profit&headerRow=1&map_merchant_id=Merchant+ID&map_merchant_name=Merchant+Name&map_machine_identifier=Machine+code&map_machine_name=Machine+name&map_product_identifier=Product+Number&map_product_name=product+name&map_commodity_price=Commodity+price&map_transaction_count=Number+of+transaction&map_transaction_amount=Transaction+amount&map_refund_count=The+refund+count&map_refund_amount=Refund+amount&map_total_transaction_count=Total+Transaction+Quantity&map_total_transaction_amount=Total+Transaction+Amount&map_cost_price=Cost+Price&map_cost_amount=Cost+Amount&map_profit_amount=Profits&autoCreateProducts=no&updateCostFromVms=no&importMode=append&reportStartDate=2026-01-01&reportEndDate=2026-01-31 303 in 2.5s (next.js: 4ms, proxy.ts: 36ms, application-code: 2.5s)
+  └─ ƒ completeVmsImport({}) in 2187ms ..//src/lib/vms-import-actions.ts
+ GET /api/auth/me 200 in 93ms (next.js: 4ms, proxy.ts: 11ms, application-code: 77ms)
+ GET /api/auth/me 200 in 125ms (next.js: 1491µs, proxy.ts: 3ms, application-code: 120ms)
+ GET /api/auth/session 200 in 30ms (next.js: 4ms, proxy.ts: 7ms, application-code: 19ms)
+ GET /api/notifications?limit=6 200 in 139ms (next.js: 16ms, proxy.ts: 8ms, application-code: 116ms)
+ GET /api/auth/session 200 in 47ms (next.js: 4ms, proxy.ts: 26ms, application-code: 17ms)
+ GET /reports 200 in 203ms (next.js: 21ms, proxy.ts: 4ms, application-code: 179ms)
+ GET /api/auth/session 200 in 17ms (next.js: 2ms, proxy.ts: 7ms, application-code: 7ms)
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '',
+  date_to: '',
+  elapsed_ms: 38,
+  filter_mode: 'default',
+  returned_row_count: 5,
+  rpc_function_name: null,
+  section_name: 'vms_batch_sources'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '',
+  date_to: '',
+  elapsed_ms: 48,
+  filter_mode: 'default',
+  returned_row_count: 0,
+  rpc_function_name: 'sales_dashboard_batch_reconciliation',
+  section_name: 'batch_reconciliation_all'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 71,
+  filter_mode: 'default',
+  returned_row_count: 6,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_machine'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 81,
+  filter_mode: 'default',
+  returned_row_count: 3,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_location'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 85,
+  filter_mode: 'default',
+  returned_row_count: 1,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_month'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 89,
+  filter_mode: 'default',
+  returned_row_count: 69,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_product'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 92,
+  filter_mode: 'default',
+  returned_row_count: 5,
+  rpc_function_name: 'sales_dashboard_monthly_batch_reconciliation',
+  section_name: 'batch_reconciliation_filtered'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 96,
+  filter_mode: 'default',
+  returned_row_count: 2,
+  rpc_function_name: 'sales_dashboard_monthly_coverage_truth',
+  section_name: 'monthly_coverage'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 99,
+  filter_mode: 'default',
+  returned_row_count: 6,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_machine'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 103,
+  filter_mode: 'default',
+  returned_row_count: 69,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_product'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 107,
+  filter_mode: 'default',
+  returned_row_count: 3,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_location'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 112,
+  filter_mode: 'default',
+  returned_row_count: 1,
+  rpc_function_name: 'sales_dashboard_monthly_summary',
+  section_name: 'summary_kpi'
+}
+ GET /sales 200 in 506ms (next.js: 45ms, proxy.ts: 4ms, application-code: 457ms)
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '',
+  date_to: '',
+  elapsed_ms: 14,
+  filter_mode: 'default',
+  returned_row_count: 5,
+  rpc_function_name: null,
+  section_name: 'vms_batch_sources'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '',
+  date_to: '',
+  elapsed_ms: 14,
+  filter_mode: 'default',
+  returned_row_count: 0,
+  rpc_function_name: 'sales_dashboard_batch_reconciliation',
+  section_name: 'batch_reconciliation_all'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 27,
+  filter_mode: 'default',
+  returned_row_count: 1,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_month'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 30,
+  filter_mode: 'default',
+  returned_row_count: 6,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_machine'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 35,
+  filter_mode: 'default',
+  returned_row_count: 3,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_location'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 40,
+  filter_mode: 'default',
+  returned_row_count: 69,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_product'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 45,
+  filter_mode: 'default',
+  returned_row_count: 5,
+  rpc_function_name: 'sales_dashboard_monthly_batch_reconciliation',
+  section_name: 'batch_reconciliation_filtered'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 49,
+  filter_mode: 'default',
+  returned_row_count: 69,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_product'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 53,
+  filter_mode: 'default',
+  returned_row_count: 6,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_machine'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 58,
+  filter_mode: 'default',
+  returned_row_count: 3,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_location'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 60,
+  filter_mode: 'default',
+  returned_row_count: 2,
+  rpc_function_name: 'sales_dashboard_monthly_coverage_truth',
+  section_name: 'monthly_coverage'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 62,
+  filter_mode: 'default',
+  returned_row_count: 1,
+  rpc_function_name: 'sales_dashboard_monthly_summary',
+  section_name: 'summary_kpi'
+}
+ GET /sales 200 in 1194ms (next.js: 407ms, proxy.ts: 12ms, application-code: 775ms)
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '',
+  date_to: '',
+  elapsed_ms: 22,
+  filter_mode: 'default',
+  returned_row_count: 5,
+  rpc_function_name: null,
+  section_name: 'vms_batch_sources'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '',
+  date_to: '',
+  elapsed_ms: 22,
+  filter_mode: 'default',
+  returned_row_count: 0,
+  rpc_function_name: 'sales_dashboard_batch_reconciliation',
+  section_name: 'batch_reconciliation_all'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 11,
+  filter_mode: 'default',
+  returned_row_count: 1,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_month'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 13,
+  filter_mode: 'default',
+  returned_row_count: 6,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_machine'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 15,
+  filter_mode: 'default',
+  returned_row_count: 3,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_location'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 17,
+  filter_mode: 'default',
+  returned_row_count: 69,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_product'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 20,
+  filter_mode: 'default',
+  returned_row_count: 5,
+  rpc_function_name: 'sales_dashboard_monthly_batch_reconciliation',
+  section_name: 'batch_reconciliation_filtered'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 22,
+  filter_mode: 'default',
+  returned_row_count: 69,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_product'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 22,
+  filter_mode: 'default',
+  returned_row_count: 6,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_machine'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 24,
+  filter_mode: 'default',
+  returned_row_count: 3,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_location'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 25,
+  filter_mode: 'default',
+  returned_row_count: 2,
+  rpc_function_name: 'sales_dashboard_monthly_coverage_truth',
+  section_name: 'monthly_coverage'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 26,
+  filter_mode: 'default',
+  returned_row_count: 1,
+  rpc_function_name: 'sales_dashboard_monthly_summary',
+  section_name: 'summary_kpi'
+}
+ GET /sales 200 in 1473ms (next.js: 219ms, proxy.ts: 9ms, application-code: 1245ms)
