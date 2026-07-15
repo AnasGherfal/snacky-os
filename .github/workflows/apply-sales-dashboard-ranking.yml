@@ -7,6 +7,15 @@ on:
     paths:
       - "scripts/apply-sales-dashboard-ranking.mjs"
       - ".github/workflows/apply-sales-dashboard-ranking.yml"
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "src/components/SortableDataTable.tsx"
+      - "src/components/ui.tsx"
+      - "src/lib/table-sort.ts"
+      - "scripts/apply-sales-dashboard-ranking.mjs"
+      - ".github/workflows/apply-sales-dashboard-ranking.yml"
 
 permissions:
   contents: write
