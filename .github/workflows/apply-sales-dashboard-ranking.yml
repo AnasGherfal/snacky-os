@@ -1,0 +1,40 @@
+name: Apply sales dashboard ranking
+
+on:
+  push:
+    branches:
+      - feature/sales-dashboard-sortable-details
+    paths:
+      - "scripts/apply-sales-dashboard-ranking.mjs"
+      - ".github/workflows/apply-sales-dashboard-ranking.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply-sales-dashboard-ranking:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/sales-dashboard-sortable-details
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply detailed product ranking changes
+        run: node scripts/apply-sales-dashboard-ranking.mjs
+      - name: Validate patch formatting
+        run: git diff --check
+      - name: Commit generated sales page update
+        run: |
+          if git diff --quiet -- src/app/sales/page.tsx; then
+            echo "Sales page already updated."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/app/sales/page.tsx
+          git commit -m "Add detailed sortable sales product rankings"
+          git push origin HEAD:feature/sales-dashboard-sortable-details
