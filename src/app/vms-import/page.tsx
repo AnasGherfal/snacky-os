@@ -39,6 +39,7 @@ import {
   resolveVmsReportType,
   requiredMissing,
   sheetRowsToRecords,
+  shouldIgnoreStaleCustomVmsState,
   vmsExpectedFields,
   vmsReportTypes,
   type VmsFieldDef,
@@ -749,10 +750,10 @@ function queryFor(params: Record<string, string | undefined>) {
   return `/vms-import?${query.toString()}`;
 }
 
-function readMapping(params: VmsImportSearchParams, reportType: VmsReportType, defaults: Record<string, string>) {
+function readMapping(params: VmsImportSearchParams, reportType: VmsReportType, defaults: Record<string, string>, options: { ignoreQueryOverrides?: boolean } = {}) {
   const mapping: Record<string, string> = {};
   for (const field of vmsExpectedFields[reportType]) {
-    mapping[field.field] = params[`map_${field.field}`] ?? defaults[field.field] ?? "";
+    mapping[field.field] = options.ignoreQueryOverrides ? defaults[field.field] ?? "" : params[`map_${field.field}`] ?? defaults[field.field] ?? "";
   }
   return mapping;
 }
@@ -1627,10 +1628,15 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
     previewReportType,
     detectedReportType,
   });
+  const ignoreStaleCustomState = shouldIgnoreStaleCustomVmsState({
+    requestedReportType,
+    previewReportType,
+    resolvedReportType: selectedReportType,
+  });
   const autoCreateProducts = selectedReportType === "product_list" ? booleanParam(params.autoCreateProducts, true) : false;
   const updateCostFromVms = selectedReportType === "product_list" ? booleanParam(params.updateCostFromVms, false) : false;
   const detectedHeaderRow = selectedSheet ? detectHeaderRowIndex(selectedSheet.rows, selectedReportType) : 0;
-  const selectedHeaderRow = selectedSheet ? parseHeaderRow(params.headerRow, detectedHeaderRow) : 0;
+  const selectedHeaderRow = selectedSheet ? parseHeaderRow(ignoreStaleCustomState ? undefined : params.headerRow, detectedHeaderRow) : 0;
   const selectedRows = selectedSheet
     ? sheetRowsToRecords(selectedSheet.rows, { reportType: selectedReportType, headerRowIndex: selectedHeaderRow })
     : { headerRowIndex: 0, headerConfidence: 0, headers: [], records: [], samples: {}, columnSamples: {} };
@@ -1666,6 +1672,7 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
     params,
     selectedReportType,
     useSavedMapping && canUseSavedMapping && Object.keys(savedMappingDefaults).length ? { ...mappingDetection.mapping, ...savedMappingDefaults } : mappingDetection.mapping,
+    { ignoreQueryOverrides: ignoreStaleCustomState },
   );
   const missingRequired = selectedSheet ? requiredMissing(selectedMapping, selectedReportType) : [];
   const mappedRows = selectedSheet ? applyColumnMapping(selectedRows.records, selectedMapping) : [];

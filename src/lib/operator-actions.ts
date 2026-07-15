@@ -658,7 +658,7 @@ export async function confirmPickList(
   routeId: string,
   pickedItems: { routeStopItemId?: string | null; routeStopId?: string | null; machineId?: string | null; productId: string; quantity: number; plannedQty?: number; reason?: string; notes?: string; isChecked?: boolean }[],
   extras: { routeStopId?: string | null; machineId?: string | null; productId: string; quantity: number; reason: string; notes?: string }[] = [],
-  options: { stopIds?: string[]; clientSubmissionId?: string | null } = {},
+  options: { stopIds?: string[]; clientSubmissionId?: string | null; acknowledgedPickupLineIds?: string[] } = {},
 ): Promise<ActionResult> {
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) throw new Error("No Supabase client");
@@ -709,6 +709,7 @@ export async function confirmPickList(
     const selectedStopIds = Array.from(new Set((options.stopIds ?? []).map((id) => String(id ?? "").trim()).filter(Boolean)));
     const batchMode = selectedStopIds.length > 0;
     const clientSubmissionId = String(options.clientSubmissionId ?? "").trim() || null;
+    const acknowledgedPickupLineIds = Array.from(new Set((options.acknowledgedPickupLineIds ?? []).map((id) => String(id ?? "").trim()).filter(Boolean)));
     const pickupSubmissionScope = clientSubmissionId || routeId;
     const selectedStopIdSet = new Set(selectedStopIds);
     logSelectedStopIds = selectedStopIds;
@@ -1384,6 +1385,7 @@ export async function confirmPickList(
       refill_line_picks: refillLinePickRows,
       selected_stop_ids: selectedStopIds,
       selected_machine_ids: selectedMachineIds,
+      acknowledged_pickup_line_ids: acknowledgedPickupLineIds,
       next_route_status: nextRouteStatus,
       remaining_pending_stop_count: remainingPendingStopCount,
     };
@@ -1422,6 +1424,7 @@ export async function confirmPickList(
       p_stop_item_picks: stopItemPickRows,
       p_refill_line_picks: refillLinePickRows,
       p_selected_stop_ids: selectedStopIds,
+      p_acknowledged_pickup_line_ids: acknowledgedPickupLineIds,
       p_selected_machine_ids: selectedMachineIds,
     };
 

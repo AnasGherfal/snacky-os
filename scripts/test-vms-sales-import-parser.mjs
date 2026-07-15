@@ -7,6 +7,7 @@ import {
   detectVmsReportTypeFromRows,
   findSalesReportPeriod,
   resolveVmsReportType,
+  shouldIgnoreStaleCustomVmsState,
   requiredMissing,
   sheetRowsToRecords,
 } from "../src/lib/vms-parser.ts";
@@ -225,6 +226,33 @@ test("VMS report type resolution treats custom as fallback only", () => {
       detectedReportType: null,
     }),
     "monthly_product_profit",
+  );
+});
+
+test("VMS import recovery ignores stale custom wizard state after concrete detection", () => {
+  assert.equal(
+    shouldIgnoreStaleCustomVmsState({
+      requestedReportType: "custom",
+      previewReportType: "custom",
+      resolvedReportType: "monthly_product_profit",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldIgnoreStaleCustomVmsState({
+      requestedReportType: "monthly_transaction_details",
+      previewReportType: "custom",
+      resolvedReportType: "monthly_transaction_details",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldIgnoreStaleCustomVmsState({
+      requestedReportType: "monthly_product_profit",
+      previewReportType: "monthly_product_profit",
+      resolvedReportType: "monthly_product_profit",
+    }),
+    false,
   );
 });
 

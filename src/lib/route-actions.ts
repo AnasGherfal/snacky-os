@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { inventoryMovementIdempotencyKey } from "@/lib/inventory-movement";
-import { canExecuteRoutes, isAdminRole } from "@/lib/authz";
+import { canExecuteRoutes, isAdminRole, isOwnerAdminRole } from "@/lib/authz";
 import {
   ROUTE_ASSIGNED_STATUS,
   ROUTE_CANCELED_STATUS,
@@ -301,6 +301,92 @@ export async function cancelRoute(formData: FormData) {
 
   revalidateRoutePaths(id);
   redirect(path);
+}
+
+export async function returnPickupToAssigned(formData: FormData) {
+  const routeId = clean(formData.get("route_id"));
+  const pickupBatchId = clean(formData.get("pickup_batch_id"));
+  if (!routeId) redirect("/routes");
+  const path = `/routes/${routeId}`;
+  const reason = requireConfirmedReason(formData, path);
+  const { profile, supabase } = await requireRouteAccess(path);
+  if (!isOwnerAdminRole(profile)) fail(path, "Only owner and admin users can return a pickup batch to Assigned.");
+
+  const [{ data: route, error: routeError }, { data: pickupBatch, error: pickupBatchError }, { data: pickupMovements, error: pickupMovementsError }] = await Promise.all([
+    supabase.from("routes").select("*").eq("id", routeId).maybeSingle(),
+    supabase
+      .from("route_pickup_batches")
+      .select("id, route_id, operator_id, status, selected_stop_ids, product_summary, storage_deducted, confirmed_at, returned_to_assigned_at, returned_to_assigned_by, returned_to_assigned_reason")
+      .eq("id", pickupBatchId)
+      .maybeSingle(),
+    supabase
+      .from("inventory_movements")
+      .select("id, product_id, quantity, from_entity_id, to_entity_id, reason, related_pickup_batch_id, created_at")
+      .eq("related_route_id", routeId)
+      .eq("related_pickup_batch_id", pickupBatchId)
+      .eq("reason", "storage_to_operator_bag")
+      .order("created_at", { ascending: true }),
+  ]);
+  if (routeError || !route) fail(path, "Route not found.");
+  if (pickupBatchError || !pickupBatch) fail(path, "Pickup batch not found.");
+  if (pickupBatch.route_id !== routeId) fail(path, "Pickup batch does not belong to this route.");
+
+  const beforeData = {
+    route,
+    pickup_batch: pickupBatch,
+    pickup_movements: pickupMovements ?? [],
+  };
+
+  const { data: rpcRows, error: rpcError } = await supabase.rpc("return_pickup_batch_to_assigned", {
+    p_route_id: routeId,
+    p_pickup_batch_id: pickupBatchId,
+    p_reason: reason,
+  });
+  if (rpcError) {
+    console.error("[routes] Failed to return pickup batch to Assigned", {
+      route_id: routeId,
+      pickup_batch_id: pickupBatchId,
+      error: rpcError,
+    });
+    fail(path, "Could not return this pickup batch to Assigned.");
+  }
+
+  const { data: updatedRoute, error: updatedRouteError } = await supabase.from("routes").select("*").eq("id", routeId).maybeSingle();
+  const { data: updatedPickupBatch, error: updatedPickupBatchError } = await supabase
+    .from("route_pickup_batches")
+    .select("id, route_id, operator_id, status, selected_stop_ids, product_summary, storage_deducted, confirmed_at, returned_to_assigned_at, returned_to_assigned_by, returned_to_assigned_reason")
+    .eq("id", pickupBatchId)
+    .maybeSingle();
+  if (updatedRouteError || !updatedRoute || updatedPickupBatchError || !updatedPickupBatch) {
+    fail(path, "Pickup batch was returned, but the refreshed route data could not be loaded.");
+  }
+
+  await logActivity({
+    profile,
+    action: "update",
+    entityType: "route",
+    entityId: routeId,
+    entityLabel: `Route ${route.route_date}`,
+    beforeData,
+    afterData: {
+      route: updatedRoute,
+      pickup_batch: updatedPickupBatch,
+      rpc_result: Array.isArray(rpcRows) ? rpcRows[0] ?? null : rpcRows ?? null,
+    },
+    metadata: {
+      reason,
+      pickup_batch_id: pickupBatchId,
+      compensating_movement_count: Array.isArray(rpcRows) ? Number(rpcRows[0]?.compensating_movement_count ?? 0) : Number((rpcRows as any)?.compensating_movement_count ?? 0),
+      restored_quantity: Array.isArray(rpcRows) ? Number(rpcRows[0]?.restored_quantity ?? 0) : Number((rpcRows as any)?.restored_quantity ?? 0),
+      already_returned: Array.isArray(rpcRows) ? Boolean(rpcRows[0]?.already_returned) : Boolean((rpcRows as any)?.already_returned),
+    },
+    summary: Array.isArray(rpcRows) && rpcRows[0]?.already_returned
+      ? `Pickup batch for ${route.route_date} was already returned to Assigned`
+      : `Returned pickup batch for ${route.route_date} to Assigned`,
+  });
+
+  revalidateRoutePaths(routeId);
+  redirect(`${path}?success=${encodeURIComponent(Array.isArray(rpcRows) && rpcRows[0]?.already_returned ? "Pickup batch was already returned to Assigned." : "Pickup batch returned to Assigned.")}`);
 }
 
 export async function assignRoute(formData: FormData) {

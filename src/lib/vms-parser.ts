@@ -721,6 +721,18 @@ export function resolveVmsReportType({
   return requestedConcrete ?? detectedReportType ?? previewConcrete ?? "custom";
 }
 
+export function shouldIgnoreStaleCustomVmsState({
+  requestedReportType,
+  previewReportType,
+  resolvedReportType,
+}: {
+  requestedReportType?: VmsReportType | null;
+  previewReportType?: VmsReportType | null;
+  resolvedReportType: VmsReportType;
+}) {
+  return resolvedReportType !== "custom" && (requestedReportType === "custom" || previewReportType === "custom");
+}
+
 export function requiredMissing(mapping: Record<string, string>, reportType: VmsReportType) {
   const fields = vmsExpectedFields[reportType];
   const missing = fields.filter((field) => field.required && !mapping[field.field]).map((field) => field.label);
