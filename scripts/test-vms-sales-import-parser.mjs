@@ -42,6 +42,29 @@ const salesRows = [
   ["6591", "Snacky", "2510001719", "HT Mall", "P001", "Water 500ml", "2.50", "10", "25.00", "1", "2.50", "11", "27.50", "1.20", "12.00", "13.00"],
 ];
 
+const monthlyProfitMergedTitleRows = [
+  ["Statistical statement of commodity profit(2026-04-01/2026-04-30)"],
+  [
+    "Merchant ID",
+    "Merchant Name",
+    "Machine code",
+    "Machine name",
+    "Product Number",
+    "product name",
+    "Commodity price",
+    "Number of transaction",
+    "Transaction amount",
+    "The refund count",
+    "Refund amount",
+    "Total Transaction Quantity",
+    "Total Transaction Amount",
+    "Cost Price",
+    "Cost Amount",
+    "Profits",
+  ],
+  ["6591", "Snacky", "2510001719", "HT Mall", "P001", "Water 500ml", "2.50", "10", "25.00", "1", "2.50", "11", "27.50", "1.20", "12.00", "13.00"],
+];
+
 const orderDetailsRows = [
   ["Order Details2026-05-27"],
   [
@@ -136,6 +159,45 @@ test("VMS sales header detection skips the title row and maps transaction column
   assert.equal(mappedRows[0].cost_price, "1.20");
   assert.equal(mappedRows[0].cost_amount, "12.00");
   assert.equal(mappedRows[0].profit_amount, "13.00");
+});
+
+test("VMS monthly profit report with merged title row detects row 2 headers and new aliases", () => {
+  assert.equal(detectVmsReportTypeFromRows(monthlyProfitMergedTitleRows), "monthly_product_profit");
+
+  const headerRow = detectHeaderRowIndex(monthlyProfitMergedTitleRows, "monthly_product_profit");
+  const sheet = sheetRowsToRecords(monthlyProfitMergedTitleRows, { reportType: "monthly_product_profit", headerRowIndex: headerRow });
+  const mapping = detectColumnMapping(sheet.headers, "monthly_product_profit", sheet.columnSamples);
+  const mappedRows = applyColumnMapping(sheet.records, mapping);
+
+  assert.equal(headerRow, 1);
+  assert.equal(sheet.headers.length, 16);
+  assert.deepEqual(sheet.headers, [
+    "Merchant ID",
+    "Merchant Name",
+    "Machine code",
+    "Machine name",
+    "Product Number",
+    "product name",
+    "Commodity price",
+    "Number of transaction",
+    "Transaction amount",
+    "The refund count",
+    "Refund amount",
+    "Total Transaction Quantity",
+    "Total Transaction Amount",
+    "Cost Price",
+    "Cost Amount",
+    "Profits",
+  ]);
+  assert.equal(mapping.refund_count, "The refund count");
+  assert.equal(mapping.total_transaction_count, "Total Transaction Quantity");
+  assert.equal(mapping.total_transaction_amount, "Total Transaction Amount");
+  assert.deepEqual(requiredMissing(mapping, "monthly_product_profit"), []);
+  assert.equal(mappedRows.length, 1);
+  assert.equal(mappedRows[0].merchant_id, "6591");
+  assert.equal(mappedRows[0].refund_count, "1");
+  assert.equal(mappedRows[0].total_transaction_count, "11");
+  assert.equal(mappedRows[0].total_transaction_amount, "27.50");
 });
 
 test("VMS sales source row key is stable for duplicate imports", () => {

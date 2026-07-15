@@ -112,9 +112,9 @@ export const vmsExpectedFields: Record<VmsReportType, VmsFieldDef[]> = {
     { field: "commodity_price", label: "Commodity price", aliases: ["Commodity price", "Commodity Price", "commodity_price", "Commodity unit price", "Unit price", "Unit Price"] },
     { field: "transaction_count", label: "Number of transaction", aliases: ["Number of transaction", "Number of transactions", "Transaction Count", "transaction_count", "number_of_transaction", "number_of_transactions"] },
     { field: "transaction_amount", label: "Transaction amount", aliases: ["Transaction amount", "Transaction Amount", "transaction_amount", "Amount", "Sales Amount", "Revenue"] },
-    { field: "refund_count", label: "Refund count", aliases: ["Refund count", "Refund Count", "refund_count"] },
+    { field: "refund_count", label: "Refund count", aliases: ["Refund count", "Refund Count", "The refund count", "refund_count"] },
     { field: "refund_amount", label: "Refund amount", aliases: ["Refund amount", "Refund Amount", "refund_amount"] },
-    { field: "total_transaction_count", label: "Total Transaction", aliases: ["Total Transaction", "Total transactions", "total_transaction_count"] },
+    { field: "total_transaction_count", label: "Total Transaction", aliases: ["Total Transaction", "Total Transaction Quantity", "Total transactions", "total_transaction_count"] },
     { field: "total_transaction_amount", label: "Total Transaction amount", aliases: ["Total Transaction amount", "Total Transaction Amount", "total_transaction_amount"] },
     { field: "cost_price", label: "Cost Price", aliases: ["Cost Price", "cost_price", "Cost price"] },
     { field: "cost_amount", label: "Cost Amount", aliases: ["Cost Amount", "cost_amount", "Cost amount"] },
@@ -303,11 +303,11 @@ function extraAliasesForField(field: string) {
     selling_price: ["Commodity price", "Commodity Price", "Commodity unit price", "commodity_price"],
     merchant_id: ["Merchant ID", "merchant_id"],
     merchant_name: ["Merchant Name", "merchant_name"],
-    transaction_count: ["Number of transaction", "Number of transactions", "Transaction Count", "transaction_count", "number_of_transaction", "total_transaction_count"],
+    transaction_count: ["Number of transaction", "Number of transactions", "Transaction Count", "transaction_count", "number_of_transaction"],
     transaction_amount: ["Transaction amount", "Transaction Amount", "transaction_amount", "Sales Amount", "Revenue"],
-    refund_count: ["Refund count", "Refund Count", "refund_count"],
+    refund_count: ["Refund count", "Refund Count", "The refund count", "refund_count"],
     refund_amount: ["Refund amount", "Refund Amount", "refund_amount"],
-    total_transaction_count: ["Total Transaction", "Total transactions", "total_transaction_count"],
+    total_transaction_count: ["Total Transaction", "Total Transaction Quantity", "Total transactions", "total_transaction_count"],
     total_transaction_amount: ["Total Transaction amount", "Total Transaction Amount", "total_transaction_amount"],
     cost_price: ["Cost Price", "cost_price"],
     cost_amount: ["Cost Amount", "cost_amount"],
@@ -447,17 +447,54 @@ function headerRowScore(row: string[], reportType?: VmsReportType) {
   return score + textCells * 2 - numericCells * 1.5;
 }
 
+function headerRowStats(row: string[], reportType?: VmsReportType) {
+  const fields = reportType ? vmsExpectedFields[reportType] : Object.values(vmsExpectedFields).flat();
+  const bestScores = new Map<string, number>();
+  let textCells = 0;
+  let numericCells = 0;
+
+  row.forEach((cell) => {
+    const value = cell.trim();
+    if (!value) return;
+    if (looksNumeric(value) || looksDate(value)) numericCells += 1;
+    else textCells += 1;
+
+    for (const field of fields) {
+      const score = scoreHeaderForField(value, field);
+      if (score > (bestScores.get(field.field) ?? 0)) {
+        bestScores.set(field.field, score);
+      }
+    }
+  });
+
+  const scores = [...bestScores.values()];
+  const strongMatches = scores.filter((score) => score >= 62).length;
+  const exactMatches = scores.filter((score) => score >= 90).length;
+  const totalScore = scores.reduce((sum, score) => sum + score, 0) + textCells * 2 - numericCells * 1.5;
+
+  return { totalScore, strongMatches, exactMatches, textCells, numericCells };
+}
+
 export function detectHeaderRowIndex(rows: unknown[][], reportType?: VmsReportType) {
   const nonEmptyRows = cleanRows(rows);
   if (!nonEmptyRows.length) return 0;
 
   let bestIndex = 0;
   let bestScore = Number.NEGATIVE_INFINITY;
+  let bestStats = { exactMatches: -1, strongMatches: -1, totalScore: Number.NEGATIVE_INFINITY, textCells: -1, numericCells: Number.POSITIVE_INFINITY };
   nonEmptyRows.slice(0, 25).forEach((row, index) => {
     const score = headerRowScore(row, reportType);
-    if (score > bestScore) {
+    const stats = headerRowStats(row, reportType);
+    const better =
+      stats.exactMatches > bestStats.exactMatches ||
+      (stats.exactMatches === bestStats.exactMatches && stats.strongMatches > bestStats.strongMatches) ||
+      (stats.exactMatches === bestStats.exactMatches && stats.strongMatches === bestStats.strongMatches && stats.totalScore > bestStats.totalScore) ||
+      (stats.exactMatches === bestStats.exactMatches && stats.strongMatches === bestStats.strongMatches && stats.totalScore === bestStats.totalScore && stats.textCells > bestStats.textCells) ||
+      (stats.exactMatches === bestStats.exactMatches && stats.strongMatches === bestStats.strongMatches && stats.totalScore === bestStats.totalScore && stats.textCells === bestStats.textCells && stats.numericCells < bestStats.numericCells);
+    if (better || (bestScore === Number.NEGATIVE_INFINITY && index === 0)) {
       bestIndex = index;
       bestScore = score;
+      bestStats = stats;
     }
   });
 
@@ -513,12 +550,25 @@ export function detectVmsReportTypeFromHeaders(headers: string[]): VmsReportType
     has(["Commodity price", "Commodity Price", "commodity_price"]),
     has(["Number of transaction", "Number of transactions", "transaction_count", "number_of_transaction"]),
     has(["Transaction amount", "Transaction Amount", "transaction_amount"]),
+    has(["Refund count", "Refund Count", "The refund count", "refund_count"]),
+    has(["Total Transaction", "Total Transaction Quantity", "Total transactions", "total_transaction_count"]),
     has(["Cost Price", "cost_price"]),
     has(["Cost Amount", "cost_amount"]),
     has(["Profits", "Profit", "profit_amount"]),
   ].filter(Boolean).length;
 
   if (monthlyProfitSignals >= 7) return "monthly_product_profit";
+
+  const detailedSignals = [
+    has(["Order number", "Order Number", "order_number"]),
+    has(["Cargo Lane Number", "cargo_lane_number"]),
+    has(["Shipping status", "Shipping Status", "shipping_status"]),
+    has(["Payment amount", "Payment Amount", "payment_amount"]),
+    has(["Time of payment", "Payment time", "time_of_payment", "payment_time"]),
+    has(["Num", "num"]),
+  ].filter(Boolean).length;
+
+  if (detailedSignals >= 4) return "vms_order_details_weekly";
 
   const monthlyTransactionSignals = [
     has(["Merchant ID", "merchant_id"]),
@@ -548,17 +598,6 @@ export function detectVmsReportTypeFromHeaders(headers: string[]): VmsReportType
   ].filter(Boolean).length;
 
   if (stockSnapshotSignals >= 5) return "machine_stock_snapshot";
-
-  const detailedSignals = [
-    has(["Order number", "Order Number", "order_number"]),
-    has(["Cargo Lane Number", "cargo_lane_number"]),
-    has(["Shipping status", "Shipping Status", "shipping_status"]),
-    has(["Payment amount", "Payment Amount", "payment_amount"]),
-    has(["Time of payment", "Payment time", "time_of_payment", "payment_time"]),
-    has(["Num", "num"]),
-  ].filter(Boolean).length;
-
-  if (detailedSignals >= 4) return "vms_order_details_weekly";
 
   const summarySignals = [
     has(["Machine ID", "Machine Code", "Machine", "machine_identifier", "machine_code"]),

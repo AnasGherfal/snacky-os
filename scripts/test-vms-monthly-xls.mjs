@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { createClient } from "@supabase/supabase-js";
 import { encodeReply, createTemporaryReferenceSet } from "../node_modules/next/dist/compiled/react-server-dom-webpack/client.node.js";
 import {
   detectColumnMappingDetails,
@@ -135,7 +134,8 @@ async function loginViaApp(email, password) {
     formData,
     routeTree: routeTreeForLogin(),
   });
-  assert.equal(result.status, 303, `Login should redirect. Body: ${result.text.slice(0, 500)}`);`r`n  console.log(JSON.stringify({ loginSetCookie: result.setCookie ?? null, loginSetCookies: result.setCookies ?? [] }, null, 2));
+  assert.equal(result.status, 303, `Login should redirect. Body: ${result.text.slice(0, 500)}`);
+  console.log(JSON.stringify({ loginSetCookie: result.setCookie ?? null, loginSetCookies: result.setCookies ?? [] }, null, 2));
   const cookieHeader = (result.setCookies && result.setCookies.length ? result.setCookies.join("\n") : result.setCookie) ?? "";
   const cookie = parseSetCookieHeader(cookieHeader);
   assert.ok(cookie.includes("snacky-auth-access-token="), "Login did not set Snacky auth access token cookie");
