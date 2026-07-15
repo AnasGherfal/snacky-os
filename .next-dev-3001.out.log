@@ -117227,3 +117227,933 @@ Caused by:
   section_name: 'summary_kpi'
 }
  GET /sales 200 in 1473ms (next.js: 219ms, proxy.ts: 9ms, application-code: 1245ms)
+○ Compiling /api/notifications ...
+ GET /api/auth/session 200 in 3.8s (next.js: 3.7s, proxy.ts: 10ms, application-code: 89ms)
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '',
+  date_to: '',
+  elapsed_ms: 91,
+  filter_mode: 'default',
+  returned_row_count: 5,
+  rpc_function_name: null,
+  section_name: 'vms_batch_sources'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '',
+  date_to: '',
+  elapsed_ms: 92,
+  filter_mode: 'default',
+  returned_row_count: 0,
+  rpc_function_name: 'sales_dashboard_batch_reconciliation',
+  section_name: 'batch_reconciliation_all'
+}
+ GET /api/notifications?limit=6 200 in 4.8s (next.js: 3.7s, proxy.ts: 10ms, application-code: 1093ms)
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 42,
+  filter_mode: 'default',
+  returned_row_count: 1,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_month'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 48,
+  filter_mode: 'default',
+  returned_row_count: 6,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_machine'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 54,
+  filter_mode: 'default',
+  returned_row_count: 3,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_location'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 60,
+  filter_mode: 'default',
+  returned_row_count: 69,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_product'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 67,
+  filter_mode: 'default',
+  returned_row_count: 5,
+  rpc_function_name: 'sales_dashboard_monthly_batch_reconciliation',
+  section_name: 'batch_reconciliation_filtered'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 76,
+  filter_mode: 'default',
+  returned_row_count: 69,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_product'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 84,
+  filter_mode: 'default',
+  returned_row_count: 6,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_machine'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 92,
+  filter_mode: 'default',
+  returned_row_count: 3,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_location'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 95,
+  filter_mode: 'default',
+  returned_row_count: 2,
+  rpc_function_name: 'sales_dashboard_monthly_coverage_truth',
+  section_name: 'monthly_coverage'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 97,
+  filter_mode: 'default',
+  returned_row_count: 1,
+  rpc_function_name: 'sales_dashboard_monthly_summary',
+  section_name: 'summary_kpi'
+}
+ GET /sales 200 in 2.3s (next.js: 177ms, proxy.ts: 10ms, application-code: 2.1s)
+ GET /api/auth/session 200 in 466ms (next.js: 25ms, proxy.ts: 56ms, application-code: 385ms)
+ GET /api/auth/session 200 in 589ms (next.js: 11ms, proxy.ts: 56ms, application-code: 523ms)
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '',
+  date_to: '',
+  elapsed_ms: 198,
+  filter_mode: 'default',
+  returned_row_count: 5,
+  rpc_function_name: null,
+  section_name: 'vms_batch_sources'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '',
+  date_to: '',
+  elapsed_ms: 208,
+  filter_mode: 'default',
+  returned_row_count: 0,
+  rpc_function_name: 'sales_dashboard_batch_reconciliation',
+  section_name: 'batch_reconciliation_all'
+}
+ GET /sales 200 in 701ms (next.js: 4ms, proxy.ts: 5ms, application-code: 691ms)
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '',
+  date_to: '',
+  elapsed_ms: 162,
+  filter_mode: 'default',
+  returned_row_count: 5,
+  rpc_function_name: null,
+  section_name: 'vms_batch_sources'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '',
+  date_to: '',
+  elapsed_ms: 201,
+  filter_mode: 'default',
+  returned_row_count: 0,
+  rpc_function_name: 'sales_dashboard_batch_reconciliation',
+  section_name: 'batch_reconciliation_all'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 272,
+  filter_mode: 'default',
+  returned_row_count: 6,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_machine'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 287,
+  filter_mode: 'default',
+  returned_row_count: 3,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_location'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 301,
+  filter_mode: 'default',
+  returned_row_count: 5,
+  rpc_function_name: 'sales_dashboard_monthly_batch_reconciliation',
+  section_name: 'batch_reconciliation_filtered'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 316,
+  filter_mode: 'default',
+  returned_row_count: 1,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_month'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 331,
+  filter_mode: 'default',
+  returned_row_count: 69,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_product'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 381,
+  filter_mode: 'default',
+  returned_row_count: 6,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_machine'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 397,
+  filter_mode: 'default',
+  returned_row_count: 3,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_location'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 412,
+  filter_mode: 'default',
+  returned_row_count: 2,
+  rpc_function_name: 'sales_dashboard_monthly_coverage_truth',
+  section_name: 'monthly_coverage'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 429,
+  filter_mode: 'default',
+  returned_row_count: 69,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_product'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 435,
+  filter_mode: 'default',
+  returned_row_count: 1,
+  rpc_function_name: 'sales_dashboard_monthly_summary',
+  section_name: 'summary_kpi'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 474,
+  filter_mode: 'default',
+  returned_row_count: 1,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_month'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 480,
+  filter_mode: 'default',
+  returned_row_count: 6,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_machine'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 498,
+  filter_mode: 'default',
+  returned_row_count: 3,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_location'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 514,
+  filter_mode: 'default',
+  returned_row_count: 69,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_product'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 528,
+  filter_mode: 'default',
+  returned_row_count: 69,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_product'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 545,
+  filter_mode: 'default',
+  returned_row_count: 5,
+  rpc_function_name: 'sales_dashboard_monthly_batch_reconciliation',
+  section_name: 'batch_reconciliation_filtered'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 554,
+  filter_mode: 'default',
+  returned_row_count: 2,
+  rpc_function_name: 'sales_dashboard_monthly_coverage_truth',
+  section_name: 'monthly_coverage'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 565,
+  filter_mode: 'default',
+  returned_row_count: 6,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_machine'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 581,
+  filter_mode: 'default',
+  returned_row_count: 3,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_location'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 603,
+  filter_mode: 'default',
+  returned_row_count: 1,
+  rpc_function_name: 'sales_dashboard_monthly_summary',
+  section_name: 'summary_kpi'
+}
+ GET /api/auth/session 200 in 383ms (next.js: 21ms, proxy.ts: 343ms, application-code: 20ms)
+ GET /sales 200 in 6.1s (next.js: 5ms, proxy.ts: 13ms, application-code: 6.1s)
+ GET /api/notifications?limit=6 200 in 533ms (next.js: 7ms, proxy.ts: 342ms, application-code: 183ms)
+ GET /api/auth/session 200 in 18ms (next.js: 2ms, proxy.ts: 7ms, application-code: 9ms)
+ GET /api/notifications?limit=6 200 in 144ms (next.js: 1831µs, proxy.ts: 5ms, application-code: 137ms)
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '',
+  date_to: '',
+  elapsed_ms: 122,
+  filter_mode: 'default',
+  returned_row_count: 5,
+  rpc_function_name: null,
+  section_name: 'vms_batch_sources'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '',
+  date_to: '',
+  elapsed_ms: 130,
+  filter_mode: 'default',
+  returned_row_count: 0,
+  rpc_function_name: 'sales_dashboard_batch_reconciliation',
+  section_name: 'batch_reconciliation_all'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 214,
+  filter_mode: 'default',
+  returned_row_count: 6,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_machine'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 242,
+  filter_mode: 'default',
+  returned_row_count: 3,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_location'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 252,
+  filter_mode: 'default',
+  returned_row_count: 5,
+  rpc_function_name: 'sales_dashboard_monthly_batch_reconciliation',
+  section_name: 'batch_reconciliation_filtered'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 264,
+  filter_mode: 'default',
+  returned_row_count: 1,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_month'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 275,
+  filter_mode: 'default',
+  returned_row_count: 69,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_product'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 288,
+  filter_mode: 'default',
+  returned_row_count: 69,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_product'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 301,
+  filter_mode: 'default',
+  returned_row_count: 3,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_location'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 322,
+  filter_mode: 'default',
+  returned_row_count: 6,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_machine'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 334,
+  filter_mode: 'default',
+  returned_row_count: 2,
+  rpc_function_name: 'sales_dashboard_monthly_coverage_truth',
+  section_name: 'monthly_coverage'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 354,
+  filter_mode: 'default',
+  returned_row_count: 1,
+  rpc_function_name: 'sales_dashboard_monthly_summary',
+  section_name: 'summary_kpi'
+}
+ GET /api/auth/session 200 in 51ms (next.js: 19ms, proxy.ts: 17ms, application-code: 15ms)
+ GET /sales 200 in 2.4s (next.js: 5ms, proxy.ts: 9ms, application-code: 2.4s)
+ GET /api/notifications?limit=6 200 in 228ms (next.js: 7ms, proxy.ts: 17ms, application-code: 205ms)
+ GET /api/auth/session 200 in 20ms (next.js: 4ms, proxy.ts: 6ms, application-code: 10ms)
+ GET /api/auth/session 200 in 35ms (next.js: 5ms, proxy.ts: 9ms, application-code: 21ms)
+ GET /api/notifications?limit=6 200 in 175ms (next.js: 14ms, proxy.ts: 9ms, application-code: 153ms)
+ GET /api/auth/session 200 in 34ms (next.js: 5ms, proxy.ts: 8ms, application-code: 21ms)
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '',
+  date_to: '',
+  elapsed_ms: 131,
+  filter_mode: 'default',
+  returned_row_count: 5,
+  rpc_function_name: null,
+  section_name: 'vms_batch_sources'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '',
+  date_to: '',
+  elapsed_ms: 140,
+  filter_mode: 'default',
+  returned_row_count: 0,
+  rpc_function_name: 'sales_dashboard_batch_reconciliation',
+  section_name: 'batch_reconciliation_all'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 203,
+  filter_mode: 'default',
+  returned_row_count: 1,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_month'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 220,
+  filter_mode: 'default',
+  returned_row_count: 69,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_product'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 229,
+  filter_mode: 'default',
+  returned_row_count: 6,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_machine'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 238,
+  filter_mode: 'default',
+  returned_row_count: 3,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_location'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 247,
+  filter_mode: 'default',
+  returned_row_count: 69,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_product'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 255,
+  filter_mode: 'default',
+  returned_row_count: 5,
+  rpc_function_name: 'sales_dashboard_monthly_batch_reconciliation',
+  section_name: 'batch_reconciliation_filtered'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 262,
+  filter_mode: 'default',
+  returned_row_count: 2,
+  rpc_function_name: 'sales_dashboard_monthly_coverage_truth',
+  section_name: 'monthly_coverage'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 276,
+  filter_mode: 'default',
+  returned_row_count: 3,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_location'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 291,
+  filter_mode: 'default',
+  returned_row_count: 6,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_machine'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 309,
+  filter_mode: 'default',
+  returned_row_count: 1,
+  rpc_function_name: 'sales_dashboard_monthly_summary',
+  section_name: 'summary_kpi'
+}
+ GET /sales 200 in 1681ms (next.js: 3ms, proxy.ts: 7ms, application-code: 1671ms)
+ GET /api/auth/session 200 in 55ms (next.js: 22ms, proxy.ts: 18ms, application-code: 14ms)
+ GET /api/notifications?limit=6 200 in 158ms (next.js: 7ms, proxy.ts: 18ms, application-code: 134ms)
+ GET /api/auth/session 200 in 26ms (next.js: 3ms, proxy.ts: 8ms, application-code: 15ms)
+ GET /api/notifications?limit=6 200 in 149ms (next.js: 11ms, proxy.ts: 8ms, application-code: 129ms)
+ GET /api/auth/session 200 in 20ms (next.js: 4ms, proxy.ts: 8ms, application-code: 8ms)
+ GET /api/notifications?limit=6 200 in 287ms (next.js: 8ms, proxy.ts: 8ms, application-code: 270ms)
+ GET /api/auth/session 200 in 145ms (next.js: 6ms, proxy.ts: 18ms, application-code: 122ms)
+ GET /api/auth/session 200 in 232ms (next.js: 16ms, proxy.ts: 18ms, application-code: 198ms)
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '',
+  date_to: '',
+  elapsed_ms: 110,
+  filter_mode: 'default',
+  returned_row_count: 5,
+  rpc_function_name: null,
+  section_name: 'vms_batch_sources'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '',
+  date_to: '',
+  elapsed_ms: 114,
+  filter_mode: 'default',
+  returned_row_count: 0,
+  rpc_function_name: 'sales_dashboard_batch_reconciliation',
+  section_name: 'batch_reconciliation_all'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 86,
+  filter_mode: 'default',
+  returned_row_count: 69,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_product'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 99,
+  filter_mode: 'default',
+  returned_row_count: 6,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_machine'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 106,
+  filter_mode: 'default',
+  returned_row_count: 2,
+  rpc_function_name: 'sales_dashboard_monthly_coverage_truth',
+  section_name: 'monthly_coverage'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 111,
+  filter_mode: 'default',
+  returned_row_count: 69,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_product'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 114,
+  filter_mode: 'default',
+  returned_row_count: 6,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_machine'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 118,
+  filter_mode: 'default',
+  returned_row_count: 1,
+  rpc_function_name: 'sales_dashboard_monthly_summary',
+  section_name: 'summary_kpi'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 121,
+  filter_mode: 'default',
+  returned_row_count: 3,
+  rpc_function_name: 'sales_dashboard_monthly_profit_breakdown',
+  section_name: 'profit_location'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 126,
+  filter_mode: 'default',
+  returned_row_count: 1,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_month'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 128,
+  filter_mode: 'default',
+  returned_row_count: 3,
+  rpc_function_name: 'sales_dashboard_monthly_breakdown',
+  section_name: 'chart_location'
+}
+[sales] Section load completed {
+  current_user_id: '0bdefd83-ecad-4632-b0e7-e9f22a3ce065',
+  current_user_role: 'owner',
+  data_missing: false,
+  date_from: '2026-03-01',
+  date_to: '2026-03-31',
+  elapsed_ms: 131,
+  filter_mode: 'default',
+  returned_row_count: 5,
+  rpc_function_name: 'sales_dashboard_monthly_batch_reconciliation',
+  section_name: 'batch_reconciliation_filtered'
+}
+ GET /sales 200 in 783ms (next.js: 4ms, proxy.ts: 7ms, application-code: 773ms)
+ GET /api/auth/session 200 in 193ms (next.js: 33ms, proxy.ts: 109ms, application-code: 50ms)
+ GET /api/notifications?limit=6 200 in 541ms (next.js: 49ms, proxy.ts: 110ms, application-code: 382ms)
+[browser] ⨯ unhandledRejection: TypeError: Failed to fetch
+    at SessionGuard.useCallback[loadSession] (src\components\SessionGuard.tsx:76:28)
+    at SessionGuard.useEffect (src\components\SessionGuard.tsx:146:12)
+  74 |
+  75 |   const loadSession = useCallback(async ({ silent = false, allowError = false }: { silent?...
+> 76 |     const response = await fetch("/api/auth/session", { cache: "no-store" });
+     |                            ^
+  77 |     const payload = await response.json().catch(() => null);
+  78 |     const nextSession = sessionFromPayload(payload);
+  79 |
+[browser] ⨯ unhandledRejection: TypeError: Failed to fetch
+    at SessionGuard.useCallback[loadSession] (src\components\SessionGuard.tsx:76:28)
+    at SessionGuard.useEffect (src\components\SessionGuard.tsx:150:12)
+  74 |
+  75 |   const loadSession = useCallback(async ({ silent = false, allowError = false }: { silent?...
+> 76 |     const response = await fetch("/api/auth/session", { cache: "no-store" });
+     |                            ^
+  77 |     const payload = await response.json().catch(() => null);
+  78 |     const nextSession = sessionFromPayload(payload);
+  79 |
+[auth] Failed to refresh session Error [AuthApiError]: Invalid Refresh Token: Already Used
+    at ignore-listed frames {
+  __isAuthError: true,
+  status: 400,
+  code: 'refresh_token_already_used'
+}
+ GET /api/auth/session 401 in 201ms (next.js: 6ms, proxy.ts: 11ms, application-code: 184ms)
+[auth] Failed to refresh session Error [AuthApiError]: Invalid Refresh Token: Already Used
+    at ignore-listed frames {
+  __isAuthError: true,
+  status: 400,
+  code: 'refresh_token_already_used'
+}
+ GET /api/notifications?limit=6 401 in 278ms (next.js: 19ms, proxy.ts: 11ms, application-code: 248ms)
+ GET /login?next=%2Fsales 200 in 259ms (next.js: 78ms, proxy.ts: 4ms, application-code: 177ms)

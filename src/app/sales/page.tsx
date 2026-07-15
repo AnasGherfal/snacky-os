@@ -500,6 +500,67 @@ function normalizeSalesSummary(row?: SalesSummaryRow | null): SalesSummary {
   };
 }
 
+function summarizeSalesFallbackFromReconciliation(rows: SalesBatchReconciliation[]): SalesSummary {
+  const summary = rows.reduce(
+    (totals, row) => ({
+      revenueAmount: totals.revenueAmount + row.rangeSuccessfulSalesAmount,
+      successfulSalesCount: totals.successfulSalesCount + row.rangeSuccessfulRows,
+      successfulUnitsSold: totals.successfulUnitsSold + row.rangeUnitsSold,
+      failedVendCount: totals.failedVendCount + row.rangeFailedVendRows,
+      failedVendAmount: totals.failedVendAmount + row.rangeFailedVendAmount,
+      refundCount: totals.refundCount + row.rangeRefundedRows,
+      refundAmount: totals.refundAmount + row.rangeRefundedAmount,
+      totalAttemptCount: totals.totalAttemptCount + row.rangeTransactionCount,
+      failedPaymentCount: totals.failedPaymentCount + row.rangeFailedPaymentRows,
+      needsReviewCount: totals.needsReviewCount + row.rangeNeedsReviewRows,
+      rowsUsed: totals.rowsUsed + row.rangeRowCount,
+    }),
+    {
+      revenueAmount: 0,
+      successfulSalesCount: 0,
+      successfulUnitsSold: 0,
+      failedVendCount: 0,
+      failedVendAmount: 0,
+      refundCount: 0,
+      refundAmount: 0,
+      totalAttemptCount: 0,
+      failedPaymentCount: 0,
+      needsReviewCount: 0,
+      rowsUsed: 0,
+    },
+  );
+
+  return {
+    revenueAmount: summary.revenueAmount,
+    successfulSalesCount: summary.successfulSalesCount,
+    successfulUnitsSold: summary.successfulUnitsSold,
+    averageTransaction: summary.successfulSalesCount > 0 ? summary.revenueAmount / summary.successfulSalesCount : 0,
+    failedVendCount: summary.failedVendCount,
+    failedVendAmount: summary.failedVendAmount,
+    refundCount: summary.refundCount,
+    refundAmount: summary.refundAmount,
+    totalAttemptCount: summary.totalAttemptCount,
+    failedVendRate: summary.totalAttemptCount > 0 ? summary.failedVendCount / summary.totalAttemptCount : 0,
+    cashPaymentAmount: 0,
+    cardPaymentAmount: 0,
+    unknownPaymentAmount: 0,
+    paymentMethodAvailable: false,
+    rowsUsed: summary.rowsUsed,
+    failedPaymentCount: summary.failedPaymentCount,
+    needsReviewCount: summary.needsReviewCount,
+    cashPaymentCount: 0,
+    cardPaymentCount: 0,
+    unknownPaymentCount: 0,
+    cogsAmount: null,
+    grossProfitAmount: null,
+    grossMarginPercent: null,
+    missingCostSalesCount: 0,
+    missingCostRevenueAmount: 0,
+    estimatedCostSalesCount: 0,
+    estimatedCostRevenueAmount: 0,
+  };
+}
+
 function normalizeSalesProfitBreakdownRows(rows: SalesProfitBreakdownRow[]) {
   return rows.map((row) => ({
     bucketKey: String(row.bucket_key ?? ""),
@@ -1207,9 +1268,11 @@ async function SalesDashboardPageContent({
     ]);
   }
 
+  const filteredReconciliationRows = normalizeSalesBatchReconciliationRows(filteredReconciliationResult.data as TransactionStatusRow[]);
+  const summary = salesSummaryResult.error && filteredReconciliationRows.length
+    ? summarizeSalesFallbackFromReconciliation(filteredReconciliationRows)
+    : normalizeSalesSummary((salesSummaryResult.data as SalesSummaryRow[])[0]);
   const monthlyCoverageRows = normalizeSalesMonthlyCoverageRows(monthlyCoverageResult.data as SalesMonthlyCoverageRow[]);
-
-  const summary = normalizeSalesSummary((salesSummaryResult.data as SalesSummaryRow[])[0]);
   const dayBreakdownRows = normalizeSalesBreakdownRows(dayBreakdownResult.data as SalesDashboardBreakdownRow[]);
   const monthBreakdownRows = normalizeSalesBreakdownRows(monthBreakdownResult.data as SalesDashboardBreakdownRow[]);
   const machineBreakdownRows = normalizeSalesBreakdownRows(machineBreakdownResult.data as SalesDashboardBreakdownRow[]);
@@ -1221,7 +1284,6 @@ async function SalesDashboardPageContent({
     .sort((left, right) => right.grossProfitAmount - left.grossProfitAmount || right.revenueAmount - left.revenueAmount || left.bucketLabel.localeCompare(right.bucketLabel));
   const locationProfitRows = normalizeSalesProfitBreakdownRows(locationProfitResult.data as SalesProfitBreakdownRow[])
     .sort((left, right) => right.grossProfitAmount - left.grossProfitAmount || right.revenueAmount - left.revenueAmount || left.bucketLabel.localeCompare(right.bucketLabel));
-  const filteredReconciliationRows = normalizeSalesBatchReconciliationRows(filteredReconciliationResult.data as TransactionStatusRow[]);
   const filteredReconciliationByBatchId = salesBatchReconciliationById(filteredReconciliationRows);
   const fileContributions = buildSalesFileContributions({
     batches,
@@ -1262,11 +1324,10 @@ async function SalesDashboardPageContent({
   const finalizedCoverageLabel = coverageSummary.earliestBusinessDate && coverageSummary.latestBusinessDate
     ? `${coverageSummary.earliestBusinessDate} to ${coverageSummary.latestBusinessDate}`
     : "-";
-  const summaryLoadFailed = Boolean(salesSummaryResult.error);
+  const summaryLoadFailed = Boolean(salesSummaryResult.error && filteredReconciliationRows.length === 0);
   const sourceLoadFailed = Boolean(
     batchResult.error
       || fullReconciliationResult.error
-      || salesSummaryResult.error
       || dayBreakdownResult.error
       || monthBreakdownResult.error
       || machineBreakdownResult.error
@@ -1441,12 +1502,6 @@ async function SalesDashboardPageContent({
             </details>
           </div>
         </section>
-
-        {summaryLoadFailed ? (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900">
-            Sales summary could not load. Please contact admin if this keeps happening.
-          </div>
-        ) : null}
 
         {hasProfitWarning ? (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
