@@ -70,6 +70,27 @@ interface RouteTotal {
   confirmedQty: number;
   availableStorageQty: number;
 }
+interface PreparedPickupSummaryRow {
+  productId: string;
+  productName: string | null;
+  quantity: number;
+}
+interface PreparedPickupBatch {
+  id: string;
+  routeId: string;
+  operatorId: string | null;
+  status: string;
+  selectedStopIds: string[];
+  productSummary: PreparedPickupSummaryRow[];
+  storageDeducted: boolean;
+  preparedAt: string | null;
+  preparedBy: string | null;
+  confirmedAt: string | null;
+  returnedToAssignedAt: string | null;
+  returnedToAssignedReason: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
 type PickListDraft = {
   selectedStopIds: string[];
   stopItems: { routeStopItemId: string; confirmedQty: number; reason: string; notes: string }[];
@@ -124,6 +145,22 @@ type PickListApiProductOption = {
   brand?: unknown;
   imageUrl?: unknown;
   availableStorageQty?: unknown;
+};
+type PickListApiPreparedBatch = {
+  id?: unknown;
+  routeId?: unknown;
+  operatorId?: unknown;
+  status?: unknown;
+  selectedStopIds?: unknown;
+  productSummary?: unknown;
+  storageDeducted?: unknown;
+  preparedAt?: unknown;
+  preparedBy?: unknown;
+  confirmedAt?: unknown;
+  returnedToAssignedAt?: unknown;
+  returnedToAssignedReason?: unknown;
+  createdAt?: unknown;
+  updatedAt?: unknown;
 };
 
 type RefreshPreviewState = {
@@ -257,6 +294,9 @@ export default function PickListPage() {
   const [error, setError] = useState("");
   const [checklistSyncError, setChecklistSyncError] = useState("");
   const [notice, setNotice] = useState("");
+  const [preparedBatch, setPreparedBatch] = useState<PreparedPickupBatch | null>(null);
+  const [loadCheckedProductIds, setLoadCheckedProductIds] = useState<Set<string>>(new Set());
+  const [vehicleClearChecked, setVehicleClearChecked] = useState(false);
   const [refreshPreview, setRefreshPreview] = useState<RefreshPreviewState>({ loading: false, applying: false, comparisons: [], message: "", error: "" });
   const [expandedChecklistFamilyKeys, setExpandedChecklistFamilyKeys] = useState<Record<string, boolean>>({});
   const errorRef = useRef<HTMLDivElement | null>(null);
@@ -325,6 +365,17 @@ export default function PickListPage() {
   const selectedLocationCount = selectedStopGroupsByLocation.length;
   const checklistProgress = progressPercent(checkedItemCount, allStopItems.length);
   const selectedStopProgress = progressPercent(selectedStopIds.length, stopGroups.length);
+  const activePreparedBatch = preparedBatch && !preparedBatch.confirmedAt && !preparedBatch.returnedToAssignedAt ? preparedBatch : null;
+  const checklistFrozen = Boolean(activePreparedBatch);
+  const preparedLoadRows = (activePreparedBatch?.productSummary?.length ? activePreparedBatch.productSummary : routeTotals.map((item) => ({
+    productId: item.productId,
+    productName: item.productName,
+    quantity: item.confirmedQty,
+  }))).filter((item) => item.quantity > 0);
+  const allDetailedItemsChecked = allStopItems.length > 0 && allStopItems.every((item) => item.isChecked);
+  const allLoadRowsChecked = preparedLoadRows.length > 0 && preparedLoadRows.every((item) => loadCheckedProductIds.has(item.productId));
+  const canPreparePickup = !activePreparedBatch && allDetailedItemsChecked && selectedStopIds.length > 0 && !submitting;
+  const canConfirmPickup = Boolean(activePreparedBatch) && allLoadRowsChecked && vehicleClearChecked && !submitting;
 
   const pickDraft = useMemo<PickListDraft>(() => ({
     selectedStopIds,
@@ -337,14 +388,15 @@ export default function PickListPage() {
     extras,
   }), [allStopItems, extras, selectedStopIds]);
   const shouldSavePickDraft = useCallback((draft: PickListDraft) => {
-    if (!routeId || locked || !initialPickDraftRef.current) return false;
+    if (!routeId || locked || checklistFrozen || !initialPickDraftRef.current) return false;
     return comparablePickDraft(draft) !== initialPickDraftRef.current;
-  }, [locked, routeId]);
+  }, [checklistFrozen, locked, routeId]);
   const localDraft = useLocalDraft<PickListDraft>({
     key: draftKey,
     value: pickDraft,
     shouldSave: shouldSavePickDraft,
     onRestore: (draft) => {
+      if (checklistFrozen) return;
       const availableStopIds = new Set(stopGroups.map((group) => group.routeStopId).filter(Boolean) as string[]);
       setSelectedStopIds((draft.selectedStopIds ?? []).filter((stopId) => availableStopIds.has(stopId)));
       const draftByStopItem = new Map((draft.stopItems ?? []).map((item) => [item.routeStopItemId, item]));
@@ -449,6 +501,35 @@ export default function PickListPage() {
         availableStorageQty: Number(product.availableStorageQty ?? 0),
       })).filter((product: ProductOption) => product.id));
       setExtras(nextExtras);
+      const responsePreparedBatch = data.preparedBatch as PickListApiPreparedBatch | undefined;
+      const parsedPreparedBatch = responsePreparedBatch && responsePreparedBatch.id && Array.isArray(responsePreparedBatch.productSummary)
+        ? {
+            id: String(responsePreparedBatch.id ?? ""),
+            routeId: String(responsePreparedBatch.routeId ?? routeId),
+            operatorId: responsePreparedBatch.operatorId ? String(responsePreparedBatch.operatorId) : null,
+            status: String(responsePreparedBatch.status ?? "draft"),
+            selectedStopIds: Array.isArray(responsePreparedBatch.selectedStopIds) ? responsePreparedBatch.selectedStopIds.map((stopId) => String(stopId ?? "")).filter(Boolean) : [],
+            productSummary: responsePreparedBatch.productSummary.map((row: any) => ({
+              productId: String(row?.productId ?? row?.product_id ?? ""),
+              productName: row?.productName ?? row?.product_name ?? null,
+              quantity: Number(row?.quantity ?? 0),
+            })).filter((row: PreparedPickupSummaryRow) => row.productId && row.quantity > 0),
+            storageDeducted: Boolean(responsePreparedBatch.storageDeducted),
+            preparedAt: responsePreparedBatch.preparedAt ? String(responsePreparedBatch.preparedAt) : null,
+            preparedBy: responsePreparedBatch.preparedBy ? String(responsePreparedBatch.preparedBy) : null,
+            confirmedAt: responsePreparedBatch.confirmedAt ? String(responsePreparedBatch.confirmedAt) : null,
+            returnedToAssignedAt: responsePreparedBatch.returnedToAssignedAt ? String(responsePreparedBatch.returnedToAssignedAt) : null,
+            returnedToAssignedReason: responsePreparedBatch.returnedToAssignedReason ? String(responsePreparedBatch.returnedToAssignedReason) : null,
+            createdAt: responsePreparedBatch.createdAt ? String(responsePreparedBatch.createdAt) : null,
+            updatedAt: responsePreparedBatch.updatedAt ? String(responsePreparedBatch.updatedAt) : null,
+          }
+        : null;
+      setPreparedBatch(parsedPreparedBatch);
+      setLoadCheckedProductIds(new Set());
+      setVehicleClearChecked(false);
+      if (parsedPreparedBatch?.id) {
+        pickupSubmissionIdRef.current = parsedPreparedBatch.id;
+      }
       initialPickDraftRef.current = comparablePickDraft({
         selectedStopIds: nextStopIds,
         stopItems: nextStopGroups.flatMap((group: PickStopGroup) => group.items.map((item) => ({
@@ -485,6 +566,7 @@ export default function PickListPage() {
   };
 
   const updateStopItem = (routeStopItemId: string, patch: Partial<PickStopItem>) => {
+    if (checklistFrozen) return;
     setStopGroups((prev) => prev.map((group) => ({
       ...group,
       items: group.items.map((item) => (item.routeStopItemId === routeStopItemId ? { ...item, ...patch } : item)),
@@ -499,7 +581,7 @@ export default function PickListPage() {
   };
 
   const togglePickupItemChecked = async (item: PickStopItem) => {
-    if (locked || submitting) return;
+    if (locked || submitting || checklistFrozen) return;
 
     const nextChecked = !item.isChecked;
     setChecklistSyncError("");
@@ -563,15 +645,18 @@ export default function PickListPage() {
   };
 
   const addExtraProduct = () => {
+    if (checklistFrozen) return;
     setExtras((prev) => [...prev, newExtraRow()]);
     setError("");
   };
 
   const toggleStopSelection = (stopId: string) => {
+    if (checklistFrozen) return;
     setSelectedStopIds((current) => current.includes(stopId) ? current.filter((id) => id !== stopId) : [...current, stopId]);
   };
 
   const toggleLocationSelection = (stopIds: string[], shouldSelect: boolean) => {
+    if (checklistFrozen) return;
     setSelectedStopIds((current) => {
       if (shouldSelect) {
         const next = new Set(current);
@@ -622,7 +707,7 @@ export default function PickListPage() {
     await loadPickList({ keepSelection: true });
   };
 
-  const handleConfirmPick = async () => {
+  const handlePreparePickup = async () => {
     if (locked) {
       router.push(routeHref);
       return;
@@ -639,8 +724,8 @@ export default function PickListPage() {
       return;
     }
 
-    const uncheckedCount = allStopItems.filter((item) => !item.isChecked).length;
-    if (uncheckedCount > 0 && !window.confirm(`You still have ${uncheckedCount} unchecked product${uncheckedCount === 1 ? "" : "s"}. Continue anyway?`)) {
+    if (!allDetailedItemsChecked) {
+      setError("Check every required product line before pressing Items prepared.");
       return;
     }
 
@@ -674,13 +759,109 @@ export default function PickListPage() {
               notes: item.notes,
             };
           }),
-        { stopIds: selectedStopIds, clientSubmissionId: pickupSubmissionIdRef.current },
+        { stopIds: selectedStopIds, clientSubmissionId: pickupSubmissionIdRef.current, stage: "prepare" },
+      );
+      if (!result.success) {
+        throw new Error(result.error || "Could not save the prepared pickup snapshot.");
+      }
+
+      const preparedSummary = Array.isArray(result.productSummary)
+        ? result.productSummary.map((row: any) => ({
+            productId: String(row?.productId ?? row?.product_id ?? ""),
+            productName: row?.productName ?? row?.product_name ?? null,
+            quantity: Number(row?.quantity ?? 0),
+          })).filter((row: PreparedPickupSummaryRow) => row.productId && row.quantity > 0)
+        : preparedLoadRows.map((item) => ({
+            productId: item.productId,
+            productName: item.productName,
+            quantity: item.quantity,
+          }));
+      const nextPreparedBatch: PreparedPickupBatch = {
+        id: String(result.pickupBatchId ?? pickupSubmissionIdRef.current),
+        routeId,
+        operatorId: null,
+        status: "draft",
+        selectedStopIds: [...selectedStopIds],
+        productSummary: preparedSummary,
+        storageDeducted: false,
+        preparedAt: new Date().toISOString(),
+        preparedBy: null,
+        confirmedAt: null,
+        returnedToAssignedAt: null,
+        returnedToAssignedReason: null,
+        createdAt: null,
+        updatedAt: null,
+      };
+      setPreparedBatch(nextPreparedBatch);
+      setLoadCheckedProductIds(new Set());
+      setVehicleClearChecked(false);
+      pickupSubmissionIdRef.current = nextPreparedBatch.id;
+      setNotice("Items prepared. Load checklist is ready.");
+      localDraft.clearDraft();
+      await loadPickList({ keepSelection: true });
+    } catch (err) {
+      setError(err instanceof Error && err.message.trim() ? err.message : "Could not prepare this pickup. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleConfirmPick = async () => {
+    if (locked) {
+      router.push(routeHref);
+      return;
+    }
+
+    if (!activePreparedBatch) {
+      setError("Press Items prepared before confirming pickup.");
+      return;
+    }
+
+    if (!allLoadRowsChecked || !vehicleClearChecked) {
+      setError("Check every loaded product and the final storage confirmation before confirming pickup.");
+      return;
+    }
+
+    setSubmitting(true);
+    setError("");
+    try {
+      const items = allStopItems.map((item) => ({
+        routeStopItemId: item.routeStopItemId,
+        routeStopId: item.routeStopId,
+        machineId: item.machineId,
+        productId: item.productId,
+        quantity: item.confirmedQty,
+        plannedQty: item.requestedQty,
+        reason: item.reason,
+        notes: item.notes,
+        isChecked: item.isChecked,
+      }));
+      const result = await confirmPickList(
+        routeId,
+        items,
+        extras
+          .filter((item) => item.productId && item.quantity > 0)
+          .map((item) => {
+            const stop = submittedRouteStopId(item.targetStopId) ? stopById.get(submittedRouteStopId(item.targetStopId) as string) : null;
+            return {
+              routeStopId: submittedRouteStopId(item.targetStopId),
+              machineId: stop?.machineId ?? null,
+              productId: item.productId,
+              quantity: item.quantity,
+              reason: item.reason,
+              notes: item.notes,
+            };
+          }),
+        { stopIds: selectedStopIds, clientSubmissionId: pickupSubmissionIdRef.current, stage: "confirm", preparedBatchId: activePreparedBatch.id },
       );
       if (result && "success" in result && result.success === false) {
         throw new Error(result.error || "Could not save added product");
       }
       localDraft.clearDraft();
       pickupSubmissionIdRef.current = crypto.randomUUID();
+      setPreparedBatch(null);
+      setLoadCheckedProductIds(new Set());
+      setVehicleClearChecked(false);
       const successMessage = "Pickup confirmed.";
       console.info("[operator:route-nav] Redirecting after pickup confirmation", {
         action: "confirm_pick_list",
@@ -690,6 +871,7 @@ export default function PickListPage() {
       router.push(`${routeHref}?success=${encodeURIComponent(successMessage)}`);
     } catch (err) {
       setError(err instanceof Error && err.message.trim() ? err.message : "Could not confirm pickup. Please try again.");
+    } finally {
       setSubmitting(false);
     }
   };
@@ -715,7 +897,7 @@ export default function PickListPage() {
       <div className="max-w-5xl space-y-6">
         <PageHeader title={t("Storage Pickup")} subtitle={t("Pack products by machine before leaving storage.")} action={<SecondaryButton href={routeHref}>{t("Cancel")}</SecondaryButton>} />
 
-        <DraftRestoreBanner pendingDraft={localDraft.pendingDraft} onRestore={localDraft.restoreDraft} onDiscard={localDraft.discardDraft} />
+        {!checklistFrozen ? <DraftRestoreBanner pendingDraft={localDraft.pendingDraft} onRestore={localDraft.restoreDraft} onDiscard={localDraft.discardDraft} /> : null}
         {!localDraft.pendingDraft ? <DraftSaveStatus status={localDraft.status} /> : null}
         {notice ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">{t(notice, notice)}</div> : null}
         {error ? <div ref={errorRef} className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{t(error, error)}</div> : null}
@@ -791,6 +973,12 @@ export default function PickListPage() {
           <div className="font-semibold">{t("Pickup progress saves on this phone immediately")}</div>
           <div className="mt-1">{t("If the backend is slow or offline, your checklist stays locally saved and sync can catch up later.")}</div>
         </div>
+        {activePreparedBatch ? (
+          <div className="rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+            <div className="font-semibold">{t("Items prepared snapshot saved")}</div>
+            <div className="mt-1">{t("The detailed checklist is frozen. Load the prepared products into the vehicle, then confirm the storage is clear before pickup confirmation.")}</div>
+          </div>
+        ) : null}
 
         {stopGroups.length ? (
           <section className="rounded-lg border border-slate-200 bg-white p-4">
@@ -800,8 +988,8 @@ export default function PickListPage() {
                 <p className="text-sm text-slate-500">{t("Only selected machines are deducted from storage and added to your bag.")}</p>
               </div>
               <div className="flex gap-2">
-                <button type="button" className="btn-secondary text-xs" onClick={() => setSelectedStopIds(stopGroups.map((group) => group.routeStopId).filter((id): id is string => Boolean(id)))}>{t("Select all")}</button>
-                <button type="button" className="btn-secondary text-xs" onClick={() => setSelectedStopIds([])}>{t("Clear")}</button>
+                <button type="button" className="btn-secondary text-xs" onClick={() => setSelectedStopIds(stopGroups.map((group) => group.routeStopId).filter((id): id is string => Boolean(id)))} disabled={checklistFrozen || locked}>{t("Select all")}</button>
+                <button type="button" className="btn-secondary text-xs" onClick={() => setSelectedStopIds([])} disabled={checklistFrozen || locked}>{t("Clear")}</button>
               </div>
             </div>
             <div className="mb-4 h-2 overflow-hidden rounded-full bg-slate-200">
@@ -822,8 +1010,8 @@ export default function PickListPage() {
                         <div className="mt-1 text-sm font-medium text-slate-900">{selectedCount} of {locationStopIds.length} stops selected</div>
                       </div>
                       <div className="flex gap-2">
-                        <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => toggleLocationSelection(locationStopIds, true)} disabled={!locationStopIds.length || allSelected}>Select location</button>
-                        <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => toggleLocationSelection(locationStopIds, false)} disabled={!selectedCount}>{t("Clear")}</button>
+                        <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => toggleLocationSelection(locationStopIds, true)} disabled={checklistFrozen || !locationStopIds.length || allSelected}>Select location</button>
+                        <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => toggleLocationSelection(locationStopIds, false)} disabled={checklistFrozen || !selectedCount}>{t("Clear")}</button>
                       </div>
                     </div>
                     <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
@@ -837,7 +1025,7 @@ export default function PickListPage() {
                       const planned = group.items.reduce((sum, item) => sum + item.requestedQty, 0);
                       return (
                         <label key={stopId || group.machineId || group.machineName} className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm ${checked ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}>
-                          <input type="checkbox" checked={checked} onChange={() => stopId && toggleStopSelection(stopId)} className="mt-1 h-6 w-6 rounded accent-emerald-600" />
+                          <input type="checkbox" checked={checked} onChange={() => stopId && toggleStopSelection(stopId)} disabled={checklistFrozen || locked} className="mt-1 h-6 w-6 rounded accent-emerald-600" />
                           <span className="min-w-0">
                             <span className="block font-semibold text-slate-900">Stop {group.stopOrder || "-"} - {group.machineName}</span>
                             <span className="block break-words text-slate-500">{planned} units planned</span>
@@ -957,7 +1145,7 @@ export default function PickListPage() {
                                           <div
                                             key={item.routeStopItemId}
                                             role="button"
-                                            tabIndex={locked ? -1 : 0}
+                                            tabIndex={locked || checklistFrozen ? -1 : 0}
                                             onClick={() => togglePickupItemChecked(item)}
                                             onKeyDown={(event) => {
                                               if (event.key === "Enter" || event.key === " ") {
@@ -974,7 +1162,7 @@ export default function PickListPage() {
                                                   checked={item.isChecked}
                                                   onChange={() => togglePickupItemChecked(item)}
                                                   onClick={(event) => event.stopPropagation()}
-                                                  disabled={locked || submitting}
+                                                  disabled={locked || submitting || checklistFrozen}
                                                   aria-label={`Mark ${item.productName} picked`}
                                                   className="mt-1 h-11 w-11 shrink-0 cursor-pointer rounded-lg border-2 border-slate-300 accent-emerald-600 disabled:cursor-not-allowed"
                                                 />
@@ -996,7 +1184,7 @@ export default function PickListPage() {
                                                   value={item.confirmedQty}
                                                   max={maxQty}
                                                   onChange={(quantity) => updateStopItem(item.routeStopItemId, { confirmedQty: quantity })}
-                                                  disabled={locked}
+                                                  disabled={locked || checklistFrozen}
                                                   inputLabel={`${item.machineName} ${item.productName} pickup quantity`}
                                                 />
                                                 <span className="mt-1 block text-xs text-slate-500">Available for this row: {maxQty}</span>
@@ -1007,7 +1195,7 @@ export default function PickListPage() {
                                               <div className="grid gap-3 md:grid-cols-2" onClick={(event) => event.stopPropagation()}>
                                                 <label className="block">
                                                   <span className="mb-1 block text-sm font-medium text-slate-800">Reason</span>
-                                                  <select value={item.reason} onChange={(event) => updateStopItem(item.routeStopItemId, { reason: event.target.value })} className="field-input" disabled={locked}>
+                                                  <select value={item.reason} onChange={(event) => updateStopItem(item.routeStopItemId, { reason: event.target.value })} className="field-input" disabled={locked || checklistFrozen}>
                                                     <option>Product not available in storage</option>
                                                     <option>Product not in operator bag</option>
                                                     <option>Product expired/damaged</option>
@@ -1017,7 +1205,7 @@ export default function PickListPage() {
                                                 </label>
                                                 <label className="block">
                                                   <span className="mb-1 block text-sm font-medium text-slate-800">Notes</span>
-                                                  <input value={item.notes} onChange={(event) => updateStopItem(item.routeStopItemId, { notes: event.target.value })} className="field-input" placeholder="Explain the pickup change" disabled={locked} />
+                                                  <input value={item.notes} onChange={(event) => updateStopItem(item.routeStopItemId, { notes: event.target.value })} className="field-input" placeholder="Explain the pickup change" disabled={locked || checklistFrozen} />
                                                 </label>
                                               </div>
                                             ) : null}
@@ -1046,7 +1234,7 @@ export default function PickListPage() {
               <h2 className="font-semibold text-slate-900">Added products before leaving storage</h2>
               <p className="text-sm text-slate-500">{assignedExtraCount} assigned to stops, {unassignedExtraCount} carried as spare stock</p>
             </div>
-            <button type="button" className="btn-secondary w-full sm:w-auto" onClick={addExtraProduct} disabled={locked}>Add Product</button>
+            <button type="button" className="btn-secondary w-full sm:w-auto" onClick={addExtraProduct} disabled={locked || checklistFrozen}>Add Product</button>
           </div>
           <div className="mt-4 space-y-3">
             {extras.map((item) => (
@@ -1059,7 +1247,7 @@ export default function PickListPage() {
                 quantity={item.quantity}
                 reason={item.reason}
                 notes={item.notes}
-                disabled={locked}
+                disabled={locked || checklistFrozen}
                 maxQuantity={item.productId ? maxForProduct(item.productId, item.quantity, productById.get(item.productId)?.availableStorageQty ?? 0) : 0}
                 onChange={(patch) => setExtras((prev) => prev.map((row) => row.id === item.id ? { ...row, ...patch } : row))}
                 onRemove={() => setExtras((prev) => prev.filter((row) => row.id !== item.id))}
@@ -1087,14 +1275,95 @@ export default function PickListPage() {
           </div>
         </section>
 
+        <section className="rounded-lg border border-slate-200 bg-white p-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="font-semibold text-slate-900">{t("Load into vehicle")}</h2>
+              <p className="text-sm text-slate-500">
+                {activePreparedBatch
+                  ? t("Check each prepared product before confirming the route pickup.")
+                  : t("Prepare the detailed checklist first to unlock this loading checklist.")}
+              </p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900">
+              {activePreparedBatch ? `${preparedLoadRows.filter((item) => loadCheckedProductIds.has(item.productId)).length} / ${preparedLoadRows.length}` : t("Locked")}
+            </div>
+          </div>
+
+          <div className="mt-4 space-y-2">
+            {activePreparedBatch ? (
+              preparedLoadRows.map((item) => {
+                const checked = loadCheckedProductIds.has(item.productId);
+                return (
+                  <label
+                    key={item.productId}
+                    className={`flex items-center gap-4 rounded-xl border p-4 ${checked ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => setLoadCheckedProductIds((current) => {
+                        const next = new Set(current);
+                        if (next.has(item.productId)) next.delete(item.productId);
+                        else next.add(item.productId);
+                        return next;
+                      })}
+                      disabled={!activePreparedBatch || locked || submitting}
+                      className="h-8 w-8 rounded border-2 border-slate-300 accent-emerald-600 disabled:cursor-not-allowed"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="break-words font-semibold text-slate-900">{item.productName ?? "Unknown product"}</div>
+                      <div className="mt-1 text-sm text-slate-500">{item.quantity} units</div>
+                    </div>
+                  </label>
+                );
+              })
+            ) : (
+              <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
+                {t("No loading checklist is available yet.")}
+              </div>
+            )}
+          </div>
+
+          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <label className="flex cursor-pointer items-start gap-3 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={vehicleClearChecked}
+                onChange={() => setVehicleClearChecked((current) => !current)}
+                disabled={!activePreparedBatch || locked || submitting}
+                className="mt-1 h-6 w-6 rounded accent-emerald-600 disabled:cursor-not-allowed"
+              />
+              <span className="min-w-0">
+                <span className="block font-semibold text-slate-900">{t("I checked the preparation area and no route products remain in storage.")}</span>
+                <span className="mt-1 block text-xs text-slate-500">{t("This is the final confirmation before pickup is submitted.")}</span>
+              </span>
+            </label>
+          </div>
+        </section>
+
         <div className="sticky bottom-3 z-10 -mx-3 flex flex-col gap-3 border-t border-slate-200 bg-slate-100/95 px-3 py-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:border-0 sm:bg-transparent sm:p-0">
           <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 sm:flex-1">
             <div className="font-semibold text-slate-900">{checkedItemCount} of {allStopItems.length} items checked</div>
-            <div className="mt-1 text-xs text-slate-500">{selectedStopIds.length} stops selected · {totalPickedUnits} total units in this pickup batch</div>
+            <div className="mt-1 text-xs text-slate-500">
+              {selectedStopIds.length} stops selected · {totalPickedUnits} total units in this pickup batch
+              {activePreparedBatch ? ` · ${preparedLoadRows.filter((item) => loadCheckedProductIds.has(item.productId)).length} of ${preparedLoadRows.length} load items checked` : ""}
+            </div>
           </div>
           {error ? <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 sm:hidden">{t(error, error)}</div> : null}
-          <button type="button" onClick={handleConfirmPick} disabled={submitting || (!locked && selectedStopIds.length === 0)} className="btn-primary w-full flex-1 disabled:cursor-not-allowed disabled:opacity-50">
-            {locked ? t("Back to Route") : submitting ? `${t("Saving")}...` : t("Confirm Pickup List")}
+          <button
+            type="button"
+            onClick={activePreparedBatch ? handleConfirmPick : handlePreparePickup}
+            disabled={submitting || (!locked ? (activePreparedBatch ? !canConfirmPickup : !canPreparePickup) : false)}
+            className="btn-primary w-full flex-1 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {locked
+              ? t("Back to Route")
+              : submitting
+                ? `${t("Saving")}...`
+                : activePreparedBatch
+                  ? t("Confirm Pickup List")
+                  : t("Items prepared")}
           </button>
           <SecondaryButton href={routeHref} type="button">{t("Cancel")}</SecondaryButton>
         </div>

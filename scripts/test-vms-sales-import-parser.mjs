@@ -6,6 +6,7 @@ import {
   detectHeaderRowIndex,
   detectVmsReportTypeFromRows,
   findSalesReportPeriod,
+  readXlsxSheetRows,
   resolveVmsReportType,
   shouldIgnoreStaleCustomVmsState,
   requiredMissing,
@@ -202,6 +203,28 @@ test("VMS monthly profit report with merged title row detects row 2 headers and 
   assert.equal(mappedRows[0].total_transaction_amount, "27.50");
 });
 
+test("VMS Excel parser ignores broken worksheet dimensions and still reads the full monthly profit table", async () => {
+  const XLSX = await import("xlsx");
+  const sheet = { "!ref": "A1:A3" };
+  monthlyProfitMergedTitleRows.forEach((row, rowIndex) => {
+    row.forEach((cell, columnIndex) => {
+      const ref = XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex });
+      sheet[ref] = { t: "s", v: cell, w: cell };
+    });
+  });
+
+  const parsedRows = readXlsxSheetRows(sheet, XLSX);
+  assert.equal(parsedRows.length, 3);
+  assert.equal(parsedRows[0][0], "Statistical statement of commodity profit(2026-04-01/2026-04-30)");
+  assert.equal(parsedRows[1].length, 16);
+  assert.equal(parsedRows[1][9], "The refund count");
+  assert.equal(parsedRows[1][11], "Total Transaction Quantity");
+  assert.equal(parsedRows[2][0], "6591");
+  assert.equal(parsedRows[2][1], "Snacky");
+  assert.equal(parsedRows[2][9], "1");
+  assert.equal(parsedRows[2][11], "11");
+});
+
 test("VMS report type resolution treats custom as fallback only", () => {
   assert.equal(
     resolveVmsReportType({
@@ -285,7 +308,15 @@ test("VMS sales source row key is stable for duplicate imports", () => {
 
 test("VMS header signature identifies reusable report formats", () => {
   const signature = vmsHeaderSignature("sales", salesRows[1]);
-  assert.equal(signature, "sales:merchant_id|merchant_name|machine_code|machine_name|product_number|product_name|commodity_price|number_of_transaction|transaction_amount|refund_count|refund_amount|total_transaction|total_transaction_amount|cost_price|cost_amount|profits");
+  assert.equal(signature, "sales:merchant_id|merchant_name|machine_identifier|machine_name|product_number|product_name|commodity_price|number_of_transaction|transaction_amount|refund_count|refund_amount|total_transaction|total_transaction_amount|cost_price|cost_amount|profits");
+  assert.equal(
+    vmsHeaderSignature("monthly_product_profit", salesRows[1]),
+    vmsHeaderSignature("monthly_product_profit", monthlyProfitMergedTitleRows[1]),
+  );
+  assert.equal(
+    vmsHeaderSignature("monthly_product_profit", monthlyProfitMergedTitleRows[1]),
+    "monthly_product_profit:merchant_id|merchant_name|machine_identifier|machine_name|product_identifier|product_name|commodity_price|transaction_count|transaction_amount|refund_count|refund_amount|total_transaction_count|total_transaction_amount|cost_price|cost_amount|profit_amount",
+  );
 });
 
 test("VMS order details auto-detects title row and duplicate commodity price headers", () => {

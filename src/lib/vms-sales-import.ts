@@ -38,8 +38,20 @@ export function parseVmsImportMode(value: unknown): VmsImportMode {
   return VMS_IMPORT_MODES.APPEND_NEW;
 }
 
+function canonicalizeHeaderForSignature(reportType: VmsReportType, header: string) {
+  const normalized = normalizeHeader(header);
+  if (!normalized) return "";
+
+  const field = vmsExpectedFields[reportType].find((candidate) => {
+    const aliases = [candidate.field, candidate.label, ...candidate.aliases];
+    return aliases.some((alias) => normalizeHeader(alias) === normalized);
+  });
+
+  return field?.field ?? normalized;
+}
+
 export function vmsHeaderSignature(reportType: VmsReportType, headers: string[]) {
-  return `${reportType}:${headers.map((header) => normalizeHeader(header)).join("|")}`;
+  return `${reportType}:${headers.map((header) => canonicalizeHeaderForSignature(reportType, header)).join("|")}`;
 }
 
 export function splitColumnMappingByRequirement(reportType: VmsReportType, mapping: Record<string, string>) {

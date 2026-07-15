@@ -107,6 +107,10 @@ function routeStopProductKey(routeStopId: string | null | undefined, productId: 
   return `${routeStopId ?? ""}:${productId ?? ""}`;
 }
 
+function isPreparedPickupBatch(batch: any) {
+  return Boolean(batch?.prepared_at) && !batch?.confirmed_at && !batch?.returned_to_assigned_at;
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -202,6 +206,49 @@ export async function GET(
     }
 
     const readClient = getSupabaseAdminClient() ?? supabase;
+    const { data: activePickupBatch, error: activePickupBatchError } = await readClient
+      .from("route_pickup_batches")
+      .select("id, route_id, operator_id, status, selected_stop_ids, product_summary, storage_deducted, prepared_at, prepared_by, confirmed_at, returned_to_assigned_at, returned_to_assigned_reason, created_at, updated_at")
+      .eq("route_id", routeId)
+      .is("returned_to_assigned_at", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    let preparedBatch = activePickupBatch && isPreparedPickupBatch(activePickupBatch)
+      ? {
+          id: String(activePickupBatch.id ?? ""),
+          routeId: String(activePickupBatch.route_id ?? routeId),
+          operatorId: activePickupBatch.operator_id ? String(activePickupBatch.operator_id) : null,
+          status: String(activePickupBatch.status ?? "draft"),
+          selectedStopIds: Array.isArray(activePickupBatch.selected_stop_ids) ? activePickupBatch.selected_stop_ids.map((value: unknown) => String(value ?? "")).filter(Boolean) : [],
+          productSummary: Array.isArray(activePickupBatch.product_summary)
+            ? activePickupBatch.product_summary.map((row: any) => ({
+                productId: String(row?.product_id ?? row?.productId ?? ""),
+                productName: row?.product_name ?? row?.productName ?? null,
+                quantity: Number(row?.quantity ?? 0),
+              })).filter((row: any) => row.productId && row.quantity > 0)
+            : [],
+          storageDeducted: Boolean(activePickupBatch.storage_deducted),
+          preparedAt: activePickupBatch.prepared_at ?? null,
+          preparedBy: activePickupBatch.prepared_by ? String(activePickupBatch.prepared_by) : null,
+          confirmedAt: activePickupBatch.confirmed_at ?? null,
+          returnedToAssignedAt: activePickupBatch.returned_to_assigned_at ?? null,
+          returnedToAssignedReason: activePickupBatch.returned_to_assigned_reason ?? null,
+          createdAt: activePickupBatch.created_at ?? null,
+          updatedAt: activePickupBatch.updated_at ?? null,
+        }
+      : null;
+    if (activePickupBatchError) {
+      if (isMissingColumn(activePickupBatchError, ["prepared_at", "prepared_by"])) {
+        preparedBatch = null;
+      } else {
+        logOptionalFailure({
+          step: "load_route_pickup_batches",
+          resource: "route_pickup_batches",
+          error: activePickupBatchError,
+        });
+      }
+    }
 
     failingStep = "load_route_stops";
     failingResource = "route_stops";
@@ -787,7 +834,7 @@ export async function GET(
       .filter((group: any) => group.items.length > 0)
       .sort((a: any, b: any) => Number(a.stop_order ?? 0) - Number(b.stop_order ?? 0));
 
-    let confirmed = false;
+    let confirmed = Boolean(preparedBatch?.confirmedAt);
     failingStep = "load_pickup_confirmation_state";
     failingResource = "inventory_movements";
     const pickMovementsResult = await readClient
@@ -801,6 +848,7 @@ export async function GET(
     } else {
       confirmed = Boolean(pickMovementsResult.data?.length);
     }
+    const isPrepared = Boolean(preparedBatch && !preparedBatch.confirmedAt && !preparedBatch.returnedToAssignedAt);
 
     const items = Array.from(plannedByProduct.values()).map((line: any) => ({
       product_id: line.product_id,
@@ -830,6 +878,8 @@ export async function GET(
       productOptions,
       extraItems,
       confirmed,
+      prepared: isPrepared,
+      preparedBatch,
       locked: isTerminalRouteStatus(route.status),
       routeStatus: route.status,
       pendingStopCount,
@@ -922,6 +972,22 @@ export async function PATCH(
     }
     if (isTerminalRouteStatus(route.status)) {
       return NextResponse.json({ error: "Completed or cancelled routes cannot be edited" }, { status: 409 });
+    }
+
+    const { data: activePickupBatch, error: activePickupBatchError } = await supabase
+      .from("route_pickup_batches")
+      .select("id, prepared_at, confirmed_at, returned_to_assigned_at")
+      .eq("route_id", routeId)
+      .is("returned_to_assigned_at", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (activePickupBatchError) {
+      if (!isMissingColumn(activePickupBatchError, ["prepared_at", "prepared_by"])) {
+        throw activePickupBatchError;
+      }
+    } else if (isPreparedPickupBatch(activePickupBatch)) {
+      return NextResponse.json({ error: "Items prepared snapshot is locked. Confirm pickup to continue." }, { status: 409 });
     }
 
     const { data: routeStopItem, error: routeStopItemError } = await supabase

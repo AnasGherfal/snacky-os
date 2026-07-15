@@ -103,8 +103,8 @@ export const vmsExpectedFields: Record<VmsReportType, VmsFieldDef[]> = {
     { field: "selling_price", label: "Selling price", aliases: ["Selling Price", "Price", "Unit Price", "selling_price", "sale_price", "Ã˜Â³Ã˜Â¹Ã˜Â± Ã˜Â§Ã™â€žÃ˜Â¨Ã™Å Ã˜Â¹"] },
   ],
   monthly_product_profit: [
-    { field: "merchant_id", label: "Merchant ID", aliases: ["Merchant ID", "merchant_id"] },
-    { field: "merchant_name", label: "Merchant Name", aliases: ["Merchant Name", "merchant_name"] },
+    { field: "merchant_id", label: "Merchant ID", aliases: ["Merchant ID", "Merchant Code", "Merchant No", "Merchant Number", "Source", "Source ID", "merchant_id"] },
+    { field: "merchant_name", label: "Merchant Name", aliases: ["Merchant Name", "Source Name", "merchant_name"] },
     { field: "machine_identifier", label: "Machine code", aliases: ["Machine code", "Machine Code", "machine_code", "Machine ID", "Machine Id", "machine_id"] },
     { field: "machine_name", label: "Machine name", aliases: ["Machine name", "Machine Name", "machine_name", "Device Name"] },
     { field: "product_identifier", label: "Product Number", aliases: ["Product Number", "Product number", "product_number", "Product No", "Product No.", "product_no"] },
@@ -121,8 +121,8 @@ export const vmsExpectedFields: Record<VmsReportType, VmsFieldDef[]> = {
     { field: "profit_amount", label: "Profits", aliases: ["Profits", "Profit", "profit_amount", "Gross Profit"] },
   ],
   monthly_transaction_details: [
-    { field: "merchant_id", label: "Merchant ID", aliases: ["Merchant ID", "merchant_id"] },
-    { field: "merchant_name", label: "Merchant name", aliases: ["Merchant Name", "merchant_name"] },
+    { field: "merchant_id", label: "Merchant ID", aliases: ["Merchant ID", "Merchant Code", "Merchant No", "Merchant Number", "Source", "Source ID", "merchant_id"] },
+    { field: "merchant_name", label: "Merchant name", aliases: ["Merchant Name", "Source Name", "merchant_name"] },
     { field: "machine_identifier", label: "Machine code", required: true, aliases: ["Machine code", "Machine Code", "machine_code", "Machine ID", "Machine Id", "machine_id", "Terminal ID", "terminal_id"] },
     { field: "machine_name", label: "Machine name", aliases: ["Machine name", "Machine Name", "machine_name", "Device Name", "Location"] },
     { field: "serial_number", label: "Serial number", aliases: ["Serial number", "Serial Number", "serial_number", "Serial No", "Serial No.", "Machine serial number"] },
@@ -143,8 +143,8 @@ export const vmsExpectedFields: Record<VmsReportType, VmsFieldDef[]> = {
     { field: "transaction_status", label: "Transaction status", aliases: ["Transaction status", "Transaction Status", "transaction_status", "Status", "status", "Result", "result", "Payment status", "payment_status"] },
   ],
   vms_order_details_weekly: [
-    { field: "merchant_id", label: "Merchant ID", aliases: ["Merchant ID", "merchant_id"] },
-    { field: "merchant_name", label: "Merchant name", aliases: ["Merchant Name", "merchant_name"] },
+    { field: "merchant_id", label: "Merchant ID", aliases: ["Merchant ID", "Merchant Code", "Merchant No", "Merchant Number", "Source", "Source ID", "merchant_id"] },
+    { field: "merchant_name", label: "Merchant name", aliases: ["Merchant Name", "Source Name", "merchant_name"] },
     { field: "machine_identifier", label: "Machine code", required: true, aliases: ["Machine code", "Machine Code", "machine_code", "Machine ID", "Device ID", "terminal_id", "device_id"] },
     { field: "machine_name", label: "Machine name", aliases: ["Machine name", "Machine Name", "machine_name", "Device Name", "Location"] },
     { field: "order_number", label: "Order number", aliases: ["Order number", "Order Number", "order_number", "Order No", "Order No.", "order_no"] },
@@ -260,6 +260,45 @@ function cleanRows(rows: unknown[][]) {
     .filter((row) => row.some(Boolean));
 }
 
+export function readXlsxSheetRows(sheet: Record<string, unknown>, XLSX: typeof import("xlsx")) {
+  const refs = Object.keys(sheet).filter((key) => /^[A-Z]+[0-9]+$/.test(key));
+  if (!refs.length) {
+    return [] as string[][];
+  }
+
+  let minRow = Number.POSITIVE_INFINITY;
+  let minCol = Number.POSITIVE_INFINITY;
+  let maxRow = 0;
+  let maxCol = 0;
+
+  for (const ref of refs) {
+    const cell = XLSX.utils.decode_cell(ref);
+    minRow = Math.min(minRow, cell.r);
+    minCol = Math.min(minCol, cell.c);
+    maxRow = Math.max(maxRow, cell.r);
+    maxCol = Math.max(maxCol, cell.c);
+  }
+
+  if (sheet["!ref"]) {
+    const reported = XLSX.utils.decode_range(String(sheet["!ref"]));
+    minRow = Math.min(minRow, reported.s.r);
+    minCol = Math.min(minCol, reported.s.c);
+    maxRow = Math.max(maxRow, reported.e.r);
+    maxCol = Math.max(maxCol, reported.e.c);
+  }
+
+  const normalizedSheet = { ...sheet, "!ref": XLSX.utils.encode_range({
+    s: { r: minRow, c: minCol },
+    e: { r: maxRow, c: maxCol },
+  }) };
+
+  return cleanRows(XLSX.utils.sheet_to_json<unknown[]>(normalizedSheet, {
+    header: 1,
+    raw: false,
+    defval: "",
+  }));
+}
+
 function spreadsheetColumnName(index: number) {
   let value = index + 1;
   let name = "";
@@ -301,8 +340,8 @@ function extraAliasesForField(field: string) {
     sold_qty: ["Number of transaction", "Number of transactions", "Transaction Count", "Transactions", "transaction_count", "number_of_transaction"],
     total_sales_amount: ["Transaction amount", "Transaction Amount", "Total Sales LYD", "total_sales_lyd", "transaction_amount"],
     selling_price: ["Commodity price", "Commodity Price", "Commodity unit price", "commodity_price"],
-    merchant_id: ["Merchant ID", "merchant_id"],
-    merchant_name: ["Merchant Name", "merchant_name"],
+    merchant_id: ["Merchant ID", "Merchant Code", "Merchant No", "Merchant Number", "Source", "Source ID", "merchant_id"],
+    merchant_name: ["Merchant Name", "Source Name", "merchant_name"],
     transaction_count: ["Number of transaction", "Number of transactions", "Transaction Count", "transaction_count", "number_of_transaction"],
     transaction_amount: ["Transaction amount", "Transaction Amount", "transaction_amount", "Sales Amount", "Revenue"],
     refund_count: ["Refund count", "Refund Count", "The refund count", "refund_count"],
@@ -639,8 +678,8 @@ export async function parseVmsUpload(file: File): Promise<VmsParsedFile> {
         fileType: extension,
         sheets: workbook.SheetNames.map((name) => {
           const sheet = workbook.Sheets[name];
-          const rows = sheet ? XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: false, defval: "" }) : [];
-          return { name, rows: cleanRows(rows) };
+          const rows = sheet ? readXlsxSheetRows(sheet as Record<string, unknown>, XLSX) : [];
+          return { name, rows };
         }).filter((sheet) => sheet.rows.length),
       };
     } catch (error) {

@@ -116,6 +116,7 @@ function pickupPublicError(error: unknown) {
   if (text.includes("route status") || text.includes("start the route")) return message;
   if (text.includes("stop status") || text.includes("only pending stops")) return message;
   if (text.includes("selected pickup stop") || text.includes("selected batch stops")) return message;
+  if (text.includes("prepared before confirmation") || text.includes("prepared pickup summary") || text.includes("prepared pickup batch")) return message;
   if (text.includes("picked quantity cannot be reduced")) return message;
   if (text.includes("route must be assigned")) return message;
 
@@ -179,6 +180,20 @@ function revalidateRouteWorkflow(routeId: string) {
 function mergeNotes(existing: string | undefined, next: string | undefined) {
   const parts = [existing, next].map((part) => String(part ?? "").trim()).filter(Boolean);
   return parts.length ? Array.from(new Set(parts)).join(" | ") : undefined;
+}
+
+function normalizePickupProductSummary(rows: { productId: string; productName: string | null; quantity: number }[]) {
+  return rows
+    .filter((row) => String(row.productId ?? "").trim() && Number(row.quantity ?? 0) > 0)
+    .map((row) => ({
+      product_id: String(row.productId).trim(),
+      product_name: row.productName ? String(row.productName).trim() || null : null,
+      quantity: Math.max(0, Math.floor(Number(row.quantity ?? 0))),
+    }))
+    .sort((a, b) =>
+      String(a.product_name ?? "").localeCompare(String(b.product_name ?? "")) ||
+      String(a.product_id).localeCompare(String(b.product_id)),
+    );
 }
 
 function unitQuantity(value: unknown) {
@@ -658,7 +673,7 @@ export async function confirmPickList(
   routeId: string,
   pickedItems: { routeStopItemId?: string | null; routeStopId?: string | null; machineId?: string | null; productId: string; quantity: number; plannedQty?: number; reason?: string; notes?: string; isChecked?: boolean }[],
   extras: { routeStopId?: string | null; machineId?: string | null; productId: string; quantity: number; reason: string; notes?: string }[] = [],
-  options: { stopIds?: string[]; clientSubmissionId?: string | null; acknowledgedPickupLineIds?: string[] } = {},
+  options: { stopIds?: string[]; clientSubmissionId?: string | null; acknowledgedPickupLineIds?: string[]; preparedBatchId?: string | null; stage?: "prepare" | "confirm" } = {},
 ): Promise<ActionResult> {
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) throw new Error("No Supabase client");
@@ -709,8 +724,10 @@ export async function confirmPickList(
     const selectedStopIds = Array.from(new Set((options.stopIds ?? []).map((id) => String(id ?? "").trim()).filter(Boolean)));
     const batchMode = selectedStopIds.length > 0;
     const clientSubmissionId = String(options.clientSubmissionId ?? "").trim() || null;
+    const pickupStage = options.stage === "prepare" ? "prepare" : "confirm";
+    const preparedBatchId = String(options.preparedBatchId ?? "").trim() || null;
     const acknowledgedPickupLineIds = Array.from(new Set((options.acknowledgedPickupLineIds ?? []).map((id) => String(id ?? "").trim()).filter(Boolean)));
-    const pickupSubmissionScope = clientSubmissionId || routeId;
+    const pickupSubmissionScope = preparedBatchId || clientSubmissionId || routeId;
     const selectedStopIdSet = new Set(selectedStopIds);
     logSelectedStopIds = selectedStopIds;
 
@@ -949,6 +966,12 @@ export async function confirmPickList(
     const pickedStopItemRows = Array.from(pickedStopItems.values());
     const pickedItemRows = [...pickedStopItemRows, ...legacyPickedRows];
     const extraRows = Array.from(unassignedExtras.values());
+    if (pickupStage === "prepare") {
+      const uncheckedCount = pickedItemRows.filter((item) => !item.isChecked).length;
+      if (uncheckedCount > 0) {
+        throw new Error("Check every required product line before pressing Items prepared.");
+      }
+    }
     logSubmittedPickupItems = [
       ...pickedStopItemRows.map((item) => ({
         route_stop_item_id: item.id || null,
@@ -1171,25 +1194,66 @@ export async function confirmPickList(
     }
 
     const confirmedAt = new Date().toISOString();
-    let pickupBatchId: string | null = batchMode ? pickupSubmissionScope : clientSubmissionId || null;
+    let pickupBatchId: string | null = pickupSubmissionScope;
     logPickupBatchId = pickupBatchId;
-    const productSummary = Array.from(pickedByProduct.entries()).map(([productId, quantity]) => ({
-      product_id: productId,
-      product_name: productById.get(productId)?.name ?? null,
+    const productSummary = normalizePickupProductSummary(Array.from(pickedByProduct.entries()).map(([productId, quantity]) => ({
+      productId,
+      productName: productById.get(productId)?.name ?? null,
       quantity,
-    }));
-    const pickupBatchPayload = batchMode
-      ? {
-          id: pickupBatchId,
-          route_id: routeId,
-          operator_id: route.operator_id,
-          status: "confirmed",
+    })));
+    const pickupBatchPayload = {
+      id: pickupBatchId,
+      route_id: routeId,
+      operator_id: route.operator_id,
+      status: pickupStage === "prepare" ? "draft" : "confirmed",
+      selected_stop_ids: selectedStopIds,
+      product_summary: productSummary,
+      storage_deducted: pickupStage === "prepare" ? false : stockAllocations.length > 0,
+      prepared_at: pickupStage === "prepare" ? confirmedAt : null,
+      prepared_by: pickupStage === "prepare" ? profile.team_member_id : null,
+      confirmed_at: pickupStage === "prepare" ? null : confirmedAt,
+    };
+
+    if (pickupStage === "prepare") {
+      const { data: existingPreparedBatch, error: existingPreparedBatchError } = await supabase
+        .from("route_pickup_batches")
+        .select("id, status, prepared_at, confirmed_at, returned_to_assigned_at")
+        .eq("id", pickupBatchId)
+        .maybeSingle();
+      if (existingPreparedBatchError) throwActionError(existingPreparedBatchError, "Could not load the prepared pickup batch.");
+      if (existingPreparedBatch?.confirmed_at || existingPreparedBatch?.returned_to_assigned_at) {
+        throw new Error("This pickup batch is already finalized.");
+      }
+
+      const { error: prepareBatchError } = await supabase
+        .from("route_pickup_batches")
+        .upsert(pickupBatchPayload, { onConflict: "id" });
+      if (prepareBatchError) throwActionError(prepareBatchError, "Could not save the prepared pickup snapshot.");
+
+      await logActivity({
+        profile,
+        action: "prepare_pick_list",
+        entityType: "route",
+        entityId: routeId,
+        entityLabel: `Route ${routeId.slice(0, 8)}`,
+        afterData: {
+          pickup_batch_id: pickupBatchId,
           selected_stop_ids: selectedStopIds,
+          prepared_product_count: productSummary.length,
           product_summary: productSummary,
-          storage_deducted: stockAllocations.length > 0,
-          confirmed_at: confirmedAt,
-        }
-      : null;
+        },
+        metadata: { operator_id: route.operator_id, pickup_batch_id: pickupBatchId, selected_stop_ids: selectedStopIds, prepared: true },
+        summary: `Prepared pickup snapshot with ${productSummary.length} products`,
+      });
+
+      revalidateRouteWorkflow(routeId);
+      return actionSuccess({
+        pickupBatchId,
+        prepared: true,
+        preparedProductCount: productSummary.length,
+        productSummary,
+      });
+    }
 
     // Create inventory movements for each picked item
     const movements = [
@@ -1461,6 +1525,23 @@ export async function confirmPickList(
     const rpcPickupBatch = Array.isArray(pickupRpcRows) ? pickupRpcRows[0]?.pickup_batch_id : null;
     pickupBatchId = pickupBatchId ?? (rpcPickupBatch ? String(rpcPickupBatch) : null);
     logPickupBatchId = pickupBatchId;
+
+    if (pickupBatchId) {
+      const { error: finalizeBatchError } = await supabase
+        .from("route_pickup_batches")
+        .update({
+          status: "confirmed",
+          selected_stop_ids: selectedStopIds,
+          product_summary: productSummary,
+          storage_deducted: movements.length > 0,
+          confirmed_at: confirmedAt,
+          updated_at: confirmedAt,
+        })
+        .eq("id", pickupBatchId);
+      if (finalizeBatchError) {
+        throwActionError(finalizeBatchError, "Pickup was confirmed, but the prepared batch could not be finalized.");
+      }
+    }
 
     if (logPickupRpcUsedFallback && movements.length) {
       console.info("[operator:pick-list] Syncing inventory movements after pickup confirmation", {
