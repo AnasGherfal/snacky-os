@@ -423,8 +423,22 @@ function finalizedDetailedSalesBatches(batches: VmsDashboardBatch[]) {
   return batches.filter((batch) => finalizedDetailedSalesBatch(batch));
 }
 
+function finalizedDetailedTransactionSalesBatch(batch: VmsDashboardBatch | undefined) {
+  if (!batch) return false;
+  if (!["vms_order_details_weekly", "monthly_transaction_details"].includes(String(batch.report_type ?? ""))) return false;
+  return isActiveImportedVmsBatch(batch);
+}
+
+function finalizedDetailedTransactionSalesBatches(batches: VmsDashboardBatch[]) {
+  return batches.filter((batch) => finalizedDetailedTransactionSalesBatch(batch));
+}
+
+function activeSalesCoverageBatches(batches: VmsDashboardBatch[]) {
+  return batches.filter((batch) => finalizedDetailedSalesBatch(batch));
+}
+
 export function salesCoverageSummary(batches: VmsDashboardBatch[]) {
-  const finalized = finalizedDetailedSalesBatches(batches)
+  const finalized = activeSalesCoverageBatches(batches)
     .sort((a, b) => String(a.report_start_date ?? "").localeCompare(String(b.report_start_date ?? "")));
   const ranges = finalized
     .map((batch) => ({ start: batch.report_start_date ?? "", end: batch.report_end_date ?? "" }))
@@ -568,7 +582,8 @@ function latestCurrentMonthCoverage(batches: VmsDashboardBatch[], monthStart: st
 }
 
 function defaultSalesRange(batches: VmsDashboardBatch[], now: Date) {
-  const finalizedDetailed = finalizedDetailedSalesBatches(batches);
+  const finalizedDetailed = finalizedDetailedTransactionSalesBatches(batches);
+  const finalizedMonthlyProfit = batches.filter((batch) => finalizedDetailedSalesBatch(batch) && String(batch.report_type ?? "") === "monthly_product_profit");
   const today = formatLocalDate(now);
   const currentMonthStart = formatLocalDate(startOfMonth(now));
   const currentMonthEnd = formatLocalDate(endOfMonth(now));
@@ -596,10 +611,22 @@ function defaultSalesRange(batches: VmsDashboardBatch[], now: Date) {
     });
   }
 
+  const latestMonthlyProfit = [...finalizedMonthlyProfit].sort((left, right) => rangeSortKey(right).localeCompare(rangeSortKey(left)))[0] ?? null;
+  const latestMonthlyCoverage = latestMonthlyProfit ? batchCoverageDates(latestMonthlyProfit) : null;
+  if (latestMonthlyCoverage?.start && latestMonthlyCoverage.end) {
+    return rangeWithDefaults({
+      key: "default",
+      label: "Latest available monthly profit",
+      helperText: `Defaulted to the latest finalized monthly profit coverage from ${sourceFileName(latestMonthlyProfit)}.`,
+      start: latestMonthlyCoverage.start,
+      end: latestMonthlyCoverage.end,
+    });
+  }
+
   return rangeWithDefaults({
     key: "default",
     label: "Current month",
-    helperText: "No finalized detailed sales files were found, so the dashboard is waiting for imports.",
+    helperText: "No finalized sales files were found, so the dashboard is waiting for imports.",
     start: currentMonthStart,
     end: today,
   });
