@@ -5,12 +5,14 @@ on:
     paths:
       - "supabase/migrations/202607150003_route_pickup_two_stage_workflow.sql"
       - "supabase/migrations/202607150006_route_pickup_rpc_chain_repair.sql"
+      - "supabase/migrations/202607150007_route_pickup_core_overload_disambiguation.sql"
       - "scripts/test-route-pickup-rpc-chain-repair.mjs"
   push:
     branches:
       - master
     paths:
       - "supabase/migrations/202607150006_route_pickup_rpc_chain_repair.sql"
+      - "supabase/migrations/202607150007_route_pickup_core_overload_disambiguation.sql"
       - "scripts/test-route-pickup-rpc-chain-repair.mjs"
 
 jobs:
