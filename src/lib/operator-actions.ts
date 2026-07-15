@@ -11,6 +11,12 @@ import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/a
 import { canAccessOperatorRoute, canExecuteRoutes, getEffectivePermissions } from "@/lib/authz";
 import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 import {
+  buildPickupAcknowledgementDiagnostics,
+  buildServerCanonicalAcknowledgedPickupLineIds,
+  isExactPickupAcknowledgementMismatchError,
+  normalizePickupLineIds,
+} from "@/lib/pickup-acknowledgement";
+import {
   ROUTE_COMPLETED_STATUS,
   ROUTE_IN_PROGRESS_STATUS,
   ROUTE_PICKUP_CONFIRMED_STATUS,
@@ -697,6 +703,7 @@ export async function confirmPickList(
   let logPickupConfirmationContext: Record<string, unknown> = {};
   let logPickupRpcRowCount: number | null = null;
   let logPickupRpcUsedFallback = false;
+  let logPickupRpcUsedAcknowledgementCompatibilityRetry = false;
 
   try {
     const profile = await getCurrentProfile();
@@ -971,6 +978,16 @@ export async function confirmPickList(
     const pickedStopItemRows = Array.from(pickedStopItems.values());
     const pickedItemRows = [...pickedStopItemRows, ...legacyPickedRows];
     const extraRows = Array.from(unassignedExtras.values());
+    const requiredPickupLineIds = normalizePickupLineIds(
+      (routeStopItems ?? [])
+        .filter((line: any) => Number(line?.planned_quantity ?? 0) > 0)
+        .filter((line: any) => {
+          const routeStopId = cleanId(line?.route_stop_id);
+          if (!batchMode) return true;
+          return routeStopId ? selectedStopIdSet.has(routeStopId) : false;
+        })
+        .map((line: any) => line?.id),
+    );
     if (pickupStage === "prepare") {
       const uncheckedCount = pickedItemRows.filter((item) => !item.isChecked).length;
       if (uncheckedCount > 0) {
@@ -1442,6 +1459,12 @@ export async function confirmPickList(
       ? (routeStops ?? []).filter((stop: any) => String(stop.status ?? "") === ROUTE_STOP_PENDING_STATUS && !selectedStopIdSet.has(String(stop.id ?? ""))).length
       : 0;
     const nextRouteStatus = batchMode && remainingPendingStopCount === 0 ? ROUTE_PICKUP_CONFIRMED_STATUS : ROUTE_IN_PROGRESS_STATUS;
+    const serverCanonicalAcknowledgedPickupLineIds = buildServerCanonicalAcknowledgedPickupLineIds(pickListRows as { route_stop_item_id?: unknown; is_checked?: unknown }[]);
+    const acknowledgementDiagnostics = buildPickupAcknowledgementDiagnostics({
+      clientAcknowledgedPickupLineIds: acknowledgedPickupLineIds,
+      pickListRows: pickListRows as { route_stop_item_id?: unknown; is_checked?: unknown }[],
+      requiredPickupLineIds,
+    });
 
     logPayload = {
       pickup_batch: pickupBatchPayload,
@@ -1455,6 +1478,8 @@ export async function confirmPickList(
       selected_stop_ids: selectedStopIds,
       selected_machine_ids: selectedMachineIds,
       acknowledged_pickup_line_ids: acknowledgedPickupLineIds,
+      server_canonical_acknowledged_pickup_line_ids: serverCanonicalAcknowledgedPickupLineIds,
+      acknowledgement_diagnostics: acknowledgementDiagnostics,
       next_route_status: nextRouteStatus,
       remaining_pending_stop_count: remainingPendingStopCount,
     };
@@ -1477,6 +1502,14 @@ export async function confirmPickList(
       action_step: "confirm_pick_list.rpc_attempt",
       table_or_rpc: "rpc.confirm_route_pickup_batch",
       ...logPickupConfirmationContext,
+      client_acknowledged_pickup_line_ids: acknowledgedPickupLineIds,
+      server_canonical_acknowledged_pickup_line_ids: serverCanonicalAcknowledgedPickupLineIds,
+      checked_pickup_line_ids: acknowledgementDiagnostics.checkedPickupLineIds,
+      required_pickup_line_ids: acknowledgementDiagnostics.requiredPickupLineIds,
+      missing_required_pickup_line_ids: acknowledgementDiagnostics.missingRequiredPickupLineIds,
+      extra_server_canonical_pickup_line_ids: acknowledgementDiagnostics.extraServerCanonicalPickupLineIds,
+      client_missing_from_canonical_pickup_line_ids: acknowledgementDiagnostics.clientMissingFromCanonicalPickupLineIds,
+      client_extra_beyond_canonical_pickup_line_ids: acknowledgementDiagnostics.clientExtraBeyondCanonicalPickupLineIds,
     });
 
     const pickupRpcArgs = {
@@ -1493,7 +1526,7 @@ export async function confirmPickList(
       p_stop_item_picks: stopItemPickRows,
       p_refill_line_picks: refillLinePickRows,
       p_selected_stop_ids: selectedStopIds,
-      p_acknowledged_pickup_line_ids: acknowledgedPickupLineIds,
+      p_acknowledged_pickup_line_ids: serverCanonicalAcknowledgedPickupLineIds,
       p_selected_machine_ids: selectedMachineIds,
     };
 
@@ -1505,12 +1538,52 @@ export async function confirmPickList(
       p_inventory_movements: movements,
     }));
 
+    if (pickupRpcError && isExactPickupAcknowledgementMismatchError(serializeActionError(pickupRpcError))) {
+      const pickupRpcErrorInfo = serializeActionError(pickupRpcError);
+      console.warn("[operator:pick-list] Pickup confirmation RPC hit acknowledgement compatibility mismatch; retrying with empty explicit acknowledgement ids", {
+        action_step: "confirm_pick_list.rpc_retry_acknowledgement_compatibility",
+        table_or_rpc: "rpc.confirm_route_pickup_batch",
+        ...logPickupConfirmationContext,
+        client_acknowledged_pickup_line_ids: acknowledgedPickupLineIds,
+        server_canonical_acknowledged_pickup_line_ids: serverCanonicalAcknowledgedPickupLineIds,
+        checked_pickup_line_ids: acknowledgementDiagnostics.checkedPickupLineIds,
+        required_pickup_line_ids: acknowledgementDiagnostics.requiredPickupLineIds,
+        missing_required_pickup_line_ids: acknowledgementDiagnostics.missingRequiredPickupLineIds,
+        extra_server_canonical_pickup_line_ids: acknowledgementDiagnostics.extraServerCanonicalPickupLineIds,
+        client_missing_from_canonical_pickup_line_ids: acknowledgementDiagnostics.clientMissingFromCanonicalPickupLineIds,
+        client_extra_beyond_canonical_pickup_line_ids: acknowledgementDiagnostics.clientExtraBeyondCanonicalPickupLineIds,
+        prepared_batch_id: preparedBatchId,
+        selected_stop_ids: selectedStopIds,
+        exact_supabase_postgres_error_code: pickupRpcErrorInfo.code,
+        exact_supabase_postgres_error_message: pickupRpcErrorInfo.message,
+        exact_supabase_postgres_error_details: pickupRpcErrorInfo.details,
+        exact_supabase_postgres_error_hint: pickupRpcErrorInfo.hint,
+      });
+
+      logPickupRpcUsedAcknowledgementCompatibilityRetry = true;
+      ({ data: pickupRpcRows, error: pickupRpcError } = await supabase.rpc("confirm_route_pickup_batch", {
+        ...pickupRpcArgs,
+        p_acknowledged_pickup_line_ids: [],
+        p_inventory_movements: movements,
+      }));
+    }
+
     if (pickupRpcError) {
       const pickupRpcErrorInfo = serializeActionError(pickupRpcError);
       console.warn("[operator:pick-list] Pickup confirmation RPC failed; retrying without inventory movements", {
         action_step: "confirm_pick_list.rpc_retry_without_inventory_movements",
         table_or_rpc: "rpc.confirm_route_pickup_batch",
         ...logPickupConfirmationContext,
+        client_acknowledged_pickup_line_ids: acknowledgedPickupLineIds,
+        server_canonical_acknowledged_pickup_line_ids: serverCanonicalAcknowledgedPickupLineIds,
+        checked_pickup_line_ids: acknowledgementDiagnostics.checkedPickupLineIds,
+        required_pickup_line_ids: acknowledgementDiagnostics.requiredPickupLineIds,
+        missing_required_pickup_line_ids: acknowledgementDiagnostics.missingRequiredPickupLineIds,
+        extra_server_canonical_pickup_line_ids: acknowledgementDiagnostics.extraServerCanonicalPickupLineIds,
+        client_missing_from_canonical_pickup_line_ids: acknowledgementDiagnostics.clientMissingFromCanonicalPickupLineIds,
+        client_extra_beyond_canonical_pickup_line_ids: acknowledgementDiagnostics.clientExtraBeyondCanonicalPickupLineIds,
+        prepared_batch_id: preparedBatchId,
+        selected_stop_ids: selectedStopIds,
         exact_supabase_postgres_error_code: pickupRpcErrorInfo.code,
         exact_supabase_postgres_error_message: pickupRpcErrorInfo.message,
         exact_supabase_postgres_error_details: pickupRpcErrorInfo.details,
@@ -1626,6 +1699,7 @@ export async function confirmPickList(
       pickup_batch_id: pickupBatchId,
       returned_row_count: logPickupRpcRowCount,
       used_inventory_fallback: logPickupRpcUsedFallback,
+      used_acknowledgement_compatibility_retry: logPickupRpcUsedAcknowledgementCompatibilityRetry,
       redirect_path: operatorRouteDetailPath(routeId),
     });
 
@@ -1662,6 +1736,7 @@ export async function confirmPickList(
       raw_error: errorInfo,
       submitted_raw_picked_items: pickedItems,
       extras,
+      used_acknowledgement_compatibility_retry: logPickupRpcUsedAcknowledgementCompatibilityRetry,
     });
     return actionFailure(pickupPublicError(error), {
       code: String(errorInfo.code ?? "") || undefined,

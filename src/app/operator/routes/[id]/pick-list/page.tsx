@@ -1377,9 +1377,19 @@ export default function PickListPage() {
               : submitting
                 ? `${t("Saving")}...`
                 : activePreparedBatch
-                  ? t("Confirm Pickup List")
+              ? t("Confirm Pickup List")
                   : t("Items prepared")}
           </button>
+          {activePreparedBatch && error ? (
+            <button
+              type="button"
+              onClick={handleConfirmPick}
+              disabled={submitting || !canConfirmPickup}
+              className="btn-secondary w-full flex-1 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {t("Retry confirmation")}
+            </button>
+          ) : null}
           <SecondaryButton href={routeHref} type="button">{t("Cancel")}</SecondaryButton>
         </div>
       </div>
