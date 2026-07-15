@@ -44,7 +44,7 @@ replaceOnce(
 replaceOnce(
   "product profit section subtitle",
   `<KpiSection title={t("Product profit")} subtitle={t(profitSectionSubtitle, profitSectionSubtitle)}>`,
-  `<KpiSection title={t("Product profit")} subtitle={t(`${profitSectionSubtitle} All products are shown and can be sorted by profit, units, revenue, cost, margin, or name.`, `${profitSectionSubtitle} All products are shown and can be sorted by profit, units, revenue, cost, margin, or name.`)}>`,
+  `<KpiSection title={t("Product profit")} subtitle={t(profitSectionSubtitle + " All products are shown and can be sorted by profit, units, revenue, cost, margin, or name.", profitSectionSubtitle + " All products are shown and can be sorted by profit, units, revenue, cost, margin, or name.")}>`,
 );
 
 replaceOnce(
