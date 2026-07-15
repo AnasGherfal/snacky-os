@@ -116,6 +116,11 @@ function pickupPublicError(error: unknown) {
   if (text.includes("route status") || text.includes("start the route")) return message;
   if (text.includes("stop status") || text.includes("only pending stops")) return message;
   if (text.includes("selected pickup stop") || text.includes("selected batch stops")) return message;
+  if (
+    text.includes("pickup checklist acknowledgements do not match the submitted checked lines")
+    || text.includes("pickup checklist acknowledgements do not match")
+    || text.includes("every required pickup line must be checked")
+  ) return message;
   if (text.includes("prepared before confirmation") || text.includes("prepared pickup summary") || text.includes("prepared pickup batch")) return message;
   if (text.includes("picked quantity cannot be reduced")) return message;
   if (text.includes("route must be assigned")) return message;
@@ -1658,7 +1663,15 @@ export async function confirmPickList(
       submitted_raw_picked_items: pickedItems,
       extras,
     });
-    return actionFailure(pickupPublicError(error), { code: String(errorInfo.code ?? "") || undefined });
+    return actionFailure(pickupPublicError(error), {
+      code: String(errorInfo.code ?? "") || undefined,
+      debug: JSON.stringify({
+        code: errorInfo.code ?? null,
+        message: errorInfo.message ?? null,
+        details: errorInfo.details ?? null,
+        hint: errorInfo.hint ?? null,
+      }),
+    });
   }
 }
 

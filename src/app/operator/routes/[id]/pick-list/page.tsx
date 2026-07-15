@@ -374,6 +374,10 @@ export default function PickListPage() {
   }))).filter((item) => item.quantity > 0);
   const allDetailedItemsChecked = allStopItems.length > 0 && allStopItems.every((item) => item.isChecked);
   const allLoadRowsChecked = preparedLoadRows.length > 0 && preparedLoadRows.every((item) => loadCheckedProductIds.has(item.productId));
+  const acknowledgedPickupLineIds = useMemo(
+    () => allStopItems.filter((item) => item.isChecked && item.routeStopItemId).map((item) => item.routeStopItemId as string),
+    [allStopItems],
+  );
   const canPreparePickup = !activePreparedBatch && allDetailedItemsChecked && selectedStopIds.length > 0 && !submitting;
   const canConfirmPickup = Boolean(activePreparedBatch) && allLoadRowsChecked && vehicleClearChecked && !submitting;
 
@@ -759,7 +763,12 @@ export default function PickListPage() {
               notes: item.notes,
             };
           }),
-        { stopIds: selectedStopIds, clientSubmissionId: pickupSubmissionIdRef.current, stage: "prepare" },
+        {
+          stopIds: selectedStopIds,
+          clientSubmissionId: pickupSubmissionIdRef.current,
+          acknowledgedPickupLineIds,
+          stage: "prepare",
+        },
       );
       if (!result.success) {
         throw new Error(result.error || "Could not save the prepared pickup snapshot.");
@@ -852,7 +861,13 @@ export default function PickListPage() {
               notes: item.notes,
             };
           }),
-        { stopIds: selectedStopIds, clientSubmissionId: pickupSubmissionIdRef.current, stage: "confirm", preparedBatchId: activePreparedBatch.id },
+        {
+          stopIds: selectedStopIds,
+          clientSubmissionId: pickupSubmissionIdRef.current,
+          acknowledgedPickupLineIds,
+          stage: "confirm",
+          preparedBatchId: activePreparedBatch.id,
+        },
       );
       if (result && "success" in result && result.success === false) {
         throw new Error(result.error || "Could not save added product");
