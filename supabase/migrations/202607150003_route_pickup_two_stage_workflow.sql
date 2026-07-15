@@ -5,6 +5,25 @@ alter table if exists public.route_pickup_batches
 create index if not exists idx_route_pickup_batches_prepared_at
   on public.route_pickup_batches(route_id, prepared_at);
 
+alter function public.confirm_route_pickup_batch(
+  uuid,
+  public.route_status,
+  public.route_status,
+  timestamptz,
+  boolean,
+  jsonb,
+  uuid[],
+  jsonb,
+  jsonb,
+  jsonb,
+  jsonb,
+  jsonb,
+  jsonb,
+  uuid[],
+  uuid[],
+  uuid[]
+) rename to confirm_route_pickup_batch_core;
+
 create or replace function public.confirm_route_pickup_batch(
   p_route_id uuid,
   p_expected_route_status public.route_status,
@@ -151,7 +170,7 @@ begin
 
   select *
   into v_result
-  from public.confirm_route_pickup_batch(
+  from public.confirm_route_pickup_batch_core(
     p_route_id,
     p_expected_route_status,
     p_next_route_status,
