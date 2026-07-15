@@ -1,0 +1,26 @@
+name: Pickup v2 production contract
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "supabase/migrations/202607150008_snacky_confirm_route_pickup_batch_v2.sql"
+      - "supabase/migrations/202607150013_pickup_v2_complete_production_contract.sql"
+      - "scripts/test-pickup-v2-production-contract.mjs"
+      - ".github/workflows/pickup-v2-production-contract.yml"
+  pull_request:
+    paths:
+      - "supabase/migrations/202607150008_snacky_confirm_route_pickup_batch_v2.sql"
+      - "supabase/migrations/202607150013_pickup_v2_complete_production_contract.sql"
+      - "scripts/test-pickup-v2-production-contract.mjs"
+      - ".github/workflows/pickup-v2-production-contract.yml"
+
+jobs:
+  pickup-v2-production-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run pickup v2 production contract regression
+        run: node --test scripts/test-pickup-v2-production-contract.mjs
