@@ -42,18 +42,18 @@ begin
       using errcode = 'P0001';
   end if;
 
-  update public.route_pickup_batches
+  update public.route_pickup_batches as existing_batch
   set
     status = case
       when new.status::text = 'confirmed' then new.status
-      else public.route_pickup_batches.status
+      else existing_batch.status
     end,
-    selected_stop_ids = coalesce(new.selected_stop_ids, public.route_pickup_batches.selected_stop_ids),
-    product_summary = coalesce(new.product_summary, public.route_pickup_batches.product_summary),
-    storage_deducted = coalesce(new.storage_deducted, public.route_pickup_batches.storage_deducted),
-    confirmed_at = coalesce(new.confirmed_at, public.route_pickup_batches.confirmed_at),
+    selected_stop_ids = coalesce(new.selected_stop_ids, existing_batch.selected_stop_ids),
+    product_summary = coalesce(new.product_summary, existing_batch.product_summary),
+    storage_deducted = coalesce(new.storage_deducted, existing_batch.storage_deducted),
+    confirmed_at = coalesce(new.confirmed_at, existing_batch.confirmed_at),
     updated_at = now()
-  where id = new.id;
+  where existing_batch.id = new.id;
 
   -- The matching existing row is now the canonical batch. Suppress the duplicate
   -- insert and allow the surrounding atomic pickup transaction to continue.
