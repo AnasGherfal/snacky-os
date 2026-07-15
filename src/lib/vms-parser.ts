@@ -707,6 +707,20 @@ export function parseReportType(value: FormDataEntryValue | string | null | unde
   return vmsReportTypes.some((type) => type.value === raw) ? (raw as VmsReportType) : null;
 }
 
+export function resolveVmsReportType({
+  requestedReportType,
+  previewReportType,
+  detectedReportType,
+}: {
+  requestedReportType?: VmsReportType | null;
+  previewReportType?: VmsReportType | null;
+  detectedReportType?: VmsReportType | null;
+}): VmsReportType {
+  const requestedConcrete = requestedReportType && requestedReportType !== "custom" ? requestedReportType : null;
+  const previewConcrete = previewReportType && previewReportType !== "custom" ? previewReportType : null;
+  return requestedConcrete ?? detectedReportType ?? previewConcrete ?? "custom";
+}
+
 export function requiredMissing(mapping: Record<string, string>, reportType: VmsReportType) {
   const fields = vmsExpectedFields[reportType];
   const missing = fields.filter((field) => field.required && !mapping[field.field]).map((field) => field.label);

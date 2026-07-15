@@ -13,6 +13,7 @@ import {
   detectVmsReportTypeFromRows,
   findSalesReportPeriod,
   parseReportType,
+  resolveVmsReportType,
   parseVmsUpload,
   requiredMissing,
   sheetRowsToRecords,
@@ -4767,7 +4768,7 @@ export async function prepareVmsImport(formData: FormData) {
     }
 
     const detectedReportType = parsed.sheets.map((sheet) => detectVmsReportTypeFromRows(sheet.rows)).find(Boolean) ?? null;
-    if (!requestedReportType && detectedReportType) reportType = detectedReportType;
+    reportType = resolveVmsReportType({ requestedReportType, detectedReportType });
     const debugContext = previewDebugContext({ file, parsed, reportType, currentUserId, effectivePermissions });
     console.info("[vms-import] Parsed VMS file for preview", {
       ...debugContext,

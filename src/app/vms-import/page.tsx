@@ -36,6 +36,7 @@ import {
   detectVmsReportTypeFromRows,
   findSalesReportPeriod,
   parseReportType,
+  resolveVmsReportType,
   requiredMissing,
   sheetRowsToRecords,
   vmsExpectedFields,
@@ -1619,8 +1620,13 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
   const previewSheets = previewSheetRows.filter((sheet) => Array.isArray(sheet.rows) && sheet.rows.length);
   const selectedSheet = previewSheets.find((sheet) => sheet.name === params.sheet) ?? previewSheets[0] ?? null;
   const detectedReportType = selectedSheet ? detectVmsReportTypeFromRows(selectedSheet.rows) : null;
-  const previewReportType = preview?.report_type && preview.report_type !== "custom" ? parseReportType(preview.report_type) : null;
-  const selectedReportType = parseReportType(params.reportType) ?? previewReportType ?? detectedReportType ?? "custom";
+  const requestedReportType = parseReportType(params.reportType);
+  const previewReportType = parseReportType(preview?.report_type);
+  const selectedReportType = resolveVmsReportType({
+    requestedReportType,
+    previewReportType,
+    detectedReportType,
+  });
   const autoCreateProducts = selectedReportType === "product_list" ? booleanParam(params.autoCreateProducts, true) : false;
   const updateCostFromVms = selectedReportType === "product_list" ? booleanParam(params.updateCostFromVms, false) : false;
   const detectedHeaderRow = selectedSheet ? detectHeaderRowIndex(selectedSheet.rows, selectedReportType) : 0;
@@ -1632,7 +1638,8 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
   const useSavedMapping = booleanParam(params.useSavedMapping, true);
   const headerSignature = selectedSheet ? vmsHeaderSignature(selectedReportType, selectedRows.headers) : "";
   let savedHeaderMapping: SavedHeaderMapping | null = null;
-  if (selectedSheet && headerSignature) {
+  const canUseSavedMapping = selectedReportType !== "custom";
+  if (selectedSheet && headerSignature && canUseSavedMapping) {
     const { data, error } = await (async () => {
       try {
         return await supabase
@@ -1658,7 +1665,7 @@ async function VmsImportPageContent({ searchParams }: { searchParams: Promise<Vm
   const selectedMapping = readMapping(
     params,
     selectedReportType,
-    useSavedMapping && Object.keys(savedMappingDefaults).length ? { ...mappingDetection.mapping, ...savedMappingDefaults } : mappingDetection.mapping,
+    useSavedMapping && canUseSavedMapping && Object.keys(savedMappingDefaults).length ? { ...mappingDetection.mapping, ...savedMappingDefaults } : mappingDetection.mapping,
   );
   const missingRequired = selectedSheet ? requiredMissing(selectedMapping, selectedReportType) : [];
   const mappedRows = selectedSheet ? applyColumnMapping(selectedRows.records, selectedMapping) : [];

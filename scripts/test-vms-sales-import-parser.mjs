@@ -6,6 +6,7 @@ import {
   detectHeaderRowIndex,
   detectVmsReportTypeFromRows,
   findSalesReportPeriod,
+  resolveVmsReportType,
   requiredMissing,
   sheetRowsToRecords,
 } from "../src/lib/vms-parser.ts";
@@ -198,6 +199,33 @@ test("VMS monthly profit report with merged title row detects row 2 headers and 
   assert.equal(mappedRows[0].refund_count, "1");
   assert.equal(mappedRows[0].total_transaction_count, "11");
   assert.equal(mappedRows[0].total_transaction_amount, "27.50");
+});
+
+test("VMS report type resolution treats custom as fallback only", () => {
+  assert.equal(
+    resolveVmsReportType({
+      requestedReportType: "custom",
+      previewReportType: "custom",
+      detectedReportType: "monthly_product_profit",
+    }),
+    "monthly_product_profit",
+  );
+  assert.equal(
+    resolveVmsReportType({
+      requestedReportType: "monthly_transaction_details",
+      previewReportType: "custom",
+      detectedReportType: "monthly_product_profit",
+    }),
+    "monthly_transaction_details",
+  );
+  assert.equal(
+    resolveVmsReportType({
+      requestedReportType: "custom",
+      previewReportType: "monthly_product_profit",
+      detectedReportType: null,
+    }),
+    "monthly_product_profit",
+  );
 });
 
 test("VMS sales source row key is stable for duplicate imports", () => {
