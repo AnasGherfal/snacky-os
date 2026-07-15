@@ -6,28 +6,25 @@ import { fileURLToPath } from "node:url";
 import {
   buildPickupAcknowledgementDiagnostics,
   buildServerCanonicalAcknowledgedPickupLineIds,
-  isExactPickupAcknowledgementMismatchError,
   normalizePickupLineIds,
 } from "../src/lib/pickup-acknowledgement.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..");
 const actionPath = path.join(repoRoot, "src/lib/operator-actions.ts");
-const pagePath = path.join(repoRoot, "src/app/operator/routes/[id]/pick-list/page.tsx");
-const migrationPath = path.join(repoRoot, "supabase/migrations/202607150005_route_pickup_acknowledgement_canonicalization.sql");
+const migrationPath = path.join(repoRoot, "supabase/migrations/202607150008_snacky_confirm_route_pickup_batch_v2.sql");
 
 const actionSource = fs.readFileSync(actionPath, "utf8");
-const pageSource = fs.readFileSync(pagePath, "utf8");
 const migrationSource = fs.readFileSync(migrationPath, "utf8");
 
-test("server canonical acknowledgement ids are derived from the final checked submitted rows", () => {
+test("server canonical acknowledgement ids are derived from the final checked submitted rows and ignore zero-quantity rows", () => {
   const rows = [
-    { route_stop_item_id: "manual-generated-line", is_checked: true },
-    { route_stop_item_id: "required-1", is_checked: true },
-    { route_stop_item_id: "required-1", is_checked: true },
-    { route_stop_item_id: "zero-quantity-line", is_checked: false },
-    { route_stop_item_id: "stale-browser-line", is_checked: false },
-    { route_stop_item_id: null, is_checked: true },
+    { route_stop_item_id: "manual-generated-line", is_checked: true, planned_qty: 4 },
+    { route_stop_item_id: "required-1", is_checked: true, planned_qty: 3 },
+    { route_stop_item_id: "required-1", is_checked: true, planned_qty: 3 },
+    { route_stop_item_id: "zero-quantity-line", is_checked: true, planned_qty: 0 },
+    { route_stop_item_id: "unchecked-line", is_checked: false, planned_qty: 2 },
+    { route_stop_item_id: null, is_checked: true, planned_qty: 2 },
   ];
 
   assert.deepEqual(buildServerCanonicalAcknowledgedPickupLineIds(rows), ["manual-generated-line", "required-1"]);
@@ -37,9 +34,9 @@ test("pickup acknowledgement diagnostics preserve browser ids but compute canoni
   const diagnostics = buildPickupAcknowledgementDiagnostics({
     clientAcknowledgedPickupLineIds: ["required-1", "required-1", "stale-browser-line"],
     pickListRows: [
-      { route_stop_item_id: "required-1", is_checked: true },
-      { route_stop_item_id: "manual-generated-line", is_checked: true },
-      { route_stop_item_id: "zero-quantity-line", is_checked: false },
+      { route_stop_item_id: "required-1", is_checked: true, planned_qty: 2 },
+      { route_stop_item_id: "manual-generated-line", is_checked: true, planned_qty: 5 },
+      { route_stop_item_id: "zero-quantity-line", is_checked: true, planned_qty: 0 },
     ],
     requiredPickupLineIds: ["required-1", "required-2"],
   });
@@ -54,45 +51,27 @@ test("pickup acknowledgement diagnostics preserve browser ids but compute canoni
   assert.deepEqual(diagnostics.clientExtraBeyondCanonicalPickupLineIds, ["stale-browser-line"]);
 });
 
-test("only the exact acknowledgement mismatch message triggers the compatibility retry", () => {
-  assert.equal(
-    isExactPickupAcknowledgementMismatchError({ message: "Pickup checklist acknowledgements do not match the submitted checked lines" }),
-    true,
-  );
-  assert.equal(
-    isExactPickupAcknowledgementMismatchError({ message: "Pickup checklist acknowledgements do not match the submitted checked lines.", details: "wrapped by Postgres" }),
-    true,
-  );
-  assert.equal(
-    isExactPickupAcknowledgementMismatchError({ message: "Pickup checklist acknowledgements do not match the submitted checked lines", details: "Every required pickup line must be checked before confirming pickup." }),
-    true,
-  );
-  assert.equal(
-    isExactPickupAcknowledgementMismatchError({ message: "Every required pickup line must be checked before confirming pickup." }),
-    false,
-  );
-});
-
 test("line-id normalisation removes duplicates and blanks", () => {
   assert.deepEqual(normalizePickupLineIds(["a", "b", "a", "", "  ", null, undefined, "c"]), ["a", "b", "c"]);
 });
 
-test("operator action uses the server canonical acknowledgement ids and compatibility retry path", () => {
+test("operator action calls only the new single-signature pickup RPC", () => {
   assert.match(actionSource, /buildServerCanonicalAcknowledgedPickupLineIds/);
   assert.match(actionSource, /serverCanonicalAcknowledgedPickupLineIds/);
   assert.match(actionSource, /p_acknowledged_pickup_line_ids:\s*serverCanonicalAcknowledgedPickupLineIds/);
-  assert.match(actionSource, /p_acknowledged_pickup_line_ids:\s*\[\]/);
-  assert.match(actionSource, /isExactPickupAcknowledgementMismatchError/);
-  assert.match(actionSource, /used_acknowledgement_compatibility_retry/);
+  assert.match(actionSource, /snacky_confirm_route_pickup_batch_v2/);
+  assert.doesNotMatch(actionSource, /p_acknowledged_pickup_line_ids:\s*\[\]/);
+  assert.doesNotMatch(actionSource, /confirm_route_pickup_batch\("/);
+  assert.doesNotMatch(actionSource, /confirm_route_pickup_batch_core\("/);
+  assert.doesNotMatch(actionSource, /acknowledgement compatibility mismatch/);
 });
 
-test("pickup page still exposes the retry confirmation affordance", () => {
-  assert.match(pageSource, /Retry confirmation/);
-  assert.match(pageSource, /acknowledgedPickupLineIds,\s*stage: "confirm"/);
-});
-
-test("canonicalisation migration still documents the server-side wrapper behavior", () => {
-  assert.match(migrationSource, /Harmless extra acknowledgement IDs are ignored/);
-  assert.match(migrationSource, /server-generated manual line IDs/);
-  assert.match(migrationSource, /create or replace function public\.confirm_route_pickup_batch/);
+test("new RPC migration has one unambiguous signature and soft-retires pick-list rows", () => {
+  assert.match(migrationSource, /create or replace function public\.snacky_confirm_route_pickup_batch_v2\(/);
+  assert.doesNotMatch(migrationSource, /default\s+/i);
+  assert.doesNotMatch(migrationSource, /confirm_route_pickup_batch_core\(/i);
+  assert.doesNotMatch(migrationSource, /confirm_route_pickup_batch\(/i);
+  assert.match(migrationSource, /update public\.route_pick_list_items\s+set\s+is_active = false/i);
+  assert.doesNotMatch(migrationSource, /\bdelete\s+from\s+public\.route_pick_list_items\b/i);
+  assert.match(migrationSource, /select pg_notify\('pgrst', 'reload schema'\);/i);
 });

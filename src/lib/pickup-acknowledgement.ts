@@ -1,6 +1,8 @@
 export type PickupLineRowLike = {
   route_stop_item_id?: unknown;
   is_checked?: unknown;
+  planned_qty?: unknown;
+  action_type?: unknown;
 };
 
 export type PickupAcknowledgementDiagnostics = {
@@ -45,6 +47,7 @@ export function buildServerCanonicalAcknowledgedPickupLineIds(pickListRows: Pick
   return normalizePickupLineIds(
     (pickListRows ?? [])
       .filter((row) => Boolean(row?.route_stop_item_id) && Boolean(row?.is_checked))
+      .filter((row) => row?.planned_qty === undefined || row?.planned_qty === null || Number(row.planned_qty) > 0)
       .map((row) => row.route_stop_item_id),
   );
 }
