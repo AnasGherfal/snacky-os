@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ReactNode } from "react";
+import { SortableDataTable } from "@/components/SortableDataTable";
 
 export type BreadcrumbItem = {
   label: string;
@@ -94,7 +95,7 @@ export const FormField = ({ label, required, hint, children }: { label: string; 
 export function PrimaryButton({ children, href, type = "submit" }: { children: ReactNode; href?: string; type?: "submit" | "button" }) { return href ? <Link className="btn-primary" href={href}>{children}</Link> : <button type={type} className="btn-primary">{children}</button>; }
 export const SecondaryButton = ({ children, href, type = "button" }: { children: ReactNode; href?: string; type?: "submit" | "button" }) => href ? <Link href={href} className="btn-secondary">{children}</Link> : <button type={type} className="btn-secondary">{children}</button>;
 export const StatusBadge = ({ status, label }: { status: string | null | undefined; label?: string }) => <span className={`status-badge status-${statusTone(status)}`}>{formatDisplayText(label, formatStatusLabel(status))}</span>;
-export const DataTable = ({ headers, children, className = "" }: { headers: string[]; children: ReactNode; className?: string }) => <div className={`table-wrap ${className}`}><table className="data-table"><thead><tr>{headers.map((h) => <th key={h}>{h}</th>)}</tr></thead><tbody>{children}</tbody></table></div>;
+export const DataTable = ({ headers, children, className = "", sortable, showSummary }: { headers: string[]; children: ReactNode; className?: string; sortable?: boolean; showSummary?: boolean }) => <SortableDataTable headers={headers} className={className} sortable={sortable} showSummary={showSummary}>{children}</SortableDataTable>;
 export const MobileCardList = ({ children, className = "" }: { children: ReactNode; className?: string }) => <div className={`grid gap-3 md:hidden ${className}`}>{children}</div>;
 export const MobileRecordCard = ({ children, className = "" }: { children: ReactNode; className?: string }) => <article className={`rounded-lg border border-slate-200 bg-white p-4 shadow-sm ${className}`}>{children}</article>;
 export const MobileField = ({ label, children }: { label: string; children: ReactNode }) => <div className="min-w-0"><div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div><div className="mt-1 break-words text-sm text-slate-800">{children}</div></div>;

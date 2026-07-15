@@ -1316,9 +1316,8 @@ async function SalesDashboardPageContent({
   const trendSubtitle = trendUsesDaily
     ? "Daily revenue for the selected business dates."
     : "Monthly revenue trend for the selected business dates.";
-  const topProductSalesRows = [...productBreakdownRows]
-    .sort((left, right) => right.successfulSalesAmount - left.successfulSalesAmount || right.unitsSold - left.unitsSold || left.bucketLabel.localeCompare(right.bucketLabel))
-    .slice(0, 15);
+  const productSalesRows = [...productBreakdownRows]
+    .sort((left, right) => right.successfulSalesAmount - left.successfulSalesAmount || right.unitsSold - left.unitsSold || left.bucketLabel.localeCompare(right.bucketLabel));
   const latestSourceBatch = contributingFiles[0]?.batch ?? activePrimaryFiles[0] ?? coverage.latest ?? batches[0] ?? null;
   const lastUpdatedAt = batchLastUpdatedAt(latestSourceBatch) ?? renderedAt.toISOString();
   const finalizedCoverageLabel = coverageSummary.earliestBusinessDate && coverageSummary.latestBusinessDate
@@ -1558,6 +1557,21 @@ async function SalesDashboardPageContent({
                 />
               ) : null}
               <MetricCard label={t("Units Sold")} value={<MetricValue>{formatInteger(summary.successfulUnitsSold)}</MetricValue>} />
+              <MetricCard label="Successful Sales" value={<MetricValue>{formatInteger(summary.successfulSalesCount)}</MetricValue>} helper="Completed sales transactions in the selected range." />
+              <MetricCard label="Revenue / Unit" value={<MetricValue>{summary.successfulUnitsSold > 0 ? lyd(summary.revenueAmount / summary.successfulUnitsSold) : "0 LYD"}</MetricValue>} helper="Average revenue earned per unit sold." />
+              <MetricCard label="Total Attempts" value={<MetricValue>{formatInteger(summary.totalAttemptCount)}</MetricValue>} helper="Successful sales plus failed, refunded, and other transaction attempts." />
+              <MetricCard label="Failed Vend Rate" tone={summary.failedVendRate > 0.03 ? "warn" : "default"} value={<MetricValue>{formatMarginPercent(summary.failedVendRate)}</MetricValue>} />
+              <MetricCard label="Failed Vends" tone={summary.failedVendCount > 0 ? "warn" : "default"} value={<MetricValue>{formatInteger(summary.failedVendCount)}</MetricValue>} />
+              <MetricCard label="Refunds" tone={summary.refundCount > 0 ? "warn" : "default"} value={<MetricValue>{formatInteger(summary.refundCount)}</MetricValue>} />
+              <MetricCard label="Failed Payments" tone={summary.failedPaymentCount > 0 ? "warn" : "default"} value={<MetricValue>{formatInteger(summary.failedPaymentCount)}</MetricValue>} />
+              <MetricCard label="Needs Review" tone={summary.needsReviewCount > 0 ? "warn" : "default"} value={<MetricValue>{formatInteger(summary.needsReviewCount)}</MetricValue>} />
+              {canViewProfit ? (
+                <MetricCard
+                  label="Profit / Unit"
+                  value={<MetricValue>{summary.grossProfitAmount === null || summary.successfulUnitsSold <= 0 ? "Not available" : lyd(summary.grossProfitAmount / summary.successfulUnitsSold)}</MetricValue>}
+                  helper="Gross profit divided by units sold."
+                />
+              ) : null}
 
               {canViewProfit ? (
                 <MetricCard
@@ -1643,16 +1657,18 @@ async function SalesDashboardPageContent({
               </KpiSection>
             </div>
 
-            <KpiSection title={t("Sales by product")} subtitle={t("Top products ranked by revenue.")}>
+            <KpiSection title={t("Sales by product")} subtitle={t("All products are shown. Sort by units sold, successful sales, revenue, revenue per unit, or product name.")}>
               {productBreakdownResult.error ? (
                 <SectionInlineMessage title="Sales by product could not load." body="Please contact admin if this keeps happening." />
-              ) : topProductSalesRows.length ? (
-                <DataTable headers={[t("Product"), t("Units sold"), t("Revenue")]}>
-                  {topProductSalesRows.map((row) => (
+              ) : productSalesRows.length ? (
+                <DataTable headers={[t("Product"), t("Units sold"), t("Successful sales"), t("Revenue"), t("Revenue / unit")]}>
+                  {productSalesRows.map((row) => (
                     <tr key={row.bucketLabel}>
                       <td className="font-medium">{row.bucketLabel}</td>
                       <td>{formatInteger(row.unitsSold)}</td>
+                      <td>{formatInteger(row.successfulSalesCount)}</td>
                       <td>{lyd(row.successfulSalesAmount)}</td>
+                      <td>{row.unitsSold > 0 ? lyd(row.successfulSalesAmount / row.unitsSold) : "0 LYD"}</td>
                     </tr>
                   ))}
                 </DataTable>
@@ -1662,18 +1678,21 @@ async function SalesDashboardPageContent({
             </KpiSection>
 
             {canViewProfit ? (
-              <KpiSection title={t("Product profit")} subtitle={t(profitSectionSubtitle, profitSectionSubtitle)}>
+              <KpiSection title={t("Product profit")} subtitle={t(profitSectionSubtitle + " All products are shown and can be sorted by profit, units, revenue, cost, margin, or name.", profitSectionSubtitle + " All products are shown and can be sorted by profit, units, revenue, cost, margin, or name.")}>
                 {productProfitResult.error ? (
                   <SectionInlineMessage title="Product profit could not load." body="Please contact admin if this keeps happening." />
                 ) : productProfitRows.length ? (
-                  <DataTable headers={[t("Product"), t("Units sold"), t("Revenue"), t("Cost"), t("Gross profit"), t("Margin %"), t("Cost status")]}>
-                    {productProfitRows.slice(0, 20).map((row) => (
+                  <DataTable headers={[t("Product"), t("Units sold"), t("Successful sales"), t("Revenue"), t("Revenue / unit"), t("Cost"), t("Gross profit"), t("Profit / unit"), t("Margin %"), t("Cost status")]}>
+                    {productProfitRows.map((row) => (
                       <tr key={row.bucketKey}>
                         <td className="font-medium">{row.bucketLabel}</td>
                         <td>{formatInteger(row.unitsSold)}</td>
+                        <td>{formatInteger(row.successfulSalesCount)}</td>
                         <td>{lyd(row.revenueAmount)}</td>
+                        <td>{row.unitsSold > 0 ? lyd(row.revenueAmount / row.unitsSold) : "0 LYD"}</td>
                         <td>{lyd(row.cogsAmount)}</td>
                         <td>{lyd(row.grossProfitAmount)}</td>
+                        <td>{row.unitsSold > 0 ? lyd(row.grossProfitAmount / row.unitsSold) : "0 LYD"}</td>
                         <td>{formatMarginPercent(row.grossMarginPercent)}</td>
                         <td><StatusBadge status={compactStatusLabel(row.costStatus)} /></td>
                       </tr>
