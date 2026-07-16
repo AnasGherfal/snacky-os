@@ -47,23 +47,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Test product planning and packaging
-        id: tests
-        shell: bash
-        run: |
-          set +e
-          node --experimental-strip-types --loader ./scripts/ts-alias-loader.mjs --test scripts/test-product-planning-packaging.mjs > product-planning-test.log 2>&1
-          status=$?
-          cat product-planning-test.log
-          echo "status=$status" >> "$GITHUB_OUTPUT"
-          exit 0
-      - name: Upload test diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: product-planning-test-log
-          path: product-planning-test.log
-      - name: Stop on test failure
-        if: steps.tests.outputs.status != '0'
-        run: exit 1
+        run: node --experimental-strip-types --loader ./scripts/ts-alias-loader.mjs --test scripts/test-product-planning-packaging.mjs
       - name: Build Snacky OS
         run: npm run build
