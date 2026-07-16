@@ -78,7 +78,7 @@ export async function createManualCashCollection(formData: FormData) {
   if (!machineId) fail("/cash-collections/new", "Machine is required.");
 
   const countedAmount = requiredAmount(formData.get("counted_amount_lyd"), "/cash-collections/new", "Counted amount");
-  const expectedCash = optionalAmount(formData.get("expected_cash_lyd"));
+  const expectedCash = null;
   const variance = calculateCashVariance(countedAmount, expectedCash);
   const reviewStatus = statusForConfirmedCash(variance);
   const payload = {
@@ -138,8 +138,7 @@ export async function confirmCashCollectionCount(formData: FormData) {
   if (beforeError || !before) fail("/cash-collections", "Cash collection not found.");
   if (before.review_status === "voided") fail(path, "Voided cash collections cannot be counted.");
 
-  const expectedFromForm = optionalAmount(formData.get("expected_cash_lyd"));
-  const expectedCash = expectedFromForm ?? (before.vms_expected_cash === null || before.vms_expected_cash === undefined ? null : Number(before.vms_expected_cash));
+  const expectedCash = null;
   const variance = calculateCashVariance(countedAmount, expectedCash);
   const reviewStatus = statusForConfirmedCash(variance);
 
@@ -200,7 +199,7 @@ export async function updateCashCollection(formData: FormData) {
   const machineId = optionalUuid(formData.get("machine_id"));
   if (!machineId) fail(path, "Machine is required.");
   const countedAmount = optionalAmount(formData.get("counted_amount_lyd"));
-  const expectedCash = optionalAmount(formData.get("expected_cash_lyd"));
+  const expectedCash = null;
   const hasCount = countedAmount !== null;
   const variance = hasCount ? calculateCashVariance(countedAmount, expectedCash) : null;
   const reviewStatus = hasCount ? statusForConfirmedCash(variance) : "collected_pending_count";

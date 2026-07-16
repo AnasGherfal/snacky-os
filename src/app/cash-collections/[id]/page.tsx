@@ -6,7 +6,7 @@ import { LocalDraftForm } from "@/components/LocalDraft";
 import { FormField, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canViewFinancials } from "@/lib/authz";
-import { getCashCollectionStatus, isCriticalCashVariance, isLargeCashVariance } from "@/lib/cash-collections";
+import { getCashCollectionStatus } from "@/lib/cash-collections";
 import { confirmCashCollectionCount, voidCashCollection } from "@/lib/cash-actions";
 import { lyd } from "@/lib/format";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
@@ -18,13 +18,6 @@ function formatDate(value: string | null) {
 
 function money(value: number | string | null | undefined) {
   return value === null || value === undefined ? "-" : lyd(Number(value));
-}
-
-function varianceTone(variance: number | null | undefined) {
-  if (variance === null || variance === undefined) return "border-slate-200 bg-slate-50 text-slate-700";
-  if (isCriticalCashVariance(variance)) return "border-rose-200 bg-rose-50 text-rose-800";
-  if (isLargeCashVariance(variance)) return "border-amber-200 bg-amber-50 text-amber-800";
-  return "border-emerald-200 bg-emerald-50 text-emerald-800";
 }
 
 function DetailItem({ label, children }: { label: string; children: ReactNode }) {
@@ -92,6 +85,7 @@ export default async function CashCollectionDetailPage({
           action={
             <div className="flex flex-wrap gap-2">
               <SecondaryButton href="/cash-collections">Back to cash</SecondaryButton>
+              <SecondaryButton href="/finance/operations">Monthly reconciliation</SecondaryButton>
               {canReviewMoney && status !== "voided" ? <SecondaryButton href={`/cash-collections/${id}/edit`}>Edit</SecondaryButton> : null}
               {canReviewMoney && status !== "voided" ? (
                 <ConfirmDialog
@@ -111,20 +105,18 @@ export default async function CashCollectionDetailPage({
         {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{error}</div> : null}
 
         <div className="grid gap-4 lg:grid-cols-4">
-          <SectionCard><div className="text-sm text-slate-500">Expected cash</div><div className="mt-2 text-2xl font-semibold text-slate-900">{money(collectionRow.vms_expected_cash)}</div></SectionCard>
           <SectionCard><div className="text-sm text-slate-500">Counted amount</div><div className="mt-2 text-2xl font-semibold text-slate-900">{money(collectionRow.actual_cash_collected)}</div></SectionCard>
-          <SectionCard><div className="text-sm text-slate-500">Variance</div><div className="mt-2 text-2xl font-semibold text-slate-900">{money(variance)}</div></SectionCard>
+          <SectionCard><div className="text-sm text-slate-500">Cash removed</div><div className="mt-2 text-base font-semibold text-slate-900">{formatDate(collectionRow.collected_at)}</div></SectionCard>
+          <SectionCard><div className="text-sm text-slate-500">Counted at</div><div className="mt-2 text-base font-semibold text-slate-900">{formatDate(collectionRow.counted_at)}</div></SectionCard>
           <SectionCard><div className="text-sm text-slate-500">Status</div><div className="mt-3"><StatusBadge status={status.replaceAll("_", " ")} /></div></SectionCard>
         </div>
 
-        <div className={`rounded-lg border p-4 text-sm ${varianceTone(variance)}`}>
+        <div className={`rounded-lg border p-4 text-sm ${status === "voided" ? "border-rose-200 bg-rose-50 text-rose-800" : needsCount ? "border-amber-200 bg-amber-50 text-amber-900" : "border-sky-200 bg-sky-50 text-sky-950"}`}>
           {status === "voided"
             ? `This collection was voided. ${collectionRow.void_reason ?? ""}`
             : needsCount
               ? "Operator collection has been recorded. Finance still needs to count and confirm the envelope before balance changes."
-              : status === "variance_review"
-                ? "This collection has a variance that should be reviewed before closing the cash cycle."
-                : "This collection has been counted and posted to finance."}
+              : "This pickup has been counted and posted to finance. Expected cash and shortage/overage are calculated for the complete machine month in Finance Operations, not for this individual pickup."}
         </div>
 
         <div className="grid gap-6 lg:grid-cols-[1fr_420px]">
@@ -150,15 +142,12 @@ export default async function CashCollectionDetailPage({
 
           <SectionCard>
             <h2 className="text-lg font-semibold">Count and confirm</h2>
-            <p className="mt-1 text-sm text-slate-500">Finance posts money-in only after the envelope is counted.</p>
+            <p className="mt-1 text-sm text-slate-500">Enter only the physical amount counted from this envelope. Finance posts money-in after confirmation.</p>
             {canReviewMoney && status !== "voided" ? (
               <LocalDraftForm action={confirmCashCollectionCount} formType="cash-collection-count" draftKeyParts={[collectionRow.id]} className="mt-5 space-y-4">
                 <input type="hidden" name="id" value={collectionRow.id} />
-                <FormField label="Counted amount LYD" required>
+                <FormField label="Counted amount LYD" required hint="This pickup will be added to the machine's other pickups for the monthly close.">
                   <input name="counted_amount_lyd" type="number" min="0" step="0.01" required defaultValue={collectionRow.actual_cash_collected ?? ""} className="field-input" />
-                </FormField>
-                <FormField label="Expected cash LYD">
-                  <input name="expected_cash_lyd" type="number" min="0" step="0.01" defaultValue={collectionRow.vms_expected_cash ?? ""} className="field-input" />
                 </FormField>
                 <FormField label="Cash bag / envelope ID">
                   <input name="cash_bag_id" defaultValue={collectionRow.cash_bag_id ?? ""} className="field-input" />

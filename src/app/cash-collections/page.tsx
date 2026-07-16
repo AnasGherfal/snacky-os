@@ -5,7 +5,7 @@ import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileR
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { createMissingCashFinanceLinks } from "@/lib/cash-actions";
 import { canAccessPath, canViewFinancials } from "@/lib/authz";
-import { getCashCollectionStatus, isCriticalCashVariance, isLargeCashVariance } from "@/lib/cash-collections";
+import { getCashCollectionStatus } from "@/lib/cash-collections";
 import { lyd } from "@/lib/format";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
@@ -23,13 +23,6 @@ function money(value: number | string | null | undefined) {
 
 function singleParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
-}
-
-function varianceClassName(variance: number | null | undefined) {
-  if (variance === null || variance === undefined) return "font-medium text-slate-500";
-  if (isCriticalCashVariance(variance)) return "font-semibold text-rose-700";
-  if (isLargeCashVariance(variance)) return "font-semibold text-amber-700";
-  return "font-medium text-slate-700";
 }
 
 export default async function CashCollectionsPage({
@@ -118,16 +111,14 @@ export default async function CashCollectionsPage({
   }
   const activeRows = rows.filter((row: any) => getCashCollectionStatus(row.review_status, row.variance) !== "voided");
   const rowsMissingFinance = activeRows.filter((row: any) => row.actual_cash_collected !== null && row.actual_cash_collected !== undefined && !financeByCashId.has(row.id));
-  const totalExpected = activeRows.reduce((sum: number, row: any) => sum + Number(row.vms_expected_cash ?? 0), 0);
   const totalCounted = activeRows.reduce((sum: number, row: any) => sum + Number(row.actual_cash_collected ?? 0), 0);
   const pendingCount = rows.filter((row: any) => row.review_status === "collected_pending_count").length;
-  const reviewCount = rows.filter((row: any) => getCashCollectionStatus(row.review_status, row.variance) === "variance_review").length;
 
   return (
     <>
       <PageHeader
         title="Cash Collections"
-        subtitle="Track route cash pickup, finance counting, variances, and linked money-in transactions."
+        subtitle="Record every physical cash pickup and counted amount. Expected cash and shortage/overage are reconciled for the full machine month in Finance Operations."
         action={canReviewMoney ? <PrimaryButton href="/cash-collections/new">New cash collection</PrimaryButton> : undefined}
       />
       {params.error ? <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{params.error}</div> : null}
@@ -187,10 +178,10 @@ export default async function CashCollectionsPage({
       ) : (
         <div className="space-y-6">
           <div className="grid gap-4 sm:grid-cols-4">
-            <SectionCard><div className="text-sm text-slate-500">Expected cash</div><div className="mt-2 text-2xl font-semibold text-slate-900">{lyd(totalExpected)}</div></SectionCard>
             <SectionCard><div className="text-sm text-slate-500">Counted amount</div><div className="mt-2 text-2xl font-semibold text-slate-900">{lyd(totalCounted)}</div></SectionCard>
+            <SectionCard><div className="text-sm text-slate-500">Collections on this page</div><div className="mt-2 text-2xl font-semibold text-slate-900">{activeRows.length}</div></SectionCard>
             <SectionCard><div className="text-sm text-slate-500">Pending count</div><div className="mt-2 text-2xl font-semibold text-slate-900">{pendingCount}</div></SectionCard>
-            <SectionCard><div className="text-sm text-slate-500">Variance review</div><div className="mt-2 text-2xl font-semibold text-slate-900">{reviewCount}</div></SectionCard>
+            <SectionCard><div className="text-sm text-slate-500">Monthly close</div><div className="mt-3"><Link href="/finance/operations" className="link-secondary">Open reconciliation</Link></div></SectionCard>
           </div>
 
           <MobileCardList>
@@ -209,9 +200,9 @@ export default async function CashCollectionsPage({
                     <StatusBadge status={status.replaceAll("_", " ")} />
                   </div>
                   <div className="grid grid-cols-2 gap-3">
-                    <MobileField label="Expected">{money(collection.vms_expected_cash)}</MobileField>
                     <MobileField label="Counted">{money(collection.actual_cash_collected)}</MobileField>
-                    <MobileField label="Variance"><span className={varianceClassName(variance)}>{money(variance)}</span></MobileField>
+                    <MobileField label="Counted at">{formatDate(collection.counted_at)}</MobileField>
+                    <MobileField label="Monthly close"><Link href="/finance/operations" className="link-secondary">Reconcile by month</Link></MobileField>
                     <MobileField label="Collected by">{collection.operator?.full_name ?? "Unassigned"}</MobileField>
                     <MobileField label="Route">{collection.route?.id ? <Link href={`/routes/${collection.route.id}`} className="link-secondary">{collection.route.route_date}</Link> : "-"}</MobileField>
                     <MobileField label="Finance">
@@ -227,7 +218,7 @@ export default async function CashCollectionsPage({
             })}
           </MobileCardList>
 
-          <DataTable className="hidden md:block" headers={["Machine", "Route", "Collected by", "Collected date", "Expected cash", "Counted amount", "Variance", "Status", "Finance", "Actions"]}>
+          <DataTable className="hidden md:block" headers={["Machine", "Route", "Collected by", "Cash removed", "Counted amount", "Counted at", "Status", "Finance", "Actions"]}>
             {rows.map((collection: any) => {
               const variance = collection.variance === null || collection.variance === undefined ? null : Number(collection.variance);
               const status = getCashCollectionStatus(collection.review_status, variance);
@@ -242,9 +233,8 @@ export default async function CashCollectionsPage({
                   <td>{collection.route?.id ? <Link href={`/routes/${collection.route.id}`} className="link-secondary">{collection.route.route_date}</Link> : "-"}</td>
                   <td>{collection.operator?.full_name ?? "Unassigned"}</td>
                   <td>{formatDate(collection.collected_at)}</td>
-                  <td>{money(collection.vms_expected_cash)}</td>
                   <td>{money(collection.actual_cash_collected)}</td>
-                  <td className={varianceClassName(variance)}>{money(variance)}</td>
+                  <td>{formatDate(collection.counted_at)}</td>
                   <td><StatusBadge status={status.replaceAll("_", " ")} /></td>
                   <td>
                     {finance?.id ? (

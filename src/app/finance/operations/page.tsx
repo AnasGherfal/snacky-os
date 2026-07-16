@@ -41,6 +41,12 @@ import {
 } from "@/lib/finance-operations";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import {
+  isCompleteClosedMonthRange,
+  monthlyMachineExpectedCash,
+  reconcileMonthlyCash,
+  resolveMonthlyCashExpectation,
+} from "@/lib/monthly-cash-close";
+import {
   resolveDetailedSalesDashboardSourceReportType,
   resolveSalesDashboardSourceReportType,
   type SalesDateRange,
@@ -102,11 +108,16 @@ function dateOnly(value: string | null | undefined) {
   return value ? String(value).slice(0, 10) : "-";
 }
 
-function statusForMachine(row: ReturnType<typeof buildMachineCashReconciliation>[number]) {
-  if (row.varianceReviewCount > 0) return "variance review";
-  if (row.missingExpectedCount > 0) return "expected cash missing";
-  if (row.vmsMatchStatus === "vms_only") return "no cash count";
-  if (row.vmsMatchStatus === "cash_only") return "no VMS match";
+function statusForMachine(row: {
+  collectionCount: number;
+  monthlyExpectedCash: number | null;
+  monthlyVariance: number | null;
+  vmsSalesAmount: number;
+}, closedMonth: boolean) {
+  if (!closedMonth) return "provisional month";
+  if (row.monthlyExpectedCash === null) return "cash split unavailable";
+  if (row.collectionCount === 0 && row.vmsSalesAmount > 0) return "no cash counted";
+  if (Math.abs(row.monthlyVariance ?? 0) >= 10) return "variance review";
   return "reconciled";
 }
 
@@ -200,8 +211,8 @@ export default async function FinanceOperationsPage({
       .from("cash_collections")
       .select("id, machine_id, collected_at, counted_at, vms_expected_cash, actual_cash_collected, variance, review_status, machine:machines(id, name, machine_code, location:locations(id, name))")
       .not("counted_at", "is", null)
-      .gte("counted_at", startTimestamp)
-      .lte("counted_at", endTimestamp)
+      .gte("collected_at", startTimestamp)
+      .lte("collected_at", endTimestamp)
       .order("counted_at", { ascending: false })
       .limit(10000),
     supabase
@@ -278,7 +289,7 @@ export default async function FinanceOperationsPage({
   const locations = new Map(((locationResult.data ?? []) as LocationRow[]).map((location) => [location.id, location.name || "Unknown location"]));
 
   const cashSummary = summarizeCashCollections(countedCashRows);
-  const machineRows = buildMachineCashReconciliation({
+  const baseMachineRows = buildMachineCashReconciliation({
     machines: machineIdentities,
     cashCollections: countedCashRows,
     vmsRows: vmsMachineRows,
@@ -295,12 +306,28 @@ export default async function FinanceOperationsPage({
   const vmsCardSales = numeric(salesSummary.card_sales_amount);
   const vmsUnknownSales = numeric(salesSummary.unknown_payment_sales_amount);
   const paymentSplitAvailable = Boolean(salesSummary.payment_method_available);
+  const monthlyExpectation = resolveMonthlyCashExpectation({
+    paymentSplitAvailable,
+    vmsCashSales,
+    vmsRevenue,
+  });
+  const monthlyClose = reconcileMonthlyCash(cashSummary.countedCash, monthlyExpectation);
+  const closedMonth = isCompleteClosedMonthRange(period.start, period.end);
+  const machineRows = baseMachineRows.map((row) => {
+    const monthlyExpectedCash = monthlyMachineExpectedCash({ paymentSplitAvailable, vmsSalesAmount: row.vmsSalesAmount });
+    const monthlyVariance = monthlyExpectedCash === null ? null : row.countedCash - monthlyExpectedCash;
+    return {
+      ...row,
+      monthlyExpectedCash,
+      monthlyVariance,
+      monthlyAccuracy: monthlyExpectedCash && monthlyExpectedCash > 0 ? row.countedCash / monthlyExpectedCash : null,
+    };
+  });
   const vmsCogs = nullableNumeric(salesSummary.cogs_amount);
   const vmsGrossProfit = nullableNumeric(salesSummary.gross_profit_amount);
   const vmsMargin = nullableNumeric(salesSummary.gross_margin_percent);
   const operatingResult = vmsGrossProfit === null ? null : vmsGrossProfit - expenses.operatingExpenses;
   const financePostingDifference = cashSummary.countedCash - postedCash;
-  const periodCashVsVmsCash = paymentSplitAvailable ? cashSummary.countedCash - vmsCashSales : null;
 
   const rentRows = ledgerRows.filter((row) => isReportableExpenseRow(row, "LYD") && canonicalExpenseCategory(row).key === "rent");
   const rentBySite = new Map<string, { label: string; amount: number; transactionCount: number }>();
@@ -373,13 +400,13 @@ export default async function FinanceOperationsPage({
       <section className="mb-6">
         <div className="mb-3">
           <h2 className="text-lg font-semibold text-slate-950">Cash control</h2>
-          <p className="mt-1 text-sm text-slate-500">Counted cash is the physical amount entered by finance/admin. Recorded expected cash is the VMS expectation saved on each collection.</p>
+          <p className="mt-1 text-sm text-slate-500">Every pickup records only physical counted cash. Expected cash, shortage/overage, and accuracy are calculated for the complete selected month.</p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <StatCard label="Actual counted cash" value={formatFinanceMoney(cashSummary.countedCash, "LYD")} note={`${cashSummary.countedRows.length} counted collection(s)`} tone="strong" />
-          <StatCard label="Recorded VMS expected cash" value={formatFinanceMoney(cashSummary.expectedCash, "LYD")} note={`${cashSummary.missingExpectedCount} count(s) missing expected cash`} tone={cashSummary.missingExpectedCount ? "warn" : "default"} />
-          <StatCard label="Cash variance" value={formatFinanceMoney(cashSummary.calculatedVariance, "LYD")} note="Counted minus recorded expected cash" tone={cashSummary.calculatedVariance < 0 ? "negative" : cashSummary.calculatedVariance > 0 ? "warn" : "positive"} />
-          <StatCard label="Collection accuracy" value={percent(cashSummary.collectionAccuracy)} note={`${cashSummary.varianceReviewCount} collection(s) need variance review`} tone={cashSummary.varianceReviewCount ? "warn" : "positive"} />
+          <StatCard label="Cash counted for selected month" value={formatFinanceMoney(monthlyClose.countedCash, "LYD")} note={`${cashSummary.countedRows.length} pickup(s) added together`} tone="strong" />
+          <StatCard label="Monthly VMS expected cash" value={monthlyClose.expectedCash === null ? "Not available" : formatFinanceMoney(monthlyClose.expectedCash, "LYD")} note={monthlyExpectation.note} tone={monthlyClose.expectedCash === null ? "warn" : "default"} />
+          <StatCard label="Monthly shortage / overage" value={monthlyClose.variance === null ? "Not available" : formatFinanceMoney(monthlyClose.variance, "LYD")} note="Total counted cash minus monthly expected cash" tone={monthlyClose.variance === null ? "warn" : monthlyClose.variance < 0 ? "negative" : monthlyClose.variance > 0 ? "warn" : "positive"} />
+          <StatCard label="Monthly cash accuracy" value={percent(monthlyClose.accuracy)} note={closedMonth ? "Closed calendar month" : "Provisional until the month is fully closed and remaining cash is counted"} tone={!closedMonth ? "warn" : monthlyClose.variance !== null && Math.abs(monthlyClose.variance) >= 10 ? "warn" : "positive"} />
           <StatCard label="Posted cash in finance" value={formatFinanceMoney(postedCash, "LYD")} note="Active cash-collection money-in transactions" tone="positive" />
           <StatCard label="Posting difference" value={formatFinanceMoney(financePostingDifference, "LYD")} note="Counted cash minus finance-posted cash" tone={Math.abs(financePostingDifference) > 0.01 ? "warn" : "positive"} />
           <StatCard label="Pending cash counts" value={String((pendingCashResult.data ?? []).length)} note="Collected records not counted yet" tone={(pendingCashResult.data ?? []).length ? "warn" : "positive"} />
@@ -400,22 +427,21 @@ export default async function FinanceOperationsPage({
           <StatCard label="Operating result" value={operatingResult === null ? "Not available" : formatFinanceMoney(operatingResult, "LYD")} note="VMS gross profit minus operating expenses; product purchases excluded to prevent double counting" tone={operatingResult !== null && operatingResult < 0 ? "negative" : "positive"} />
           <StatCard label="Product purchases" value={formatFinanceMoney(expenses.productPurchases, "LYD")} note="Inventory cash out, shown separately from operating expenses" tone="negative" />
           <StatCard label="Finance cash-flow net" value={formatFinanceMoney(netCashMovement, "LYD")} note={`${formatFinanceMoney(totalMoneyIn, "LYD")} in minus ${formatFinanceMoney(totalMoneyOut, "LYD")} out`} tone={netCashMovement < 0 ? "negative" : "positive"} />
-          <StatCard label="VMS payment split" value={paymentSplitAvailable ? `${formatFinanceMoney(vmsCashSales, "LYD")} cash` : "Unavailable"} note={paymentSplitAvailable ? `${formatFinanceMoney(vmsCardSales, "LYD")} card • ${formatFinanceMoney(vmsUnknownSales, "LYD")} unknown` : "This source does not separate cash and card sales."} />
-          {paymentSplitAvailable ? <StatCard label="Period cash vs VMS cash" value={formatFinanceMoney(periodCashVsVmsCash ?? 0, "LYD")} note="Counted during the period minus VMS cash sales dated in the period; timing differences can exist." tone={(periodCashVsVmsCash ?? 0) < 0 ? "warn" : "default"} /> : null}
+          <StatCard label="VMS payment split" value={paymentSplitAvailable ? `${formatFinanceMoney(vmsCashSales, "LYD")} cash` : "Cash-only assumption"} note={paymentSplitAvailable ? `${formatFinanceMoney(vmsCardSales, "LYD")} card • ${formatFinanceMoney(vmsUnknownSales, "LYD")} unknown` : "The report has no payment split, so monthly total sales are treated as expected cash for Snacky's current cash-only machines."} />
         </div>
       </section>
 
       <section className="surface-card mb-6">
         <div className="border-b border-slate-200 pb-4">
           <h2 className="text-base font-semibold text-slate-950">Machine cash reconciliation</h2>
-          <p className="mt-1 text-sm leading-6 text-slate-500">Variance uses the expected cash saved on collection records. VMS sales is shown as full machine revenue for the selected sales dates and may include card sales.</p>
+          <p className="mt-1 text-sm leading-6 text-slate-500">All pickups counted during the selected month are added per machine. When VMS has no payment split, total machine sales are used as expected cash under the cash-only workflow. Current-month results remain provisional until the final month-end cash is removed and counted.</p>
         </div>
         {machineRows.length ? (
           <div className="mt-4">
             <DataTable
               sortable
               showSummary
-              headers={["Machine", "Location", "VMS sales", "Units sold", "Expected cash", "Counted cash", "Variance", "Accuracy", "Collections", "Latest count", "Status"]}
+              headers={["Machine", "Location", "VMS sales", "Units sold", "Monthly expected cash", "Cash counted in month", "Monthly variance", "Monthly accuracy", "Pickups", "Latest count", "Status"]}
             >
               {machineRows.map((row) => (
                 <tr key={row.key}>
@@ -426,13 +452,13 @@ export default async function FinanceOperationsPage({
                   <td>{row.locationLabel}</td>
                   <td>{formatFinanceMoney(row.vmsSalesAmount, "LYD")}</td>
                   <td>{row.unitsSold.toLocaleString("en-US")}</td>
-                  <td>{formatFinanceMoney(row.expectedCash, "LYD")}</td>
+                  <td>{row.monthlyExpectedCash === null ? "Not available" : formatFinanceMoney(row.monthlyExpectedCash, "LYD")}</td>
                   <td>{formatFinanceMoney(row.countedCash, "LYD")}</td>
-                  <td className={row.calculatedVariance < 0 ? "font-semibold text-rose-700" : row.calculatedVariance > 0 ? "font-semibold text-amber-700" : "font-medium text-emerald-700"}>{formatFinanceMoney(row.calculatedVariance, "LYD")}</td>
-                  <td>{percent(row.collectionAccuracy)}</td>
+                  <td className={row.monthlyVariance === null ? "text-slate-500" : row.monthlyVariance < 0 ? "font-semibold text-rose-700" : row.monthlyVariance > 0 ? "font-semibold text-amber-700" : "font-medium text-emerald-700"}>{row.monthlyVariance === null ? "Not available" : formatFinanceMoney(row.monthlyVariance, "LYD")}</td>
+                  <td>{percent(row.monthlyAccuracy)}</td>
                   <td>{row.collectionCount}</td>
                   <td>{formatDateTime(row.latestCountedAt)}</td>
-                  <td><StatusBadge status={statusForMachine(row)} /></td>
+                  <td><StatusBadge status={statusForMachine(row, closedMonth)} /></td>
                 </tr>
               ))}
             </DataTable>

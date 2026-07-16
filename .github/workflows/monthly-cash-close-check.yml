@@ -1,0 +1,42 @@
+name: Monthly cash close checks
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "src/components/CashCollectionForm.tsx"
+      - "src/app/cash-collections/**"
+      - "src/app/finance/operations/page.tsx"
+      - "src/lib/cash-actions.ts"
+      - "src/lib/monthly-cash-close.ts"
+      - "scripts/test-monthly-cash-close.mjs"
+      - ".github/workflows/monthly-cash-close-check.yml"
+  push:
+    branches:
+      - fix/monthly-cash-close-workflow
+    paths:
+      - "src/components/CashCollectionForm.tsx"
+      - "src/app/cash-collections/**"
+      - "src/app/finance/operations/page.tsx"
+      - "src/lib/cash-actions.ts"
+      - "src/lib/monthly-cash-close.ts"
+      - "scripts/test-monthly-cash-close.mjs"
+      - ".github/workflows/monthly-cash-close-check.yml"
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Test monthly cash close workflow
+        run: node --experimental-strip-types --test scripts/test-monthly-cash-close.mjs
+      - name: Build Snacky OS
+        run: npm run build
