@@ -41,6 +41,14 @@ type SavedPlanRow = {
   notes: string | null;
 };
 
+type MonthlyBatchRow = {
+  id?: unknown;
+  report_start_date?: unknown;
+  report_end_date?: unknown;
+  imported_at?: unknown;
+  uploaded_at?: unknown;
+};
+
 function monthStart(value: string | null | undefined) {
   const match = /^(\d{4})-(\d{2})$/.exec(String(value ?? ""));
   if (match) return `${match[1]}-${match[2]}-01`;
@@ -77,6 +85,43 @@ function actionTone(action: string) {
   if (action === "reduce" || action === "review") return "variance_review";
   if (action === "remove") return "critical";
   return action;
+}
+
+function safeDate(value: unknown) {
+  const text = String(value ?? "").slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : null;
+}
+
+function dateTimeValue(value: unknown) {
+  const timestamp = Date.parse(String(value ?? ""));
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function batchMonthKey(row: MonthlyBatchRow) {
+  return safeDate(row.report_start_date)?.slice(0, 7) ?? safeDate(row.report_end_date)?.slice(0, 7) ?? "";
+}
+
+function selectBestMonthlyBatches(rows: MonthlyBatchRow[]) {
+  const sorted = [...rows].sort((left, right) => {
+    const endDiff = String(safeDate(right.report_end_date) ?? "").localeCompare(String(safeDate(left.report_end_date) ?? ""));
+    if (endDiff) return endDiff;
+    return Math.max(dateTimeValue(right.imported_at), dateTimeValue(right.uploaded_at))
+      - Math.max(dateTimeValue(left.imported_at), dateTimeValue(left.uploaded_at));
+  });
+  const byMonth = new Map<string, MonthlyBatchRow>();
+  sorted.forEach((row) => {
+    const month = batchMonthKey(row);
+    if (month && !byMonth.has(month)) byMonth.set(month, row);
+  });
+  return Array.from(byMonth.values());
+}
+
+function inclusiveCoverageDays(startDate: string | null, endDate: string | null) {
+  if (!startDate || !endDate) return 0;
+  const start = Date.parse(`${startDate}T00:00:00Z`);
+  const end = Date.parse(`${endDate}T00:00:00Z`);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return 0;
+  return Math.floor((end - start) / 86_400_000) + 1;
 }
 
 async function saveMonthlyProductPlans(formData: FormData) {
@@ -158,13 +203,13 @@ export default async function ProductPlanningPage({ searchParams }: { searchPara
       .limit(2000),
     supabase
       .from("vms_import_batches")
-      .select("id, report_type, status, is_active, deleted_at, report_start_date, report_end_date")
+      .select("id, report_type, status, is_active, deleted_at, report_start_date, report_end_date, imported_at, uploaded_at")
       .eq("report_type", "monthly_product_profit")
       .in("status", ["imported", "imported_with_warnings", "partially_imported"])
       .eq("is_active", true)
       .is("deleted_at", null)
       .gte("report_end_date", historyStart)
-      .lte("report_start_date", monthEnd(previousMonth))
+      .lte("report_start_date", currentMonthEnd)
       .limit(1000),
   ]);
 
@@ -173,14 +218,22 @@ export default async function ProductPlanningPage({ searchParams }: { searchPara
     return <ErrorState title="Product Planning could not load" body="Snacky OS could not load the product catalog." />;
   }
 
-  const monthlyBatchIds = (batchesResult.data ?? []).map((row: any) => String(row.id ?? "")).filter(Boolean);
+  const selectedMonthlyBatches = selectBestMonthlyBatches((batchesResult.data ?? []) as MonthlyBatchRow[]);
+  const monthlyBatchIds = selectedMonthlyBatches.map((row) => String(row.id ?? "")).filter(Boolean);
+  const planningMonthBatch = selectedMonthlyBatches.find((row) => batchMonthKey(row) === planningMonth.slice(0, 7)) ?? null;
+  const coverageStartRaw = safeDate(planningMonthBatch?.report_start_date) ?? (planningMonthBatch ? planningMonth : null);
+  const coverageEndRaw = safeDate(planningMonthBatch?.report_end_date);
+  const currentMonthCoverageStart = coverageStartRaw && coverageStartRaw < planningMonth ? planningMonth : coverageStartRaw;
+  const currentMonthSalesThrough = coverageEndRaw && coverageEndRaw > currentMonthEnd ? currentMonthEnd : coverageEndRaw;
+  const currentMonthObservedDays = inclusiveCoverageDays(currentMonthCoverageStart, currentMonthSalesThrough);
+
   const monthlySalesResult = monthlyBatchIds.length
     ? await supabase
         .from("vms_monthly_product_profit")
         .select("business_month, internal_product_id, transaction_count, transaction_amount, cost_amount, profit_amount, import_batch_id")
         .in("import_batch_id", monthlyBatchIds)
         .gte("business_month", historyStart)
-        .lte("business_month", previousMonth)
+        .lte("business_month", planningMonth)
         .limit(20000)
     : { data: [], error: null };
 
@@ -189,7 +242,7 @@ export default async function ProductPlanningPage({ searchParams }: { searchPara
         .from("kpi_product_monthly")
         .select("product_id, sales_month, units_sold, gross_sales_amount, gross_profit_amount")
         .gte("sales_month", historyStart)
-        .lte("sales_month", previousMonth)
+        .lte("sales_month", planningMonth)
         .limit(10000)
     : { data: [], error: null };
 
@@ -280,6 +333,8 @@ export default async function ProductPlanningPage({ searchParams }: { searchPara
       activeMachineCount: machineIdsByProduct.get(product.id)?.size ?? 0,
       unitCost,
       salesMonths: salesByProduct.get(product.id) ?? [],
+      currentMonthObservedDays,
+      currentMonthSalesThrough,
       purchasedUnitsThisMonth: purchased.units,
       purchasedSpendThisMonth: purchased.spend,
     }, planningMonth);
@@ -291,7 +346,7 @@ export default async function ProductPlanningPage({ searchParams }: { searchPara
       storageUnits: storageByProduct.get(product.id) ?? 0,
       activeMachineCount: machineIdsByProduct.get(product.id)?.size ?? 0,
       unitCost,
-      plannedUnits: saved ? wholeNumber(saved.planned_units) : recommendation.suggestedBuyUnits,
+      plannedUnits: saved ? wholeNumber(saved.planned_units) : recommendation.recommendedPlanUnits,
       plannedBudget: saved ? Math.max(0, numeric(saved.planned_budget_lyd)) : recommendation.recommendedBudgetLyd ?? 0,
       planStatus: saved?.plan_status ?? "draft",
       notes: saved?.notes ?? "",
@@ -299,13 +354,15 @@ export default async function ProductPlanningPage({ searchParams }: { searchPara
   }).sort((left, right) => {
     const priority = { remove: 0, review: 1, reduce: 2, increase: 3, testing: 4, keep: 5 } as Record<string, number>;
     return (priority[left.recommendation.action] ?? 99) - (priority[right.recommendation.action] ?? 99)
-      || right.recommendation.previousMonthUnits - left.recommendation.previousMonthUnits
+      || right.recommendation.projectedCurrentMonthUnits - left.recommendation.projectedCurrentMonthUnits
       || left.product.name.localeCompare(right.product.name);
   });
 
   const totalRecommendedBudget = rows.reduce((sum, row) => sum + (row.recommendation.recommendedBudgetLyd ?? 0), 0);
   const totalPlannedBudget = rows.reduce((sum, row) => sum + row.plannedBudget, 0);
   const totalPurchasedSpend = rows.reduce((sum, row) => sum + row.recommendation.purchasedSpendThisMonth, 0);
+  const totalCurrentMonthUnits = rows.reduce((sum, row) => sum + row.recommendation.currentMonthUnits, 0);
+  const totalProjectedMonthUnits = rows.reduce((sum, row) => sum + row.recommendation.projectedCurrentMonthUnits, 0);
   const remainingBudget = Math.max(0, totalPlannedBudget - totalPurchasedSpend);
   const newCount = rows.filter((row) => row.recommendation.action === "testing").length;
   const removeCount = rows.filter((row) => row.recommendation.action === "remove").length;
@@ -313,12 +370,15 @@ export default async function ProductPlanningPage({ searchParams }: { searchPara
   const dataWarning = monthlySalesResult.error && detailedSalesResult.error
     ? "Monthly VMS product sales could not load. Recommendations are based on product age, storage, and purchase records only."
     : null;
+  const currentMonthDataNotice = currentMonthObservedDays > 0
+    ? `Current-month VMS sales are included through ${currentMonthSalesThrough} (${currentMonthObservedDays} day${currentMonthObservedDays === 1 ? "" : "s"} covered).`
+    : "No active current-month product-sales upload was found. Recommendations still use last month until you upload this month's VMS sales.";
 
   return (
     <>
       <PageHeader
         title="Product Planning"
-        subtitle="Decide what to keep, increase, reduce, or remove; set a dedicated monthly quantity and budget for every product."
+        subtitle="Plan what to buy using last month, current-month VMS sales, projected remaining demand, current storage, and purchases already made."
         breadcrumbs={[{ label: "Inventory", href: "/inventory" }, { label: "Product Planning" }]}
         action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/products-dashboard">Product Dashboard</SecondaryButton><SecondaryButton href="/purchases?module=finance">Purchases</SecondaryButton><PrimaryButton href="/purchases/new">New purchase</PrimaryButton></div>}
       />
@@ -327,6 +387,10 @@ export default async function ProductPlanningPage({ searchParams }: { searchPara
       {params.error ? <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-900">{params.error}</div> : null}
       {planTableMissing ? <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><div className="font-semibold">Recommendations are available, but plan saving is not installed yet.</div><p className="mt-1">Apply migration 202607160001_product_monthly_purchase_plans.sql to save monthly quantities and budgets.</p></div> : null}
       {dataWarning ? <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">{dataWarning}</div> : null}
+      <div className={`mb-5 rounded-xl border p-4 text-sm ${currentMonthObservedDays > 0 ? "border-sky-200 bg-sky-50 text-sky-950" : "border-amber-200 bg-amber-50 text-amber-950"}`}>
+        <div className="font-semibold">Current-month demand signal</div>
+        <p className="mt-1">{currentMonthDataNotice}</p>
+      </div>
 
       <section className="surface-card mb-6">
         <form className="flex flex-col gap-3 sm:flex-row sm:items-end">
@@ -334,13 +398,14 @@ export default async function ProductPlanningPage({ searchParams }: { searchPara
           <button className="btn-primary">Open month</button>
           <Link href="/product-planning" className="btn-secondary">Current month</Link>
         </form>
-        <p className="mt-3 text-sm text-slate-500">Sales baseline: {previousMonth.slice(0, 7)}. Trend comparison: {priorMonth.slice(0, 7)}.</p>
+        <p className="mt-3 text-sm text-slate-500">Baseline: {previousMonth.slice(0, 7)}. Current uploaded sales: {planningMonth.slice(0, 7)}{currentMonthSalesThrough ? ` through ${currentMonthSalesThrough}` : " not uploaded yet"}. Earlier comparison: {priorMonth.slice(0, 7)}.</p>
       </section>
 
-      <section className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <div className="surface-card"><div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Recommended budget</div><div className="mt-2 text-2xl font-semibold">{lyd(totalRecommendedBudget)}</div><p className="mt-1 text-sm text-slate-500">Calculated from target buy units and latest product costs</p></div>
+      <section className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="surface-card"><div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Current month sold</div><div className="mt-2 text-2xl font-semibold">{totalCurrentMonthUnits.toLocaleString("en-US")}</div><p className="mt-1 text-sm text-slate-500">Projected full month: {totalProjectedMonthUnits.toLocaleString("en-US")} units</p></div>
+        <div className="surface-card"><div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Recommended budget</div><div className="mt-2 text-2xl font-semibold">{lyd(totalRecommendedBudget)}</div><p className="mt-1 text-sm text-slate-500">Spent so far plus the quantity still suggested</p></div>
         <div className="surface-card"><div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Saved / editable budget</div><div className="mt-2 text-2xl font-semibold">{lyd(totalPlannedBudget)}</div><p className="mt-1 text-sm text-slate-500">Your dedicated amount for each item this month</p></div>
-        <div className="surface-card"><div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Purchased this month</div><div className="mt-2 text-2xl font-semibold">{lyd(totalPurchasedSpend)}</div><p className="mt-1 text-sm text-slate-500">Remaining against plan: {lyd(remainingBudget)}</p></div>
+        <div className="surface-card"><div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Purchased this month</div><div className="mt-2 text-2xl font-semibold">{lyd(totalPurchasedSpend)}</div><p className="mt-1 text-sm text-slate-500">Remaining against saved plan: {lyd(remainingBudget)}</p></div>
         <div className="surface-card"><div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</div><div className="mt-2 text-lg font-semibold">{increaseCount} increase · {removeCount} remove</div><p className="mt-1 text-sm text-slate-500">{newCount} new products remain protected for testing</p></div>
       </section>
 
@@ -348,10 +413,10 @@ export default async function ProductPlanningPage({ searchParams }: { searchPara
         <form action={saveMonthlyProductPlans}>
           <input type="hidden" name="planning_month" value={planningMonth} />
           <div className="mb-4 flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div><div className="font-semibold text-slate-950">Monthly item budget</div><p className="mt-1 text-sm text-slate-500">Edit planned units or budget, then save all products together.</p></div>
+            <div><div className="font-semibold text-slate-950">Monthly item budget</div><p className="mt-1 text-sm text-slate-500">Planned units represent the total monthly purchase allocation: already purchased plus what is still recommended.</p></div>
             <button className="btn-primary" disabled={planTableMissing}>Save monthly plan</button>
           </div>
-          <DataTable sortable showSummary headers={["Product", "Recommendation", "Last month sold", "Month before", "Storage now", "Minimum stock", "Suggested buy", "Purchased this month", "Planned units", "Planned budget", "Status", "Notes"]}>
+          <DataTable sortable showSummary headers={["Product", "Recommendation", "Current month sold", "Projected month", "Last month sold", "Storage now", "Remaining demand", "Suggested buy now", "Purchased this month", "Planned units", "Planned budget", "Status", "Notes"]}>
             {rows.map((row) => {
               const packaging = { caseQuantity: row.product.case_quantity, productName: row.product.name, category: row.product.category };
               return (
@@ -362,15 +427,16 @@ export default async function ProductPlanningPage({ searchParams }: { searchPara
                     <div className="mt-1 text-xs text-slate-500">{row.product.sku ?? "No SKU"} · {normalizeCaseQuantity(row.product.case_quantity)} per box · {row.activeMachineCount} machine(s)</div>
                     <div className="mt-1 text-xs text-slate-500">Unit cost: {Number.isFinite(row.unitCost) && row.unitCost > 0 ? lyd(row.unitCost) : "Missing"}</div>
                   </td>
-                  <td className="min-w-56">
+                  <td className="min-w-64">
                     <StatusBadge status={actionTone(row.recommendation.action)} label={row.recommendation.actionLabel} />
-                    <ul className="mt-2 space-y-1 text-xs text-slate-600">{row.recommendation.reasons.slice(0, 3).map((reason) => <li key={reason}>{reason}</li>)}</ul>
+                    <ul className="mt-2 space-y-1 text-xs text-slate-600">{row.recommendation.reasons.slice(0, 4).map((reason) => <li key={reason}>{reason}</li>)}</ul>
                   </td>
+                  <td><div>{formatProductQuantity(row.recommendation.currentMonthUnits, packaging)}</div><div className="mt-1 text-xs text-slate-500">{row.recommendation.currentMonthSalesThrough ? `through ${row.recommendation.currentMonthSalesThrough}` : "not uploaded"}</div></td>
+                  <td><div>{formatProductQuantity(row.recommendation.projectedCurrentMonthUnits, packaging)}</div><div className="mt-1 text-xs text-slate-500">{row.recommendation.currentMonthObservedDays > 0 ? `${row.recommendation.currentMonthObservedDays}/${row.recommendation.currentMonthDaysInMonth} days observed` : "using last month"}</div></td>
                   <td>{formatProductQuantity(row.recommendation.previousMonthUnits, packaging)}</td>
-                  <td>{formatProductQuantity(row.recommendation.priorMonthUnits, packaging)}</td>
                   <td>{formatProductQuantity(row.storageUnits, packaging)}</td>
-                  <td>{formatProductQuantity(row.recommendation.minimumStockUnits, packaging)}</td>
-                  <td>{formatProductQuantity(row.recommendation.suggestedBuyUnits, packaging)}</td>
+                  <td><div>{formatProductQuantity(row.recommendation.remainingProjectedDemandUnits, packaging)}</div><div className="mt-1 text-xs text-slate-500">Target stock now: {formatProductQuantity(row.recommendation.targetStockUnits, packaging, { compact: true })}</div></td>
+                  <td><div className="font-semibold">{formatProductQuantity(row.recommendation.suggestedBuyUnits, packaging)}</div><div className="mt-1 text-xs text-slate-500">Remaining budget: {row.recommendation.remainingBudgetLyd === null ? "Cost missing" : lyd(row.recommendation.remainingBudgetLyd)}</div></td>
                   <td><div>{formatProductQuantity(row.recommendation.purchasedUnitsThisMonth, packaging)}</div><div className="mt-1 text-xs text-slate-500">{lyd(row.recommendation.purchasedSpendThisMonth)}</div></td>
                   <td className="min-w-36"><input type="number" min="0" step="1" name={`planned_units__${row.product.id}`} defaultValue={row.plannedUnits} className="field-input" /><div className="mt-1 text-xs text-slate-500">{formatProductQuantity(row.plannedUnits, packaging)}</div></td>
                   <td className="min-w-36"><input type="number" min="0" step="0.01" name={`planned_budget__${row.product.id}`} defaultValue={row.plannedBudget.toFixed(2)} className="field-input" /></td>
