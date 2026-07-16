@@ -28,10 +28,10 @@ export default async function MonthlyProfitRepairPage() {
   const [batchesResult, rowsResult] = await Promise.all([
     supabase
       .from("vms_import_batches")
-      .select("id, file_name, original_file_name, status, is_active, report_start_date, report_end_date, rows_imported, imported_at, uploaded_at")
+      .select("id, file_name, status, is_active, report_start_date, report_end_date, rows_imported, imported_at")
       .eq("report_type", "monthly_product_profit")
       .order("report_end_date", { ascending: false })
-      .order("uploaded_at", { ascending: false })
+      .order("imported_at", { ascending: false })
       .limit(200),
     supabase.from("vms_monthly_product_profit").select("import_batch_id").limit(50000),
   ]);
@@ -88,7 +88,7 @@ export default async function MonthlyProfitRepairPage() {
           {batches.map((batch: any) => (
             <tr key={batch.id}>
               <td>
-                <Link href={`/vms-import/${batch.id}`} className="font-semibold text-slate-950 hover:underline">{text(batch.original_file_name ?? batch.file_name)}</Link>
+                <Link href={`/vms-import/${batch.id}`} className="font-semibold text-slate-950 hover:underline">{text(batch.file_name)}</Link>
                 <div className="mt-1 text-xs text-slate-500">{String(batch.id).slice(0, 8)}</div>
               </td>
               <td>{formatDate(batch.report_start_date)} → {formatDate(batch.report_end_date)}</td>
