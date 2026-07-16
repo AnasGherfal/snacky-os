@@ -44,6 +44,20 @@ jobs:
           }
           for before, after in replacements.items():
               source = source.replace(before, after)
+
+          marker = 'pickup = replace_once(\n    pickup,\n    "adjustment quantity package",'
+          if marker in source:
+              start = source.index(marker)
+              end = source.index('pickup = replace_once(', start + len(marker))
+              stable_block = '''pickup = replace_once(
+              pickup,
+              "adjustment quantity package",
+              'inputLabel="Added product quantity"\n          />',
+              'inputLabel="Added product quantity"\n          />\n          {selectedProduct ? <span className="mt-1 block text-xs text-slate-500">{formatProductQuantity(quantity, { caseQuantity: selectedProduct.caseQuantity, productName: selectedProduct.name, category: selectedProduct.category }, { compact: true })}</span> : null}',
+          )
+          '''
+              source = source[:start] + stable_block + source[end:]
+
           path.write_text(source, encoding="utf-8")
           PY
       - name: Apply integration
