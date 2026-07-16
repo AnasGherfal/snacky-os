@@ -7,6 +7,12 @@ on:
     paths:
       - "scripts/apply-product-planning-packaging.py"
       - ".github/workflows/apply-product-planning-packaging.yml"
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "scripts/apply-product-planning-packaging.py"
+      - ".github/workflows/apply-product-planning-packaging.yml"
 
 permissions:
   contents: write
