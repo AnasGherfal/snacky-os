@@ -27,7 +27,24 @@ jobs:
           ref: feature/product-planning-packaging
           fetch-depth: 0
       - name: Apply integration
-        run: python scripts/apply-product-planning-packaging.py
+        id: apply
+        shell: bash
+        run: |
+          set +e
+          python scripts/apply-product-planning-packaging.py > product-planning-packaging.log 2>&1
+          status=$?
+          cat product-planning-packaging.log
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Upload integration diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-planning-packaging-log
+          path: product-planning-packaging.log
+      - name: Stop on integration failure
+        if: steps.apply.outputs.status != '0'
+        run: exit 1
       - name: Validate diff
         run: git diff --check
       - name: Commit generated changes
