@@ -1,0 +1,37 @@
+name: Apply product planning packaging integration
+
+on:
+  push:
+    branches:
+      - feature/product-planning-packaging
+    paths:
+      - "scripts/apply-product-planning-packaging.py"
+      - ".github/workflows/apply-product-planning-packaging.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/product-planning-packaging
+          fetch-depth: 0
+      - name: Apply integration
+        run: python scripts/apply-product-planning-packaging.py
+      - name: Validate diff
+        run: git diff --check
+      - name: Commit generated changes
+        run: |
+          if git diff --quiet -- src/lib/authz.ts src/app/inventory/page.tsx src/app/api/operator/routes/[id]/pick-list/route.ts src/app/operator/routes/[id]/pick-list/page.tsx; then
+            echo "Generated files already updated."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/authz.ts src/app/inventory/page.tsx src/app/api/operator/routes/[id]/pick-list/route.ts src/app/operator/routes/[id]/pick-list/page.tsx
+          git commit -m "Show product quantities as boxes and loose units"
+          git push origin HEAD:feature/product-planning-packaging
