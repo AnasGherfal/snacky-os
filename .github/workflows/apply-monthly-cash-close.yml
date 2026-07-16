@@ -30,7 +30,24 @@ jobs:
         with:
           node-version: 22
       - name: Apply monthly cash close changes
-        run: node scripts/apply-monthly-cash-close-workflow.mjs
+        id: codemod
+        shell: bash
+        run: |
+          set +e
+          node scripts/apply-monthly-cash-close-workflow.mjs > monthly-cash-close-codemod.log 2>&1
+          status=$?
+          cat monthly-cash-close-codemod.log
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Upload codemod diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-cash-close-codemod-log
+          path: monthly-cash-close-codemod.log
+      - name: Stop on codemod failure
+        if: steps.codemod.outputs.status != '0'
+        run: exit 1
       - name: Validate diff
         run: git diff --check
       - name: Commit generated changes
