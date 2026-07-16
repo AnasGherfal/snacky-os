@@ -15,6 +15,7 @@ const repoRoot = path.resolve(here, "..");
 const read = (relativePath) => fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
 
 const planningPage = read("src/app/product-planning/page.tsx");
+const planningHelper = read("src/lib/product-planning.ts");
 const inventoryPage = read("src/app/inventory/page.tsx");
 const pickupPage = read("src/app/operator/routes/[id]/pick-list/page.tsx");
 const pickupApi = read("src/app/api/operator/routes/[id]/pick-list/route.ts");
@@ -66,6 +67,7 @@ test("new products remain protected for testing even with no sales", () => {
   }, "2026-07-01");
 
   assert.equal(recommendation.action, "testing");
+  assert.equal(recommendation.actionLabel, "New product — keep testing");
   assert.equal(recommendation.isNewProduct, true);
   assert.equal(recommendation.minimumStockUnits, 13);
   assert.equal(recommendation.suggestedBuyUnits, 13);
@@ -139,7 +141,6 @@ test("sharp sales decline or excess storage reduces buying", () => {
 test("Product Planning page exposes monthly quantity, budget, purchases, and recommendations", () => {
   for (const text of [
     "Product Planning",
-    "New product — keep testing",
     "Recommended budget",
     "Purchased this month",
     "Minimum stock",
@@ -150,6 +151,7 @@ test("Product Planning page exposes monthly quantity, budget, purchases, and rec
   ]) {
     assert.match(planningPage, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+  assert.match(planningHelper, /New product — keep testing/);
   assert.match(moduleTabs, /label:\s*"Product Planning",\s*href:\s*"\/product-planning"/);
   assert.match(authz, /matchesPrefix\(pathname, \["\/product-planning"\]\)/);
 });
