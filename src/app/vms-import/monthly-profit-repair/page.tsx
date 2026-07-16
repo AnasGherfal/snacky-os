@@ -28,7 +28,7 @@ export default async function MonthlyProfitRepairPage() {
   const [batchesResult, rowsResult] = await Promise.all([
     supabase
       .from("vms_import_batches")
-      .select("id, file_name, original_file_name, status, is_active, report_start_date, report_end_date, rows_imported, imported_at, uploaded_at, deleted_at, disabled_at")
+      .select("id, file_name, original_file_name, status, is_active, report_start_date, report_end_date, rows_imported, imported_at, uploaded_at")
       .eq("report_type", "monthly_product_profit")
       .order("report_end_date", { ascending: false })
       .order("uploaded_at", { ascending: false })
@@ -57,13 +57,15 @@ export default async function MonthlyProfitRepairPage() {
     savedRowsByBatch.set(batchId, (savedRowsByBatch.get(batchId) ?? 0) + 1);
   });
 
-  const batches = (batchesResult.data ?? []).map((batch: any) => ({
-    ...batch,
-    savedRows: savedRowsByBatch.get(String(batch.id)) ?? 0,
-    usable: ["imported", "imported_with_warnings", "partially_imported"].includes(String(batch.status ?? ""))
-      && batch.is_active !== false
-      && !batch.deleted_at,
-  }));
+  const batches = (batchesResult.data ?? []).map((batch: any) => {
+    const status = String(batch.status ?? "");
+    return {
+      ...batch,
+      savedRows: savedRowsByBatch.get(String(batch.id)) ?? 0,
+      usable: ["imported", "imported_with_warnings", "partially_imported"].includes(status) && batch.is_active !== false,
+      eligible: !["deleted", "disabled"].includes(status),
+    };
+  });
 
   return (
     <>
@@ -97,7 +99,7 @@ export default async function MonthlyProfitRepairPage() {
               <td>
                 {batch.usable ? (
                   <span className="text-sm text-slate-500">No action needed</span>
-                ) : batch.savedRows > 0 && !batch.deleted_at ? (
+                ) : batch.savedRows > 0 && batch.eligible ? (
                   <form action={activateMonthlyProfitImportBatch}>
                     <input type="hidden" name="batch_id" value={String(batch.id)} />
                     <FormSubmitButton className="btn-primary" pendingLabel="Activating...">Activate saved rows</FormSubmitButton>
