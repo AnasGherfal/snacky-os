@@ -7,8 +7,9 @@ on:
     paths:
       - "src/lib/vms-monthly-profit-activation.ts"
       - "src/lib/vms-monthly-profit-actions.ts"
-      - "src/lib/vms-import-actions.ts"
-      - "src/app/vms-import/[batchId]/page.tsx"
+      - "src/app/vms-import/monthly-profit-repair/**"
+      - "src/components/module-tabs-config.ts"
+      - "supabase/migrations/202607160002_monthly_profit_batch_activation.sql"
       - "scripts/test-monthly-profit-activation.mjs"
       - ".github/workflows/monthly-profit-activation-check.yml"
   push:
@@ -17,8 +18,9 @@ on:
     paths:
       - "src/lib/vms-monthly-profit-activation.ts"
       - "src/lib/vms-monthly-profit-actions.ts"
-      - "src/lib/vms-import-actions.ts"
-      - "src/app/vms-import/[batchId]/page.tsx"
+      - "src/app/vms-import/monthly-profit-repair/**"
+      - "src/components/module-tabs-config.ts"
+      - "supabase/migrations/202607160002_monthly_profit_batch_activation.sql"
       - "scripts/test-monthly-profit-activation.mjs"
       - ".github/workflows/monthly-profit-activation-check.yml"
 
