@@ -1,0 +1,46 @@
+name: Apply monthly cash close workflow
+
+on:
+  push:
+    branches:
+      - fix/monthly-cash-close-workflow
+    paths:
+      - "scripts/apply-monthly-cash-close-workflow.mjs"
+      - ".github/workflows/apply-monthly-cash-close.yml"
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "scripts/apply-monthly-cash-close-workflow.mjs"
+      - ".github/workflows/apply-monthly-cash-close.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/monthly-cash-close-workflow
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply monthly cash close changes
+        run: node scripts/apply-monthly-cash-close-workflow.mjs
+      - name: Validate diff
+        run: git diff --check
+      - name: Commit generated changes
+        run: |
+          if git diff --quiet -- src/lib/cash-actions.ts src/app/cash-collections/page.tsx src/app/finance/operations/page.tsx; then
+            echo "Generated files already updated."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/cash-actions.ts src/app/cash-collections/page.tsx src/app/finance/operations/page.tsx
+          git commit -m "Use monthly cash close reconciliation"
+          git push origin HEAD:fix/monthly-cash-close-workflow
