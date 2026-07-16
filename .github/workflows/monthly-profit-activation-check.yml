@@ -1,0 +1,42 @@
+name: Monthly Product Profit activation checks
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "src/lib/vms-monthly-profit-activation.ts"
+      - "src/lib/vms-monthly-profit-actions.ts"
+      - "src/app/vms-import/monthly-profit-repair/**"
+      - "src/components/module-tabs-config.ts"
+      - "supabase/migrations/202607160002_monthly_profit_batch_activation.sql"
+      - "scripts/test-monthly-profit-activation.mjs"
+      - ".github/workflows/monthly-profit-activation-check.yml"
+  push:
+    branches:
+      - fix/monthly-profit-batch-activation
+    paths:
+      - "src/lib/vms-monthly-profit-activation.ts"
+      - "src/lib/vms-monthly-profit-actions.ts"
+      - "src/app/vms-import/monthly-profit-repair/**"
+      - "src/components/module-tabs-config.ts"
+      - "supabase/migrations/202607160002_monthly_profit_batch_activation.sql"
+      - "scripts/test-monthly-profit-activation.mjs"
+      - ".github/workflows/monthly-profit-activation-check.yml"
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Test Monthly Product Profit activation
+        run: node --test scripts/test-monthly-profit-activation.mjs
+      - name: Build Snacky OS
+        run: npm run build
