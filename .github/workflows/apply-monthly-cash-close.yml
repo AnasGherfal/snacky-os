@@ -5,13 +5,13 @@ on:
     branches:
       - fix/monthly-cash-close-workflow
     paths:
-      - "scripts/apply-monthly-cash-close-workflow.mjs"
+      - "scripts/apply-monthly-cash-close-workflow.py"
       - ".github/workflows/apply-monthly-cash-close.yml"
   pull_request:
     branches:
       - master
     paths:
-      - "scripts/apply-monthly-cash-close-workflow.mjs"
+      - "scripts/apply-monthly-cash-close-workflow.py"
       - ".github/workflows/apply-monthly-cash-close.yml"
 
 permissions:
@@ -26,46 +26,12 @@ jobs:
         with:
           ref: fix/monthly-cash-close-workflow
           fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Prepare codemod for repeated expected-cash lines
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          path = Path("scripts/apply-monthly-cash-close-workflow.mjs")
-          source = path.read_text()
-          first = '''cashActions = replaceOnce(
-            cashActions,
-            "create expected cash",
-            `  const expectedCash = optionalAmount(formData.get("expected_cash_lyd"));`,
-            `  const expectedCash = null;`,
-          );'''
-          third = '''cashActions = replaceOnce(
-            cashActions,
-            "update expected cash",
-            `  const expectedCash = optionalAmount(formData.get("expected_cash_lyd"));`,
-            `  const expectedCash = null;`,
-          );'''
-          replacement = '''{
-            const before = `  const expectedCash = optionalAmount(formData.get("expected_cash_lyd"));`;
-            const count = cashActions.split(before).length - 1;
-            if (count !== 2 && !cashActions.includes(`  const expectedCash = null;`)) {
-              throw new Error(`create/update expected cash: expected two matches, found ${count}`);
-            }
-            cashActions = cashActions.replaceAll(before, `  const expectedCash = null;`);
-          }'''
-          if first not in source or third not in source:
-              raise SystemExit("Could not prepare expected-cash codemod blocks")
-          source = source.replace(first, replacement).replace(third, "")
-          path.write_text(source)
-          PY
       - name: Apply monthly cash close changes
         id: codemod
         shell: bash
         run: |
           set +e
-          node scripts/apply-monthly-cash-close-workflow.mjs > monthly-cash-close-codemod.log 2>&1
+          python scripts/apply-monthly-cash-close-workflow.py > monthly-cash-close-codemod.log 2>&1
           status=$?
           cat monthly-cash-close-codemod.log
           echo "status=$status" >> "$GITHUB_OUTPUT"
