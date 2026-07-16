@@ -53,6 +53,12 @@ import {
   resolveMonthlyCashExpectation,
 } from "@/lib/monthly-cash-close";
 import {
+  isCompleteClosedMonthRange,
+  monthlyMachineExpectedCash,
+  reconcileMonthlyCash,
+  resolveMonthlyCashExpectation,
+} from "@/lib/monthly-cash-close";
+import {
   resolveDetailedSalesDashboardSourceReportType,
   resolveSalesDashboardSourceReportType,
   type SalesDateRange,
@@ -217,8 +223,8 @@ export default async function FinanceOperationsPage({
       .from("cash_collections")
       .select("id, machine_id, collected_at, counted_at, vms_expected_cash, actual_cash_collected, variance, review_status, machine:machines(id, name, machine_code, location:locations(id, name))")
       .not("counted_at", "is", null)
-      .gte("counted_at", startTimestamp)
-      .lte("counted_at", endTimestamp)
+      .gte("collected_at", startTimestamp)
+      .lte("collected_at", endTimestamp)
       .order("counted_at", { ascending: false })
       .limit(10000),
     supabase

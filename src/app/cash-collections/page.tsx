@@ -113,7 +113,6 @@ export default async function CashCollectionsPage({
   const rowsMissingFinance = activeRows.filter((row: any) => row.actual_cash_collected !== null && row.actual_cash_collected !== undefined && !financeByCashId.has(row.id));
   const totalCounted = activeRows.reduce((sum: number, row: any) => sum + Number(row.actual_cash_collected ?? 0), 0);
   const pendingCount = rows.filter((row: any) => row.review_status === "collected_pending_count").length;
-  const reviewCount = rows.filter((row: any) => getCashCollectionStatus(row.review_status, row.variance) === "variance_review").length;
 
   return (
     <>
