@@ -71,10 +71,11 @@ test("new products remain protected for testing even with no sales", () => {
   assert.equal(recommendation.isNewProduct, true);
   assert.equal(recommendation.minimumStockUnits, 13);
   assert.equal(recommendation.suggestedBuyUnits, 13);
+  assert.equal(recommendation.recommendedPlanUnits, 13);
   assert.equal(recommendation.recommendedBudgetLyd, 19.5);
 });
 
-test("established products with no sales for two completed months can be removed", () => {
+test("established products with no sales in current or previous periods can be removed", () => {
   const recommendation = buildProductPlanningRecommendation({
     productId: "old-slow",
     productName: "Old Slow Product",
@@ -82,17 +83,80 @@ test("established products with no sales for two completed months can be removed
     caseQuantity: 12,
     currentStorageUnits: 24,
     unitCost: 2,
+    currentMonthObservedDays: 15,
+    currentMonthSalesThrough: "2026-07-15",
     salesMonths: [
       { month: "2026-05-01", units: 0, revenue: 0, grossProfit: 0 },
       { month: "2026-06-01", units: 0, revenue: 0, grossProfit: 0 },
+      { month: "2026-07-01", units: 0, revenue: 0, grossProfit: 0 },
     ],
   }, "2026-07-01");
 
   assert.equal(recommendation.action, "remove");
   assert.equal(recommendation.isNewProduct, false);
+  assert.equal(recommendation.currentMonthDataAvailable, true);
 });
 
-test("growth increases target stock and dedicated budget", () => {
+test("current-month sales project remaining demand without buying the already-sold units again", () => {
+  const recommendation = buildProductPlanningRecommendation({
+    productId: "pepsi",
+    productName: "Pepsi",
+    category: "Drinks",
+    createdAt: "2025-01-01T00:00:00.000Z",
+    caseQuantity: 12,
+    currentStorageUnits: 20,
+    activeMachineCount: 8,
+    unitCost: 2,
+    currentMonthObservedDays: 15,
+    currentMonthSalesThrough: "2026-07-15",
+    purchasedUnitsThisMonth: 30,
+    purchasedSpendThisMonth: 60,
+    salesMonths: [
+      { month: "2026-05-01", units: 60, revenue: 180, grossProfit: 60 },
+      { month: "2026-06-01", units: 100, revenue: 300, grossProfit: 100 },
+      { month: "2026-07-01", units: 60, revenue: 180, grossProfit: 60 },
+    ],
+  }, "2026-07-01");
+
+  assert.equal(recommendation.currentMonthUnits, 60);
+  assert.equal(recommendation.currentMonthObservedDays, 15);
+  assert.equal(recommendation.projectedCurrentMonthUnits, 124);
+  assert.equal(recommendation.remainingProjectedDemandUnits, 64);
+  assert.equal(recommendation.targetStockUnits, 84);
+  assert.equal(recommendation.suggestedBuyUnits, 72);
+  assert.equal(recommendation.recommendedPlanUnits, 102);
+  assert.equal(recommendation.remainingPlannedUnits, 72);
+  assert.equal(recommendation.remainingBudgetLyd, 144);
+  assert.equal(recommendation.recommendedBudgetLyd, 204);
+  assert.equal(recommendation.action, "increase");
+});
+
+test("late-month current sales and existing storage can reduce suggested buying to zero", () => {
+  const recommendation = buildProductPlanningRecommendation({
+    productId: "water",
+    productName: "Water",
+    category: "Water",
+    createdAt: "2025-01-01T00:00:00.000Z",
+    caseQuantity: 12,
+    currentStorageUnits: 24,
+    unitCost: 1,
+    currentMonthObservedDays: 28,
+    currentMonthSalesThrough: "2026-07-28",
+    salesMonths: [
+      { month: "2026-05-01", units: 95, revenue: 190, grossProfit: 95 },
+      { month: "2026-06-01", units: 100, revenue: 200, grossProfit: 100 },
+      { month: "2026-07-01", units: 90, revenue: 180, grossProfit: 90 },
+    ],
+  }, "2026-07-01");
+
+  assert.equal(recommendation.projectedCurrentMonthUnits, 100);
+  assert.equal(recommendation.remainingProjectedDemandUnits, 10);
+  assert.equal(recommendation.targetStockUnits, 12);
+  assert.equal(recommendation.suggestedBuyUnits, 0);
+  assert.equal(recommendation.remainingBudgetLyd, 0);
+});
+
+test("without current-month coverage the previous completed month remains the fallback", () => {
   const recommendation = buildProductPlanningRecommendation({
     productId: "pepsi",
     productName: "Pepsi",
@@ -110,13 +174,14 @@ test("growth increases target stock and dedicated budget", () => {
     ],
   }, "2026-07-01");
 
-  assert.equal(recommendation.action, "increase");
-  assert.equal(recommendation.minimumStockUnits, 100);
+  assert.equal(recommendation.currentMonthDataAvailable, false);
+  assert.equal(recommendation.projectedCurrentMonthUnits, 100);
+  assert.equal(recommendation.remainingProjectedDemandUnits, 100);
   assert.equal(recommendation.targetStockUnits, 120);
-  assert.equal(recommendation.suggestedBuyUnits, 100);
-  assert.equal(recommendation.recommendedBudgetLyd, 200);
-  assert.equal(recommendation.remainingPlannedUnits, 70);
-  assert.equal(recommendation.remainingBudgetLyd, 140);
+  assert.equal(recommendation.suggestedBuyUnits, 108);
+  assert.equal(recommendation.recommendedPlanUnits, 138);
+  assert.equal(recommendation.remainingBudgetLyd, 216);
+  assert.equal(recommendation.recommendedBudgetLyd, 276);
 });
 
 test("sharp sales decline or excess storage reduces buying", () => {
@@ -138,20 +203,30 @@ test("sharp sales decline or excess storage reduces buying", () => {
   assert.equal(recommendation.suggestedBuyUnits, 0);
 });
 
-test("Product Planning page exposes monthly quantity, budget, purchases, and recommendations", () => {
+test("Product Planning page loads and explains current-month VMS demand", () => {
   for (const text of [
     "Product Planning",
-    "Recommended budget",
+    "Current-month demand signal",
+    "Current month sold",
+    "Projected month",
+    "Last month sold",
+    "Remaining demand",
+    "Suggested buy now",
     "Purchased this month",
-    "Minimum stock",
-    "Suggested buy",
     "Planned units",
     "Planned budget",
     "Save monthly plan",
   ]) {
     assert.match(planningPage, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+  assert.match(planningPage, /\.lte\("business_month", planningMonth\)/);
+  assert.match(planningPage, /\.lte\("sales_month", planningMonth\)/);
+  assert.match(planningPage, /currentMonthObservedDays/);
+  assert.match(planningPage, /currentMonthSalesThrough/);
+  assert.match(planningPage, /recommendation\.recommendedPlanUnits/);
   assert.match(planningHelper, /New product — keep testing/);
+  assert.match(planningHelper, /projectCurrentMonthDemand/);
+  assert.match(planningHelper, /projectedCurrentMonthUnits - currentMonthUnits/);
   assert.match(moduleTabs, /label:\s*"Product Planning",\s*href:\s*"\/product-planning"/);
   assert.match(authz, /matchesPrefix\(pathname, \["\/product-planning"\]\)/);
 });
