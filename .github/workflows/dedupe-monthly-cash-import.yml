@@ -1,0 +1,62 @@
+name: Deduplicate monthly cash close import
+
+on:
+  push:
+    branches:
+      - fix/monthly-cash-close-workflow
+    paths:
+      - ".github/workflows/dedupe-monthly-cash-import.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  dedupe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/monthly-cash-close-workflow
+          fetch-depth: 0
+      - name: Keep one monthly cash close import
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("src/app/finance/operations/page.tsx")
+          source = path.read_text()
+          pattern = re.compile(
+              r'import \{\n'
+              r'  isCompleteClosedMonthRange,\n'
+              r'  monthlyMachineExpectedCash,\n'
+              r'  reconcileMonthlyCash,\n'
+              r'  resolveMonthlyCashExpectation,\n'
+              r'\} from "@/lib/monthly-cash-close";\n'
+          )
+          matches = list(pattern.finditer(source))
+          if not matches:
+              raise SystemExit("Monthly cash close import was not found")
+          first = matches[0].group(0)
+          source = pattern.sub("", source)
+          marker = 'import { formatMachineDisplayName } from "@/lib/machine-site-display";\n'
+          if marker not in source:
+              raise SystemExit("Machine display import marker was not found")
+          source = source.replace(marker, marker + first, 1)
+          path.write_text(source)
+          print(f"Reduced {len(matches)} monthly cash close imports to one.")
+          PY
+      - name: Validate and commit
+        run: |
+          git diff --check
+          if git diff --quiet -- src/app/finance/operations/page.tsx; then
+            echo "Import already deduplicated."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/app/finance/operations/page.tsx
+          git commit -m "Remove duplicate monthly cash close imports"
+          git pull --rebase origin fix/monthly-cash-close-workflow
+          git push origin HEAD:fix/monthly-cash-close-workflow
