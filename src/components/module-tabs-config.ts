@@ -7,6 +7,7 @@ export type ModuleTabGroup = {
 
 const financeTabs: ModuleTab[] = [
   { label: "Overview", href: "/finance", exact: true },
+  { label: "Operations", href: "/finance/operations" },
   { label: "Payroll", href: "/payroll", match: ["/payroll"] },
   { label: "Transactions", href: "/finance/transactions" },
   {
