@@ -14,9 +14,6 @@ type MonthlyProfitBatchRow = {
   rows_imported?: unknown;
   report_start_date?: unknown;
   report_end_date?: unknown;
-  file_name?: unknown;
-  original_file_name?: unknown;
-  deleted_at?: unknown;
 };
 
 type MonthlyProfitSavedRow = {
@@ -117,7 +114,7 @@ export async function ensureMonthlyProfitBatchActivated({
 
   const batchResult = await supabase
     .from("vms_import_batches")
-    .select("id, report_type, status, is_active, rows_found, row_count, rows_imported, report_start_date, report_end_date, file_name, original_file_name, deleted_at")
+    .select("id, report_type, status, is_active, rows_found, row_count, rows_imported, report_start_date, report_end_date")
     .eq("id", cleanBatchId)
     .maybeSingle();
 
@@ -134,6 +131,15 @@ export async function ensureMonthlyProfitBatchActivated({
       code: "WRONG_REPORT_TYPE",
       message: "Only Monthly Product Profit imports can use this activation repair.",
       details: `report_type=${text(batch.report_type) || "unknown"}`,
+    };
+  }
+  if (["deleted", "disabled"].includes(text(batch.status))) {
+    return {
+      ok: false,
+      batchId: cleanBatchId,
+      code: "BATCH_NOT_ELIGIBLE",
+      message: "A deleted or manually disabled Monthly Product Profit batch cannot be activated from this repair screen.",
+      details: `status=${text(batch.status)}`,
     };
   }
 
@@ -191,10 +197,6 @@ export async function ensureMonthlyProfitBatchActivated({
     imported_by: actorId ?? null,
     imported_at: now,
     updated_at: now,
-    deleted_at: null,
-    disabled_at: null,
-    latest_error: null,
-    last_error: null,
   };
 
   const activationResult = await supabase
@@ -211,10 +213,9 @@ export async function ensureMonthlyProfitBatchActivated({
 
   const olderBatchesResult = await supabase
     .from("vms_import_batches")
-    .select("id, report_start_date, report_end_date")
+    .select("id, status, report_start_date, report_end_date")
     .eq("report_type", "monthly_product_profit")
     .eq("is_active", true)
-    .is("deleted_at", null)
     .neq("id", cleanBatchId)
     .limit(5000);
 
@@ -231,6 +232,7 @@ export async function ensureMonthlyProfitBatchActivated({
   }
 
   const deactivatedBatchIds = ((olderBatchesResult.data ?? []) as MonthlyProfitBatchRow[])
+    .filter((row) => !["deleted", "disabled"].includes(text(row.status)))
     .filter((row) => monthlyProfitBatchMonth(row) === businessMonth)
     .map((row) => text(row.id))
     .filter(Boolean);
