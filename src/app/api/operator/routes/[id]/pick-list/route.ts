@@ -525,13 +525,13 @@ export async function GET(
       failingResource = "products";
       let productsResponse: any = await readClient
         .from("products")
-        .select("id, name, sku, category")
+        .select("id, name, sku, category, case_quantity")
         .in("id", productIds);
 
       if (productsResponse.error && isMissingColumn(productsResponse.error, ["category"])) {
         productsResponse = await readClient
           .from("products")
-          .select("id, name, sku")
+          .select("id, name, sku, case_quantity")
           .in("id", productIds);
       }
       if (productsResponse.error && isMissingColumn(productsResponse.error, ["sku"])) {
@@ -548,6 +548,7 @@ export async function GET(
           ...product,
           sku: product?.sku ?? null,
           category: product?.category ?? null,
+          case_quantity: Math.max(1, unitQuantity(product?.case_quantity ?? 1)),
         }));
       }
     }
@@ -658,14 +659,14 @@ export async function GET(
     {
       let productOptionsResponse: any = await readClient
         .from("products")
-        .select("id, sku, barcode, name, category, brand, image_url, active")
+        .select("id, sku, barcode, name, category, brand, image_url, case_quantity, active")
         .eq("active", true)
         .order("name");
 
       if (productOptionsResponse.error && isMissingColumn(productOptionsResponse.error, ["category", "brand", "image_url"])) {
         productOptionsResponse = await readClient
           .from("products")
-          .select("id, sku, barcode, name, active")
+          .select("id, sku, barcode, name, case_quantity, active")
           .eq("active", true)
           .order("name");
       }
@@ -685,6 +686,7 @@ export async function GET(
           category: product?.category ?? null,
           brand: product?.brand ?? null,
           image_url: product?.image_url ?? null,
+          case_quantity: Math.max(1, unitQuantity(product?.case_quantity ?? 1)),
         }));
       }
     }
@@ -780,6 +782,7 @@ export async function GET(
         product_name: product?.name || "Unknown product",
         sku: product?.sku ?? null,
         category: product?.category ?? "Other",
+        case_quantity: Math.max(1, unitQuantity(product?.case_quantity ?? 1)),
         planned_qty: plannedQty,
         picked_qty: savedPick ? savedPick.quantity : null,
         is_checked: Boolean(line.is_checked ?? savedPick?.isChecked ?? false),
@@ -796,6 +799,7 @@ export async function GET(
         product_name: product?.name || "Unknown product",
         sku: product?.sku ?? null,
         category: product?.category ?? "Other",
+        case_quantity: Math.max(1, unitQuantity(product?.case_quantity ?? 1)),
         planned_qty: 0,
         picked_qty: 0,
         has_picked_qty: false,
@@ -854,6 +858,7 @@ export async function GET(
       product_id: line.product_id,
       product_name: line.product_name || "Unknown product",
       sku: line.sku ?? null,
+      case_quantity: Math.max(1, unitQuantity(line.case_quantity ?? 1)),
       planned_qty: unitQuantity(line.planned_qty),
       picked_qty: line.has_picked_qty ? unitQuantity(line.picked_qty) : null,
       available_storage_qty: availableStorageQtyForProduct(String(line.product_id), unitQuantity(line.planned_qty)),
@@ -868,6 +873,7 @@ export async function GET(
       category: product.category ?? "Other",
       brand: product.brand ?? null,
       imageUrl: product.image_url ?? null,
+      caseQuantity: Math.max(1, unitQuantity(product.case_quantity ?? 1)),
       availableStorageQty: availableStorageQtyForProduct(String(product.id ?? ""), 0),
     }));
 

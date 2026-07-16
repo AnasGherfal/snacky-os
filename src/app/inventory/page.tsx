@@ -5,6 +5,7 @@ import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileR
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canViewFinancials } from "@/lib/authz";
 import { lyd } from "@/lib/format";
+import { formatProductQuantity } from "@/lib/product-quantity";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { type RestockPriorityItem } from "@/lib/restock-priority";
 import { loadRestockPriorityData } from "@/lib/restock-priority-data";
@@ -27,6 +28,7 @@ type InventoryRow = {
   sku: string | null;
   category: string | null;
   brand: string | null;
+  caseQuantity: number;
   currentQty: number;
   reservedQty: number;
   availableQty: number;
@@ -110,6 +112,14 @@ function inventoryFilterHref(filter: InventoryFilter, q: string) {
   return query ? `/inventory?${query}` : "/inventory";
 }
 
+function packagedQuantity(quantity: unknown, row: { productName?: string | null; product_name?: string | null; category?: string | null; caseQuantity?: number | null; case_quantity?: number | null }) {
+  return formatProductQuantity(quantity, {
+    caseQuantity: row.caseQuantity ?? row.case_quantity ?? 1,
+    productName: row.productName ?? row.product_name ?? null,
+    category: row.category ?? null,
+  }, { compact: true });
+}
+
 function matchesText(values: Array<string | null | undefined>, query: string) {
   const normalizedQuery = query.trim().toLowerCase();
   if (!normalizedQuery) return true;
@@ -158,6 +168,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
   const [
     { data: operatorBagRowsData, error: operatorBagError },
     { data: movementsData, error: movementsError },
+    { data: packagingRowsData, error: packagingError },
   ] = await Promise.all([
     supabase
       .from("current_inventory_by_location")
@@ -171,6 +182,12 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
       .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, related_route_id, created_at, product:products(name)")
       .order("created_at", { ascending: false })
       .limit(250),
+    supabase
+      .from("products")
+      .select("id, name, category, case_quantity")
+      .eq("active", true)
+      .order("name")
+      .limit(5000),
   ]);
 
   const queryIssues: InventoryQueryIssue[] = [
@@ -200,9 +217,24 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
           params: { order: "created_at desc", limit: 250 },
         })
       : null,
+    packagingError
+      ? logInventoryQueryError({
+          key: "product_packaging",
+          label: "Could not load product box quantities",
+          table: "products",
+          error: packagingError,
+          profile,
+          params: { select: "id,name,category,case_quantity", limit: 5000 },
+        })
+      : null,
   ].filter((issue): issue is InventoryQueryIssue => Boolean(issue));
 
   const priorityByProductId = new Map(restockResult.items.map((item) => [item.productId, item]));
+  const packagingByProductId = new Map((packagingRowsData ?? []).map((row: any) => [String(row.id), {
+    productName: row.name ?? null,
+    category: row.category ?? null,
+    caseQuantity: Math.max(1, Number(row.case_quantity ?? 1)),
+  }]));
   const allInventoryRows = restockResult.items
     .map<InventoryRow>((item) => {
       const currentQty = Math.max(0, Number(item.storageQty ?? 0));
@@ -215,6 +247,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         sku: item.sku,
         category: item.category,
         brand: item.brand,
+        caseQuantity: packagingByProductId.get(item.productId)?.caseQuantity ?? 1,
         currentQty,
         reservedQty,
         availableQty,
@@ -252,6 +285,8 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         ...row,
         product_name: row.product_name ?? product?.name ?? "Unknown product",
         sku: product?.sku ?? null,
+        category: product?.category ?? packagingByProductId.get(String(row.product_id ?? ""))?.category ?? null,
+        case_quantity: packagingByProductId.get(String(row.product_id ?? ""))?.caseQuantity ?? 1,
         isFastSeller: Boolean(product?.isFastSeller),
       };
     })
@@ -261,6 +296,8 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
   const movements = (movementsData ?? []).map((movement: any) => ({
     ...movement,
     product_name: movement.product?.name ?? priorityByProductId.get(String(movement.product_id ?? ""))?.name ?? "Unknown product",
+    category: priorityByProductId.get(String(movement.product_id ?? ""))?.category ?? packagingByProductId.get(String(movement.product_id ?? ""))?.category ?? null,
+    case_quantity: packagingByProductId.get(String(movement.product_id ?? ""))?.caseQuantity ?? 1,
     from_label: formatEntity(movement.from_entity_type, movement.from_entity_id),
     to_label: formatEntity(movement.to_entity_type, movement.to_entity_id),
   }));
@@ -291,6 +328,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         subtitle="Search applies across storage stock, operator bags, and recent movement history. Quick filters reuse the same critical, low, and fast-seller signals used by Snacky OS restock planning."
         action={
           <div className="flex flex-wrap gap-2">
+            <SecondaryButton href="/product-planning">Product Planning</SecondaryButton>
             <SecondaryButton href="/restock-priority">Restock Priority</SecondaryButton>
             <SecondaryButton href="/inventory/machine-storage">Machine Storage</SecondaryButton>
             <SecondaryButton href="/inventory/movements">Movement Log</SecondaryButton>
@@ -388,14 +426,14 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                 <div className="mb-3 flex flex-wrap gap-2">
                   {row.isFastSeller ? <span className="rounded-full bg-sky-100 px-2 py-1 text-xs font-semibold text-sky-800">Fast seller</span> : null}
                   {row.routeNeedQty > 0 ? <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-900">Needed for routes</span> : null}
-                  {row.suggestedBuyQty > 0 ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800">Buy {row.suggestedBuyQty}</span> : null}
+                  {row.suggestedBuyQty > 0 ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800">Buy {packagedQuantity(row.suggestedBuyQty, row)}</span> : null}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <MobileField label="Current">{row.currentQty}</MobileField>
-                  <MobileField label="Reserved">{row.reservedQty}</MobileField>
-                  <MobileField label="Available"><span className="font-semibold text-slate-950">{row.availableQty}</span></MobileField>
-                  <MobileField label="Suggested buy">{row.suggestedBuyQty}</MobileField>
-                  <MobileField label="Route need">{row.routeNeedQty}</MobileField>
+                  <MobileField label="Current">{packagedQuantity(row.currentQty, row)}</MobileField>
+                  <MobileField label="Reserved">{packagedQuantity(row.reservedQty, row)}</MobileField>
+                  <MobileField label="Available"><span className="font-semibold text-slate-950">{packagedQuantity(row.availableQty, row)}</span></MobileField>
+                  <MobileField label="Suggested buy">{packagedQuantity(row.suggestedBuyQty, row)}</MobileField>
+                  <MobileField label="Route need">{packagedQuantity(row.routeNeedQty, row)}</MobileField>
                   <MobileField label="Velocity">{row.salesVelocity > 0 ? `${row.salesVelocity.toFixed(1)}/day` : "-"}</MobileField>
                 </div>
                 {canSeeCost ? <div className="mt-3"><MobileField label="Last cost">{row.lastPurchaseCost === null ? "-" : lyd(row.lastPurchaseCost)}</MobileField></div> : null}
@@ -420,11 +458,11 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                   <div className="text-xs text-slate-500">{row.sku ?? "No SKU"} - {row.category ?? "Uncategorized"}</div>
                   <div className="mt-2 text-xs text-slate-500">{row.reasons.join(" - ") || "No extra restock signals"}</div>
                 </td>
-                <td>{row.currentQty}</td>
-                <td>{row.reservedQty}</td>
-                <td className="font-semibold">{row.availableQty}</td>
-                <td>{row.suggestedBuyQty}</td>
-                <td>{row.routeNeedQty}</td>
+                <td>{packagedQuantity(row.currentQty, row)}</td>
+                <td>{packagedQuantity(row.reservedQty, row)}</td>
+                <td className="font-semibold">{packagedQuantity(row.availableQty, row)}</td>
+                <td>{packagedQuantity(row.suggestedBuyQty, row)}</td>
+                <td>{packagedQuantity(row.routeNeedQty, row)}</td>
                 <td>{row.salesVelocity > 0 ? `${row.salesVelocity.toFixed(1)}/day` : "-"}</td>
                 {canSeeCost ? <td>{row.lastPurchaseCost === null ? "-" : lyd(row.lastPurchaseCost)}</td> : null}
                 <td><StatusBadge status={row.status} /></td>
@@ -462,7 +500,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-3">
                     <MobileField label="Operator">{row.location_name ?? "Unknown operator"}</MobileField>
-                    <MobileField label="Quantity"><span className="font-semibold text-slate-950">{Number(row.quantity_on_hand ?? 0)}</span></MobileField>
+                    <MobileField label="Quantity"><span className="font-semibold text-slate-950">{packagedQuantity(row.quantity_on_hand, row)}</span></MobileField>
                   </div>
                 </MobileRecordCard>
               ))}
@@ -473,7 +511,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                   <td className="font-medium text-slate-900">{row.location_name ?? "Unknown operator"}</td>
                   <td>{row.product_name}</td>
                   <td>{row.sku ?? "No SKU"}</td>
-                  <td className="font-semibold">{Number(row.quantity_on_hand ?? 0)}</td>
+                  <td className="font-semibold">{packagedQuantity(row.quantity_on_hand, row)}</td>
                 </tr>
               ))}
             </DataTable>
@@ -507,7 +545,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                     <StatusBadge status={movement.reason} />
                   </div>
                   <div className="grid grid-cols-2 gap-3">
-                    <MobileField label="Qty">{movement.quantity}</MobileField>
+                    <MobileField label="Qty">{packagedQuantity(movement.quantity, movement)}</MobileField>
                     <MobileField label="Route">{movement.related_route_id ? movement.related_route_id.slice(0, 8) : "-"}</MobileField>
                     <MobileField label="From">{movement.from_label}</MobileField>
                     <MobileField label="To">{movement.to_label}</MobileField>
@@ -520,7 +558,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                 <tr key={movement.id}>
                   <td>{new Date(movement.created_at).toLocaleString("en-US")}</td>
                   <td className="font-medium">{movement.product_name}</td>
-                  <td>{movement.quantity}</td>
+                  <td>{packagedQuantity(movement.quantity, movement)}</td>
                   <td>{movement.from_label}</td>
                   <td>{movement.to_label}</td>
                   <td><StatusBadge status={movement.reason} /></td>

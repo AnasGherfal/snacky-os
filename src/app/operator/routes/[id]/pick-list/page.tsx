@@ -10,6 +10,7 @@ import { useLanguage } from "@/components/I18nProvider";
 import { applyPendingStopRecommendationRefresh, confirmPickList, previewPendingStopRecommendationRefresh, startRoute, type PendingStopRefreshComparison } from "@/lib/operator-actions";
 import { comparePickupProductRows, groupRouteItemsForDisplay, pickupProductPriorityGroup, sortPickupProductRows } from "@/lib/route-pickup-checklist";
 import { ROUTE_STOP_PENDING_STATUS } from "@/lib/route-workflow";
+import { formatProductQuantity } from "@/lib/product-quantity";
 
 const UNASSIGNED_EXTRA_TARGET = "__unassigned__";
 const PICKUP_CHECKLIST_STORAGE_PREFIX = "snacky:route-pickup-checklist";
@@ -22,6 +23,7 @@ interface PickStopItem {
   productName: string;
   productCategory: string | null;
   sku: string | null;
+  caseQuantity: number;
   requestedQty: number;
   availableStorageQty: number;
   confirmedQty: number;
@@ -51,6 +53,7 @@ interface ProductOption {
   category: string | null;
   brand: string | null;
   imageUrl?: string | null;
+  caseQuantity: number;
   availableStorageQty: number;
 }
 interface ExtraPickItem {
@@ -66,6 +69,7 @@ interface RouteTotal {
   productName: string;
   productCategory?: string | null;
   sku: string | null;
+  caseQuantity: number;
   plannedQty: number;
   confirmedQty: number;
   availableStorageQty: number;
@@ -106,6 +110,7 @@ type PickListApiStopItem = {
   product_name?: unknown;
   category?: unknown;
   sku?: unknown;
+  case_quantity?: unknown;
   planned_qty?: unknown;
   available_storage_qty?: unknown;
   picked_qty?: unknown;
@@ -144,6 +149,7 @@ type PickListApiProductOption = {
   category?: unknown;
   brand?: unknown;
   imageUrl?: unknown;
+  caseQuantity?: unknown;
   availableStorageQty?: unknown;
 };
 type PickListApiPreparedBatch = {
@@ -329,6 +335,7 @@ export default function PickListPage() {
         productName: item.productName,
         productCategory: item.productCategory,
         sku: item.sku,
+        caseQuantity: item.caseQuantity,
         plannedQty: 0,
         confirmedQty: 0,
         availableStorageQty: productById.get(item.productId)?.availableStorageQty ?? item.availableStorageQty,
@@ -346,6 +353,7 @@ export default function PickListPage() {
         productName: product?.name ?? "Unknown product",
         productCategory: product?.category ?? null,
         sku: product?.sku ?? null,
+        caseQuantity: product?.caseQuantity ?? 1,
         plannedQty: 0,
         confirmedQty: 0,
         availableStorageQty: product?.availableStorageQty ?? 0,
@@ -465,6 +473,7 @@ export default function PickListPage() {
           productName: textOrFallback(item.product_name, "Unknown product"),
           productCategory: optionalText(item.category),
           sku: optionalText(item.sku),
+          caseQuantity: Math.max(1, Number(item.case_quantity ?? 1)),
           requestedQty,
           availableStorageQty,
             confirmedQty: hasSavedPickQty ? Number(item.picked_qty ?? 0) : Math.min(requestedQty, availableStorageQty),
@@ -502,6 +511,7 @@ export default function PickListPage() {
         category: optionalText(product.category),
         brand: optionalText(product.brand),
         imageUrl: optionalText(product.imageUrl),
+        caseQuantity: Math.max(1, Number(product.caseQuantity ?? 1)),
         availableStorageQty: Number(product.availableStorageQty ?? 0),
       })).filter((product: ProductOption) => product.id));
       setExtras(nextExtras);
@@ -1188,7 +1198,7 @@ export default function PickListPage() {
                                                     {saving ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Saving</span> : null}
                                                   </div>
                                                   <p className="mt-1 break-words text-xs text-slate-500">
-                                                    SKU: {item.sku ?? "No SKU"} - Recommended: {item.requestedQty} - Route storage: {item.availableStorageQty}
+                                                    SKU: {item.sku ?? "No SKU"} - Recommended: {formatProductQuantity(item.requestedQty, { caseQuantity: item.caseQuantity, productName: item.productName, category: item.productCategory }, { compact: true })} - Route storage: {formatProductQuantity(item.availableStorageQty, { caseQuantity: item.caseQuantity, productName: item.productName, category: item.productCategory }, { compact: true })}
                                                   </p>
                                                   <p className="mt-1 text-xs text-slate-500">{item.source === "manual_admin_assignment" ? "Manual assignment" : "Refill recommendation"}</p>
                                                 </div>
@@ -1202,7 +1212,7 @@ export default function PickListPage() {
                                                   disabled={locked || checklistFrozen}
                                                   inputLabel={`${item.machineName} ${item.productName} pickup quantity`}
                                                 />
-                                                <span className="mt-1 block text-xs text-slate-500">Available for this row: {maxQty}</span>
+                                                <span className="mt-1 block text-xs text-slate-500">Available for this row: {formatProductQuantity(maxQty, { caseQuantity: item.caseQuantity, productName: item.productName, category: item.productCategory }, { compact: true })}</span>
                                               </label>
                                             </div>
 
@@ -1279,10 +1289,10 @@ export default function PickListPage() {
               <div key={item.productId} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 py-3 text-sm">
                 <div className="min-w-0">
                   <p className="break-words font-medium text-slate-900">{item.productName}</p>
-                  <p className="text-xs text-slate-500">{item.sku ?? "No SKU"} - Storage {item.availableStorageQty}</p>
+                  <p className="text-xs text-slate-500">{item.sku ?? "No SKU"} - Storage {formatProductQuantity(item.availableStorageQty, { caseQuantity: item.caseQuantity, productName: item.productName, category: item.productCategory }, { compact: true })}</p>
                 </div>
                 <div className="text-right font-semibold text-slate-900">
-                  {item.confirmedQty} / {item.plannedQty}
+                  {formatProductQuantity(item.confirmedQty, { caseQuantity: item.caseQuantity, productName: item.productName, category: item.productCategory }, { compact: true })} / {formatProductQuantity(item.plannedQty, { caseQuantity: item.caseQuantity, productName: item.productName, category: item.productCategory }, { compact: true })}
                 </div>
               </div>
             ))}
@@ -1328,7 +1338,7 @@ export default function PickListPage() {
                     />
                     <div className="min-w-0 flex-1">
                       <div className="break-words font-semibold text-slate-900">{item.productName ?? "Unknown product"}</div>
-                      <div className="mt-1 text-sm text-slate-500">{item.quantity} units</div>
+                      <div className="mt-1 text-sm text-slate-500">{formatProductQuantity(item.quantity, { caseQuantity: productById.get(item.productId)?.caseQuantity ?? 1, productName: item.productName ?? productById.get(item.productId)?.name, category: productById.get(item.productId)?.category }, { compact: true })}</div>
                     </div>
                   </label>
                 );
@@ -1422,6 +1432,7 @@ function AdjustmentRow({
   onChange: (patch: Partial<ExtraPickItem>) => void;
   onRemove: () => void;
 }) {
+  const selectedProduct = products.find((product) => product.id === productId);
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
       <div className="grid gap-3 md:grid-cols-[1fr_1fr_140px]">
@@ -1452,6 +1463,7 @@ function AdjustmentRow({
             disabled={disabled || !productId}
             inputLabel="Added product quantity"
           />
+          {selectedProduct ? <span className="mt-1 block text-xs text-slate-500">{formatProductQuantity(quantity, { caseQuantity: selectedProduct.caseQuantity, productName: selectedProduct.name, category: selectedProduct.category }, { compact: true })}</span> : null}
         </label>
       </div>
       <div className="mt-3 grid gap-3 md:grid-cols-[1fr_2fr]">
@@ -1511,7 +1523,7 @@ function ProductCombobox({
         <div className="mt-2 max-h-56 space-y-1 overflow-y-auto">
           {selected && !query.trim() ? (
             <div className="rounded-md bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
-              Selected: {selected.name} - Storage {selected.availableStorageQty}
+              Selected: {selected.name} - Storage {formatProductQuantity(selected.availableStorageQty, { caseQuantity: selected.caseQuantity, productName: selected.name, category: selected.category }, { compact: true })}
             </div>
           ) : null}
           {filtered.map((product) => {
@@ -1532,7 +1544,7 @@ function ProductCombobox({
                   <ProductThumbnail imageUrl={product.imageUrl} name={product.name} />
                   <span className="min-w-0">
                     <span className="block truncate font-medium">{product.name}</span>
-                    <span className={`block truncate ${product.id === productId ? "text-white/80" : "text-slate-500"}`}>{product.sku ?? "No SKU"} - Storage {product.availableStorageQty}{outOfStock ? " available" : ""}</span>
+                    <span className={`block truncate ${product.id === productId ? "text-white/80" : "text-slate-500"}`}>{product.sku ?? "No SKU"} - Storage {formatProductQuantity(product.availableStorageQty, { caseQuantity: product.caseQuantity, productName: product.name, category: product.category }, { compact: true })}{outOfStock ? " available" : ""}</span>
                   </span>
                 </span>
               </button>
