@@ -26,6 +26,22 @@ jobs:
         with:
           ref: feature/product-planning-packaging
           fetch-depth: 0
+      - name: Normalize fragile codemod match
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("scripts/apply-product-planning-packaging.py")
+          source = path.read_text(encoding="utf-8")
+          source = source.replace(
+              "'                                                 <span className=\"mt-1 block text-xs text-slate-500\">Available for this row: {maxQty}</span>'",
+              "'<span className=\"mt-1 block text-xs text-slate-500\">Available for this row: {maxQty}</span>'",
+          )
+          source = source.replace(
+              "'                                                 <span className=\"mt-1 block text-xs text-slate-500\">Available for this row: {formatProductQuantity(maxQty, { caseQuantity: item.caseQuantity, productName: item.productName, category: item.productCategory }, { compact: true })}</span>'",
+              "'<span className=\"mt-1 block text-xs text-slate-500\">Available for this row: {formatProductQuantity(maxQty, { caseQuantity: item.caseQuantity, productName: item.productName, category: item.productCategory }, { compact: true })}</span>'",
+          )
+          path.write_text(source, encoding="utf-8")
+          PY
       - name: Apply integration
         id: apply
         shell: bash
