@@ -50,7 +50,7 @@ test("automatic activation keeps one latest source per business month", () => {
   assert.match(migration, /stats\.report_end_date desc nulls last/i);
   assert.match(migration, /is_active = ranked\.activation_rank = 1/i);
   assert.match(migration, /where stats\.business_month = p_business_month/i);
-  assert.match(migration, /batches\.disabled_at is null/i);
+  assert.match(migration, /batches\.status not in \('deleted', 'disabled'\)/i);
 });
 
 test("migration repairs existing inactive batches immediately", () => {
