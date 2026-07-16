@@ -5,13 +5,13 @@ on:
     branches:
       - feature/product-planning-packaging
     paths:
-      - "scripts/apply-product-planning-packaging.py"
+      - "scripts/apply-product-planning-packaging-v2.py"
       - ".github/workflows/apply-product-planning-packaging.yml"
   pull_request:
     branches:
       - master
     paths:
-      - "scripts/apply-product-planning-packaging.py"
+      - "scripts/apply-product-planning-packaging-v2.py"
       - ".github/workflows/apply-product-planning-packaging.yml"
 
 permissions:
@@ -26,39 +26,12 @@ jobs:
         with:
           ref: feature/product-planning-packaging
           fetch-depth: 0
-      - name: Normalize fragile codemod matches
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          path = Path("scripts/apply-product-planning-packaging.py")
-          source = path.read_text(encoding="utf-8")
-          replacements = {
-              "'                                                 <span className=\"mt-1 block text-xs text-slate-500\">Available for this row: {maxQty}</span>'": "'<span className=\"mt-1 block text-xs text-slate-500\">Available for this row: {maxQty}</span>'",
-              "'                                                 <span className=\"mt-1 block text-xs text-slate-500\">Available for this row: {formatProductQuantity(maxQty, { caseQuantity: item.caseQuantity, productName: item.productName, category: item.productCategory }, { compact: true })}</span>'": "'<span className=\"mt-1 block text-xs text-slate-500\">Available for this row: {formatProductQuantity(maxQty, { caseQuantity: item.caseQuantity, productName: item.productName, category: item.productCategory }, { compact: true })}</span>'",
-              "'                   {item.confirmedQty} / {item.plannedQty}'": "'{item.confirmedQty} / {item.plannedQty}'",
-              "'                   {formatProductQuantity(item.confirmedQty, { caseQuantity: item.caseQuantity, productName: item.productName, category: item.productCategory }, { compact: true })} / {formatProductQuantity(item.plannedQty, { caseQuantity: item.caseQuantity, productName: item.productName, category: item.productCategory }, { compact: true })}'": "'{formatProductQuantity(item.confirmedQty, { caseQuantity: item.caseQuantity, productName: item.productName, category: item.productCategory }, { compact: true })} / {formatProductQuantity(item.plannedQty, { caseQuantity: item.caseQuantity, productName: item.productName, category: item.productCategory }, { compact: true })}'",
-              "'                       <div className=\"mt-1 text-sm text-slate-500\">{item.quantity} units</div>'": "'<div className=\"mt-1 text-sm text-slate-500\">{item.quantity} units</div>'",
-              "'                       <div className=\"mt-1 text-sm text-slate-500\">{formatProductQuantity(item.quantity, { caseQuantity: productById.get(item.productId)?.caseQuantity ?? 1, productName: item.productName ?? productById.get(item.productId)?.name, category: productById.get(item.productId)?.category }, { compact: true })}</div>'": "'<div className=\"mt-1 text-sm text-slate-500\">{formatProductQuantity(item.quantity, { caseQuantity: productById.get(item.productId)?.caseQuantity ?? 1, productName: item.productName ?? productById.get(item.productId)?.name, category: productById.get(item.productId)?.category }, { compact: true })}</div>'",
-              "'               Selected: {selected.name} - Storage {selected.availableStorageQty}'": "'Selected: {selected.name} - Storage {selected.availableStorageQty}'",
-              "'               Selected: {selected.name} - Storage {formatProductQuantity(selected.availableStorageQty, { caseQuantity: selected.caseQuantity, productName: selected.name, category: selected.category }, { compact: true })}'": "'Selected: {selected.name} - Storage {formatProductQuantity(selected.availableStorageQty, { caseQuantity: selected.caseQuantity, productName: selected.name, category: selected.category }, { compact: true })}'",
-          }
-          for before, after in replacements.items():
-              source = source.replace(before, after)
-
-          marker = 'pickup = replace_once(\n    pickup,\n    "adjustment quantity package",'
-          if marker in source:
-              start = source.index(marker)
-              end = source.index('pickup = replace_once(', start + len(marker))
-              source = source[:start] + source[end:]
-
-          path.write_text(source, encoding="utf-8")
-          PY
-      - name: Apply integration
+      - name: Apply robust integration
         id: apply
         shell: bash
         run: |
           set +e
-          python scripts/apply-product-planning-packaging.py > product-planning-packaging.log 2>&1
+          python scripts/apply-product-planning-packaging-v2.py > product-planning-packaging.log 2>&1
           status=$?
           cat product-planning-packaging.log
           echo "status=$status" >> "$GITHUB_OUTPUT"
@@ -72,25 +45,6 @@ jobs:
       - name: Stop on integration failure
         if: steps.apply.outputs.status != '0'
         run: exit 1
-      - name: Add packaging text under added-product quantity
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          path = Path("src/app/operator/routes/[id]/pick-list/page.tsx")
-          source = path.read_text(encoding="utf-8")
-          before = '''            inputLabel="Added product quantity"
-          />
-        </label>'''
-          after = '''            inputLabel="Added product quantity"
-          />
-          {selectedProduct ? <span className="mt-1 block text-xs text-slate-500">{formatProductQuantity(quantity, { caseQuantity: selectedProduct.caseQuantity, productName: selectedProduct.name, category: selectedProduct.category }, { compact: true })}</span> : null}
-        </label>'''
-          if before in source:
-              source = source.replace(before, after, 1)
-          elif after not in source:
-              raise RuntimeError("Could not locate added-product quantity stepper")
-          path.write_text(source, encoding="utf-8")
-          PY
       - name: Validate diff
         run: git diff --check
       - name: Commit generated changes
