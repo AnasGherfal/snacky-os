@@ -26,20 +26,24 @@ jobs:
         with:
           ref: feature/product-planning-packaging
           fetch-depth: 0
-      - name: Normalize fragile codemod match
+      - name: Normalize fragile codemod matches
         run: |
           python - <<'PY'
           from pathlib import Path
           path = Path("scripts/apply-product-planning-packaging.py")
           source = path.read_text(encoding="utf-8")
-          source = source.replace(
-              "'                                                 <span className=\"mt-1 block text-xs text-slate-500\">Available for this row: {maxQty}</span>'",
-              "'<span className=\"mt-1 block text-xs text-slate-500\">Available for this row: {maxQty}</span>'",
-          )
-          source = source.replace(
-              "'                                                 <span className=\"mt-1 block text-xs text-slate-500\">Available for this row: {formatProductQuantity(maxQty, { caseQuantity: item.caseQuantity, productName: item.productName, category: item.productCategory }, { compact: true })}</span>'",
-              "'<span className=\"mt-1 block text-xs text-slate-500\">Available for this row: {formatProductQuantity(maxQty, { caseQuantity: item.caseQuantity, productName: item.productName, category: item.productCategory }, { compact: true })}</span>'",
-          )
+          replacements = {
+              "'                                                 <span className=\"mt-1 block text-xs text-slate-500\">Available for this row: {maxQty}</span>'": "'<span className=\"mt-1 block text-xs text-slate-500\">Available for this row: {maxQty}</span>'",
+              "'                                                 <span className=\"mt-1 block text-xs text-slate-500\">Available for this row: {formatProductQuantity(maxQty, { caseQuantity: item.caseQuantity, productName: item.productName, category: item.productCategory }, { compact: true })}</span>'": "'<span className=\"mt-1 block text-xs text-slate-500\">Available for this row: {formatProductQuantity(maxQty, { caseQuantity: item.caseQuantity, productName: item.productName, category: item.productCategory }, { compact: true })}</span>'",
+              "'                   {item.confirmedQty} / {item.plannedQty}'": "'{item.confirmedQty} / {item.plannedQty}'",
+              "'                   {formatProductQuantity(item.confirmedQty, { caseQuantity: item.caseQuantity, productName: item.productName, category: item.productCategory }, { compact: true })} / {formatProductQuantity(item.plannedQty, { caseQuantity: item.caseQuantity, productName: item.productName, category: item.productCategory }, { compact: true })}'": "'{formatProductQuantity(item.confirmedQty, { caseQuantity: item.caseQuantity, productName: item.productName, category: item.productCategory }, { compact: true })} / {formatProductQuantity(item.plannedQty, { caseQuantity: item.caseQuantity, productName: item.productName, category: item.productCategory }, { compact: true })}'",
+              "'                       <div className=\"mt-1 text-sm text-slate-500\">{item.quantity} units</div>'": "'<div className=\"mt-1 text-sm text-slate-500\">{item.quantity} units</div>'",
+              "'                       <div className=\"mt-1 text-sm text-slate-500\">{formatProductQuantity(item.quantity, { caseQuantity: productById.get(item.productId)?.caseQuantity ?? 1, productName: item.productName ?? productById.get(item.productId)?.name, category: productById.get(item.productId)?.category }, { compact: true })}</div>'": "'<div className=\"mt-1 text-sm text-slate-500\">{formatProductQuantity(item.quantity, { caseQuantity: productById.get(item.productId)?.caseQuantity ?? 1, productName: item.productName ?? productById.get(item.productId)?.name, category: productById.get(item.productId)?.category }, { compact: true })}</div>'",
+              "'               Selected: {selected.name} - Storage {selected.availableStorageQty}'": "'Selected: {selected.name} - Storage {selected.availableStorageQty}'",
+              "'               Selected: {selected.name} - Storage {formatProductQuantity(selected.availableStorageQty, { caseQuantity: selected.caseQuantity, productName: selected.name, category: selected.category }, { compact: true })}'": "'Selected: {selected.name} - Storage {formatProductQuantity(selected.availableStorageQty, { caseQuantity: selected.caseQuantity, productName: selected.name, category: selected.category }, { compact: true })}'",
+          }
+          for before, after in replacements.items():
+              source = source.replace(before, after)
           path.write_text(source, encoding="utf-8")
           PY
       - name: Apply integration
