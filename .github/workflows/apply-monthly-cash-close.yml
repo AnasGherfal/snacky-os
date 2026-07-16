@@ -6,12 +6,14 @@ on:
       - fix/monthly-cash-close-workflow
     paths:
       - "scripts/apply-monthly-cash-close-workflow.py"
+      - "scripts/finalize-monthly-cash-close.py"
       - ".github/workflows/apply-monthly-cash-close.yml"
   pull_request:
     branches:
       - master
     paths:
       - "scripts/apply-monthly-cash-close-workflow.py"
+      - "scripts/finalize-monthly-cash-close.py"
       - ".github/workflows/apply-monthly-cash-close.yml"
 
 permissions:
@@ -31,8 +33,16 @@ jobs:
         shell: bash
         run: |
           set +e
-          python scripts/apply-monthly-cash-close-workflow.py > monthly-cash-close-codemod.log 2>&1
-          status=$?
+          {
+            python scripts/apply-monthly-cash-close-workflow.py
+            first_status=$?
+            if [ "$first_status" -eq 0 ]; then
+              python scripts/finalize-monthly-cash-close.py
+              status=$?
+            else
+              status=$first_status
+            fi
+          } > monthly-cash-close-codemod.log 2>&1
           cat monthly-cash-close-codemod.log
           echo "status=$status" >> "$GITHUB_OUTPUT"
           exit 0
@@ -56,5 +66,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/lib/cash-actions.ts src/app/cash-collections/page.tsx src/app/finance/operations/page.tsx
-          git commit -m "Use monthly cash close reconciliation"
+          git commit -m "Finalize monthly cash close reconciliation"
+          git pull --rebase origin fix/monthly-cash-close-workflow
           git push origin HEAD:fix/monthly-cash-close-workflow
