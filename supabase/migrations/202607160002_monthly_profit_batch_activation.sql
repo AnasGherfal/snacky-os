@@ -45,8 +45,7 @@ begin
       on batches.id = stats.import_batch_id
     where stats.business_month = p_business_month
       and batches.report_type = 'monthly_product_profit'
-      and batches.deleted_at is null
-      and batches.disabled_at is null
+      and batches.status not in ('deleted', 'disabled')
   )
   update public.vms_import_batches batches
   set
@@ -65,8 +64,6 @@ begin
       when ranked.activation_rank = 1 then coalesce(batches.imported_at, now())
       else batches.imported_at
     end,
-    latest_error = case when ranked.activation_rank = 1 then null else batches.latest_error end,
-    last_error = case when ranked.activation_rank = 1 then null else batches.last_error end,
     updated_at = now()
   from ranked
   where batches.id = ranked.import_batch_id;
