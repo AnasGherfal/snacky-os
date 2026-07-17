@@ -45,6 +45,18 @@ test("sales source selection prevents double counting", () => {
   assert.match(migration, /where mode\.sales_source = 'detailed_transactions'/i);
 });
 
+test("date-misaligned checkpoints cannot become fake missing stock", () => {
+  assert.match(migration, /sales_coverage_end/i);
+  assert.match(migration, /baseline_misaligned/i);
+  assert.match(migration, /closing_misaligned/i);
+  assert.match(migration, /when calculated\.baseline_misaligned or calculated\.closing_misaligned then 'data_gap'/i);
+  assert.match(migration, /when calculated\.sales_coverage_end < calculated\.period_end then 'suspected'/i);
+  assert.match(migration, /case when rows\.confidence = 'data_gap' then 0 else rows\.missing_units end as missing_units/i);
+  assert.match(migration, /case when rows\.confidence = 'data_gap' then 0 else \(rows\.missing_units \* rows\.unit_cost\)::numeric end as missing_cost/i);
+  assert.match(page, /now\.getUTCDate\(\) - 1/);
+  assert.match(page, /excluded from missing-unit and missing-cost totals/i);
+});
+
 test("page exposes baseline, closing capture, physical counts, and variance cases", () => {
   for (const text of [
     "Missing Items & Stock Reconciliation",
