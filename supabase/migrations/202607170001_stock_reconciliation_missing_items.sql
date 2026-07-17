@@ -435,7 +435,15 @@ sales_mode as (
       when exists (select 1 from detailed_sales)
       then 'detailed_transactions'
       else 'none'
-    end as sales_source
+    end as sales_source,
+    case
+      when session.period_start = date_trunc('month', session.period_start)::date
+        and exists (select 1 from monthly_batches)
+      then (select max(report_end_date) from monthly_batches)
+      when exists (select 1 from detailed_sales)
+      then session.period_end
+      else null
+    end as sales_coverage_end
   from session_row session
 ),
 selected_sales as (
@@ -487,7 +495,11 @@ calculated as (
     closing.latest_count_at,
     closing.machine_count_at,
     greatest(coalesce(products.cost_price, 0), 0)::numeric as unit_cost,
-    mode.sales_source
+    mode.sales_source,
+    mode.sales_coverage_end,
+    (session.baseline_at::date > session.period_start) as baseline_misaligned,
+    (session.cutoff_at is null or session.cutoff_at::date < session.period_end) as closing_misaligned,
+    session.period_end
   from product_scope scope
   join public.products products on products.id = scope.product_id
   left join opening on opening.product_id = products.id
@@ -495,6 +507,7 @@ calculated as (
   left join movement_rollup movements on movements.product_id = products.id
   left join selected_sales sales on sales.product_id = products.id
   cross join sales_mode mode
+  cross join session_row session
 ),
 final_rows as (
   select
@@ -504,6 +517,9 @@ final_rows as (
     greatest(calculated.actual_closing_units - calculated.expected_closing_units, 0)::integer as extra_units,
     case
       when calculated.opening_rows <= 0 or calculated.closing_rows <= 0 or calculated.sales_source = 'none' then 'data_gap'
+      when calculated.baseline_misaligned or calculated.closing_misaligned then 'data_gap'
+      when calculated.sales_coverage_end is null then 'data_gap'
+      when calculated.sales_coverage_end < calculated.period_end then 'suspected'
       when not calculated.opening_storage_manual or not calculated.opening_operator_manual
         or not calculated.storage_manual or not calculated.operator_manual then 'suspected'
       when calculated.opening_machine_units > 0 and calculated.machine_count_at is null then 'data_gap'
@@ -529,10 +545,10 @@ select
   rows.operator_units,
   rows.actual_closing_units,
   rows.variance_units,
-  rows.missing_units,
+  case when rows.confidence = 'data_gap' then 0 else rows.missing_units end as missing_units,
   rows.extra_units,
   rows.unit_cost,
-  (rows.missing_units * rows.unit_cost)::numeric as missing_cost,
+  case when rows.confidence = 'data_gap' then 0 else (rows.missing_units * rows.unit_cost)::numeric end as missing_cost,
   rows.confidence,
   case
     when rows.confidence = 'data_gap' then 'data_gap'

@@ -72,8 +72,10 @@ function dateOnly(value: unknown) {
 
 function currentMonthRange() {
   const now = new Date();
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString().slice(0, 10);
-  const end = now.toISOString().slice(0, 10);
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const yesterday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 1));
+  const start = monthStart.toISOString().slice(0, 10);
+  const end = (yesterday < monthStart ? monthStart : yesterday).toISOString().slice(0, 10);
   return { start, end };
 }
 
@@ -474,7 +476,7 @@ export default async function StockReconciliationPage({ searchParams }: { search
                 {selectedSession.status !== "closed" ? <form action={closeReconciliationSession}><input type="hidden" name="session_id" value={selectedSession.id} /><FormSubmitButton className="btn-secondary" pendingLabel="Closing...">Close reconciliation</FormSubmitButton></form> : null}
               </div>
             </div>
-            <div className="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-950"><span className="font-semibold">Count rule:</span> machine stock comes from the latest VMS snapshot. Storage and operator values start as ledger estimates and become confirmed only after you enter physical totals below.</div>
+            <div className="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-950"><span className="font-semibold">Count rule:</span> machine stock comes from the latest VMS snapshot. Storage and operator values start as ledger estimates and become confirmed only after you enter physical totals below. Date-misaligned checkpoints remain data gaps and are excluded from missing-unit and missing-cost totals.</div>
           </section>
 
           {varianceError ? <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">Some reconciliation data could not load: {errorText(varianceError)}</div> : null}
