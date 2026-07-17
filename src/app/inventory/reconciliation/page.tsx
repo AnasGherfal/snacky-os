@@ -109,9 +109,10 @@ function manualCountValue(
   counts: CountRow[],
   productId: string,
   entityType: CountRow["entity_type"],
+  countPhase: CountRow["count_phase"],
 ) {
   const row = counts.find((count) => count.product_id === productId
-    && count.count_phase === "closing"
+    && count.count_phase === countPhase
     && count.entity_type === entityType
     && count.count_source === "manual"
     && count.is_confirmed);
@@ -122,10 +123,11 @@ function autoCountValue(
   counts: CountRow[],
   productId: string,
   entityType: CountRow["entity_type"],
+  countPhase: CountRow["count_phase"],
 ) {
   return counts
     .filter((count) => count.product_id === productId
-      && count.count_phase === "closing"
+      && count.count_phase === countPhase
       && count.entity_type === entityType
       && count.count_source !== "manual")
     .reduce((sum, count) => sum + reconciliationWholeNumber(count.quantity_counted), 0);
@@ -204,6 +206,7 @@ async function savePhysicalCounts(formData: FormData) {
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase || !sessionId) redirect("/inventory/reconciliation?error=Missing%20reconciliation%20session");
 
+  const countPhase = text(formData.get("count_phase")) === "opening" ? "opening" : "closing";
   const productIds = Array.from(new Set(formData.getAll("product_id").map((value) => text(value)).filter(Boolean)));
   const now = new Date().toISOString();
   const actorId = profile.team_member_id ?? profile.id ?? null;
@@ -217,7 +220,7 @@ async function savePhysicalCounts(formData: FormData) {
       if (!Number.isFinite(quantity) || quantity < 0) continue;
       payloads.push({
         session_id: sessionId,
-        count_phase: "closing",
+        count_phase: countPhase,
         entity_type: entityType,
         entity_id: null,
         entity_key: "manual-total",
@@ -228,7 +231,7 @@ async function savePhysicalCounts(formData: FormData) {
         is_confirmed: true,
         counted_by: actorId,
         counted_at: now,
-        notes: "Physical company total entered from Missing Items reconciliation",
+        notes: `Physical ${countPhase} company total entered from Missing Items reconciliation`,
         updated_at: now,
       });
     }
@@ -249,9 +252,12 @@ async function savePhysicalCounts(formData: FormData) {
     redirect(`/inventory/reconciliation?session=${encodeURIComponent(sessionId)}&error=${encodeURIComponent(message)}`);
   }
 
-  await supabase.from(SESSION_TABLE).update({ status: "review", updated_at: now }).eq("id", sessionId).neq("status", "closed");
+  await supabase.from(SESSION_TABLE).update({
+    status: countPhase === "closing" ? "review" : "open",
+    updated_at: now,
+  }).eq("id", sessionId).neq("status", "closed");
   revalidatePath("/inventory/reconciliation");
-  redirect(`/inventory/reconciliation?session=${encodeURIComponent(sessionId)}&saved=counts`);
+  redirect(`/inventory/reconciliation?session=${encodeURIComponent(sessionId)}&saved=${countPhase}-counts`);
 }
 
 async function saveVarianceCases(formData: FormData) {
@@ -526,19 +532,44 @@ export default async function StockReconciliationPage({ searchParams }: { search
 
           {varianceRows.length ? (
             <section className="surface-card mb-6">
+              <div><h2 className="text-lg font-semibold text-slate-950">Physical opening baseline</h2><p className="mt-1 text-sm text-slate-500">Confirm the opening totals that existed when this checkpoint began. Manual totals override the provisional opening ledger/VMS snapshot.</p></div>
+              <form action={savePhysicalCounts} className="mt-4">
+                <input type="hidden" name="session_id" value={selectedSession.id} />
+                <input type="hidden" name="count_phase" value="opening" />
+                <DataTable headers={["Product", "Auto storage", "Physical storage", "VMS machines", "Machine override", "Auto operator", "Physical operator"]}>
+                  {varianceRows.map((row) => (
+                    <tr key={row.product_id}>
+                      <td><input type="hidden" name="product_id" value={row.product_id} /><div className="font-semibold text-slate-950">{row.product_name}</div><div className="text-xs text-slate-500">{reconciliationWholeNumber(row.case_quantity)} per box</div></td>
+                      <td>{reconciliationQuantity(autoCountValue(counts, row.product_id, "storage", "opening"), row)}</td>
+                      <td><input name={`storage__${row.product_id}`} type="number" min="0" step="1" className="field-input min-w-28" defaultValue={manualCountValue(counts, row.product_id, "storage", "opening")} placeholder="Count" /></td>
+                      <td>{reconciliationQuantity(autoCountValue(counts, row.product_id, "machine", "opening"), row)}</td>
+                      <td><input name={`machine__${row.product_id}`} type="number" min="0" step="1" className="field-input min-w-28" defaultValue={manualCountValue(counts, row.product_id, "machine", "opening")} placeholder="Optional" /></td>
+                      <td>{reconciliationQuantity(autoCountValue(counts, row.product_id, "operator_bag", "opening"), row)}</td>
+                      <td><input name={`operator_bag__${row.product_id}`} type="number" min="0" step="1" className="field-input min-w-28" defaultValue={manualCountValue(counts, row.product_id, "operator_bag", "opening")} placeholder="Count" /></td>
+                    </tr>
+                  ))}
+                </DataTable>
+                <div className="mt-4 flex justify-end"><FormSubmitButton className="btn-primary" pendingLabel="Saving opening counts...">Confirm opening baseline</FormSubmitButton></div>
+              </form>
+            </section>
+          ) : null}
+
+          {varianceRows.length ? (
+            <section className="surface-card mb-6">
               <div><h2 className="text-lg font-semibold text-slate-950">Physical closing counts</h2><p className="mt-1 text-sm text-slate-500">Enter total physical units by product. A saved manual total overrides the provisional ledger/VMS total for that stock location type.</p></div>
               <form action={savePhysicalCounts} className="mt-4">
                 <input type="hidden" name="session_id" value={selectedSession.id} />
+                <input type="hidden" name="count_phase" value="closing" />
                 <DataTable headers={["Product", "Auto storage", "Physical storage", "VMS machines", "Machine override", "Auto operator", "Physical operator"]}>
                   {varianceRows.map((row) => (
                     <tr key={row.product_id}>
                       <td><input type="hidden" name="product_id" value={row.product_id} /><div className="font-semibold text-slate-950">{row.product_name}</div><div className="text-xs text-slate-500">{reconciliationQuantity(0, row).replace(/^0\s*/, "")} · {reconciliationWholeNumber(row.case_quantity)} per box</div></td>
-                      <td>{reconciliationQuantity(autoCountValue(counts, row.product_id, "storage"), row)}</td>
-                      <td><input name={`storage__${row.product_id}`} type="number" min="0" step="1" className="field-input min-w-28" defaultValue={manualCountValue(counts, row.product_id, "storage")} placeholder="Count" /></td>
-                      <td>{reconciliationQuantity(autoCountValue(counts, row.product_id, "machine"), row)}</td>
-                      <td><input name={`machine__${row.product_id}`} type="number" min="0" step="1" className="field-input min-w-28" defaultValue={manualCountValue(counts, row.product_id, "machine")} placeholder="Optional" /></td>
-                      <td>{reconciliationQuantity(autoCountValue(counts, row.product_id, "operator_bag"), row)}</td>
-                      <td><input name={`operator_bag__${row.product_id}`} type="number" min="0" step="1" className="field-input min-w-28" defaultValue={manualCountValue(counts, row.product_id, "operator_bag")} placeholder="Count" /></td>
+                      <td>{reconciliationQuantity(autoCountValue(counts, row.product_id, "storage", "closing"), row)}</td>
+                      <td><input name={`storage__${row.product_id}`} type="number" min="0" step="1" className="field-input min-w-28" defaultValue={manualCountValue(counts, row.product_id, "storage", "closing")} placeholder="Count" /></td>
+                      <td>{reconciliationQuantity(autoCountValue(counts, row.product_id, "machine", "closing"), row)}</td>
+                      <td><input name={`machine__${row.product_id}`} type="number" min="0" step="1" className="field-input min-w-28" defaultValue={manualCountValue(counts, row.product_id, "machine", "closing")} placeholder="Optional" /></td>
+                      <td>{reconciliationQuantity(autoCountValue(counts, row.product_id, "operator_bag", "closing"), row)}</td>
+                      <td><input name={`operator_bag__${row.product_id}`} type="number" min="0" step="1" className="field-input min-w-28" defaultValue={manualCountValue(counts, row.product_id, "operator_bag", "closing")} placeholder="Count" /></td>
                     </tr>
                   ))}
                 </DataTable>

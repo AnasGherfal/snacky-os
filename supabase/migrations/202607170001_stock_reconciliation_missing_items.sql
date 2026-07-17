@@ -303,14 +303,16 @@ with session_row as (
   from public.stock_reconciliation_sessions
   where id = p_session_id
 ),
-internal_types as (
-  select unnest(array['storage', 'operator_bag', 'machine'])::text as entity_type
-),
 opening_by_type as (
   select
     counts.product_id,
     counts.entity_type,
-    sum(counts.quantity_counted)::integer as quantity,
+    coalesce(
+      sum(counts.quantity_counted) filter (where counts.count_source = 'manual' and counts.is_confirmed),
+      sum(counts.quantity_counted) filter (where counts.count_source <> 'manual'),
+      0
+    )::integer as quantity,
+    bool_or(counts.count_source = 'manual' and counts.is_confirmed) as has_manual,
     count(*)::integer as row_count
   from public.stock_reconciliation_counts counts
   where counts.session_id = p_session_id
@@ -321,7 +323,9 @@ opening as (
   select
     product_id,
     sum(quantity)::integer as opening_units,
-    sum(quantity) filter (where entity_type = 'machine')::integer as opening_machine_units,
+    coalesce(sum(quantity) filter (where entity_type = 'machine'), 0)::integer as opening_machine_units,
+    coalesce(bool_or(has_manual) filter (where entity_type = 'storage'), false) as storage_manual,
+    coalesce(bool_or(has_manual) filter (where entity_type = 'operator_bag'), false) as operator_manual,
     sum(row_count)::integer as opening_rows
   from opening_by_type
   group by product_id
@@ -364,16 +368,16 @@ movement_rollup as (
     movements.product_id,
     coalesce(sum(movements.quantity) filter (
       where movements.from_entity_type::text = 'supplier'
-        and movements.to_entity_type::text in (select entity_type from internal_types)
+        and movements.to_entity_type::text in ('storage', 'operator_bag', 'machine')
     ), 0)::integer as purchased_units,
     coalesce(sum(movements.quantity) filter (
-      where movements.from_entity_type::text not in (select entity_type from internal_types)
+      where movements.from_entity_type::text not in ('storage', 'operator_bag', 'machine')
         and movements.from_entity_type::text <> 'supplier'
-        and movements.to_entity_type::text in (select entity_type from internal_types)
+        and movements.to_entity_type::text in ('storage', 'operator_bag', 'machine')
     ), 0)::integer as other_inflow_units,
     coalesce(sum(movements.quantity) filter (
-      where movements.from_entity_type::text in (select entity_type from internal_types)
-        and movements.to_entity_type::text not in (select entity_type from internal_types)
+      where movements.from_entity_type::text in ('storage', 'operator_bag', 'machine')
+        and movements.to_entity_type::text not in ('storage', 'operator_bag', 'machine')
     ), 0)::integer as recorded_loss_units
   from public.inventory_movements movements
   cross join session_row session
@@ -458,6 +462,8 @@ calculated as (
     greatest(coalesce(products.case_quantity, 1), 1)::integer as case_quantity,
     coalesce(opening.opening_units, 0)::integer as opening_units,
     coalesce(opening.opening_machine_units, 0)::integer as opening_machine_units,
+    coalesce(opening.storage_manual, false) as opening_storage_manual,
+    coalesce(opening.operator_manual, false) as opening_operator_manual,
     coalesce(opening.opening_rows, 0)::integer as opening_rows,
     coalesce(movements.purchased_units, 0)::integer as purchased_units,
     coalesce(movements.other_inflow_units, 0)::integer as other_inflow_units,
@@ -498,7 +504,8 @@ final_rows as (
     greatest(calculated.actual_closing_units - calculated.expected_closing_units, 0)::integer as extra_units,
     case
       when calculated.opening_rows <= 0 or calculated.closing_rows <= 0 or calculated.sales_source = 'none' then 'data_gap'
-      when not calculated.storage_manual or not calculated.operator_manual then 'suspected'
+      when not calculated.opening_storage_manual or not calculated.opening_operator_manual
+        or not calculated.storage_manual or not calculated.operator_manual then 'suspected'
       when calculated.opening_machine_units > 0 and calculated.machine_count_at is null then 'data_gap'
       when calculated.machine_count_at is not null and calculated.machine_count_at < (select period_end::timestamptz - interval '1 day' from session_row) then 'suspected'
       else 'confirmed'
