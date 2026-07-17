@@ -208,6 +208,7 @@ async function savePhysicalCounts(formData: FormData) {
 
   const countPhase = text(formData.get("count_phase")) === "opening" ? "opening" : "closing";
   const countPhase = text(formData.get("count_phase")) === "opening" ? "opening" : "closing";
+  const countPhase = text(formData.get("count_phase")) === "opening" ? "opening" : "closing";
   const productIds = Array.from(new Set(formData.getAll("product_id").map((value) => text(value)).filter(Boolean)));
   const now = new Date().toISOString();
   const actorId = profile.team_member_id ?? profile.id ?? null;
