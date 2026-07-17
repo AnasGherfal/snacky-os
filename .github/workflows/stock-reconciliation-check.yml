@@ -37,18 +37,4 @@ jobs:
       - name: Run stock reconciliation tests
         run: node --test scripts/test-stock-reconciliation.mjs
       - name: Build Snacky OS
-        id: build
-        shell: bash
-        run: |
-          set +e
-          npm run build > stock-reconciliation-build.log 2>&1
-          status=$?
-          cat stock-reconciliation-build.log
-          exit $status
-      - name: Upload build diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: stock-reconciliation-build-log
-          path: stock-reconciliation-build.log
-          if-no-files-found: ignore
+        run: npm run build
