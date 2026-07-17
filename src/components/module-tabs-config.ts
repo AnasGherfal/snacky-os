@@ -31,6 +31,7 @@ const financeTabs: ModuleTab[] = [
 
 const inventoryTabs: ModuleTab[] = [
   { label: "Storage", href: "/inventory", exact: true },
+  { label: "Missing Items", href: "/inventory/reconciliation" },
   { label: "Product Planning", href: "/product-planning" },
   { label: "Restock Priority", href: "/restock-priority" },
   { label: "Movements", href: "/inventory/movements" },
