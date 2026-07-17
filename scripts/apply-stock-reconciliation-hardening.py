@@ -138,15 +138,18 @@ page = replace_once(
     .filter((count) => count.product_id === productId
       && count.count_phase === countPhase''',
 )
-page = replace_once(
-    page,
-    "physical count phase input",
-    '''  const productIds = Array.from(new Set(formData.getAll("product_id").map((value) => text(value)).filter(Boolean)));
+count_phase_declaration = '  const countPhase = text(formData.get("count_phase")) === "opening" ? "opening" : "closing";\n'
+while count_phase_declaration + count_phase_declaration in page:
+    page = page.replace(count_phase_declaration + count_phase_declaration, count_phase_declaration)
+if count_phase_declaration not in page:
+    page = replace_once(
+        page,
+        "physical count phase input",
+        '''  const productIds = Array.from(new Set(formData.getAll("product_id").map((value) => text(value)).filter(Boolean)));
   const now = new Date().toISOString();''',
-    '''  const countPhase = text(formData.get("count_phase")) === "opening" ? "opening" : "closing";
-  const productIds = Array.from(new Set(formData.getAll("product_id").map((value) => text(value)).filter(Boolean)));
+        count_phase_declaration + '''  const productIds = Array.from(new Set(formData.getAll("product_id").map((value) => text(value)).filter(Boolean)));
   const now = new Date().toISOString();''',
-)
+    )
 page = replace_once(page, "physical count payload phase", '        count_phase: "closing",', '        count_phase: countPhase,')
 page = replace_once(
     page,
