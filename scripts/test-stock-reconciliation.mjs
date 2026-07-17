@@ -50,11 +50,9 @@ test("page exposes baseline, closing capture, physical counts, and variance case
     "Missing Items & Stock Reconciliation",
     "Create opening baseline",
     "Capture latest closing stock",
+    "Physical opening baseline",
     "Physical closing counts",
     "Variance cases",
-    "Confirmed missing",
-    "Suspected missing",
-    "Data gap",
     "Missing cost",
     "audit trail",
   ]) {
@@ -65,11 +63,16 @@ test("page exposes baseline, closing capture, physical counts, and variance case
   assert.match(page, /snacky_stock_reconciliation_variance/);
   assert.match(page, /count_source:\s*"manual"/);
   assert.match(page, /is_confirmed:\s*true/);
+  assert.match(page, /name="count_phase" value="opening"/);
+  assert.match(page, /name="count_phase" value="closing"/);
 });
 
 test("status helper distinguishes confirmed, suspected, gap, extra, and balanced", () => {
   for (const status of ["confirmed_missing", "suspected_missing", "data_gap", "extra_found", "balanced"]) {
     assert.match(helper, new RegExp(status));
+  }
+  for (const label of ["Confirmed missing", "Suspected missing", "Data gap", "Extra found", "Balanced"]) {
+    assert.match(helper, new RegExp(label, "i"));
   }
 });
 
