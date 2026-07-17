@@ -26,8 +26,8 @@ migration = migration.replace(
     "internal_types as (\n  select unnest(array['storage', 'operator_bag', 'machine'])::text as entity_type\n),\n",
     "",
 )
-migration = migration.replace("in (select entity_type from internal_types)", "in ('storage', 'operator_bag', 'machine')")
 migration = migration.replace("not in (select entity_type from internal_types)", "not in ('storage', 'operator_bag', 'machine')")
+migration = migration.replace("in (select entity_type from internal_types)", "in ('storage', 'operator_bag', 'machine')")
 
 old_opening = '''opening_by_type as (
   select
@@ -91,9 +91,8 @@ migration = replace_once(
 migration = replace_once(
     migration,
     "confidence requires opening and closing physical counts",
-    '''      when not calculated.storage_manual or not calculated.operator_manual then 'suspected' ''',
-    '''      when not calculated.opening_storage_manual or not calculated.opening_operator_manual
-        or not calculated.storage_manual or not calculated.operator_manual then 'suspected' ''',
+    "      when not calculated.storage_manual or not calculated.operator_manual then 'suspected'",
+    "      when not calculated.opening_storage_manual or not calculated.opening_operator_manual\n        or not calculated.storage_manual or not calculated.operator_manual then 'suspected'",
 )
 write(migration_path, migration)
 
