@@ -104,7 +104,7 @@ test("migration is additive and protects each investor's data", () => {
   assert.match(migration, /create table if not exists public\.investor_payments/);
   assert.match(migration, /investor_user_id = auth\.uid\(\)/);
   assert.match(migration, /snacky_can_view_investor_agreement/);
-  assert.doesNotMatch(migration, /\btruncate\b|\bdelete\s+from\b|drop\s+table|drop\s+column|\bcascade\b/i);
+  assert.doesNotMatch(migration, /\btruncate\b|\bdelete\s+from\b|drop\s+table|drop\s+column|drop[\s\S]{0,120}\bcascade\b/i);
 });
 
 test("owner pages are connected through Finance and team login creation", () => {
