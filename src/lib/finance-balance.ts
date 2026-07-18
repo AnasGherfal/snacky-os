@@ -117,6 +117,9 @@ const nonProfitCategories = new Set([
   "bank exchange",
   "exchange",
   "opening balance",
+  "investor profit share",
+  "investor distribution",
+  "profit distribution",
 ]);
 
 function normalizedCategory(row: BalanceTransaction) {
