@@ -53,6 +53,29 @@ function formatReasonLabel(value: string) {
   }
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
+
+const adjustmentReasonArabicLabels: Record<string, string> = {
+  "Damaged during transport": "تالف أثناء النقل",
+  "Broken / opened": "مكسور / مفتوح",
+  "Melted / heat damage": "ذائب / متضرر من الحرارة",
+  "Expired": "منتهي الصلاحية",
+  "Customer returned damaged": "أرجعه العميل تالفاً",
+  "Machine issue damaged product": "تلف بسبب عطل في الجهاز",
+  "Removed from machine": "تمت إزالته من الجهاز",
+  "Product replaced": "تم استبدال المنتج",
+  "Slow moving item removed": "إزالة منتج بطيء البيع",
+  "Expired soon": "قريب من انتهاء الصلاحية",
+  "Wrong product in slot": "منتج خاطئ في الخانة",
+  "Machine reset / re-layout": "إعادة ضبط / ترتيب الجهاز",
+  "Customer complaint": "شكوى عميل",
+  "Other": "أخرى",
+};
+
+function localizedAdjustmentReasonLabel(value: string, locale: string) {
+  const label = formatReasonLabel(value);
+  return locale === "ar" ? adjustmentReasonArabicLabels[label] ?? label : label;
+}
+
 const damagedReasonOptions = [
   "Damaged during transport",
   "Broken / opened",
@@ -806,15 +829,15 @@ export default function MachineStopPage() {
     if (!stopData) return;
     const canReuseCompletedProof = stopData.stopStatus === ROUTE_STOP_COMPLETED_STATUS && stopData.hasCompletionPhoto;
     if (!cleaningDone && stopData.stopStatus !== ROUTE_STOP_COMPLETED_STATUS) {
-      setError("Please complete the cleaning checklist before finishing.");
+      setError(tr("Please complete the cleaning checklist before finishing.", "أكمل قائمة التنظيف والفحص قبل الإنهاء."));
       return;
     }
     if (!finalPhotoFile && !canReuseCompletedProof) {
-      setError("Please take or upload the final machine photo before completing the stop.");
+      setError(tr("Please take or upload the final machine photo before completing the stop.", "التقط أو ارفع الصورة النهائية للجهاز قبل إنهاء الموقع."));
       return;
     }
     if (compressorSafetyInstalled && !compressorProofReady && stopData.stopStatus !== ROUTE_STOP_COMPLETED_STATUS) {
-      setError("Save the compressor ON photo before completing this stop.");
+      setError(tr("Save the compressor ON photo before completing this stop.", "احفظ صورة تشغيل الضاغط قبل إنهاء هذا الموقع."));
       document.getElementById("compressor-safety")?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
@@ -913,8 +936,8 @@ export default function MachineStopPage() {
       localDraft.clearDraft();
       clientSubmissionIdRef.current = newClientId();
       const stopSuccessMessage = stopData.stopStatus === ROUTE_STOP_COMPLETED_STATUS
-        ? "Stop changes saved successfully."
-        : "Stop completed successfully.";
+        ? tr("Stop changes saved successfully.", "تم حفظ تغييرات الموقع بنجاح.")
+        : tr("Stop completed successfully.", "تم إنهاء الموقع بنجاح.");
       console.info("[operator:route-nav] Redirecting after stop save", {
         action: stopData.stopStatus === ROUTE_STOP_COMPLETED_STATUS ? "save_stop_machine" : "complete_stop",
         routeId,
@@ -984,11 +1007,11 @@ export default function MachineStopPage() {
         <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <Metric label={t("Assigned units")} value={stopExecutionSummary.assignedUnits} />
           <Metric label={t("Filled now")} value={stopExecutionSummary.filledUnits} />
-          <Metric label={t("Shortage to explain")} value={stopExecutionSummary.shortageUnits} tone={stopExecutionSummary.shortageUnits > 0 ? "warn" : "neutral"} />
-          <Metric label={t("Machine storage units")} value={stopExecutionSummary.extraUnits} />
+          <Metric label={tr("Shortage to explain", "نقص يحتاج توضيحاً")} value={stopExecutionSummary.shortageUnits} tone={stopExecutionSummary.shortageUnits > 0 ? "warn" : "neutral"} />
+          <Metric label={tr("Machine storage units", "وحدات مخزن الجهاز")} value={stopExecutionSummary.extraUnits} />
           <Metric label={t("Inventory adjustments")} value={stopExecutionSummary.adjustmentCount} />
           <Metric label={t("Proof photo")} value={stopExecutionSummary.proofReady ? t("Ready") : t("Needed")} tone={stopExecutionSummary.proofReady ? "neutral" : "warn"} />
-          <Metric label={t("Compressor proof")} value={!compressorSafetyInstalled ? t("Setup pending") : compressorProofReady ? t("Ready") : t("Needed")} tone={compressorSafetyInstalled && !compressorProofReady ? "warn" : "neutral"} />
+          <Metric label={tr("Compressor proof", "إثبات الضاغط")} value={!compressorSafetyInstalled ? tr("Setup pending", "الإعداد معلق") : compressorProofReady ? tr("Ready", "جاهز") : tr("Needed", "مطلوب")} tone={compressorSafetyInstalled && !compressorProofReady ? "warn" : "neutral"} />
         </section>
 
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
@@ -1350,11 +1373,11 @@ export default function MachineStopPage() {
           <button onClick={handleCompleteStop} disabled={!canSubmitStop} className="btn-primary w-full flex-1 disabled:cursor-not-allowed disabled:opacity-50">
             {submitting ? `${t("Saving")}...` : isEditingCompletedStop ? t("Save Stop Changes") : t("Complete Stop")}
           </button>
-          <SecondaryButton href={routeHref} type="button">{t("Cancel")}</SecondaryButton>
+          <SecondaryButton href={routeHref} type="button">{tr("Cancel", "إلغاء")}</SecondaryButton>
         </div>
 
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-          <strong>{t("Reminder")}:</strong> {t("This page is for physical execution at the machine: actual filled quantities, shortage reasons, machine storage, cash, issues, and the final photo after cleaning.")}
+          <strong>{tr("Reminder", "تذكير")}:</strong> {tr("This page is for physical execution at the machine: actual filled quantities, shortage reasons, machine storage, cash, issues, and the final photo after cleaning.", "هذه الصفحة للتنفيذ الفعلي عند الجهاز: الكميات المعبأة فعلياً، أسباب النقص، مخزن الجهاز، النقد، الأعطال، والصورة النهائية بعد التنظيف.")}
         </div>
 
       </div>
@@ -1494,26 +1517,7 @@ function ReasonSelect({ value, onChange, options = reasonOptions }: { value: str
       <span className="mb-1 block text-sm font-medium text-slate-800">{t("Reason")}</span>
       <select value={value || ""} onChange={(event) => onChange(event.target.value)} className="field-input">
         <option value="">{t("Select reason")}</option>
-        {reasonValues.map((reason) => {
-          const label = formatReasonLabel(reason);
-          const arabicLabels: Record<string, string> = {
-            "Damaged during transport": "تالف أثناء النقل",
-            "Broken / opened": "مكسور / مفتوح",
-            "Melted / heat damage": "ذائب / متضرر من الحرارة",
-            "Expired": "منتهي الصلاحية",
-            "Customer returned damaged": "أرجعه العميل تالفاً",
-            "Machine issue damaged product": "تلف بسبب عطل في الجهاز",
-            "Removed from machine": "تمت إزالته من الجهاز",
-            "Product replaced": "تم استبدال المنتج",
-            "Slow moving item removed": "إزالة منتج بطيء البيع",
-            "Expired soon": "قريب من انتهاء الصلاحية",
-            "Wrong product in slot": "منتج خاطئ في الخانة",
-            "Machine reset / re-layout": "إعادة ضبط / ترتيب الجهاز",
-            "Customer complaint": "شكوى عميل",
-            "Other": "أخرى",
-          };
-          return <option key={reason} value={reason}>{locale === "ar" ? arabicLabels[label] ?? label : label}</option>;
-        })}
+        {reasonValues.map((reason) => <option key={reason} value={reason}>{localizedAdjustmentReasonLabel(reason, locale)}</option>)}
       </select>
     </label>
   );
@@ -1715,7 +1719,7 @@ function InventoryAdjustmentsSection({
                       <span className="text-sm font-semibold text-slate-900">{adjustment.productName}</span>
                       <span className="text-sm text-slate-500">x{adjustment.quantity}</span>
                     </div>
-                    <p className="mt-1 text-sm text-slate-600">{t(formatReasonLabel(adjustment.reason), formatReasonLabel(adjustment.reason))}</p>
+                    <p className="mt-1 text-sm text-slate-600">{localizedAdjustmentReasonLabel(adjustment.reason, locale)}</p>
                     {adjustment.notes ? <p className="mt-1 text-sm text-slate-500">{adjustment.notes}</p> : null}
                   </div>
                   <div className="text-xs text-slate-500">
