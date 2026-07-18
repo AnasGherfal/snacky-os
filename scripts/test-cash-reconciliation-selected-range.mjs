@@ -29,14 +29,25 @@ test("headline reconciliation is VMS sales versus cash counted", () => {
   assert.match(page, /VMS sales \/ مبيعات VMS/);
   assert.match(page, /Cash counted \/ الكاش المعدود/);
   assert.match(page, /Cash counted minus VMS sales/);
+  assert.match(page, /See exactly which machines below/);
   assert.match(page, /varianceAmount:\s*roundMoney\(cashCountedAmount - vmsSalesAmount\)/);
   assert.match(page, /accuracy:\s*vmsSalesAmount > 0 \? cashCountedAmount \/ vmsSalesAmount : null/);
 });
 
-test("machine table compares the same two sources", () => {
+test("machine table explicitly identifies expected, counted, and difference by machine", () => {
   assert.match(page, /buildMachineCashReconciliation/);
+  assert.match(page, /Which machine has the difference\?/);
+  assert.match(page, /VMS expected sales for machine/);
+  assert.match(page, /Cash counted for machine/);
+  assert.match(page, /Difference for machine/);
+  assert.match(page, /Counted pickups/);
+  assert.match(page, /Latest finance count/);
   assert.match(page, /rangeVariance:\s*roundMoney\(row\.countedCash - row\.vmsSalesAmount\)/);
-  assert.match(page, /headers=\{\["Machine", "Location", "VMS sales", "Units", "Cash counted", "Difference"/);
+});
+
+test("machines are sorted by largest absolute difference and unmatched rows are visible", () => {
+  assert.match(page, /Math\.abs\(right\.rangeVariance\) - Math\.abs\(left\.rangeVariance\)/);
+  assert.match(page, /Unmatched VMS\/cash machine — fix mapping/);
 });
 
 test("pending cash stays separate from counted totals", () => {
