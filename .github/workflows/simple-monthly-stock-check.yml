@@ -1,0 +1,38 @@
+name: Simple monthly Stock Check
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "src/app/inventory/stock-check/page.tsx"
+      - "src/lib/simple-stock-check.ts"
+      - "src/components/module-tabs-config.ts"
+      - "scripts/test-simple-monthly-stock-check.mjs"
+      - ".github/workflows/simple-monthly-stock-check.yml"
+  push:
+    branches:
+      - feature/simple-monthly-stock-check
+    paths:
+      - "src/app/inventory/stock-check/page.tsx"
+      - "src/lib/simple-stock-check.ts"
+      - "src/components/module-tabs-config.ts"
+      - "scripts/test-simple-monthly-stock-check.mjs"
+      - ".github/workflows/simple-monthly-stock-check.yml"
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Test simple monthly Stock Check
+        run: node --test scripts/test-simple-monthly-stock-check.mjs
+      - name: Build Snacky OS
+        run: npm run build
