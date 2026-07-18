@@ -119,6 +119,9 @@ const NON_OPERATING_CATEGORY_TOKENS = [
   "bank / exchange",
   "exchange transfer",
   "internal transfer",
+  "investor profit share",
+  "investor distribution",
+  "profit distribution",
 ];
 
 const EXPENSE_CATEGORY_RULES: Array<{ key: string; label: string; tokens: string[]; productPurchase?: boolean }> = [
