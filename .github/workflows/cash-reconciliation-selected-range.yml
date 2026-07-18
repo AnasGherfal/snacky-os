@@ -1,0 +1,36 @@
+name: Cash reconciliation selected-range checks
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "src/app/reports/cash-reconciliation/page.tsx"
+      - "scripts/test-cash-reconciliation-selected-range.mjs"
+      - ".github/workflows/cash-reconciliation-selected-range.yml"
+  push:
+    branches:
+      - fix/cash-reconciliation-selected-range
+    paths:
+      - "src/app/reports/cash-reconciliation/page.tsx"
+      - "scripts/test-cash-reconciliation-selected-range.mjs"
+      - ".github/workflows/cash-reconciliation-selected-range.yml"
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Test selected-range cash reconciliation
+        run: node --test scripts/test-cash-reconciliation-selected-range.mjs
+      - name: Run pickup regression tests
+        run: npm run test:pickup
+      - name: Build Snacky OS
+        run: npm run build
