@@ -9,6 +9,7 @@ import {
   BarChart3,
   Boxes,
   ClipboardList,
+  HandCoins,
   LayoutDashboard,
   Package,
   PackagePlus,
@@ -24,7 +25,8 @@ import type { Dictionary } from "@/lib/i18n";
 
 type NavLabelKey = keyof Dictionary["nav"];
 type NavItem = {
-  labelKey: NavLabelKey;
+  labelKey?: NavLabelKey;
+  label?: { en: string; ar: string };
   href: string;
   icon: ComponentType<{ className?: string }>;
   exact?: boolean;
@@ -66,6 +68,12 @@ const accountItem: NavItem = {
   labelKey: "account",
   href: "/account",
   icon: UserCircle,
+};
+const investorPortalItem: NavItem = {
+  label: { en: "Investor Portal", ar: "بوابة المستثمر" },
+  href: "/investor",
+  icon: HandCoins,
+  activePrefixes: ["/investor"],
 };
 const warehouseOperationsItem: NavItem = {
   labelKey: "operations",
@@ -132,13 +140,21 @@ const financeNav: NavSection[] = [
   { items: [financeItem] },
 ];
 
+const investorNav: NavSection[] = [
+  { items: [investorPortalItem, accountItem] },
+];
+
 const viewerNav: NavSection[] = [{ items: [dashboardItem] }];
+
+function itemIdentity(item: NavItem) {
+  return `${item.labelKey ?? item.label?.en ?? "item"}:${item.href}`;
+}
 
 function mergeSections(sections: NavSection[]): NavSection[] {
   const seen = new Set<string>();
   const items: NavItem[] = [];
   sections.flatMap((section) => section.items).forEach((item) => {
-    const key = `${item.labelKey}:${item.href}`;
+    const key = itemIdentity(item);
     if (seen.has(key)) return;
     seen.add(key);
     items.push(item);
@@ -159,6 +175,7 @@ function sectionsForRoles(role: AppRole, roles?: AppRole[] | null) {
   if (hasRole(context, "warehouse") || hasPermission(context, "storage.movement.view")) sections.push({ items: [warehouseOperationsItem] });
   if (hasRole(context, "purchasing")) sections.push({ items: [inventoryItem, restockPriorityItem, productsItem] });
   if (hasRole(context, "finance") || hasPermission(context, "finance.view")) sections.push(...financeNav);
+  if (hasPermission(context, "investor.view")) sections.push(...investorNav);
   if (!sections.length && hasAnyRole(context, ["viewer"])) sections.push(...viewerNav);
   return sections.length ? mergeSections(sections) : viewerNav;
 }
@@ -202,7 +219,7 @@ function SidebarContent({ role, roles, onNavigate }: { role: AppRole; roles?: Ap
   const router = useRouter();
   const searchParams = useSearchParams();
   const currentSearch = searchParams.toString();
-  const { dictionary } = useLanguage();
+  const { dictionary, locale } = useLanguage();
   const sections = sectionsForRoles(role, roles);
   const [optimisticHref, setOptimisticHref] = useState<string | null>(null);
   const [optimisticOriginHref, setOptimisticOriginHref] = useState<string | null>(null);
@@ -247,10 +264,11 @@ function SidebarContent({ role, roles, onNavigate }: { role: AppRole; roles?: Ap
                     : matchesPath(activePathname, "/purchases")
                       ? item.labelKey === "inventory"
                       : isActiveItem(activePathname, item, activeSearchParams);
+                const label = item.label ? item.label[locale] : item.labelKey ? dictionary.nav[item.labelKey] : item.href;
 
                 return (
                   <Link
-                    key={`${item.labelKey}-${item.href}`}
+                    key={itemIdentity(item)}
                     href={item.href}
                     prefetch={true}
                     onClick={(event) => {
@@ -263,7 +281,7 @@ function SidebarContent({ role, roles, onNavigate }: { role: AppRole; roles?: Ap
                     aria-current={active ? "page" : undefined}
                   >
                     <Icon className="h-4 w-4 shrink-0" />
-                    <span className="min-w-0 truncate">{dictionary.nav[item.labelKey]}</span>
+                    <span className="min-w-0 truncate">{label}</span>
                     <NavPendingIndicator />
                   </Link>
                 );
