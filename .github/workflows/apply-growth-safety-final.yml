@@ -1,0 +1,86 @@
+name: Apply final growth safety integration
+
+on:
+  push:
+    branches:
+      - feature/growth-decisions-investor-portal
+    paths:
+      - ".github/workflows/apply-growth-safety-final.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/growth-decisions-investor-portal
+          fetch-depth: 0
+      - name: Apply fail-closed decision data guard and assertions
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          page = Path('src/app/finance/growth-decisions/page.tsx')
+          source = page.read_text(encoding='utf-8')
+          old = '''  if (salesResult.error || manualSalesResult.error) {
+    return <ErrorState title={ar ? "تعذر تحميل المبيعات الكاملة" : "Complete sales could not load"} body={ar ? "يجب تحميل مبيعات VMS والمبيعات اليدوية معاً قبل اتخاذ قرار توسع." : "Both VMS and confirmed manual route sales must load before relying on an expansion decision."} />;
+  }
+
+  const salesRows ='''
+          new = '''  if (salesResult.error || manualSalesResult.error) {
+    return <ErrorState title={ar ? "تعذر تحميل المبيعات الكاملة" : "Complete sales could not load"} body={ar ? "يجب تحميل مبيعات VMS والمبيعات اليدوية معاً قبل اتخاذ قرار توسع." : "Both VMS and confirmed manual route sales must load before relying on an expansion decision."} />;
+  }
+  const decisionSourceErrors = [
+    machinesResult.error,
+    acceptedLocationsResult.error,
+    issuesResult.error,
+    refillResult.error,
+    statementsResult.error,
+    paymentsResult.error,
+  ].filter(Boolean);
+  if (decisionSourceErrors.length) {
+    return <ErrorState title={ar ? "بيانات القرار غير مكتملة" : "Decision data is incomplete"} body={ar ? "تعذر تحميل الأجهزة أو المواقع أو الأعطال أو المخزون أو مستحقات المستثمر. لن يصدر النظام توصية شراء حتى تكتمل البيانات." : "Machines, locations, issues, restocking, or investor commitments could not load. Snacky OS will not recommend a purchase from incomplete data."} />;
+  }
+
+  const salesRows ='''
+          if 'const decisionSourceErrors = [' not in source:
+              if old not in source:
+                  raise SystemExit('Expected decision data marker was not found.')
+              source = source.replace(old, new, 1)
+              page.write_text(source, encoding='utf-8')
+
+          test = Path('scripts/test-growth-investor-portal.mjs')
+          checks = test.read_text(encoding='utf-8')
+          marker = '''  assert.match(growth, /Both VMS and confirmed manual route sales must load/);
+});'''
+          replacement = '''  assert.match(growth, /Both VMS and confirmed manual route sales must load/);
+  assert.match(growth, /decisionSourceErrors/);
+  assert.match(growth, /will not recommend a purchase from incomplete data/);
+});'''
+          if 'will not recommend a purchase from incomplete data' not in checks:
+              if marker not in checks:
+                  raise SystemExit('Expected growth test marker was not found.')
+              checks = checks.replace(marker, replacement, 1)
+
+          auth_marker = '''  assert.match(authz, /matchesPrefix\\(pathname, \\["\\/investor"\\]\\).*investor\\.view/);'''
+          auth_replacement = '''  assert.match(authz, /matchesPrefix\\(pathname, \\["\\/investor"\\]\\).*investor\\.view/);
+  assert.match(authz, /matchesPrefix\\(pathname, \\["\\/vms-import"\\]\\).*canViewVmsImports/);
+  assert.match(authz, /matchesPrefix\\(pathname, \\["\\/vms-mappings"\\]\\).*canManageVmsMappings/);
+  assert.doesNotMatch(authz, /matchesPrefix\\(pathname, \\["\\/vms-import", "\\/vms-mappings"\\]\\)\\) return true/);'''
+          if 'canViewVmsImports/);' not in checks:
+              if auth_marker not in checks:
+                  raise SystemExit('Expected investor authorization test marker was not found.')
+              checks = checks.replace(auth_marker, auth_replacement, 1)
+          test.write_text(checks, encoding='utf-8')
+          PY
+      - name: Commit final safety integration
+        run: |
+          git config user.name "Snacky CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add src/app/finance/growth-decisions/page.tsx scripts/test-growth-investor-portal.mjs
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Fail closed on incomplete growth decision data"
+          git push origin HEAD:feature/growth-decisions-investor-portal
