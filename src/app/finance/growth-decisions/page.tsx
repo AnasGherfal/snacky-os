@@ -8,7 +8,7 @@ import { isOwnerAdminRole } from "@/lib/authz";
 import { computeFinanceBalancesFromCutoff, formatFinanceMoney } from "@/lib/finance-balance";
 import { applyVisibleFinanceLedgerFilter, FINANCE_TRANSACTIONS_TABLE, loadFinanceLedgerRows } from "@/lib/finance-ledger";
 import { buildGrowthDecision } from "@/lib/growth-decision";
-import { calculateInvestorMonth } from "@/lib/investor-profit";
+import { calculateInvestorMonth, manualRouteSalesAsProfitRows } from "@/lib/investor-profit";
 import { saveGrowthDecisionSettings } from "@/lib/investor-actions";
 import { getServerI18n } from "@/lib/i18n/server";
 
@@ -106,7 +106,7 @@ export default async function GrowthDecisionsPage({ searchParams }: { searchPara
   const historyStart = monthStarts[0];
   const historyEnd = endOfMonth(monthStarts[monthStarts.length - 1]);
 
-  const [ledgerResult, salesResult, machinesResult, acceptedLocationsResult, issuesResult, refillResult, statementsResult, paymentsResult] = await Promise.all([
+  const [ledgerResult, salesResult, manualSalesResult, machinesResult, acceptedLocationsResult, issuesResult, refillResult, statementsResult, paymentsResult] = await Promise.all([
     loadFinanceLedgerRows({
       label: "growth-decisions.finance-ledger",
       buildQuery: (columns, level) => applyVisibleFinanceLedgerFilter(
@@ -119,6 +119,12 @@ export default async function GrowthDecisionsPage({ searchParams }: { searchPara
       .select("machine_id, net_sales_amount, cogs_amount, gross_profit_amount, cost_missing, sale_date")
       .gte("sale_date", historyStart)
       .lte("sale_date", historyEnd),
+    supabase
+      .from("route_manual_sales")
+      .select("id, machine_id, total_amount_lyd, inventory_movement_id, sale_time, status")
+      .eq("status", "confirmed")
+      .gte("sale_time", `${historyStart}T00:00:00.000Z`)
+      .lte("sale_time", `${historyEnd}T23:59:59.999Z`),
     supabase.from("machines").select("id, name, rent_amount, status"),
     supabase.from("location_pipeline_leads").select("id", { count: "exact", head: true }).eq("status", "accepted").is("archived_at", null),
     supabase.from("issues").select("id", { count: "exact", head: true }).eq("priority", "critical").not("status", "in", "(resolved,closed)"),
@@ -130,15 +136,36 @@ export default async function GrowthDecisionsPage({ searchParams }: { searchPara
   if (ledgerResult.error) {
     return <ErrorState title={ar ? "تعذر تحميل الرصيد المالي" : "Finance balance could not load"} body={ar ? "راجع صحة دفتر المالية قبل اتخاذ قرار توسع." : "Repair the Finance ledger before relying on an expansion decision."} />;
   }
+  if (salesResult.error || manualSalesResult.error) {
+    return <ErrorState title={ar ? "تعذر تحميل المبيعات الكاملة" : "Complete sales could not load"} body={ar ? "يجب تحميل مبيعات VMS والمبيعات اليدوية معاً قبل اتخاذ قرار توسع." : "Both VMS and confirmed manual route sales must load before relying on an expansion decision."} />;
+  }
 
-  const salesRows = (salesResult.data ?? []) as SalesRow[];
+  const salesRows = ((salesResult.data ?? []) as SalesRow[]).map((row) => ({ ...row, source: "vms" }));
+  const manualSales = (manualSalesResult.data ?? []) as any[];
+  const manualMovementIds = Array.from(new Set(manualSales.map((sale) => String(sale.inventory_movement_id ?? "").trim()).filter(Boolean)));
+  const manualMovementResult = manualMovementIds.length
+    ? await supabase.from("inventory_movements").select("id, line_total_lyd, unit_cost_lyd").in("id", manualMovementIds)
+    : { data: [], error: null };
+  if (manualMovementResult.error) {
+    return <ErrorState title={ar ? "تعذر تحميل تكلفة المبيعات اليدوية" : "Manual-sale costs could not load"} body={ar ? "لا يمكن إصدار قرار شراء موثوق من دون تكلفة المنتجات المباعة يدوياً." : "A reliable purchase decision requires the product cost of manual sales."} />;
+  }
+  const manualProfitRows = manualRouteSalesAsProfitRows(manualSales, manualMovementResult.data ?? []);
+  const manualProfitBySaleId = new Map(manualSales.map((sale, index) => [String(sale.id), manualProfitRows[index]]));
   const machines = (machinesResult.data ?? []) as MachineRow[];
   const ledgerRows = ledgerResult.data;
   const monthly = monthStarts.map((start) => {
     const end = endOfMonth(start);
     const monthSales = salesRows.filter((row) => row.sale_date && row.sale_date >= start && row.sale_date <= end);
+    const monthManualSales = manualSales.filter((sale) => {
+      const date = String(sale.sale_time ?? "").slice(0, 10);
+      return date >= start && date <= end;
+    });
+    const monthManualProfitRows = monthManualSales.flatMap((sale) => {
+      const row = manualProfitBySaleId.get(String(sale.id));
+      return row ? [row] : [];
+    });
     const monthLedger = ledgerRows.filter((row) => row.transaction_date && row.transaction_date >= start && row.transaction_date <= end);
-    return { start, end, ...calculateInvestorMonth({ salesRows: monthSales, ledgerRows: monthLedger, sharePercent: 0 }) };
+    return { start, end, ...calculateInvestorMonth({ salesRows: [...monthSales, ...monthManualProfitRows], ledgerRows: monthLedger, sharePercent: 0 }) };
   });
   const completeMonthly = monthly.filter((row) => row.complete && row.revenueLyd > 0);
   const configuredHistoryMonths = Math.round(numeric(settings.minimum_history_months));
@@ -150,12 +177,22 @@ export default async function GrowthDecisionsPage({ searchParams }: { searchPara
   const latestStart = monthStarts[monthStarts.length - 1];
   const latestEnd = endOfMonth(latestStart);
   const latestSales = salesRows.filter((row) => row.sale_date && row.sale_date >= latestStart && row.sale_date <= latestEnd);
+  const latestManualSales = manualSales.filter((sale) => {
+    const date = String(sale.sale_time ?? "").slice(0, 10);
+    return date >= latestStart && date <= latestEnd;
+  });
   const activeMachines = machines.filter((machine) => String(machine.status ?? "active") === "active");
   const machineProfitRows = activeMachines.map((machine) => {
-    const grossProfit = latestSales
+    const vmsGrossProfit = latestSales
       .filter((row) => row.machine_id === machine.id && !row.cost_missing)
       .reduce((sum, row) => sum + numeric(row.gross_profit_amount), 0);
-    return { id: machine.id, name: machine.name ?? machine.id, profitAfterRent: money(grossProfit - numeric(machine.rent_amount)) };
+    const manualGrossProfit = latestManualSales
+      .filter((sale) => sale.machine_id === machine.id)
+      .reduce((sum, sale) => {
+        const profitRow = manualProfitBySaleId.get(String(sale.id));
+        return sum + (profitRow && !profitRow.cost_missing ? numeric(profitRow.gross_profit_amount) : 0);
+      }, 0);
+    return { id: machine.id, name: machine.name ?? machine.id, profitAfterRent: money(vmsGrossProfit + manualGrossProfit - numeric(machine.rent_amount)) };
   });
   const averageMachineProfitAfterRent = machineProfitRows.length
     ? money(machineProfitRows.reduce((sum, row) => sum + row.profitAfterRent, 0) / machineProfitRows.length)
