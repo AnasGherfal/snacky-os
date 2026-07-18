@@ -1,0 +1,37 @@
+name: Clean temporary route localization files
+
+on:
+  push:
+    branches:
+      - fix/route-arabic-no-mix
+    paths:
+      - ".github/workflows/cleanup-route-arabic-temp.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/route-arabic-no-mix
+      - name: Remove temporary integration files
+        run: |
+          git rm -f \
+            scripts/apply-route-arabic-components.py \
+            scripts/apply-manual-sales-language.py \
+            scripts/apply-route-proof-cleaning-language.py \
+            scripts/apply-route-adjustment-language.py \
+            scripts/apply-route-language-hardening-components.py \
+            scripts/apply-route-language-hardening-page.py \
+            scripts/apply-route-language-final.py \
+            .github/workflows/apply-route-arabic-ui.yml \
+            .github/workflows/cleanup-route-arabic-temp.yml || true
+      - name: Commit cleanup
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git diff --cached --quiet || git commit -m "Remove temporary route localization integration files"
+          git push origin HEAD:fix/route-arabic-no-mix
