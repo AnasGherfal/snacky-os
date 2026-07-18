@@ -17,6 +17,7 @@ const subscriptionApi = read("src/app/api/push-subscriptions/route.ts");
 const routeApi = read("src/app/api/routes/route.ts");
 const migration = read("supabase/migrations/202607180002_notification_push_activation.sql");
 
+// This suite validates the complete browser-to-server notification contract without exposing private key material.
 const combined = [delivery, center, topbar, serviceWorker, pushConfigApi, testApi, subscriptionApi, migration].join("\n");
 
 test("service worker receives push and opens the notification route", () => {
