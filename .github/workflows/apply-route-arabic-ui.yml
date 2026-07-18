@@ -5,10 +5,8 @@ on:
     branches:
       - fix/route-arabic-no-mix
     paths:
-      - "scripts/apply-route-arabic-components.py"
-      - "scripts/apply-manual-sales-language.py"
-      - "scripts/apply-route-proof-cleaning-language.py"
-      - "scripts/apply-route-adjustment-language.py"
+      - "scripts/apply-route-language-hardening-components.py"
+      - "scripts/apply-route-language-hardening-page.py"
       - ".github/workflows/apply-route-arabic-ui.yml"
 
 permissions:
@@ -21,16 +19,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: fix/route-arabic-no-mix
-      - name: Apply language changes
+      - name: Apply language hardening
         run: |
-          python scripts/apply-route-arabic-components.py
-          python scripts/apply-manual-sales-language.py
-          python scripts/apply-route-proof-cleaning-language.py
-          python scripts/apply-route-adjustment-language.py
-      - name: Commit route language changes
+          python scripts/apply-route-language-hardening-components.py
+          python scripts/apply-route-language-hardening-page.py
+      - name: Commit route language hardening
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/components/operator/RouteStopQuickActions.tsx src/components/operator/CompressorSafetyProofCard.tsx src/components/operator/ManualRouteSalesSection.tsx src/app/operator/routes/[id]/stops/[stopId]/page.tsx
-          git diff --cached --quiet || git commit -m "Localize route stop controls in Arabic"
+          git config user.email "4189822+github-actions[bot]@users.noreply.github.com"
+          git add src/components/operator/CompressorSafetyProofCard.tsx src/components/operator/ManualRouteSalesSection.tsx src/app/operator/routes/[id]/stops/[stopId]/page.tsx
+          git diff --cached --quiet || git commit -m "Harden Arabic route stop localization"
           git push origin HEAD:fix/route-arabic-no-mix
