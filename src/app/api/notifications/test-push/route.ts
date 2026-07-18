@@ -1,30 +1,24 @@
 import { NextResponse } from "next/server";
 import webpush, { type PushSubscription } from "web-push";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
-
-let configured = false;
-
-function configureWebPush() {
-  const subject = String(process.env.VAPID_SUBJECT ?? "").trim();
-  const publicKey = String(process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "").trim();
-  const privateKey = String(process.env.VAPID_PRIVATE_KEY ?? "").trim();
-  if (!subject || !publicKey || !privateKey) return false;
-  if (!configured) {
-    webpush.setVapidDetails(subject, publicKey, privateKey);
-    configured = true;
-  }
-  return true;
-}
+import { configureWebPush } from "@/lib/push-config";
 
 export async function POST() {
   const profile = await getCurrentProfile();
   if (!profile) return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
-  if (!configureWebPush()) {
-    return NextResponse.json({ error: "VAPID environment values are missing." }, { status: 503 });
-  }
 
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) return NextResponse.json({ error: "Supabase is not configured." }, { status: 500 });
+
+  const config = await configureWebPush(supabase);
+  if (!config.configured) {
+    return NextResponse.json({
+      error: config.reason === "migration_required"
+        ? "Push notification configuration migration is not installed."
+        : "Push notification configuration is not ready.",
+      reason: config.reason,
+    }, { status: 503 });
+  }
 
   const { data, error } = await supabase
     .from("push_subscriptions")
