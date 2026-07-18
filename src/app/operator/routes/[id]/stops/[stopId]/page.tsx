@@ -53,6 +53,29 @@ function formatReasonLabel(value: string) {
   }
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
+
+const adjustmentReasonArabicLabels: Record<string, string> = {
+  "Damaged during transport": "تالف أثناء النقل",
+  "Broken / opened": "مكسور / مفتوح",
+  "Melted / heat damage": "ذائب / متضرر من الحرارة",
+  "Expired": "منتهي الصلاحية",
+  "Customer returned damaged": "أرجعه العميل تالفاً",
+  "Machine issue damaged product": "تلف بسبب عطل في الجهاز",
+  "Removed from machine": "تمت إزالته من الجهاز",
+  "Product replaced": "تم استبدال المنتج",
+  "Slow moving item removed": "إزالة منتج بطيء البيع",
+  "Expired soon": "قريب من انتهاء الصلاحية",
+  "Wrong product in slot": "منتج خاطئ في الخانة",
+  "Machine reset / re-layout": "إعادة ضبط / ترتيب الجهاز",
+  "Customer complaint": "شكوى عميل",
+  "Other": "أخرى",
+};
+
+function localizedAdjustmentReasonLabel(value: string, locale: string) {
+  const label = formatReasonLabel(value);
+  return locale === "ar" ? adjustmentReasonArabicLabels[label] ?? label : label;
+}
+
 const damagedReasonOptions = [
   "Damaged during transport",
   "Broken / opened",
@@ -515,7 +538,8 @@ function comparableStopDraft(draft: StopDraft) {
 
 export default function MachineStopPage() {
   const router = useRouter();
-  const { t } = useLanguage();
+  const { t, locale } = useLanguage();
+  const tr = (en: string, ar: string) => t(en, locale === "ar" ? ar : en);
   const params = useParams<{ id?: string | string[]; stopId?: string | string[] }>();
   const rawRouteId = params?.id;
   const rawStopId = params?.stopId;
@@ -805,15 +829,15 @@ export default function MachineStopPage() {
     if (!stopData) return;
     const canReuseCompletedProof = stopData.stopStatus === ROUTE_STOP_COMPLETED_STATUS && stopData.hasCompletionPhoto;
     if (!cleaningDone && stopData.stopStatus !== ROUTE_STOP_COMPLETED_STATUS) {
-      setError("Please complete the cleaning checklist before finishing.");
+      setError(tr("Please complete the cleaning checklist before finishing.", "أكمل قائمة التنظيف والفحص قبل الإنهاء."));
       return;
     }
     if (!finalPhotoFile && !canReuseCompletedProof) {
-      setError("Please take or upload the final machine photo before completing the stop.");
+      setError(tr("Please take or upload the final machine photo before completing the stop.", "التقط أو ارفع الصورة النهائية للجهاز قبل إنهاء الموقع."));
       return;
     }
     if (compressorSafetyInstalled && !compressorProofReady && stopData.stopStatus !== ROUTE_STOP_COMPLETED_STATUS) {
-      setError("Save the compressor ON photo before completing this stop.");
+      setError(tr("Save the compressor ON photo before completing this stop.", "احفظ صورة تشغيل الضاغط قبل إنهاء هذا الموقع."));
       document.getElementById("compressor-safety")?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
@@ -912,8 +936,8 @@ export default function MachineStopPage() {
       localDraft.clearDraft();
       clientSubmissionIdRef.current = newClientId();
       const stopSuccessMessage = stopData.stopStatus === ROUTE_STOP_COMPLETED_STATUS
-        ? "Stop changes saved successfully."
-        : "Stop completed successfully.";
+        ? tr("Stop changes saved successfully.", "تم حفظ تغييرات الموقع بنجاح.")
+        : tr("Stop completed successfully.", "تم إنهاء الموقع بنجاح.");
       console.info("[operator:route-nav] Redirecting after stop save", {
         action: stopData.stopStatus === ROUTE_STOP_COMPLETED_STATUS ? "save_stop_machine" : "complete_stop",
         routeId,
@@ -983,11 +1007,11 @@ export default function MachineStopPage() {
         <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <Metric label={t("Assigned units")} value={stopExecutionSummary.assignedUnits} />
           <Metric label={t("Filled now")} value={stopExecutionSummary.filledUnits} />
-          <Metric label={t("Shortage to explain")} value={stopExecutionSummary.shortageUnits} tone={stopExecutionSummary.shortageUnits > 0 ? "warn" : "neutral"} />
-          <Metric label={t("Machine storage units")} value={stopExecutionSummary.extraUnits} />
+          <Metric label={tr("Shortage to explain", "نقص يحتاج توضيحاً")} value={stopExecutionSummary.shortageUnits} tone={stopExecutionSummary.shortageUnits > 0 ? "warn" : "neutral"} />
+          <Metric label={tr("Machine storage units", "وحدات مخزن الجهاز")} value={stopExecutionSummary.extraUnits} />
           <Metric label={t("Inventory adjustments")} value={stopExecutionSummary.adjustmentCount} />
           <Metric label={t("Proof photo")} value={stopExecutionSummary.proofReady ? t("Ready") : t("Needed")} tone={stopExecutionSummary.proofReady ? "neutral" : "warn"} />
-          <Metric label={t("Compressor proof")} value={!compressorSafetyInstalled ? t("Setup pending") : compressorProofReady ? t("Ready") : t("Needed")} tone={compressorSafetyInstalled && !compressorProofReady ? "warn" : "neutral"} />
+          <Metric label={tr("Compressor proof", "إثبات الضاغط")} value={!compressorSafetyInstalled ? tr("Setup pending", "الإعداد معلق") : compressorProofReady ? tr("Ready", "جاهز") : tr("Needed", "مطلوب")} tone={compressorSafetyInstalled && !compressorProofReady ? "warn" : "neutral"} />
         </section>
 
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
@@ -1021,18 +1045,18 @@ export default function MachineStopPage() {
                   <div key={`${item.refillOrderLineId ?? item.productId}-${item.slotCode}`} className="space-y-4 p-4 md:p-6">
                     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                       <div className="min-w-0 sm:col-span-2 lg:col-span-2">
-                        <p className="text-xs text-slate-500">Product</p>
+                        <p className="text-xs text-slate-500">{tr("Product", "المنتج")}</p>
                         <p className="break-words font-semibold text-slate-900">{item.productName}</p>
-                        <p className="text-sm text-slate-500">Slot {item.slotCode}</p>
+                        <p className="text-sm text-slate-500">{tr("Slot", "الخانة")} {item.slotCode}</p>
                         {item.sourceLabel ? (
                           <span className="mt-1 inline-flex rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800">
                             {item.sourceLabel}
                           </span>
                         ) : null}
                       </div>
-                      <Metric label="Assigned" value={assignedQty} />
-                      <Metric label="Bag available" value={item.availableQty ?? 0} />
-                      <Metric label="Difference" value={difference > 0 ? `+${difference}` : difference} tone={difference === 0 ? "neutral" : "warn"} />
+                      <Metric label={tr("Assigned", "المسند")} value={assignedQty} />
+                      <Metric label={tr("Bag available", "المتاح في الحقيبة")} value={item.availableQty ?? 0} />
+                      <Metric label={tr("Difference", "الفرق")} value={difference > 0 ? `+${difference}` : difference} tone={difference === 0 ? "neutral" : "warn"} />
                     </div>
                     <div className="grid gap-3 md:grid-cols-[220px_1fr]">
                       <label className="block">
@@ -1282,8 +1306,8 @@ export default function MachineStopPage() {
         <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <h2 className="text-lg font-semibold">{t("Refill proof")}</h2>
-              <p className="mt-1 text-sm text-slate-500">{t("Take the photo after filling the machine and cleaning the glass.")}</p>
+              <h2 className="text-lg font-semibold">{tr("Refill proof", "إثبات التعبئة")}</h2>
+              <p className="mt-1 text-sm text-slate-500">{tr("Take the photo after filling the machine and cleaning the glass.", "التقط الصورة بعد تعبئة الجهاز وتنظيف الزجاج.")}</p>
             </div>
             <div className={fillStatusPreview === "full" ? "rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm font-semibold text-green-800" : "rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800"}>
               {fillStatusPreview === "full" ? t("Full refill") : t("Partial refill")}
@@ -1302,28 +1326,28 @@ export default function MachineStopPage() {
                 }}
                 className="field-input"
               />
-              {finalPhotoFile ? <p className="mt-2 text-sm text-slate-600">Selected: {finalPhotoFile.name}</p> : null}
-              {!finalPhotoFile && stopData.hasCompletionPhoto ? <p className="mt-2 text-sm text-slate-600">A completion photo is already saved for this stop. Add a new photo only if you want to replace it.</p> : null}
-              {!finalPhotoFile && !stopData.hasCompletionPhoto ? <p className="mt-2 text-sm text-amber-700">Final photo is required before completion.</p> : null}
+              {finalPhotoFile ? <p className="mt-2 text-sm text-slate-600">{tr("Selected", "المحدد")}: {finalPhotoFile.name}</p> : null}
+              {!finalPhotoFile && stopData.hasCompletionPhoto ? <p className="mt-2 text-sm text-slate-600">{tr("A completion photo is already saved for this stop. Add a new photo only if you want to replace it.", "تم حفظ صورة إنهاء لهذا الموقع بالفعل. أضف صورة جديدة فقط عند الرغبة في استبدالها.")}</p> : null}
+              {!finalPhotoFile && !stopData.hasCompletionPhoto ? <p className="mt-2 text-sm text-amber-700">{tr("Final photo is required before completion.", "الصورة النهائية مطلوبة قبل الإنهاء.")}</p> : null}
             </div>
             <div className={stopExecutionSummary.proofReady ? "rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900" : "rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"}>
-              <div className="text-xs font-semibold uppercase tracking-wide">{stopExecutionSummary.proofReady ? "Photo ready" : "Photo still needed"}</div>
+              <div className="text-xs font-semibold uppercase tracking-wide">{stopExecutionSummary.proofReady ? tr("Photo ready", "الصورة جاهزة") : tr("Photo still needed", "ما زالت الصورة مطلوبة")}</div>
               <div className="mt-2 font-semibold">
-                {finalPhotoFile ? "New proof photo will upload with this save." : stopData.hasCompletionPhoto ? "Existing proof photo is already attached." : "Take a completion photo before finishing this stop."}
+                {finalPhotoFile ? tr("New proof photo will upload with this save.", "سيتم رفع صورة إثبات جديدة مع هذا الحفظ.") : stopData.hasCompletionPhoto ? tr("Existing proof photo is already attached.", "صورة الإثبات الحالية مرفقة بالفعل.") : tr("Take a completion photo before finishing this stop.", "التقط صورة إنهاء قبل إتمام هذا الموقع.")}
               </div>
               <div className="mt-2 text-xs">
-                Completion photos stay visible later from the route details page.
+                {tr("Completion photos stay visible later from the route details page.", "ستظل صور الإنهاء ظاهرة لاحقاً في صفحة تفاصيل الجولة.")}
               </div>
             </div>
           </div>
         </section>
 
         <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
-          <h2 className="mb-4 text-lg font-semibold">{t("Cleaning and final check")}</h2>
+          <h2 className="mb-4 text-lg font-semibold">{tr("Cleaning and final check", "التنظيف والفحص النهائي")}</h2>
           <button type="button" onClick={() => setShowCleaningChecklist(!showCleaningChecklist)} className="w-full rounded-lg border border-slate-200 bg-slate-50 p-4 text-left transition hover:bg-slate-100">
             <div className="flex items-center justify-between">
-              <span className="font-medium text-slate-900">{t("Checklist")}</span>
-              <span className={cleaningDone ? "font-semibold text-green-600" : "text-slate-600"}>{cleaningDone ? t("Completed") : t("Open")}</span>
+              <span className="font-medium text-slate-900">{tr("Checklist", "قائمة التحقق")}</span>
+              <span className={cleaningDone ? "font-semibold text-green-600" : "text-slate-600"}>{cleaningDone ? tr("Completed", "مكتمل") : tr("Open", "فتح")}</span>
             </div>
           </button>
           {showCleaningChecklist && (
@@ -1331,13 +1355,13 @@ export default function MachineStopPage() {
               <label className="flex cursor-pointer items-start gap-3">
                 <input type="checkbox" checked={cleaningDone} onChange={(event) => setCleaningDone(event.target.checked)} className="mt-1" />
                 <div>
-                  <p className="font-medium text-slate-900">I have completed all checks:</p>
+                  <p className="font-medium text-slate-900">{tr("I have completed all checks:", "أكملت جميع الفحوصات:")}</p>
                   <ul className="mt-2 ml-2 list-disc space-y-1 text-sm text-slate-600">
-                    <li>Machine exterior is clean</li>
-                    <li>Display screen is working</li>
-                    <li>All items are stocked correctly</li>
-                    <li>No damaged or expired items visible</li>
-                    <li>Machine is operating properly</li>
+                    <li>{tr("Machine exterior is clean", "الجزء الخارجي للجهاز نظيف")}</li>
+                    <li>{tr("Display screen is working", "شاشة الجهاز تعمل")}</li>
+                    <li>{tr("All items are stocked correctly", "جميع المنتجات موضوعة بشكل صحيح")}</li>
+                    <li>{tr("No damaged or expired items visible", "لا توجد منتجات تالفة أو منتهية الصلاحية ظاهرة")}</li>
+                    <li>{tr("Machine is operating properly", "الجهاز يعمل بشكل سليم")}</li>
                   </ul>
                 </div>
               </label>
@@ -1349,11 +1373,11 @@ export default function MachineStopPage() {
           <button onClick={handleCompleteStop} disabled={!canSubmitStop} className="btn-primary w-full flex-1 disabled:cursor-not-allowed disabled:opacity-50">
             {submitting ? `${t("Saving")}...` : isEditingCompletedStop ? t("Save Stop Changes") : t("Complete Stop")}
           </button>
-          <SecondaryButton href={routeHref} type="button">{t("Cancel")}</SecondaryButton>
+          <SecondaryButton href={routeHref} type="button">{tr("Cancel", "إلغاء")}</SecondaryButton>
         </div>
 
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-          <strong>{t("Reminder")}:</strong> {t("This page is for physical execution at the machine: actual filled quantities, shortage reasons, machine storage, cash, issues, and the final photo after cleaning.")}
+          <strong>{tr("Reminder", "تذكير")}:</strong> {tr("This page is for physical execution at the machine: actual filled quantities, shortage reasons, machine storage, cash, issues, and the final photo after cleaning.", "هذه الصفحة للتنفيذ الفعلي عند الجهاز: الكميات المعبأة فعلياً، أسباب النقص، مخزن الجهاز، النقد، الأعطال، والصورة النهائية بعد التنظيف.")}
         </div>
 
       </div>
@@ -1486,14 +1510,14 @@ function QuantityInput({ value, max, onChange, availabilityLabel = "Bag availabl
 }
 
 function ReasonSelect({ value, onChange, options = reasonOptions }: { value: string; onChange: (reason: string) => void; options?: readonly string[] }) {
-  const { t } = useLanguage();
+  const { t, locale } = useLanguage();
   const reasonValues = useMemo(() => Array.from(new Set([...(options ?? []), String(value ?? "").trim()].filter(Boolean))), [options, value]);
   return (
     <label className="block">
       <span className="mb-1 block text-sm font-medium text-slate-800">{t("Reason")}</span>
       <select value={value || ""} onChange={(event) => onChange(event.target.value)} className="field-input">
         <option value="">{t("Select reason")}</option>
-        {reasonValues.map((reason) => <option key={reason} value={reason}>{formatReasonLabel(reason)}</option>)}
+        {reasonValues.map((reason) => <option key={reason} value={reason}>{localizedAdjustmentReasonLabel(reason, locale)}</option>)}
       </select>
     </label>
   );
@@ -1525,46 +1549,47 @@ function CashAndIssueSections({
   issueDescription: string;
   setIssueDescription: (value: string) => void;
 }) {
-  const { t } = useLanguage();
+  const { t, locale } = useLanguage();
+  const tr = (en: string, ar: string) => t(en, locale === "ar" ? ar : en);
   return (
     <>
       <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
-        <h2 className="mb-4 text-lg font-semibold">{t("Cash Collection")}</h2>
+        <h2 className="mb-4 text-lg font-semibold">{tr("Cash Collection", "تحصيل النقد")}</h2>
         <div className="space-y-4">
           <div>
             <span className="mb-2 block text-sm font-medium text-slate-800">{t("Cash collected from machine")}</span>
             <div className="grid grid-cols-2 gap-2">
               <button type="button" onClick={() => setCashCollected(true)} className={cashCollected ? "btn-primary" : "btn-secondary"}>
-                Yes
+                {tr("Yes", "نعم")}
               </button>
               <button type="button" onClick={() => setCashCollected(false)} className={!cashCollected ? "btn-primary" : "btn-secondary"}>
-                No
+                {tr("No", "لا")}
               </button>
             </div>
             <p className="mt-2 text-xs text-slate-500">{t("Operators only mark collection. Finance counts the envelope later")}</p>
           </div>
           <div className={cashCollected ? "rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900" : "rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700"}>
             {cashCollected
-              ? t("Cash is marked as collected. If you have an envelope or bag ID, enter it below so Finance can reconcile it faster.")
-              : t("No cash collected at this stop. Leave the envelope field blank unless you are carrying a cash bag anyway")}
+              ? tr("Cash is marked as collected. If you have an envelope or bag ID, enter it below so Finance can reconcile it faster.", "تم تحديد النقد كمحصّل. إذا كان لديك رقم ظرف أو كيس، أدخله أدناه لتسريع المطابقة المالية.")
+              : tr("No cash collected at this stop. Leave the envelope field blank unless you are carrying a cash bag anyway", "لم يتم جمع نقد في هذا الموقع. اترك حقل الظرف فارغاً إلا إذا كنت تحمل كيس نقد.")}
           </div>
           <label className="block">
             <span className="mb-1 block text-sm font-medium text-slate-800">{t("Cash bag / envelope ID")}</span>
             <input value={cashBagId} onChange={(event) => setCashBagId(event.target.value)} className="field-input" placeholder={t("Envelope ID optional")} />
           </label>
           <label className="block">
-            <span className="mb-1 block text-sm font-medium text-slate-800">{t("Stop notes")}</span>
-            <textarea value={notes} onChange={(event) => setNotes(event.target.value)} className="field-input" rows={3} placeholder={t("Any notes about this stop?")} />
+            <span className="mb-1 block text-sm font-medium text-slate-800">{tr("Stop notes", "ملاحظات الموقع")}</span>
+            <textarea value={notes} onChange={(event) => setNotes(event.target.value)} className="field-input" rows={3} placeholder={tr("Any notes about this stop?", "أي ملاحظات عن هذا الموقع؟")} />
           </label>
         </div>
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
-        <h2 className="mb-4 text-lg font-semibold">{t("Issue Report")}</h2>
+        <h2 className="mb-4 text-lg font-semibold">{tr("Issue Report", "بلاغ عطل")}</h2>
         <div className="grid gap-4 md:grid-cols-2">
           <label className="block">
             <span className="mb-1 block text-sm font-medium text-slate-800">{t("Issue type")}</span>
-            <input value={issueType} onChange={(event) => setIssueType(event.target.value)} className="field-input" placeholder={t("e.g. cash jam, display error, cooling issue")} />
+            <input value={issueType} onChange={(event) => setIssueType(event.target.value)} className="field-input" placeholder={tr("e.g. cash jam, display error, cooling issue", "مثل: انحشار النقد، عطل الشاشة، مشكلة تبريد")} />
           </label>
           <label className="block">
             <span className="mb-1 block text-sm font-medium text-slate-800">{t("Priority")}</span>
@@ -1577,7 +1602,7 @@ function CashAndIssueSections({
           </label>
           <label className="block md:col-span-2">
             <span className="mb-1 block text-sm font-medium text-slate-800">{t("Description")}</span>
-            <textarea value={issueDescription} onChange={(event) => setIssueDescription(event.target.value)} className="field-input" rows={3} placeholder={t("Describe the problem only if there is an issue to report.")} />
+            <textarea value={issueDescription} onChange={(event) => setIssueDescription(event.target.value)} className="field-input" rows={3} placeholder={tr("Describe the problem only if there is an issue to report.", "صف المشكلة فقط إذا كان هناك عطل للإبلاغ عنه.")} />
           </label>
         </div>
       </section>
@@ -1607,7 +1632,8 @@ function InventoryAdjustmentsSection({
   adjustments: InventoryAdjustmentRow[];
   onSaved: (adjustment: InventoryAdjustmentRow) => void;
 }) {
-  const { t } = useLanguage();
+  const { t, locale } = useLanguage();
+  const tr = (en: string, ar: string) => t(en, locale === "ar" ? ar : en);
   const damagedAdjustments = adjustments.filter((adjustment) => adjustment.adjustmentType === "damaged");
   const returnedAdjustments = adjustments.filter((adjustment) => adjustment.adjustmentType === "returned_from_machine");
   const damagedQuantity = damagedAdjustments.reduce((sum, adjustment) => sum + Number(adjustment.quantity ?? 0), 0);
@@ -1629,7 +1655,7 @@ function InventoryAdjustmentsSection({
         <div>
           <h2 className="text-lg font-semibold">{t("Inventory adjustments")}</h2>
           <p className="mt-1 text-sm text-slate-500">
-            {t("Record damaged products and products returned from this machine without leaving the stop screen.")}
+            {tr("Record damaged products and products returned from this machine without leaving the stop screen.", "سجّل المنتجات التالفة والمنتجات الراجعة من هذا الجهاز دون مغادرة شاشة الموقع.")}
           </p>
           <p className="mt-2 text-xs text-slate-500">
             {t("Machine")}: <span className="font-medium text-slate-700">{machineName}</span> {machineCode ? `(${machineCode})` : ""}.
@@ -1644,8 +1670,8 @@ function InventoryAdjustmentsSection({
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2">
-        <button type="button" onClick={() => setActiveAdjustmentType("damaged")} className={activeAdjustmentType === "damaged" ? "btn-primary" : "btn-secondary"}>{t("Damaged")}</button>
-        <button type="button" onClick={() => setActiveAdjustmentType("returned_from_machine")} className={activeAdjustmentType === "returned_from_machine" ? "btn-primary" : "btn-secondary"}>{t("Return from machine")}</button>
+        <button type="button" onClick={() => setActiveAdjustmentType("damaged")} className={activeAdjustmentType === "damaged" ? "btn-primary" : "btn-secondary"}>{tr("Damaged", "تالف")}</button>
+        <button type="button" onClick={() => setActiveAdjustmentType("returned_from_machine")} className={activeAdjustmentType === "returned_from_machine" ? "btn-primary" : "btn-secondary"}>{tr("Return from machine", "إرجاع من الجهاز")}</button>
       </div>
 
       {activeAdjustmentType ? (
@@ -1653,8 +1679,8 @@ function InventoryAdjustmentsSection({
           <InventoryAdjustmentForm
             key={activeAdjustmentType}
             adjustmentType={activeAdjustmentType}
-            title={activeAdjustmentType === "damaged" ? t("Add damaged product") : t("Add returned product")}
-            description={activeAdjustmentType === "damaged" ? t("Record items that broke, expired, melted, or cannot be sold.") : t("Record products removed from the machine and brought back.")}
+            title={activeAdjustmentType === "damaged" ? tr("Add damaged product", "إضافة منتج تالف") : tr("Add returned product", "إضافة منتج راجع")}
+            description={activeAdjustmentType === "damaged" ? tr("Record items that broke, expired, melted, or cannot be sold.", "سجّل المنتجات المكسورة أو المنتهية أو الذائبة أو غير القابلة للبيع.") : tr("Record products removed from the machine and brought back.", "سجّل المنتجات التي تمت إزالتها من الجهاز وإرجاعها.")}
             routeId={routeId}
             stopId={stopId}
             machineId={machineId}
@@ -1670,15 +1696,15 @@ function InventoryAdjustmentsSection({
         </div>
       ) : (
         <div className="mt-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
-          {t("Choose Damaged or Return from machine. Then search and save only that product.")}
+          {tr("Choose Damaged or Return from machine. Then search and save only that product.", "اختر تالف أو إرجاع من الجهاز، ثم ابحث عن المنتج واحفظه مباشرة.")}
         </div>
       )}
 
       <div className="mt-6">
         <div className="mb-3 flex items-center justify-between gap-2">
           <div>
-            <h3 className="text-base font-semibold text-slate-900">{t("Recent adjustments")}</h3>
-            <p className="text-sm text-slate-500">{t("Saved adjustments for this stop appear here immediately.")}</p>
+            <h3 className="text-base font-semibold text-slate-900">{tr("Recent adjustments", "آخر التعديلات")}</h3>
+            <p className="text-sm text-slate-500">{tr("Saved adjustments for this stop appear here immediately.", "تظهر هنا فوراً التعديلات المحفوظة لهذا الموقع.")}</p>
           </div>
           <StatusBadge status={adjustments.length ? "confirmed" : "pending"} label={adjustments.length ? t("confirmed", "confirmed") : t("pending", "pending")} />
         </div>
@@ -1693,11 +1719,11 @@ function InventoryAdjustmentsSection({
                       <span className="text-sm font-semibold text-slate-900">{adjustment.productName}</span>
                       <span className="text-sm text-slate-500">x{adjustment.quantity}</span>
                     </div>
-                    <p className="mt-1 text-sm text-slate-600">{adjustment.reason}</p>
+                    <p className="mt-1 text-sm text-slate-600">{localizedAdjustmentReasonLabel(adjustment.reason, locale)}</p>
                     {adjustment.notes ? <p className="mt-1 text-sm text-slate-500">{adjustment.notes}</p> : null}
                   </div>
                   <div className="text-xs text-slate-500">
-                    {adjustment.createdAt ? new Date(adjustment.createdAt).toLocaleString("en-US") : t("Just now")}
+                    {adjustment.createdAt ? new Date(adjustment.createdAt).toLocaleString(locale === "ar" ? "ar-LY" : "en-US") : t("Just now")}
                     {adjustment.photoUrl ? <div className="mt-1 font-medium text-emerald-700">{t("Photo attached")}</div> : null}
                   </div>
                 </div>
@@ -1739,7 +1765,8 @@ function InventoryAdjustmentForm({
   submitLabel: string;
   onSaved: (adjustment: InventoryAdjustmentRow) => void;
 }) {
-  const { t } = useLanguage();
+  const { t, locale } = useLanguage();
+  const tr = (en: string, ar: string) => t(en, locale === "ar" ? ar : en);
   const [sourceMode, setSourceMode] = useState<"machine" | "all">("machine");
   const [productId, setProductId] = useState("");
   const [quantity, setQuantity] = useState(1);
@@ -1759,15 +1786,15 @@ function InventoryAdjustmentForm({
 
   async function handleSave() {
     if (!productId) {
-      setError("Choose a product first.");
+      setError(tr("Choose a product first.", "اختر منتجاً أولاً."));
       return;
     }
     if (!Number.isFinite(quantity) || quantity <= 0) {
-      setError("Quantity must be greater than 0.");
+      setError(tr("Quantity must be greater than 0.", "يجب أن تكون الكمية أكبر من 0."));
       return;
     }
     if (!selectedReason) {
-      setError("Choose a reason.");
+      setError(tr("Choose a reason.", "اختر السبب."));
       return;
     }
 
@@ -1819,12 +1846,12 @@ function InventoryAdjustmentForm({
       });
 
       if (!response.ok || parsed.payload?.success === false || !parsed.payload) {
-        throw new Error(responseMessage(parsed.payload) || "Could not save inventory adjustment.");
+        throw new Error(responseMessage(parsed.payload) || tr("Could not save inventory adjustment.", "تعذر حفظ تعديل المخزون."));
       }
 
       const saved = parsed.payload.adjustment as Record<string, unknown> | undefined;
       if (!saved) {
-        throw new Error("The adjustment was saved, but no row was returned.");
+        throw new Error(tr("The adjustment was saved, but no row was returned.", "تم حفظ التعديل، لكن لم يتم إرجاع السجل.") );
       }
 
       const savedAdjustment: InventoryAdjustmentRow = {
@@ -1851,11 +1878,11 @@ function InventoryAdjustmentForm({
       setSuccess(
         adjustmentType === "damaged"
           ? photoSaved
-            ? "Damaged product saved with a photo."
-            : "Damaged product saved."
+            ? tr("Damaged product saved with a photo.", "تم حفظ المنتج التالف مع صورة.")
+            : tr("Damaged product saved.", "تم حفظ المنتج التالف.")
           : photoSaved
-            ? "Returned product saved with a photo."
-            : "Returned product saved.",
+            ? tr("Returned product saved with a photo.", "تم حفظ المنتج الراجع مع صورة.")
+            : tr("Returned product saved.", "تم حفظ المنتج الراجع."),
       );
     } catch (err) {
       setError(adjustmentSubmitErrorMessage(err));
@@ -1876,19 +1903,19 @@ function InventoryAdjustmentForm({
           type="button"
           onClick={() => setSourceMode("machine")}
           className={sourceMode === "machine" ? "btn-primary" : "btn-secondary"}
-        >{t("Machine products")}</button>
+        >{tr("Machine products", "منتجات الجهاز")}</button>
         <button
           type="button"
           onClick={() => setSourceMode("all")}
           className={sourceMode === "all" ? "btn-primary" : "btn-secondary"}
-        >{t("Search all products")}</button>
+        >{tr("Search all products", "البحث في كل المنتجات")}</button>
       </div>
 
       <div className="mt-4">
         <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800">
           {sourceMode === "machine"
-            ? t("Showing products already linked to this machine first.")
-            : t("Search the full product catalog if the item is not in this machine list.")}
+            ? tr("Showing products already linked to this machine first.", "يتم عرض المنتجات المرتبطة بهذا الجهاز أولاً.")
+            : tr("Search the full product catalog if the item is not in this machine list.", "ابحث في كل المنتجات إذا لم يكن المنتج موجوداً ضمن قائمة هذا الجهاز.")}
         </div>
       </div>
 
@@ -1898,7 +1925,7 @@ function InventoryAdjustmentForm({
           products={productChoices}
           value={productId}
           onChange={setProductId}
-          label={sourceMode === "machine" ? t("Machine products") : t("Search all products")}
+          label={sourceMode === "machine" ? tr("Machine products", "منتجات الجهاز") : tr("Search all products", "البحث في كل المنتجات")}
         />
 
         <div className="grid gap-4 md:grid-cols-[160px_1fr]">
@@ -1913,7 +1940,7 @@ function InventoryAdjustmentForm({
             onChange={(event) => setNotes(event.target.value)}
             className="field-input"
             rows={3}
-            placeholder={t("Optional context about this adjustment")}
+            placeholder={tr("Optional context about this adjustment", "ملاحظات اختيارية عن هذا التعديل")}
           />
         </label>
 
@@ -1927,12 +1954,12 @@ function InventoryAdjustmentForm({
             onChange={(event) => setPhotoFile(event.target.files?.[0] ?? null)}
             className="field-input"
           />
-          <span className="mt-1 block text-xs text-slate-500">{t("Optional. Use a photo if the item is damaged or the return needs proof.")}</span>
+          <span className="mt-1 block text-xs text-slate-500">{tr("Optional. Use a photo if the item is damaged or the return needs proof.", "اختياري. أرفق صورة إذا كان المنتج تالفاً أو كان الإرجاع يحتاج إثباتاً.")}</span>
         </label>
 
         {selectedProduct ? (
           <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-            Selected: <span className="font-medium text-slate-900">{selectedProduct.name}</span>
+            {tr("Selected", "المحدد")}: <span className="font-medium text-slate-900">{selectedProduct.name}</span>
             {selectedProduct.sku ? <span className="text-slate-500"> - {selectedProduct.sku}</span> : null}
           </div>
         ) : null}

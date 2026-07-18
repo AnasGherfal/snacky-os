@@ -17,7 +17,8 @@ export function CompressorSafetyProofCard({
   completed?: boolean;
   onStateChange?: (state: { installed: boolean; ready: boolean }) => void;
 }) {
-  const { t } = useLanguage();
+  const { t, locale } = useLanguage();
+  const tr = (en: string, ar: string) => t(en, locale === "ar" ? ar : en);
   const onStateChangeRef = useRef(onStateChange);
   const [installed, setInstalled] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -57,15 +58,15 @@ export function CompressorSafetyProofCard({
 
   async function saveProof() {
     if (!confirmed) {
-      setError("Confirm that the compressor is switched on.");
+      setError(tr("Confirm that the compressor is switched on.", "أكد أن الضاغط قد تم تشغيله."));
       return;
     }
     if (!file) {
-      setError("Take a photo showing the compressor switch or running indicator on.");
+      setError(tr("Take a photo showing the compressor switch or running indicator on.", "التقط صورة توضح مفتاح تشغيل الضاغط أو مؤشر التشغيل."));
       return;
     }
     if (file.size > 10 * 1024 * 1024) {
-      setError("The compressor photo is too large. Retake it with the camera and try again.");
+      setError(tr("The compressor photo is too large. Retake it with the camera and try again.", "صورة الضاغط كبيرة جداً. أعد التقاطها بالكاميرا ثم حاول مرة أخرى."));
       return;
     }
 
@@ -78,7 +79,7 @@ export function CompressorSafetyProofCard({
       photoFormData.append("machineId", machineId);
       photoFormData.append("photo", file);
       const uploaded = await uploadRefillProofPhoto(photoFormData);
-      if (uploaded.uploadUnavailable || (!uploaded.photoUrl && !uploaded.photoPath)) throw new Error("The photo could not be uploaded. Try again before completing the stop.");
+      if (uploaded.uploadUnavailable || (!uploaded.photoUrl && !uploaded.photoPath)) throw new Error(tr("The photo could not be uploaded. Try again before completing the stop.", "تعذر رفع الصورة. حاول مرة أخرى قبل إنهاء الموقع."));
 
       const response = await fetch(`/api/operator/routes/${routeId}/stops/${stopId}/safety-check`, {
         method: "POST",
@@ -92,14 +93,14 @@ export function CompressorSafetyProofCard({
         }),
       });
       const payload = await response.json().catch(() => null);
-      if (!response.ok || payload?.success === false) throw new Error(payload?.error || "Could not save compressor proof.");
+      if (!response.ok || payload?.success === false) throw new Error(payload?.error || tr("Could not save compressor proof.", "تعذر حفظ إثبات تشغيل الضاغط."));
       setInstalled(true);
       setReady(true);
       setSavedAt(payload?.proof?.confirmed_at ?? new Date().toISOString());
       setFile(null);
       onStateChangeRef.current?.({ installed: true, ready: true });
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Could not save compressor proof.");
+      setError(saveError instanceof Error ? saveError.message : tr("Could not save compressor proof.", "تعذر حفظ إثبات تشغيل الضاغط."));
     } finally {
       setSaving(false);
     }
@@ -109,37 +110,37 @@ export function CompressorSafetyProofCard({
     <section id="compressor-safety" className={ready ? "rounded-xl border-2 border-emerald-300 bg-emerald-50 p-4 md:p-6" : "rounded-xl border-2 border-amber-300 bg-amber-50 p-4 md:p-6"}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">{t("Required final safety check")}</div>
-          <h2 className="mt-1 text-lg font-semibold text-slate-950">{t("Compressor switched ON")}</h2>
-          <p className="mt-1 text-sm leading-6 text-slate-700">{t("After filling, switch the compressor back on and take a close photo showing the ON switch or running indicator.")}</p>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">{tr("Required final safety check", "فحص السلامة النهائي المطلوب")}</div>
+          <h2 className="mt-1 text-lg font-semibold text-slate-950">{tr("Compressor switched ON", "تم تشغيل الضاغط")}</h2>
+          <p className="mt-1 text-sm leading-6 text-slate-700">{tr("After filling, switch the compressor back on and take a close photo showing the ON switch or running indicator.", "بعد التعبئة شغّل الضاغط من جديد والتقط صورة قريبة توضح مفتاح التشغيل أو مؤشر عمل الجهاز.")}</p>
         </div>
-        <span className={ready ? "rounded-full bg-emerald-600 px-3 py-1 text-sm font-semibold text-white" : "rounded-full bg-amber-500 px-3 py-1 text-sm font-semibold text-white"}>{ready ? t("Proof saved") : t("Required")}</span>
+        <span className={ready ? "rounded-full bg-emerald-600 px-3 py-1 text-sm font-semibold text-white" : "rounded-full bg-amber-500 px-3 py-1 text-sm font-semibold text-white"}>{ready ? tr("Proof saved", "تم حفظ الإثبات") : tr("Required", "مطلوب")}</span>
       </div>
 
-      {!loaded ? <p className="mt-4 text-sm text-slate-600">{t("Checking saved proof...")}</p> : null}
+      {!loaded ? <p className="mt-4 text-sm text-slate-600">{tr("Checking saved proof...", "جارٍ التحقق من الإثبات المحفوظ...")}</p> : null}
       {loaded && !installed ? (
         <div className="mt-4 rounded-lg border border-amber-300 bg-white p-3 text-sm text-amber-900">
-          {t("Compressor proof setup is not installed yet. The existing route remains usable until the safety migration is applied.")}
+          {tr("Compressor proof setup is not installed yet. The existing route remains usable until the safety migration is applied.", "إعداد إثبات الضاغط غير مثبت بعد. ستظل الجولة الحالية قابلة للاستخدام إلى أن يتم تطبيق تحديث السلامة.")}
         </div>
       ) : null}
       {ready ? (
         <div className="mt-4 rounded-lg border border-emerald-200 bg-white p-3 text-sm font-medium text-emerald-900">
-          {t("Compressor ON proof is saved")}{savedAt ? ` · ${new Date(savedAt).toLocaleString("en-US")}` : ""}.
+          {tr("Compressor ON proof is saved", "تم حفظ إثبات تشغيل الضاغط")}{savedAt ? ` · ${new Date(savedAt).toLocaleString(locale === "ar" ? "ar-LY" : "en-US")}` : ""}.
         </div>
       ) : (
         <div className="mt-4 space-y-4">
           <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-amber-200 bg-white p-3">
             <input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} className="mt-1" />
-            <span className="text-sm font-medium text-slate-900">{t("I switched the compressor ON and verified the machine is running.")}</span>
+            <span className="text-sm font-medium text-slate-900">{tr("I switched the compressor ON and verified the machine is running.", "قمت بتشغيل الضاغط وتأكدت أن الجهاز يعمل.")}</span>
           </label>
           <label className="block">
-            <span className="mb-1 block text-sm font-medium text-slate-900">{t("Photo of ON switch / running indicator")}</span>
+            <span className="mb-1 block text-sm font-medium text-slate-900">{tr("Photo of ON switch / running indicator", "صورة مفتاح التشغيل / مؤشر عمل الجهاز")}</span>
             <input type="file" accept="image/*" capture="environment" className="field-input bg-white" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
             {file ? <span className="mt-1 block text-xs text-slate-600">{file.name}</span> : null}
           </label>
           {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-800">{error}</div> : null}
           <button type="button" onClick={() => void saveProof()} disabled={saving || completed} className="btn-primary w-full disabled:cursor-not-allowed disabled:opacity-50">
-            {saving ? `${t("Saving")}...` : t("Save compressor proof")}
+            {saving ? `${tr("Saving", "جارٍ الحفظ")}...` : tr("Save compressor proof", "حفظ إثبات الضاغط")}
           </button>
         </div>
       )}

@@ -1,0 +1,40 @@
+name: Route Arabic UI checks
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "src/app/operator/routes/[id]/stops/[stopId]/page.tsx"
+      - "src/components/operator/RouteStopQuickActions.tsx"
+      - "src/components/operator/CompressorSafetyProofCard.tsx"
+      - "src/components/operator/ManualRouteSalesSection.tsx"
+      - "scripts/test-route-arabic-ui.mjs"
+      - ".github/workflows/route-arabic-ui-check.yml"
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Test route language and encoding
+        run: node --test scripts/test-route-arabic-ui.mjs
+      - name: Test route safety and product activity
+        run: node --test scripts/test-route-safety-product-activity.mjs
+      - name: Check mojibake UI
+        run: npm run check:mojibake-ui
+      - name: Test pickup checklist
+        run: npm run test:route-pickup-checklist
+      - name: Test route inventory regression
+        run: npm run test:route-inventory-regression
+      - name: Test critical workflows
+        run: npm run test:critical-workflows
+      - name: Build Snacky OS
+        run: npm run build
