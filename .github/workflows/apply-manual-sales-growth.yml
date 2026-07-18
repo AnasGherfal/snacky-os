@@ -46,7 +46,7 @@ jobs:
 
           replaceOnce(
             `    supabase\n      .from("vms_sales_clean")\n      .select("machine_id, net_sales_amount, cogs_amount, gross_profit_amount, cost_missing, sale_date")\n      .gte("sale_date", historyStart)\n      .lte("sale_date", historyEnd),\n    supabase.from("machines").select("id, name, rent_amount, status"),`,
-            `    supabase\n      .from("vms_sales_clean")\n      .select("machine_id, net_sales_amount, cogs_amount, gross_profit_amount, cost_missing, sale_date")\n      .gte("sale_date", historyStart)\n      .lte("sale_date", historyEnd),\n    supabase\n      .from("route_manual_sales")\n      .select("id, machine_id, total_amount_lyd, inventory_movement_id, sale_time, status")\n      .eq("status", "confirmed")\n      .gte("sale_time", \`${historyStart}T00:00:00.000Z\`)\n      .lte("sale_time", \`${historyEnd}T23:59:59.999Z\`),\n    supabase.from("machines").select("id, name, rent_amount, status"),`,
+            `    supabase\n      .from("vms_sales_clean")\n      .select("machine_id, net_sales_amount, cogs_amount, gross_profit_amount, cost_missing, sale_date")\n      .gte("sale_date", historyStart)\n      .lte("sale_date", historyEnd),\n    supabase\n      .from("route_manual_sales")\n      .select("id, machine_id, total_amount_lyd, inventory_movement_id, sale_time, status")\n      .eq("status", "confirmed")\n      .gte("sale_time", \`\${historyStart}T00:00:00.000Z\`)\n      .lte("sale_time", \`\${historyEnd}T23:59:59.999Z\`),\n    supabase.from("machines").select("id, name, rent_amount, status"),`,
             'manual sales query',
           );
 
