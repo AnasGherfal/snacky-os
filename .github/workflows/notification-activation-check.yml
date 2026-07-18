@@ -16,6 +16,21 @@ on:
       - "supabase/migrations/202607180002_notification_push_activation.sql"
       - "scripts/test-notification-activation.mjs"
       - ".github/workflows/notification-activation-check.yml"
+  push:
+    branches:
+      - feature/activate-push-notifications
+    paths:
+      - "src/lib/notification-delivery.ts"
+      - "src/components/NotificationCenter.tsx"
+      - "src/components/Topbar.tsx"
+      - "src/app/api/push-config/route.ts"
+      - "src/app/api/notifications/test/route.ts"
+      - "src/app/api/push-subscriptions/route.ts"
+      - "src/app/api/notifications/route.ts"
+      - "public/sw.js"
+      - "supabase/migrations/202607180002_notification_push_activation.sql"
+      - "scripts/test-notification-activation.mjs"
+      - ".github/workflows/notification-activation-check.yml"
 
 jobs:
   test-and-build:
