@@ -30,7 +30,13 @@ jobs:
         run: npm ci
       - name: Test selected-range cash reconciliation
         run: node --test scripts/test-cash-reconciliation-selected-range.mjs
-      - name: Run pickup regression tests
-        run: npm run test:pickup
+      - name: Test route workflow
+        run: npm run test:route-workflow
+      - name: Test pickup checklist
+        run: npm run test:route-pickup-checklist
+      - name: Test route inventory regression
+        run: npm run test:route-inventory-regression
+      - name: Test critical workflows
+        run: npm run test:critical-workflows
       - name: Build Snacky OS
         run: npm run build
