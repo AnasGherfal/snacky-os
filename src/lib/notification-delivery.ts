@@ -2,6 +2,7 @@ import "server-only";
 import { type SupabaseClient } from "@supabase/supabase-js";
 import webpush, { type PushSubscription as WebPushSubscription } from "web-push";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
+import { configureWebPush } from "@/lib/push-config";
 
 type RouteAssignmentNotificationInput = {
   routeId: string;
@@ -165,9 +166,9 @@ async function sendPushToSubscription(
   subscription: PushSubscriptionRecord,
   payload: NotificationPayload,
 ) {
-  const vapid = ensureWebPushConfigured();
-  if (!vapid) {
-    return { sent: false, skipped: "missing_vapid_configuration" as const };
+  const vapid = await configureWebPush(supabase);
+  if (!vapid.configured) {
+    return { sent: false, skipped: "missing_vapid_configuration" as const, reason: vapid.reason };
   }
 
   const pushSubscription: WebPushSubscription = {
