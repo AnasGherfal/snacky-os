@@ -57,6 +57,11 @@ test("date-misaligned checkpoints cannot become fake missing stock", () => {
   assert.match(page, /excluded from missing-unit and missing-cost totals/i);
 });
 
+test("variance results order by output aliases that exist in the final select", () => {
+  assert.doesNotMatch(migration, /order by rows\.missing_cost/i);
+  assert.match(migration, /order by missing_cost desc, missing_units desc, rows\.product_name/i);
+});
+
 test("page exposes baseline, closing capture, physical counts, and variance cases", () => {
   for (const text of [
     "Missing Items & Stock Reconciliation",
