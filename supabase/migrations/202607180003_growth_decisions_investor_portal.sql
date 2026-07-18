@@ -40,7 +40,7 @@ create table if not exists public.investor_agreements (
 create table if not exists public.investor_monthly_statements (
   id uuid primary key default gen_random_uuid(),
   agreement_id uuid not null references public.investor_agreements(id) on delete cascade,
-  month_start date not null check (date_trunc('month', month_start)::date = month_start),
+  month_start date not null check (extract(day from month_start) = 1),
   revenue_lyd numeric(14,2) not null default 0,
   cogs_lyd numeric(14,2) not null default 0,
   gross_profit_lyd numeric(14,2) not null default 0,
@@ -66,6 +66,9 @@ create table if not exists public.investor_payments (
   amount_lyd numeric(14,2) not null check (amount_lyd > 0),
   payment_reference text,
   notes text,
+  finance_transaction_id uuid,
+  finance_posting_status text not null default 'pending' check (finance_posting_status in ('pending', 'posted', 'needs_review')),
+  finance_posting_error text,
   recorded_by uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now()
 );
@@ -78,6 +81,8 @@ create index if not exists investor_payments_agreement_date_idx
   on public.investor_payments(agreement_id, payment_date desc);
 create index if not exists investor_payments_statement_idx
   on public.investor_payments(statement_id);
+create index if not exists investor_payments_finance_status_idx
+  on public.investor_payments(finance_posting_status, payment_date desc);
 
 create or replace function public.snacky_is_owner_admin()
 returns boolean
