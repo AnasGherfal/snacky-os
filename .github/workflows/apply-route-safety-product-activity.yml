@@ -1,0 +1,37 @@
+name: Apply route safety product activity integration
+
+on:
+  push:
+    branches:
+      - feature/route-safety-product-activity
+    paths:
+      - "scripts/apply-route-safety-product-activity.py"
+      - ".github/workflows/apply-route-safety-product-activity.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/route-safety-product-activity
+          fetch-depth: 0
+      - name: Apply guarded integration
+        run: python scripts/apply-route-safety-product-activity.py
+      - name: Validate generated diff
+        run: git diff --check
+      - name: Commit integrated source
+        run: |
+          if git diff --quiet -- src/app/operator/routes/[id]/stops/[stopId]/page.tsx src/components/operator/ManualRouteSalesSection.tsx src/lib/operator-actions.ts src/app/sales/page.tsx src/components/module-tabs-config.ts src/app/api/operator/routes/[id]/stops/[stopId]/manual-sales/route.ts src/app/api/operator/routes/[id]/stops/[stopId]/adjustments/route.ts; then
+            echo "Integration already applied."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/app/operator/routes/[id]/stops/[stopId]/page.tsx src/components/operator/ManualRouteSalesSection.tsx src/lib/operator-actions.ts src/app/sales/page.tsx src/components/module-tabs-config.ts src/app/api/operator/routes/[id]/stops/[stopId]/manual-sales/route.ts src/app/api/operator/routes/[id]/stops/[stopId]/adjustments/route.ts
+          git commit -m "Integrate route safety and product activity"
+          git push origin HEAD:feature/route-safety-product-activity
