@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLanguage } from "@/components/I18nProvider";
 import { uploadRefillProofPhoto } from "@/lib/operator-actions";
 
@@ -18,6 +18,7 @@ export function CompressorSafetyProofCard({
   onStateChange?: (state: { installed: boolean; ready: boolean }) => void;
 }) {
   const { t } = useLanguage();
+  const onStateChangeRef = useRef(onStateChange);
   const [installed, setInstalled] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
@@ -26,6 +27,10 @@ export function CompressorSafetyProofCard({
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    onStateChangeRef.current = onStateChange;
+  }, [onStateChange]);
 
   useEffect(() => {
     let active = true;
@@ -39,16 +44,16 @@ export function CompressorSafetyProofCard({
         setReady(nextReady);
         setConfirmed(nextReady);
         setSavedAt(payload?.proof?.confirmed_at ?? null);
-        onStateChange?.({ installed: nextInstalled, ready: nextReady });
+        onStateChangeRef.current?.({ installed: nextInstalled, ready: nextReady });
       })
       .catch(() => {
         if (!active) return;
         setInstalled(false);
-        onStateChange?.({ installed: false, ready: false });
+        onStateChangeRef.current?.({ installed: false, ready: false });
       })
       .finally(() => active && setLoaded(true));
     return () => { active = false; };
-  }, [onStateChange, routeId, stopId]);
+  }, [routeId, stopId]);
 
   async function saveProof() {
     if (!confirmed) {
@@ -92,7 +97,7 @@ export function CompressorSafetyProofCard({
       setReady(true);
       setSavedAt(payload?.proof?.confirmed_at ?? new Date().toISOString());
       setFile(null);
-      onStateChange?.({ installed: true, ready: true });
+      onStateChangeRef.current?.({ installed: true, ready: true });
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Could not save compressor proof.");
     } finally {
