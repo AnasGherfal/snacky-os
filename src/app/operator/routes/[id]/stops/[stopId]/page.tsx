@@ -515,7 +515,8 @@ function comparableStopDraft(draft: StopDraft) {
 
 export default function MachineStopPage() {
   const router = useRouter();
-  const { t } = useLanguage();
+  const { t, locale } = useLanguage();
+  const tr = (en: string, ar: string) => t(en, locale === "ar" ? ar : en);
   const params = useParams<{ id?: string | string[]; stopId?: string | string[] }>();
   const rawRouteId = params?.id;
   const rawStopId = params?.stopId;
@@ -1021,18 +1022,18 @@ export default function MachineStopPage() {
                   <div key={`${item.refillOrderLineId ?? item.productId}-${item.slotCode}`} className="space-y-4 p-4 md:p-6">
                     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                       <div className="min-w-0 sm:col-span-2 lg:col-span-2">
-                        <p className="text-xs text-slate-500">Product</p>
+                        <p className="text-xs text-slate-500">{tr("Product", "المنتج")}</p>
                         <p className="break-words font-semibold text-slate-900">{item.productName}</p>
-                        <p className="text-sm text-slate-500">Slot {item.slotCode}</p>
+                        <p className="text-sm text-slate-500">{tr("Slot", "الخانة")} {item.slotCode}</p>
                         {item.sourceLabel ? (
                           <span className="mt-1 inline-flex rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800">
                             {item.sourceLabel}
                           </span>
                         ) : null}
                       </div>
-                      <Metric label="Assigned" value={assignedQty} />
-                      <Metric label="Bag available" value={item.availableQty ?? 0} />
-                      <Metric label="Difference" value={difference > 0 ? `+${difference}` : difference} tone={difference === 0 ? "neutral" : "warn"} />
+                      <Metric label={tr("Assigned", "المسند")} value={assignedQty} />
+                      <Metric label={tr("Bag available", "المتاح في الحقيبة")} value={item.availableQty ?? 0} />
+                      <Metric label={tr("Difference", "الفرق")} value={difference > 0 ? `+${difference}` : difference} tone={difference === 0 ? "neutral" : "warn"} />
                     </div>
                     <div className="grid gap-3 md:grid-cols-[220px_1fr]">
                       <label className="block">
@@ -1302,28 +1303,28 @@ export default function MachineStopPage() {
                 }}
                 className="field-input"
               />
-              {finalPhotoFile ? <p className="mt-2 text-sm text-slate-600">Selected: {finalPhotoFile.name}</p> : null}
-              {!finalPhotoFile && stopData.hasCompletionPhoto ? <p className="mt-2 text-sm text-slate-600">A completion photo is already saved for this stop. Add a new photo only if you want to replace it.</p> : null}
-              {!finalPhotoFile && !stopData.hasCompletionPhoto ? <p className="mt-2 text-sm text-amber-700">Final photo is required before completion.</p> : null}
+              {finalPhotoFile ? <p className="mt-2 text-sm text-slate-600">{tr("Selected", "المحدد")}: {finalPhotoFile.name}</p> : null}
+              {!finalPhotoFile && stopData.hasCompletionPhoto ? <p className="mt-2 text-sm text-slate-600">{tr("A completion photo is already saved for this stop. Add a new photo only if you want to replace it.", "تم حفظ صورة إنهاء لهذا الموقع بالفعل. أضف صورة جديدة فقط عند الرغبة في استبدالها.")}</p> : null}
+              {!finalPhotoFile && !stopData.hasCompletionPhoto ? <p className="mt-2 text-sm text-amber-700">{tr("Final photo is required before completion.", "الصورة النهائية مطلوبة قبل الإنهاء.")}</p> : null}
             </div>
             <div className={stopExecutionSummary.proofReady ? "rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900" : "rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"}>
-              <div className="text-xs font-semibold uppercase tracking-wide">{stopExecutionSummary.proofReady ? "Photo ready" : "Photo still needed"}</div>
+              <div className="text-xs font-semibold uppercase tracking-wide">{stopExecutionSummary.proofReady ? tr("Photo ready", "الصورة جاهزة") : tr("Photo still needed", "ما زالت الصورة مطلوبة")}</div>
               <div className="mt-2 font-semibold">
-                {finalPhotoFile ? "New proof photo will upload with this save." : stopData.hasCompletionPhoto ? "Existing proof photo is already attached." : "Take a completion photo before finishing this stop."}
+                {finalPhotoFile ? tr("New proof photo will upload with this save.", "سيتم رفع صورة إثبات جديدة مع هذا الحفظ.") : stopData.hasCompletionPhoto ? tr("Existing proof photo is already attached.", "صورة الإثبات الحالية مرفقة بالفعل.") : tr("Take a completion photo before finishing this stop.", "التقط صورة إنهاء قبل إتمام هذا الموقع.")}
               </div>
               <div className="mt-2 text-xs">
-                Completion photos stay visible later from the route details page.
+                {tr("Completion photos stay visible later from the route details page.", "ستظل صور الإنهاء ظاهرة لاحقاً في صفحة تفاصيل الجولة.")}
               </div>
             </div>
           </div>
         </section>
 
         <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
-          <h2 className="mb-4 text-lg font-semibold">{t("Cleaning and final check")}</h2>
+          <h2 className="mb-4 text-lg font-semibold">{tr("Cleaning and final check", "التنظيف والفحص النهائي")}</h2>
           <button type="button" onClick={() => setShowCleaningChecklist(!showCleaningChecklist)} className="w-full rounded-lg border border-slate-200 bg-slate-50 p-4 text-left transition hover:bg-slate-100">
             <div className="flex items-center justify-between">
-              <span className="font-medium text-slate-900">{t("Checklist")}</span>
-              <span className={cleaningDone ? "font-semibold text-green-600" : "text-slate-600"}>{cleaningDone ? t("Completed") : t("Open")}</span>
+              <span className="font-medium text-slate-900">{tr("Checklist", "قائمة التحقق")}</span>
+              <span className={cleaningDone ? "font-semibold text-green-600" : "text-slate-600"}>{cleaningDone ? tr("Completed", "مكتمل") : tr("Open", "فتح")}</span>
             </div>
           </button>
           {showCleaningChecklist && (
@@ -1331,13 +1332,13 @@ export default function MachineStopPage() {
               <label className="flex cursor-pointer items-start gap-3">
                 <input type="checkbox" checked={cleaningDone} onChange={(event) => setCleaningDone(event.target.checked)} className="mt-1" />
                 <div>
-                  <p className="font-medium text-slate-900">I have completed all checks:</p>
+                  <p className="font-medium text-slate-900">{tr("I have completed all checks:", "أكملت جميع الفحوصات:")}</p>
                   <ul className="mt-2 ml-2 list-disc space-y-1 text-sm text-slate-600">
-                    <li>Machine exterior is clean</li>
-                    <li>Display screen is working</li>
-                    <li>All items are stocked correctly</li>
-                    <li>No damaged or expired items visible</li>
-                    <li>Machine is operating properly</li>
+                    <li>{tr("Machine exterior is clean", "الجزء الخارجي للجهاز نظيف")}</li>
+                    <li>{tr("Display screen is working", "شاشة الجهاز تعمل")}</li>
+                    <li>{tr("All items are stocked correctly", "جميع المنتجات موضوعة بشكل صحيح")}</li>
+                    <li>{tr("No damaged or expired items visible", "لا توجد منتجات تالفة أو منتهية الصلاحية ظاهرة")}</li>
+                    <li>{tr("Machine is operating properly", "الجهاز يعمل بشكل سليم")}</li>
                   </ul>
                 </div>
               </label>
@@ -1493,7 +1494,26 @@ function ReasonSelect({ value, onChange, options = reasonOptions }: { value: str
       <span className="mb-1 block text-sm font-medium text-slate-800">{t("Reason")}</span>
       <select value={value || ""} onChange={(event) => onChange(event.target.value)} className="field-input">
         <option value="">{t("Select reason")}</option>
-        {reasonValues.map((reason) => <option key={reason} value={reason}>{formatReasonLabel(reason)}</option>)}
+        {reasonValues.map((reason) => {
+          const label = formatReasonLabel(reason);
+          const arabicLabels: Record<string, string> = {
+            "Damaged during transport": "تالف أثناء النقل",
+            "Broken / opened": "مكسور / مفتوح",
+            "Melted / heat damage": "ذائب / متضرر من الحرارة",
+            "Expired": "منتهي الصلاحية",
+            "Customer returned damaged": "أرجعه العميل تالفاً",
+            "Machine issue damaged product": "تلف بسبب عطل في الجهاز",
+            "Removed from machine": "تمت إزالته من الجهاز",
+            "Product replaced": "تم استبدال المنتج",
+            "Slow moving item removed": "إزالة منتج بطيء البيع",
+            "Expired soon": "قريب من انتهاء الصلاحية",
+            "Wrong product in slot": "منتج خاطئ في الخانة",
+            "Machine reset / re-layout": "إعادة ضبط / ترتيب الجهاز",
+            "Customer complaint": "شكوى عميل",
+            "Other": "أخرى",
+          };
+          return <option key={reason} value={reason}>{locale === "ar" ? arabicLabels[label] ?? label : label}</option>;
+        })}
       </select>
     </label>
   );
@@ -1607,7 +1627,8 @@ function InventoryAdjustmentsSection({
   adjustments: InventoryAdjustmentRow[];
   onSaved: (adjustment: InventoryAdjustmentRow) => void;
 }) {
-  const { t } = useLanguage();
+  const { t, locale } = useLanguage();
+  const tr = (en: string, ar: string) => t(en, locale === "ar" ? ar : en);
   const damagedAdjustments = adjustments.filter((adjustment) => adjustment.adjustmentType === "damaged");
   const returnedAdjustments = adjustments.filter((adjustment) => adjustment.adjustmentType === "returned_from_machine");
   const damagedQuantity = damagedAdjustments.reduce((sum, adjustment) => sum + Number(adjustment.quantity ?? 0), 0);
@@ -1629,7 +1650,7 @@ function InventoryAdjustmentsSection({
         <div>
           <h2 className="text-lg font-semibold">{t("Inventory adjustments")}</h2>
           <p className="mt-1 text-sm text-slate-500">
-            {t("Record damaged products and products returned from this machine without leaving the stop screen.")}
+            {tr("Record damaged products and products returned from this machine without leaving the stop screen.", "سجّل المنتجات التالفة والمنتجات الراجعة من هذا الجهاز دون مغادرة شاشة الموقع.")}
           </p>
           <p className="mt-2 text-xs text-slate-500">
             {t("Machine")}: <span className="font-medium text-slate-700">{machineName}</span> {machineCode ? `(${machineCode})` : ""}.
@@ -1644,8 +1665,8 @@ function InventoryAdjustmentsSection({
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2">
-        <button type="button" onClick={() => setActiveAdjustmentType("damaged")} className={activeAdjustmentType === "damaged" ? "btn-primary" : "btn-secondary"}>{t("Damaged")}</button>
-        <button type="button" onClick={() => setActiveAdjustmentType("returned_from_machine")} className={activeAdjustmentType === "returned_from_machine" ? "btn-primary" : "btn-secondary"}>{t("Return from machine")}</button>
+        <button type="button" onClick={() => setActiveAdjustmentType("damaged")} className={activeAdjustmentType === "damaged" ? "btn-primary" : "btn-secondary"}>{tr("Damaged", "تالف")}</button>
+        <button type="button" onClick={() => setActiveAdjustmentType("returned_from_machine")} className={activeAdjustmentType === "returned_from_machine" ? "btn-primary" : "btn-secondary"}>{tr("Return from machine", "إرجاع من الجهاز")}</button>
       </div>
 
       {activeAdjustmentType ? (
@@ -1653,8 +1674,8 @@ function InventoryAdjustmentsSection({
           <InventoryAdjustmentForm
             key={activeAdjustmentType}
             adjustmentType={activeAdjustmentType}
-            title={activeAdjustmentType === "damaged" ? t("Add damaged product") : t("Add returned product")}
-            description={activeAdjustmentType === "damaged" ? t("Record items that broke, expired, melted, or cannot be sold.") : t("Record products removed from the machine and brought back.")}
+            title={activeAdjustmentType === "damaged" ? tr("Add damaged product", "إضافة منتج تالف") : tr("Add returned product", "إضافة منتج راجع")}
+            description={activeAdjustmentType === "damaged" ? tr("Record items that broke, expired, melted, or cannot be sold.", "سجّل المنتجات المكسورة أو المنتهية أو الذائبة أو غير القابلة للبيع.") : tr("Record products removed from the machine and brought back.", "سجّل المنتجات التي تمت إزالتها من الجهاز وإرجاعها.")}
             routeId={routeId}
             stopId={stopId}
             machineId={machineId}
@@ -1670,7 +1691,7 @@ function InventoryAdjustmentsSection({
         </div>
       ) : (
         <div className="mt-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
-          {t("Choose Damaged or Return from machine. Then search and save only that product.")}
+          {tr("Choose Damaged or Return from machine. Then search and save only that product.", "اختر تالف أو إرجاع من الجهاز، ثم ابحث عن المنتج واحفظه مباشرة.")}
         </div>
       )}
 
@@ -1693,7 +1714,7 @@ function InventoryAdjustmentsSection({
                       <span className="text-sm font-semibold text-slate-900">{adjustment.productName}</span>
                       <span className="text-sm text-slate-500">x{adjustment.quantity}</span>
                     </div>
-                    <p className="mt-1 text-sm text-slate-600">{adjustment.reason}</p>
+                    <p className="mt-1 text-sm text-slate-600">{t(formatReasonLabel(adjustment.reason), formatReasonLabel(adjustment.reason))}</p>
                     {adjustment.notes ? <p className="mt-1 text-sm text-slate-500">{adjustment.notes}</p> : null}
                   </div>
                   <div className="text-xs text-slate-500">
@@ -1739,7 +1760,8 @@ function InventoryAdjustmentForm({
   submitLabel: string;
   onSaved: (adjustment: InventoryAdjustmentRow) => void;
 }) {
-  const { t } = useLanguage();
+  const { t, locale } = useLanguage();
+  const tr = (en: string, ar: string) => t(en, locale === "ar" ? ar : en);
   const [sourceMode, setSourceMode] = useState<"machine" | "all">("machine");
   const [productId, setProductId] = useState("");
   const [quantity, setQuantity] = useState(1);
@@ -1913,7 +1935,7 @@ function InventoryAdjustmentForm({
             onChange={(event) => setNotes(event.target.value)}
             className="field-input"
             rows={3}
-            placeholder={t("Optional context about this adjustment")}
+            placeholder={tr("Optional context about this adjustment", "ملاحظات اختيارية عن هذا التعديل")}
           />
         </label>
 
@@ -1927,12 +1949,12 @@ function InventoryAdjustmentForm({
             onChange={(event) => setPhotoFile(event.target.files?.[0] ?? null)}
             className="field-input"
           />
-          <span className="mt-1 block text-xs text-slate-500">{t("Optional. Use a photo if the item is damaged or the return needs proof.")}</span>
+          <span className="mt-1 block text-xs text-slate-500">{tr("Optional. Use a photo if the item is damaged or the return needs proof.", "اختياري. أرفق صورة إذا كان المنتج تالفاً أو كان الإرجاع يحتاج إثباتاً.")}</span>
         </label>
 
         {selectedProduct ? (
           <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-            Selected: <span className="font-medium text-slate-900">{selectedProduct.name}</span>
+            {tr("Selected", "المحدد")}: <span className="font-medium text-slate-900">{selectedProduct.name}</span>
             {selectedProduct.sku ? <span className="text-slate-500"> - {selectedProduct.sku}</span> : null}
           </div>
         ) : null}

@@ -191,15 +191,15 @@ export function ManualRouteSalesSection({
   async function handleSave() {
     const fallbackName = cleanText(fallbackProductName);
     if (!productId && !fallbackName) {
-      setError("اختر منتجاً أو اكتب اسم المنتج.");
+      setError(tr("Choose a product or enter the product name.", "اختر منتجاً أو اكتب اسم المنتج."));
       return;
     }
     if (!Number.isFinite(quantity) || quantity <= 0) {
-      setError("يجب أن تكون الكمية أكبر من 0.");
+      setError(tr("Quantity must be greater than 0.", "يجب أن تكون الكمية أكبر من 0."));
       return;
     }
     if (!Number.isFinite(unitSalePriceLyd) || unitSalePriceLyd <= 0) {
-      setError("يجب أن يكون سعر الوحدة أكبر من 0.");
+      setError(tr("Unit price must be greater than 0.", "يجب أن يكون سعر الوحدة أكبر من 0."));
       return;
     }
 
@@ -240,7 +240,7 @@ export function ManualRouteSalesSection({
       resetForm();
       setExpanded(true);
       setShowForm(false);
-      setSuccess("تم حفظ البيع اليدوي.");
+      setSuccess(tr("Manual sale saved.", "تم حفظ البيع اليدوي."));
       if (responseWarning) setWarning(responseWarning);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "تعذر حفظ البيع اليدوي.");
@@ -276,7 +276,7 @@ export function ManualRouteSalesSection({
         warning: responseWarning || null,
       });
       setExpanded(true);
-      setSuccess("تم إلغاء البيع اليدوي.");
+      setSuccess(tr("Manual sale cancelled.", "تم إلغاء البيع اليدوي."));
       if (responseWarning) setWarning(responseWarning);
     } catch (cancelError) {
       setError(cancelError instanceof Error ? cancelError.message : "تعذر إلغاء البيع اليدوي.");
@@ -296,7 +296,7 @@ export function ManualRouteSalesSection({
       >
         <div>
           <h2 className="text-lg font-semibold">{tr("Manual Route Sales", "بيع يدوي أثناء الجولة")}</h2>
-          <p className="mt-1 text-sm text-slate-500">{t("Optional sales recorded during filling without blocking stop completion.", "Optional sales recorded during filling without blocking stop completion.")}</p>
+          <p className="mt-1 text-sm text-slate-500">{tr("Optional sales recorded during filling without blocking stop completion.", "مبيعات اختيارية تُسجَّل أثناء التعبئة من دون تعطيل إنهاء الموقع.")}</p>
         </div>
         <div className="flex items-center gap-2">
           <StatusBadge status={confirmedCount ? "confirmed" : "pending"} label={confirmedCount ? String(confirmedCount) : tr("Optional", "اختياري")} />
@@ -316,14 +316,14 @@ export function ManualRouteSalesSection({
         <div className="rounded-lg border border-sky-200 bg-sky-50 p-3">
           <div className="text-xs text-sky-700">{tr("Manual sales total", "إجمالي المبيعات اليدوية")}</div>
           <div className="mt-1 text-lg font-semibold text-sky-950">{money(confirmedTotal)}</div>
-          {confirmedCardTotal > 0 ? <div className="mt-1 text-xs text-sky-800">{t("Card", "Card")}: {money(confirmedCardTotal)}</div> : null}
+          {confirmedCardTotal > 0 ? <div className="mt-1 text-xs text-sky-800">{tr("Card", "بطاقة")}: {money(confirmedCardTotal)}</div> : null}
         </div>
       </div>
 
       {expanded ? (
         <div className="mt-4 space-y-4 border-t border-slate-200 pt-4">
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-            <span className="font-medium text-slate-900">{t("Machine", "Machine")}: </span>
+            <span className="font-medium text-slate-900">{tr("Machine", "الجهاز")}: </span>
             {machineName}
             {locationName ? <span className="text-slate-500"> - {locationName}</span> : null}
           </div>
@@ -431,7 +431,7 @@ export function ManualRouteSalesSection({
                   onChange={(event) => setNotes(event.target.value)}
                   className="field-input"
                   rows={3}
-                  placeholder={t("Optional context for this sale", "Optional context for this sale")}
+                  placeholder={tr("Optional context for this sale", "ملاحظات اختيارية عن هذا البيع")}
                 />
               </label>
 
@@ -463,7 +463,7 @@ export function ManualRouteSalesSection({
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <StatusBadge status={sale.status} label={t(manualRouteSaleStatusLabel(sale.status), manualRouteSaleStatusLabel(sale.status))} />
-                            <span className="font-semibold text-slate-900">{sale.productName || t("Unknown product", "Unknown product")}</span>
+                            <span className="font-semibold text-slate-900">{sale.productName || tr("Unknown product", "منتج غير معروف")}</span>
                             <span className="text-sm text-slate-500">x{sale.quantity}</span>
                             <span className="text-sm font-medium text-slate-700">{money(sale.totalAmountLyd)}</span>
                           </div>
@@ -474,7 +474,7 @@ export function ManualRouteSalesSection({
                           {sale.cancellationReason ? <p className="mt-1 text-sm text-amber-700">{sale.cancellationReason}</p> : null}
                         </div>
                         <div className="flex flex-col items-start gap-2 text-xs text-slate-500 sm:items-end">
-                          <div>{sale.saleTime ? new Date(sale.saleTime).toLocaleString("en-US") : t("Just now", "Just now")}</div>
+                          <div>{sale.saleTime ? new Date(sale.saleTime).toLocaleString("en-US") : tr("Just now", "الآن")}</div>
                           {canCancel ? (
                             <button
                               type="button"
@@ -537,7 +537,7 @@ function ManualSaleProductPicker({
         <div className="mt-2 max-h-56 space-y-1 overflow-y-auto">
           {selected && !query.trim() ? (
             <div className="rounded-md bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
-              {t("Selected", "Selected")}: {selected.name} - {tr("Bag available", "المتاح في الحقيبة")}: {selected.availableQty}
+              {tr("Selected", "المحدد")}: {selected.name} - {tr("Bag available", "المتاح في الحقيبة")}: {selected.availableQty}
             </div>
           ) : null}
           {filtered.map((product) => (
@@ -562,7 +562,7 @@ function ManualSaleProductPicker({
               </span>
             </button>
           ))}
-          {!filtered.length ? <p className="px-3 py-2 text-sm text-slate-500">{t("No products found", "No products found")}</p> : null}
+          {!filtered.length ? <p className="px-3 py-2 text-sm text-slate-500">{tr("No products found", "لا توجد منتجات")}</p> : null}
         </div>
       </div>
     </div>
