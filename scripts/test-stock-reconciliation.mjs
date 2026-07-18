@@ -10,6 +10,7 @@ const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "u
 
 const migration = read("supabase/migrations/202607170001_stock_reconciliation_missing_items.sql");
 const page = read("src/app/inventory/reconciliation/page.tsx");
+const simplePage = read("src/app/inventory/stock-check/page.tsx");
 const helper = read("src/lib/stock-reconciliation.ts");
 const tabs = read("src/components/module-tabs-config.ts");
 
@@ -93,13 +94,17 @@ test("status helper distinguishes confirmed, suspected, gap, extra, and balanced
   }
 });
 
-test("inventory navigation includes Missing Items", () => {
-  assert.match(tabs, /label:\s*"Missing Items",\s*href:\s*"\/inventory\/reconciliation"/);
+test("simple Stock Check is the default while exact reconciliation remains accessible", () => {
+  assert.match(tabs, /label:\s*"Stock Check",\s*href:\s*"\/inventory\/stock-check"/);
+  assert.match(simplePage, /href="\/inventory\/reconciliation"/);
+  assert.match(simplePage, /Advanced exact reconciliation/);
+  assert.match(page, /Missing Items & Stock Reconciliation/);
 });
 
 test("feature never auto-adjusts or deletes operational inventory data", () => {
-  for (const source of [migration, page]) {
+  for (const source of [migration, page, simplePage]) {
     assert.doesNotMatch(source, /truncate\s+table|drop\s+table\s+public\.(inventory_movements|products|vms_)|delete\s+from\s+public\.(inventory_movements|vms_|products)/i);
   }
   assert.doesNotMatch(page, /from\("inventory_movements"\)\.delete|from\("products"\)\.delete|stock_count_adjustment.*insert/i);
+  assert.doesNotMatch(simplePage, /\.insert\(|\.update\(|\.delete\(/);
 });
