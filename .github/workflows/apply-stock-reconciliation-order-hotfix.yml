@@ -7,6 +7,13 @@ on:
     paths:
       - "scripts/apply-stock-reconciliation-order-hotfix.py"
       - ".github/workflows/apply-stock-reconciliation-order-hotfix.yml"
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "scripts/apply-stock-reconciliation-order-hotfix.py"
+      - ".github/workflows/apply-stock-reconciliation-order-hotfix.yml"
+      - "supabase/migrations/202607170001_stock_reconciliation_missing_items.sql"
 
 permissions:
   contents: write
