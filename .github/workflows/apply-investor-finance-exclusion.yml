@@ -1,0 +1,44 @@
+name: Apply investor finance exclusion
+
+on:
+  push:
+    branches:
+      - feature/growth-decisions-investor-portal
+    paths:
+      - ".github/workflows/apply-investor-finance-exclusion.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/growth-decisions-investor-portal
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Add non-operating investor distribution tokens
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = 'src/lib/finance-operations.ts';
+          let source = fs.readFileSync(path, 'utf8');
+          const marker = '  "internal transfer",\n];';
+          const replacement = '  "internal transfer",\n  "investor profit share",\n  "investor distribution",\n  "profit distribution",\n];';
+          if (source.includes(replacement)) process.exit(0);
+          if (!source.includes(marker)) throw new Error('Expected finance exclusion marker was not found.');
+          source = source.replace(marker, replacement);
+          fs.writeFileSync(path, source);
+          NODE
+      - name: Commit guarded change
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name "Snacky CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add src/lib/finance-operations.ts
+          git commit -m "Exclude investor distributions from operating expenses"
+          git push origin HEAD:feature/growth-decisions-investor-portal
