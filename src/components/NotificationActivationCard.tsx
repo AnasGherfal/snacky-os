@@ -15,6 +15,8 @@ type SetupStatus = {
   configured: boolean;
   schemaReady: boolean;
   activeSubscriptions: number;
+  publicKey?: string | null;
+  source?: "environment" | "database" | null;
   reason?: string | null;
 };
 
@@ -25,7 +27,6 @@ export function NotificationActivationCard() {
   const [browserState, setBrowserState] = useState<"checking" | "unsupported" | "blocked" | "available" | "enabled">("checking");
   const [busy, setBusy] = useState<"enable" | "test" | null>(null);
   const [message, setMessage] = useState("");
-  const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "";
 
   async function refresh() {
     const response = await fetch("/api/notifications/push-status", { cache: "no-store" });
@@ -57,11 +58,13 @@ export function NotificationActivationCard() {
     setBusy("enable");
     setMessage("");
     try {
+      const publicKey = String(status?.publicKey ?? "").trim();
       if (!status?.configured || !publicKey) throw new Error(ar ? "إعدادات الإشعارات غير مكتملة في الخادم." : "Server notification configuration is incomplete.");
       if (!status.schemaReady) throw new Error(ar ? "جداول الإشعارات غير مثبتة في قاعدة البيانات." : "Notification tables are not installed in the database.");
       const permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
       if (permission !== "granted") throw new Error(ar ? "لم يتم السماح بالإشعارات من المتصفح." : "Browser notification permission was not granted.");
       const registration = await navigator.serviceWorker.register("/sw.js");
+      await navigator.serviceWorker.ready;
       const existing = await registration.pushManager.getSubscription();
       const subscription = existing ?? await registration.pushManager.subscribe({
         userVisibleOnly: true,
@@ -99,7 +102,7 @@ export function NotificationActivationCard() {
     }
   }
 
-  const serverReady = Boolean(status?.configured && status?.schemaReady);
+  const serverReady = Boolean(status?.configured && status?.schemaReady && status?.publicKey);
   const stateText = browserState === "enabled"
     ? (ar ? "مفعلة على هذا الجهاز" : "Enabled on this device")
     : browserState === "blocked"
@@ -126,7 +129,9 @@ export function NotificationActivationCard() {
 
       {!serverReady && status ? (
         <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-          {ar ? "يلزم إكمال إعداد VAPID وتثبيت جداول الإشعارات قبل التفعيل." : "VAPID configuration and notification tables must be ready before activation."}
+          {status.reason === "migration_required"
+            ? (ar ? "يلزم تطبيق تحديث إعداد الإشعارات في قاعدة البيانات مرة واحدة." : "Apply the push notification configuration migration once.")
+            : (ar ? "يلزم إكمال إعداد الإشعارات قبل التفعيل." : "Notification setup must be completed before activation.")}
         </div>
       ) : null}
       {message ? <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">{message}</div> : null}
