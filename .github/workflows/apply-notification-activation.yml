@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: feature/activate-push-notifications
-      - name: Make integration marker line-based
+      - name: Scope notification payload marker
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -35,9 +35,13 @@ jobs:
           source = path.read_text(encoding="utf-8")
           start = source.index('source = replace_once(\n    source,\n    "  routeId: string;')
           end = source.index('start = source.index("let vapidConfigured = false;")')
-          replacement = '''source = replace_once(source, "  routeId: string;", "  routeId?: string | null;", "notification route id")
-          source = replace_once(source, "  routeDate: string;", "  routeDate?: string | null;", "notification route date")
-          source = replace_once(source, "  assignedBy: string | null;", "  assignedBy?: string | null;", "notification assigned by")
+          replacement = '''payload_start = source.index("type NotificationPayload = {")
+          payload_end = source.index("};", payload_start) + 2
+          payload_source = source[payload_start:payload_end]
+          payload_source = replace_once(payload_source, "  routeId: string;", "  routeId?: string | null;", "notification route id")
+          payload_source = replace_once(payload_source, "  routeDate: string;", "  routeDate?: string | null;", "notification route date")
+          payload_source = replace_once(payload_source, "  assignedBy: string | null;", "  assignedBy?: string | null;", "notification assigned by")
+          source = source[:payload_start] + payload_source + source[payload_end:]
           '''
           path.write_text(source[:start] + replacement + source[end:], encoding="utf-8")
           PY
