@@ -683,7 +683,7 @@ export default async function CashReconciliationPage({
 
       <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <section className="surface-card"><div className="text-sm text-slate-500">VMS sales / مبيعات VMS</div><div className="mt-2 text-3xl font-semibold text-slate-950">{lyd(selectedSummary.vmsSalesAmount)}</div><div className="mt-1 text-xs text-slate-500">{formatInteger(selectedSummary.vmsUnits)} units · {formatInteger(selectedSummary.vmsTransactionCount)} successful sales</div></section>
-        <section className="surface-card"><div className="text-sm text-slate-500">Cash counted / الكاش المعدود</div><div className="mt-2 text-3xl font-semibold text-slate-950">{lyd(selectedSummary.cashCountedAmount)}</div><div className="mt-1 text-xs text-slate-500">{formatInteger(selectedSummary.countedCollectionCount)} count record(s), filtered by counted_at</div></section>
+        <section className="surface-card"><div className="text-sm text-slate-500">Cash counted / الكاش المعدود</div><div className="mt-2 text-3xl font-semibold text-slate-950">{lyd(selectedSummary.cashCountedAmount)}</div><div className="mt-1 text-xs text-slate-500">{formatInteger(selectedSummary.countedCollectionCount)} count record(s), filtered by counted_at. See exactly which machines below.</div></section>
         <section className="surface-card"><div className="text-sm text-slate-500">Difference / الفرق</div><div className={`mt-2 text-3xl font-semibold ${differenceClass(selectedSummary.varianceAmount)}`}>{formatDelta(selectedSummary.varianceAmount)}</div><div className="mt-1 text-xs text-slate-500">Cash counted minus VMS sales</div></section>
         <section className="surface-card"><div className="text-sm text-slate-500">Match rate / نسبة المطابقة</div><div className="mt-2 text-3xl font-semibold text-slate-950">{formatPercent(selectedSummary.accuracy)}</div><div className="mt-1 text-xs text-slate-500">Cash counted divided by VMS sales</div></section>
         <section className="surface-card"><div className="text-sm text-slate-500">Pending cash counts</div><div className="mt-2 text-3xl font-semibold text-slate-950">{formatInteger(selectedSummary.pendingCollectionCount)}</div><div className="mt-1 text-xs text-slate-500">Removed in this period but not counted; excluded from counted cash</div></section>
@@ -729,15 +729,15 @@ export default async function CashReconciliationPage({
 
           <section className="surface-card">
             <div className="border-b border-slate-200 pb-4">
-              <h2 className="text-base font-semibold text-slate-950">Machine reconciliation</h2>
-              <p className="mt-1 text-sm text-slate-500">VMS sales and cash counted in the selected duration, grouped by machine.</p>
+              <h2 className="text-base font-semibold text-slate-950">Which machine has the difference?</h2>
+              <p className="mt-1 text-sm text-slate-500">Each row compares that machine's VMS expected sales with the cash Finance counted for that machine during the selected dates. Largest differences appear first.</p>
             </div>
             {machineRows.length ? (
               <div className="mt-4">
-                <DataTable sortable showSummary headers={["Machine", "Location", "VMS sales", "Units", "Cash counted", "Difference", "Match rate", "Count records", "Latest count", "Status"]}>
-                  {machineRows.map((row) => (
+                <DataTable sortable showSummary headers={["Machine", "Location", "VMS expected sales for machine", "VMS units", "Cash counted for machine", "Difference for machine", "Match rate", "Counted pickups", "Latest finance count", "Result"]}>
+                  {[...machineRows].sort((left, right) => Math.abs(right.rangeVariance) - Math.abs(left.rangeVariance) || right.vmsSalesAmount - left.vmsSalesAmount || left.machineLabel.localeCompare(right.machineLabel)).map((row) => (
                     <tr key={row.key}>
-                      <td className="font-medium"><div>{row.machineLabel}</div><div className="mt-1 text-xs text-slate-500">{row.machineCode ?? row.machineId ?? "Unmatched VMS row"}</div></td>
+                      <td className="font-medium"><div>{row.machineLabel}</div><div className="mt-1 text-xs text-slate-500">{row.machineCode ?? row.machineId ?? "Unmatched VMS/cash machine — fix mapping"}</div></td>
                       <td>{row.locationLabel}</td>
                       <td>{lyd(row.vmsSalesAmount)}</td>
                       <td>{formatInteger(row.unitsSold)}</td>
