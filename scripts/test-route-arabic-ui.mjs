@@ -10,11 +10,21 @@ const quick = read("src/components/operator/RouteStopQuickActions.tsx");
 const compressor = read("src/components/operator/CompressorSafetyProofCard.tsx");
 const manual = read("src/components/operator/ManualRouteSalesSection.tsx");
 const stop = read("src/app/operator/routes/[id]/stops/[stopId]/page.tsx");
+const routeSources = { quick, compressor, manual, stop };
 
 function hasPair(source, english) {
   const escaped = english.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   assert.match(source, new RegExp(`tr\\(\\"${escaped}\\", \\"[^\\"]+\\"\\)`));
 }
+
+test("route localization source is valid UTF-8 without mojibake markers", () => {
+  const suspiciousPatterns = ["Ãƒ", "Ã¢", "Ã‚", "â€", "Ø", "Ù", "Ùƒ", "Ø§", "�"];
+  for (const [name, source] of Object.entries(routeSources)) {
+    for (const marker of suspiciousPatterns) {
+      assert.equal(source.includes(marker), false, `${name} contains mojibake marker ${marker}`);
+    }
+  }
+});
 
 test("quick route actions are explicit language pairs", () => {
   for (const label of ["Quick product actions", "Manual sale", "Damaged", "Return"]) hasPair(quick, label);
