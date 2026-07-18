@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
 import { applyVisibleFinanceLedgerFilter, FINANCE_TRANSACTIONS_TABLE, loadFinanceLedgerRows } from "@/lib/finance-ledger";
-import { calculateInvestorMonth, monthBounds } from "@/lib/investor-profit";
+import { calculateInvestorMonth, manualRouteSalesAsProfitRows, monthBounds } from "@/lib/investor-profit";
 
 function text(formData: FormData, name: string) {
   return String(formData.get(name) ?? "").trim();
@@ -128,12 +128,18 @@ export async function generateInvestorStatement(formData: FormData) {
     redirect(investorsUrl(agreementId, { type: "error", text: "This month is finalized and cannot be recalculated." }));
   }
 
-  const [salesResult, ledgerResult, priorStatementsResult] = await Promise.all([
+  const [salesResult, manualSalesResult, ledgerResult, priorStatementsResult] = await Promise.all([
     supabase
       .from("vms_sales_clean")
       .select("net_sales_amount, cogs_amount, gross_profit_amount, cost_missing")
       .gte("sale_date", bounds.start)
       .lte("sale_date", bounds.end),
+    supabase
+      .from("route_manual_sales")
+      .select("id, machine_id, total_amount_lyd, inventory_movement_id, sale_time, status")
+      .eq("status", "confirmed")
+      .gte("sale_time", `${bounds.start}T00:00:00.000Z`)
+      .lte("sale_time", `${bounds.end}T23:59:59.999Z`),
     loadFinanceLedgerRows({
       label: `investor-statement.${bounds.start}`,
       buildQuery: (columns, level) => {
@@ -155,10 +161,22 @@ export async function generateInvestorStatement(formData: FormData) {
   ]);
 
   if (salesResult.error) redirect(investorsUrl(agreementId, { type: "error", text: `VMS sales could not load: ${salesResult.error.message}` }));
+  if (manualSalesResult.error) redirect(investorsUrl(agreementId, { type: "error", text: `Manual route sales could not load: ${manualSalesResult.error.message}` }));
   if (ledgerResult.error) redirect(investorsUrl(agreementId, { type: "error", text: "Finance expenses could not load for this month." }));
 
+  const manualSales = manualSalesResult.data ?? [];
+  const movementIds = Array.from(new Set(manualSales.map((sale) => String(sale.inventory_movement_id ?? "").trim()).filter(Boolean)));
+  const movementResult = movementIds.length
+    ? await supabase.from("inventory_movements").select("id, line_total_lyd, unit_cost_lyd").in("id", movementIds)
+    : { data: [], error: null };
+  if (movementResult.error) redirect(investorsUrl(agreementId, { type: "error", text: `Manual-sale product costs could not load: ${movementResult.error.message}` }));
+
+  const manualProfitRows = manualRouteSalesAsProfitRows(manualSales, movementResult.data ?? []);
   const calculation = calculateInvestorMonth({
-    salesRows: salesResult.data ?? [],
+    salesRows: [
+      ...(salesResult.data ?? []).map((row) => ({ ...row, source: "vms" })),
+      ...manualProfitRows,
+    ],
     ledgerRows: ledgerResult.data,
     sharePercent: Number(agreement.profit_share_percent ?? 30),
   });
@@ -167,8 +185,12 @@ export async function generateInvestorStatement(formData: FormData) {
   const remainingCap = cap === null ? null : Math.max(0, cap - paidOrDueBefore);
   const investorDue = remainingCap === null ? calculation.investorShareDueLyd : Math.min(calculation.investorShareDueLyd, remainingCap);
   const sourceNote = [
-    `VMS ${bounds.start} to ${bounds.end}`,
-    `${salesResult.data?.length ?? 0} sales rows`,
+    `period ${bounds.start} to ${bounds.end}`,
+    `VMS rows: ${salesResult.data?.length ?? 0}`,
+    `VMS revenue: ${calculation.vmsRevenueLyd}`,
+    `manual sale rows: ${manualSales.length}`,
+    `manual sales revenue: ${calculation.manualSalesRevenueLyd}`,
+    `manual sales COGS: ${calculation.manualSalesCogsLyd}`,
     `missing cost rows: ${calculation.missingCostRows}`,
     `complete=${calculation.complete}`,
     ledgerResult.warning ?? "finance ledger full contract",
@@ -198,7 +220,7 @@ export async function generateInvestorStatement(formData: FormData) {
   revalidatePath("/investor");
   redirect(investorsUrl(agreementId, {
     type: calculation.complete ? "success" : "warning",
-    text: calculation.complete ? "Monthly statement calculated as a draft." : "Draft calculated, but missing product costs must be fixed before finalizing.",
+    text: calculation.complete ? "Monthly statement calculated as a draft, including confirmed manual route sales." : "Draft calculated, but missing VMS or manual-sale product costs must be fixed before finalizing.",
   }));
 }
 
