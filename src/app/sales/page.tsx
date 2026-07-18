@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { FormSubmitButton } from "@/components/FormSubmitButton";
 import { BarList, KpiSection } from "@/components/KpiDashboard";
+import { OperationalSalesSummary } from "@/components/OperationalSalesSummary";
 import { DataTable, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
 import { getServerI18n } from "@/lib/i18n/server";
@@ -1420,6 +1421,12 @@ async function SalesDashboardPageContent({
       />
 
       <div className="space-y-6">
+        <OperationalSalesSummary
+          dateFrom={selectedRange.start}
+          dateTo={selectedRange.end}
+          vmsRevenue={summary.revenueAmount}
+          vmsUnits={summary.successfulUnitsSold}
+        />
         <section className="surface-card space-y-4">
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">

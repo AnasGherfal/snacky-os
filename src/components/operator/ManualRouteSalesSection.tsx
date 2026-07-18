@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { QuantityStepper } from "@/components/QuantityStepper";
 import { StatusBadge } from "@/components/ui";
@@ -135,6 +135,15 @@ export function ManualRouteSalesSection({
   const [priceSourceLabel, setPriceSourceLabel] = useState<string | null>(null);
   const submissionIdRef = useRef(newClientId());
   const routeLocked = isRouteLocked(routeStatus);
+
+  useEffect(() => {
+    const openManualSale = () => {
+      setExpanded(true);
+      setShowForm(true);
+    };
+    window.addEventListener("snacky:open-manual-sale", openManualSale);
+    return () => window.removeEventListener("snacky:open-manual-sale", openManualSale);
+  }, []);
 
   const productChoices = sourceMode === "preferred" ? preferredProducts : allProducts;
   const selectedProduct = useMemo(
@@ -279,7 +288,7 @@ export function ManualRouteSalesSection({
   const totalAmount = routeManualSaleTotal(quantity, unitSalePriceLyd);
 
   return (
-    <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
+    <section id="manual-route-sales" className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
       <button
         type="button"
         onClick={() => setExpanded((current) => !current)}

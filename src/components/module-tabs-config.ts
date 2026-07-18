@@ -67,6 +67,7 @@ const reportsTabs: ModuleTab[] = [
   { label: "Overview", href: "/reports", exact: true },
   { label: "Sales", href: "/sales" },
   { label: "Cash Reconciliation", href: "/reports/cash-reconciliation" },
+  { label: "Product Activity", href: "/reports/route-product-activity" },
   { label: "Products", href: "/products-dashboard" },
   { label: "Machines", href: "/machines-dashboard" },
   { label: "Inventory", href: "/inventory-dashboard" },

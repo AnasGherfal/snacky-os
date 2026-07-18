@@ -183,6 +183,7 @@ export async function POST(
     revalidatePath("/inventory");
     revalidatePath("/inventory/movements");
     revalidatePath("/reports/inventory-adjustments");
+    revalidatePath("/reports/route-product-activity");
 
     return NextResponse.json({ success: true, adjustment });
   } catch (error) {
