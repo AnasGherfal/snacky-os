@@ -1,0 +1,58 @@
+name: Apply growth data source guard
+
+on:
+  push:
+    branches:
+      - feature/growth-decisions-investor-portal
+    paths:
+      - ".github/workflows/apply-growth-data-gap-guard.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/growth-decisions-investor-portal
+          fetch-depth: 0
+      - name: Add fail-closed source validation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('src/app/finance/growth-decisions/page.tsx')
+          source = path.read_text(encoding='utf-8')
+          old = '''  if (salesResult.error || manualSalesResult.error) {
+    return <ErrorState title={ar ? "تعذر تحميل المبيعات الكاملة" : "Complete sales could not load"} body={ar ? "يجب تحميل مبيعات VMS والمبيعات اليدوية معاً قبل اتخاذ قرار توسع." : "Both VMS and confirmed manual route sales must load before relying on an expansion decision."} />;
+  }
+
+  const salesRows ='''
+          new = '''  if (salesResult.error || manualSalesResult.error) {
+    return <ErrorState title={ar ? "تعذر تحميل المبيعات الكاملة" : "Complete sales could not load"} body={ar ? "يجب تحميل مبيعات VMS والمبيعات اليدوية معاً قبل اتخاذ قرار توسع." : "Both VMS and confirmed manual route sales must load before relying on an expansion decision."} />;
+  }
+  const decisionSourceErrors = [
+    machinesResult.error,
+    acceptedLocationsResult.error,
+    issuesResult.error,
+    refillResult.error,
+    statementsResult.error,
+    paymentsResult.error,
+  ].filter(Boolean);
+  if (decisionSourceErrors.length) {
+    return <ErrorState title={ar ? "بيانات القرار غير مكتملة" : "Decision data is incomplete"} body={ar ? "تعذر تحميل الأجهزة أو المواقع أو الأعطال أو المخزون أو مستحقات المستثمر. لن يصدر النظام توصية شراء حتى تكتمل البيانات." : "Machines, locations, issues, restocking, or investor commitments could not load. Snacky OS will not recommend a purchase from incomplete data."} />;
+  }
+
+  const salesRows ='''
+          if old not in source:
+              raise SystemExit('Expected growth source marker was not found.')
+          path.write_text(source.replace(old, new, 1), encoding='utf-8')
+          PY
+      - name: Commit guarded data validation
+        run: |
+          git config user.name "Snacky CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add src/app/finance/growth-decisions/page.tsx
+          git commit -m "Fail closed on incomplete growth decision data"
+          git push origin HEAD:feature/growth-decisions-investor-portal
