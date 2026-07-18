@@ -10,6 +10,7 @@ export const roleDescriptions: Record<AppRole, string> = {
   warehouse: "Works with products and storage inventory without access to financial or admin controls.",
   purchasing: "Creates supplier purchases, uploads receipts, reviews purchase history, and matches receipt lines.",
   finance: "Reviews sales, cash collections, variance, and machine financial performance.",
+  investor: "Read-only access to this investor's agreement, finalized monthly profit statements, payments, and unpaid balance.",
   viewer: "Read-only dashboard access for basic operational visibility.",
 };
 
