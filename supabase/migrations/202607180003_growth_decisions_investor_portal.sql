@@ -159,7 +159,10 @@ create policy investor_statements_investor_read
   on public.investor_monthly_statements
   for select
   to authenticated
-  using (public.snacky_can_view_investor_agreement(agreement_id));
+  using (
+    calculation_status = 'finalized'
+    and public.snacky_can_view_investor_agreement(agreement_id)
+  );
 
 drop policy if exists investor_payments_owner_admin_manage on public.investor_payments;
 create policy investor_payments_owner_admin_manage
