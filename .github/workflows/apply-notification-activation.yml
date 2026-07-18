@@ -7,6 +7,15 @@ on:
     paths:
       - "scripts/apply-notification-activation.py"
       - ".github/workflows/apply-notification-activation.yml"
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "scripts/apply-notification-activation.py"
+      - ".github/workflows/apply-notification-activation.yml"
+      - "src/app/api/push-config/route.ts"
+      - "src/app/api/notifications/test/route.ts"
+      - "supabase/migrations/202607180002_notification_push_activation.sql"
 
 permissions:
   contents: write
