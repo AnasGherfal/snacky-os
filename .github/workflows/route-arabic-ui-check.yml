@@ -24,12 +24,10 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
-      - name: Test route language pairing
+      - name: Test route language and encoding
         run: node --test scripts/test-route-arabic-ui.mjs
       - name: Test route safety and product activity
         run: node --test scripts/test-route-safety-product-activity.mjs
-      - name: Check Arabic encoding
-        run: npm run check:arabic-encoding
       - name: Check mojibake UI
         run: npm run check:mojibake-ui
       - name: Test pickup checklist
