@@ -85,6 +85,9 @@ test("investor role is restricted to the investor portal", () => {
   assert.match(authz, /investor: \["investor\.view"\]/);
   assert.match(authz, /hasPermission\(input, "investor\.view"\).*"\/investor"/s);
   assert.match(authz, /matchesPrefix\(pathname, \["\/investor"\]\).*investor\.view/);
+  assert.match(authz, /matchesPrefix\(pathname, \["\/vms-import"\]\).*canViewVmsImports/);
+  assert.match(authz, /matchesPrefix\(pathname, \["\/vms-mappings"\]\).*canManageVmsMappings/);
+  assert.doesNotMatch(authz, /matchesPrefix\(pathname, \["\/vms-import", "\/vms-mappings"\]\)\) return true/);
   const sidebar = read("src/components/Sidebar.tsx");
   assert.match(sidebar, /Investor Portal/);
   assert.match(sidebar, /بوابة المستثمر/);
