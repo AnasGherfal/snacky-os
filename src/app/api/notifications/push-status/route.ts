@@ -1,13 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
-
-function configured() {
-  return Boolean(
-    String(process.env.VAPID_SUBJECT ?? "").trim()
-    && String(process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "").trim()
-    && String(process.env.VAPID_PRIVATE_KEY ?? "").trim(),
-  );
-}
+import { ensurePushConfig } from "@/lib/push-config";
 
 export async function GET() {
   const profile = await getCurrentProfile();
@@ -16,23 +9,29 @@ export async function GET() {
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) {
     return NextResponse.json({
-      configured: configured(),
+      configured: false,
       schemaReady: false,
       activeSubscriptions: 0,
+      publicKey: null,
       reason: "Supabase is not configured.",
     });
   }
 
-  const { count, error } = await supabase
-    .from("push_subscriptions")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", profile.id)
-    .eq("is_active", true);
+  const [config, subscriptionResult] = await Promise.all([
+    ensurePushConfig(supabase),
+    supabase
+      .from("push_subscriptions")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", profile.id)
+      .eq("is_active", true),
+  ]);
 
   return NextResponse.json({
-    configured: configured(),
-    schemaReady: !error,
-    activeSubscriptions: error ? 0 : count ?? 0,
-    reason: error ? error.message : null,
+    configured: config.configured,
+    schemaReady: !subscriptionResult.error,
+    activeSubscriptions: subscriptionResult.error ? 0 : subscriptionResult.count ?? 0,
+    publicKey: config.configured ? config.config.publicKey : null,
+    source: config.configured ? config.source : null,
+    reason: subscriptionResult.error?.message ?? (config.configured ? null : config.reason),
   });
 }
