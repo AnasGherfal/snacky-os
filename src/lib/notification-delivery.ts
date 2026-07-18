@@ -37,9 +37,9 @@ type NotificationPayload = {
   title: string;
   body: string;
   url: string;
-  routeId: string;
-  routeDate: string;
-  assignedBy: string | null;
+  routeId?: string | null;
+  routeDate?: string | null;
+  assignedBy?: string | null;
 };
 
 type PushSubscriptionInput = {
@@ -51,7 +51,18 @@ type PushSubscriptionInput = {
   expirationTime?: number | null;
 };
 
-let vapidConfigured = false;
+type VapidConfig = {
+  subject: string;
+  publicKey: string;
+  privateKey: string;
+};
+
+type VapidResolution =
+  | { config: VapidConfig; source: "environment" | "database" }
+  | { config: null; reason: string };
+
+const DEFAULT_VAPID_SUBJECT = "mailto:notifications@snacky.ly";
+let vapidFingerprint = "";
 
 function cleanText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -71,23 +82,98 @@ function shortErrorText(error: unknown) {
     .join(" ");
 }
 
-function getVapidConfig() {
+function environmentVapidConfig(): VapidConfig | null {
   const subject = cleanText(process.env.VAPID_SUBJECT);
   const publicKey = cleanText(process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY);
   const privateKey = cleanText(process.env.VAPID_PRIVATE_KEY);
-
   if (!subject || !publicKey || !privateKey) return null;
   return { subject, publicKey, privateKey };
 }
 
-function ensureWebPushConfigured() {
-  const vapid = getVapidConfig();
-  if (!vapid) return null;
-  if (!vapidConfigured) {
-    webpush.setVapidDetails(vapid.subject, vapid.publicKey, vapid.privateKey);
-    vapidConfigured = true;
+async function loadDatabaseVapidConfig(client: SupabaseClient): Promise<VapidResolution> {
+  const result = await client
+    .from("push_notification_config")
+    .select("public_key, private_key, subject")
+    .eq("singleton", true)
+    .maybeSingle<{ public_key: string; private_key: string; subject: string }>();
+
+  if (result.error) {
+    const text = shortErrorText(result.error).toLowerCase();
+    const reason = text.includes("push_notification_config") || text.includes("pgrst205")
+      ? "migration_required"
+      : "config_load_failed";
+    return { config: null, reason };
   }
-  return vapid;
+
+  const publicKey = cleanText(result.data?.public_key);
+  const privateKey = cleanText(result.data?.private_key);
+  const subject = cleanText(result.data?.subject);
+  if (!publicKey || !privateKey || !subject) return { config: null, reason: "config_missing" };
+  return { config: { publicKey, privateKey, subject }, source: "database" };
+}
+
+async function createDatabaseVapidConfig(client: SupabaseClient): Promise<VapidResolution> {
+  const generated = webpush.generateVAPIDKeys();
+  const config: VapidConfig = {
+    publicKey: generated.publicKey,
+    privateKey: generated.privateKey,
+    subject: cleanText(process.env.VAPID_SUBJECT) || DEFAULT_VAPID_SUBJECT,
+  };
+  const now = new Date().toISOString();
+  const result = await client.from("push_notification_config").upsert(
+    {
+      singleton: true,
+      public_key: config.publicKey,
+      private_key: config.privateKey,
+      subject: config.subject,
+      updated_at: now,
+    },
+    { onConflict: "singleton" },
+  );
+  if (result.error) {
+    const text = shortErrorText(result.error).toLowerCase();
+    return {
+      config: null,
+      reason: text.includes("push_notification_config") || text.includes("pgrst205")
+        ? "migration_required"
+        : "config_create_failed",
+    };
+  }
+  return { config, source: "database" };
+}
+
+async function resolveVapidConfig(supabase?: SupabaseClient | null): Promise<VapidResolution> {
+  const environment = environmentVapidConfig();
+  if (environment) return { config: environment, source: "environment" };
+
+  const client = getSupabaseAdminClient() ?? supabase ?? null;
+  if (!client) return { config: null, reason: "missing_admin_client" };
+
+  const stored = await loadDatabaseVapidConfig(client);
+  if (stored.config) return stored;
+  if (stored.reason === "migration_required") return stored;
+  return createDatabaseVapidConfig(client);
+}
+
+export async function ensurePushNotificationConfig(supabase?: SupabaseClient | null) {
+  const result = await resolveVapidConfig(supabase);
+  if (!result.config) return { configured: false as const, reason: result.reason };
+  return {
+    configured: true as const,
+    publicKey: result.config.publicKey,
+    source: result.source,
+  };
+}
+
+async function ensureWebPushConfigured(supabase?: SupabaseClient | null) {
+  const result = await resolveVapidConfig(supabase);
+  if (!result.config) return null;
+  const fingerprint = `${result.config.subject}:${result.config.publicKey}`;
+  if (vapidFingerprint !== fingerprint) {
+    webpush.setVapidDetails(result.config.subject, result.config.publicKey, result.config.privateKey);
+    vapidFingerprint = fingerprint;
+  }
+  return result.config;
 }
 
 async function resolveRecipientUserId(
@@ -165,7 +251,7 @@ async function sendPushToSubscription(
   subscription: PushSubscriptionRecord,
   payload: NotificationPayload,
 ) {
-  const vapid = ensureWebPushConfigured();
+  const vapid = await ensureWebPushConfigured(supabase);
   if (!vapid) {
     return { sent: false, skipped: "missing_vapid_configuration" as const };
   }
@@ -311,6 +397,68 @@ export async function markAllNotificationsReadForUser(supabase: NonNullable<Supa
   }
 
   return { updated: true };
+}
+
+export async function sendTestPushNotification(
+  supabase: NonNullable<SupabaseClient>,
+  userId: string,
+) {
+  const adminClient = getSupabaseAdminClient() ?? supabase;
+  const config = await ensurePushNotificationConfig(adminClient);
+  if (!config.configured) {
+    return { sent: false as const, deliveredCount: 0, subscriptionCount: 0, reason: config.reason };
+  }
+
+  const subscriptionResult = await adminClient
+    .from("push_subscriptions")
+    .select("id, endpoint, p256dh, auth, user_agent, device_label, is_active")
+    .eq("user_id", userId)
+    .eq("is_active", true)
+    .order("created_at", { ascending: false });
+
+  if (subscriptionResult.error) {
+    return {
+      sent: false as const,
+      deliveredCount: 0,
+      subscriptionCount: 0,
+      reason: shortErrorText(subscriptionResult.error) || "subscription_load_failed",
+    };
+  }
+
+  const subscriptions = (subscriptionResult.data ?? []) as PushSubscriptionRecord[];
+  if (!subscriptions.length) {
+    return { sent: false as const, deliveredCount: 0, subscriptionCount: 0, reason: "no_active_subscription" };
+  }
+
+  const payload: NotificationPayload = {
+    type: "push_test",
+    title: "Snacky OS notifications are working",
+    body: "This device can now receive route assignments before the app is opened.",
+    url: "/operator/routes",
+    routeId: null,
+    routeDate: null,
+    assignedBy: null,
+  };
+
+  await adminClient.from("notifications").insert({
+    user_id: userId,
+    type: payload.type,
+    title: payload.title,
+    message: payload.body,
+    action_url: payload.url,
+    related_route_id: null,
+  });
+
+  const settled = await Promise.allSettled(
+    subscriptions.map((subscription) => sendPushToSubscription(adminClient, subscription, payload)),
+  );
+  const deliveredCount = settled.filter((item) => item.status === "fulfilled" && item.value.sent).length;
+  return {
+    sent: deliveredCount > 0,
+    deliveredCount,
+    subscriptionCount: subscriptions.length,
+    reason: deliveredCount > 0 ? null : "delivery_failed",
+  };
 }
 
 export async function notifyRouteAssigned(

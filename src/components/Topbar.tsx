@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Image from "next/image";
 import Link from "next/link";
@@ -98,7 +98,7 @@ export function Topbar({ profile, onMenuClick }: { profile: TopbarProfile; onMen
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {canSeeNotifications ? (
-            <div className="md:hidden">
+            <div>
               <NotificationCenter compact />
             </div>
           ) : null}

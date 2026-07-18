@@ -74,12 +74,14 @@ export function NotificationCenter({ compact = false, label = "Notifications", c
   const [open, setOpen] = useState(false);
   const [loadingNotifications, setLoadingNotifications] = useState(false);
   const [loadingPush, setLoadingPush] = useState(false);
+  const [loadingTest, setLoadingTest] = useState(false);
   const [notifications, setNotifications] = useState<NotificationRow[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [pushStatus, setPushStatus] = useState<"checking" | "unsupported" | "blocked" | "available" | "enabled">("checking");
+  const [pushConfigStatus, setPushConfigStatus] = useState<"checking" | "ready" | "unavailable">("checking");
+  const [vapidPublicKey, setVapidPublicKey] = useState("");
   const [message, setMessage] = useState<string | null>(null);
-  const vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "";
-  const supportsPush = typeof window !== "undefined" && "Notification" in window && "serviceWorker" in navigator && "PushManager" in window && Boolean(vapidPublicKey);
+  const browserSupportsPush = typeof window !== "undefined" && "Notification" in window && "serviceWorker" in navigator && "PushManager" in window;
   const buttonLabel = compact ? "Alerts" : label;
   const unreadBadge = unreadCount > 9 ? "9+" : String(unreadCount);
 
@@ -100,22 +102,50 @@ export function NotificationCenter({ compact = false, label = "Notifications", c
     }
   };
 
-  const refreshPushStatus = async () => {
-    if (!supportsPush) {
+  const loadPushConfiguration = async () => {
+    if (!browserSupportsPush) {
+      setPushStatus("unsupported");
+      setPushConfigStatus("unavailable");
+      return "";
+    }
+    setPushConfigStatus("checking");
+    try {
+      const response = await fetch("/api/push-config", { cache: "no-store" });
+      const payload = (await response.json().catch(() => null)) as { configured?: boolean; publicKey?: string; error?: string } | null;
+      const publicKey = typeof payload?.publicKey === "string" ? payload.publicKey.trim() : "";
+      if (!response.ok || !payload?.configured || !publicKey) {
+        setPushConfigStatus("unavailable");
+        setMessage(payload?.error ?? "Push notification setup is not ready yet.");
+        return "";
+      }
+      setVapidPublicKey(publicKey);
+      setPushConfigStatus("ready");
+      return publicKey;
+    } catch (error) {
+      console.warn("[notifications] Could not load push configuration", errorText(error));
+      setPushConfigStatus("unavailable");
+      setMessage("Push notification setup could not be loaded.");
+      return "";
+    }
+  };
+
+  const refreshPushStatus = async (resolvedPublicKey = vapidPublicKey) => {
+    if (!browserSupportsPush) {
       setPushStatus("unsupported");
       return;
     }
-
+    if (!resolvedPublicKey) {
+      setPushStatus("available");
+      return;
+    }
     if (Notification.permission === "denied") {
       setPushStatus("blocked");
       return;
     }
-
     if (Notification.permission !== "granted") {
       setPushStatus("available");
       return;
     }
-
     try {
       const registration = await navigator.serviceWorker.getRegistration() ?? await navigator.serviceWorker.register("/sw.js");
       const subscription = await registration.pushManager.getSubscription();
@@ -138,19 +168,18 @@ export function NotificationCenter({ compact = false, label = "Notifications", c
   };
 
   const enablePush = async () => {
-    if (!supportsPush) {
-      setMessage("Push notifications are not supported in this browser.");
-      return;
-    }
-
-    if (!vapidPublicKey) {
-      setMessage("Push notifications are not configured for this environment.");
+    if (!browserSupportsPush) {
+      setMessage("Push notifications are not supported in this browser. On iPhone, install Snacky OS to the Home Screen first.");
+      setPushStatus("unsupported");
       return;
     }
 
     setLoadingPush(true);
     setMessage(null);
     try {
+      const publicKey = vapidPublicKey || await loadPushConfiguration();
+      if (!publicKey) return;
+
       if (Notification.permission === "default") {
         const permission = await Notification.requestPermission();
         if (permission !== "granted") {
@@ -159,7 +188,6 @@ export function NotificationCenter({ compact = false, label = "Notifications", c
           return;
         }
       }
-
       if (Notification.permission === "denied") {
         setPushStatus("blocked");
         setMessage("Notifications are blocked in this browser. Enable them in browser settings first.");
@@ -167,27 +195,25 @@ export function NotificationCenter({ compact = false, label = "Notifications", c
       }
 
       const registration = await navigator.serviceWorker.register("/sw.js");
-      const subscription = await registration.pushManager.subscribe({
+      await navigator.serviceWorker.ready;
+      const existing = await registration.pushManager.getSubscription();
+      const subscription = existing ?? await registration.pushManager.subscribe({
         userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
       });
 
       const response = await fetch("/api/push-subscriptions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          subscription: subscription.toJSON(),
-          deviceLabel: detectDeviceLabel(),
-        }),
+        body: JSON.stringify({ subscription: subscription.toJSON(), deviceLabel: detectDeviceLabel() }),
       });
-
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as { error?: string } | null;
         throw new Error(payload?.error ?? "Could not save the subscription.");
       }
 
       setPushStatus("enabled");
-      setMessage("Push notifications are enabled on this device.");
+      setMessage("Push notifications are enabled on this device. Send a test to verify delivery.");
     } catch (error) {
       console.warn("[notifications] Failed to enable push", errorText(error));
       setMessage(error instanceof Error ? error.message : "Could not enable push notifications.");
@@ -197,16 +223,31 @@ export function NotificationCenter({ compact = false, label = "Notifications", c
     }
   };
 
-  useEffect(() => {
-    const initialLoad = window.setTimeout(() => {
+  const sendTestPush = async () => {
+    setLoadingTest(true);
+    setMessage(null);
+    try {
+      const response = await fetch("/api/notifications/test", { method: "POST" });
+      const payload = (await response.json().catch(() => null)) as { sent?: boolean; error?: string } | null;
+      if (!response.ok || !payload?.sent) throw new Error(payload?.error ?? "Test notification failed.");
+      setMessage("Test notification sent. It should appear on this device now.");
       void loadNotifications();
-      void refreshPushStatus();
-    }, 0);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Test notification failed.");
+    } finally {
+      setLoadingTest(false);
+    }
+  };
+
+  useEffect(() => {
+    const refresh = async () => {
+      void loadNotifications();
+      const publicKey = await loadPushConfiguration();
+      await refreshPushStatus(publicKey);
+    };
+    const initialLoad = window.setTimeout(() => { void refresh(); }, 0);
     const interval = window.setInterval(() => {
-      if (!document.hidden) {
-        void loadNotifications();
-        void refreshPushStatus();
-      }
+      if (!document.hidden) void refresh();
     }, 30000);
     return () => {
       window.clearTimeout(initialLoad);
@@ -239,12 +280,13 @@ export function NotificationCenter({ compact = false, label = "Notifications", c
   }, [open]);
 
   const pushStatusLabel = useMemo(() => {
-    if (pushStatus === "checking") return "Checking browser support...";
-    if (pushStatus === "unsupported") return "Push not supported here.";
+    if (pushStatus === "checking" || pushConfigStatus === "checking") return "Preparing push notifications...";
+    if (pushStatus === "unsupported") return "Push is not supported in this browser.";
+    if (pushConfigStatus === "unavailable") return "Push setup needs attention.";
     if (pushStatus === "blocked") return "Push notifications are blocked.";
     if (pushStatus === "enabled") return "Push enabled on this device.";
     return "Push available on this device.";
-  }, [pushStatus]);
+  }, [pushStatus, pushConfigStatus]);
 
   return (
     <div ref={rootRef} className={`relative inline-flex ${className}`}>
@@ -283,14 +325,26 @@ export function NotificationCenter({ compact = false, label = "Notifications", c
                 <div className="text-xs uppercase tracking-wide text-slate-500">Browser push</div>
                 <div className="mt-1 text-sm font-medium text-slate-900">{pushStatusLabel}</div>
               </div>
-              <button
-                type="button"
-                onClick={() => void enablePush()}
-                disabled={loadingPush || pushStatus === "enabled"}
-                className="inline-flex h-10 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {loadingPush ? <Loader2 className="h-4 w-4 animate-spin" /> : pushStatus === "enabled" ? "Enabled" : "Enable"}
-              </button>
+              <div className="flex shrink-0 gap-2">
+                <button
+                  type="button"
+                  onClick={() => void enablePush()}
+                  disabled={loadingPush || pushStatus === "enabled" || pushConfigStatus === "checking"}
+                  className="inline-flex h-10 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {loadingPush ? <Loader2 className="h-4 w-4 animate-spin" /> : pushStatus === "enabled" ? "Enabled" : "Enable"}
+                </button>
+                {pushStatus === "enabled" ? (
+                  <button
+                    type="button"
+                    onClick={() => void sendTestPush()}
+                    disabled={loadingTest}
+                    className="inline-flex h-10 items-center justify-center rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-sm font-semibold text-emerald-800 disabled:opacity-60"
+                  >
+                    {loadingTest ? <Loader2 className="h-4 w-4 animate-spin" /> : "Test"}
+                  </button>
+                ) : null}
+              </div>
             </div>
             {message ? <p className="mt-2 text-xs leading-5 text-slate-600">{message}</p> : null}
           </div>
