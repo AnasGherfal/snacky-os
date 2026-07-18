@@ -1,4 +1,5 @@
-import { BarList, KpiLoadWarning, KpiSection } from "@/components/KpiDashboard";
+import { ChartCard, HorizontalBarChart } from "@/components/DecisionCharts";
+import { KpiLoadWarning, KpiSection } from "@/components/KpiDashboard";
 import { VmsDataSourceCard } from "@/components/VmsDataSourceCard";
 import { DataTable, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
 import { requireCurrentProfileForPath } from "@/lib/auth";
@@ -137,40 +138,23 @@ export default async function MachinesDashboardPage() {
           <KpiLoadWarning message={cashResult.error} />
 
           {!machines.length ? <EmptyState title="No machines yet" body="Create machines and upload VMS sales snapshots to populate machine KPIs." /> : null}
-
           {!sales.length ? <EmptyState title="No machine sales yet" body="VMS sales snapshots are required for sales, NSM, and profit metrics." /> : null}
 
-          <div className="grid gap-4 xl:grid-cols-2">
-            <KpiSection title="Sales by machine">
-              <BarList rows={rankedSales.map((row) => ({ label: row.name, value: row.revenue, detail: row.code }))} valueFormatter={lyd} />
-            </KpiSection>
-            <KpiSection title="Target NSM comparison" subtitle="Positive values are above target for the latest observed month.">
-              {targetComparison.length ? (
-                <BarList rows={targetComparison.map((row) => ({ label: row.name, value: Math.max(row.targetGap, 0), detail: `${lyd(row.nsm)} vs ${lyd(row.targetNsm)}` }))} valueFormatter={lyd} />
-              ) : (
-                <p className="text-sm text-slate-500">No machine targets available.</p>
-              )}
-            </KpiSection>
+          <div className="grid gap-6 xl:grid-cols-2">
+            <ChartCard title="Sales by machine" subtitle="Top machines ranked by VMS sales in the available data.">
+              <HorizontalBarChart rows={rankedSales.map((row) => ({ label: row.name, value: row.revenue, note: row.code }))} valueFormatter={lyd} />
+            </ChartCard>
+            <ChartCard title="Latest month versus NSM target" subtitle="The bar shows actual latest-month sales; the note shows the configured target.">
+              <HorizontalBarChart rows={targetComparison.map((row) => ({ label: row.name, value: row.nsm, note: `${lyd(row.nsm)} vs ${lyd(row.targetNsm)} target` }))} valueFormatter={lyd} />
+            </ChartCard>
           </div>
 
           <KpiSection title="Machine KPI table">
             <DataTable headers={["Machine", "Status", "Location", "Sales", "NSM", "Target", "Refills", "Stockouts", "Issues", "Cash variance", "Profit after rent"]}>
               {machineMetrics.map((row) => (
                 <tr key={row.id}>
-                  <td>
-                    <div className="font-medium text-slate-900">{row.name}</div>
-                    <div className="text-xs text-slate-500">{row.code}</div>
-                  </td>
-                  <td><StatusBadge status={row.status} /></td>
-                  <td>{row.location}</td>
-                  <td>{lyd(row.revenue)}</td>
-                  <td>{sales.length ? lyd(row.nsm) : "-"}</td>
-                  <td>{row.targetNsm > 0 ? lyd(row.targetNsm) : "-"}</td>
-                  <td>{formatInteger(row.refillCount)}</td>
-                  <td>{formatInteger(row.stockoutCount)}</td>
-                  <td>{formatInteger(row.issueCount)}</td>
-                  <td>{lyd(row.cashVariance)}</td>
-                  <td>{formatLydOrDash(row.profitAfterRent)}</td>
+                  <td><div className="font-medium text-slate-900">{row.name}</div><div className="text-xs text-slate-500">{row.code}</div></td>
+                  <td><StatusBadge status={row.status} /></td><td>{row.location}</td><td>{lyd(row.revenue)}</td><td>{sales.length ? lyd(row.nsm) : "-"}</td><td>{row.targetNsm > 0 ? lyd(row.targetNsm) : "-"}</td><td>{formatInteger(row.refillCount)}</td><td>{formatInteger(row.stockoutCount)}</td><td>{formatInteger(row.issueCount)}</td><td>{lyd(row.cashVariance)}</td><td>{formatLydOrDash(row.profitAfterRent)}</td>
                 </tr>
               ))}
             </DataTable>

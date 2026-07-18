@@ -1,0 +1,58 @@
+name: Growth and investor portal checks
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "src/app/finance/growth-decisions/**"
+      - "src/app/finance/investors/**"
+      - "src/app/investor/**"
+      - "src/lib/growth-decision.ts"
+      - "src/lib/investor-*.ts"
+      - "src/components/DecisionCharts.tsx"
+      - "src/components/Sidebar.tsx"
+      - "src/components/Topbar.tsx"
+      - "src/components/module-tabs-config.ts"
+      - "src/lib/authz.ts"
+      - "src/lib/team.ts"
+      - "src/lib/finance-balance.ts"
+      - "src/lib/finance-operations.ts"
+      - "src/app/machines-dashboard/page.tsx"
+      - "supabase/migrations/202607180003_growth_decisions_investor_portal.sql"
+      - "scripts/test-growth-investor-portal.mjs"
+      - ".github/workflows/growth-investor-portal-check.yml"
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Test growth and investor portal
+        run: node --experimental-strip-types --test scripts/test-growth-investor-portal.mjs
+      - name: Verify route workflow files were not changed
+        run: |
+          git fetch origin master
+          changed="$(git diff --name-only origin/master...HEAD -- src/app/operator src/app/api/routes src/lib/route-actions.ts src/lib/route-workflow.ts src/components/RouteStopExecution.tsx supabase/migrations | grep -E 'pickup|route_stop|operator/routes|RouteStopExecution' || true)"
+          if [ -n "$changed" ]; then
+            echo "Unexpected route-sensitive changes:"
+            echo "$changed"
+            exit 1
+          fi
+      - name: Test pickup checklist
+        run: npm run test:route-pickup-checklist
+      - name: Test route inventory regression
+        run: npm run test:route-inventory-regression
+      - name: Test critical workflows
+        run: npm run test:critical-workflows
+      - name: Build Snacky OS
+        run: npm run build

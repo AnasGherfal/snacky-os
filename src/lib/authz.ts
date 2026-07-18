@@ -1,4 +1,4 @@
-export const appRoles = ["owner", "admin", "supervisor", "operator", "warehouse", "purchasing", "finance", "viewer"] as const;
+export const appRoles = ["owner", "admin", "supervisor", "operator", "warehouse", "purchasing", "finance", "investor", "viewer"] as const;
 
 export type AppRole = (typeof appRoles)[number];
 
@@ -36,6 +36,7 @@ export const appPermissions = [
   "locations.pipeline.manage",
   "finance.view",
   "finance.edit",
+  "investor.view",
   "reports.view",
   "team.manage",
   "activity.view",
@@ -69,7 +70,7 @@ const routePerformerRoles = new Set<AppRole>(["owner", "admin", "supervisor", "o
 
 type RoleInput = AppRole | AppRole[] | AuthUserContext | null | undefined;
 
-const rolePriority: AppRole[] = ["owner", "admin", "supervisor", "finance", "warehouse", "purchasing", "operator", "viewer"];
+const rolePriority: AppRole[] = ["owner", "admin", "supervisor", "finance", "warehouse", "purchasing", "operator", "investor", "viewer"];
 
 const rolePermissions = {
   owner: appPermissions,
@@ -150,6 +151,7 @@ const rolePermissions = {
     "purchase_items.view",
     "purchases.view",
   ],
+  investor: ["investor.view"],
   viewer: ["dashboard.view"],
 } satisfies Record<AppRole, readonly AppPermission[]>;
 
@@ -299,6 +301,7 @@ export function canAccessOperatorRoute(user: AuthUserContext | null | undefined,
 
 export function getDefaultPathForRole(input: RoleInput) {
   if (isOwnerAdminRole(input) || isSupervisorRole(input)) return "/dashboard";
+  if (hasPermission(input, "investor.view")) return "/investor";
   if (hasPermission(input, "finance.view")) return "/finance";
   if (hasPermission(input, "inventory.view") || hasPermission(input, "storage.view")) return "/inventory";
   if (hasPermission(input, "purchases.view")) return "/purchases";
@@ -318,6 +321,7 @@ export function canAccessPath(user: AuthUserContext | null | undefined, pathname
   if (!user || user.activeStatus === "inactive") return false;
   if (pathname === "/account" || pathname.startsWith("/account/")) return true;
   if (pathname === "/install" || pathname.startsWith("/install/")) return true;
+  if (matchesPrefix(pathname, ["/investor"])) return hasPermission(user, "investor.view");
 
   if (pathname === "/dashboard") return hasPermission(user, "dashboard.view");
   if (matchesPrefix(pathname, ["/reports", "/sales", "/products-dashboard", "/machines-dashboard", "/inventory-dashboard"])) return hasPermission(user, "reports.view");
@@ -366,7 +370,8 @@ export function canAccessPath(user: AuthUserContext | null | undefined, pathname
 
   if (matchesPrefix(pathname, ["/team"])) return hasPermission(user, "team.manage");
   if (matchesPrefix(pathname, ["/activity"])) return hasPermission(user, "activity.view");
-  if (matchesPrefix(pathname, ["/vms-import", "/vms-mappings"])) return true;
+  if (matchesPrefix(pathname, ["/vms-import"])) return canViewVmsImports(user);
+  if (matchesPrefix(pathname, ["/vms-mappings"])) return canManageVmsMappings(user);
   if (matchesPrefix(pathname, ["/settings"])) return hasPermission(user, "system.settings");
   if (matchesPrefix(pathname, ["/admin"])) return hasPermission(user, "system.settings");
 
