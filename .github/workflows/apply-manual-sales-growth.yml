@@ -1,0 +1,79 @@
+name: Apply manual sales growth integration
+
+on:
+  push:
+    branches:
+      - feature/growth-decisions-investor-portal
+    paths:
+      - ".github/workflows/apply-manual-sales-growth.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/growth-decisions-investor-portal
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Integrate manual sales into growth calculations
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = 'src/app/finance/growth-decisions/page.tsx';
+          let source = fs.readFileSync(path, 'utf8');
+          function replaceOnce(marker, replacement, label) {
+            if (!source.includes(marker)) throw new Error(`Missing ${label} marker`);
+            source = source.replace(marker, replacement);
+          }
+
+          replaceOnce(
+            'import { calculateInvestorMonth } from "@/lib/investor-profit";',
+            'import { calculateInvestorMonth, manualRouteSalesAsProfitRows } from "@/lib/investor-profit";',
+            'import',
+          );
+
+          replaceOnce(
+            'const [ledgerResult, salesResult, machinesResult, acceptedLocationsResult, issuesResult, refillResult, statementsResult, paymentsResult] = await Promise.all([',
+            'const [ledgerResult, salesResult, manualSalesResult, machinesResult, acceptedLocationsResult, issuesResult, refillResult, statementsResult, paymentsResult] = await Promise.all([',
+            'promise result list',
+          );
+
+          replaceOnce(
+            `    supabase\n      .from("vms_sales_clean")\n      .select("machine_id, net_sales_amount, cogs_amount, gross_profit_amount, cost_missing, sale_date")\n      .gte("sale_date", historyStart)\n      .lte("sale_date", historyEnd),\n    supabase.from("machines").select("id, name, rent_amount, status"),`,
+            `    supabase\n      .from("vms_sales_clean")\n      .select("machine_id, net_sales_amount, cogs_amount, gross_profit_amount, cost_missing, sale_date")\n      .gte("sale_date", historyStart)\n      .lte("sale_date", historyEnd),\n    supabase\n      .from("route_manual_sales")\n      .select("id, machine_id, total_amount_lyd, inventory_movement_id, sale_time, status")\n      .eq("status", "confirmed")\n      .gte("sale_time", \`${historyStart}T00:00:00.000Z\`)\n      .lte("sale_time", \`${historyEnd}T23:59:59.999Z\`),\n    supabase.from("machines").select("id, name, rent_amount, status"),`,
+            'manual sales query',
+          );
+
+          replaceOnce(
+            `  if (ledgerResult.error) {\n    return <ErrorState title={ar ? "تعذر تحميل الرصيد المالي" : "Finance balance could not load"} body={ar ? "راجع صحة دفتر المالية قبل اتخاذ قرار توسع." : "Repair the Finance ledger before relying on an expansion decision."} />;\n  }\n\n  const salesRows = (salesResult.data ?? []) as SalesRow[];`,
+            `  if (ledgerResult.error) {\n    return <ErrorState title={ar ? "تعذر تحميل الرصيد المالي" : "Finance balance could not load"} body={ar ? "راجع صحة دفتر المالية قبل اتخاذ قرار توسع." : "Repair the Finance ledger before relying on an expansion decision."} />;\n  }\n  if (salesResult.error || manualSalesResult.error) {\n    return <ErrorState title={ar ? "تعذر تحميل المبيعات الكاملة" : "Complete sales could not load"} body={ar ? "يجب تحميل مبيعات VMS والمبيعات اليدوية معاً قبل اتخاذ قرار توسع." : "Both VMS and confirmed manual route sales must load before relying on an expansion decision."} />;\n  }\n\n  const salesRows = ((salesResult.data ?? []) as SalesRow[]).map((row) => ({ ...row, source: "vms" }));\n  const manualSales = (manualSalesResult.data ?? []) as any[];\n  const manualMovementIds = Array.from(new Set(manualSales.map((sale) => String(sale.inventory_movement_id ?? "").trim()).filter(Boolean)));\n  const manualMovementResult = manualMovementIds.length\n    ? await supabase.from("inventory_movements").select("id, line_total_lyd, unit_cost_lyd").in("id", manualMovementIds)\n    : { data: [], error: null };\n  if (manualMovementResult.error) {\n    return <ErrorState title={ar ? "تعذر تحميل تكلفة المبيعات اليدوية" : "Manual-sale costs could not load"} body={ar ? "لا يمكن إصدار قرار شراء موثوق من دون تكلفة المنتجات المباعة يدوياً." : "A reliable purchase decision requires the product cost of manual sales."} />;\n  }\n  const manualProfitRows = manualRouteSalesAsProfitRows(manualSales, manualMovementResult.data ?? []);\n  const manualProfitBySaleId = new Map(manualSales.map((sale, index) => [String(sale.id), manualProfitRows[index]]));`,
+            'manual sales preparation',
+          );
+
+          replaceOnce(
+            `    const monthSales = salesRows.filter((row) => row.sale_date && row.sale_date >= start && row.sale_date <= end);\n    const monthLedger = ledgerRows.filter((row) => row.transaction_date && row.transaction_date >= start && row.transaction_date <= end);\n    return { start, end, ...calculateInvestorMonth({ salesRows: monthSales, ledgerRows: monthLedger, sharePercent: 0 }) };`,
+            `    const monthSales = salesRows.filter((row) => row.sale_date && row.sale_date >= start && row.sale_date <= end);\n    const monthManualSales = manualSales.filter((sale) => {\n      const date = String(sale.sale_time ?? "").slice(0, 10);\n      return date >= start && date <= end;\n    });\n    const monthManualProfitRows = monthManualSales.flatMap((sale) => {\n      const row = manualProfitBySaleId.get(String(sale.id));\n      return row ? [row] : [];\n    });\n    const monthLedger = ledgerRows.filter((row) => row.transaction_date && row.transaction_date >= start && row.transaction_date <= end);\n    return { start, end, ...calculateInvestorMonth({ salesRows: [...monthSales, ...monthManualProfitRows], ledgerRows: monthLedger, sharePercent: 0 }) };`,
+            'monthly combination',
+          );
+
+          replaceOnce(
+            `  const latestSales = salesRows.filter((row) => row.sale_date && row.sale_date >= latestStart && row.sale_date <= latestEnd);\n  const activeMachines = machines.filter((machine) => String(machine.status ?? "active") === "active");\n  const machineProfitRows = activeMachines.map((machine) => {\n    const grossProfit = latestSales\n      .filter((row) => row.machine_id === machine.id && !row.cost_missing)\n      .reduce((sum, row) => sum + numeric(row.gross_profit_amount), 0);\n    return { id: machine.id, name: machine.name ?? machine.id, profitAfterRent: money(grossProfit - numeric(machine.rent_amount)) };\n  });`,
+            `  const latestSales = salesRows.filter((row) => row.sale_date && row.sale_date >= latestStart && row.sale_date <= latestEnd);\n  const latestManualSales = manualSales.filter((sale) => {\n    const date = String(sale.sale_time ?? "").slice(0, 10);\n    return date >= latestStart && date <= latestEnd;\n  });\n  const activeMachines = machines.filter((machine) => String(machine.status ?? "active") === "active");\n  const machineProfitRows = activeMachines.map((machine) => {\n    const vmsGrossProfit = latestSales\n      .filter((row) => row.machine_id === machine.id && !row.cost_missing)\n      .reduce((sum, row) => sum + numeric(row.gross_profit_amount), 0);\n    const manualGrossProfit = latestManualSales\n      .filter((sale) => sale.machine_id === machine.id)\n      .reduce((sum, sale) => {\n        const profitRow = manualProfitBySaleId.get(String(sale.id));\n        return sum + (profitRow && !profitRow.cost_missing ? numeric(profitRow.gross_profit_amount) : 0);\n      }, 0);\n    return { id: machine.id, name: machine.name ?? machine.id, profitAfterRent: money(vmsGrossProfit + manualGrossProfit - numeric(machine.rent_amount)) };\n  });`,
+            'machine profit combination',
+          );
+
+          fs.writeFileSync(path, source);
+          NODE
+      - name: Commit guarded integration
+        run: |
+          git config user.name "Snacky CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add src/app/finance/growth-decisions/page.tsx
+          git commit -m "Include manual sales in growth decisions"
+          git push origin HEAD:feature/growth-decisions-investor-portal
