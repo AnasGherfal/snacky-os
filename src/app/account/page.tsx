@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { FormField, FormSection, PageHeader, SectionCard, StatusBadge } from "@/components/ui";
+import { NotificationActivationCard } from "@/components/NotificationActivationCard";
 import { changeOwnPassword, logoutFromAccount } from "@/lib/account-actions";
 import { getCurrentProfile } from "@/lib/auth";
 
@@ -12,37 +13,41 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
 
   return (
     <>
-      <PageHeader title="Account" subtitle="View your Snacky OS profile, change your password, or log out." />
+      <PageHeader title="Account" subtitle="View your Snacky OS profile, notifications, password, and session." />
 
       <div className="grid gap-6 xl:grid-cols-[1fr_420px]">
-        <SectionCard>
-          <div className="space-y-4 p-4">
-            <h2 className="text-base font-semibold text-slate-900">Profile</h2>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="rounded-lg border border-slate-200 bg-white p-4">
-                <div className="text-xs text-slate-500">Name</div>
-                <div className="mt-1 font-medium text-slate-900">{profile.full_name}</div>
+        <div className="space-y-6">
+          <SectionCard>
+            <div className="space-y-4 p-4">
+              <h2 className="text-base font-semibold text-slate-900">Profile</h2>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="rounded-lg border border-slate-200 bg-white p-4">
+                  <div className="text-xs text-slate-500">Name</div>
+                  <div className="mt-1 font-medium text-slate-900">{profile.full_name}</div>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-white p-4">
+                  <div className="text-xs text-slate-500">Email</div>
+                  <div className="mt-1 font-medium text-slate-900">{profile.email ?? "-"}</div>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-white p-4">
+                  <div className="text-xs text-slate-500">Role</div>
+                  <div className="mt-2 flex flex-wrap gap-1">{profile.roles.map((role) => <StatusBadge key={role} status={role} />)}</div>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-white p-4">
+                  <div className="text-xs text-slate-500">Status</div>
+                  <div className="mt-2"><StatusBadge status={profile.active_status} /></div>
+                </div>
               </div>
-              <div className="rounded-lg border border-slate-200 bg-white p-4">
-                <div className="text-xs text-slate-500">Email</div>
-                <div className="mt-1 font-medium text-slate-900">{profile.email ?? "-"}</div>
-              </div>
-              <div className="rounded-lg border border-slate-200 bg-white p-4">
-                <div className="text-xs text-slate-500">Role</div>
-                <div className="mt-2 flex flex-wrap gap-1">{profile.roles.map((role) => <StatusBadge key={role} status={role} />)}</div>
-              </div>
-              <div className="rounded-lg border border-slate-200 bg-white p-4">
-                <div className="text-xs text-slate-500">Status</div>
-                <div className="mt-2"><StatusBadge status={profile.active_status} /></div>
-              </div>
+              {profile.must_change_password ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900">
+                  You are using a temporary password. Change it before continuing regular operations.
+                </div>
+              ) : null}
             </div>
-            {profile.must_change_password ? (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900">
-                You are using a temporary password. Change it before continuing regular operations.
-              </div>
-            ) : null}
-          </div>
-        </SectionCard>
+          </SectionCard>
+
+          <NotificationActivationCard />
+        </div>
 
         <div className="space-y-6">
           <FormSection title="Change password">
