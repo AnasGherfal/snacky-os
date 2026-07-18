@@ -24,8 +24,7 @@ alter table public.notifications add column if not exists created_at timestamptz
 alter table public.notifications add column if not exists updated_at timestamptz not null default now();
 
 create unique index if not exists notifications_route_user_unique
-  on public.notifications(type, user_id, related_route_id)
-  where related_route_id is not null;
+  on public.notifications(type, user_id, related_route_id);
 create index if not exists notifications_user_created_idx
   on public.notifications(user_id, created_at desc);
 create index if not exists notifications_user_unread_idx
