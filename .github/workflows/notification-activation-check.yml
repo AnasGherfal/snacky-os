@@ -1,0 +1,35 @@
+name: Notification activation checks
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "src/components/NotificationActivationCard.tsx"
+      - "src/app/account/page.tsx"
+      - "src/app/api/notifications/push-status/route.ts"
+      - "src/app/api/notifications/test-push/route.ts"
+      - "scripts/test-notification-activation.mjs"
+      - ".env.example"
+      - ".github/workflows/notification-activation-check.yml"
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Test notification activation
+        run: node --test scripts/test-notification-activation.mjs
+      - name: Test route safety
+        run: node --test scripts/test-route-safety-product-activity.mjs
+      - name: Test critical workflows
+        run: npm run test:critical-workflows
+      - name: Build Snacky OS
+        run: npm run build
