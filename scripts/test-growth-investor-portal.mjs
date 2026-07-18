@@ -7,7 +7,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 const growthModule = await import(pathToFileURL(path.join(root, "src/lib/growth-decision.ts")).href);
+const investorProfitModule = await import(pathToFileURL(path.join(root, "src/lib/investor-profit.ts")).href);
 const { buildGrowthDecision } = growthModule;
+const { calculateInvestorMonth, manualRouteSalesAsProfitRows } = investorProfitModule;
 
 const readyInput = {
   cashAvailableLyd: 65000,
@@ -48,12 +50,58 @@ test("operational problems take priority over expansion", () => {
   assert.equal(buildGrowthDecision({ ...readyInput, historyMonthCount: 1 }).code, "collect_more_history");
 });
 
+test("confirmed manual sales add revenue and movement cost to investor profit", () => {
+  const manualRows = manualRouteSalesAsProfitRows([
+    { id: "sale-1", status: "confirmed", total_amount_lyd: 30, inventory_movement_id: "movement-1" },
+    { id: "sale-2", status: "confirmed", total_amount_lyd: 15, inventory_movement_id: null },
+    { id: "sale-3", status: "cancelled", total_amount_lyd: 99, inventory_movement_id: "movement-3" },
+  ], [
+    { id: "movement-1", line_total_lyd: 18, unit_cost_lyd: 6 },
+    { id: "movement-3", line_total_lyd: 50, unit_cost_lyd: 5 },
+  ]);
+  assert.equal(manualRows.length, 2);
+  assert.deepEqual(manualRows[0], {
+    net_sales_amount: 30,
+    cogs_amount: 18,
+    gross_profit_amount: 12,
+    cost_missing: false,
+    source: "manual_route_sale",
+  });
+  assert.equal(manualRows[1].cost_missing, true);
+
+  const calculation = calculateInvestorMonth({
+    salesRows: [
+      { net_sales_amount: 100, cogs_amount: 60, gross_profit_amount: 40, cost_missing: false, source: "vms" },
+      ...manualRows,
+    ],
+    ledgerRows: [],
+    sharePercent: 30,
+  });
+  assert.equal(calculation.revenueLyd, 145);
+  assert.equal(calculation.manualSalesRevenueLyd, 45);
+  assert.equal(calculation.manualSalesCogsLyd, 18);
+  assert.equal(calculation.missingCostRows, 1);
+  assert.equal(calculation.complete, false);
+});
+
 test("investor profit calculation is positive-profit only and excludes distributions", () => {
   const source = read("src/lib/investor-profit.ts");
   assert.match(source, /Math\.max\(0, operatingProfitLyd\)/);
   assert.match(source, /isInvestorDistributionLedgerRow/);
   assert.match(source, /source_type.*investor_payment/s);
   assert.match(source, /aggregateExpenseCategories\(operatingLedger/);
+});
+
+test("growth and statements use confirmed manual sales and inventory movement cost", () => {
+  const actions = read("src/lib/investor-actions.ts");
+  const growth = read("src/app/finance/growth-decisions/page.tsx");
+  for (const source of [actions, growth]) {
+    assert.match(source, /route_manual_sales/);
+    assert.match(source, /manualRouteSalesAsProfitRows/);
+    assert.match(source, /inventory_movements/);
+  }
+  assert.match(actions, /manual sales revenue/);
+  assert.match(growth, /Both VMS and confirmed manual route sales must load/);
 });
 
 test("investor role is restricted to the investor portal", () => {
