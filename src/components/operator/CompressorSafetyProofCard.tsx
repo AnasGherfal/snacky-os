@@ -58,15 +58,15 @@ export function CompressorSafetyProofCard({
 
   async function saveProof() {
     if (!confirmed) {
-      setError("Confirm that the compressor is switched on.");
+      setError(tr("Confirm that the compressor is switched on.", "أكد أن الضاغط قد تم تشغيله."));
       return;
     }
     if (!file) {
-      setError("Take a photo showing the compressor switch or running indicator on.");
+      setError(tr("Take a photo showing the compressor switch or running indicator on.", "التقط صورة توضح مفتاح تشغيل الضاغط أو مؤشر التشغيل."));
       return;
     }
     if (file.size > 10 * 1024 * 1024) {
-      setError("The compressor photo is too large. Retake it with the camera and try again.");
+      setError(tr("The compressor photo is too large. Retake it with the camera and try again.", "صورة الضاغط كبيرة جداً. أعد التقاطها بالكاميرا ثم حاول مرة أخرى."));
       return;
     }
 
@@ -79,7 +79,7 @@ export function CompressorSafetyProofCard({
       photoFormData.append("machineId", machineId);
       photoFormData.append("photo", file);
       const uploaded = await uploadRefillProofPhoto(photoFormData);
-      if (uploaded.uploadUnavailable || (!uploaded.photoUrl && !uploaded.photoPath)) throw new Error("The photo could not be uploaded. Try again before completing the stop.");
+      if (uploaded.uploadUnavailable || (!uploaded.photoUrl && !uploaded.photoPath)) throw new Error(tr("The photo could not be uploaded. Try again before completing the stop.", "تعذر رفع الصورة. حاول مرة أخرى قبل إنهاء الموقع."));
 
       const response = await fetch(`/api/operator/routes/${routeId}/stops/${stopId}/safety-check`, {
         method: "POST",
@@ -93,14 +93,14 @@ export function CompressorSafetyProofCard({
         }),
       });
       const payload = await response.json().catch(() => null);
-      if (!response.ok || payload?.success === false) throw new Error(payload?.error || "Could not save compressor proof.");
+      if (!response.ok || payload?.success === false) throw new Error(payload?.error || tr("Could not save compressor proof.", "تعذر حفظ إثبات تشغيل الضاغط."));
       setInstalled(true);
       setReady(true);
       setSavedAt(payload?.proof?.confirmed_at ?? new Date().toISOString());
       setFile(null);
       onStateChangeRef.current?.({ installed: true, ready: true });
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Could not save compressor proof.");
+      setError(saveError instanceof Error ? saveError.message : tr("Could not save compressor proof.", "تعذر حفظ إثبات تشغيل الضاغط."));
     } finally {
       setSaving(false);
     }
@@ -125,7 +125,7 @@ export function CompressorSafetyProofCard({
       ) : null}
       {ready ? (
         <div className="mt-4 rounded-lg border border-emerald-200 bg-white p-3 text-sm font-medium text-emerald-900">
-          {tr("Compressor ON proof is saved", "تم حفظ إثبات تشغيل الضاغط")}{savedAt ? ` · ${new Date(savedAt).toLocaleString("en-US")}` : ""}.
+          {tr("Compressor ON proof is saved", "تم حفظ إثبات تشغيل الضاغط")}{savedAt ? ` · ${new Date(savedAt).toLocaleString(locale === "ar" ? "ar-LY" : "en-US")}` : ""}.
         </div>
       ) : (
         <div className="mt-4 space-y-4">
