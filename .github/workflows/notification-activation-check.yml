@@ -1,0 +1,43 @@
+name: Notification activation checks
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "src/lib/notification-delivery.ts"
+      - "src/components/NotificationCenter.tsx"
+      - "src/components/Topbar.tsx"
+      - "src/app/api/push-config/route.ts"
+      - "src/app/api/notifications/test/route.ts"
+      - "src/app/api/push-subscriptions/route.ts"
+      - "src/app/api/notifications/route.ts"
+      - "public/sw.js"
+      - "supabase/migrations/202607180002_notification_push_activation.sql"
+      - "scripts/test-notification-activation.mjs"
+      - ".github/workflows/notification-activation-check.yml"
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Test push notification activation
+        run: node --test scripts/test-notification-activation.mjs
+      - name: Test route safety and product activity
+        run: node --test scripts/test-route-safety-product-activity.mjs
+      - name: Test pickup checklist
+        run: npm run test:route-pickup-checklist
+      - name: Test route inventory regression
+        run: npm run test:route-inventory-regression
+      - name: Test critical workflows
+        run: npm run test:critical-workflows
+      - name: Build Snacky OS
+        run: npm run build
