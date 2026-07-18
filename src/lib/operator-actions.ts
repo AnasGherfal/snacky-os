@@ -2463,6 +2463,18 @@ export async function completeStop({
     const hasExistingCompletionPhoto = Boolean(existingProof?.machine_photo_url || existingProof?.machine_photo_path);
     if (!hasNewCompletionPhoto && !hasExistingCompletionPhoto) throw new Error("Take or upload a final machine photo before completing the stop.");
 
+    const { data: compressorProof, error: compressorProofError } = await supabase
+      .from("route_stop_safety_checks")
+      .select("compressor_confirmed, proof_photo_url, proof_photo_path")
+      .eq("route_stop_id", stopId)
+      .maybeSingle();
+    if (compressorProofError && !isMissingTable(compressorProofError, "route_stop_safety_checks")) {
+      throwActionError(compressorProofError, "Could not verify compressor safety proof.");
+    }
+    if (!compressorProofError && (!compressorProof?.compressor_confirmed || (!compressorProof.proof_photo_url && !compressorProof.proof_photo_path))) {
+      throw new Error("Save the compressor ON photo before completing this stop.");
+    }
+
     const [{ data: machine, error: machineError }, { data: operatorMember, error: operatorError }] = await Promise.all([
       supabase
         .from("machines")

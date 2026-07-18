@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from "@/components/LocalDraft";
+import { CompressorSafetyProofCard } from "@/components/operator/CompressorSafetyProofCard";
 import { ManualRouteSalesSection, type ManualRouteSaleProductOption } from "@/components/operator/ManualRouteSalesSection";
+import { RouteStopQuickActions } from "@/components/operator/RouteStopQuickActions";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { QuantityStepper } from "@/components/QuantityStepper";
 import { EmptyState, ErrorState, LoadingState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
@@ -542,6 +544,8 @@ export default function MachineStopPage() {
   const [cleaningDone, setCleaningDone] = useState(false);
   const [finalPhotoName, setFinalPhotoName] = useState("");
   const [finalPhotoFile, setFinalPhotoFile] = useState<File | null>(null);
+  const [compressorSafetyInstalled, setCompressorSafetyInstalled] = useState(false);
+  const [compressorProofReady, setCompressorProofReady] = useState(false);
   const initialStopDraftRef = useRef<string>("");
   const clientSubmissionIdRef = useRef(newClientId());
   const draftKey = useDraftKey("route-stop", [routeId || "missing-route", stopId || "missing-stop"]);
@@ -808,6 +812,11 @@ export default function MachineStopPage() {
       setError("Please take or upload the final machine photo before completing the stop.");
       return;
     }
+    if (compressorSafetyInstalled && !compressorProofReady && stopData.stopStatus !== ROUTE_STOP_COMPLETED_STATUS) {
+      setError("Save the compressor ON photo before completing this stop.");
+      document.getElementById("compressor-safety")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
 
     localDraft.saveNow();
     setSubmitting(true);
@@ -947,7 +956,8 @@ export default function MachineStopPage() {
   }
 
   const isEditingCompletedStop = stopData.stopStatus === ROUTE_STOP_COMPLETED_STATUS;
-  const canSubmitStop = !submitting && (cleaningDone || isEditingCompletedStop);
+  const compressorReadyForSubmit = !compressorSafetyInstalled || compressorProofReady || isEditingCompletedStop;
+  const canSubmitStop = !submitting && (cleaningDone || isEditingCompletedStop) && compressorReadyForSubmit;
 
   return (
     <>
@@ -960,6 +970,7 @@ export default function MachineStopPage() {
 
         <DraftRestoreBanner pendingDraft={localDraft.pendingDraft} onRestore={localDraft.restoreDraft} onDiscard={localDraft.discardDraft} />
         {!localDraft.pendingDraft ? <DraftSaveStatus status={localDraft.status} /> : null}
+        <RouteStopQuickActions />
         {error && (
           <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
             <p>{t(error, error)}</p>
@@ -976,6 +987,7 @@ export default function MachineStopPage() {
           <Metric label={t("Machine storage units")} value={stopExecutionSummary.extraUnits} />
           <Metric label={t("Inventory adjustments")} value={stopExecutionSummary.adjustmentCount} />
           <Metric label={t("Proof photo")} value={stopExecutionSummary.proofReady ? t("Ready") : t("Needed")} tone={stopExecutionSummary.proofReady ? "neutral" : "warn"} />
+          <Metric label={t("Compressor proof")} value={!compressorSafetyInstalled ? t("Setup pending") : compressorProofReady ? t("Ready") : t("Needed")} tone={compressorSafetyInstalled && !compressorProofReady ? "warn" : "neutral"} />
         </section>
 
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
@@ -1254,6 +1266,17 @@ export default function MachineStopPage() {
           setIssuePriority={setIssuePriority}
           issueDescription={issueDescription}
           setIssueDescription={setIssueDescription}
+        />
+
+        <CompressorSafetyProofCard
+          routeId={routeId}
+          stopId={stopId}
+          machineId={stopData.machineId}
+          completed={isEditingCompletedStop}
+          onStateChange={({ installed, ready }) => {
+            setCompressorSafetyInstalled(installed);
+            setCompressorProofReady(ready);
+          }}
         />
 
         <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
@@ -1589,9 +1612,19 @@ function InventoryAdjustmentsSection({
   const returnedAdjustments = adjustments.filter((adjustment) => adjustment.adjustmentType === "returned_from_machine");
   const damagedQuantity = damagedAdjustments.reduce((sum, adjustment) => sum + Number(adjustment.quantity ?? 0), 0);
   const returnedQuantity = returnedAdjustments.reduce((sum, adjustment) => sum + Number(adjustment.quantity ?? 0), 0);
+  const [activeAdjustmentType, setActiveAdjustmentType] = useState<InventoryAdjustmentType | null>(null);
+
+  useEffect(() => {
+    const openAdjustment = (event: Event) => {
+      const requested = (event as CustomEvent<{ adjustmentType?: InventoryAdjustmentType }>).detail?.adjustmentType;
+      setActiveAdjustmentType(requested === "returned_from_machine" ? "returned_from_machine" : "damaged");
+    };
+    window.addEventListener("snacky:open-inventory-adjustment", openAdjustment);
+    return () => window.removeEventListener("snacky:open-inventory-adjustment", openAdjustment);
+  }, []);
 
   return (
-    <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
+    <section id="inventory-adjustments" className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold">{t("Inventory adjustments")}</h2>
@@ -1610,34 +1643,36 @@ function InventoryAdjustmentsSection({
         <Metric label={t("Adjustment rows")} value={adjustments.length} />
       </div>
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-2">
-        <InventoryAdjustmentForm
-          adjustmentType="damaged"
-          title={t("Add damaged product")}
-          description={t("Record items that broke, expired, melted, or cannot be sold.")}
-          routeId={routeId}
-          stopId={stopId}
-          machineId={machineId}
-          machineProducts={machineProducts}
-          allProducts={allProducts}
-          reasonOptions={damagedReasonOptions}
-          submitLabel={t("Save damaged product")}
-          onSaved={onSaved}
-        />
-        <InventoryAdjustmentForm
-          adjustmentType="returned_from_machine"
-          title={t("Add returned product")}
-          description={t("Record products removed from the machine and brought back.")}
-          routeId={routeId}
-          stopId={stopId}
-          machineId={machineId}
-          machineProducts={machineProducts}
-          allProducts={allProducts}
-          reasonOptions={returnedReasonOptions}
-          submitLabel={t("Save returned product")}
-          onSaved={onSaved}
-        />
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <button type="button" onClick={() => setActiveAdjustmentType("damaged")} className={activeAdjustmentType === "damaged" ? "btn-primary" : "btn-secondary"}>{t("Damaged")}</button>
+        <button type="button" onClick={() => setActiveAdjustmentType("returned_from_machine")} className={activeAdjustmentType === "returned_from_machine" ? "btn-primary" : "btn-secondary"}>{t("Return from machine")}</button>
       </div>
+
+      {activeAdjustmentType ? (
+        <div className="mt-4">
+          <InventoryAdjustmentForm
+            key={activeAdjustmentType}
+            adjustmentType={activeAdjustmentType}
+            title={activeAdjustmentType === "damaged" ? t("Add damaged product") : t("Add returned product")}
+            description={activeAdjustmentType === "damaged" ? t("Record items that broke, expired, melted, or cannot be sold.") : t("Record products removed from the machine and brought back.")}
+            routeId={routeId}
+            stopId={stopId}
+            machineId={machineId}
+            machineProducts={machineProducts}
+            allProducts={allProducts}
+            reasonOptions={activeAdjustmentType === "damaged" ? damagedReasonOptions : returnedReasonOptions}
+            submitLabel={activeAdjustmentType === "damaged" ? t("Save damaged product") : t("Save returned product")}
+            onSaved={(adjustment) => {
+              onSaved(adjustment);
+              setActiveAdjustmentType(null);
+            }}
+          />
+        </div>
+      ) : (
+        <div className="mt-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
+          {t("Choose Damaged or Return from machine. Then search and save only that product.")}
+        </div>
+      )}
 
       <div className="mt-6">
         <div className="mb-3 flex items-center justify-between gap-2">

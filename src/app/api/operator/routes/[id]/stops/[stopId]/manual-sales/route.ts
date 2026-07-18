@@ -106,6 +106,9 @@ function revalidateManualSalePaths(routeId: string, stopId: string) {
   revalidatePath(`/routes/${routeId}`);
   revalidatePath("/inventory");
   revalidatePath("/inventory/movements");
+  revalidatePath("/sales");
+  revalidatePath("/reports");
+  revalidatePath("/reports/route-product-activity");
 }
 
 async function loadRouteContext(routeClient: NonNullable<ReturnType<typeof getSupabaseServerClient>>, routeId: string, stopId: string) {
