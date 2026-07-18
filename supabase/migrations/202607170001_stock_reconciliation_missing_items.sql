@@ -565,7 +565,7 @@ select
 from final_rows rows
 left join public.stock_reconciliation_variance_cases cases
   on cases.session_id = p_session_id and cases.product_id = rows.product_id
-order by rows.missing_cost desc, rows.missing_units desc, rows.product_name;
+order by missing_cost desc, missing_units desc, rows.product_name;
 $$;
 
 alter table public.stock_reconciliation_sessions enable row level security;
