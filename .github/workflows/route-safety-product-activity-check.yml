@@ -1,0 +1,47 @@
+name: Route safety and product activity checks
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "src/app/operator/routes/[id]/stops/[stopId]/page.tsx"
+      - "src/components/operator/ManualRouteSalesSection.tsx"
+      - "src/components/operator/RouteStopQuickActions.tsx"
+      - "src/components/operator/CompressorSafetyProofCard.tsx"
+      - "src/app/api/operator/routes/[id]/stops/[stopId]/safety-check/route.ts"
+      - "src/app/api/operator/routes/[id]/stops/[stopId]/manual-sales/route.ts"
+      - "src/app/api/operator/routes/[id]/stops/[stopId]/adjustments/route.ts"
+      - "src/lib/operator-actions.ts"
+      - "src/components/OperationalSalesSummary.tsx"
+      - "src/app/sales/page.tsx"
+      - "src/app/reports/route-product-activity/page.tsx"
+      - "src/components/module-tabs-config.ts"
+      - "supabase/migrations/202607180001_route_stop_compressor_safety.sql"
+      - "scripts/test-route-safety-product-activity.mjs"
+      - ".github/workflows/route-safety-product-activity-check.yml"
+  push:
+    branches:
+      - feature/route-safety-product-activity
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Test route safety and product activity
+        run: node --test scripts/test-route-safety-product-activity.mjs
+      - name: Run route pickup regression checks
+        run: |
+          for test_file in scripts/test-route-pickup-*.mjs; do
+            if [ -f "$test_file" ]; then node --test "$test_file"; fi
+          done
+      - name: Build Snacky OS
+        run: npm run build
