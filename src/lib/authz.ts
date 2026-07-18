@@ -370,7 +370,8 @@ export function canAccessPath(user: AuthUserContext | null | undefined, pathname
 
   if (matchesPrefix(pathname, ["/team"])) return hasPermission(user, "team.manage");
   if (matchesPrefix(pathname, ["/activity"])) return hasPermission(user, "activity.view");
-  if (matchesPrefix(pathname, ["/vms-import", "/vms-mappings"])) return true;
+  if (matchesPrefix(pathname, ["/vms-import"])) return canViewVmsImports(user);
+  if (matchesPrefix(pathname, ["/vms-mappings"])) return canManageVmsMappings(user);
   if (matchesPrefix(pathname, ["/settings"])) return hasPermission(user, "system.settings");
   if (matchesPrefix(pathname, ["/admin"])) return hasPermission(user, "system.settings");
 
