@@ -24,6 +24,18 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Narrow duplicate monthly return anchor
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("scripts/agent-fix-growth-cost-coverage.py")
+          text = path.read_text(encoding="utf-8")
+          old = '''    count = text.count(old)\n    if count != 1:\n        raise RuntimeError(f"{label}: expected exactly one match, found {count}")\n    return text.replace(old, new, 1)'''
+          new = '''    count = text.count(old)\n    if label == "growth monthly product return first" and count == 2:\n        return text.replace(old, new, 1)\n    if count != 1:\n        raise RuntimeError(f"{label}: expected exactly one match, found {count}")\n    return text.replace(old, new, 1)'''
+          if text.count(old) != 1:
+              raise SystemExit("Could not update duplicate-anchor guard")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
       - name: Apply prepared patch
         id: apply_patch
         continue-on-error: true
