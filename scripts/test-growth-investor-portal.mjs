@@ -139,6 +139,11 @@ test("growth uses the same sales dashboard RPCs instead of the missing clean vie
   assert.match(growth, /missingCostProducts/);
   assert.match(growth, /Complete product costs first/);
   assert.match(growth, /Unavailable until costs are complete/);
+  assert.match(growth, /MIN_DECISION_COST_COVERAGE_PERCENT = 99/);
+  assert.match(growth, /costCoveragePercent >= MIN_DECISION_COST_COVERAGE_PERCENT/);
+  assert.match(growth, /Minor cost gap ignored for growth decision/);
+  assert.match(growth, /reportedGrossProfit - missingCostRevenue/);
+  assert.match(growth, /Revenue treated as zero profit/);
 });
 
 test("growth keeps figures visible but holds expansion when coverage is incomplete", () => {
