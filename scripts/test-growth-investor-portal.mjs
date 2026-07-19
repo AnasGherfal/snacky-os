@@ -77,7 +77,17 @@ test("growth and statements use confirmed manual sales and inventory movement co
     assert.match(source, /inventory_movements/);
   }
   assert.match(actions, /manual sales revenue/);
-  assert.match(growth, /Both VMS and confirmed manual route sales must load/);
+  assert.match(growth, /operationalReadClient/);
+});
+
+test("growth keeps VMS figures visible but holds expansion when manual coverage fails", () => {
+  const growth = read("src/app/finance/growth-decisions/page.tsx");
+  assert.match(growth, /getSupabaseAdminClient\(\) \?\? supabase/);
+  assert.match(growth, /if \(salesResult\.error\)/);
+  assert.doesNotMatch(growth, /salesResult\.error \|\| manualSalesResult\.error/);
+  assert.match(growth, /manualCoverageComplete \? completeMonthly\.length : 0/);
+  assert.match(growth, /Manual route sales coverage is incomplete/);
+  assert.match(growth, /VMS sales could not load/);
 });
 
 test("investor role is restricted to the investor portal", () => {
