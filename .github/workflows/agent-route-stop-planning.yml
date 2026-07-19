@@ -45,11 +45,18 @@ jobs:
                   if match:
                       replacement = f"{match.group(1)}{new.strip()}"
                       return text[:match.start()] + replacement + text[match.end():]
+              if label == "API activity creation mode" and count == 0:
+                  pattern = r"(?m)^(\\s*)assignment_mode: assignmentMode,\\s*$"
+                  match = re.search(pattern, text)
+                  if match:
+                      indent = match.group(1)
+                      replacement = f"{indent}assignment_mode: assignmentMode,\\n{indent}creation_mode: creationMode,\\n{indent}products_deferred_until_storage: stopsOnly,"
+                      return text[:match.start()] + replacement + text[match.end():]
               if count != 1:
                   raise RuntimeError(f"{label}: expected exactly one match, found {count}")
               return text.replace(old, new, 1)
           '''
-          new = new.replace("              count", "    count").replace("              if label", "    if label").replace("                  pattern", "        pattern").replace("                  match", "        match").replace("                  if match", "        if match").replace("                      replacement", "            replacement").replace("                      return", "            return").replace("              if count", "    if count").replace("                  raise", "        raise").replace("              return", "    return")
+          new = new.replace("              count", "    count").replace("              if label", "    if label").replace("                  pattern", "        pattern").replace("                  match", "        match").replace("                  if match", "        if match").replace("                      replacement", "            replacement").replace("                      indent", "            indent").replace("                      return", "            return").replace("              if count", "    if count").replace("                  raise", "        raise").replace("              return", "    return")
           if text.count(old) != 1:
               raise SystemExit("Could not locate patch helper for formatted-anchor normalization.")
           path.write_text(text.replace(old, new, 1), encoding="utf-8")
@@ -131,17 +138,7 @@ jobs:
 
           def request_json(url, method="GET", payload=None):
               data = None if payload is None else json.dumps(payload).encode()
-              request = Request(
-                  url,
-                  data=data,
-                  method=method,
-                  headers={
-                      "Authorization": f"Bearer {token}",
-                      "Accept": "application/vnd.github+json",
-                      "X-GitHub-Api-Version": "2022-11-28",
-                      "Content-Type": "application/json",
-                  },
-              )
+              request = Request(url, data=data, method=method, headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json"})
               with urlopen(request) as response:
                   return json.load(response)
 
@@ -151,11 +148,6 @@ jobs:
               request_json(
                   f"https://api.github.com/repos/{repository}/contents/{path}",
                   method="PUT",
-                  payload={
-                      "message": "Add two-stage stop-only route planning",
-                      "content": content,
-                      "sha": current["sha"],
-                      "branch": branch,
-                  },
+                  payload={"message": "Add two-stage stop-only route planning", "content": content, "sha": current["sha"], "branch": branch},
               )
           PY
