@@ -3,14 +3,14 @@
 > node --experimental-strip-types --test scripts/test-route-workflow.mjs
 
 TAP version 13
-# (node:2166) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///home/runner/work/snacky-os/snacky-os/src/lib/route-workflow.ts is not specified and it doesn't parse as CommonJS.
+# (node:2063) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///home/runner/work/snacky-os/snacky-os/src/lib/route-workflow.ts is not specified and it doesn't parse as CommonJS.
 # Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
 # To eliminate this warning, add "type": "module" to /home/runner/work/snacky-os/snacky-os/package.json.
 # (Use `node --trace-warnings ...` to show where the warning was created)
 # Subtest: route status groups describe one consistent workflow
 not ok 1 - route status groups describe one consistent workflow
   ---
-  duration_ms: 3.331411
+  duration_ms: 2.318862
   type: 'test'
   location: '/home/runner/work/snacky-os/snacky-os/scripts/test-route-workflow.mjs:43:1'
   failureType: 'testCodeFailure'
@@ -34,43 +34,43 @@ not ok 1 - route status groups describe one consistent workflow
 # Subtest: route item edits stay open for non-terminal routes only
 ok 2 - route item edits stay open for non-terminal routes only
   ---
-  duration_ms: 0.281456
+  duration_ms: 0.238154
   type: 'test'
   ...
 # Subtest: route creation and display statuses use database statuses only
 ok 3 - route creation and display statuses use database statuses only
   ---
-  duration_ms: 0.363861
+  duration_ms: 0.209368
   type: 'test'
   ...
 # Subtest: partial route continuation respects independent stop statuses
 ok 4 - partial route continuation respects independent stop statuses
   ---
-  duration_ms: 0.538096
+  duration_ms: 0.453067
   type: 'test'
   ...
 # Subtest: database write statuses avoid production enum mismatch values
 ok 5 - database write statuses avoid production enum mismatch values
   ---
-  duration_ms: 0.364702
+  duration_ms: 0.234543
   type: 'test'
   ...
 # Subtest: route status enum mismatch detection matches Supabase errors
 ok 6 - route status enum mismatch detection matches Supabase errors
   ---
-  duration_ms: 0.293179
+  duration_ms: 0.164105
   type: 'test'
   ...
 # Subtest: schema validation reports missing enum values before route workflow writes
 ok 7 - schema validation reports missing enum values before route workflow writes
   ---
-  duration_ms: 3.588319
+  duration_ms: 1.586432
   type: 'test'
   ...
 # Subtest: route reservation queries do not send UI-only statuses into route_status enum filters
 not ok 8 - route reservation queries do not send UI-only statuses into route_status enum filters
   ---
-  duration_ms: 0.586557
+  duration_ms: 0.420509
   type: 'test'
   location: '/home/runner/work/snacky-os/snacky-os/scripts/test-route-workflow.mjs:170:1'
   failureType: 'testCodeFailure'
@@ -93,7 +93,7 @@ not ok 8 - route reservation queries do not send UI-only statuses into route_sta
 # Subtest: route pickup checklist prioritizes Mr Crunch, then Doritos, then other products
 not ok 9 - route pickup checklist prioritizes Mr Crunch, then Doritos, then other products
   ---
-  duration_ms: 15.900903
+  duration_ms: 9.316088
   type: 'test'
   location: '/home/runner/work/snacky-os/snacky-os/scripts/test-route-workflow.mjs:188:1'
   failureType: 'testCodeFailure'
@@ -141,7 +141,7 @@ not ok 9 - route pickup checklist prioritizes Mr Crunch, then Doritos, then othe
 # Subtest: route product grouping keeps similar products together in the expected family order
 ok 10 - route product grouping keeps similar products together in the expected family order
   ---
-  duration_ms: 3.267753
+  duration_ms: 1.452062
   type: 'test'
   ...
 1..10
@@ -152,4 +152,4 @@ ok 10 - route product grouping keeps similar products together in the expected f
 # cancelled 0
 # skipped 0
 # todo 0
-# duration_ms 212.756136
+# duration_ms 207.445269
