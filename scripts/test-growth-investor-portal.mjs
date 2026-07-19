@@ -27,6 +27,10 @@ const readyInput = {
   weakMachineCount: 0,
   historyMonthCount: 4,
   minimumHistoryMonths: 3,
+  monthsWithRevenue: 4,
+  costCoverageComplete: true,
+  missingCostSalesCount: 0,
+  missingCostRevenueLyd: 0,
 };
 
 test("growth engine recommends a machine only after every protection rule passes", () => {
@@ -47,6 +51,22 @@ test("investor due and reserves can block a machine purchase", () => {
   });
   assert.equal(result.code, "build_cash_reserve");
   assert.ok(result.reserveGapLyd > 0);
+});
+
+test("missing product costs produce a dedicated hold without a fake payback", () => {
+  const result = buildGrowthDecision({
+    ...readyInput,
+    costCoverageComplete: false,
+    historyMonthCount: 0,
+    monthsWithRevenue: 4,
+    missingCostSalesCount: 6,
+    missingCostRevenueLyd: 850,
+  });
+  assert.equal(result.code, "complete_product_costs");
+  assert.equal(result.projectedPaybackMonths, null);
+  assert.match(result.title, /Complete product costs/);
+  assert.match(result.reasons.join(" "), /4 month/);
+  assert.doesNotMatch(result.reasons.join(" "), /Estimated payback/);
 });
 
 test("operational problems take priority over expansion", () => {
@@ -100,6 +120,9 @@ test("growth and statements use confirmed manual sales and inventory movement co
     assert.match(source, /inventory_movements/);
   }
   assert.match(actions, /manual sales revenue/);
+  assert.match(actions, /sales_dashboard_monthly_summary/);
+  assert.match(actions, /sales_dashboard_summary/);
+  assert.doesNotMatch(actions, /from\("vms_sales_clean"\)/);
   assert.match(growth, /operationalReadClient/);
 });
 
@@ -112,6 +135,10 @@ test("growth uses the same sales dashboard RPCs instead of the missing clean vie
   assert.match(growth, /p_dimension: "machine"/);
   assert.doesNotMatch(growth, /from\("vms_sales_clean"\)/);
   assert.match(growth, /Decision sales source:/);
+  assert.match(growth, /p_dimension: "product"/);
+  assert.match(growth, /missingCostProducts/);
+  assert.match(growth, /Complete product costs first/);
+  assert.match(growth, /Unavailable until costs are complete/);
 });
 
 test("growth keeps figures visible but holds expansion when coverage is incomplete", () => {
@@ -119,10 +146,15 @@ test("growth keeps figures visible but holds expansion when coverage is incomple
   assert.match(growth, /getSupabaseAdminClient\(\) \?\? supabase/);
   assert.match(
     growth,
-    /manualCoverageComplete && vmsCoverageComplete[\s\S]*completeMonthly\.length/,
+    /historyMonthCount: manualCoverageComplete \? completeMonthly\.length : 0/,
+  );
+  assert.match(growth, /costCoverageComplete: vmsCoverageComplete/);
+  assert.match(
+    growth,
+    /reliableProfitCoverage = vmsCoverageComplete && manualCoverageComplete/,
   );
   assert.match(growth, /Manual route sales coverage is incomplete/);
-  assert.match(growth, /Some machine sales costs are incomplete/);
+  assert.match(growth, /Complete product costs first/);
   assert.match(growth, /VMS sales could not load/);
 });
 
