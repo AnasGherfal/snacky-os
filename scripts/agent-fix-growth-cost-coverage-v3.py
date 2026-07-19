@@ -40,6 +40,25 @@ try:
     patched_source = source.replace(old_helper, new_helper, 1)
     namespace = {"__name__": "__main__", "__file__": str(source_path)}
     exec(compile(patched_source, str(source_path), "exec"), namespace)
+
+    test_path = Path("scripts/test-growth-investor-portal.mjs")
+    test_source = test_path.read_text(encoding="utf-8")
+    old_assertion = '''  assert.match(
+    growth,
+    /manualCoverageComplete && vmsCoverageComplete[\\s\\S]*completeMonthly\\.length/,
+  );'''
+    new_assertions = '''  assert.match(
+    growth,
+    /historyMonthCount: manualCoverageComplete \\? completeMonthly\\.length : 0/,
+  );
+  assert.match(growth, /costCoverageComplete: vmsCoverageComplete/);
+  assert.match(
+    growth,
+    /reliableProfitCoverage = vmsCoverageComplete && manualCoverageComplete/,
+  );'''
+    if test_source.count(old_assertion) != 1:
+        raise RuntimeError("Could not locate stale growth coverage assertion.")
+    test_path.write_text(test_source.replace(old_assertion, new_assertions, 1), encoding="utf-8")
 except Exception:
     diagnostic = traceback.format_exc()
     Path("scripts/agent-growth-patch-error.txt").write_text(diagnostic, encoding="utf-8")
