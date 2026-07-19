@@ -1,0 +1,155 @@
+
+> snacky-os@0.1.0 test:route-workflow
+> node --experimental-strip-types --test scripts/test-route-workflow.mjs
+
+TAP version 13
+# (node:2166) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///home/runner/work/snacky-os/snacky-os/src/lib/route-workflow.ts is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /home/runner/work/snacky-os/snacky-os/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: route status groups describe one consistent workflow
+not ok 1 - route status groups describe one consistent workflow
+  ---
+  duration_ms: 3.331411
+  type: 'test'
+  location: '/home/runner/work/snacky-os/snacky-os/scripts/test-route-workflow.mjs:43:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    true !== false
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: false
+  actual: true
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/runner/work/snacky-os/snacky-os/scripts/test-route-workflow.mjs:63:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.start (node:internal/test_runner/test:944:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:296:17)
+  ...
+# Subtest: route item edits stay open for non-terminal routes only
+ok 2 - route item edits stay open for non-terminal routes only
+  ---
+  duration_ms: 0.281456
+  type: 'test'
+  ...
+# Subtest: route creation and display statuses use database statuses only
+ok 3 - route creation and display statuses use database statuses only
+  ---
+  duration_ms: 0.363861
+  type: 'test'
+  ...
+# Subtest: partial route continuation respects independent stop statuses
+ok 4 - partial route continuation respects independent stop statuses
+  ---
+  duration_ms: 0.538096
+  type: 'test'
+  ...
+# Subtest: database write statuses avoid production enum mismatch values
+ok 5 - database write statuses avoid production enum mismatch values
+  ---
+  duration_ms: 0.364702
+  type: 'test'
+  ...
+# Subtest: route status enum mismatch detection matches Supabase errors
+ok 6 - route status enum mismatch detection matches Supabase errors
+  ---
+  duration_ms: 0.293179
+  type: 'test'
+  ...
+# Subtest: schema validation reports missing enum values before route workflow writes
+ok 7 - schema validation reports missing enum values before route workflow writes
+  ---
+  duration_ms: 3.588319
+  type: 'test'
+  ...
+# Subtest: route reservation queries do not send UI-only statuses into route_status enum filters
+not ok 8 - route reservation queries do not send UI-only statuses into route_status enum filters
+  ---
+  duration_ms: 0.586557
+  type: 'test'
+  location: '/home/runner/work/snacky-os/snacky-os/scripts/test-route-workflow.mjs:170:1'
+  failureType: 'testCodeFailure'
+  error: 'src/app/api/routes/route.ts should contain .select("route_id, product_id, planned_qty, picked_qty, routes!inner(status)")'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: -1
+  actual: -1
+  operator: 'notStrictEqual'
+  stack: |-
+    sourceWindow (file:///home/runner/work/snacky-os/snacky-os/scripts/test-route-workflow.mjs:39:10)
+    TestContext.<anonymous> (file:///home/runner/work/snacky-os/snacky-os/scripts/test-route-workflow.mjs:175:37)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: route pickup checklist prioritizes Mr Crunch, then Doritos, then other products
+not ok 9 - route pickup checklist prioritizes Mr Crunch, then Doritos, then other products
+  ---
+  duration_ms: 15.900903
+  type: 'test'
+  location: '/home/runner/work/snacky-os/snacky-os/scripts/test-route-workflow.mjs:188:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+      [
+        'Mr Crunch Tarboouch',
+    -   'Ã˜Â·Ã˜Â±Ã˜Â¨Ã™Ë†Ã˜Â´ Cheese',
+        'Doritos Nacho',
+    -   'Ã˜Â¯Ã™Ë†Ã˜Â±Ã™Å Ã˜ÂªÃ™Ë†Ã˜Â³ Green Hot',
+        'Chips Classic',
+        'Water 500ml',
+    +   'Ã˜Â¯Ã™Ë†Ã˜Â±Ã™Å Ã˜ÂªÃ™Ë†Ã˜Â³ Green Hot',
+    +   'Ã˜Â·Ã˜Â±Ã˜Â¨Ã™Ë†Ã˜Â´ Cheese'
+      ]
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0: 'Mr Crunch Tarboouch'
+    1: 'Ã˜Â·Ã˜Â±Ã˜Â¨Ã™Ë†Ã˜Â´ Cheese'
+    2: 'Doritos Nacho'
+    3: 'Ã˜Â¯Ã™Ë†Ã˜Â±Ã™Å Ã˜ÂªÃ™Ë†Ã˜Â³ Green Hot'
+    4: 'Chips Classic'
+    5: 'Water 500ml'
+  actual:
+    0: 'Mr Crunch Tarboouch'
+    1: 'Doritos Nacho'
+    2: 'Chips Classic'
+    3: 'Water 500ml'
+    4: 'Ã˜Â¯Ã™Ë†Ã˜Â±Ã™Å Ã˜ÂªÃ™Ë†Ã˜Â³ Green Hot'
+    5: 'Ã˜Â·Ã˜Â±Ã˜Â¨Ã™Ë†Ã˜Â´ Cheese'
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/runner/work/snacky-os/snacky-os/scripts/test-route-workflow.mjs:198:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: route product grouping keeps similar products together in the expected family order
+ok 10 - route product grouping keeps similar products together in the expected family order
+  ---
+  duration_ms: 3.267753
+  type: 'test'
+  ...
+1..10
+# tests 10
+# suites 0
+# pass 7
+# fail 3
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 212.756136
