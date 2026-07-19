@@ -1,3 +1,4 @@
+# Registered workflow trigger
 name: Fix growth cost coverage
 
 on:
