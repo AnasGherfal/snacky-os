@@ -24,6 +24,36 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Normalize formatted patch anchors
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("scripts/agent-route-stop-planning.py")
+          text = path.read_text(encoding="utf-8")
+          old = '''def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f"{label}: expected exactly one match, found {count}")
+              return text.replace(old, new, 1)
+          '''
+          old = old.replace("              count", "    count").replace("              if", "    if").replace("                  raise", "        raise").replace("              return", "    return")
+          new = '''def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if label == "sticky summary mode" and count == 0:
+                  pattern = r"(?m)^(\\s*)\\{selectedProducts\\.length\\} items selected · \\{plannedRouteStock\\.reduce\\(\\(sum, item\\) => sum \\+ unitQuantity\\(item\\.quantity\\), 0\\)\\} total units\\s*$"
+                  match = re.search(pattern, text)
+                  if match:
+                      replacement = f"{match.group(1)}{new.strip()}"
+                      return text[:match.start()] + replacement + text[match.end():]
+              if count != 1:
+                  raise RuntimeError(f"{label}: expected exactly one match, found {count}")
+              return text.replace(old, new, 1)
+          '''
+          new = new.replace("              count", "    count").replace("              if label", "    if label").replace("                  pattern", "        pattern").replace("                  match", "        match").replace("                  if match", "        if match").replace("                      replacement", "            replacement").replace("                      return", "            return").replace("              if count", "    if count").replace("                  raise", "        raise").replace("              return", "    return")
+          if text.count(old) != 1:
+              raise SystemExit("Could not locate patch helper for formatted-anchor normalization.")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
       - name: Apply stop-only route patch
         id: patch
         continue-on-error: true
