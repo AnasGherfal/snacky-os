@@ -73,6 +73,7 @@ type VmsProfitSource = "monthly_product_profit" | "detailed_sales";
 type VmsProfitLoadResult = {
   monthlyData: VmsProfitBreakdownRow[];
   machineData: VmsProfitBreakdownRow[];
+  productData: VmsProfitBreakdownRow[];
   error: unknown | null;
   source: VmsProfitSource | null;
 };
@@ -194,7 +195,7 @@ async function loadVmsGrowthProfit({
   latestStart: string;
   latestEnd: string;
 }): Promise<VmsProfitLoadResult> {
-  const [monthlyHistory, monthlyMachines] = await Promise.all([
+  const [monthlyHistory, monthlyMachines, monthlyProducts] = await Promise.all([
     client.rpc("sales_dashboard_monthly_profit_breakdown", {
       p_dimension: "month",
       p_date_from: historyStart,
@@ -204,23 +205,30 @@ async function loadVmsGrowthProfit({
       p_dimension: "machine",
       p_date_from: latestStart,
       p_date_to: latestEnd,
+    }),
+    client.rpc("sales_dashboard_monthly_profit_breakdown", {
+      p_dimension: "product",
+      p_date_from: historyStart,
+      p_date_to: historyEnd,
     }),
   ]);
 
   if (
     !monthlyHistory.error &&
     !monthlyMachines.error &&
+    !monthlyProducts.error &&
     (monthlyHistory.data ?? []).length > 0
   ) {
     return {
       monthlyData: (monthlyHistory.data ?? []) as VmsProfitBreakdownRow[],
       machineData: (monthlyMachines.data ?? []) as VmsProfitBreakdownRow[],
+      productData: (monthlyProducts.data ?? []) as VmsProfitBreakdownRow[],
       error: null,
       source: "monthly_product_profit",
     };
   }
 
-  const [detailedHistory, detailedMachines] = await Promise.all([
+  const [detailedHistory, detailedMachines, detailedProducts] = await Promise.all([
     client.rpc("sales_dashboard_profit_breakdown", {
       p_dimension: "month",
       p_date_from: historyStart,
@@ -231,21 +239,28 @@ async function loadVmsGrowthProfit({
       p_date_from: latestStart,
       p_date_to: latestEnd,
     }),
+    client.rpc("sales_dashboard_profit_breakdown", {
+      p_dimension: "product",
+      p_date_from: historyStart,
+      p_date_to: historyEnd,
+    }),
   ]);
 
-  if (!detailedHistory.error && !detailedMachines.error) {
+  if (!detailedHistory.error && !detailedMachines.error && !detailedProducts.error) {
     return {
       monthlyData: (detailedHistory.data ?? []) as VmsProfitBreakdownRow[],
       machineData: (detailedMachines.data ?? []) as VmsProfitBreakdownRow[],
+      productData: (detailedProducts.data ?? []) as VmsProfitBreakdownRow[],
       error: null,
       source: "detailed_sales",
     };
   }
 
-  if (!monthlyHistory.error && !monthlyMachines.error) {
+  if (!monthlyHistory.error && !monthlyMachines.error && !monthlyProducts.error) {
     return {
       monthlyData: (monthlyHistory.data ?? []) as VmsProfitBreakdownRow[],
       machineData: (monthlyMachines.data ?? []) as VmsProfitBreakdownRow[],
+      productData: (monthlyProducts.data ?? []) as VmsProfitBreakdownRow[],
       error: null,
       source: "monthly_product_profit",
     };
@@ -254,6 +269,7 @@ async function loadVmsGrowthProfit({
   return {
     monthlyData: [],
     machineData: [],
+    productData: [],
     error: new Error(
       `Monthly sales RPCs: ${databaseErrorMessage(monthlyHistory.error ?? monthlyMachines.error)} | Detailed sales RPCs: ${databaseErrorMessage(detailedHistory.error ?? detailedMachines.error)}`,
     ),
@@ -462,9 +478,39 @@ export default async function GrowthDecisionsPage({
       }),
     };
   });
-  const completeMonthly = monthly.filter(
-    (row) => row.vmsDataPresent && row.complete && row.revenueLyd > 0,
+  const monthsWithRevenue = monthly.filter(
+    (row) => row.vmsDataPresent && row.revenueLyd > 0,
   );
+  const completeMonthly = monthsWithRevenue.filter((row) => row.complete);
+  const vmsHistoryCostsComplete =
+    monthsWithRevenue.length > 0 && monthsWithRevenue.every((row) => row.complete);
+  const missingCostSalesCount = vmsProfitResult.monthlyData.reduce(
+    (sum, row) => sum + numeric(row.missing_cost_sales_count),
+    0,
+  );
+  const missingCostRevenueLyd = money(
+    vmsProfitResult.monthlyData.reduce(
+      (sum, row) => sum + numeric(row.missing_cost_revenue_amount),
+      0,
+    ),
+  );
+  const totalVmsRevenueLyd = money(
+    vmsProfitResult.monthlyData.reduce(
+      (sum, row) => sum + numeric(row.revenue_amount),
+      0,
+    ),
+  );
+  const costCoveragePercent =
+    totalVmsRevenueLyd > 0
+      ? Math.max(0, Math.min(100, ((totalVmsRevenueLyd - missingCostRevenueLyd) / totalVmsRevenueLyd) * 100))
+      : 0;
+  const missingCostProducts = vmsProfitResult.productData
+    .filter((row) => numeric(row.missing_cost_sales_count) > 0)
+    .sort(
+      (left, right) =>
+        numeric(right.missing_cost_revenue_amount) - numeric(left.missing_cost_revenue_amount),
+    )
+    .slice(0, 8);
   const configuredHistoryMonths = Math.round(
     numeric(settings.minimum_history_months),
   );
@@ -489,6 +535,10 @@ export default async function GrowthDecisionsPage({
   const vmsMachineCostsComplete = vmsProfitResult.machineData.every(
     (row) => numeric(row.missing_cost_sales_count) === 0,
   );
+  const vmsCoverageComplete =
+    vmsHistoryCostsComplete &&
+    vmsMachineCostsComplete &&
+    vmsProfitResult.source !== null;
   const activeMachines = machines.filter(
     (machine) => String(machine.status ?? "active") === "active",
   );
@@ -526,10 +576,13 @@ export default async function GrowthDecisionsPage({
   const weakMachineCount = machineProfitRows.filter(
     (row) => row.profitAfterRent <= 0,
   ).length;
-  const vmsCoverageComplete =
-    vmsMachineCostsComplete &&
-    completeMonthly.length > 0 &&
-    vmsProfitResult.source !== null;
+  const reliableProfitCoverage = vmsCoverageComplete && manualCoverageComplete;
+  const reliableAverageMonthlyOperatingProfit = reliableProfitCoverage
+    ? averageMonthlyOperatingProfit
+    : null;
+  const reliableAverageMachineProfitAfterRent = reliableProfitCoverage
+    ? averageMachineProfitAfterRent
+    : null;
   const financeBalances = computeFinanceBalancesFromCutoff({
     rows: ledgerRows,
   });
@@ -563,18 +616,19 @@ export default async function GrowthDecisionsPage({
     minimumMonthlyOperatingProfitLyd: numeric(
       settings.minimum_monthly_operating_profit_lyd,
     ),
-    averageMonthlyOperatingProfitLyd: averageMonthlyOperatingProfit,
-    averageMachineProfitAfterRentLyd: averageMachineProfitAfterRent,
+    averageMonthlyOperatingProfitLyd: reliableAverageMonthlyOperatingProfit ?? 0,
+    averageMachineProfitAfterRentLyd: reliableAverageMachineProfitAfterRent ?? 0,
     targetPaybackMonths: numeric(settings.target_payback_months),
     acceptedLocationCount: acceptedLocationsResult.count ?? 0,
     criticalRestockCount,
     openCriticalIssueCount: issuesResult.count ?? 0,
     weakMachineCount,
-    historyMonthCount:
-      manualCoverageComplete && vmsCoverageComplete
-        ? completeMonthly.length
-        : 0,
+    historyMonthCount: manualCoverageComplete ? completeMonthly.length : 0,
     minimumHistoryMonths: configuredHistoryMonths,
+    monthsWithRevenue: monthsWithRevenue.length,
+    costCoverageComplete: vmsCoverageComplete,
+    missingCostSalesCount,
+    missingCostRevenueLyd,
   });
 
   const decisionTitle = ar ? decision.titleAr : decision.title;
@@ -626,15 +680,33 @@ export default async function GrowthDecisionsPage({
         {!vmsCoverageComplete && vmsProfitResult.monthlyData.length ? (
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
             <div className="font-semibold">
-              {ar
-                ? "تكلفة بعض مبيعات الأجهزة غير مكتملة — قرار الشراء موقوف"
-                : "Some machine sales costs are incomplete — purchase recommendation is held"}
+              {ar ? "أكمل تكاليف المنتجات أولاً" : "Complete product costs first"}
             </div>
             <p className="mt-1 leading-6">
               {ar
-                ? "يمكن عرض الإيراد والرسوم، لكن حساب ربح الجهاز ومدة الاسترداد يحتاج تكلفة منتجات مكتملة."
-                : "Revenue and charts remain visible, but machine profit and payback require complete product costs."}
+                ? "يوجد سجل مبيعات فعلي، لكن الربح ومدة الاسترداد لن يعتمدا حتى تكتمل تكلفة المنتجات المباعة."
+                : "Real sales history is available, but profit and payback will remain unavailable until sold-product costs are complete."}
             </p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-lg bg-white/80 p-3"><div className="text-xs text-slate-500">{ar ? "أشهر بها مبيعات" : "Months with sales"}</div><div className="mt-1 text-lg font-semibold">{monthsWithRevenue.length}</div></div>
+              <div className="rounded-lg bg-white/80 p-3"><div className="text-xs text-slate-500">{ar ? "أشهر مكتملة التكلفة" : "Fully costed months"}</div><div className="mt-1 text-lg font-semibold">{completeMonthly.length}</div></div>
+              <div className="rounded-lg bg-white/80 p-3"><div className="text-xs text-slate-500">{ar ? "إيراد متأثر" : "Revenue affected"}</div><div className="mt-1 text-lg font-semibold">{formatFinanceMoney(missingCostRevenueLyd)}</div></div>
+              <div className="rounded-lg bg-white/80 p-3"><div className="text-xs text-slate-500">{ar ? "تغطية التكلفة" : "Cost coverage"}</div><div className="mt-1 text-lg font-semibold">{costCoveragePercent.toFixed(1)}%</div></div>
+            </div>
+            {missingCostProducts.length ? (
+              <div className="mt-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">{ar ? "أعلى المنتجات الناقصة تكلفة" : "Top products missing cost"}</div>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  {missingCostProducts.map((row) => (
+                    <div key={String(row.bucket_key ?? row.bucket_label)} className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-white/80 px-3 py-2">
+                      <span className="min-w-0 truncate font-medium">{row.bucket_label ?? row.bucket_key ?? (ar ? "منتج غير معروف" : "Unknown product")}</span>
+                      <span className="shrink-0 text-xs">{formatFinanceMoney(numeric(row.missing_cost_revenue_amount))}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            <Link href="/products" className="mt-4 inline-flex font-semibold text-amber-900 underline underline-offset-4">{ar ? "مراجعة تكاليف المنتجات" : "Review product costs"}</Link>
           </div>
         ) : null}
 
@@ -692,7 +764,11 @@ export default async function GrowthDecisionsPage({
                 </div>
                 <div className="mt-1 text-xl font-semibold">
                   {decision.projectedPaybackMonths === null
-                    ? "-"
+                    ? reliableProfitCoverage
+                      ? "-"
+                      : ar
+                        ? "غير متاح حتى اكتمال التكلفة"
+                        : "Unavailable until costs are complete"
                     : `${decision.projectedPaybackMonths} ${ar ? "شهر" : "months"}`}
                 </div>
               </div>
@@ -713,13 +789,13 @@ export default async function GrowthDecisionsPage({
             [ar ? "النقد المتاح" : "Available Snacky cash", cashAvailable],
             [
               ar ? "متوسط الربح التشغيلي" : "Average monthly operating profit",
-              averageMonthlyOperatingProfit,
+              reliableAverageMonthlyOperatingProfit,
             ],
             [
               ar
                 ? "متوسط ربح الجهاز بعد الإيجار"
                 : "Average machine profit after rent",
-              averageMachineProfitAfterRent,
+              reliableAverageMachineProfitAfterRent,
             ],
             [
               ar ? "مستحق المستثمر غير المدفوع" : "Unpaid investor amount",
@@ -731,7 +807,11 @@ export default async function GrowthDecisionsPage({
                 {String(label)}
               </div>
               <div className="mt-2 text-2xl font-semibold text-slate-950">
-                {formatFinanceMoney(Number(value))}
+                {value === null
+                  ? ar
+                    ? "غير متاح"
+                    : "Unavailable"
+                  : formatFinanceMoney(Number(value))}
               </div>
             </div>
           ))}
@@ -743,7 +823,9 @@ export default async function GrowthDecisionsPage({
             subtitle={
               ar
                 ? "الإيراد والربح الإجمالي والربح التشغيلي للأشهر المكتملة."
-                : "Revenue, gross profit, and operating profit for completed months."
+                : reliableProfitCoverage
+                  ? "Revenue, gross profit, and operating profit for completed months."
+                  : "Revenue remains visible. Profit lines appear after product costs are complete."
             }
           >
             <TrendChart
@@ -754,16 +836,20 @@ export default async function GrowthDecisionsPage({
                   label: ar ? "الإيراد" : "Revenue",
                   values: monthly.map((row) => row.revenueLyd),
                 },
-                {
-                  key: "gross",
-                  label: ar ? "إجمالي الربح" : "Gross profit",
-                  values: monthly.map((row) => row.grossProfitLyd),
-                },
-                {
-                  key: "operating",
-                  label: ar ? "الربح التشغيلي" : "Operating profit",
-                  values: monthly.map((row) => row.operatingProfitLyd),
-                },
+                ...(reliableProfitCoverage
+                  ? [
+                      {
+                        key: "gross",
+                        label: ar ? "إجمالي الربح" : "Gross profit",
+                        values: monthly.map((row) => row.grossProfitLyd),
+                      },
+                      {
+                        key: "operating",
+                        label: ar ? "الربح التشغيلي" : "Operating profit",
+                        values: monthly.map((row) => row.operatingProfitLyd),
+                      },
+                    ]
+                  : []),
               ]}
               valueFormatter={(value) =>
                 new Intl.NumberFormat("en-US", {

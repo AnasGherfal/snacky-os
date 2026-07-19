@@ -6,6 +6,7 @@ import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/a
 import { isOwnerAdminRole } from "@/lib/authz";
 import { applyVisibleFinanceLedgerFilter, FINANCE_TRANSACTIONS_TABLE, loadFinanceLedgerRows } from "@/lib/finance-ledger";
 import { calculateInvestorMonth, manualRouteSalesAsProfitRows, monthBounds } from "@/lib/investor-profit";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 
 function text(formData: FormData, name: string) {
   return String(formData.get(name) ?? "").trim();
@@ -21,6 +22,69 @@ function optionalNumber(formData: FormData, name: string) {
   if (!value) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+type InvestorVmsSummaryRow = {
+  revenue_amount?: number | string | null;
+  cogs_amount?: number | string | null;
+  gross_profit_amount?: number | string | null;
+  missing_cost_sales_count?: number | string | null;
+};
+
+function summaryRevenue(row: InvestorVmsSummaryRow | null | undefined) {
+  const value = Number(row?.revenue_amount ?? 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+async function loadInvestorVmsProfit(client: any, dateFrom: string, dateTo: string) {
+  const monthly = await client.rpc("sales_dashboard_monthly_summary", {
+    p_date_from: dateFrom,
+    p_date_to: dateTo,
+  });
+  const monthlyRow = (monthly.data ?? [])[0] as InvestorVmsSummaryRow | undefined;
+  if (!monthly.error && summaryRevenue(monthlyRow) > 0) {
+    return { data: monthlyRow ? [{
+      net_sales_amount: monthlyRow.revenue_amount,
+      cogs_amount: monthlyRow.cogs_amount,
+      gross_profit_amount: monthlyRow.gross_profit_amount,
+      cost_missing: Number(monthlyRow.missing_cost_sales_count ?? 0) > 0,
+      source: "vms",
+    }] : [], error: null, source: "monthly_product_profit" };
+  }
+
+  const detailed = await client.rpc("sales_dashboard_summary", {
+    p_date_from: dateFrom,
+    p_date_to: dateTo,
+  });
+  const detailedRow = (detailed.data ?? [])[0] as InvestorVmsSummaryRow | undefined;
+  if (!detailed.error && summaryRevenue(detailedRow) > 0) {
+    return { data: detailedRow ? [{
+      net_sales_amount: detailedRow.revenue_amount,
+      cogs_amount: detailedRow.cogs_amount,
+      gross_profit_amount: detailedRow.gross_profit_amount,
+      cost_missing: Number(detailedRow.missing_cost_sales_count ?? 0) > 0,
+      source: "vms",
+    }] : [], error: null, source: "detailed_sales" };
+  }
+  if (!monthly.error) {
+    return { data: monthlyRow ? [{
+      net_sales_amount: monthlyRow.revenue_amount,
+      cogs_amount: monthlyRow.cogs_amount,
+      gross_profit_amount: monthlyRow.gross_profit_amount,
+      cost_missing: Number(monthlyRow.missing_cost_sales_count ?? 0) > 0,
+      source: "vms",
+    }] : [], error: null, source: "monthly_product_profit" };
+  }
+  if (!detailed.error) {
+    return { data: detailedRow ? [{
+      net_sales_amount: detailedRow.revenue_amount,
+      cogs_amount: detailedRow.cogs_amount,
+      gross_profit_amount: detailedRow.gross_profit_amount,
+      cost_missing: Number(detailedRow.missing_cost_sales_count ?? 0) > 0,
+      source: "vms",
+    }] : [], error: null, source: "detailed_sales" };
+  }
+  return { data: [], error: new Error(`Monthly VMS RPC: ${monthly.error?.message ?? "unknown error"}; detailed VMS RPC: ${detailed.error?.message ?? "unknown error"}`), source: null };
 }
 
 function investorsUrl(agreementId?: string | null, message?: { type: "success" | "error" | "warning"; text: string }) {
@@ -128,13 +192,10 @@ export async function generateInvestorStatement(formData: FormData) {
     redirect(investorsUrl(agreementId, { type: "error", text: "This month is finalized and cannot be recalculated." }));
   }
 
+  const operationalReadClient = getSupabaseAdminClient() ?? supabase;
   const [salesResult, manualSalesResult, ledgerResult, priorStatementsResult] = await Promise.all([
-    supabase
-      .from("vms_sales_clean")
-      .select("net_sales_amount, cogs_amount, gross_profit_amount, cost_missing")
-      .gte("sale_date", bounds.start)
-      .lte("sale_date", bounds.end),
-    supabase
+    loadInvestorVmsProfit(supabase, bounds.start, bounds.end),
+    operationalReadClient
       .from("route_manual_sales")
       .select("id, machine_id, total_amount_lyd, inventory_movement_id, sale_time, status")
       .eq("status", "confirmed")
@@ -160,14 +221,14 @@ export async function generateInvestorStatement(formData: FormData) {
       .eq("calculation_status", "finalized"),
   ]);
 
-  if (salesResult.error) redirect(investorsUrl(agreementId, { type: "error", text: `VMS sales could not load: ${salesResult.error.message}` }));
+  if (salesResult.error) redirect(investorsUrl(agreementId, { type: "error", text: `VMS sales could not load: ${salesResult.error instanceof Error ? salesResult.error.message : "Unknown VMS RPC error"}` }));
   if (manualSalesResult.error) redirect(investorsUrl(agreementId, { type: "error", text: `Manual route sales could not load: ${manualSalesResult.error.message}` }));
   if (ledgerResult.error) redirect(investorsUrl(agreementId, { type: "error", text: "Finance expenses could not load for this month." }));
 
   const manualSales = manualSalesResult.data ?? [];
   const movementIds = Array.from(new Set(manualSales.map((sale) => String(sale.inventory_movement_id ?? "").trim()).filter(Boolean)));
   const movementResult = movementIds.length
-    ? await supabase.from("inventory_movements").select("id, line_total_lyd, unit_cost_lyd").in("id", movementIds)
+    ? await operationalReadClient.from("inventory_movements").select("id, line_total_lyd, unit_cost_lyd").in("id", movementIds)
     : { data: [], error: null };
   if (movementResult.error) redirect(investorsUrl(agreementId, { type: "error", text: `Manual-sale product costs could not load: ${movementResult.error.message}` }));
 
@@ -186,6 +247,7 @@ export async function generateInvestorStatement(formData: FormData) {
   const investorDue = remainingCap === null ? calculation.investorShareDueLyd : Math.min(calculation.investorShareDueLyd, remainingCap);
   const sourceNote = [
     `period ${bounds.start} to ${bounds.end}`,
+    `VMS source: ${salesResult.source ?? "unavailable"}`,
     `VMS rows: ${salesResult.data?.length ?? 0}`,
     `VMS revenue: ${calculation.vmsRevenueLyd}`,
     `manual sale rows: ${manualSales.length}`,
