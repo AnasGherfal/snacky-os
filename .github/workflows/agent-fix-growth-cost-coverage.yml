@@ -25,7 +25,20 @@ jobs:
           node-version: 22
           cache: npm
       - name: Apply prepared patch
-        run: python scripts/agent-fix-growth-cost-coverage.py
+        id: apply_patch
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python scripts/agent-fix-growth-cost-coverage.py 2>&1 | tee /tmp/growth-patch.log
+      - name: Upload patch diagnostic
+        if: steps.apply_patch.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: growth-patch-diagnostic
+          path: /tmp/growth-patch.log
+      - name: Stop after patch failure
+        if: steps.apply_patch.outcome == 'failure'
+        run: exit 1
       - name: Install dependencies
         run: npm ci
       - name: Test growth and investor portal
