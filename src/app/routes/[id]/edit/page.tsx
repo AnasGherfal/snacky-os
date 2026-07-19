@@ -120,6 +120,8 @@ export default async function RouteEditPage({ params, searchParams }: { params: 
     isChecked: Boolean(item.is_checked),
   }));
 
+  const preparationMode = initialRows.every((row) => Number(row.quantity ?? 0) <= 0);
+
   const warningMessage = isPickupConfirmedStatus(route.status)
     ? "تم تأكيد التحميل. هذه التعديلات تؤثر على خطة الجولة، لكنها قد لا تغيّر ما تم تحميله بالفعل من المخزن."
     : isActiveRouteStatus(route.status) || ["started", "filling", "machine_filling"].includes(String(route.status ?? ""))
@@ -131,8 +133,8 @@ export default async function RouteEditPage({ params, searchParams }: { params: 
   return (
     <div className="space-y-6">
       <PageHeader
-        title={locale === "ar" ? "تعديل عناصر الجولة" : "Edit route items"}
-        subtitle={locale === "ar" ? "حدّث عناصر الجولة والكميات من دون إنشاء حركات مخزون تلقائيًا." : "Update route items and quantities without creating inventory movements automatically."}
+        title={preparationMode ? (locale === "ar" ? "تجهيز منتجات الجولة في المخزن" : "Prepare route products at storage") : (locale === "ar" ? "تعديل عناصر الجولة" : "Edit route items")}
+        subtitle={preparationMode ? (locale === "ar" ? "أضف المنتجات والكميات الدقيقة الآن. سيبني Snacky OS قائمة التحميل من دون تحريك المخزون حتى تأكيد التحميل." : "Add the exact products and quantities now. Snacky OS builds the pick list without moving inventory until pickup is confirmed.") : (locale === "ar" ? "حدّث عناصر الجولة والكميات من دون إنشاء حركات مخزون تلقائيًا." : "Update route items and quantities without creating inventory movements automatically.")}
         breadcrumbs={[{ label: locale === "ar" ? "الجولات" : "Routes", href: "/routes" }, { label: `Route ${route.route_date}` }, { label: locale === "ar" ? "تعديل عناصر الجولة" : "Edit route items" }]}
         action={<SecondaryButton href={`/routes/${id}`}>{locale === "ar" ? "العودة إلى الجولة" : "Back to route"}</SecondaryButton>}
       />
@@ -150,6 +152,7 @@ export default async function RouteEditPage({ params, searchParams }: { params: 
         products={products.map((product) => ({ id: product.id, name: product.name, sku: product.sku ?? null, category: product.category ?? null }))}
         initialRows={initialRows}
         warningMessage={warningMessage}
+        preparationMode={preparationMode}
       />
     </div>
   );
