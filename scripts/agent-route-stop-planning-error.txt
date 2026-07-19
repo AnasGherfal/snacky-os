@@ -1,7 +1,1 @@
-Traceback (most recent call last):
-  File "/home/runner/work/snacky-os/snacky-os/scripts/agent-route-stop-planning.py", line 65, in <module>
-    text = replace_once(text, '       assignment_mode: assignmentMode,', '       assignment_mode: assignmentMode,\n       creation_mode: creationMode,\n       products_deferred_until_storage: stopsOnly,', "API activity creation mode")
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/runner/work/snacky-os/snacky-os/scripts/agent-route-stop-planning.py", line 22, in replace_once
-    raise RuntimeError(f"{label}: expected exactly one match, found {count}")
-RuntimeError: API activity creation mode: expected exactly one match, found 0
+Temporary validation diagnostic removed.
