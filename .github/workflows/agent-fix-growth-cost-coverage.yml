@@ -24,16 +24,30 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - name: Narrow duplicate monthly return anchor
+      - name: Narrow formatted patch anchors
         run: |
           python - <<'PY'
           from pathlib import Path
           path = Path("scripts/agent-fix-growth-cost-coverage.py")
           text = path.read_text(encoding="utf-8")
-          old = '''    count = text.count(old)\n    if count != 1:\n        raise RuntimeError(f"{label}: expected exactly one match, found {count}")\n    return text.replace(old, new, 1)'''
-          new = '''    count = text.count(old)\n    if label == "growth monthly product return first" and count == 2:\n        return text.replace(old, new, 1)\n    if count != 1:\n        raise RuntimeError(f"{label}: expected exactly one match, found {count}")\n    return text.replace(old, new, 1)'''
+          old = '''    count = text.count(old)
+    if count != 1:
+        raise RuntimeError(f"{label}: expected exactly one match, found {count}")
+    return text.replace(old, new, 1)'''
+          new = '''    count = text.count(old)
+    if label == "growth monthly product return first" and count == 2:
+        return text.replace(old, new, 1)
+    if label in {"growth reliable monthly KPI", "growth reliable machine KPI"} and count == 0:
+        variable = "averageMonthlyOperatingProfit" if label == "growth reliable monthly KPI" else "averageMachineProfitAfterRent"
+        replacement = "reliableAverageMonthlyOperatingProfit" if label == "growth reliable monthly KPI" else "reliableAverageMachineProfitAfterRent"
+        updated, replacements = re.subn(rf"(?m)^(\\s*){variable},\\s*$", rf"\\1{replacement},", text, count=1)
+        if replacements == 1:
+            return updated
+    if count != 1:
+        raise RuntimeError(f"{label}: expected exactly one match, found {count}")
+    return text.replace(old, new, 1)'''
           if text.count(old) != 1:
-              raise SystemExit("Could not update duplicate-anchor guard")
+              raise SystemExit("Could not update formatted-anchor guard")
           path.write_text(text.replace(old, new, 1), encoding="utf-8")
           PY
       - name: Apply prepared patch
