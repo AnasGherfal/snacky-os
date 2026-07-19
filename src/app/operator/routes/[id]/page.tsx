@@ -359,6 +359,7 @@ export default async function OperatorRouteDetailPage({
   const doneStops = routeStops.filter((s) => isRouteStopDoneStatus(s.status)).length;
   const totalStops = routeStops.length;
   const pickItems = routeStockRows;
+  const routeProductsPrepared = pickItems.some((item) => Number(item.planned_qty ?? 0) > 0);
   const hasPickup = pickItems.some((item) => Number(item.picked_qty ?? 0) > 0);
   const sortedPickItems = sortPickupProductRows(
     pickItems.map((item) => ({
@@ -367,7 +368,9 @@ export default async function OperatorRouteDetailPage({
       productCategory: item.product?.category ?? null,
     })),
   );
-  const continueHref = nextOperatorRouteHref({ routeId, status: routeRow.status, hasPickup, stops: routeStops, start: true });
+  const continueHref = routeProductsPrepared
+    ? nextOperatorRouteHref({ routeId, status: routeRow.status, hasPickup, stops: routeStops, start: true })
+    : null;
   const primaryAction = continueHref
     ? {
         href: continueHref,
@@ -390,6 +393,12 @@ export default async function OperatorRouteDetailPage({
         />
         {translatedSuccess ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900">{translatedSuccess}</div> : null}
         {translatedError ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{translatedError}</div> : null}
+        {!routeProductsPrepared && totalStops > 0 ? (
+          <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950">
+            <div className="font-semibold">{t("Machine stops assigned — waiting for storage quantities")}</div>
+            <p className="mt-1 leading-6">{t("You can review every machine on this route now. The exact products and quantities will be added at storage before the route can start.")}</p>
+          </div>
+        ) : null}
         {operatorError || machinesError || adjustmentsError ? (
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
 {t("Some route details could not load. The route is still available, but a few non-critical details may be missing.")}
@@ -431,7 +440,7 @@ export default async function OperatorRouteDetailPage({
                   {primaryAction.label}
                 </Link>
               ) : (
-                <div className="text-sm text-slate-600">{t("Route completed")}</div>
+                <div className="text-sm text-slate-600">{routeProductsPrepared ? t("Route completed") : t("Waiting for product quantities")}</div>
               )}
             </div>
           </SectionCard>

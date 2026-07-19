@@ -370,3 +370,26 @@ test("warehouse purchase flow creates ledger inventory and viewer is denied", { 
     }
   }
 });
+
+test("route stops can be planned before products and starting stays locked", () => {
+  const routeForm = readFileSync("src/app/routes/new/RouteCreateForm.tsx", "utf8");
+  const routeApi = readFileSync("src/app/api/routes/route.ts", "utf8");
+  const adminRoute = readFileSync("src/app/routes/[id]/page.tsx", "utf8");
+  const operatorRoute = readFileSync("src/app/operator/routes/[id]/page.tsx", "utf8");
+  const operatorActions = readFileSync("src/lib/operator-actions.ts", "utf8");
+  const editPage = readFileSync("src/app/routes/[id]/edit/page.tsx", "utf8");
+  const editor = readFileSync("src/app/routes/[id]/edit/RouteItemEditor.tsx", "utf8");
+
+  assert.match(routeForm, /creationMode: "full" \| "stops_only"/);
+  assert.match(routeForm, /Plan machine stops only/);
+  assert.match(routeForm, /products added later at storage/);
+  assert.match(routeApi, /stopsOnly && !manualMachineIds\.length/);
+  assert.match(routeApi, /productsDeferred: stopsOnly/);
+  assert.match(routeApi, /if \(!stopsOnly\) \{[\s\S]*route_stock_lines/);
+  assert.match(adminRoute, /Prepare products at storage/);
+  assert.match(operatorRoute, /waiting for storage quantities/i);
+  assert.match(operatorRoute, /routeProductsPrepared/);
+  assert.match(operatorActions, /Route products have not been prepared yet/);
+  assert.match(editPage, /Prepare route products at storage/);
+  assert.match(editor, /Save products and build pick list/);
+});

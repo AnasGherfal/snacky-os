@@ -370,10 +370,12 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   }));
   const canManageRouteAssignment = isAdminRole(profile);
   const canEditRouteItems = isOwnerAdminRole(profile) && isRouteItemsEditableStatus(routeRow.status);
+  const routeProductsPrepared = Boolean((routeStock ?? []).some((item: any) => Number(item.planned_qty ?? 0) > 0) || routeStopItems.some((item: any) => Number(item.planned_quantity ?? 0) > 0));
+  const productsPendingAtStorage = routeStops.length > 0 && !routeProductsPrepared && isAvailableRouteStatus(routeRow.status);
   const hasPickMovements = Boolean(movements?.some((movement: any) => movement.reason === "storage_to_operator_bag"));
   const hasReturnMovements = Boolean(movements?.some((movement: any) => movement.reason === "operator_bag_to_storage"));
-  const canStartRoute = canExecuteRoutes(profile) && Boolean(profile.team_member_id) && isAvailableRouteStatus(routeRow.status);
-  const continueHref = canExecuteRoutes(profile)
+  const canStartRoute = canExecuteRoutes(profile) && Boolean(profile.team_member_id) && isAvailableRouteStatus(routeRow.status) && routeProductsPrepared;
+  const continueHref = canExecuteRoutes(profile) && routeProductsPrepared
     ? nextOperatorRouteHref({ routeId: id, status: routeRow.status, hasPickup: hasPickMovements, stops: routeStops, start: true })
     : null;
   const productById = new Map((products ?? []).map((product: any) => [product.id, product]));
@@ -458,7 +460,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
               <SecondaryButton href="/routes">{tr(locale, "Back to routes", "العودة إلى الجولات")}</SecondaryButton>
               {canEditRouteItems ? (
                 <Link href={`/routes/${id}/edit`} className="btn-secondary">
-                  {tr(locale, "Edit route items", "تعديل عناصر الجولة")}
+                  {productsPendingAtStorage ? tr(locale, "Prepare products at storage", "تجهيز المنتجات في المخزن") : tr(locale, "Edit route items", "تعديل عناصر الجولة")}
                 </Link>
               ) : null}
               {continueHref ? (
@@ -512,6 +514,13 @@ export default async function RouteDetailPage({ params, searchParams }: { params
         />
         {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{error}</div> : null}
         {success ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900">{success}</div> : null}
+        {productsPendingAtStorage ? (
+          <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950">
+            <div className="font-semibold">{tr(locale, "Machine stops planned — products pending at storage", "تم تخطيط مواقع الأجهزة — المنتجات بانتظار التجهيز في المخزن")}</div>
+            <p className="mt-1 leading-6">{tr(locale, "The operator can already see the machines on this route. Add the exact product quantities when you reach storage; Start Route remains locked until then.", "يمكن للمشغل رؤية الأجهزة في هذه الجولة بالفعل. أضف كميات المنتجات الدقيقة عند الوصول إلى المخزن؛ وسيبقى بدء الجولة مقفلاً حتى ذلك الحين.")}</p>
+            {canEditRouteItems ? <Link href={`/routes/${id}/edit`} className="btn-primary mt-3 inline-flex">{tr(locale, "Prepare products now", "تجهيز المنتجات الآن")}</Link> : null}
+          </div>
+        ) : null}
 
         <div className="grid gap-4 md:grid-cols-3">
           <SectionCard>

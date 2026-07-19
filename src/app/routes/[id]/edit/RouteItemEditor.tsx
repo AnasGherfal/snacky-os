@@ -50,6 +50,7 @@ type RouteItemEditorProps = {
   products: ProductOption[];
   initialRows: RouteItemRow[];
   warningMessage?: string | null;
+  preparationMode?: boolean;
 };
 
 function rowSortValue(row: RouteItemRow, productName: string) {
@@ -69,6 +70,7 @@ export function RouteItemEditor({
   products,
   initialRows,
   warningMessage,
+  preparationMode = false,
 }: RouteItemEditorProps) {
   const { locale } = useLanguage();
   const [rows, setRows] = useState<RouteItemRow[]>(initialRows);
@@ -138,6 +140,12 @@ export function RouteItemEditor({
       <input type="hidden" name="id" value={routeId} />
       <input type="hidden" name="payload" value={payload} />
 
+      {preparationMode ? (
+        <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950">
+          <div className="font-semibold">{tr(locale, "Add exact quantities at storage", "أضف الكميات الدقيقة في المخزن")}</div>
+          <p className="mt-1 leading-6">{tr(locale, "The machine stops are already assigned to the operator. Add at least one product to each stop that needs stock, then save to build the route pick list.", "تم إسناد مواقع الأجهزة للمشغل بالفعل. أضف منتجًا واحدًا على الأقل لكل موقع يحتاج مخزونًا، ثم احفظ لبناء قائمة تحميل الجولة.")}</p>
+        </div>
+      ) : null}
       {warningMessage ? (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{warningMessage}</div>
       ) : null}
@@ -279,7 +287,7 @@ export function RouteItemEditor({
       {!readOnly ? (
         <div className="flex flex-col gap-3 sm:flex-row">
           <button type="submit" className="btn-primary">
-            {tr(locale, "Save route changes", "حفظ تعديلات الجولة")}
+            {preparationMode ? tr(locale, "Save products and build pick list", "حفظ المنتجات وبناء قائمة التحميل") : tr(locale, "Save route changes", "حفظ تعديلات الجولة")}
           </button>
           <a href={`/routes/${routeId}`} className="btn-secondary inline-flex items-center justify-center">
             {tr(locale, "Cancel", "إلغاء")}

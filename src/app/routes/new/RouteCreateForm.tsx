@@ -111,6 +111,7 @@ type ManualStopItem = {
 
 type RouteCreateDraft = {
   routeDate: string;
+  creationMode: "full" | "stops_only";
   assignmentMode: "unassigned" | "assigned";
   operatorId: string;
   machineIds: string[];
@@ -233,6 +234,7 @@ export function RouteCreateForm({
   const { locale } = useLanguage();
   const saveErrorRef = useRef<HTMLDivElement | null>(null);
   const [routeDate, setRouteDate] = useState(defaultRouteDate);
+  const [creationMode, setCreationMode] = useState<"full" | "stops_only">("full");
   const [assignmentMode, setAssignmentMode] = useState<"unassigned" | "assigned">("unassigned");
   const [operatorId, setOperatorId] = useState("");
   const [machineIds, setMachineIds] = useState<string[]>([]);
@@ -261,6 +263,7 @@ export function RouteCreateForm({
 
   const routeDraft = useMemo<RouteCreateDraft>(() => ({
     routeDate,
+    creationMode,
     assignmentMode,
     operatorId,
     machineIds,
@@ -282,6 +285,7 @@ export function RouteCreateForm({
     adminOverride,
     assignmentMode,
     barcode,
+    creationMode,
     expandedRecommendationGroups,
     finalTakeByRecommendationGroup,
     machineIds,
@@ -302,6 +306,7 @@ export function RouteCreateForm({
   const shouldSaveRouteDraft = useCallback((draft: RouteCreateDraft) => {
     return Boolean(
       draft.routeDate !== defaultRouteDate ||
+        draft.creationMode !== "full" ||
         draft.assignmentMode !== "unassigned" ||
         draft.operatorId ||
         draft.machineIds.length ||
@@ -328,6 +333,7 @@ export function RouteCreateForm({
     shouldSave: shouldSaveRouteDraft,
     onRestore: (draft) => {
       setRouteDate(draft.routeDate || defaultRouteDate);
+      setCreationMode(draft.creationMode === "stops_only" ? "stops_only" : "full");
       setAssignmentMode(draft.assignmentMode === "assigned" ? "assigned" : "unassigned");
       setOperatorId(draft.operatorId ?? "");
       setMachineIds(Array.isArray(draft.machineIds) ? draft.machineIds : []);
@@ -904,6 +910,10 @@ export function RouteCreateForm({
   const validate = () => {
     if (!routeDate) return "Route date is required.";
     if (assignmentMode === "assigned" && !operatorId) return "Choose a route performer or leave this route unassigned.";
+    if (creationMode === "stops_only") {
+      if (!machineIds.length) return "Choose at least one machine stop for the route plan.";
+      return "";
+    }
     if (!plannedRouteStock.length) {
       if (selectedRecommendationGroups.some((group) => group.recommendedTotal > 0)) {
         return "Selected recommendations still need stock, but the current final take is 0. Replenish storage, adjust final take, or use admin override.";
@@ -943,7 +953,17 @@ export function RouteCreateForm({
       const response = await fetch("/api/routes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ routeDate, assignmentMode, operatorId: assignmentMode === "assigned" ? operatorId : "", machineIds, recommendationKeys, recommendationFinalTakeQty, manualStopItems, adminOverride }),
+        body: JSON.stringify({
+          routeDate,
+          creationMode,
+          assignmentMode,
+          operatorId: assignmentMode === "assigned" ? operatorId : "",
+          machineIds,
+          recommendationKeys: creationMode === "full" ? recommendationKeys : [],
+          recommendationFinalTakeQty: creationMode === "full" ? recommendationFinalTakeQty : [],
+          manualStopItems: creationMode === "full" ? manualStopItems : [],
+          adminOverride: creationMode === "full" ? adminOverride : false,
+        }),
       });
       const result = await response.json().catch(() => ({ error: "Could not read the route creation response." }));
 
@@ -956,7 +976,7 @@ export function RouteCreateForm({
         throw new Error(result.error || "Could not create the route.");
       }
 
-      window.sessionStorage.setItem("snacky-route-created", "Route created successfully.");
+      window.sessionStorage.setItem("snacky-route-created", creationMode === "stops_only" ? "Route stops planned. Add exact product quantities at storage before starting." : "Route created successfully.");
       localDraft.clearDraft();
       router.replace(`/routes/${result.routeId}`);
     } catch (err) {
@@ -1062,6 +1082,32 @@ export function RouteCreateForm({
         </div>
       </FormSection>
 
+      <FormSection
+        title={tr(locale, "How do you want to create this route?", "كيف تريد إنشاء هذه الجولة؟")}
+        description={tr(locale, "Plan only the machine stops now, or build the complete product list immediately.", "خطط مواقع الأجهزة فقط الآن، أو أنشئ قائمة المنتجات الكاملة فورًا.")}
+      >
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className={`rounded-2xl border p-4 text-sm transition ${creationMode === "stops_only" ? "border-[var(--snacky-primary)] bg-emerald-50 text-slate-950" : "border-slate-200 bg-white text-slate-700"}`}>
+            <input type="radio" name="creation_mode" value="stops_only" checked={creationMode === "stops_only"} onChange={() => setCreationMode("stops_only")} className="mr-2" disabled={saving} />
+            <span className="font-semibold">{tr(locale, "Plan machine stops only", "تخطيط مواقع الأجهزة فقط")}</span>
+            <span className="mt-1 block text-xs text-slate-500">{tr(locale, "Tell the operator which machines are planned. Add exact products and quantities later when you reach storage.", "أخبر المشغل بالأجهزة المخططة، ثم أضف المنتجات والكميات الدقيقة لاحقًا عند الوصول إلى المخزن.")}</span>
+          </label>
+          <label className={`rounded-2xl border p-4 text-sm transition ${creationMode === "full" ? "border-[var(--snacky-primary)] bg-emerald-50 text-slate-950" : "border-slate-200 bg-white text-slate-700"}`}>
+            <input type="radio" name="creation_mode" value="full" checked={creationMode === "full"} onChange={() => setCreationMode("full")} className="mr-2" disabled={saving} />
+            <span className="font-semibold">{tr(locale, "Build full route now", "إنشاء الجولة الكاملة الآن")}</span>
+            <span className="mt-1 block text-xs text-slate-500">{tr(locale, "Choose products and exact quantities before saving the route.", "اختر المنتجات والكميات الدقيقة قبل حفظ الجولة.")}</span>
+          </label>
+        </div>
+      </FormSection>
+
+      {creationMode === "stops_only" ? (
+        <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950">
+          <div className="font-semibold">{tr(locale, "Products will be prepared at storage", "سيتم تجهيز المنتجات في المخزن")}</div>
+          <p className="mt-1 leading-6">{tr(locale, "The operator can see the assigned machine stops immediately. Snacky OS will keep Start Route locked until the exact product quantities are saved from the route page.", "يمكن للمشغل رؤية مواقع الأجهزة المسندة فورًا. سيبقي Snacky OS زر بدء الجولة مقفلاً حتى يتم حفظ كميات المنتجات الدقيقة من صفحة الجولة.")}</p>
+        </div>
+      ) : null}
+
+      <div className={creationMode === "stops_only" ? "hidden" : "contents"}>
       <FormSection title="Manual machine refill items">
         <p className="text-sm text-slate-500">{tr(locale, "Manual products must be assigned to a machine stop. The route pick list is calculated from these stop plans plus selected recommendations.", "يجب ربط المنتجات اليدوية بموقع جهاز. تُحسب قائمة التحميل من خطط المواقع هذه بالإضافة إلى التوصيات المختارة.")}</p>
 
@@ -1810,9 +1856,10 @@ export function RouteCreateForm({
           </div>
         )}
       </FormSection>
+      </div>
 
-      <FormSection title="Add machine stops manually">
-        <p className="text-sm text-slate-500">{tr(locale, "Choose machines that should be included in the route even if there is no recommendation row.", "اختر الأجهزة التي يجب تضمينها في الجولة حتى لو لم توجد لها توصية.")}</p>
+      <FormSection title={creationMode === "stops_only" ? tr(locale, "Choose planned machine stops", "اختر مواقع الأجهزة المخططة") : tr(locale, "Add machine stops manually", "إضافة مواقع الأجهزة يدويًا")}>
+        <p className="text-sm text-slate-500">{creationMode === "stops_only" ? tr(locale, "Select every machine the operator should visit. You can add the exact products later at storage.", "حدد كل جهاز يجب على المشغل زيارته. يمكنك إضافة المنتجات الدقيقة لاحقًا في المخزن.") : tr(locale, "Choose machines that should be included in the route even if there is no recommendation row.", "اختر الأجهزة التي يجب تضمينها في الجولة حتى لو لم توجد لها توصية.")}</p>
         {!machines.length ? (
           <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
             {tr(locale, "No active machines found. Create a machine first.", "لم يتم العثور على أجهزة نشطة. أنشئ جهازًا أولًا.")}
@@ -1841,7 +1888,7 @@ export function RouteCreateForm({
       <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
         {tr(locale, "Selected stops:", "المواقع المحددة:")} <span className="font-semibold text-slate-900">{selectedStopCount}</span>
         <span className="mx-2 text-slate-300">/</span>
-        {tr(locale, "Route pick-list products:", "منتجات قائمة التحميل:")} <span className="font-semibold text-slate-900">{selectedProducts.length}</span>
+        {creationMode === "stops_only" ? tr(locale, "Products: add at storage", "المنتجات: تضاف في المخزن") : <>{tr(locale, "Route pick-list products:", "منتجات قائمة التحميل:")} <span className="font-semibold text-slate-900">{selectedProducts.length}</span></>}
       </div>
 
       {error ? (
@@ -1853,12 +1900,12 @@ export function RouteCreateForm({
       <div className="sticky bottom-3 z-20 -mx-3 flex flex-col gap-3 border-t border-slate-200 bg-slate-100/95 px-3 py-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:border-0 sm:bg-transparent sm:p-0">
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 sm:flex-1">
           <div className="font-semibold text-slate-900">
-            {selectedProducts.length} items selected · {plannedRouteStock.reduce((sum, item) => sum + unitQuantity(item.quantity), 0)} total units
+            {creationMode === "stops_only" ? `${machineIds.length} machine stops planned · products added later at storage` : `${selectedProducts.length} items selected · ${plannedRouteStock.reduce((sum, item) => sum + unitQuantity(item.quantity), 0)} total units`}
           </div>
           <div className="mt-1 text-xs text-slate-500">{tr(locale, "The create button stays visible on phones while you review the route.", "يبقى زر الإنشاء ظاهرًا على الهواتف أثناء مراجعة الجولة.")}</div>
         </div>
         <button type="submit" className="btn-primary disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto" disabled={saving}>
-          {saving ? tr(locale, "Creating route...", "جارٍ إنشاء الجولة...") : tr(locale, "Create route", "إنشاء جولة")}
+          {saving ? tr(locale, "Creating route...", "جارٍ إنشاء الجولة...") : creationMode === "stops_only" ? tr(locale, "Plan route stops", "تخطيط مواقع الجولة") : tr(locale, "Create route", "إنشاء جولة")}
         </button>
         <SecondaryButton href="/routes">{tr(locale, "Cancel", "إلغاء")}</SecondaryButton>
       </div>

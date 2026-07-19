@@ -636,6 +636,16 @@ export async function startRoute(routeId: string) {
     return { success: true };
   }
 
+  const preparedStockResult = await supabase
+    .from("route_stock_lines")
+    .select("planned_qty")
+    .eq("route_id", routeId);
+  if (preparedStockResult.error) throwActionError(preparedStockResult.error, "Could not verify the route product plan.");
+  const hasPreparedProducts = (preparedStockResult.data ?? []).some((row: any) => unitQuantity(row.planned_qty) > 0);
+  if (!hasPreparedProducts) {
+    throw new Error("Route products have not been prepared yet. Add exact quantities at storage before starting.");
+  }
+
   const now = new Date().toISOString();
   const startUpdate = route.operator_id
     ? await supabase
