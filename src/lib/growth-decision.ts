@@ -14,6 +14,10 @@ export type GrowthDecisionInput = {
   weakMachineCount: number;
   historyMonthCount: number;
   minimumHistoryMonths: number;
+  monthsWithRevenue: number;
+  costCoverageComplete: boolean;
+  missingCostSalesCount: number;
+  missingCostRevenueLyd: number;
 };
 
 export type GrowthDecisionCode =
@@ -23,6 +27,7 @@ export type GrowthDecisionCode =
   | "fix_existing_first"
   | "build_cash_reserve"
   | "improve_profit_first"
+  | "complete_product_costs"
   | "collect_more_history"
   | "do_not_buy_payback";
 
@@ -64,15 +69,18 @@ function payback(machineCost: number, monthlyProfit: number) {
 
 function scoreInput(input: GrowthDecisionInput, projectedPaybackMonths: number | null, cashAfterMachinePurchaseLyd: number) {
   let score = 100;
-  if (input.historyMonthCount < input.minimumHistoryMonths) score -= 25;
+  if (!input.costCoverageComplete) score -= 30;
+  if (input.costCoverageComplete && input.historyMonthCount < input.minimumHistoryMonths) score -= 25;
   if (input.acceptedLocationCount <= 0) score -= 25;
   if (input.criticalRestockCount > 0) score -= Math.min(20, 5 + input.criticalRestockCount * 2);
   if (input.openCriticalIssueCount > 0) score -= Math.min(20, 8 + input.openCriticalIssueCount * 4);
-  if (input.weakMachineCount > 0) score -= Math.min(15, input.weakMachineCount * 4);
-  if (input.averageMonthlyOperatingProfitLyd < input.minimumMonthlyOperatingProfitLyd) score -= 20;
+  if (input.costCoverageComplete) {
+    if (input.weakMachineCount > 0) score -= Math.min(15, input.weakMachineCount * 4);
+    if (input.averageMonthlyOperatingProfitLyd < input.minimumMonthlyOperatingProfitLyd) score -= 20;
+    if (projectedPaybackMonths === null) score -= 20;
+    else if (projectedPaybackMonths > input.targetPaybackMonths) score -= 25;
+  }
   if (cashAfterMachinePurchaseLyd < input.minimumCashReserveLyd) score -= 30;
-  if (projectedPaybackMonths === null) score -= 20;
-  else if (projectedPaybackMonths > input.targetPaybackMonths) score -= 25;
   return Math.max(0, Math.min(100, Math.round(score)));
 }
 
@@ -82,7 +90,9 @@ export function buildGrowthDecision(input: GrowthDecisionInput): GrowthDecision 
   );
   const cashAfterMachinePurchaseLyd = money(cashAfterCommitmentsLyd - nonNegative(input.machineCostLyd));
   const reserveGapLyd = nonNegative(input.minimumCashReserveLyd - cashAfterMachinePurchaseLyd);
-  const projectedPaybackMonths = payback(input.machineCostLyd, input.averageMachineProfitAfterRentLyd);
+  const projectedPaybackMonths = input.costCoverageComplete
+    ? payback(input.machineCostLyd, input.averageMachineProfitAfterRentLyd)
+    : null;
   const score = scoreInput(input, projectedPaybackMonths, cashAfterMachinePurchaseLyd);
 
   const priorities: GrowthDecision["priorities"] = [
@@ -99,6 +109,13 @@ export function buildGrowthDecision(input: GrowthDecisionInput): GrowthDecision 
       labelAr: "احتياطي شراء المنتجات",
       amountLyd: nonNegative(input.restockReserveLyd),
       status: input.criticalRestockCount > 0 ? "required" : "recommended",
+    },
+    {
+      key: "product_costs",
+      label: "Revenue missing product cost",
+      labelAr: "إيراد بدون تكلفة منتج",
+      amountLyd: nonNegative(input.missingCostRevenueLyd),
+      status: input.costCoverageComplete ? "clear" : "required",
     },
     {
       key: "cash_reserve",
@@ -120,7 +137,7 @@ export function buildGrowthDecision(input: GrowthDecisionInput): GrowthDecision 
   const commonReasonsAr: string[] = [];
   commonReasons.push(`Cash after investor due and protected restocking reserve: ${cashAfterCommitmentsLyd.toLocaleString("en-US")} LYD.`);
   commonReasonsAr.push(`النقد بعد مستحق المستثمر واحتياطي المنتجات: ${cashAfterCommitmentsLyd.toLocaleString("en-US")} د.ل.`);
-  if (projectedPaybackMonths !== null) {
+  if (input.costCoverageComplete && projectedPaybackMonths !== null) {
     commonReasons.push(`Estimated payback from current machine performance: ${projectedPaybackMonths} months.`);
     commonReasonsAr.push(`مدة استرداد التكلفة حسب أداء الأجهزة الحالية: ${projectedPaybackMonths} شهر.`);
   }
@@ -150,6 +167,29 @@ export function buildGrowthDecision(input: GrowthDecisionInput): GrowthDecision 
     reasonsAr: [...reasonsAr, ...commonReasonsAr],
     priorities,
   });
+
+  if (!input.costCoverageComplete) {
+    return result(
+      "complete_product_costs",
+      "Complete product costs first",
+      "أكمل تكاليف المنتجات أولاً",
+      "Sales history exists, but operating profit and payback are not reliable until every sold product has a valid cost.",
+      "سجل المبيعات موجود، لكن الربح التشغيلي ومدة الاسترداد غير موثوقين حتى تكون تكلفة كل منتج مباع مكتملة.",
+      [
+        `${input.monthsWithRevenue} month(s) contain revenue; ${input.historyMonthCount} month(s) currently have complete product costs.`,
+        input.missingCostSalesCount > 0
+          ? `${input.missingCostSalesCount} sales record(s), representing ${money(input.missingCostRevenueLyd).toLocaleString("en-US")} LYD of revenue, are missing cost coverage.`
+          : "Machine-level product cost coverage is incomplete.",
+      ],
+      [
+        `يوجد إيراد في ${input.monthsWithRevenue} شهر، بينما ${input.historyMonthCount} شهر فقط لديه تكاليف منتجات مكتملة.`,
+        input.missingCostSalesCount > 0
+          ? `يوجد ${input.missingCostSalesCount} سجل مبيعات بقيمة ${money(input.missingCostRevenueLyd).toLocaleString("en-US")} د.ل بدون تغطية تكلفة مكتملة.`
+          : "تغطية تكلفة المنتجات على مستوى الأجهزة غير مكتملة.",
+      ],
+      "high",
+    );
+  }
 
   if (input.historyMonthCount < input.minimumHistoryMonths) {
     return result(
