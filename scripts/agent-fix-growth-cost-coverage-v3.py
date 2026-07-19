@@ -21,6 +21,14 @@ new_helper = '''def replace_once(text: str, old: str, new: str, label: str) -> s
         updated, replacements = re.subn(rf"(?m)^(\\s*){re.escape(variable)},\\s*$", rf"\\1{replacement},", text, count=1)
         if replacements == 1:
             return updated
+    if label == "investor source note" and count == 0:
+        pattern = r'(?m)^(\\s*)`VMS rows: \\${salesResult\\.data\\?\\.length \\?\\? 0}`,\\s*$'
+        def insert_source(match):
+            indent = match.group(1)
+            return f'{indent}`VMS source: ${{salesResult.source ?? "unavailable"}}`,\\n{indent}`VMS rows: ${{salesResult.data?.length ?? 0}}`,'
+        updated, replacements = re.subn(pattern, insert_source, text, count=1)
+        if replacements == 1:
+            return updated
     if count != 1:
         raise RuntimeError(f"{label}: expected exactly one match, found {count}")
     return text.replace(old, new, 1)
