@@ -11,6 +11,7 @@ import { buildGrowthDecision } from "@/lib/growth-decision";
 import { calculateInvestorMonth, manualRouteSalesAsProfitRows } from "@/lib/investor-profit";
 import { saveGrowthDecisionSettings } from "@/lib/investor-actions";
 import { getServerI18n } from "@/lib/i18n/server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
@@ -82,6 +83,12 @@ function setupError(error: unknown) {
   return text.includes("growth_decision_settings") || text.includes("does not exist") || text.includes("schema cache");
 }
 
+function databaseErrorMessage(error: unknown) {
+  if (!error || typeof error !== "object") return String(error ?? "Unknown database error");
+  const row = error as { code?: unknown; message?: unknown; details?: unknown; hint?: unknown };
+  return [row.code, row.message, row.details, row.hint].map((value) => String(value ?? "").trim()).filter(Boolean).join(" · ") || "Unknown database error";
+}
+
 export default async function GrowthDecisionsPage({ searchParams }: { searchParams: Promise<{ success?: string; error?: string }> }) {
   const profile = await getCurrentProfile();
   if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
@@ -105,6 +112,7 @@ export default async function GrowthDecisionsPage({ searchParams }: { searchPara
   const monthStarts = completeMonthStarts(6);
   const historyStart = monthStarts[0];
   const historyEnd = endOfMonth(monthStarts[monthStarts.length - 1]);
+  const operationalReadClient = getSupabaseAdminClient() ?? supabase;
 
   const [ledgerResult, salesResult, manualSalesResult, machinesResult, acceptedLocationsResult, issuesResult, refillResult, statementsResult, paymentsResult] = await Promise.all([
     loadFinanceLedgerRows({
@@ -116,10 +124,10 @@ export default async function GrowthDecisionsPage({ searchParams }: { searchPara
     }),
     supabase
       .from("vms_sales_clean")
-      .select("machine_id, net_sales_amount, cogs_amount, gross_profit_amount, cost_missing, sale_date")
+      .select("machine_id, net_sales_amount, gross_profit_amount, cost_missing, sale_date")
       .gte("sale_date", historyStart)
       .lte("sale_date", historyEnd),
-    supabase
+    operationalReadClient
       .from("route_manual_sales")
       .select("id, machine_id, total_amount_lyd, inventory_movement_id, sale_time, status")
       .eq("status", "confirmed")
@@ -136,20 +144,25 @@ export default async function GrowthDecisionsPage({ searchParams }: { searchPara
   if (ledgerResult.error) {
     return <ErrorState title={ar ? "تعذر تحميل الرصيد المالي" : "Finance balance could not load"} body={ar ? "راجع صحة دفتر المالية قبل اتخاذ قرار توسع." : "Repair the Finance ledger before relying on an expansion decision."} />;
   }
-  if (salesResult.error || manualSalesResult.error) {
-    return <ErrorState title={ar ? "تعذر تحميل المبيعات الكاملة" : "Complete sales could not load"} body={ar ? "يجب تحميل مبيعات VMS والمبيعات اليدوية معاً قبل اتخاذ قرار توسع." : "Both VMS and confirmed manual route sales must load before relying on an expansion decision."} />;
+  if (salesResult.error) {
+    return (
+      <ErrorState
+        title={ar ? "تعذر تحميل مبيعات VMS" : "VMS sales could not load"}
+        body={`${ar ? "تعذر تحميل مصدر المبيعات الأساسي. أصلح VMS قبل الاعتماد على قرار التوسع." : "The primary sales source failed. Repair VMS sales before relying on an expansion decision."} ${databaseErrorMessage(salesResult.error)}`}
+      />
+    );
   }
 
   const salesRows = ((salesResult.data ?? []) as SalesRow[]).map((row) => ({ ...row, source: "vms" }));
-  const manualSales = (manualSalesResult.data ?? []) as any[];
+  const manualSalesAvailable = !manualSalesResult.error;
+  const manualSales = manualSalesAvailable ? ((manualSalesResult.data ?? []) as any[]) : [];
   const manualMovementIds = Array.from(new Set(manualSales.map((sale) => String(sale.inventory_movement_id ?? "").trim()).filter(Boolean)));
   const manualMovementResult = manualMovementIds.length
-    ? await supabase.from("inventory_movements").select("id, line_total_lyd, unit_cost_lyd").in("id", manualMovementIds)
+    ? await operationalReadClient.from("inventory_movements").select("id, line_total_lyd, unit_cost_lyd").in("id", manualMovementIds)
     : { data: [], error: null };
-  if (manualMovementResult.error) {
-    return <ErrorState title={ar ? "تعذر تحميل تكلفة المبيعات اليدوية" : "Manual-sale costs could not load"} body={ar ? "لا يمكن إصدار قرار شراء موثوق من دون تكلفة المنتجات المباعة يدوياً." : "A reliable purchase decision requires the product cost of manual sales."} />;
-  }
-  const manualProfitRows = manualRouteSalesAsProfitRows(manualSales, manualMovementResult.data ?? []);
+  const manualCostsAvailable = !manualMovementResult.error;
+  const manualCoverageComplete = manualSalesAvailable && manualCostsAvailable;
+  const manualProfitRows = manualCostsAvailable ? manualRouteSalesAsProfitRows(manualSales, manualMovementResult.data ?? []) : [];
   const manualProfitBySaleId = new Map(manualSales.map((sale, index) => [String(sale.id), manualProfitRows[index]]));
   const machines = (machinesResult.data ?? []) as MachineRow[];
   const ledgerRows = ledgerResult.data;
@@ -223,7 +236,7 @@ export default async function GrowthDecisionsPage({ searchParams }: { searchPara
     criticalRestockCount,
     openCriticalIssueCount: issuesResult.count ?? 0,
     weakMachineCount,
-    historyMonthCount: completeMonthly.length,
+    historyMonthCount: manualCoverageComplete ? completeMonthly.length : 0,
     minimumHistoryMonths: configuredHistoryMonths,
   });
 
@@ -231,6 +244,7 @@ export default async function GrowthDecisionsPage({ searchParams }: { searchPara
   const decisionSummary = ar ? decision.summaryAr : decision.summary;
   const reasons = ar ? decision.reasonsAr : decision.reasons;
   const notice = params.error ? { tone: "error", text: params.error } : params.success ? { tone: "success", text: params.success } : null;
+  const manualCoverageError = manualSalesResult.error ?? manualMovementResult.error ?? null;
 
   return (
     <>
@@ -241,6 +255,14 @@ export default async function GrowthDecisionsPage({ searchParams }: { searchPara
 
       <div className="space-y-6">
         {notice ? <div className={`rounded-xl border p-4 text-sm font-medium ${notice.tone === "error" ? "border-rose-200 bg-rose-50 text-rose-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>{notice.text}</div> : null}
+
+        {!manualCoverageComplete ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+            <div className="font-semibold">{ar ? "تغطية المبيعات اليدوية غير مكتملة — قرار الشراء موقوف احتياطياً" : "Manual route sales coverage is incomplete — purchase recommendation is held"}</div>
+            <p className="mt-1 leading-6">{ar ? "تم تحميل مبيعات VMS والمالية، لذلك ستظهر الرسوم والأرقام. لكن النظام لن يوصي بشراء جهاز حتى يتمكن من قراءة المبيعات اليدوية المؤكدة وتكلفتها." : "VMS and Finance data loaded, so the charts and figures remain available. Snacky OS will not recommend buying a machine until confirmed manual route sales and their product costs can be read."}</p>
+            {manualCoverageError ? <p className="mt-2 break-words font-mono text-xs text-amber-800">{databaseErrorMessage(manualCoverageError)}</p> : null}
+          </div>
+        ) : null}
 
         <section className={`rounded-3xl border p-6 ${decision.code === "buy_now" ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50"}`}>
           <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
