@@ -58,7 +58,12 @@ try:
   );'''
     if test_source.count(old_assertion) != 1:
         raise RuntimeError("Could not locate stale growth coverage assertion.")
-    test_path.write_text(test_source.replace(old_assertion, new_assertions, 1), encoding="utf-8")
+    test_source = test_source.replace(old_assertion, new_assertions, 1)
+    old_banner_assertion = '  assert.match(growth, /Some machine sales costs are incomplete/);'
+    new_banner_assertion = '  assert.match(growth, /Complete product costs first/);'
+    if test_source.count(old_banner_assertion) != 1:
+        raise RuntimeError("Could not locate stale growth cost banner assertion.")
+    test_path.write_text(test_source.replace(old_banner_assertion, new_banner_assertion, 1), encoding="utf-8")
 except Exception:
     diagnostic = traceback.format_exc()
     Path("scripts/agent-growth-patch-error.txt").write_text(diagnostic, encoding="utf-8")
