@@ -1,7 +1,7 @@
 Traceback (most recent call last):
-  File "/home/runner/work/snacky-os/snacky-os/scripts/agent-route-stop-planning.py", line 43, in <module>
-    text = replace_once(text, '              {selectedProducts.length} items selected · {plannedRouteStock.reduce((sum, item) => sum + unitQuantity(item.quantity), 0)} total units', '              {creationMode === "stops_only" ? `${machineIds.length} machine stops planned · products added later at storage` : `${selectedProducts.length} items selected · ${plannedRouteStock.reduce((sum, item) => sum + unitQuantity(item.quantity), 0)} total units`}', "sticky summary mode")
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/runner/work/snacky-os/snacky-os/scripts/agent-route-stop-planning.py", line 16, in replace_once
+  File "/home/runner/work/snacky-os/snacky-os/scripts/agent-route-stop-planning.py", line 65, in <module>
+    text = replace_once(text, '       assignment_mode: assignmentMode,', '       assignment_mode: assignmentMode,\n       creation_mode: creationMode,\n       products_deferred_until_storage: stopsOnly,', "API activity creation mode")
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/snacky-os/snacky-os/scripts/agent-route-stop-planning.py", line 22, in replace_once
     raise RuntimeError(f"{label}: expected exactly one match, found {count}")
-RuntimeError: sticky summary mode: expected exactly one match, found 0
+RuntimeError: API activity creation mode: expected exactly one match, found 0
