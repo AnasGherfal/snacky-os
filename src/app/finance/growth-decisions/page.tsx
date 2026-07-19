@@ -94,6 +94,8 @@ const DEFAULT_SETTINGS: SettingsRow = {
   minimum_history_months: 3,
 };
 
+const MIN_DECISION_COST_COVERAGE_PERCENT = 99;
+
 function numeric(value: unknown) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -165,16 +167,35 @@ function normalizeMachineName(value: unknown) {
   return String(value ?? "").trim().toLocaleLowerCase("en-US");
 }
 
+function conservativeVmsProfit(row: VmsProfitBreakdownRow | null | undefined) {
+  const revenue = numeric(row?.revenue_amount);
+  const reportedGrossProfit = numeric(row?.gross_profit_amount);
+  const missingCostRevenue = numeric(row?.missing_cost_revenue_amount);
+  const grossProfit = money(Math.max(0, reportedGrossProfit - missingCostRevenue));
+  return {
+    revenue,
+    cogs: money(Math.max(0, revenue - grossProfit)),
+    grossProfit,
+  };
+}
+
+function displayProductLabel(row: VmsProfitBreakdownRow, ar: boolean) {
+  const value = String(row.bucket_label ?? row.bucket_key ?? "").trim();
+  if (!value || value === "未设置") return ar ? "منتج غير مربوط" : "Unmapped product";
+  return value;
+}
+
 function vmsAggregateAsSalesRow(
   row: VmsProfitBreakdownRow | null | undefined,
 ): SalesRow[] {
   if (!row) return [];
+  const conservative = conservativeVmsProfit(row);
   return [
     {
-      net_sales_amount: numeric(row.revenue_amount),
-      cogs_amount: numeric(row.cogs_amount),
-      gross_profit_amount: numeric(row.gross_profit_amount),
-      cost_missing: numeric(row.missing_cost_sales_count) > 0,
+      net_sales_amount: conservative.revenue,
+      cogs_amount: conservative.cogs,
+      gross_profit_amount: conservative.grossProfit,
+      cost_missing: false,
       source: "vms",
     },
   ];
@@ -482,8 +503,6 @@ export default async function GrowthDecisionsPage({
     (row) => row.vmsDataPresent && row.revenueLyd > 0,
   );
   const completeMonthly = monthsWithRevenue.filter((row) => row.complete);
-  const vmsHistoryCostsComplete =
-    monthsWithRevenue.length > 0 && monthsWithRevenue.every((row) => row.complete);
   const missingCostSalesCount = vmsProfitResult.monthlyData.reduce(
     (sum, row) => sum + numeric(row.missing_cost_sales_count),
     0,
@@ -504,6 +523,11 @@ export default async function GrowthDecisionsPage({
     totalVmsRevenueLyd > 0
       ? Math.max(0, Math.min(100, ((totalVmsRevenueLyd - missingCostRevenueLyd) / totalVmsRevenueLyd) * 100))
       : 0;
+  const minorCostGapAccepted =
+    missingCostSalesCount > 0 &&
+    costCoveragePercent >= MIN_DECISION_COST_COVERAGE_PERCENT;
+  const decisionCostCoverageAccepted =
+    missingCostSalesCount === 0 || minorCostGapAccepted;
   const missingCostProducts = vmsProfitResult.productData
     .filter((row) => numeric(row.missing_cost_sales_count) > 0)
     .sort(
@@ -532,22 +556,18 @@ export default async function GrowthDecisionsPage({
       row,
     ]),
   );
-  const vmsMachineCostsComplete = vmsProfitResult.machineData.every(
-    (row) => numeric(row.missing_cost_sales_count) === 0,
-  );
   const vmsCoverageComplete =
-    vmsHistoryCostsComplete &&
-    vmsMachineCostsComplete &&
+    monthsWithRevenue.length > 0 &&
+    decisionCostCoverageAccepted &&
     vmsProfitResult.source !== null;
   const activeMachines = machines.filter(
     (machine) => String(machine.status ?? "active") === "active",
   );
   const machineProfitRows = activeMachines.map((machine) => {
     const vmsRow = vmsMachineByName.get(normalizeMachineName(machine.name));
-    const vmsGrossProfit =
-      vmsRow && numeric(vmsRow.missing_cost_sales_count) === 0
-        ? numeric(vmsRow.gross_profit_amount)
-        : 0;
+    const vmsGrossProfit = vmsRow
+      ? conservativeVmsProfit(vmsRow).grossProfit
+      : 0;
     const manualGrossProfit = latestManualSales
       .filter((sale) => sale.machine_id === machine.id)
       .reduce((sum, sale) => {
@@ -677,36 +697,46 @@ export default async function GrowthDecisionsPage({
           {vmsSourceLabel}
         </div>
 
-        {!vmsCoverageComplete && vmsProfitResult.monthlyData.length ? (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+        {missingCostSalesCount > 0 && vmsProfitResult.monthlyData.length ? (
+          <div className={`rounded-xl border p-4 text-sm ${minorCostGapAccepted ? "border-sky-200 bg-sky-50 text-sky-950" : "border-amber-200 bg-amber-50 text-amber-950"}`}>
             <div className="font-semibold">
-              {ar ? "أكمل تكاليف المنتجات أولاً" : "Complete product costs first"}
+              {minorCostGapAccepted
+                ? ar
+                  ? "تم تجاهل فجوة تكلفة بسيطة في قرار النمو"
+                  : "Minor cost gap ignored for growth decision"
+                : ar
+                  ? "أكمل تكاليف المنتجات أولاً"
+                  : "Complete product costs first"}
             </div>
             <p className="mt-1 leading-6">
-              {ar
-                ? "يوجد سجل مبيعات فعلي، لكن الربح ومدة الاسترداد لن يعتمدا حتى تكتمل تكلفة المنتجات المباعة."
-                : "Real sales history is available, but profit and payback will remain unavailable until sold-product costs are complete."}
+              {minorCostGapAccepted
+                ? ar
+                  ? `تغطية التكلفة ${costCoveragePercent.toFixed(1)}%. سيستمر القرار، وتم احتساب المبيعات المتأثرة كربح صفري حتى لا يتم تضخيم الربح أو مدة الاسترداد.`
+                  : `Cost coverage is ${costCoveragePercent.toFixed(1)}%. The decision continues, and affected sales are conservatively treated as zero profit so profit and payback are not overstated.`
+                : ar
+                  ? "فجوة التكلفة كبيرة بما يكفي للتأثير على الربح ومدة الاسترداد، لذلك يبقى قرار الشراء موقوفاً."
+                  : "The cost gap is large enough to affect profit and payback, so the purchase recommendation remains on hold."}
             </p>
             <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <div className="rounded-lg bg-white/80 p-3"><div className="text-xs text-slate-500">{ar ? "أشهر بها مبيعات" : "Months with sales"}</div><div className="mt-1 text-lg font-semibold">{monthsWithRevenue.length}</div></div>
-              <div className="rounded-lg bg-white/80 p-3"><div className="text-xs text-slate-500">{ar ? "أشهر مكتملة التكلفة" : "Fully costed months"}</div><div className="mt-1 text-lg font-semibold">{completeMonthly.length}</div></div>
-              <div className="rounded-lg bg-white/80 p-3"><div className="text-xs text-slate-500">{ar ? "إيراد متأثر" : "Revenue affected"}</div><div className="mt-1 text-lg font-semibold">{formatFinanceMoney(missingCostRevenueLyd)}</div></div>
+              <div className="rounded-lg bg-white/80 p-3"><div className="text-xs text-slate-500">{ar ? "سجلات ناقصة التكلفة" : "Missing-cost records"}</div><div className="mt-1 text-lg font-semibold">{missingCostSalesCount}</div></div>
+              <div className="rounded-lg bg-white/80 p-3"><div className="text-xs text-slate-500">{ar ? "إيراد محسوب بربح صفري" : "Revenue treated as zero profit"}</div><div className="mt-1 text-lg font-semibold">{formatFinanceMoney(missingCostRevenueLyd)}</div></div>
               <div className="rounded-lg bg-white/80 p-3"><div className="text-xs text-slate-500">{ar ? "تغطية التكلفة" : "Cost coverage"}</div><div className="mt-1 text-lg font-semibold">{costCoveragePercent.toFixed(1)}%</div></div>
             </div>
             {missingCostProducts.length ? (
               <div className="mt-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">{ar ? "أعلى المنتجات الناقصة تكلفة" : "Top products missing cost"}</div>
+                <div className={`text-xs font-semibold uppercase tracking-wide ${minorCostGapAccepted ? "text-sky-800" : "text-amber-800"}`}>{ar ? "أعلى المنتجات الناقصة تكلفة" : "Top products missing cost"}</div>
                 <div className="mt-2 grid gap-2 sm:grid-cols-2">
                   {missingCostProducts.map((row) => (
-                    <div key={String(row.bucket_key ?? row.bucket_label)} className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-white/80 px-3 py-2">
-                      <span className="min-w-0 truncate font-medium">{row.bucket_label ?? row.bucket_key ?? (ar ? "منتج غير معروف" : "Unknown product")}</span>
+                    <div key={String(row.bucket_key ?? row.bucket_label)} className={`flex items-center justify-between gap-3 rounded-lg border bg-white/80 px-3 py-2 ${minorCostGapAccepted ? "border-sky-200" : "border-amber-200"}`}>
+                      <span className="min-w-0 truncate font-medium">{displayProductLabel(row, ar)}</span>
                       <span className="shrink-0 text-xs">{formatFinanceMoney(numeric(row.missing_cost_revenue_amount))}</span>
                     </div>
                   ))}
                 </div>
               </div>
             ) : null}
-            <Link href="/products" className="mt-4 inline-flex font-semibold text-amber-900 underline underline-offset-4">{ar ? "مراجعة تكاليف المنتجات" : "Review product costs"}</Link>
+            <Link href="/products" className={`mt-4 inline-flex font-semibold underline underline-offset-4 ${minorCostGapAccepted ? "text-sky-900" : "text-amber-900"}`}>{ar ? "مراجعة تكاليف المنتجات" : "Review product costs"}</Link>
           </div>
         ) : null}
 
