@@ -1,6 +1,12 @@
 name: Fix growth cost coverage
 
 on:
+  push:
+    branches:
+      - agent/fix-growth-cost-coverage
+    paths:
+      - "scripts/agent-fix-growth-cost-coverage.py"
+      - ".github/workflows/agent-fix-growth-cost-coverage.yml"
   pull_request:
     branches:
       - master
