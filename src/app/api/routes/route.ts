@@ -15,6 +15,7 @@ import { notifyRouteAssigned } from "@/lib/notification-delivery";
 
 type CreateRoutePayload = {
   routeDate?: string;
+  creationMode?: "full" | "stops_only";
   assignmentMode?: "assigned" | "unassigned";
   operatorId?: string;
   machineIds?: string[];
@@ -384,6 +385,8 @@ export async function POST(request: Request) {
   }
 
   const routeDate = String(payload.routeDate ?? "").trim();
+  const creationMode = payload.creationMode === "stops_only" ? "stops_only" : "full";
+  const stopsOnly = creationMode === "stops_only";
   const assignmentMode = payload.assignmentMode === "assigned" ? "assigned" : "unassigned";
   const operatorId = assignmentMode === "assigned" ? String(payload.operatorId ?? "").trim() : "";
   const manualMachineIds = Array.from(new Set((payload.machineIds ?? []).map(String).filter(Boolean)));
@@ -408,7 +411,8 @@ export async function POST(request: Request) {
   if (!routeDate) return jsonError("Route date is required.");
   if (assignmentMode === "assigned" && !operatorId) return jsonError("Choose a route performer or leave this route unassigned.");
   if (adminOverride && !isOwnerAdminRole(profile)) return jsonError("Only owner or admin can override storage availability.", 403);
-  if (!recommendationKeys.length && !legacyRecommendationSlotIds.length && !manualStopItems.length) return jsonError("Choose machine-level refill items for this route.");
+  if (stopsOnly && !manualMachineIds.length) return jsonError("Choose at least one machine stop for this route plan.");
+  if (!stopsOnly && !recommendationKeys.length && !legacyRecommendationSlotIds.length && !manualStopItems.length) return jsonError("Choose machine-level refill items for this route.");
 
   const recommendationsResult = recommendationKeys.length
     ? await supabase
@@ -481,7 +485,9 @@ export async function POST(request: Request) {
   });
   const plannedRecommendationRows = groupedRecommendationRows.filter((row) => planQuantity(row.final_take_qty) > 0);
   const recommendationMachineIds = plannedRecommendationRows.map((row) => row.machine_id).filter(Boolean);
-  const selectedMachineIds = Array.from(new Set([...manualMachineIds, ...recommendationMachineIds, ...manualStopItems.map((item) => item.machineId)]));
+  const selectedMachineIds = stopsOnly
+    ? manualMachineIds
+    : Array.from(new Set([...manualMachineIds, ...recommendationMachineIds, ...manualStopItems.map((item) => item.machineId)]));
   const stockByProduct = new Map<string, number>();
   plannedRecommendationRows.forEach((row) => {
     const productId = String(row.product_id);
@@ -491,14 +497,14 @@ export async function POST(request: Request) {
   manualStopItems.forEach((item) => {
     if (item.quantity > 0) stockByProduct.set(item.productId, (stockByProduct.get(item.productId) ?? 0) + item.quantity);
   });
-  if (recommendationRows.length && !actionableRecommendationRows.length && !manualStopItems.length) {
+  if (!stopsOnly && recommendationRows.length && !actionableRecommendationRows.length && !manualStopItems.length) {
     return jsonError("Enter planned quantities for capacity-missing VMS rows before creating a route.");
   }
-  if (!stockByProduct.size) return jsonError("Planned machine refill quantities must be greater than zero.");
+  if (!stopsOnly && !stockByProduct.size) return jsonError("Planned machine refill quantities must be greater than zero.");
   if (!selectedMachineIds.length) return jsonError("Choose at least one machine stop with a planned refill quantity greater than zero.");
 
   let availableUnitsByProduct = new Map<string, number>();
-  if (!adminOverride) {
+  if (!stopsOnly && !adminOverride) {
     const stockValidation = await validateRouteStock(supabase, stockByProduct);
     availableUnitsByProduct = stockValidation.availableByProduct;
     if (stockValidation.error) return jsonError(stockValidation.error, stockValidation.status ?? 500);
@@ -735,26 +741,28 @@ export async function POST(request: Request) {
     }
   }
 
-  const routeStockInsert = await supabase.from("route_stock_lines").insert(
-    Array.from(stockByProduct.entries()).map(([productId, quantity]) => ({
-      route_id: routeId,
-      product_id: productId,
-      planned_qty: planQuantity(quantity),
-    })),
-  );
+  if (!stopsOnly) {
+    const routeStockInsert = await supabase.from("route_stock_lines").insert(
+      Array.from(stockByProduct.entries()).map(([productId, quantity]) => ({
+        route_id: routeId,
+        product_id: productId,
+        planned_qty: planQuantity(quantity),
+      })),
+    );
 
-  if (routeStockInsert.error) {
-    console.error("[routes:create] Failed to insert route stock lines", { routeId, error: routeStockInsert.error });
-    if (!adminOverride) {
-      const stockValidation = await validateRouteStock(supabase, stockByProduct, routeId);
-      if (stockValidation.error) console.error("[routes:create] Stock recheck after route stock insert failure failed", { routeId, error: stockValidation.error });
-      if (stockValidation.issues.length) {
-        await cleanupRoute();
-        return jsonError(stockValidationMessage(stockValidation.issues), 400, { code: "stock_exceeded", stockErrors: stockValidation.issues });
+    if (routeStockInsert.error) {
+      console.error("[routes:create] Failed to insert route stock lines", { routeId, error: routeStockInsert.error });
+      if (!adminOverride) {
+        const stockValidation = await validateRouteStock(supabase, stockByProduct, routeId);
+        if (stockValidation.error) console.error("[routes:create] Stock recheck after route stock insert failure failed", { routeId, error: stockValidation.error });
+        if (stockValidation.issues.length) {
+          await cleanupRoute();
+          return jsonError(stockValidationMessage(stockValidation.issues), 400, { code: "stock_exceeded", stockErrors: stockValidation.issues });
+        }
       }
+      await cleanupRoute();
+      return jsonError("Could not save route stock. The route was not created.", 500);
     }
-    await cleanupRoute();
-    return jsonError("Could not save route stock. The route was not created.", 500);
   }
 
   const verifyRoute = await supabase.from("routes").select("id").eq("id", routeId).single();
@@ -788,6 +796,8 @@ export async function POST(request: Request) {
       manual_stop_item_count: manualStopItems.length,
       admin_override: adminOverride,
       assignment_mode: assignmentMode,
+      creation_mode: creationMode,
+      products_deferred_until_storage: stopsOnly,
     },
     summary: operatorId
       ? `Created assigned route for ${routeDate} with ${selectedMachineIds.length} stops`
@@ -812,7 +822,7 @@ export async function POST(request: Request) {
   revalidatePath("/operator/routes");
   revalidatePath(`/routes/${routeId}`);
 
-  return NextResponse.json({ routeId });
+  return NextResponse.json({ routeId, productsDeferred: stopsOnly });
 }
 
 // TODO: Add update_route activity logging when Snacky OS gets a route edit/update endpoint.
