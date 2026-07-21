@@ -40,7 +40,7 @@ export default async function MachinesPage({ searchParams }: { searchParams: Pro
     </form>
     {!data?.length ? <EmptyState title="No machines yet" body="Create your first machine to start refill and route planning." /> :
       <>
-        <DataTable headers={["Code","Machine","Type","Site","Status","Actions"]}>{data.map((m:any)=><tr key={m.id}><td>{m.machine_code}</td><td className="font-medium"><div>{formatMachineDisplayName(m, { includeArea: false })}</div><div className="text-xs text-slate-500">{m.vms_machine_id || "No VMS ID"}</div></td><td>{m.machine_type}</td><td>{formatSiteLabel(m.locations, { includeArea: true, fallback: "-" })}</td><td><StatusBadge status={m.status} /></td><td><Link href={`/machines/${m.id}/edit`} className="btn-secondary">Edit</Link></td></tr>)}</DataTable>
+        <DataTable headers={["Code","Machine","Type","Site","Status","Actions"]}>{data.map((m:any)=><tr key={m.id}><td>{m.machine_code}</td><td className="font-medium"><div>{formatMachineDisplayName(m, { includeArea: false })}</div><div className="text-xs text-slate-500">{m.vms_machine_id || "No VMS ID"}</div></td><td>{m.machine_type}</td><td>{formatSiteLabel(m.locations, { includeArea: true, fallback: "-" })}</td><td><StatusBadge status={m.status} /></td><td><div className="flex flex-wrap gap-2"><Link href={`/machines/${m.id}`} className="link-secondary">History</Link><Link href={`/machines/${m.id}/edit`} className="btn-secondary">Edit</Link></div></td></tr>)}</DataTable>
         <PaginationControls basePath="/machines" searchParams={params} page={page} pageSize={pageSize} totalCount={count ?? 0} itemLabel="machines" />
       </>}
   </>;
