@@ -291,7 +291,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     productIds.length ? supabase.from("products").select("id, name").in("id", productIds) : Promise.resolve({ data: [] }),
     supabase
       .from("inventory_movements")
-      .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, related_route_stop_id, related_machine_id, notes, created_by, created_at, product:products(name), created_by_member:team_members(full_name)")
+      .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, movement_type, related_route_stop_id, related_machine_id, notes, created_by, created_at, product:products(name), created_by_member:team_members(full_name)")
       .eq("related_route_id", id)
       .order("created_at", { ascending: false }),
     supabase
@@ -398,9 +398,10 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   const returnedAdjustments = routeAdjustments.filter((row: any) => String(row.adjustment_type ?? "") === "returned_from_machine");
   const machineStorageMovements = (movements ?? []).filter((movement: any) => {
     const reason = String(movement.reason ?? "").toLowerCase();
-    return reason === "extra_stock_left_at_machine"
-      || reason === "machine_storage"
-      || (movement.from_entity_type === "operator_bag" && movement.to_entity_type === "machine");
+    return movement.to_entity_type === "machine_storage"
+      || movement.movement_type === "route_to_machine_storage"
+      || reason === "extra_stock_left_at_machine"
+      || reason === "machine_storage";
   });
   const damagedTotalQty = damagedAdjustments.reduce((sum: number, row: any) => sum + Number(row.quantity ?? 0), 0);
   const returnedTotalQty = returnedAdjustments.reduce((sum: number, row: any) => sum + Number(row.quantity ?? 0), 0);
