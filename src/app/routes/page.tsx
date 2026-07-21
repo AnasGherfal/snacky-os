@@ -152,7 +152,7 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
   const stopRows = stopsError ? [] : (stops ?? []);
   const stopMachineIds = Array.from(new Set(stopRows.map((stop: any) => stop.machine_id).filter(Boolean)));
   const { data: stopMachines, error: stopMachinesError } = stopMachineIds.length
-    ? await supportClient.from("machines").select("id, name, machine_code, machine_display_name, location:locations(id, name, area)").in("id", stopMachineIds)
+    ? await supportClient.from("machines").select("id, name, machine_code, location:locations(id, name)").in("id", stopMachineIds)
     : { data: [], error: null };
   if (stopMachinesError) logRouteLoaderIssue({ step: "load_route_stop_machines", query: "machines", error: stopMachinesError, context: loaderContext, optional: true });
   const stopMachineById = new Map((stopMachines ?? []).map((machine: any) => [machine.id, machine]));
@@ -161,7 +161,10 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
   if (!stopsError) {
     (stops ?? []).forEach((stop: any) => {
       stopsByRouteId.set(stop.route_id, (stopsByRouteId.get(stop.route_id) ?? 0) + 1);
-      const label = formatMachineDisplayName(stopMachineById.get(stop.machine_id) ?? null, { includeArea: true });
+      const machine = stopMachineById.get(stop.machine_id);
+      const label = machine
+        ? formatMachineDisplayName(machine, { includeArea: true })
+        : `Machine ${String(stop.machine_id ?? "").slice(0, 8)}`;
       stopNamesByRouteId.set(stop.route_id, [...(stopNamesByRouteId.get(stop.route_id) ?? []), label]);
     });
   }
@@ -226,7 +229,7 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
         subtitle={locale === "ar" ? "خطط جولات التعبئة، وعيّن المشغلين، وتابع مواقع الأجهزة." : "Plan refill routes, assign operators, and track machine stops."}
         action={<PrimaryButton href="/routes/new">{locale === "ar" ? "إنشاء جولة" : "Create route"}</PrimaryButton>}
       />
-      {operatorsError || stopsError ? (
+      {operatorsError || stopsError || stopMachinesError ? (
         <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
           {locale === "ar" ? "بعض تفاصيل ملخص الجولات غير متاحة الآن. ما زالت الجولات محمّلة." : "Some route summary details are unavailable right now. Routes are still loaded."}
         </div>
