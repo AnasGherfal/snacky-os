@@ -140,7 +140,8 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
                   <td>{formatLastLogin(profile?.last_login_at)}</td>
                   <td>
                     <div className="flex flex-wrap gap-2">
-                      <Link className="link-secondary" href={`/team/${member.id}/activity`}>Activity</Link>
+                      <Link className="link-secondary" href={`/team/${member.id}`}>Profile</Link>
+                       <Link className="link-secondary" href={`/team/${member.id}/activity`}>Activity</Link>
                       <Link className="link-secondary" href={`/team/${member.id}/edit`}>Edit</Link>
                     </div>
                   </td>
