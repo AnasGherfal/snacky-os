@@ -413,3 +413,24 @@ test("completed route outcomes and machine/operator histories stay visible witho
   assert.match(teamPage, /Machines visited/);
   assert.match(teamPage, /Damaged, returned, and machine storage/);
 });
+
+
+test("machine storage and history use explicit storage records and schema-safe route links", () => {
+  const routeDetail = readFileSync("src/app/routes/[id]/page.tsx", "utf8");
+  const routesPage = readFileSync("src/app/routes/page.tsx", "utf8");
+  const machinePage = readFileSync("src/app/machines/[id]/page.tsx", "utf8");
+  const teamPage = readFileSync("src/app/team/[id]/page.tsx", "utf8");
+
+  for (const source of [routeDetail, machinePage, teamPage]) {
+    assert.match(source, /route_to_machine_storage/);
+    assert.match(source, /to_entity_type === "machine_storage"/);
+    assert.doesNotMatch(source, /from_entity_type === "operator_bag" && .*to_entity_type === "machine"/);
+  }
+
+  assert.doesNotMatch(routesPage, /machine_display_name/);
+  assert.match(routesPage, /location:locations\(id, name\)/);
+  assert.match(machinePage, /route_stop_items/);
+  assert.match(machinePage, /refill_orders/);
+  assert.equal(machinePage.includes('.from("route_stops").select("id, route_id, stop_order, status").eq("machine_id", id).order("created_at"'), false);
+  assert.doesNotMatch(teamPage, /machine_display_name/);
+});
