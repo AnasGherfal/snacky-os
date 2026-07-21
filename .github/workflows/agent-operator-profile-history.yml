@@ -1,0 +1,28 @@
+name: Validate operator profile history
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "src/app/team/[id]/page.tsx"
+      - "scripts/test-operator-profile-history.mjs"
+      - ".github/workflows/agent-operator-profile-history.yml"
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Test operator profile history
+        run: node --test scripts/test-operator-profile-history.mjs
+      - name: Test critical workflows
+        run: npm run test:critical-workflows
+      - name: Build Snacky OS
+        run: npm run build
