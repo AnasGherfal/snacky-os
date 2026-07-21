@@ -8,6 +8,7 @@ import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagi
 import { isActiveRouteStatus, isCompletedRouteStatus, isTerminalRouteStatus, routeDisplayStatus } from "@/lib/route-workflow";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { getServerI18n } from "@/lib/i18n/server";
+import { formatMachineDisplayName } from "@/lib/machine-site-display";
 
 export const dynamic = "force-dynamic";
 
@@ -63,6 +64,11 @@ function logRouteLoaderIssue({
   (optional ? console.warn : console.error)("[routes] " + step + " failed", payload);
 }
 
+function routeCreatedTime(value: unknown, locale: RoutesI18n["locale"]) {
+  if (!value) return "-";
+  return new Date(String(value)).toLocaleTimeString(locale === "ar" ? "ar-LY" : "en-US", { hour: "2-digit", minute: "2-digit" });
+}
+
 function routeStatusLabel(status: string | null | undefined, locale: RoutesI18n["locale"]) {
   const value = String(status ?? "").toLowerCase();
   if (locale !== "ar") {
@@ -112,8 +118,9 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
   };
   const { data: routes, count, error: routesError } = await supabase
     .from("routes")
-    .select("id, route_date, status, operator_id", { count: "exact" })
+    .select("id, route_date, status, operator_id, created_at", { count: "exact" })
     .order("route_date", { ascending: false })
+    .order("created_at", { ascending: false })
     .range(from, to);
   if (routesError) {
     logRouteLoaderIssue({ step: "load_routes", query: "routes", error: routesError, context: loaderContext });
@@ -132,7 +139,7 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
       ? supportClient.from("team_members").select("id, full_name").in("id", operatorIds)
       : Promise.resolve({ data: [], error: null }),
     routeIds.length
-      ? supportClient.from("route_stops").select("route_id").in("route_id", routeIds)
+      ? supportClient.from("route_stops").select("route_id, machine_id, stop_order").in("route_id", routeIds).order("stop_order", { ascending: true })
       : Promise.resolve({ data: [], error: null }),
   ]);
   if (operatorsError) {
@@ -142,10 +149,20 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
     logRouteLoaderIssue({ step: "load_route_stop_counts", query: "route_stops", error: stopsError, context: loaderContext, optional: true });
   }
   const operatorById = new Map((operators ?? []).map((operator: any) => [operator.id, operator]));
+  const stopRows = stopsError ? [] : (stops ?? []);
+  const stopMachineIds = Array.from(new Set(stopRows.map((stop: any) => stop.machine_id).filter(Boolean)));
+  const { data: stopMachines, error: stopMachinesError } = stopMachineIds.length
+    ? await supportClient.from("machines").select("id, name, machine_code, machine_display_name, location:locations(id, name, area)").in("id", stopMachineIds)
+    : { data: [], error: null };
+  if (stopMachinesError) logRouteLoaderIssue({ step: "load_route_stop_machines", query: "machines", error: stopMachinesError, context: loaderContext, optional: true });
+  const stopMachineById = new Map((stopMachines ?? []).map((machine: any) => [machine.id, machine]));
   const stopsByRouteId = new Map<string, number>();
+  const stopNamesByRouteId = new Map<string, string[]>();
   if (!stopsError) {
     (stops ?? []).forEach((stop: any) => {
       stopsByRouteId.set(stop.route_id, (stopsByRouteId.get(stop.route_id) ?? 0) + 1);
+      const label = formatMachineDisplayName(stopMachineById.get(stop.machine_id) ?? null, { includeArea: true });
+      stopNamesByRouteId.set(stop.route_id, [...(stopNamesByRouteId.get(stop.route_id) ?? []), label]);
     });
   }
   const initialGroups = [
@@ -167,13 +184,13 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
         <MobileRecordCard key={route.id}>
           <div className="mb-3 flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <h2 className="break-words text-base font-semibold text-slate-900">{route.route_date}</h2>
+              <h2 className="break-words text-base font-semibold text-slate-900">{route.route_date} · {routeCreatedTime(route.created_at, locale)}</h2>
               <p className="mt-1 text-sm text-slate-500">{operatorById.get(route.operator_id)?.full_name ?? (locale === "ar" ? "متاحة" : "Available")}</p>
             </div>
             <StatusBadge status={routeDisplayStatus(route.status, route.operator_id)} label={routeStatusLabel(route.status, locale)} />
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <MobileField label={locale === "ar" ? "المواقع" : "Stops"}>{stopsByRouteId.get(route.id) ?? 0}</MobileField>
+            <MobileField label={locale === "ar" ? "مواقع الأجهزة" : "Machine stops"}>{(stopNamesByRouteId.get(route.id) ?? []).join(" · ") || "-"}</MobileField>
             <MobileField label={locale === "ar" ? "المسؤول" : "Performer"}>{operatorById.get(route.operator_id)?.full_name ?? (locale === "ar" ? "غير مسندة" : "Unassigned")}</MobileField>
           </div>
           <Link className="btn-secondary mt-4 w-full" href={`/routes/${route.id}`}>
@@ -185,13 +202,13 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
   );
 
   const renderRouteTable = (rows: any[]) => (
-    <DataTable className="hidden md:block" headers={locale === "ar" ? ["التاريخ", "المسؤول", "الحالة", "المواقع", "التفاصيل"] : ["Date", "Performer", "Status", "Stops", "Details"]}>
+    <DataTable className="hidden md:block" headers={locale === "ar" ? ["التاريخ والوقت", "المسؤول", "الحالة", "مواقع الأجهزة", "التفاصيل"] : ["Date & time", "Performer", "Status", "Machine stops", "Details"]}>
       {rows.map((route: any) => (
         <tr key={route.id}>
-          <td>{route.route_date}</td>
+          <td><div>{route.route_date}</div><div className="text-xs text-slate-500">{routeCreatedTime(route.created_at, locale)}</div></td>
           <td>{operatorById.get(route.operator_id)?.full_name ?? (locale === "ar" ? "غير مسندة" : "Unassigned")}</td>
           <td><StatusBadge status={routeDisplayStatus(route.status, route.operator_id)} label={routeStatusLabel(route.status, locale)} /></td>
-          <td>{stopsByRouteId.get(route.id) ?? 0}</td>
+          <td><div className="max-w-xl text-sm">{(stopNamesByRouteId.get(route.id) ?? []).join(" · ") || "-"}</div><div className="text-xs text-slate-500">{stopsByRouteId.get(route.id) ?? 0} {locale === "ar" ? "موقع" : "stops"}</div></td>
           <td>
             <Link className="link-secondary" href={`/routes/${route.id}`}>
               {locale === "ar" ? "عرض الجولة" : "View route"}
