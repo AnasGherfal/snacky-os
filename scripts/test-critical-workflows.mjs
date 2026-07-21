@@ -393,3 +393,23 @@ test("route stops can be planned before products and starting stays locked", () 
   assert.match(editPage, /Prepare route products at storage/);
   assert.match(editor, /Save products and build pick list/);
 });
+
+
+test("completed route outcomes and machine/operator histories stay visible without raw logs", () => {
+  const routeDetail = readFileSync("src/app/routes/[id]/page.tsx", "utf8");
+  const routesPage = readFileSync("src/app/routes/page.tsx", "utf8");
+  const machinePage = readFileSync("src/app/machines/[id]/page.tsx", "utf8");
+  const teamPage = readFileSync("src/app/team/[id]/page.tsx", "utf8");
+  assert.match(routeDetail, /Completed route outcome/);
+  assert.match(routeDetail, /route_manual_sales/);
+  assert.match(routeDetail, /returned_from_machine/);
+  assert.match(routeDetail, /extra_stock_left_at_machine/);
+  assert.doesNotMatch(routeDetail, />Pickup batches</);
+  assert.doesNotMatch(routeDetail, />Inventory movements</);
+  assert.match(routesPage, /created_at/);
+  assert.match(routesPage, /Machine stops/);
+  assert.match(machinePage, /Route history/);
+  assert.match(machinePage, /Manual sales/);
+  assert.match(teamPage, /Machines visited/);
+  assert.match(teamPage, /Damaged, returned, and machine storage/);
+});

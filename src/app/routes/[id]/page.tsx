@@ -7,6 +7,7 @@ import { lyd } from "@/lib/format";
 import { moneyLabel } from "@/lib/payroll";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { privateStorageObjectUrl, REFILL_PHOTO_BUCKET } from "@/lib/storage-buckets";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { ROUTE_CANCELED_STATUS, isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isPickupConfirmedStatus, isRouteItemsEditableStatus, isRouteStopDoneStatus, isTerminalRouteStatus, nextOperatorRouteHref, routeDisplayStatus } from "@/lib/route-workflow";
 import { RouteCreatedToast } from "@/app/routes/[id]/RouteCreatedToast";
 import { assignRoute, cancelRoute, deleteDraftRoute } from "@/lib/route-actions";
@@ -197,7 +198,8 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   }
 
   const routeRow: any = route;
-  const [{ data: operator }, { data: performers }, { data: stops, error: stopsError }, { data: stopItems, error: stopItemsError }, { data: routeStock, error: routeStockError }, { data: fillLines, error: fillLinesError }, { data: pickListItems, error: pickListItemsError }, { data: pickupBatches, error: pickupBatchesError }] = await Promise.all([
+  const supportClient = getSupabaseAdminClient() ?? supabase;
+  const [{ data: operator }, { data: performers }, { data: stops, error: stopsError }, { data: stopItems, error: stopItemsError }, { data: routeStock, error: routeStockError }, { data: fillLines, error: fillLinesError }, { data: pickListItems, error: pickListItemsError }] = await Promise.all([
     routeRow.operator_id
       ? supabase.from("team_members").select("id, full_name").eq("id", routeRow.operator_id).maybeSingle()
       : Promise.resolve({ data: null }),
@@ -227,11 +229,6 @@ export default async function RouteDetailPage({ params, searchParams }: { params
       .select("id, pickup_batch_id, product_id, planned_qty, picked_qty, action_type, substituted_for_product_id, reason, notes, needs_review, is_active, created_at, product:products!route_pick_list_items_product_id_fkey(id, name), substituted_product:products!route_pick_list_items_substituted_for_product_id_fkey(id, name)")
       .eq("route_id", id)
       .order("created_at", { ascending: true }),
-    supabase
-      .from("route_pickup_batches")
-      .select("id, status, selected_stop_ids, product_summary, storage_deducted, confirmed_at, operator:team_members(full_name)")
-      .eq("route_id", id)
-      .order("confirmed_at", { ascending: true }),
   ]);
 
   if (stopsError) console.error("[routes:detail] Failed to load route stops", { id, error: stopsError });
@@ -279,7 +276,6 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   } else if (pickListItemsError && !isMissingTable(pickListItemsError, "route_pick_list_items")) {
     console.error("[routes:detail] Failed to load route pick list items", { id, error: pickListItemsError });
   }
-  if (pickupBatchesError && !isMissingTable(pickupBatchesError, "route_pickup_batches")) console.error("[routes:detail] Failed to load pickup batches", { id, error: pickupBatchesError });
 
   const routeStops = stops ?? [];
   routePickListItems = routePickListItems.filter((item: any) => item.is_active !== false);
@@ -314,6 +310,23 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   ]);
   if (routePayError) console.error("[routes:detail] Failed to load route pay breakdown", { id, error: routePayError });
   const machineById = new Map((machines ?? []).map((machine: any) => [machine.id, machine]));
+  const [manualSalesResult, adjustmentsResult] = await Promise.all([
+    supportClient
+      .from("route_manual_sales")
+      .select("id, route_id, route_stop_id, machine_id, product_id, product_name, quantity, unit_price_lyd, total_amount_lyd, payment_method, sale_time, status")
+      .eq("route_id", id)
+      .order("sale_time", { ascending: true }),
+    supportClient
+      .from("inventory_adjustments")
+      .select("id, route_id, route_stop_id, machine_id, adjustment_type, product_id, product_name, quantity, reason, notes, status, created_at")
+      .eq("route_id", id)
+      .neq("status", "cancelled")
+      .order("created_at", { ascending: true }),
+  ]);
+  if (manualSalesResult.error && !isMissingTable(manualSalesResult.error, "route_manual_sales")) console.warn("[routes:detail] Manual sales unavailable", { id, error: manualSalesResult.error });
+  if (adjustmentsResult.error && !isMissingTable(adjustmentsResult.error, "inventory_adjustments")) console.warn("[routes:detail] Inventory adjustments unavailable", { id, error: adjustmentsResult.error });
+  const manualSales = manualSalesResult.error ? [] : (manualSalesResult.data ?? []);
+  const routeAdjustments = adjustmentsResult.error ? [] : (adjustmentsResult.data ?? []);
   const stopIds = routeStops.map((stop: any) => stop.id).filter(Boolean);
   let completionProofRows: any[] = [];
   if (stopIds.length) {
@@ -379,6 +392,37 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     ? nextOperatorRouteHref({ routeId: id, status: routeRow.status, hasPickup: hasPickMovements, stops: routeStops, start: true })
     : null;
   const productById = new Map((products ?? []).map((product: any) => [product.id, product]));
+  const confirmedManualSales = manualSales.filter((sale: any) => String(sale.status ?? "confirmed").toLowerCase() === "confirmed");
+  const manualSalesTotal = confirmedManualSales.reduce((sum: number, sale: any) => sum + Number(sale.total_amount_lyd ?? 0), 0);
+  const damagedAdjustments = routeAdjustments.filter((row: any) => String(row.adjustment_type ?? "") === "damaged");
+  const returnedAdjustments = routeAdjustments.filter((row: any) => String(row.adjustment_type ?? "") === "returned_from_machine");
+  const machineStorageMovements = (movements ?? []).filter((movement: any) => {
+    const reason = String(movement.reason ?? "").toLowerCase();
+    return reason === "extra_stock_left_at_machine"
+      || reason === "machine_storage"
+      || (movement.from_entity_type === "operator_bag" && movement.to_entity_type === "machine");
+  });
+  const damagedTotalQty = damagedAdjustments.reduce((sum: number, row: any) => sum + Number(row.quantity ?? 0), 0);
+  const returnedTotalQty = returnedAdjustments.reduce((sum: number, row: any) => sum + Number(row.quantity ?? 0), 0);
+  const machineStorageTotalQty = machineStorageMovements.reduce((sum: number, row: any) => sum + Number(row.quantity ?? 0), 0);
+  const outcomeByMachine = routeStops.map((stop: any) => {
+    const machineId = String(stop.machine_id ?? "");
+    const fills = (fillLines ?? []).filter((line: any) => String(line.machine_id ?? "") === machineId && Number(line.actual_qty ?? 0) > 0);
+    const sales = confirmedManualSales.filter((sale: any) => String(sale.machine_id ?? "") === machineId);
+    const damaged = damagedAdjustments.filter((row: any) => String(row.machine_id ?? "") === machineId || String(row.route_stop_id ?? "") === String(stop.id));
+    const returned = returnedAdjustments.filter((row: any) => String(row.machine_id ?? "") === machineId || String(row.route_stop_id ?? "") === String(stop.id));
+    const machineStorage = machineStorageMovements.filter((row: any) => String(row.related_machine_id ?? "") === machineId || String(row.related_route_stop_id ?? "") === String(stop.id));
+    return {
+      stop,
+      machineId,
+      fills,
+      sales,
+      damaged,
+      returned,
+      machineStorage,
+      salesTotal: sales.reduce((sum: number, sale: any) => sum + Number(sale.total_amount_lyd ?? 0), 0),
+    };
+  });
   const routeActivityQueries: PromiseLike<any>[] = [
     supabase
       .from("system_activity_logs")
@@ -532,7 +576,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
           <SectionCard>
             <div className="space-y-2 p-4">
               <div className="text-sm text-slate-500">{tr(locale, "Performer", "المسؤول")}</div>
-              <div>{operator?.full_name ?? tr(locale, "Unassigned / Available", "غير مسندة / متاحة")}</div>
+              <div>{operator?.id ? <Link href={`/team/${operator.id}`} className="link-secondary">{operator.full_name}</Link> : tr(locale, "Unassigned / Available", "غير مسندة / متاحة")}</div>
             </div>
           </SectionCard>
           <SectionCard>
@@ -578,7 +622,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
               {routeStops.map((stop: any) => (
                 <tr key={stop.id}>
                   <td>{stop.stop_order}</td>
-                  <td>{formatMachineDisplayName(machineById.get(stop.machine_id) ?? null, { includeArea: true })}</td>
+                  <td><Link href={`/machines/${stop.machine_id}`} className="link-secondary">{formatMachineDisplayName(machineById.get(stop.machine_id) ?? null, { includeArea: true })}</Link></td>
                   <td>{machineById.get(stop.machine_id)?.machine_code ?? "-"}</td>
                   <td><StatusBadge status={stop.status} label={routeStepLabel(locale, stop.status)} /></td>
                 </tr>
@@ -586,6 +630,41 @@ export default async function RouteDetailPage({ params, searchParams }: { params
             </DataTable>
           )}
         </section>
+
+
+        {isCompletedRouteStatus(routeRow.status) ? (
+          <section className="surface-card p-4">
+            <div className="mb-4">
+              <h2 className="text-lg font-semibold">{tr(locale, "Completed route outcome", "نتيجة الجولة المكتملة")}</h2>
+              <p className="mt-1 text-sm text-slate-500">{tr(locale, "What was filled, sold manually, damaged, returned, or left as machine storage at each stop.", "ما تم تعبئته أو بيعه يدويًا أو تسجيله كتالف أو مرتجع أو مخزون جهاز في كل موقع.")}</p>
+            </div>
+            <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-xl border border-sky-200 bg-sky-50 p-4"><div className="text-xs font-semibold uppercase tracking-wide text-sky-800">{tr(locale, "Manual sales", "المبيعات اليدوية")}</div><div className="mt-1 text-2xl font-semibold text-sky-950">{lyd(manualSalesTotal)}</div></div>
+              <div className="rounded-xl border border-rose-200 bg-rose-50 p-4"><div className="text-xs font-semibold uppercase tracking-wide text-rose-800">{tr(locale, "Damaged", "التالف")}</div><div className="mt-1 text-2xl font-semibold text-rose-950">{damagedTotalQty}</div></div>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4"><div className="text-xs font-semibold uppercase tracking-wide text-emerald-800">{tr(locale, "Returned", "المرتجع")}</div><div className="mt-1 text-2xl font-semibold text-emerald-950">{returnedTotalQty}</div></div>
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4"><div className="text-xs font-semibold uppercase tracking-wide text-amber-800">{tr(locale, "Machine storage", "مخزون الجهاز")}</div><div className="mt-1 text-2xl font-semibold text-amber-950">{machineStorageTotalQty}</div></div>
+            </div>
+            <div className="space-y-4">
+              {outcomeByMachine.map((outcome: any) => {
+                const machine = machineById.get(outcome.machineId);
+                return (
+                  <article key={outcome.stop.id} className="rounded-2xl border border-slate-200 bg-white p-4">
+                    <div className="flex flex-col gap-2 border-b border-slate-100 pb-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div><Link href={`/machines/${outcome.machineId}`} className="font-semibold text-slate-900 hover:underline">{formatMachineDisplayName(machine ?? null, { includeArea: true })}</Link><div className="text-xs text-slate-500">{machine?.machine_code ?? "-"}</div></div>
+                      <div className="text-sm font-semibold text-sky-800">{tr(locale, "Manual sales", "المبيعات اليدوية")}: {lyd(outcome.salesTotal)}</div>
+                    </div>
+                    <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                      <div><div className="text-sm font-semibold text-slate-800">{tr(locale, "Products filled", "المنتجات المعبأة")}</div><div className="mt-2 text-sm text-slate-600">{outcome.fills.length ? outcome.fills.map((line: any) => `${productById.get(line.product_id)?.name ?? productById.get(line.substitute_product_id)?.name ?? line.missing_product_name ?? tr(locale, "Product", "منتج")}: ${line.actual_qty}`).join(" · ") : tr(locale, "No fill rows recorded", "لم تسجل عناصر تعبئة")}</div></div>
+                      <div><div className="text-sm font-semibold text-slate-800">{tr(locale, "Manual sales items", "عناصر المبيعات اليدوية")}</div><div className="mt-2 text-sm text-slate-600">{outcome.sales.length ? outcome.sales.map((sale: any) => `${sale.product_name ?? productById.get(sale.product_id)?.name ?? tr(locale, "Product", "منتج")} × ${sale.quantity ?? 0} — ${lyd(Number(sale.total_amount_lyd ?? 0))}`).join(" · ") : tr(locale, "No manual sales", "لا توجد مبيعات يدوية")}</div></div>
+                      <div><div className="text-sm font-semibold text-slate-800">{tr(locale, "Damaged and returned", "التالف والمرتجع")}</div><div className="mt-2 text-sm text-slate-600">{[...outcome.damaged.map((row: any) => `${row.product_name ?? tr(locale, "Product", "منتج")}: ${row.quantity} ${tr(locale, "damaged", "تالف")}`), ...outcome.returned.map((row: any) => `${row.product_name ?? tr(locale, "Product", "منتج")}: ${row.quantity} ${tr(locale, "returned", "مرتجع")}`)].join(" · ") || tr(locale, "None recorded", "لا يوجد")}</div></div>
+                      <div><div className="text-sm font-semibold text-slate-800">{tr(locale, "Added to machine storage", "المضاف إلى مخزون الجهاز")}</div><div className="mt-2 text-sm text-slate-600">{outcome.machineStorage.length ? outcome.machineStorage.map((row: any) => `${row.product?.name ?? tr(locale, "Product", "منتج")}: ${row.quantity}`).join(" · ") : tr(locale, "None recorded", "لا يوجد")}</div></div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
 
         {routeStops.length ? (
           <section className="surface-card p-4">
@@ -653,31 +732,6 @@ export default async function RouteDetailPage({ params, searchParams }: { params
           )}
         </section>
 
-        <section className="surface-card p-4">
-          <h2 className="text-lg font-semibold">{tr(locale, "Pickup batches", "دفعات التحميل")}</h2>
-          {!pickupBatches?.length ? (
-            <EmptyState title={tr(locale, "No pickup batches yet", "لا توجد دفعات تحميل بعد")} body={tr(locale, "Each partial storage pickup will appear here after confirmation.", "ستظهر كل دفعة تحميل جزئية من المخزن هنا بعد التأكيد.")} />
-          ) : (
-            <DataTable headers={[tr(locale, "Confirmed", "تم التأكيد"), tr(locale, "Operator", "المشغل"), tr(locale, "Stops", "المواقع"), tr(locale, "Products", "المنتجات"), tr(locale, "Storage", "المخزن")]}>
-              {pickupBatches.map((batch: any, index: number) => {
-                const products = Array.isArray(batch.product_summary) ? batch.product_summary : [];
-                return (
-                  <tr key={batch.id}>
-                    <td>{batch.confirmed_at ? new Date(batch.confirmed_at).toLocaleString(locale === "ar" ? "ar-LY" : "en-US") : tr(locale, `Batch ${index + 1}`, `الدفعة ${index + 1}`)}</td>
-                    <td>{batch.operator?.full_name ?? "-"}</td>
-                    <td>{Array.isArray(batch.selected_stop_ids) ? batch.selected_stop_ids.length : 0}</td>
-                    <td>
-                      {products.length
-                        ? products.map((product: any) => `${product.product_name ?? tr(locale, "Product", "منتج")}: ${product.quantity}`).join(", ")
-                        : "-"}
-                    </td>
-                    <td><StatusBadge status={batch.storage_deducted ? "deducted" : "none"} label={batch.storage_deducted ? tr(locale, "Deducted", "تم الخصم") : tr(locale, "None", "لا يوجد")} /></td>
-                  </tr>
-                );
-              })}
-            </DataTable>
-          )}
-        </section>
 
         <section className="surface-card p-4">
           <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -745,33 +799,6 @@ export default async function RouteDetailPage({ params, searchParams }: { params
           )}
         </section>
 
-        <section className="surface-card p-4">
-          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-lg font-semibold">{tr(locale, "Inventory movements", "حركات المخزون")}</h2>
-              <p className="text-sm text-slate-500">{tr(locale, "Ledger entries generated by this route.", "قيود دفتر الحركة الناتجة عن هذه الجولة.")}</p>
-            </div>
-            <SecondaryButton href={`/inventory/movements?route_id=${id}`}>{tr(locale, "Open full log", "فتح السجل الكامل")}</SecondaryButton>
-          </div>
-          {!movements?.length ? (
-            <EmptyState title={tr(locale, "No inventory movements yet", "لا توجد حركات مخزون بعد")} body={tr(locale, "Pick, fill, and leftover movements for this route will appear here.", "ستظهر هنا حركات التحميل والتعبئة والمرتجعات لهذه الجولة.")} />
-          ) : (
-            <DataTable headers={[tr(locale, "Created", "الإنشاء"), tr(locale, "Product", "المنتج"), tr(locale, "Qty", "الكمية"), tr(locale, "From", "من"), tr(locale, "To", "إلى"), tr(locale, "Reason", "السبب"), tr(locale, "User", "المستخدم"), tr(locale, "Notes", "الملاحظات")]}>
-              {movements.map((movement: any) => (
-                <tr key={movement.id}>
-                  <td>{new Date(movement.created_at).toLocaleString(locale === "ar" ? "ar-LY" : "en-US")}</td>
-                  <td className="font-medium">{movement.product?.name ?? tr(locale, "Unknown product", "منتج غير معروف")}</td>
-                  <td>{movement.quantity}</td>
-                  <td><StatusBadge status={movement.from_entity_type} label={routeEntityLabel(locale, movement.from_entity_type)} /></td>
-                  <td><StatusBadge status={movement.to_entity_type} label={routeEntityLabel(locale, movement.to_entity_type)} /></td>
-                  <td>{routeMovementReasonLabel(locale, movement.reason)}</td>
-                  <td>{movement.created_by_member?.full_name ?? "-"}</td>
-                  <td>{movement.notes ?? "-"}</td>
-                </tr>
-              ))}
-            </DataTable>
-          )}
-        </section>
 
         <div className="grid gap-4 xl:grid-cols-2">
           <section className="surface-card p-4">
