@@ -22,15 +22,33 @@ export default async function MachineHistoryPage({ params }: { params: Promise<{
   const { data: machine, error: machineError } = await client.from("machines").select("*, location:locations(*)").eq("id", id).maybeSingle();
   if (machineError || !machine) return <ErrorState title="Machine not found" body="This machine could not be loaded." action={<SecondaryButton href="/machines">Back to machines</SecondaryButton>} />;
 
-  const { data: stops, error: stopsError } = await client.from("route_stops").select("id, route_id, stop_order, status").eq("machine_id", id).order("created_at", { ascending: false }).limit(500);
-  const routeIds = Array.from(new Set((stops ?? []).map((row: any) => row.route_id).filter(Boolean)));
+  const stopsResult = await client.from("route_stops").select("id, route_id, stop_order, status").eq("machine_id", id).limit(500);
+  let stops: any[] = stopsResult.data ?? [];
+  let stopsError = stopsResult.error;
+  if (!stops.length) {
+    const [stopItemsResult, refillOrdersResult, refillHistoryResult] = await Promise.all([
+      client.from("route_stop_items").select("route_id, route_stop_id, machine_id").eq("machine_id", id).limit(1000),
+      client.from("refill_orders").select("route_id, machine_id").eq("machine_id", id).limit(1000),
+      client.from("machine_refill_history").select("route_id, machine_id").eq("machine_id", id).limit(1000),
+    ]);
+    const fallbackRouteIds = Array.from(new Set([
+      ...(stopItemsResult.data ?? []).map((row: any) => row.route_id),
+      ...(refillOrdersResult.data ?? []).map((row: any) => row.route_id),
+      ...(refillHistoryResult.data ?? []).map((row: any) => row.route_id),
+    ].filter(Boolean)));
+    if (fallbackRouteIds.length) {
+      stops = fallbackRouteIds.map((routeId, index) => ({ id: `history-${index}-${routeId}`, route_id: routeId, stop_order: null, status: null }));
+      stopsError = null;
+    }
+  }
+  const routeIds = Array.from(new Set(stops.map((row: any) => row.route_id).filter(Boolean)));
   const [routesResult, fillsResult, salesResult, adjustmentsResult, cashResult, movementsResult] = await Promise.all([
     routeIds.length ? client.from("routes").select("id, route_date, status, operator_id, created_at, started_at, completed_at").in("id", routeIds).order("route_date", { ascending: false }).order("created_at", { ascending: false }) : Promise.resolve({ data: [], error: null }),
     client.from("route_stop_fill_lines").select("id, route_id, product_id, substitute_product_id, missing_product_name, actual_qty, action_type, created_at, product:products!route_stop_fill_lines_product_id_fkey(name)").eq("machine_id", id).order("created_at", { ascending: false }).limit(500),
     client.from("route_manual_sales").select("id, route_id, product_name, quantity, total_amount_lyd, payment_method, sale_time, status").eq("machine_id", id).order("sale_time", { ascending: false }).limit(500),
     client.from("inventory_adjustments").select("id, route_id, adjustment_type, product_name, quantity, reason, notes, status, created_at").eq("machine_id", id).neq("status", "cancelled").order("created_at", { ascending: false }).limit(500),
     client.from("cash_collections").select("id, route_id, vms_expected_cash, actual_cash_collected, variance, collected_at").eq("machine_id", id).order("collected_at", { ascending: false }).limit(250),
-    client.from("inventory_movements").select("id, related_route_id, quantity, reason, from_entity_type, to_entity_type, created_at, product:products(name)").eq("related_machine_id", id).order("created_at", { ascending: false }).limit(500),
+    client.from("inventory_movements").select("id, related_route_id, quantity, reason, movement_type, from_entity_type, to_entity_type, created_at, product:products(name)").eq("related_machine_id", id).order("created_at", { ascending: false }).limit(500),
   ]);
   const routes = routesResult.data ?? [];
   const operatorIds = Array.from(new Set(routes.map((route: any) => route.operator_id).filter(Boolean)));
@@ -44,7 +62,13 @@ export default async function MachineHistoryPage({ params }: { params: Promise<{
   const movements = movementsResult.error ? [] : (movementsResult.data ?? []);
   const damaged = adjustments.filter((row: any) => row.adjustment_type === "damaged");
   const returned = adjustments.filter((row: any) => row.adjustment_type === "returned_from_machine");
-  const machineStorage = movements.filter((row: any) => row.reason === "extra_stock_left_at_machine" || (row.from_entity_type === "operator_bag" && row.to_entity_type === "machine"));
+  const machineStorage = movements.filter((row: any) => {
+    const reason = String(row.reason ?? "").toLowerCase();
+    return row.to_entity_type === "machine_storage"
+      || row.movement_type === "route_to_machine_storage"
+      || reason === "extra_stock_left_at_machine"
+      || reason === "machine_storage";
+  });
   const filledByProduct = new Map<string, number>();
   fills.forEach((row: any) => { const name = row.product?.name ?? row.missing_product_name ?? "Unknown product"; filledByProduct.set(name, (filledByProduct.get(name) ?? 0) + Number(row.actual_qty ?? 0)); });
 
