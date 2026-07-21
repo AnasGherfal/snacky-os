@@ -26,11 +26,11 @@ export default async function TeamMemberProfilePage({ params }: { params: Promis
     routeIds.length ? client.from("route_stop_fill_lines").select("id, route_id, machine_id, product_id, missing_product_name, actual_qty, action_type, created_at, product:products!route_stop_fill_lines_product_id_fkey(name)").in("route_id", routeIds).order("created_at", { ascending: false }).limit(1000) : Promise.resolve({ data: [], error: null }),
     routeIds.length ? client.from("route_manual_sales").select("id, route_id, machine_id, product_name, quantity, total_amount_lyd, payment_method, sale_time, status").in("route_id", routeIds).order("sale_time", { ascending: false }).limit(1000) : Promise.resolve({ data: [], error: null }),
     routeIds.length ? client.from("inventory_adjustments").select("id, route_id, machine_id, adjustment_type, product_name, quantity, reason, notes, status, created_at").in("route_id", routeIds).neq("status", "cancelled").order("created_at", { ascending: false }).limit(1000) : Promise.resolve({ data: [], error: null }),
-    routeIds.length ? client.from("inventory_movements").select("id, related_route_id, related_machine_id, quantity, reason, from_entity_type, to_entity_type, created_at, product:products(name)").in("related_route_id", routeIds).order("created_at", { ascending: false }).limit(1000) : Promise.resolve({ data: [], error: null }),
+    routeIds.length ? client.from("inventory_movements").select("id, related_route_id, related_machine_id, quantity, reason, movement_type, from_entity_type, to_entity_type, created_at, product:products(name)").in("related_route_id", routeIds).order("created_at", { ascending: false }).limit(1000) : Promise.resolve({ data: [], error: null }),
   ]);
   const stops = stopsResult.error ? [] : (stopsResult.data ?? []);
   const machineIds = Array.from(new Set(stops.map((row:any)=>row.machine_id).filter(Boolean)));
-  const { data: machines } = machineIds.length ? await client.from("machines").select("id, name, machine_code, machine_display_name, location:locations(id, name, area)").in("id", machineIds) : { data: [] };
+  const { data: machines } = machineIds.length ? await client.from("machines").select("id, name, machine_code, location:locations(id, name)").in("id", machineIds) : { data: [] };
   const machineById = new Map((machines ?? []).map((machine:any)=>[machine.id,machine]));
   const stopsByRoute = new Map<string, any[]>(); stops.forEach((stop:any)=>stopsByRoute.set(stop.route_id,[...(stopsByRoute.get(stop.route_id)??[]),stop]));
   const fills = fillsResult.error ? [] : (fillsResult.data ?? []);
@@ -39,7 +39,13 @@ export default async function TeamMemberProfilePage({ params }: { params: Promis
   const movements = movementsResult.error ? [] : (movementsResult.data ?? []);
   const damaged = adjustments.filter((row:any)=>row.adjustment_type === "damaged");
   const returned = adjustments.filter((row:any)=>row.adjustment_type === "returned_from_machine");
-  const machineStorage = movements.filter((row:any)=>row.reason === "extra_stock_left_at_machine" || (row.from_entity_type === "operator_bag" && row.to_entity_type === "machine"));
+  const machineStorage = movements.filter((row:any)=>{
+    const reason = String(row.reason ?? "").toLowerCase();
+    return row.to_entity_type === "machine_storage"
+      || row.movement_type === "route_to_machine_storage"
+      || reason === "extra_stock_left_at_machine"
+      || reason === "machine_storage";
+  });
   const completedRoutes = (routes ?? []).filter((route:any)=>["completed","verified","payroll_pending","paid","reviewed"].includes(String(route.status ?? "")));
 
   return <div className="space-y-6">
