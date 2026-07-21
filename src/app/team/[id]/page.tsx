@@ -1,201 +1,66 @@
 import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { DataTable, EmptyState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
+import { redirect } from "next/navigation";
+import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
-import type { AppPermission } from "@/lib/authz";
-import { appPermissions, getEffectivePermissions, isOwnerAdminRole, normalizeRoles } from "@/lib/authz";
+import { isOwnerAdminRole, normalizeRoles } from "@/lib/authz";
 import { lyd } from "@/lib/format";
-import { isCompletedRouteStatus } from "@/lib/route-workflow";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
-import { deactivateTeamMember } from "@/lib/team-actions";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
+function sum(rows: any[], field: string) { return rows.reduce((total, row) => total + Number(row?.[field] ?? 0), 0); }
+function time(value: unknown) { return value ? new Date(String(value)).toLocaleString("en-US") : "-"; }
 
-function formatDate(value: string | null | undefined) {
-  return value ? new Date(value).toLocaleString("en-US") : "-";
-}
-
-const permissionGroups: { title: string; permissions: AppPermission[] }[] = [
-  { title: "Operations", permissions: appPermissions.filter((permission) => permission.startsWith("routes.") || permission.startsWith("assigned_") || permission.startsWith("refills.") || permission === "operations.manage") },
-  { title: "Inventory", permissions: appPermissions.filter((permission) => permission.startsWith("inventory.") || permission.startsWith("storage.")) },
-  { title: "Purchasing", permissions: appPermissions.filter((permission) => permission.startsWith("purchase") || permission.startsWith("purchases.") || permission.startsWith("suppliers.")) },
-  { title: "Finance", permissions: appPermissions.filter((permission) => permission.startsWith("finance.")) },
-  { title: "VMS", permissions: appPermissions.filter((permission) => permission.startsWith("vms")) },
-  { title: "Admin", permissions: appPermissions.filter((permission) => ["dashboard.view", "reports.view", "team.manage", "activity.view", "system.settings"].includes(permission)) },
-  { title: "Products and Machines", permissions: appPermissions.filter((permission) => permission.startsWith("products.") || permission.startsWith("machines.") || permission.startsWith("issues.")) },
-];
-
-export default async function TeamMemberActivityPage({
-  params,
-  searchParams,
-}: {
-  params: Promise<{ id: string }>;
-  searchParams: Promise<{ action?: string; date_from?: string; date_to?: string; error?: string }>;
-}) {
+export default async function TeamMemberProfilePage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   const profile = await getCurrentProfile();
   if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
-
-  const { id } = await params;
-  const { action = "", date_from = "", date_to = "", error = "" } = await searchParams;
-  const supabase = getSupabaseServerClient();
-  if (!supabase) notFound();
-
-  const { data: member } = await supabase.from("team_members").select("id, full_name, email, phone, role, roles, can_add_products, active, active_status").eq("id", id).maybeSingle();
-  if (!member) notFound();
-  const roles = normalizeRoles(member.roles, member.role);
-  const effectivePermissions = new Set(getEffectivePermissions({ id: member.id, role: roles[0], roles, canAddProducts: member.can_add_products, activeStatus: member.active_status ?? (member.active === false ? "inactive" : "active") }));
-
-  let activityQuery = supabase
-    .from("system_activity_logs")
-    .select("id, action, entity_type, entity_id, entity_label, summary, metadata, created_at")
-    .eq("actor_team_member_id", id);
-  if (action) activityQuery = activityQuery.eq("action", action);
-  if (date_from) activityQuery = activityQuery.gte("created_at", `${date_from}T00:00:00`);
-  if (date_to) activityQuery = activityQuery.lte("created_at", `${date_to}T23:59:59`);
-
-  const [{ data: activity }, { data: routes }, { data: movements }, { data: cash }, { data: issues }, { data: actions }] = await Promise.all([
-    activityQuery.order("created_at", { ascending: false }).limit(200),
-    supabase.from("routes").select("id, route_date, status, completed_at").eq("operator_id", id).order("route_date", { ascending: false }).limit(100),
-    supabase
-      .from("inventory_movements")
-      .select("id, quantity, reason, related_route_id, notes, created_at, product:products(name, sku)")
-      .eq("created_by", id)
-      .order("created_at", { ascending: false })
-      .limit(100),
-    supabase
-      .from("cash_collections")
-      .select("id, route_id, machine_id, actual_cash_collected, variance, review_status, collected_at, machine:machines(id, name, machine_code, location:locations(id, name))")
-      .eq("operator_id", id)
-      .order("collected_at", { ascending: false })
-      .limit(100),
-    supabase
-      .from("issues")
-      .select("id, issue_type, priority, status, created_at, machine:machines(id, name, machine_code, location:locations(id, name))")
-      .eq("reported_by", id)
-      .order("created_at", { ascending: false })
-      .limit(100),
-    supabase.from("system_activity_logs").select("action").eq("actor_team_member_id", id).order("action"),
+  const client = getSupabaseServerClient();
+  if (!client) return <ErrorState title="Team profile unavailable" body="Supabase is not configured." />;
+  const { data: member, error: memberError } = await client.from("team_members").select("id, full_name, email, phone, role, roles, active, active_status").eq("id", id).maybeSingle();
+  if (memberError || !member) return <ErrorState title="Team member not found" body="This team member could not be loaded." action={<SecondaryButton href="/team">Back to team</SecondaryButton>} />;
+  const { data: routes, error: routesError } = await client.from("routes").select("id, route_date, status, operator_id, created_at, started_at, completed_at").eq("operator_id", id).order("route_date", { ascending: false }).order("created_at", { ascending: false }).limit(500);
+  const routeIds = (routes ?? []).map((route: any) => route.id);
+  const [stopsResult, fillsResult, salesResult, adjustmentsResult, movementsResult] = await Promise.all([
+    routeIds.length ? client.from("route_stops").select("id, route_id, machine_id, stop_order, status").in("route_id", routeIds).order("stop_order", { ascending: true }) : Promise.resolve({ data: [], error: null }),
+    routeIds.length ? client.from("route_stop_fill_lines").select("id, route_id, machine_id, product_id, missing_product_name, actual_qty, action_type, created_at, product:products!route_stop_fill_lines_product_id_fkey(name)").in("route_id", routeIds).order("created_at", { ascending: false }).limit(1000) : Promise.resolve({ data: [], error: null }),
+    routeIds.length ? client.from("route_manual_sales").select("id, route_id, machine_id, product_name, quantity, total_amount_lyd, payment_method, sale_time, status").in("route_id", routeIds).order("sale_time", { ascending: false }).limit(1000) : Promise.resolve({ data: [], error: null }),
+    routeIds.length ? client.from("inventory_adjustments").select("id, route_id, machine_id, adjustment_type, product_name, quantity, reason, notes, status, created_at").in("route_id", routeIds).neq("status", "cancelled").order("created_at", { ascending: false }).limit(1000) : Promise.resolve({ data: [], error: null }),
+    routeIds.length ? client.from("inventory_movements").select("id, related_route_id, related_machine_id, quantity, reason, from_entity_type, to_entity_type, created_at, product:products(name)").in("related_route_id", routeIds).order("created_at", { ascending: false }).limit(1000) : Promise.resolve({ data: [], error: null }),
   ]);
+  const stops = stopsResult.error ? [] : (stopsResult.data ?? []);
+  const machineIds = Array.from(new Set(stops.map((row:any)=>row.machine_id).filter(Boolean)));
+  const { data: machines } = machineIds.length ? await client.from("machines").select("id, name, machine_code, machine_display_name, location:locations(id, name, area)").in("id", machineIds) : { data: [] };
+  const machineById = new Map((machines ?? []).map((machine:any)=>[machine.id,machine]));
+  const stopsByRoute = new Map<string, any[]>(); stops.forEach((stop:any)=>stopsByRoute.set(stop.route_id,[...(stopsByRoute.get(stop.route_id)??[]),stop]));
+  const fills = fillsResult.error ? [] : (fillsResult.data ?? []);
+  const sales = salesResult.error ? [] : (salesResult.data ?? []).filter((row:any)=>String(row.status ?? "confirmed") === "confirmed");
+  const adjustments = adjustmentsResult.error ? [] : (adjustmentsResult.data ?? []);
+  const movements = movementsResult.error ? [] : (movementsResult.data ?? []);
+  const damaged = adjustments.filter((row:any)=>row.adjustment_type === "damaged");
+  const returned = adjustments.filter((row:any)=>row.adjustment_type === "returned_from_machine");
+  const machineStorage = movements.filter((row:any)=>row.reason === "extra_stock_left_at_machine" || (row.from_entity_type === "operator_bag" && row.to_entity_type === "machine"));
+  const completedRoutes = (routes ?? []).filter((route:any)=>["completed","verified","payroll_pending","paid","reviewed"].includes(String(route.status ?? "")));
 
-  const routeRows = (routes ?? []) as any[];
-  const completedRoutes = routeRows.filter((route) => isCompletedRouteStatus(route.status)).length;
-  const actionOptions = Array.from(new Set((actions ?? []).map((row: any) => row.action).filter(Boolean)));
+  return <div className="space-y-6">
+    <PageHeader title={member.full_name} subtitle={`${normalizeRoles(member.roles, member.role).join(", ")} · ${member.email ?? "No email"}`} breadcrumbs={[{label:"Team",href:"/team"},{label:member.full_name}]} action={<div className="flex gap-2"><SecondaryButton href={`/team/${id}/activity`}>Activity log</SecondaryButton><SecondaryButton href={`/team/${id}/edit`}>Edit</SecondaryButton></div>} />
+    {routesError ? <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Some route history could not load.</div> : null}
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+      <SectionCard><div className="p-4"><div className="text-sm text-slate-500">Routes</div><div className="mt-1 text-2xl font-semibold">{(routes ?? []).length}</div></div></SectionCard>
+      <SectionCard><div className="p-4"><div className="text-sm text-slate-500">Completed</div><div className="mt-1 text-2xl font-semibold">{completedRoutes.length}</div></div></SectionCard>
+      <SectionCard><div className="p-4"><div className="text-sm text-slate-500">Machines visited</div><div className="mt-1 text-2xl font-semibold">{machineIds.length}</div></div></SectionCard>
+      <SectionCard><div className="p-4"><div className="text-sm text-slate-500">Units filled</div><div className="mt-1 text-2xl font-semibold">{sum(fills,"actual_qty")}</div></div></SectionCard>
+      <SectionCard><div className="p-4"><div className="text-sm text-slate-500">Manual sales</div><div className="mt-1 text-2xl font-semibold">{lyd(sum(sales,"total_amount_lyd"))}</div></div></SectionCard>
+      <SectionCard><div className="p-4"><div className="text-sm text-slate-500">Damaged / returned</div><div className="mt-1 text-2xl font-semibold">{sum(damaged,"quantity")} / {sum(returned,"quantity")}</div></div></SectionCard>
+    </div>
 
-  return (
-    <>
-      <PageHeader
-        title={member.full_name}
-        subtitle="Team member activity, route execution, movement history, cash variance, and issue reporting."
-        breadcrumbs={[
-          { label: "Admin", href: "/admin" },
-          { label: "Team", href: "/team" },
-          { label: member.full_name },
-        ]}
-        action={
-          <div className="flex flex-wrap gap-2">
-            <SecondaryButton href={`/team/${id}/edit`}>Edit member</SecondaryButton>
-            {member.active_status !== "inactive" && member.active !== false ? (
-              <ConfirmDialog
-                action={deactivateTeamMember}
-                triggerLabel="Deactivate member"
-                title="Deactivate team member?"
-                description="Deactivated users cannot access Snacky OS. Their activity, route, inventory, cash, and issue history stays intact."
-                confirmLabel="Deactivate member"
-                buttonClassName="btn-danger"
-                confirmButtonClassName="btn-danger"
-                hiddenFields={[{ name: "id", value: id }]}
-              />
-            ) : null}
-          </div>
-        }
-      />
-      {error ? <div className="mb-5 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{error}</div> : null}
+    <section className="surface-card p-4"><h2 className="text-lg font-semibold">Route history</h2>{!(routes ?? []).length ? <EmptyState title="No routes" body="No routes are assigned to this team member." /> : <DataTable headers={["Date & time","Status","Machine stops","Filled units","Manual sales","Route"]}>{(routes ?? []).map((route:any)=>{const routeStops=stopsByRoute.get(route.id)??[];const routeFills=fills.filter((row:any)=>row.route_id===route.id);const routeSales=sales.filter((row:any)=>row.route_id===route.id);return <tr key={route.id}><td><div>{route.route_date}</div><div className="text-xs text-slate-500">{time(route.created_at)}</div></td><td><StatusBadge status={route.status}/></td><td><div className="max-w-xl">{routeStops.map((stop:any)=>formatMachineDisplayName(machineById.get(stop.machine_id)??null,{includeArea:true})).join(" · ")||"-"}</div></td><td>{sum(routeFills,"actual_qty")}</td><td>{lyd(sum(routeSales,"total_amount_lyd"))}</td><td><Link className="link-secondary" href={`/routes/${route.id}`}>Open</Link></td></tr>})}</DataTable>}</section>
 
-      <section className="grid gap-4 md:grid-cols-5">
-        <div className="surface-card"><div className="text-sm text-slate-500">Roles</div><div className="mt-2 flex flex-wrap gap-1">{roles.map((role) => <StatusBadge key={role} status={role} />)}</div></div>
-        <div className="surface-card"><div className="text-sm text-slate-500">Status</div><div className="mt-2"><StatusBadge status={member.active_status ?? (member.active === false ? "inactive" : "active")} /></div></div>
-        <div className="surface-card"><div className="text-sm text-slate-500">Assigned routes</div><div className="mt-1 text-3xl font-semibold">{routeRows.length}</div></div>
-        <div className="surface-card"><div className="text-sm text-slate-500">Completed routes</div><div className="mt-1 text-3xl font-semibold">{completedRoutes}</div></div>
-        <div className="surface-card"><div className="text-sm text-slate-500">Cash records</div><div className="mt-1 text-3xl font-semibold">{cash?.length ?? 0}</div></div>
-      </section>
+    <div className="grid gap-4 xl:grid-cols-2">
+      <section className="surface-card p-4"><h2 className="text-lg font-semibold">Manual sales made on routes</h2>{!sales.length ? <EmptyState title="No manual sales" body="Manual route sales will appear here." /> : <DataTable headers={["Time","Machine","Product","Qty","Total","Route"]}>{sales.map((sale:any)=><tr key={sale.id}><td>{time(sale.sale_time)}</td><td>{sale.machine_id ? <Link className="link-secondary" href={`/machines/${sale.machine_id}`}>{formatMachineDisplayName(machineById.get(sale.machine_id)??null,{includeArea:true})}</Link> : "-"}</td><td>{sale.product_name??"Product"}</td><td>{sale.quantity}</td><td>{lyd(Number(sale.total_amount_lyd??0))}</td><td><Link className="link-secondary" href={`/routes/${sale.route_id}`}>Route</Link></td></tr>)}</DataTable>}</section>
+      <section className="surface-card p-4"><h2 className="text-lg font-semibold">Products filled</h2>{!fills.length ? <EmptyState title="No fill history" body="Completed fill activity will appear here." /> : <DataTable headers={["Time","Machine","Product","Qty","Route"]}>{fills.map((row:any)=><tr key={row.id}><td>{time(row.created_at)}</td><td>{row.machine_id ? <Link className="link-secondary" href={`/machines/${row.machine_id}`}>{formatMachineDisplayName(machineById.get(row.machine_id)??null,{includeArea:true})}</Link> : "-"}</td><td>{row.product?.name??row.missing_product_name??"Product"}</td><td>{row.actual_qty}</td><td><Link className="link-secondary" href={`/routes/${row.route_id}`}>Route</Link></td></tr>)}</DataTable>}</section>
+    </div>
 
-      <section className="surface-card mt-6">
-        <h2 className="mb-4 text-lg font-semibold text-slate-900">Effective permissions</h2>
-        <div className="grid gap-4 xl:grid-cols-2">
-          {permissionGroups.map((group) => (
-            <div key={group.title} className="rounded-lg border border-slate-200 bg-white p-3">
-              <h3 className="text-sm font-semibold text-slate-900">{group.title}</h3>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                {group.permissions.map((permission) => (
-                  <div key={permission} className="flex items-center justify-between gap-2 rounded-md border border-slate-100 bg-slate-50 px-2 py-2">
-                    <span className="min-w-0 break-words font-mono text-xs text-slate-600">{permission}</span>
-                    <span className={effectivePermissions.has(permission) ? "shrink-0 text-xs font-semibold text-emerald-700" : "shrink-0 text-xs font-semibold text-slate-400"}>
-                      {effectivePermissions.has(permission) ? "allowed" : "blocked"}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="surface-card mt-6">
-        <h2 className="mb-4 text-lg font-semibold text-slate-900">Activity</h2>
-        <form className="mb-4 grid gap-3 md:grid-cols-4">
-          <select name="action" defaultValue={action} className="field-input">
-            <option value="">All actions</option>
-            {actionOptions.map((item) => <option key={item} value={item}>{String(item).replaceAll("_", " ")}</option>)}
-          </select>
-          <input name="date_from" type="date" defaultValue={date_from} className="field-input" />
-          <input name="date_to" type="date" defaultValue={date_to} className="field-input" />
-          <button className="btn-primary">Filter</button>
-        </form>
-        {!activity?.length ? <EmptyState title="No activity found" body="Audited actions by this team member will appear here." /> : (
-          <DataTable headers={["Date", "Action", "Entity", "Summary"]}>
-            {activity.map((row: any) => <tr key={row.id}><td>{formatDate(row.created_at)}</td><td><StatusBadge status={row.action} /></td><td>{row.entity_label ?? row.entity_type}</td><td>{row.summary ?? "-"}</td></tr>)}
-          </DataTable>
-        )}
-      </section>
-
-      <section className="surface-card mt-6">
-        <h2 className="mb-4 text-lg font-semibold text-slate-900">Routes</h2>
-        {!routeRows.length ? <EmptyState title="No assigned routes" body="Assigned and completed routes will appear here." /> : (
-          <DataTable headers={["Date", "Status", "Completed", "Route"]}>
-            {routeRows.map((route: any) => <tr key={route.id}><td>{route.route_date}</td><td><StatusBadge status={route.status} /></td><td>{formatDate(route.completed_at)}</td><td><Link href={`/routes/${route.id}`} className="link-secondary">Open route</Link></td></tr>)}
-          </DataTable>
-        )}
-      </section>
-
-      <section className="surface-card mt-6">
-        <h2 className="mb-4 text-lg font-semibold text-slate-900">Inventory movements</h2>
-        {!movements?.length ? <EmptyState title="No stock movements" body="Movements created by this user will appear here." /> : (
-          <DataTable headers={["Date", "Product", "Qty", "Reason", "Route", "Notes"]}>
-            {movements.map((movement: any) => <tr key={movement.id}><td>{formatDate(movement.created_at)}</td><td>{movement.product?.name ?? "-"}</td><td>{movement.quantity}</td><td><StatusBadge status={movement.reason} /></td><td>{movement.related_route_id ? <Link href={`/routes/${movement.related_route_id}`} className="link-secondary">Open route</Link> : "-"}</td><td>{movement.notes ?? "-"}</td></tr>)}
-          </DataTable>
-        )}
-      </section>
-
-      <section className="mt-6 grid gap-6 xl:grid-cols-2">
-        <div className="surface-card">
-          <h2 className="mb-4 text-lg font-semibold text-slate-900">Cash variances</h2>
-          {!cash?.length ? <EmptyState title="No cash collections" body="Cash collection records entered by this user will appear here." /> : (
-            <DataTable headers={["Date", "Machine", "Actual", "Variance", "Status"]}>
-              {cash.map((row: any) => <tr key={row.id}><td>{formatDate(row.collected_at)}</td><td>{formatMachineDisplayName(row.machine as any, { includeArea: true })}</td><td>{row.actual_cash_collected === null ? "-" : lyd(Number(row.actual_cash_collected ?? 0))}</td><td>{row.variance === null ? "-" : lyd(Number(row.variance ?? 0))}</td><td><StatusBadge status={String(row.review_status ?? "").replaceAll("_", " ")} /></td></tr>)}
-            </DataTable>
-          )}
-        </div>
-        <div className="surface-card">
-          <h2 className="mb-4 text-lg font-semibold text-slate-900">Issues reported</h2>
-          {!issues?.length ? <EmptyState title="No issues reported" body="Machine issues reported by this user will appear here." /> : (
-            <DataTable headers={["Date", "Machine", "Type", "Priority", "Status"]}>
-              {issues.map((issue: any) => <tr key={issue.id}><td>{formatDate(issue.created_at)}</td><td>{formatMachineDisplayName(issue.machine as any, { includeArea: true })}</td><td>{issue.issue_type}</td><td><StatusBadge status={issue.priority} /></td><td><StatusBadge status={issue.status} /></td></tr>)}
-            </DataTable>
-          )}
-        </div>
-      </section>
-    </>
-  );
+    <section className="surface-card p-4"><h2 className="text-lg font-semibold">Damaged, returned, and machine storage</h2>{!adjustments.length && !machineStorage.length ? <EmptyState title="No product adjustments" body="Operator-assigned damaged, returned, and machine-storage records will appear here." /> : <DataTable headers={["Time","Type","Machine","Product","Qty","Route","Reason"]}>{[...adjustments.map((row:any)=>({id:row.id,time:row.created_at,type:row.adjustment_type,machine_id:row.machine_id,product:row.product_name,quantity:row.quantity,route_id:row.route_id,reason:row.reason??row.notes})),...machineStorage.map((row:any)=>({id:row.id,time:row.created_at,type:"machine_storage",machine_id:row.related_machine_id,product:row.product?.name,quantity:row.quantity,route_id:row.related_route_id,reason:row.reason}))].sort((a:any,b:any)=>String(b.time).localeCompare(String(a.time))).map((row:any)=><tr key={`${row.type}-${row.id}`}><td>{time(row.time)}</td><td><StatusBadge status={row.type}/></td><td>{row.machine_id ? <Link className="link-secondary" href={`/machines/${row.machine_id}`}>{formatMachineDisplayName(machineById.get(row.machine_id)??null,{includeArea:true})}</Link> : "-"}</td><td>{row.product??"Product"}</td><td>{row.quantity}</td><td>{row.route_id ? <Link className="link-secondary" href={`/routes/${row.route_id}`}>Route</Link> : "-"}</td><td>{row.reason??"-"}</td></tr>)}</DataTable>}</section>
+  </div>;
 }
