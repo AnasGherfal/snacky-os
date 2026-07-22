@@ -434,3 +434,22 @@ test("machine storage and history use explicit storage records and schema-safe r
   assert.equal(machinePage.includes('.from("route_stops").select("id, route_id, stop_order, status").eq("machine_id", id).order("created_at"'), false);
   assert.doesNotMatch(teamPage, /machine_display_name/);
 });
+
+
+test("restock planning is sales-ranked with a persistent costed buying list", () => {
+  const page = readFileSync("src/app/restock-priority/page.tsx", "utf8");
+  const shoppingList = readFileSync("src/lib/restock-shopping-list.ts", "utf8");
+  const buyingList = readFileSync("src/components/RestockBuyingList.tsx", "utf8");
+
+  assert.match(page, /right\.unitsSold - left\.unitsSold/);
+  assert.match(page, /Sold this month/);
+  assert.match(page, /Storage left/);
+  assert.match(page, /Recommended buy/);
+  assert.match(page, /Estimated cost/);
+  assert.match(page, /\[&_thead\]:sticky/);
+  assert.match(page, /restock-priority\/shopping-list/);
+  assert.match(shoppingList, /lastPurchaseCost/);
+  assert.match(shoppingList, /updateRestockShoppingListQuantity/);
+  assert.match(buyingList, /Estimated total/);
+  assert.match(buyingList, /Create purchase draft/);
+});
