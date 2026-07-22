@@ -59,3 +59,13 @@ test("change is read-only and does not touch route or pickup workflows", () => {
   assert.doesNotMatch(page, /\.insert\(|\.update\(|\.delete\(|\.upsert\(/);
   assert.doesNotMatch(page, /snacky_confirm_route_pickup|completeStop|inventory_movements/);
 });
+
+
+test("custom ranges recover VMS totals by combining working month selections", () => {
+  assert.match(page, /loadMonthlyVmsRangeByMonth/);
+  assert.match(page, /selectedRange\.key === "custom"/);
+  assert.match(page, /calendarMonthRanges/);
+  assert.match(page, /sales_dashboard_monthly_summary/);
+  assert.match(page, /combined by calendar month/);
+  assert.match(page, /same finalized monthly VMS records that appear when each month is selected separately/);
+});
