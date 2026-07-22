@@ -4,6 +4,7 @@ export type RestockShoppingListItem = {
   suggestedQty: number;
   priorityScore?: number;
   status?: string | null;
+  lastPurchaseCost?: number | null;
 };
 
 export const RESTOCK_SHOPPING_LIST_STORAGE_KEY = "snacky-restock-shopping-list";
@@ -18,6 +19,8 @@ function normalizeRestockShoppingListItem(item: Partial<RestockShoppingListItem>
   const suggestedQty = Math.max(0, Math.floor(Number(item?.suggestedQty ?? 0)));
   const priorityScore = Number(item?.priorityScore ?? 0);
   const status = item?.status ? String(item.status) : null;
+  const parsedCost = Number(item?.lastPurchaseCost ?? 0);
+  const lastPurchaseCost = Number.isFinite(parsedCost) && parsedCost > 0 ? parsedCost : null;
 
   if (!productId || !name || suggestedQty <= 0) return null;
 
@@ -27,6 +30,7 @@ function normalizeRestockShoppingListItem(item: Partial<RestockShoppingListItem>
     suggestedQty,
     priorityScore: Number.isFinite(priorityScore) ? priorityScore : 0,
     status,
+    lastPurchaseCost,
   };
 }
 
@@ -74,4 +78,18 @@ export function toggleRestockShoppingListItem(item: Partial<RestockShoppingListI
 export function clearRestockShoppingList() {
   if (!hasBrowserStorage()) return;
   window.localStorage.removeItem(RESTOCK_SHOPPING_LIST_STORAGE_KEY);
+}
+
+
+export function updateRestockShoppingListQuantity(productId: string, suggestedQty: number) {
+  const quantity = Math.max(1, Math.floor(Number(suggestedQty ?? 1)));
+  const next = readRestockShoppingList().map((item) => item.productId === productId ? { ...item, suggestedQty: quantity } : item);
+  writeRestockShoppingList(next);
+  return next;
+}
+
+export function removeRestockShoppingListItem(productId: string) {
+  const next = readRestockShoppingList().filter((item) => item.productId !== productId);
+  writeRestockShoppingList(next);
+  return next;
 }
