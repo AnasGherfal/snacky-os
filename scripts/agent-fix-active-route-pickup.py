@@ -1,5 +1,6 @@
 from pathlib import Path
 
+# Applies the smallest possible repair, then the workflow validates pickup and inventory behavior.
 path = Path('src/app/api/operator/routes/[id]/pick-list/route.ts')
 text = path.read_text(encoding='utf-8')
 text = text.replace(
