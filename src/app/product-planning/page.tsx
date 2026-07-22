@@ -7,6 +7,7 @@ import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } fr
 import { lyd } from "@/lib/format";
 import { buildProductPlanningRecommendation, shiftPlanningMonth, type ProductPlanningSalesMonth } from "@/lib/product-planning";
 import { formatProductQuantity, normalizeCaseQuantity } from "@/lib/product-quantity";
+import { BuyListLiveSummary } from "@/app/product-planning/BuyListLiveSummary";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,7 @@ type PlanningSearchParams = {
   month?: string;
   saved?: string;
   error?: string;
+  view?: string;
 };
 
 type ProductRow = {
@@ -28,6 +30,7 @@ type ProductRow = {
   current_cost_price_lyd: number | string | null;
   last_purchase_cost_lyd: number | string | null;
   average_cost_lyd: number | string | null;
+  last_purchase_date: string | null;
   active: boolean | null;
 };
 
@@ -68,6 +71,10 @@ function monthInputValue(month: string) {
 function numeric(value: unknown, fallback = 0) {
   const parsed = Number(value ?? fallback);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function roundMoney(value: number) {
+  return Math.round(value * 100) / 100;
 }
 
 function wholeNumber(value: unknown) {
@@ -131,22 +138,34 @@ async function saveMonthlyProductPlans(formData: FormData) {
   if (!supabase) redirect("/product-planning?error=Supabase%20is%20not%20configured");
 
   const planningMonth = monthStart(String(formData.get("planning_month") ?? ""));
+  const redirectView = String(formData.get("redirect_view") ?? "") === "buy-list" ? "buy-list" : "";
+  const targetSuffix = `month=${monthInputValue(planningMonth)}${redirectView ? "&view=buy-list" : ""}`;
   const productIds = Array.from(new Set(formData.getAll("product_id").map((value) => String(value ?? "").trim()).filter(Boolean)));
   const now = new Date().toISOString();
-  const payloads = productIds.map((productId) => ({
-    planning_month: planningMonth,
-    product_id: productId,
-    planned_units: wholeNumber(formData.get(`planned_units__${productId}`)),
-    planned_budget_lyd: Math.max(0, numeric(formData.get(`planned_budget__${productId}`))),
-    plan_status: ["draft", "approved", "ordered", "closed"].includes(String(formData.get(`plan_status__${productId}`)))
-      ? String(formData.get(`plan_status__${productId}`))
-      : "draft",
-    notes: String(formData.get(`notes__${productId}`) ?? "").trim() || null,
-    created_by: profile.id,
-    updated_at: now,
-  }));
+  const payloads = productIds.map((productId) => {
+    const selectedForBuyList = String(formData.get(`buy_list__${productId}`) ?? "") === "on";
+    const buyQuantity = wholeNumber(formData.get(`buy_quantity__${productId}`));
+    const purchasedUnits = wholeNumber(formData.get(`purchased_units__${productId}`));
+    const purchasedSpend = Math.max(0, numeric(formData.get(`purchased_spend__${productId}`)));
+    const lastPurchaseCost = numeric(formData.get(`buy_unit_cost__${productId}`), Number.NaN);
+    const existingStatus = String(formData.get(`existing_status__${productId}`) ?? "draft");
+    const estimatedRemainingCost = selectedForBuyList && Number.isFinite(lastPurchaseCost) && lastPurchaseCost > 0
+      ? buyQuantity * lastPurchaseCost
+      : 0;
 
-  if (!payloads.length) redirect(`/product-planning?month=${monthInputValue(planningMonth)}&error=${encodeURIComponent("No product plan rows were submitted.")}`);
+    return {
+      planning_month: planningMonth,
+      product_id: productId,
+      planned_units: purchasedUnits + (selectedForBuyList ? buyQuantity : 0),
+      planned_budget_lyd: roundMoney(purchasedSpend + estimatedRemainingCost),
+      plan_status: selectedForBuyList ? (existingStatus === "ordered" ? "ordered" : "approved") : "draft",
+      notes: String(formData.get(`notes__${productId}`) ?? "").trim() || null,
+      created_by: profile.id,
+      updated_at: now,
+    };
+  });
+
+  if (!payloads.length) redirect(`/product-planning?${targetSuffix}&error=${encodeURIComponent("No product plan rows were submitted.")}`);
 
   const { error } = await supabase.from(PLAN_TABLE).upsert(payloads, { onConflict: "planning_month,product_id" });
   if (error) {
@@ -154,11 +173,11 @@ async function saveMonthlyProductPlans(formData: FormData) {
     const message = isMissingPlanTable(error)
       ? "Apply the product monthly planning migration before saving plans."
       : "Could not save the monthly product plan.";
-    redirect(`/product-planning?month=${monthInputValue(planningMonth)}&error=${encodeURIComponent(message)}`);
+    redirect(`/product-planning?${targetSuffix}&error=${encodeURIComponent(message)}`);
   }
 
   revalidatePath("/product-planning");
-  redirect(`/product-planning?month=${monthInputValue(planningMonth)}&saved=1`);
+  redirect(`/product-planning?${targetSuffix}&saved=1`);
 }
 
 export default async function ProductPlanningPage({ searchParams }: { searchParams: Promise<PlanningSearchParams> }) {
@@ -178,7 +197,7 @@ export default async function ProductPlanningPage({ searchParams }: { searchPara
   const [productsResult, storageResult, slotsResult, plansResult, purchasesResult, batchesResult] = await Promise.all([
     supabase
       .from("products")
-      .select("id, sku, name, category, created_at, case_quantity, current_cost_price_lyd, last_purchase_cost_lyd, average_cost_lyd, active")
+      .select("id, sku, name, category, created_at, case_quantity, current_cost_price_lyd, last_purchase_cost_lyd, average_cost_lyd, last_purchase_date, active")
       .eq("active", true)
       .order("name"),
     supabase
@@ -322,7 +341,8 @@ export default async function ProductPlanningPage({ searchParams }: { searchPara
 
   const rows = products.map((product) => {
     const purchased = purchasedByProduct.get(product.id) ?? { units: 0, spend: 0 };
-    const unitCost = numeric(product.last_purchase_cost_lyd ?? product.average_cost_lyd ?? product.current_cost_price_lyd, NaN);
+    const recommendationCost = numeric(product.last_purchase_cost_lyd ?? product.average_cost_lyd ?? product.current_cost_price_lyd, Number.NaN);
+    const lastPurchaseCost = numeric(product.last_purchase_cost_lyd, Number.NaN);
     const recommendation = buildProductPlanningRecommendation({
       productId: product.id,
       productName: product.name,
@@ -331,7 +351,7 @@ export default async function ProductPlanningPage({ searchParams }: { searchPara
       caseQuantity: product.case_quantity,
       currentStorageUnits: storageByProduct.get(product.id) ?? 0,
       activeMachineCount: machineIdsByProduct.get(product.id)?.size ?? 0,
-      unitCost,
+      unitCost: recommendationCost,
       salesMonths: salesByProduct.get(product.id) ?? [],
       currentMonthObservedDays,
       currentMonthSalesThrough,
@@ -339,22 +359,34 @@ export default async function ProductPlanningPage({ searchParams }: { searchPara
       purchasedSpendThisMonth: purchased.spend,
     }, planningMonth);
     const saved = savedPlans.get(product.id) ?? null;
+    const planStatus = saved?.plan_status ?? "draft";
+    const inBuyList = ["approved", "ordered"].includes(planStatus);
+    const savedRemainingUnits = saved ? Math.max(0, wholeNumber(saved.planned_units) - purchased.units) : recommendation.suggestedBuyUnits;
+    const buyQuantity = inBuyList ? savedRemainingUnits : recommendation.suggestedBuyUnits;
+    const estimatedBuyCost = Number.isFinite(lastPurchaseCost) && lastPurchaseCost > 0
+      ? roundMoney(buyQuantity * lastPurchaseCost)
+      : null;
+
     return {
       product,
       recommendation,
       saved,
       storageUnits: storageByProduct.get(product.id) ?? 0,
       activeMachineCount: machineIdsByProduct.get(product.id)?.size ?? 0,
-      unitCost,
+      recommendationCost,
+      lastPurchaseCost,
+      inBuyList,
+      buyQuantity,
+      estimatedBuyCost,
       plannedUnits: saved ? wholeNumber(saved.planned_units) : recommendation.recommendedPlanUnits,
       plannedBudget: saved ? Math.max(0, numeric(saved.planned_budget_lyd)) : recommendation.recommendedBudgetLyd ?? 0,
-      planStatus: saved?.plan_status ?? "draft",
+      planStatus,
       notes: saved?.notes ?? "",
     };
   }).sort((left, right) => {
-    const priority = { remove: 0, review: 1, reduce: 2, increase: 3, testing: 4, keep: 5 } as Record<string, number>;
-    return (priority[left.recommendation.action] ?? 99) - (priority[right.recommendation.action] ?? 99)
+    return right.recommendation.currentMonthUnits - left.recommendation.currentMonthUnits
       || right.recommendation.projectedCurrentMonthUnits - left.recommendation.projectedCurrentMonthUnits
+      || right.recommendation.previousMonthUnits - left.recommendation.previousMonthUnits
       || left.product.name.localeCompare(right.product.name);
   });
 
@@ -363,6 +395,11 @@ export default async function ProductPlanningPage({ searchParams }: { searchPara
   const totalPurchasedSpend = rows.reduce((sum, row) => sum + row.recommendation.purchasedSpendThisMonth, 0);
   const totalCurrentMonthUnits = rows.reduce((sum, row) => sum + row.recommendation.currentMonthUnits, 0);
   const totalProjectedMonthUnits = rows.reduce((sum, row) => sum + row.recommendation.projectedCurrentMonthUnits, 0);
+  const buyListRows = rows.filter((row) => row.inBuyList && row.buyQuantity > 0);
+  const buyListOnly = params.view === "buy-list";
+  const visibleRows = buyListOnly ? buyListRows : rows;
+  const estimatedBuyListTotal = buyListRows.reduce((sum, row) => sum + (row.estimatedBuyCost ?? 0), 0);
+  const missingBuyListCostCount = buyListRows.filter((row) => row.estimatedBuyCost === null).length;
   const remainingBudget = Math.max(0, totalPlannedBudget - totalPurchasedSpend);
   const newCount = rows.filter((row) => row.recommendation.action === "testing").length;
   const removeCount = rows.filter((row) => row.recommendation.action === "remove").length;
@@ -380,10 +417,10 @@ export default async function ProductPlanningPage({ searchParams }: { searchPara
         title="Product Planning"
         subtitle="Plan what to buy using last month, current-month VMS sales, projected remaining demand, current storage, and purchases already made."
         breadcrumbs={[{ label: "Inventory", href: "/inventory" }, { label: "Product Planning" }]}
-        action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/products-dashboard">Product Dashboard</SecondaryButton><SecondaryButton href="/purchases?module=finance">Purchases</SecondaryButton><PrimaryButton href="/purchases/new">New purchase</PrimaryButton></div>}
+        action={<div className="flex flex-wrap gap-2"><SecondaryButton href={`/product-planning?month=${monthInputValue(planningMonth)}&view=buy-list`}>Buy list ({buyListRows.length})</SecondaryButton><SecondaryButton href="/purchases?module=finance">Purchases</SecondaryButton><PrimaryButton href="/purchases/new">New purchase</PrimaryButton></div>}
       />
 
-      {params.saved ? <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900">Monthly product plan saved.</div> : null}
+      {params.saved ? <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900">Buy list and monthly product plan saved.</div> : null}
       {params.error ? <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-900">{params.error}</div> : null}
       {planTableMissing ? <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><div className="font-semibold">Recommendations are available, but plan saving is not installed yet.</div><p className="mt-1">Apply migration 202607160001_product_monthly_purchase_plans.sql to save monthly quantities and budgets.</p></div> : null}
       {dataWarning ? <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">{dataWarning}</div> : null}
@@ -409,44 +446,76 @@ export default async function ProductPlanningPage({ searchParams }: { searchPara
         <div className="surface-card"><div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Actions</div><div className="mt-2 text-lg font-semibold">{increaseCount} increase · {removeCount} remove</div><p className="mt-1 text-sm text-slate-500">{newCount} new products remain protected for testing</p></div>
       </section>
 
-      {!rows.length ? <EmptyState title="No products to plan" body="Create active products before building a monthly purchase plan." /> : (
-        <form action={saveMonthlyProductPlans}>
+      <section className="surface-card mb-5">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-sm font-semibold text-slate-950">Purchasing view</div>
+            <p className="mt-1 text-sm text-slate-500">Products are ordered from most sold to least sold this month. Add only the products you intend to buy.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Link href={`/product-planning?month=${monthInputValue(planningMonth)}`} className={buyListOnly ? "btn-secondary" : "btn-primary"}>All products</Link>
+            <Link href={`/product-planning?month=${monthInputValue(planningMonth)}&view=buy-list`} className={buyListOnly ? "btn-primary" : "btn-secondary"}>Buy list ({buyListRows.length})</Link>
+          </div>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3"><div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Items in buy list</div><div className="mt-1 text-xl font-semibold">{buyListRows.length}</div></div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3"><div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Estimated list cost</div><div className="mt-1 text-xl font-semibold">{lyd(estimatedBuyListTotal)}</div></div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3"><div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Missing last costs</div><div className="mt-1 text-xl font-semibold">{missingBuyListCostCount}</div></div>
+        </div>
+      </section>
+
+      {!rows.length ? <EmptyState title="No products to plan" body="Create active products before building a monthly purchase plan." /> : buyListOnly && !visibleRows.length ? (
+        <EmptyState title="Your buy list is empty" body="Open All products, choose quantities, tick Add to buy list, then save." action={<SecondaryButton href={`/product-planning?month=${monthInputValue(planningMonth)}`}>Open all products</SecondaryButton>} />
+      ) : (
+        <form id="product-planning-buy-list" action={saveMonthlyProductPlans}>
           <input type="hidden" name="planning_month" value={planningMonth} />
           <div className="mb-4 flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div><div className="font-semibold text-slate-950">Monthly item budget</div><p className="mt-1 text-sm text-slate-500">Planned units represent the total monthly purchase allocation: already purchased plus what is still recommended.</p></div>
-            <button className="btn-primary" disabled={planTableMissing}>Save monthly plan</button>
+            <div><div className="font-semibold text-slate-950">Restock products and buy list</div><p className="mt-1 text-sm text-slate-500">Storage, monthly sales, recommended quantity, and latest purchase cost are shown together. Save to keep the list for purchasing.</p></div>
+            <div className="flex flex-wrap gap-2"><button className="btn-secondary" name="redirect_view" value={buyListOnly ? "buy-list" : ""} disabled={planTableMissing}>Save list</button><button className="btn-primary" name="redirect_view" value="buy-list" disabled={planTableMissing}>Save & open buy list</button></div>
           </div>
-          <DataTable sortable showSummary headers={["Product", "Recommendation", "Current month sold", "Projected month", "Last month sold", "Storage now", "Remaining demand", "Suggested buy now", "Purchased this month", "Planned units", "Planned budget", "Status", "Notes"]}>
-            {rows.map((row) => {
+
+          <BuyListLiveSummary formId="product-planning-buy-list" initialCount={buyListRows.length} initialTotal={estimatedBuyListTotal} initialMissingCostCount={missingBuyListCostCount} />
+
+          <DataTable
+            className="product-planning-table [&_.table-wrap]:max-h-[68vh] [&_.table-wrap]:overflow-auto [&_.data-table_th]:sticky [&_.data-table_th]:top-0 [&_.data-table_th]:z-20 [&_.data-table_th]:bg-slate-50"
+            headers={["Product", "Sold this month", "Storage left", "Recommended buy", "Buy list quantity", "Last purchase cost", "Estimated cost", "Add to buy list", "Recommendation"]}
+          >
+            {visibleRows.map((row) => {
               const packaging = { caseQuantity: row.product.case_quantity, productName: row.product.name, category: row.product.category };
               return (
                 <tr key={row.product.id}>
-                  <td>
+                  <td className="min-w-56">
                     <input type="hidden" name="product_id" value={row.product.id} />
+                    <input type="hidden" name={`purchased_units__${row.product.id}`} value={row.recommendation.purchasedUnitsThisMonth} />
+                    <input type="hidden" name={`purchased_spend__${row.product.id}`} value={row.recommendation.purchasedSpendThisMonth} />
+                    <input type="hidden" name={`buy_unit_cost__${row.product.id}`} value={Number.isFinite(row.lastPurchaseCost) && row.lastPurchaseCost > 0 ? row.lastPurchaseCost : ""} />
+                    <input type="hidden" name={`existing_status__${row.product.id}`} value={row.planStatus} />
+                    <input type="hidden" name={`notes__${row.product.id}`} value={row.notes} />
                     <div className="font-semibold text-slate-950">{row.product.name}</div>
-                    <div className="mt-1 text-xs text-slate-500">{row.product.sku ?? "No SKU"} · {normalizeCaseQuantity(row.product.case_quantity)} per box · {row.activeMachineCount} machine(s)</div>
-                    <div className="mt-1 text-xs text-slate-500">Unit cost: {Number.isFinite(row.unitCost) && row.unitCost > 0 ? lyd(row.unitCost) : "Missing"}</div>
+                    <div className="mt-1 text-xs text-slate-500">{row.product.sku ?? "No SKU"} · {normalizeCaseQuantity(row.product.case_quantity)} per box</div>
+                    <div className="mt-1 text-xs text-slate-500">Used in {row.activeMachineCount} machine(s)</div>
                   </td>
-                  <td className="min-w-64">
-                    <StatusBadge status={actionTone(row.recommendation.action)} label={row.recommendation.actionLabel} />
-                    <ul className="mt-2 space-y-1 text-xs text-slate-600">{row.recommendation.reasons.slice(0, 4).map((reason) => <li key={reason}>{reason}</li>)}</ul>
+                  <td className="min-w-44">
+                    <div className="text-lg font-semibold text-slate-950">{formatProductQuantity(row.recommendation.currentMonthUnits, packaging)}</div>
+                    <div className="mt-1 text-xs text-slate-500">Projected: {formatProductQuantity(row.recommendation.projectedCurrentMonthUnits, packaging, { compact: true })}</div>
+                    <div className="mt-1 text-xs text-slate-500">Last month: {formatProductQuantity(row.recommendation.previousMonthUnits, packaging, { compact: true })}</div>
                   </td>
-                  <td><div>{formatProductQuantity(row.recommendation.currentMonthUnits, packaging)}</div><div className="mt-1 text-xs text-slate-500">{row.recommendation.currentMonthSalesThrough ? `through ${row.recommendation.currentMonthSalesThrough}` : "not uploaded"}</div></td>
-                  <td><div>{formatProductQuantity(row.recommendation.projectedCurrentMonthUnits, packaging)}</div><div className="mt-1 text-xs text-slate-500">{row.recommendation.currentMonthObservedDays > 0 ? `${row.recommendation.currentMonthObservedDays}/${row.recommendation.currentMonthDaysInMonth} days observed` : "using last month"}</div></td>
-                  <td>{formatProductQuantity(row.recommendation.previousMonthUnits, packaging)}</td>
-                  <td>{formatProductQuantity(row.storageUnits, packaging)}</td>
-                  <td><div>{formatProductQuantity(row.recommendation.remainingProjectedDemandUnits, packaging)}</div><div className="mt-1 text-xs text-slate-500">Target stock now: {formatProductQuantity(row.recommendation.targetStockUnits, packaging, { compact: true })}</div></td>
-                  <td><div className="font-semibold">{formatProductQuantity(row.recommendation.suggestedBuyUnits, packaging)}</div><div className="mt-1 text-xs text-slate-500">Remaining budget: {row.recommendation.remainingBudgetLyd === null ? "Cost missing" : lyd(row.recommendation.remainingBudgetLyd)}</div></td>
-                  <td><div>{formatProductQuantity(row.recommendation.purchasedUnitsThisMonth, packaging)}</div><div className="mt-1 text-xs text-slate-500">{lyd(row.recommendation.purchasedSpendThisMonth)}</div></td>
-                  <td className="min-w-36"><input type="number" min="0" step="1" name={`planned_units__${row.product.id}`} defaultValue={row.plannedUnits} className="field-input" /><div className="mt-1 text-xs text-slate-500">{formatProductQuantity(row.plannedUnits, packaging)}</div></td>
-                  <td className="min-w-36"><input type="number" min="0" step="0.01" name={`planned_budget__${row.product.id}`} defaultValue={row.plannedBudget.toFixed(2)} className="field-input" /></td>
-                  <td><select name={`plan_status__${row.product.id}`} defaultValue={row.planStatus} className="field-input min-w-28"><option value="draft">Draft</option><option value="approved">Approved</option><option value="ordered">Ordered</option><option value="closed">Closed</option></select></td>
-                  <td className="min-w-48"><input name={`notes__${row.product.id}`} defaultValue={row.notes} className="field-input" placeholder="Supplier, promo, test note..." /></td>
+                  <td className="min-w-40"><div className="text-lg font-semibold">{formatProductQuantity(row.storageUnits, packaging)}</div><div className="mt-1 text-xs text-slate-500">Target now: {formatProductQuantity(row.recommendation.targetStockUnits, packaging, { compact: true })}</div></td>
+                  <td className="min-w-44"><div className="text-lg font-semibold text-slate-950">{formatProductQuantity(row.recommendation.suggestedBuyUnits, packaging)}</div><div className="mt-1 text-xs text-slate-500">Already purchased: {formatProductQuantity(row.recommendation.purchasedUnitsThisMonth, packaging, { compact: true })}</div></td>
+                  <td className="min-w-40"><input type="number" min="0" step="1" name={`buy_quantity__${row.product.id}`} defaultValue={row.buyQuantity} data-buy-quantity={row.product.id} data-unit-cost={Number.isFinite(row.lastPurchaseCost) && row.lastPurchaseCost > 0 ? row.lastPurchaseCost : ""} className="field-input" /><div className="mt-1 text-xs text-slate-500">Suggested: {formatProductQuantity(row.recommendation.suggestedBuyUnits, packaging, { compact: true })}</div></td>
+                  <td className="min-w-40"><div className="font-semibold">{Number.isFinite(row.lastPurchaseCost) && row.lastPurchaseCost > 0 ? lyd(row.lastPurchaseCost) : "Missing"}</div><div className="mt-1 text-xs text-slate-500">{row.product.last_purchase_date ? `Purchased ${row.product.last_purchase_date}` : "No previous purchase cost"}</div></td>
+                  <td className="min-w-36"><div className="text-lg font-semibold" data-buy-line-total={row.product.id}>{row.inBuyList ? (row.estimatedBuyCost === null ? "Cost missing" : lyd(row.estimatedBuyCost)) : "Not in list"}</div><div className="mt-1 text-xs text-slate-500">Quantity × last purchase cost</div></td>
+                  <td className="min-w-32"><label className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium"><input type="checkbox" name={`buy_list__${row.product.id}`} defaultChecked={row.inBuyList} data-buy-list-checkbox="true" data-product-id={row.product.id} className="h-5 w-5" /><span>Add</span></label></td>
+                  <td className="min-w-64"><StatusBadge status={actionTone(row.recommendation.action)} label={row.recommendation.actionLabel} /><ul className="mt-2 space-y-1 text-xs text-slate-600">{row.recommendation.reasons.slice(0, 3).map((reason) => <li key={reason}>{reason}</li>)}</ul></td>
                 </tr>
               );
             })}
           </DataTable>
-          <div className="sticky bottom-3 z-10 mt-4 flex justify-end rounded-xl border border-slate-200 bg-white/95 p-3 shadow-lg backdrop-blur"><button className="btn-primary" disabled={planTableMissing}>Save monthly plan</button></div>
+
+          <div className="sticky bottom-3 z-30 mt-4 flex flex-col gap-3 rounded-xl border border-slate-200 bg-white/95 p-3 shadow-lg backdrop-blur sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm text-slate-600">The list is saved inside this month’s product plan and remains available when you record purchases.</div>
+            <div className="flex flex-wrap gap-2"><button className="btn-secondary" name="redirect_view" value={buyListOnly ? "buy-list" : ""} disabled={planTableMissing}>Save list</button><button className="btn-primary" name="redirect_view" value="buy-list" disabled={planTableMissing}>Save & open buy list</button></div>
+          </div>
         </form>
       )}
     </>
