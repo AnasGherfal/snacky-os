@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute } from "@/lib/authz";
 import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
-import { isTerminalRouteStatus, ROUTE_STOP_PENDING_STATUS } from "@/lib/route-workflow";
+import { isRouteStopDoneStatus, isTerminalRouteStatus, ROUTE_STOP_PENDING_STATUS } from "@/lib/route-workflow";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 
 function isMissingTable(error: any, tableName: string) {
@@ -278,8 +278,20 @@ export async function GET(
         .map((stop: any) => String(stop.id ?? ""))
         .filter(Boolean),
     );
-    const relevantStopIds = pendingStopIds.size
-      ? pendingStopIds
+    const preparedStopIds = new Set(
+      Array.isArray(preparedBatch?.selectedStopIds)
+        ? preparedBatch.selectedStopIds.map((stopId: unknown) => String(stopId ?? "")).filter(Boolean)
+        : [],
+    );
+    const actionableStopIds = new Set(
+      stops
+        .filter((stop: any) => !isRouteStopDoneStatus(String(stop.status ?? ROUTE_STOP_PENDING_STATUS)))
+        .map((stop: any) => String(stop.id ?? ""))
+        .filter(Boolean),
+    );
+    preparedStopIds.forEach((stopId) => actionableStopIds.add(stopId));
+    const relevantStopIds = actionableStopIds.size
+      ? actionableStopIds
       : new Set(stops.map((stop: any) => String(stop.id ?? "")).filter(Boolean));
 
     const loadStopItemsFromRefillOrders = async (reason: string) => {
