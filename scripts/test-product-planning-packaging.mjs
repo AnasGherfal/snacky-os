@@ -15,6 +15,7 @@ const repoRoot = path.resolve(here, "..");
 const read = (relativePath) => fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
 
 const planningPage = read("src/app/product-planning/page.tsx");
+const buyListSummary = read("src/app/product-planning/BuyListLiveSummary.tsx");
 const planningHelper = read("src/lib/product-planning.ts");
 const inventoryPage = read("src/app/inventory/page.tsx");
 const pickupPage = read("src/app/operator/routes/[id]/pick-list/page.tsx");
@@ -203,30 +204,35 @@ test("sharp sales decline or excess storage reduces buying", () => {
   assert.equal(recommendation.suggestedBuyUnits, 0);
 });
 
-test("Product Planning page loads and explains current-month VMS demand", () => {
-  for (const text of [
+test("Product Planning page exposes a persistent buy list ordered by monthly sales", () => {
+  for (const label of [
     "Product Planning",
     "Current-month demand signal",
-    "Current month sold",
-    "Projected month",
-    "Last month sold",
-    "Remaining demand",
-    "Suggested buy now",
-    "Purchased this month",
-    "Planned units",
-    "Planned budget",
-    "Save monthly plan",
+    "Sold this month",
+    "Storage left",
+    "Recommended buy",
+    "Buy list quantity",
+    "Last purchase cost",
+    "Estimated cost",
+    "Add to buy list",
+    "Save & open buy list",
+    "Estimated list cost",
   ]) {
-    assert.match(planningPage, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(planningPage, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+  assert.match(planningPage, /right\.recommendation\.currentMonthUnits - left\.recommendation\.currentMonthUnits/);
+  assert.match(planningPage, /params\.view === "buy-list"/);
+  assert.match(planningPage, /plan_status: selectedForBuyList \?/);
+  assert.match(planningPage, /planned_units: purchasedUnits \+ \(selectedForBuyList \? buyQuantity : 0\)/);
+  assert.match(planningPage, /last_purchase_cost_lyd, average_cost_lyd, last_purchase_date/);
+  assert.match(planningPage, /\[&_\.data-table_th\]:sticky/);
+  assert.match(planningPage, /BuyListLiveSummary/);
+  assert.match(buyListSummary, /Live estimated total/);
+  assert.match(buyListSummary, /data-buy-list-checkbox/);
+  assert.match(buyListSummary, /quantity \* unitCost/);
   assert.match(planningPage, /\.lte\("business_month", planningMonth\)/);
   assert.match(planningPage, /\.lte\("sales_month", planningMonth\)/);
-  assert.match(planningPage, /currentMonthObservedDays/);
-  assert.match(planningPage, /currentMonthSalesThrough/);
-  assert.match(planningPage, /recommendation\.recommendedPlanUnits/);
   assert.match(planningHelper, /New product — keep testing/);
-  assert.match(planningHelper, /projectCurrentMonthDemand/);
-  assert.match(planningHelper, /projectedCurrentMonthUnits - currentMonthUnits/);
   assert.match(moduleTabs, /label:\s*"Product Planning",\s*href:\s*"\/product-planning"/);
   assert.match(authz, /matchesPrefix\(pathname, \["\/product-planning"\]\)/);
 });
