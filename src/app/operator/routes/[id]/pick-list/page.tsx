@@ -373,7 +373,14 @@ export default function PickListPage() {
   const selectedLocationCount = selectedStopGroupsByLocation.length;
   const checklistProgress = progressPercent(checkedItemCount, allStopItems.length);
   const selectedStopProgress = progressPercent(selectedStopIds.length, stopGroups.length);
-  const activePreparedBatch = preparedBatch && !preparedBatch.confirmedAt && !preparedBatch.returnedToAssignedAt ? preparedBatch : null;
+  const preparedSummaryMatchesRouteTotals = useMemo(() => {
+    if (!preparedBatch?.productSummary?.length) return true;
+    const expected = new Map(routeTotals.filter((item) => item.confirmedQty > 0).map((item) => [item.productId, item.confirmedQty]));
+    const prepared = new Map(preparedBatch.productSummary.filter((item) => item.quantity > 0).map((item) => [item.productId, item.quantity]));
+    if (expected.size !== prepared.size) return false;
+    return Array.from(expected.entries()).every(([productId, quantity]) => prepared.get(productId) === quantity);
+  }, [preparedBatch, routeTotals]);
+  const activePreparedBatch = preparedBatch && !preparedBatch.confirmedAt && !preparedBatch.returnedToAssignedAt && preparedSummaryMatchesRouteTotals ? preparedBatch : null;
   const checklistFrozen = Boolean(activePreparedBatch);
   const preparedLoadRows = (activePreparedBatch?.productSummary?.length ? activePreparedBatch.productSummary : routeTotals.map((item) => ({
     productId: item.productId,

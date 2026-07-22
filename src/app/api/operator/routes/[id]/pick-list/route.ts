@@ -762,7 +762,7 @@ export async function GET(
       const routeStopId = line.route_stop_id ? String(line.route_stop_id) : null;
       const routeStopItemId = String(line.id ?? "");
       const stop = routeStopId ? stopById.get(routeStopId) : stopByMachine.get(String(line.machine_id ?? ""));
-      if (pendingStopIds.size && stop && String(stop.status ?? "") !== ROUTE_STOP_PENDING_STATUS) return;
+      if (stop && !includesRelevantStop(String(stop.id ?? ""))) return;
 
       const machineId = String(line.machine_id ?? stop?.machine_id ?? "");
       const machine = machineById.get(machineId) ?? null;
