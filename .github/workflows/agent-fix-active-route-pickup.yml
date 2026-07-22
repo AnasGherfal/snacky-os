@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/fix-active-route-pickup-quantity
+  pull_request:
+    branches:
+      - master
 
 jobs:
   apply-test-publish:
