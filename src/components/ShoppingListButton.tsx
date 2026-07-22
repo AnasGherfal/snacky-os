@@ -4,7 +4,7 @@ import { ShoppingCart } from "lucide-react";
 import { useEffect, useState } from "react";
 import { readRestockShoppingList, toggleRestockShoppingListItem, type RestockShoppingListItem } from "@/lib/restock-shopping-list";
 
-export function ShoppingListButton({ productId, name, suggestedQty, priorityScore, status }: RestockShoppingListItem) {
+export function ShoppingListButton({ productId, name, suggestedQty, priorityScore, status, lastPurchaseCost }: RestockShoppingListItem) {
   const [selected, setSelected] = useState(false);
   const canAdd = Math.max(0, Math.floor(Number(suggestedQty ?? 0))) > 0;
 
@@ -20,7 +20,7 @@ export function ShoppingListButton({ productId, name, suggestedQty, priorityScor
       disabled={!canAdd}
       onClick={() => {
         if (!canAdd) return;
-        const next = toggleRestockShoppingListItem({ productId, name, suggestedQty, priorityScore, status });
+        const next = toggleRestockShoppingListItem({ productId, name, suggestedQty, priorityScore, status, lastPurchaseCost });
         setSelected(next.some((item) => item.productId === productId));
       }}
       title={canAdd ? undefined : "This product does not have a suggested purchase quantity yet"}
