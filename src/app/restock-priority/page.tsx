@@ -83,6 +83,7 @@ function toShoppingListItem(item: RestockPriorityItem): RestockShoppingListItem 
     suggestedQty: item.suggestedBuyQty,
     priorityScore: item.priorityScore,
     status: item.status,
+    lastPurchaseCost: item.lastPurchaseCost,
   };
 }
 
@@ -164,6 +165,7 @@ function ProductActions({ item }: { item: RestockPriorityItem }) {
         suggestedQty={item.suggestedBuyQty}
         priorityScore={item.priorityScore}
         status={item.status}
+        lastPurchaseCost={item.lastPurchaseCost}
       />
     </div>
   );
@@ -342,42 +344,52 @@ function ProductCard({ item, currentPath, canEditProducts }: { item: RestockPrio
 function ProductTable({ items, currentPath, canEditProducts }: { items: RestockPriorityItem[]; currentPath: string; canEditProducts: boolean }) {
   return (
     <DataTable
-      className="hidden md:block"
-      headers={["Product", "Status", "Storage", "Min", "Target", "Buy", "Velocity", "Machines", "Last purchase", "Actions"]}
+      className="hidden max-h-[70vh] overflow-auto md:block [&_thead]:sticky [&_thead]:top-0 [&_thead]:z-20 [&_thead]:bg-white [&_th]:whitespace-nowrap [&_th]:shadow-[0_1px_0_0_rgb(226_232_240)]"
+      headers={["Product", "Status", "Sold this month", "Storage left", "Recommended buy", "Last cost", "Estimated cost", "Machines", "Add to list", "Settings"]}
     >
-      {items.map((item) => (
-        <tr key={item.productId}>
-          <td>
-            <div className="font-semibold text-slate-900">{item.name}</div>
-            <div className="text-xs text-slate-500">{item.sku ?? "-"} - {item.category ?? "-"}</div>
-            <div className="mt-2">
-              <WhyRecommended item={item} />
-            </div>
-          </td>
-          <td><StatusBadge status={statusLabel(item.status)} /></td>
-          <td>{formatQty(item.storageQty)}</td>
-          <td>{formatQty(item.minStorageQty)}</td>
-          <td>{formatQty(item.effectiveTargetQty)}</td>
-          <td className="font-semibold">{formatQty(item.suggestedBuyQty)}</td>
-          <td>{formatVelocity(item.salesVelocity)}</td>
-          <td><MachineNeeds item={item} /></td>
-          <td>
-            <div>{item.lastPurchaseCost === null ? "-" : lyd(item.lastPurchaseCost)}</div>
-            <div className="text-xs text-slate-500">{item.lastPurchasedDate ?? "-"}</div>
-          </td>
-          <td>
-            <div className="space-y-2">
-              <ProductActions item={item} />
-              {canEditProducts ? (
-                <details className="rounded-lg border border-slate-200 p-3">
-                  <summary className="cursor-pointer text-xs font-semibold text-slate-700">Adjust</summary>
-                  <ThresholdForm item={item} currentPath={currentPath} />
-                </details>
-              ) : null}
-            </div>
-          </td>
-        </tr>
-      ))}
+      {items.map((item) => {
+        const estimatedCost = item.lastPurchaseCost === null ? null : item.lastPurchaseCost * item.suggestedBuyQty;
+        return (
+          <tr key={item.productId}>
+            <td>
+              <div className="font-semibold text-slate-900">{item.name}</div>
+              <div className="text-xs text-slate-500">{item.sku ?? "-"} - {item.category ?? "-"}</div>
+              <div className="mt-2"><WhyRecommended item={item} /></div>
+            </td>
+            <td><StatusBadge status={statusLabel(item.status)} /></td>
+            <td className="font-semibold text-slate-950">{formatQty(item.unitsSold)}</td>
+            <td>{formatQty(item.storageQty)}</td>
+            <td className="font-semibold text-slate-950">{formatQty(item.suggestedBuyQty)}</td>
+            <td>
+              <div>{item.lastPurchaseCost === null ? "-" : lyd(item.lastPurchaseCost)}</div>
+              <div className="text-xs text-slate-500">{item.lastPurchasedDate ?? "-"}</div>
+            </td>
+            <td className="font-semibold">{estimatedCost === null ? "-" : lyd(estimatedCost)}</td>
+            <td><MachineNeeds item={item} /></td>
+            <td>
+              <ShoppingListButton
+                productId={item.productId}
+                name={item.name}
+                suggestedQty={item.suggestedBuyQty}
+                priorityScore={item.priorityScore}
+                status={item.status}
+                lastPurchaseCost={item.lastPurchaseCost}
+              />
+            </td>
+            <td>
+              <div className="space-y-2">
+                <Link href={`/products/${item.productId}/history`} className="link-secondary">Product history</Link>
+                {canEditProducts ? (
+                  <details className="rounded-lg border border-slate-200 p-3">
+                    <summary className="cursor-pointer text-xs font-semibold text-slate-700">Adjust planning</summary>
+                    <ThresholdForm item={item} currentPath={currentPath} />
+                  </details>
+                ) : null}
+              </div>
+            </td>
+          </tr>
+        );
+      })}
     </DataTable>
   );
 }
@@ -428,7 +440,12 @@ export default async function RestockPriorityPage({
       }),
     }),
   ]);
-  const filteredItems = filterRestockItems(result.items, filter, q);
+  const filteredItems = [...filterRestockItems(result.items, filter, q)].sort((left, right) =>
+    right.unitsSold - left.unitsSold
+    || right.salesVelocity - left.salesVelocity
+    || right.suggestedBuyQty - left.suggestedBuyQty
+    || left.name.localeCompare(right.name)
+  );
   const counts = restockCounts(result.items);
   const buyTodayBaseItems = q.trim() || filter !== "focus" ? filteredItems : result.items;
   const buyTodayItems = buyTodayBaseItems.filter(isBuyTodayItem).slice(0, 12);
@@ -444,9 +461,10 @@ export default async function RestockPriorityPage({
     <>
       <PageHeader
         title="Restock Priority"
-        subtitle="What should I buy today? Snacky ranks products by storage pressure, route demand, machine gaps, and recent sales so you can buy the right items first."
+        subtitle="Plan purchases from one sales-ranked table: this month’s sales, storage left, recommended quantity, latest cost, and your saved buying list."
         action={
           <div className="flex flex-wrap gap-2">
+            <SecondaryButton href="/restock-priority/shopping-list">Open Buying List</SecondaryButton>
             <CreatePurchaseListButton items={purchaseListItems} />
             <SecondaryButton href="/inventory/movements/new">Storage adjustment</SecondaryButton>
           </div>
