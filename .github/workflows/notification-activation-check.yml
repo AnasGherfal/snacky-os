@@ -5,10 +5,17 @@ on:
     branches:
       - master
     paths:
+      - "public/sw.js"
       - "src/components/NotificationActivationCard.tsx"
+      - "src/components/NotificationCenter.tsx"
+      - "src/components/Topbar.tsx"
       - "src/app/account/page.tsx"
+      - "src/app/api/push-config/route.ts"
+      - "src/app/api/push-subscriptions/route.ts"
       - "src/app/api/notifications/push-status/route.ts"
+      - "src/app/api/notifications/test/route.ts"
       - "src/app/api/notifications/test-push/route.ts"
+      - "src/lib/notification-delivery.ts"
       - "scripts/test-notification-activation.mjs"
       - ".env.example"
       - ".github/workflows/notification-activation-check.yml"

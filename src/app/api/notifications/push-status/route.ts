@@ -1,22 +1,19 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
-
-function configured() {
-  return Boolean(
-    String(process.env.VAPID_SUBJECT ?? "").trim()
-    && String(process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "").trim()
-    && String(process.env.VAPID_PRIVATE_KEY ?? "").trim(),
-  );
-}
+import { ensurePushNotificationConfig } from "@/lib/notification-delivery";
 
 export async function GET() {
   const profile = await getCurrentProfile();
   if (!profile) return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
 
   const supabase = await getAuthenticatedSupabaseServerClient();
+  const config = await ensurePushNotificationConfig(supabase);
+
   if (!supabase) {
     return NextResponse.json({
-      configured: configured(),
+      configured: config.configured,
+      publicKey: config.configured ? config.publicKey : "",
+      source: config.configured ? config.source : null,
       schemaReady: false,
       activeSubscriptions: 0,
       reason: "Supabase is not configured.",
@@ -30,9 +27,11 @@ export async function GET() {
     .eq("is_active", true);
 
   return NextResponse.json({
-    configured: configured(),
+    configured: config.configured,
+    publicKey: config.configured ? config.publicKey : "",
+    source: config.configured ? config.source : null,
     schemaReady: !error,
     activeSubscriptions: error ? 0 : count ?? 0,
-    reason: error ? error.message : null,
+    reason: error?.message ?? (config.configured ? null : config.reason),
   });
 }

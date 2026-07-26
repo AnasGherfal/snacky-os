@@ -1,6 +1,7 @@
 import "server-only";
 import { type SupabaseClient } from "@supabase/supabase-js";
 import webpush, { type PushSubscription as WebPushSubscription } from "web-push";
+import { createECDH, createHmac } from "node:crypto";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 
 type RouteAssignmentNotificationInput = {
@@ -37,9 +38,9 @@ type NotificationPayload = {
   title: string;
   body: string;
   url: string;
-  routeId: string;
-  routeDate: string;
-  assignedBy: string | null;
+  routeId?: string | null;
+  routeDate?: string | null;
+  assignedBy?: string | null;
 };
 
 type PushSubscriptionInput = {
@@ -51,7 +52,19 @@ type PushSubscriptionInput = {
   expirationTime?: number | null;
 };
 
-let vapidConfigured = false;
+type VapidConfig = {
+  subject: string;
+  publicKey: string;
+  privateKey: string;
+};
+
+type VapidResolution =
+  | { config: VapidConfig; source: "environment" | "derived" }
+  | { config: null; reason: string };
+
+const DEFAULT_VAPID_SUBJECT = "mailto:notifications@snacky.ly";
+const VAPID_DERIVATION_CONTEXT = "snacky-os:web-push:v1";
+let vapidFingerprint = "";
 
 function cleanText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -71,23 +84,67 @@ function shortErrorText(error: unknown) {
     .join(" ");
 }
 
-function getVapidConfig() {
+function environmentVapidConfig(): VapidConfig | null {
   const subject = cleanText(process.env.VAPID_SUBJECT);
   const publicKey = cleanText(process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY);
   const privateKey = cleanText(process.env.VAPID_PRIVATE_KEY);
-
   if (!subject || !publicKey || !privateKey) return null;
   return { subject, publicKey, privateKey };
 }
 
-function ensureWebPushConfigured() {
-  const vapid = getVapidConfig();
-  if (!vapid) return null;
-  if (!vapidConfigured) {
-    webpush.setVapidDetails(vapid.subject, vapid.publicKey, vapid.privateKey);
-    vapidConfigured = true;
+function deriveVapidConfig(): VapidConfig | null {
+  const serverSecret = cleanText(process.env.SUPABASE_SERVICE_ROLE_KEY);
+  if (!serverSecret) return null;
+
+  for (let counter = 0; counter < 256; counter += 1) {
+    const privateKeyBytes = createHmac("sha256", serverSecret)
+      .update(`${VAPID_DERIVATION_CONTEXT}:${counter}`)
+      .digest();
+    try {
+      const ecdh = createECDH("prime256v1");
+      ecdh.setPrivateKey(privateKeyBytes);
+      return {
+        subject: cleanText(process.env.VAPID_SUBJECT) || DEFAULT_VAPID_SUBJECT,
+        publicKey: ecdh.getPublicKey(undefined, "uncompressed").toString("base64url"),
+        privateKey: privateKeyBytes.toString("base64url"),
+      };
+    } catch {
+      // A P-256 private scalar can very rarely be invalid. Retry deterministically.
+    }
   }
-  return vapid;
+
+  return null;
+}
+
+function resolveVapidConfig(): VapidResolution {
+  const environment = environmentVapidConfig();
+  if (environment) return { config: environment, source: "environment" };
+
+  const derived = deriveVapidConfig();
+  if (derived) return { config: derived, source: "derived" };
+
+  return { config: null, reason: "missing_server_notification_secret" };
+}
+
+export async function ensurePushNotificationConfig(_supabase?: SupabaseClient | null) {
+  const result = resolveVapidConfig();
+  if (!result.config) return { configured: false as const, reason: result.reason };
+  return {
+    configured: true as const,
+    publicKey: result.config.publicKey,
+    source: result.source,
+  };
+}
+
+async function ensureWebPushConfigured(_supabase?: SupabaseClient | null) {
+  const result = resolveVapidConfig();
+  if (!result.config) return null;
+  const fingerprint = `${result.config.subject}:${result.config.publicKey}`;
+  if (vapidFingerprint !== fingerprint) {
+    webpush.setVapidDetails(result.config.subject, result.config.publicKey, result.config.privateKey);
+    vapidFingerprint = fingerprint;
+  }
+  return result.config;
 }
 
 async function resolveRecipientUserId(
@@ -165,7 +222,7 @@ async function sendPushToSubscription(
   subscription: PushSubscriptionRecord,
   payload: NotificationPayload,
 ) {
-  const vapid = ensureWebPushConfigured();
+  const vapid = await ensureWebPushConfigured(supabase);
   if (!vapid) {
     return { sent: false, skipped: "missing_vapid_configuration" as const };
   }
@@ -311,6 +368,68 @@ export async function markAllNotificationsReadForUser(supabase: NonNullable<Supa
   }
 
   return { updated: true };
+}
+
+export async function sendTestPushNotification(
+  supabase: NonNullable<SupabaseClient>,
+  userId: string,
+) {
+  const adminClient = getSupabaseAdminClient() ?? supabase;
+  const config = await ensurePushNotificationConfig(adminClient);
+  if (!config.configured) {
+    return { sent: false as const, deliveredCount: 0, subscriptionCount: 0, reason: config.reason };
+  }
+
+  const subscriptionResult = await adminClient
+    .from("push_subscriptions")
+    .select("id, endpoint, p256dh, auth, user_agent, device_label, is_active")
+    .eq("user_id", userId)
+    .eq("is_active", true)
+    .order("created_at", { ascending: false });
+
+  if (subscriptionResult.error) {
+    return {
+      sent: false as const,
+      deliveredCount: 0,
+      subscriptionCount: 0,
+      reason: shortErrorText(subscriptionResult.error) || "subscription_load_failed",
+    };
+  }
+
+  const subscriptions = (subscriptionResult.data ?? []) as PushSubscriptionRecord[];
+  if (!subscriptions.length) {
+    return { sent: false as const, deliveredCount: 0, subscriptionCount: 0, reason: "no_active_subscription" };
+  }
+
+  const payload: NotificationPayload = {
+    type: "push_test",
+    title: "Snacky OS notifications are working",
+    body: "This device can now receive route assignments before the app is opened.",
+    url: "/operator/routes",
+    routeId: null,
+    routeDate: null,
+    assignedBy: null,
+  };
+
+  await adminClient.from("notifications").insert({
+    user_id: userId,
+    type: payload.type,
+    title: payload.title,
+    message: payload.body,
+    action_url: payload.url,
+    related_route_id: null,
+  });
+
+  const settled = await Promise.allSettled(
+    subscriptions.map((subscription) => sendPushToSubscription(adminClient, subscription, payload)),
+  );
+  const deliveredCount = settled.filter((item) => item.status === "fulfilled" && item.value.sent).length;
+  return {
+    sent: deliveredCount > 0,
+    deliveredCount,
+    subscriptionCount: subscriptions.length,
+    reason: deliveredCount > 0 ? null : "delivery_failed",
+  };
 }
 
 export async function notifyRouteAssigned(

@@ -105,7 +105,7 @@ export function Topbar({ profile, onMenuClick }: { profile: TopbarProfile; onMen
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {canSeeNotifications ? (
-            <div className="md:hidden">
+            <div>
               <NotificationCenter compact />
             </div>
           ) : null}
