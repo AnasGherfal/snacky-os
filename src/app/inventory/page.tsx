@@ -490,13 +490,28 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                   {row.suggestedBuyQty > 0 ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800">Buy {packagedQuantity(row.suggestedBuyQty, row)}</span> : null}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <MobileField label="Current">{packagedQuantity(row.currentQty, row)}</MobileField>
-                  <MobileField label="Reserved">{packagedQuantity(row.reservedQty, row)}</MobileField>
-                  <MobileField label="Available"><span className="font-semibold text-slate-950">{packagedQuantity(row.availableQty, row)}</span></MobileField>
+                  <MobileField label="In storage">{packagedQuantity(row.currentQty, row)}</MobileField>
+                  <MobileField label="Reserved in storage">{packagedQuantity(row.reservedQty, row)}</MobileField>
+                  <MobileField label="Available — no route"><span className="font-semibold text-emerald-800">{packagedQuantity(row.availableQty, row)}</span></MobileField>
                   <MobileField label="Suggested buy">{packagedQuantity(row.suggestedBuyQty, row)}</MobileField>
-                  <MobileField label="Route need">{packagedQuantity(row.routeNeedQty, row)}</MobileField>
                   <MobileField label="Velocity">{row.salesVelocity > 0 ? `${row.salesVelocity.toFixed(1)}/day` : "-"}</MobileField>
                 </div>
+                {row.reservations.length ? (
+                  <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">Attached route reservations</div>
+                    <div className="mt-2 space-y-2">
+                      {row.reservations.map((reservation) => (
+                        <Link key={reservation.routeId} href={`/routes/${reservation.routeId}`} className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm hover:border-amber-300">
+                          <span className="font-medium text-slate-900">Route {reservation.routeDate ?? reservation.routeId.slice(0, 8)}</span>
+                          <span className="shrink-0 text-amber-900">{packagedQuantity(reservation.remainingQty, row)} · {reservation.status.replaceAll("_", " ")}</span>
+                        </Link>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-xs leading-5 text-amber-800">Open a route to change or release its reservation.</p>
+                  </div>
+                ) : row.availableQty > 0 ? (
+                  <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-medium text-emerald-800">Available units have no route attached.</div>
+                ) : null}
                 {canSeeCost ? <div className="mt-3"><MobileField label="Last cost">{row.lastPurchaseCost === null ? "-" : lyd(row.lastPurchaseCost)}</MobileField></div> : null}
                 {row.reasons.length ? (
                   <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -520,13 +535,31 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                   <div className="mt-2 text-xs text-slate-500">{row.reasons.join(" - ") || "No extra restock signals"}</div>
                 </td>
                 <td>{packagedQuantity(row.currentQty, row)}</td>
-                <td>{packagedQuantity(row.reservedQty, row)}</td>
-                <td className="font-semibold">{packagedQuantity(row.availableQty, row)}</td>
+                <td>
+                  <div className={row.reservedQty > 0 ? "font-semibold text-amber-900" : "text-emerald-700"}>{row.reservedQty > 0 ? packagedQuantity(row.reservedQty, row) : "None"}</div>
+                  {row.reservations.length ? (
+                    <div className="mt-2 space-y-1">
+                      {row.reservations.map((reservation) => (
+                        <Link key={reservation.routeId} href={`/routes/${reservation.routeId}`} className="block text-xs font-medium text-amber-800 underline decoration-amber-300 underline-offset-2 hover:text-amber-950">
+                          Route {reservation.routeDate ?? reservation.routeId.slice(0, 8)} · {packagedQuantity(reservation.remainingQty, row)}
+                        </Link>
+                      ))}
+                    </div>
+                  ) : null}
+                </td>
+                <td className="font-semibold text-emerald-800">
+                  {packagedQuantity(row.availableQty, row)}
+                  <div className="mt-1 text-xs font-normal text-slate-500">{row.availableQty > 0 ? "No route attached" : row.reservedQty > 0 ? "All in-storage units reserved" : "No stock"}</div>
+                </td>
                 <td>{packagedQuantity(row.suggestedBuyQty, row)}</td>
-                <td>{packagedQuantity(row.routeNeedQty, row)}</td>
                 <td>{row.salesVelocity > 0 ? `${row.salesVelocity.toFixed(1)}/day` : "-"}</td>
                 {canSeeCost ? <td>{row.lastPurchaseCost === null ? "-" : lyd(row.lastPurchaseCost)}</td> : null}
-                <td><StatusBadge status={row.status} /></td>
+                <td>
+                  <div className="flex flex-col items-start gap-1">
+                    <StatusBadge status={row.status} />
+                    {row.reservedQty > 0 && row.status !== "reserved" ? <StatusBadge status="reserved" label="Reserved in storage" /> : null}
+                  </div>
+                </td>
               </tr>
             ))}
           </DataTable>
