@@ -8,10 +8,15 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
 const page = fs.readFileSync(path.join(root, "src/app/reports/cash-reconciliation/page.tsx"), "utf8");
 
-test("selected duration filters physical cash by counted_at", () => {
-  assert.match(page, /\.not\("counted_at",\s*"is",\s*null\)/);
-  assert.match(page, /\.gte\("counted_at",\s*`\$\{range\.start\}T00:00:00\.000Z`\)/);
-  assert.match(page, /\.lt\("counted_at",\s*`\$\{shiftIsoDate\(range\.end, 1\)\}T00:00:00\.000Z`\)/);
+test("selected duration uses the same Finance LYD In ledger source as Finance", () => {
+  assert.match(page, /FINANCE_TRANSACTIONS_TABLE/);
+  assert.match(page, /loadFinanceLedgerRows/);
+  assert.match(page, /applyVisibleFinanceLedgerFilter/);
+  assert.match(page, /isFinanceLedgerTransaction\(row,\s*financeCutoffDate\)/);
+  assert.match(page, /financeCashRowsInRange/);
+  assert.match(page, /sumFinanceRows\(financeCashRows,\s*"LYD",\s*"money_in"\)/);
+  assert.match(page, /row\.transaction_date < range\.start/);
+  assert.match(page, /row\.transaction_date > range\.end/);
   assert.doesNotMatch(page, /cash_reconciliation_summary/);
   assert.doesNotMatch(page, /cash_reconciliation_breakdown/);
 });
@@ -27,9 +32,9 @@ test("VMS summary and breakdown receive the selected range", () => {
 
 test("headline reconciliation is VMS sales versus cash counted", () => {
   assert.match(page, /VMS sales \/ مبيعات VMS/);
-  assert.match(page, /Cash counted \/ الكاش المعدود/);
-  assert.match(page, /Cash counted minus VMS sales/);
-  assert.match(page, /See exactly which machines below/);
+  assert.match(page, /Cash counted \(Finance LYD In\) \/ الكاش المعدود/);
+  assert.match(page, /Finance LYD In minus VMS sales/);
+  assert.match(page, /same Finance source and transaction dates/);
   assert.match(page, /varianceAmount:\s*roundMoney\(cashCountedAmount - vmsSalesAmount\)/);
   assert.match(page, /accuracy:\s*vmsSalesAmount > 0 \? cashCountedAmount \/ vmsSalesAmount : null/);
 });
@@ -43,6 +48,8 @@ test("machine table explicitly identifies expected, counted, and difference by m
   assert.match(page, /Counted pickups/);
   assert.match(page, /Latest finance count/);
   assert.match(page, /rangeVariance:\s*roundMoney\(row\.countedCash - row\.vmsSalesAmount\)/);
+  assert.match(page, /financeToMachineDifference/);
+  assert.match(page, /not mapped through machine cash-collection records/);
 });
 
 test("machines are sorted by largest absolute difference and unmatched rows are visible", () => {
@@ -73,9 +80,16 @@ test("custom ranges recover VMS totals by combining working month selections", (
 test("shows the selected-period cash estimated to remain inside machines", () => {
   assert.match(page, /estimatedCashStillInMachines/);
   assert.match(page, /expectedMachineCashAmount/);
-  assert.match(page, /VMS cash expected minus cash counted in Finance/);
+  assert.match(page, /VMS cash expected minus active Finance LYD In/);
   assert.match(page, /Estimated still in machine/);
   assert.match(page, /Card sales are excluded when VMS payment methods are available/);
+});
+
+test("daily and monthly cash breakdowns use Finance transaction dates", () => {
+  assert.match(page, /timeBucketFromFinance/);
+  assert.match(page, /row\.transaction_date/);
+  assert.match(page, /mergeTimeBreakdown\(selectedVmsDayRows,\s*selectedFinanceCashRows,\s*"day"\)/);
+  assert.match(page, /mergeTimeBreakdown\(selectedVmsMonthRows,\s*selectedFinanceCashRows,\s*"month"\)/);
 });
 
 test("cash-in-machines estimate is read-only and never becomes negative", () => {
