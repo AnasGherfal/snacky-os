@@ -5,6 +5,19 @@ import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, Section
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canViewFinancials } from "@/lib/authz";
 import {
+  FINANCE_RECONCILIATION_CUTOFF_DATE,
+  isFinanceLedgerTransaction,
+  signedAmount,
+  sumFinanceRows,
+  type BalanceTransaction,
+} from "@/lib/finance-balance";
+import {
+  FINANCE_TRANSACTIONS_TABLE,
+  applyVisibleFinanceLedgerFilter,
+  isVisibleFinanceLedgerRow,
+  loadFinanceLedgerRows,
+} from "@/lib/finance-ledger";
+import {
   buildMachineCashReconciliation,
   summarizeCashCollections,
   type FinanceCashCollectionRow,
@@ -86,6 +99,11 @@ type MachineRow = {
   name?: string | null;
   machine_code?: string | null;
   location?: { id?: string | null; name?: string | null } | { id?: string | null; name?: string | null }[] | null;
+};
+
+type FinanceCashInRow = BalanceTransaction & {
+  id?: string | null;
+  transaction_date: string;
 };
 
 type RangeSummary = {
@@ -258,11 +276,11 @@ function resolveCashReconciliationRange(params: CashReconciliationSearchParams, 
   const customEnd = parseIsoDate(params.date_to);
 
   if (rawRange === "today") {
-    return cashRangeWithDefaults({ key: "today", label: "Today", helperText: "VMS sales dated today versus cash counted today.", start: today, end: today });
+    return cashRangeWithDefaults({ key: "today", label: "Today", helperText: "VMS sales dated today versus active Finance LYD In dated today.", start: today, end: today });
   }
   if (rawRange === "yesterday") {
     const yesterday = formatLocalDate(addDays(now, -1));
-    return cashRangeWithDefaults({ key: "yesterday", label: "Yesterday", helperText: "VMS sales dated yesterday versus cash counted yesterday.", start: yesterday, end: yesterday });
+    return cashRangeWithDefaults({ key: "yesterday", label: "Yesterday", helperText: "VMS sales dated yesterday versus active Finance LYD In dated yesterday.", start: yesterday, end: yesterday });
   }
   if (rawRange === "this_month") {
     return cashRangeWithDefaults({ key: "this_month", label: "This month", helperText: "VMS sales and finance counts from the first day of this month through today.", start: formatLocalDate(startOfMonth(now)), end: today });
@@ -283,10 +301,10 @@ function resolveCashReconciliationRange(params: CashReconciliationSearchParams, 
     return cashRangeWithDefaults({ key: "year", label: yearValue, helperText: `VMS sales and finance counts for ${yearValue}.`, start: `${yearValue}-01-01`, end: `${yearValue}-12-31` });
   }
   if (rawRange === "all_time") {
-    return cashRangeWithDefaults({ key: "all_time", label: "All time", helperText: "All available VMS sales versus all cash counted in Snacky OS.", start: null, end: null });
+    return cashRangeWithDefaults({ key: "all_time", label: "All time", helperText: "All available VMS sales versus all active Finance LYD In after the Finance reconciliation cutoff.", start: null, end: null });
   }
   if (rawRange === "date" && singleDate) {
-    return cashRangeWithDefaults({ key: "date", label: singleDate, helperText: "VMS sales dated on the selected day versus cash counted on that day.", start: singleDate, end: singleDate });
+    return cashRangeWithDefaults({ key: "date", label: singleDate, helperText: "VMS sales dated on the selected day versus active Finance LYD In dated on that day.", start: singleDate, end: singleDate });
   }
   if (rawRange === "custom" || customStart || customEnd) {
     const start = customStart ?? customEnd ?? today;
@@ -433,10 +451,25 @@ async function loadMonthlyVmsRangeByMonth(supabase: any, range: SalesDateRange) 
   };
 }
 
-function summarizeRange(cashRows: CashCollectionRow[], pendingCount: number, sales: SalesSummaryRow): RangeSummary {
+function financeCashRowsInRange(rows: FinanceCashInRow[], range: CashRange) {
+  return rows.filter((row) => {
+    if (row.direction !== "money_in") return false;
+    if (String(row.currency ?? "LYD").trim().toUpperCase() !== "LYD") return false;
+    if (range.start && row.transaction_date < range.start) return false;
+    if (range.end && row.transaction_date > range.end) return false;
+    return true;
+  });
+}
+
+function summarizeRange(
+  cashRows: CashCollectionRow[],
+  financeCashRows: FinanceCashInRow[],
+  pendingCount: number,
+  sales: SalesSummaryRow,
+): RangeSummary {
   const cashSummary = summarizeCashCollections(cashRows);
   const vmsSalesAmount = roundMoney(numeric(sales.revenue_amount));
-  const cashCountedAmount = roundMoney(cashSummary.countedCash);
+  const cashCountedAmount = roundMoney(sumFinanceRows(financeCashRows, "LYD", "money_in"));
   const paymentSplitAvailable = Boolean(sales.payment_method_available);
   const vmsCashSalesAmount = roundMoney(numeric(sales.cash_sales_amount));
   const vmsCardSalesAmount = roundMoney(numeric(sales.card_sales_amount));
@@ -455,7 +488,7 @@ function summarizeRange(cashRows: CashCollectionRow[], pendingCount: number, sal
     countedAboveExpectedAmount: Math.max(0, roundMoney(-unboundedCashBalance)),
     varianceAmount: roundMoney(cashCountedAmount - vmsSalesAmount),
     accuracy: vmsSalesAmount > 0 ? cashCountedAmount / vmsSalesAmount : null,
-    countedCollectionCount: cashSummary.countedRows.length,
+    countedCollectionCount: financeCashRows.length,
     pendingCollectionCount: pendingCount,
     varianceReviewCount: cashSummary.varianceReviewCount,
     paymentSplitAvailable,
@@ -465,15 +498,15 @@ function summarizeRange(cashRows: CashCollectionRow[], pendingCount: number, sal
   };
 }
 
-function timeBucketFromCash(row: CashCollectionRow, dimension: "day" | "month") {
-  const date = String(row.counted_at ?? "").slice(0, 10);
+function timeBucketFromFinance(row: FinanceCashInRow, dimension: "day" | "month") {
+  const date = String(row.transaction_date ?? "").slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
   return dimension === "month"
     ? { key: date.slice(0, 7), label: monthLabel(date.slice(0, 7)), sortKey: date.slice(0, 7) }
     : { key: date, label: date, sortKey: date };
 }
 
-function mergeTimeBreakdown(vmsRows: VmsMachineSalesRow[], cashRows: CashCollectionRow[], dimension: "day" | "month") {
+function mergeTimeBreakdown(vmsRows: VmsMachineSalesRow[], financeCashRows: FinanceCashInRow[], dimension: "day" | "month") {
   const rows = new Map<string, PeriodBreakdownRow>();
   const ensure = (key: string, label: string, sortKey: string) => {
     const current = rows.get(key) ?? { key, label, sortKey, vmsSalesAmount: 0, cashCountedAmount: 0, varianceAmount: 0, countedCollectionCount: 0 };
@@ -488,11 +521,11 @@ function mergeTimeBreakdown(vmsRows: VmsMachineSalesRow[], cashRows: CashCollect
     current.vmsSalesAmount = roundMoney(current.vmsSalesAmount + numeric(row.successful_sales_amount));
   }
 
-  for (const cash of cashRows) {
-    const bucket = timeBucketFromCash(cash, dimension);
+  for (const cash of financeCashRows) {
+    const bucket = timeBucketFromFinance(cash, dimension);
     if (!bucket) continue;
     const current = ensure(bucket.key, bucket.label, bucket.sortKey);
-    current.cashCountedAmount = roundMoney(current.cashCountedAmount + numeric(cash.actual_cash_collected));
+    current.cashCountedAmount = roundMoney(current.cashCountedAmount + signedAmount(cash));
     current.countedCollectionCount += 1;
   }
 
@@ -514,7 +547,7 @@ function comparisonMetrics(selected: RangeSummary, comparison: RangeSummary): Co
   return [
     { label: "VMS sales", selected: lyd(selected.vmsSalesAmount), comparison: lyd(comparison.vmsSalesAmount), delta: formatDelta(selected.vmsSalesAmount - comparison.vmsSalesAmount) },
     { label: "Estimated cash still in machines", selected: lyd(selected.estimatedCashStillInMachines), comparison: lyd(comparison.estimatedCashStillInMachines), delta: formatDelta(selected.estimatedCashStillInMachines - comparison.estimatedCashStillInMachines) },
-    { label: "Cash counted", selected: lyd(selected.cashCountedAmount), comparison: lyd(comparison.cashCountedAmount), delta: formatDelta(selected.cashCountedAmount - comparison.cashCountedAmount) },
+    { label: "Finance LYD In", selected: lyd(selected.cashCountedAmount), comparison: lyd(comparison.cashCountedAmount), delta: formatDelta(selected.cashCountedAmount - comparison.cashCountedAmount) },
     { label: "Difference", selected: formatDelta(selected.varianceAmount), comparison: formatDelta(comparison.varianceAmount), delta: formatDelta(selected.varianceAmount - comparison.varianceAmount) },
     { label: "Match rate", selected: formatPercent(selected.accuracy), comparison: formatPercent(comparison.accuracy), delta: selected.accuracy === null || comparison.accuracy === null ? "-" : `${((selected.accuracy - comparison.accuracy) * 100).toFixed(1)} pp` },
     { label: "Counted collections", selected: formatInteger(selected.countedCollectionCount), comparison: formatInteger(comparison.countedCollectionCount), delta: formatInteger(selected.countedCollectionCount - comparison.countedCollectionCount) },
@@ -603,7 +636,7 @@ export default async function CashReconciliationPage({
       )
     : Promise.resolve({ data: [], error: null });
 
-  const [machineResult, selectedCashResult, selectedPendingResult, comparisonCashResult, comparisonPendingResult, batchResult, monthlyProfitTableCheck] = await Promise.all([
+  const [machineResult, selectedCashResult, selectedPendingResult, comparisonCashResult, comparisonPendingResult, batchResult, monthlyProfitTableCheck, financeSettingsResult, financeLedgerResult] = await Promise.all([
     supabase.from("machines").select("id, name, machine_code, location:locations(id, name)").order("name"),
     selectedCashQuery,
     selectedPendingQuery,
@@ -615,15 +648,32 @@ export default async function CashReconciliationPage({
       ascending: false,
     }),
     supabase.from("vms_monthly_product_profit").select("id", { head: true, count: "exact" }).limit(1),
+    supabase
+      .from("finance_settings")
+      .select("opening_balance_date, reconciliation_cutoff_date")
+      .eq("id", "default")
+      .maybeSingle(),
+    loadFinanceLedgerRows({
+      label: "cash reconciliation Finance LYD In",
+      buildQuery: (columns, level) => {
+        const query = supabase
+          .from(FINANCE_TRANSACTIONS_TABLE)
+          .select(columns.join(", "))
+          .order("transaction_date", { ascending: false })
+          .limit(10000);
+        return applyVisibleFinanceLedgerFilter(query, level);
+      },
+    }),
   ]);
 
-  if (machineResult.error || selectedCashResult.error || selectedPendingResult.error) {
+  if (machineResult.error || selectedCashResult.error || selectedPendingResult.error || financeLedgerResult.error) {
     console.error("[cash-reconciliation] Cash query failed", {
       machines: machineResult.error,
       counted_cash: selectedCashResult.error,
       pending_cash: selectedPendingResult.error,
+      finance_ledger: financeLedgerResult.error,
     });
-    return <ErrorState title="Cash reconciliation unavailable" body="The cash count or machine query failed. No records were changed." action={<SecondaryButton href="/reports/cash-reconciliation">Retry</SecondaryButton>} />;
+    return <ErrorState title="Cash reconciliation unavailable" body="The Finance LYD In total, cash count, or machine query failed. No records were changed." action={<SecondaryButton href="/reports/cash-reconciliation">Retry</SecondaryButton>} />;
   }
 
   const batches = (batchResult.data ?? []) as VmsDashboardBatch[];
@@ -702,16 +752,28 @@ export default async function CashReconciliationPage({
 
   const selectedCashRows = (selectedCashResult.data ?? []) as CashCollectionRow[];
   const comparisonCashRows = (comparisonCashResult.data ?? []) as CashCollectionRow[];
-  const selectedSummary = summarizeRange(selectedCashRows, (selectedPendingResult.data ?? []).length, firstRpcRow(selectedVmsSummaryResult.data));
+  const financeCutoffDate = String(
+    financeSettingsResult.data?.reconciliation_cutoff_date
+      ?? financeSettingsResult.data?.opening_balance_date
+      ?? FINANCE_RECONCILIATION_CUTOFF_DATE,
+  );
+  const financeLedgerRows = (financeLedgerResult.data as FinanceCashInRow[])
+    .filter((row) => row.transaction_date && isVisibleFinanceLedgerRow(row))
+    .filter((row) => isFinanceLedgerTransaction(row, financeCutoffDate));
+  const selectedFinanceCashRows = financeCashRowsInRange(financeLedgerRows, selectedRange);
+  const comparisonFinanceCashRows = comparisonRange
+    ? financeCashRowsInRange(financeLedgerRows, comparisonRange)
+    : [];
+  const selectedSummary = summarizeRange(selectedCashRows, selectedFinanceCashRows, (selectedPendingResult.data ?? []).length, firstRpcRow(selectedVmsSummaryResult.data));
   const comparisonSummary = comparisonRange
-    ? summarizeRange(comparisonCashRows, (comparisonPendingResult.data ?? []).length, firstRpcRow(comparisonVmsSummaryResult.data))
+    ? summarizeRange(comparisonCashRows, comparisonFinanceCashRows, (comparisonPendingResult.data ?? []).length, firstRpcRow(comparisonVmsSummaryResult.data))
     : null;
 
   const selectedVmsDayRows = (selectedVmsDayResult.data ?? []) as VmsMachineSalesRow[];
   const selectedVmsMonthRows = (selectedVmsMonthResult.data ?? []) as VmsMachineSalesRow[];
   const selectedVmsMachineRows = (selectedVmsMachineResult.data ?? []) as VmsMachineSalesRow[];
-  const dayRows = mergeTimeBreakdown(selectedVmsDayRows, selectedCashRows, "day");
-  const monthRows = mergeTimeBreakdown(selectedVmsMonthRows, selectedCashRows, "month");
+  const dayRows = mergeTimeBreakdown(selectedVmsDayRows, selectedFinanceCashRows, "day");
+  const monthRows = mergeTimeBreakdown(selectedVmsMonthRows, selectedFinanceCashRows, "month");
 
   const machines = (machineResult.data ?? []) as MachineRow[];
   const machineIdentities: MachineIdentity[] = machines.map((machine) => ({
@@ -730,6 +792,8 @@ export default async function CashReconciliationPage({
     rangeAccuracy: row.vmsSalesAmount > 0 ? row.countedCash / row.vmsSalesAmount : null,
     estimatedCashStillInMachine: Math.max(0, roundMoney(row.vmsSalesAmount - row.countedCash)),
   }));
+  const machineLinkedCashAmount = roundMoney(summarizeCashCollections(selectedCashRows).countedCash);
+  const financeToMachineDifference = roundMoney(selectedSummary.cashCountedAmount - machineLinkedCashAmount);
 
   const selectedDayCount = selectedRange.start && selectedRange.end ? inclusiveDayCount(selectedRange.start, selectedRange.end) : null;
   const showDayBreakdown = selectedSourceMode !== "monthly" && selectedDayCount !== null && selectedDayCount <= 62;
@@ -744,17 +808,19 @@ export default async function CashReconciliationPage({
     selectedVmsMachineResult.error,
     selectedMonthlyFallbackError,
     comparisonMonthlyFallbackError,
+    financeSettingsResult.error,
+    financeLedgerResult.warning,
   ].filter(Boolean);
 
   const comparisonSubtitle = comparisonRange
-    ? `${selectedRange.label} compared with ${comparisonRange.label}. Both periods use VMS sale dates and finance counted_at dates.`
+    ? `${selectedRange.label} compared with ${comparisonRange.label}. Both periods use VMS sale dates and Finance transaction dates.`
     : "All-time reports do not have a previous comparison window.";
 
   return (
     <>
       <PageHeader
         title={"Cash Reconciliation / \u0645\u0637\u0627\u0628\u0642\u0629 \u0627\u0644\u0643\u0627\u0634"}
-        subtitle="Compare VMS sales in the selected duration with cash that Finance counted during the same duration. Cash is filtered by counted_at, not by the day it was removed from the machine."
+        subtitle="Compare VMS sales with the same active LYD In total shown in Finance for the selected transaction dates."
         action={<SecondaryButton href="/cash-collections">Cash collections</SecondaryButton>}
       />
 
@@ -814,7 +880,7 @@ export default async function CashReconciliationPage({
             <div className="text-sm font-semibold text-emerald-100">Estimated cash still in machines / الكاش المتوقع داخل الماكينات</div>
             <div className="mt-2 text-4xl font-bold tracking-tight">{lyd(selectedSummary.estimatedCashStillInMachines)}</div>
             <p className="mt-2 max-w-xl text-sm leading-6 text-emerald-100">
-              For {selectedRange.label.toLowerCase()}: VMS cash expected minus cash counted in Finance. Card sales are excluded when VMS payment methods are available.
+              For {selectedRange.label.toLowerCase()}: VMS cash expected minus active Finance LYD In. Card sales are excluded when VMS payment methods are available.
             </p>
           </div>
           <div className="grid gap-3 sm:grid-cols-3">
@@ -823,7 +889,7 @@ export default async function CashReconciliationPage({
               <div className="mt-1 text-xl font-semibold">{lyd(selectedSummary.expectedMachineCashAmount)}</div>
             </div>
             <div className="rounded-xl bg-white/10 p-4 ring-1 ring-white/15">
-              <div className="text-xs font-semibold uppercase tracking-wide text-emerald-100">Cash counted</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-emerald-100">Finance LYD In</div>
               <div className="mt-1 text-xl font-semibold">{lyd(selectedSummary.cashCountedAmount)}</div>
             </div>
             <div className="rounded-xl bg-white/10 p-4 ring-1 ring-white/15">
@@ -834,16 +900,16 @@ export default async function CashReconciliationPage({
         </div>
         {selectedSummary.countedAboveExpectedAmount > 0 ? (
           <div className="mt-4 rounded-xl border border-amber-200/40 bg-amber-200/15 px-4 py-3 text-sm text-amber-50">
-            Finance counted {lyd(selectedSummary.countedAboveExpectedAmount)} more than the selected period&apos;s VMS cash estimate. This can happen when a count includes money sold before the selected period; the estimated balance is therefore shown as zero, never negative.
+            Finance LYD In is {lyd(selectedSummary.countedAboveExpectedAmount)} above the selected period&apos;s VMS cash estimate. This can happen when a count includes money sold before the selected period; the estimated balance is therefore shown as zero, never negative.
           </div>
         ) : null}
       </section>
 
       <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <section className="surface-card"><div className="text-sm text-slate-500">VMS sales / مبيعات VMS</div><div className="mt-2 text-3xl font-semibold text-slate-950">{lyd(selectedSummary.vmsSalesAmount)}</div><div className="mt-1 text-xs text-slate-500">{formatInteger(selectedSummary.vmsUnits)} units · {formatInteger(selectedSummary.vmsTransactionCount)} successful sales</div></section>
-        <section className="surface-card"><div className="text-sm text-slate-500">Cash counted / الكاش المعدود</div><div className="mt-2 text-3xl font-semibold text-slate-950">{lyd(selectedSummary.cashCountedAmount)}</div><div className="mt-1 text-xs text-slate-500">{formatInteger(selectedSummary.countedCollectionCount)} count record(s), filtered by counted_at. See exactly which machines below.</div></section>
-        <section className="surface-card"><div className="text-sm text-slate-500">Difference / الفرق</div><div className={`mt-2 text-3xl font-semibold ${differenceClass(selectedSummary.varianceAmount)}`}>{formatDelta(selectedSummary.varianceAmount)}</div><div className="mt-1 text-xs text-slate-500">Cash counted minus VMS sales</div></section>
-        <section className="surface-card"><div className="text-sm text-slate-500">Match rate / نسبة المطابقة</div><div className="mt-2 text-3xl font-semibold text-slate-950">{formatPercent(selectedSummary.accuracy)}</div><div className="mt-1 text-xs text-slate-500">Cash counted divided by VMS sales</div></section>
+        <section className="surface-card"><div className="text-sm text-slate-500">Cash counted (Finance LYD In) / الكاش المعدود</div><div className="mt-2 text-3xl font-semibold text-slate-950">{lyd(selectedSummary.cashCountedAmount)}</div><div className="mt-1 text-xs text-slate-500">{formatInteger(selectedSummary.countedCollectionCount)} active LYD money-in record(s), using the same Finance source and transaction dates.</div></section>
+        <section className="surface-card"><div className="text-sm text-slate-500">Difference / الفرق</div><div className={`mt-2 text-3xl font-semibold ${differenceClass(selectedSummary.varianceAmount)}`}>{formatDelta(selectedSummary.varianceAmount)}</div><div className="mt-1 text-xs text-slate-500">Finance LYD In minus VMS sales</div></section>
+        <section className="surface-card"><div className="text-sm text-slate-500">Match rate / نسبة المطابقة</div><div className="mt-2 text-3xl font-semibold text-slate-950">{formatPercent(selectedSummary.accuracy)}</div><div className="mt-1 text-xs text-slate-500">Finance LYD In divided by VMS sales</div></section>
         <section className="surface-card"><div className="text-sm text-slate-500">Pending cash counts</div><div className="mt-2 text-3xl font-semibold text-slate-950">{formatInteger(selectedSummary.pendingCollectionCount)}</div><div className="mt-1 text-xs text-slate-500">Removed in this period but not counted; excluded from counted cash</div></section>
         <section className="surface-card"><div className="text-sm text-slate-500">Variance review records</div><div className="mt-2 text-3xl font-semibold text-slate-950">{formatInteger(selectedSummary.varianceReviewCount)}</div><div className="mt-1 text-xs text-slate-500">Counted collections already flagged for review</div></section>
         <section className="surface-card sm:col-span-2"><div className="text-sm text-slate-500">VMS source</div><div className="mt-2 text-xl font-semibold text-slate-950">{selectedSourceReportType.replaceAll("_", " ")}{selectedMonthlyCalendarFallbackUsed ? " · combined by calendar month" : ""}</div><div className="mt-1 text-xs text-slate-500">{selectedMonthlyCalendarFallbackUsed ? "The exact custom-range source returned no VMS activity, so Snacky OS combined the same finalized monthly VMS records that appear when each month is selected separately." : "Selected dates are passed to the same finalized VMS sales source used by the Sales Dashboard."}</div></section>
@@ -861,7 +927,7 @@ export default async function CashReconciliationPage({
 
       <SectionCard>
         <div className="p-4 text-sm leading-6 text-slate-700">
-          <strong>Cash-in-machines rule:</strong> VMS uses sale/business dates inside the selected range. Finance cash uses <code>counted_at</code> inside the same range. Estimated cash still in machines = VMS cash sales + unknown-payment sales − cash counted, never below zero. If VMS has no payment-method split, total VMS sales are treated as cash. A collection containing sales from before the selected period can make this a period estimate rather than an exact physical balance.
+          <strong>Cash-in-machines rule:</strong> VMS uses sale/business dates inside the selected range. Counted cash uses the same active LYD <code>money_in</code> ledger rows and <code>transaction_date</code> rules as Finance. Estimated cash still in machines = VMS cash sales + unknown-payment sales − Finance LYD In, never below zero. If VMS has no payment-method split, total VMS sales are treated as cash. A count containing sales from before the selected period can make this a period estimate rather than an exact physical balance.
         </div>
       </SectionCard>
 
@@ -890,6 +956,11 @@ export default async function CashReconciliationPage({
               <h2 className="text-base font-semibold text-slate-950">Which machine has the difference?</h2>
               <p className="mt-1 text-sm text-slate-500">Each row compares that machine's VMS expected sales with the cash Finance counted for that machine during the selected dates. Largest differences appear first.</p>
             </div>
+            {Math.abs(financeToMachineDifference) >= 0.01 ? (
+              <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                The Finance LYD In headline is {lyd(selectedSummary.cashCountedAmount)}, while cash linked to individual machine collection records totals {lyd(machineLinkedCashAmount)}. The {lyd(Math.abs(financeToMachineDifference))} difference is not mapped through machine cash-collection records, so it is included in the headline but cannot be assigned to a machine below.
+              </div>
+            ) : null}
             {machineRows.length ? (
               <div className="mt-4">
                 <DataTable sortable showSummary headers={["Machine", "Location", "VMS expected sales for machine", "VMS units", "Cash counted for machine", "Estimated still in machine", "Difference for machine", "Match rate", "Counted pickups", "Latest finance count", "Result"]}>
@@ -916,10 +987,10 @@ export default async function CashReconciliationPage({
           <section className="surface-card">
             <div className="border-b border-slate-200 pb-4">
               <h2 className="text-base font-semibold text-slate-950">Daily comparison</h2>
-              <p className="mt-1 text-sm text-slate-500">Cash is grouped by the day Finance counted it.</p>
+              <p className="mt-1 text-sm text-slate-500">Finance LYD In is grouped by transaction date.</p>
             </div>
             {showDayBreakdown ? (
-              dayRows.length ? <div className="mt-4"><DataTable headers={["Day", "VMS sales", "Cash counted", "Difference", "Count records"]}>{dayRows.map((row) => <tr key={row.key}><td className="font-medium">{row.label}</td><td>{lyd(row.vmsSalesAmount)}</td><td>{lyd(row.cashCountedAmount)}</td><td className={differenceClass(row.varianceAmount)}>{formatDelta(row.varianceAmount)}</td><td>{formatInteger(row.countedCollectionCount)}</td></tr>)}</DataTable></div> : <p className="mt-4 text-sm text-slate-500">No daily rows found.</p>
+              dayRows.length ? <div className="mt-4"><DataTable headers={["Day", "VMS sales", "Finance LYD In", "Difference", "Finance records"]}>{dayRows.map((row) => <tr key={row.key}><td className="font-medium">{row.label}</td><td>{lyd(row.vmsSalesAmount)}</td><td>{lyd(row.cashCountedAmount)}</td><td className={differenceClass(row.varianceAmount)}>{formatDelta(row.varianceAmount)}</td><td>{formatInteger(row.countedCollectionCount)}</td></tr>)}</DataTable></div> : <p className="mt-4 text-sm text-slate-500">No daily rows found.</p>
             ) : <p className="mt-4 text-sm text-slate-500">Daily VMS detail requires a detailed sales source and a selected range of 62 days or fewer.</p>}
           </section>
 
@@ -928,7 +999,7 @@ export default async function CashReconciliationPage({
               <h2 className="text-base font-semibold text-slate-950">Monthly comparison</h2>
               <p className="mt-1 text-sm text-slate-500">Useful for year and all-time selections.</p>
             </div>
-            {monthRows.length ? <div className="mt-4"><DataTable headers={["Month", "VMS sales", "Cash counted", "Difference", "Count records"]}>{monthRows.map((row) => <tr key={row.key}><td className="font-medium">{row.label}</td><td>{lyd(row.vmsSalesAmount)}</td><td>{lyd(row.cashCountedAmount)}</td><td className={differenceClass(row.varianceAmount)}>{formatDelta(row.varianceAmount)}</td><td>{formatInteger(row.countedCollectionCount)}</td></tr>)}</DataTable></div> : <p className="mt-4 text-sm text-slate-500">No monthly rows found.</p>}
+            {monthRows.length ? <div className="mt-4"><DataTable headers={["Month", "VMS sales", "Finance LYD In", "Difference", "Finance records"]}>{monthRows.map((row) => <tr key={row.key}><td className="font-medium">{row.label}</td><td>{lyd(row.vmsSalesAmount)}</td><td>{lyd(row.cashCountedAmount)}</td><td className={differenceClass(row.varianceAmount)}>{formatDelta(row.varianceAmount)}</td><td>{formatInteger(row.countedCollectionCount)}</td></tr>)}</DataTable></div> : <p className="mt-4 text-sm text-slate-500">No monthly rows found.</p>}
           </section>
         </div>
       )}
