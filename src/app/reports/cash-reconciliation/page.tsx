@@ -93,6 +93,9 @@ type RangeSummary = {
   vmsUnits: number;
   vmsTransactionCount: number;
   cashCountedAmount: number;
+  expectedMachineCashAmount: number;
+  estimatedCashStillInMachines: number;
+  countedAboveExpectedAmount: number;
   varianceAmount: number;
   accuracy: number | null;
   countedCollectionCount: number;
@@ -434,20 +437,31 @@ function summarizeRange(cashRows: CashCollectionRow[], pendingCount: number, sal
   const cashSummary = summarizeCashCollections(cashRows);
   const vmsSalesAmount = roundMoney(numeric(sales.revenue_amount));
   const cashCountedAmount = roundMoney(cashSummary.countedCash);
+  const paymentSplitAvailable = Boolean(sales.payment_method_available);
+  const vmsCashSalesAmount = roundMoney(numeric(sales.cash_sales_amount));
+  const vmsCardSalesAmount = roundMoney(numeric(sales.card_sales_amount));
+  const vmsUnknownSalesAmount = roundMoney(numeric(sales.unknown_payment_sales_amount));
+  const expectedMachineCashAmount = paymentSplitAvailable
+    ? roundMoney(vmsCashSalesAmount + vmsUnknownSalesAmount)
+    : vmsSalesAmount;
+  const unboundedCashBalance = roundMoney(expectedMachineCashAmount - cashCountedAmount);
   return {
     vmsSalesAmount,
     vmsUnits: Math.max(0, Math.floor(numeric(sales.units_sold))),
     vmsTransactionCount: Math.max(0, Math.floor(numeric(sales.successful_sales_count))),
     cashCountedAmount,
+    expectedMachineCashAmount,
+    estimatedCashStillInMachines: Math.max(0, unboundedCashBalance),
+    countedAboveExpectedAmount: Math.max(0, roundMoney(-unboundedCashBalance)),
     varianceAmount: roundMoney(cashCountedAmount - vmsSalesAmount),
     accuracy: vmsSalesAmount > 0 ? cashCountedAmount / vmsSalesAmount : null,
     countedCollectionCount: cashSummary.countedRows.length,
     pendingCollectionCount: pendingCount,
     varianceReviewCount: cashSummary.varianceReviewCount,
-    paymentSplitAvailable: Boolean(sales.payment_method_available),
-    vmsCashSalesAmount: roundMoney(numeric(sales.cash_sales_amount)),
-    vmsCardSalesAmount: roundMoney(numeric(sales.card_sales_amount)),
-    vmsUnknownSalesAmount: roundMoney(numeric(sales.unknown_payment_sales_amount)),
+    paymentSplitAvailable,
+    vmsCashSalesAmount,
+    vmsCardSalesAmount,
+    vmsUnknownSalesAmount,
   };
 }
 
@@ -499,6 +513,7 @@ function formatPercent(value: number | null) {
 function comparisonMetrics(selected: RangeSummary, comparison: RangeSummary): ComparisonMetricRow[] {
   return [
     { label: "VMS sales", selected: lyd(selected.vmsSalesAmount), comparison: lyd(comparison.vmsSalesAmount), delta: formatDelta(selected.vmsSalesAmount - comparison.vmsSalesAmount) },
+    { label: "Estimated cash still in machines", selected: lyd(selected.estimatedCashStillInMachines), comparison: lyd(comparison.estimatedCashStillInMachines), delta: formatDelta(selected.estimatedCashStillInMachines - comparison.estimatedCashStillInMachines) },
     { label: "Cash counted", selected: lyd(selected.cashCountedAmount), comparison: lyd(comparison.cashCountedAmount), delta: formatDelta(selected.cashCountedAmount - comparison.cashCountedAmount) },
     { label: "Difference", selected: formatDelta(selected.varianceAmount), comparison: formatDelta(comparison.varianceAmount), delta: formatDelta(selected.varianceAmount - comparison.varianceAmount) },
     { label: "Match rate", selected: formatPercent(selected.accuracy), comparison: formatPercent(comparison.accuracy), delta: selected.accuracy === null || comparison.accuracy === null ? "-" : `${((selected.accuracy - comparison.accuracy) * 100).toFixed(1)} pp` },
@@ -713,6 +728,7 @@ export default async function CashReconciliationPage({
     ...row,
     rangeVariance: roundMoney(row.countedCash - row.vmsSalesAmount),
     rangeAccuracy: row.vmsSalesAmount > 0 ? row.countedCash / row.vmsSalesAmount : null,
+    estimatedCashStillInMachine: Math.max(0, roundMoney(row.vmsSalesAmount - row.countedCash)),
   }));
 
   const selectedDayCount = selectedRange.start && selectedRange.end ? inclusiveDayCount(selectedRange.start, selectedRange.end) : null;
@@ -792,6 +808,37 @@ export default async function CashReconciliationPage({
         </div>
       ) : null}
 
+      <section className="mt-6 overflow-hidden rounded-2xl border border-emerald-300 bg-gradient-to-br from-emerald-950 via-emerald-900 to-teal-800 p-5 text-white shadow-sm">
+        <div className="grid gap-5 lg:grid-cols-[1.25fr_2fr] lg:items-center">
+          <div>
+            <div className="text-sm font-semibold text-emerald-100">Estimated cash still in machines / الكاش المتوقع داخل الماكينات</div>
+            <div className="mt-2 text-4xl font-bold tracking-tight">{lyd(selectedSummary.estimatedCashStillInMachines)}</div>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-emerald-100">
+              For {selectedRange.label.toLowerCase()}: VMS cash expected minus cash counted in Finance. Card sales are excluded when VMS payment methods are available.
+            </p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="rounded-xl bg-white/10 p-4 ring-1 ring-white/15">
+              <div className="text-xs font-semibold uppercase tracking-wide text-emerald-100">VMS cash expected</div>
+              <div className="mt-1 text-xl font-semibold">{lyd(selectedSummary.expectedMachineCashAmount)}</div>
+            </div>
+            <div className="rounded-xl bg-white/10 p-4 ring-1 ring-white/15">
+              <div className="text-xs font-semibold uppercase tracking-wide text-emerald-100">Cash counted</div>
+              <div className="mt-1 text-xl font-semibold">{lyd(selectedSummary.cashCountedAmount)}</div>
+            </div>
+            <div className="rounded-xl bg-white/10 p-4 ring-1 ring-white/15">
+              <div className="text-xs font-semibold uppercase tracking-wide text-emerald-100">Calculation</div>
+              <div className="mt-1 text-xl font-semibold">{lyd(selectedSummary.expectedMachineCashAmount)} − {lyd(selectedSummary.cashCountedAmount)}</div>
+            </div>
+          </div>
+        </div>
+        {selectedSummary.countedAboveExpectedAmount > 0 ? (
+          <div className="mt-4 rounded-xl border border-amber-200/40 bg-amber-200/15 px-4 py-3 text-sm text-amber-50">
+            Finance counted {lyd(selectedSummary.countedAboveExpectedAmount)} more than the selected period&apos;s VMS cash estimate. This can happen when a count includes money sold before the selected period; the estimated balance is therefore shown as zero, never negative.
+          </div>
+        ) : null}
+      </section>
+
       <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <section className="surface-card"><div className="text-sm text-slate-500">VMS sales / مبيعات VMS</div><div className="mt-2 text-3xl font-semibold text-slate-950">{lyd(selectedSummary.vmsSalesAmount)}</div><div className="mt-1 text-xs text-slate-500">{formatInteger(selectedSummary.vmsUnits)} units · {formatInteger(selectedSummary.vmsTransactionCount)} successful sales</div></section>
         <section className="surface-card"><div className="text-sm text-slate-500">Cash counted / الكاش المعدود</div><div className="mt-2 text-3xl font-semibold text-slate-950">{lyd(selectedSummary.cashCountedAmount)}</div><div className="mt-1 text-xs text-slate-500">{formatInteger(selectedSummary.countedCollectionCount)} count record(s), filtered by counted_at. See exactly which machines below.</div></section>
@@ -814,7 +861,7 @@ export default async function CashReconciliationPage({
 
       <SectionCard>
         <div className="p-4 text-sm leading-6 text-slate-700">
-          <strong>Comparison rule:</strong> VMS uses sale/business dates inside the selected range. Cash uses <code>counted_at</code> inside that exact same range. The report does not use the cash removal date for the counted total. Difference = cash counted − VMS sales.
+          <strong>Cash-in-machines rule:</strong> VMS uses sale/business dates inside the selected range. Finance cash uses <code>counted_at</code> inside the same range. Estimated cash still in machines = VMS cash sales + unknown-payment sales − cash counted, never below zero. If VMS has no payment-method split, total VMS sales are treated as cash. A collection containing sales from before the selected period can make this a period estimate rather than an exact physical balance.
         </div>
       </SectionCard>
 
@@ -845,7 +892,7 @@ export default async function CashReconciliationPage({
             </div>
             {machineRows.length ? (
               <div className="mt-4">
-                <DataTable sortable showSummary headers={["Machine", "Location", "VMS expected sales for machine", "VMS units", "Cash counted for machine", "Difference for machine", "Match rate", "Counted pickups", "Latest finance count", "Result"]}>
+                <DataTable sortable showSummary headers={["Machine", "Location", "VMS expected sales for machine", "VMS units", "Cash counted for machine", "Estimated still in machine", "Difference for machine", "Match rate", "Counted pickups", "Latest finance count", "Result"]}>
                   {[...machineRows].sort((left, right) => Math.abs(right.rangeVariance) - Math.abs(left.rangeVariance) || right.vmsSalesAmount - left.vmsSalesAmount || left.machineLabel.localeCompare(right.machineLabel)).map((row) => (
                     <tr key={row.key}>
                       <td className="font-medium"><div>{row.machineLabel}</div><div className="mt-1 text-xs text-slate-500">{row.machineCode ?? row.machineId ?? "Unmatched VMS/cash machine — fix mapping"}</div></td>
@@ -853,6 +900,7 @@ export default async function CashReconciliationPage({
                       <td>{lyd(row.vmsSalesAmount)}</td>
                       <td>{formatInteger(row.unitsSold)}</td>
                       <td>{lyd(row.countedCash)}</td>
+                      <td className={row.estimatedCashStillInMachine > 0 ? "font-semibold text-emerald-700" : "text-slate-500"}>{lyd(row.estimatedCashStillInMachine)}</td>
                       <td className={differenceClass(row.rangeVariance)}>{formatDelta(row.rangeVariance)}</td>
                       <td>{formatPercent(row.rangeAccuracy)}</td>
                       <td>{formatInteger(row.collectionCount)}</td>
