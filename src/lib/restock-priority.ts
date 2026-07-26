@@ -1,3 +1,5 @@
+import { isRouteReservationStatus } from "@/lib/route-workflow";
+
 export type RestockPriorityLevel = "high" | "normal" | "low";
 export type RestockStatus = "out" | "critical" | "low" | "ok";
 export type RestockSection = "critical" | "important" | "normal";
@@ -129,8 +131,6 @@ export type RestockPriorityInput = {
   salesRows?: RestockSalesRow[];
 };
 
-const reservationStatuses = new Set(["draft", "assigned", "in_progress", "pickup_confirmed"]);
-
 function numberValue(value: unknown, fallback = 0) {
   if (value === null || value === undefined || value === "") return fallback;
   const parsed = Number(value);
@@ -186,7 +186,7 @@ function addName(map: Map<string, Set<string>>, productId: string, name: string 
 }
 
 function activeRouteNeedQty(row: RestockRouteNeedRow) {
-  if (!reservationStatuses.has(String(row.route_status ?? ""))) return 0;
+  if (!isRouteReservationStatus(row.route_status)) return 0;
   return Math.max(0, wholeNumber(row.planned_qty) - wholeNumber(row.picked_qty));
 }
 
