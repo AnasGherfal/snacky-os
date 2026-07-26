@@ -16,7 +16,16 @@ type SetupStatus = {
   schemaReady: boolean;
   activeSubscriptions: number;
   reason?: string | null;
+  publicKey?: string;
 };
+
+function subscriptionMatchesPublicKey(subscription: PushSubscription, publicKey: string) {
+  const existingKey = subscription.options.applicationServerKey;
+  if (!existingKey) return false;
+  const expected = urlBase64ToUint8Array(publicKey);
+  const actual = new Uint8Array(existingKey);
+  return actual.length === expected.length && actual.every((value, index) => value === expected[index]);
+}
 
 export function NotificationActivationCard() {
   const { locale } = useLanguage();
@@ -25,7 +34,6 @@ export function NotificationActivationCard() {
   const [browserState, setBrowserState] = useState<"checking" | "unsupported" | "blocked" | "available" | "enabled">("checking");
   const [busy, setBusy] = useState<"enable" | "test" | null>(null);
   const [message, setMessage] = useState("");
-  const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "";
 
   async function refresh() {
     const response = await fetch("/api/notifications/push-status", { cache: "no-store" });
@@ -46,7 +54,8 @@ export function NotificationActivationCard() {
     }
     const registration = await navigator.serviceWorker.getRegistration() ?? await navigator.serviceWorker.register("/sw.js");
     const subscription = await registration.pushManager.getSubscription();
-    setBrowserState(subscription ? "enabled" : "available");
+    const publicKey = typeof payload?.publicKey === "string" ? payload.publicKey : "";
+    setBrowserState(subscription && publicKey && subscriptionMatchesPublicKey(subscription, publicKey) ? "enabled" : "available");
   }
 
   useEffect(() => {
@@ -57,12 +66,17 @@ export function NotificationActivationCard() {
     setBusy("enable");
     setMessage("");
     try {
+      const publicKey = status?.publicKey ?? "";
       if (!status?.configured || !publicKey) throw new Error(ar ? "إعدادات الإشعارات غير مكتملة في الخادم." : "Server notification configuration is incomplete.");
       if (!status.schemaReady) throw new Error(ar ? "جداول الإشعارات غير مثبتة في قاعدة البيانات." : "Notification tables are not installed in the database.");
       const permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
       if (permission !== "granted") throw new Error(ar ? "لم يتم السماح بالإشعارات من المتصفح." : "Browser notification permission was not granted.");
       const registration = await navigator.serviceWorker.register("/sw.js");
-      const existing = await registration.pushManager.getSubscription();
+      let existing = await registration.pushManager.getSubscription();
+      if (existing && !subscriptionMatchesPublicKey(existing, publicKey)) {
+        await existing.unsubscribe();
+        existing = null;
+      }
       const subscription = existing ?? await registration.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(publicKey),
@@ -88,7 +102,7 @@ export function NotificationActivationCard() {
     setBusy("test");
     setMessage("");
     try {
-      const response = await fetch("/api/notifications/test-push", { method: "POST" });
+      const response = await fetch("/api/notifications/test", { method: "POST" });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(payload?.error ?? "Test notification failed.");
       setMessage(ar ? "تم إرسال إشعار تجريبي. يجب أن يظهر الآن على هذا الجهاز." : "Test notification sent. It should appear on this device now.");
@@ -105,7 +119,7 @@ export function NotificationActivationCard() {
     : browserState === "blocked"
       ? (ar ? "محظورة من إعدادات المتصفح" : "Blocked in browser settings")
       : browserState === "unsupported"
-        ? (ar ? "هذا المتصفح لا يدعم الإشعارات" : "This browser does not support push")
+        ? (ar ? "على الآيفون، أضف Snacky OS للشاشة الرئيسية ثم افتحه من الأيقونة." : "On iPhone, add Snacky OS to the Home Screen and open it from the icon.")
         : (ar ? "غير مفعلة على هذا الجهاز" : "Not enabled on this device");
 
   return (
