@@ -9,17 +9,33 @@ import { formatProductQuantity } from "@/lib/product-quantity";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { type RestockPriorityItem } from "@/lib/restock-priority";
 import { loadRestockPriorityData } from "@/lib/restock-priority-data";
+import { isRouteReservationStatus } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
-type InventoryFilter = "all" | "out" | "critical" | "low" | "fast";
+type InventoryFilter = "all" | "out" | "critical" | "low" | "reserved" | "fast";
 
 type InventoryQueryIssue = {
   key: string;
   label: string;
   table: string;
   message: string;
+};
+
+type InventoryRouteReservation = {
+  routeId: string;
+  routeDate: string | null;
+  status: string;
+  remainingQty: number;
+};
+
+type RouteReservationSourceRow = {
+  route_id?: string | null;
+  product_id?: string | null;
+  planned_qty?: unknown;
+  picked_qty?: unknown;
+  routes?: { id?: string | null; route_date?: string | null; status?: string | null } | { id?: string | null; route_date?: string | null; status?: string | null }[] | null;
 };
 
 type InventoryRow = {
@@ -32,6 +48,7 @@ type InventoryRow = {
   currentQty: number;
   reservedQty: number;
   availableQty: number;
+  reservations: InventoryRouteReservation[];
   suggestedBuyQty: number;
   routeNeedQty: number;
   salesVelocity: number;
@@ -48,12 +65,14 @@ const inventoryFilters: { key: InventoryFilter; label: string }[] = [
   { key: "out", label: "Out of stock" },
   { key: "critical", label: "Critical" },
   { key: "low", label: "Low" },
+  { key: "reserved", label: "Reserved for routes" },
   { key: "fast", label: "Fast sellers" },
 ];
 
 function inventoryStatus(currentQty: number, reservedQty: number, availableQty: number, isCritical: boolean) {
   if (currentQty <= 0) return "out_of_stock";
-  if (isCritical || (availableQty <= 0 && reservedQty > 0)) return "critical";
+  if (availableQty <= 0 && reservedQty > 0) return "reserved";
+  if (isCritical) return "critical";
   if (availableQty <= 10) return "low_stock";
   return "available";
 }
@@ -128,11 +147,12 @@ function matchesText(values: Array<string | null | undefined>, query: string) {
 
 function filterInventoryRows(rows: InventoryRow[], filter: InventoryFilter, query: string) {
   return rows.filter((row) => {
-    const matchesQuery = matchesText([row.productName, row.sku, row.category, row.brand], query);
+    const matchesQuery = matchesText([row.productName, row.sku, row.category, row.brand, ...row.reservations.flatMap((reservation) => [reservation.routeId, reservation.routeDate, reservation.status])], query);
     if (!matchesQuery) return false;
     if (filter === "out") return row.currentQty <= 0;
     if (filter === "critical") return row.restockSection === "critical" || row.status === "critical";
     if (filter === "low") return row.status === "low_stock" || row.restockStatus === "low";
+    if (filter === "reserved") return row.reservedQty > 0;
     if (filter === "fast") return row.isFastSeller;
     return true;
   });
@@ -169,6 +189,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     { data: operatorBagRowsData, error: operatorBagError },
     { data: movementsData, error: movementsError },
     { data: packagingRowsData, error: packagingError },
+    { data: routeReservationsData, error: routeReservationsError },
   ] = await Promise.all([
     supabase
       .from("current_inventory_by_location")
@@ -188,6 +209,10 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
       .eq("active", true)
       .order("name")
       .limit(5000),
+    supabase
+      .from("route_stock_lines")
+      .select("route_id, product_id, planned_qty, picked_qty, routes!inner(id, route_date, status)")
+      .limit(10000),
   ]);
 
   const queryIssues: InventoryQueryIssue[] = [
@@ -205,6 +230,16 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
           error: operatorBagError,
           profile,
           params: { location_type: "operator_bag", order: ["location_name", "product_name"], limit: 2000 },
+        })
+      : null,
+    routeReservationsError
+      ? logInventoryQueryError({
+          key: "route_reservations",
+          label: "Could not load route reservation details",
+          table: "route_stock_lines + routes",
+          error: routeReservationsError,
+          profile,
+          params: { active_status_rule: "isRouteReservationStatus", limit: 10000 },
         })
       : null,
     movementsError
@@ -235,10 +270,30 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     category: row.category ?? null,
     caseQuantity: Math.max(1, Number(row.case_quantity ?? 1)),
   }]));
+  const reservationsByProductId = new Map<string, InventoryRouteReservation[]>();
+  ((routeReservationsData ?? []) as RouteReservationSourceRow[]).forEach((row) => {
+    const route = Array.isArray(row.routes) ? row.routes[0] : row.routes;
+    const routeId = String(route?.id ?? row.route_id ?? "").trim();
+    const productId = String(row.product_id ?? "").trim();
+    const status = String(route?.status ?? "").trim();
+    const remainingQty = Math.max(0, Math.floor(Number(row.planned_qty ?? 0)) - Math.floor(Number(row.picked_qty ?? 0)));
+    if (!routeId || !productId || remainingQty <= 0 || !isRouteReservationStatus(status)) return;
+    reservationsByProductId.set(productId, [
+      ...(reservationsByProductId.get(productId) ?? []),
+      { routeId, routeDate: route?.route_date ?? null, status, remainingQty },
+    ]);
+  });
+  reservationsByProductId.forEach((reservations) => reservations.sort((left, right) =>
+    String(left.routeDate ?? "").localeCompare(String(right.routeDate ?? "")) || left.routeId.localeCompare(right.routeId)
+  ));
+
   const allInventoryRows = restockResult.items
     .map<InventoryRow>((item) => {
       const currentQty = Math.max(0, Number(item.storageQty ?? 0));
-      const reservedQty = Math.max(0, Number(item.activeRouteNeedQty ?? 0));
+      const reservations = reservationsByProductId.get(item.productId) ?? [];
+      const reservedQty = routeReservationsError
+        ? Math.max(0, Number(item.activeRouteNeedQty ?? 0))
+        : reservations.reduce((sum, reservation) => sum + reservation.remainingQty, 0);
       const availableQty = Math.max(0, currentQty - reservedQty);
       const isCritical = item.section === "critical" || item.status === "critical";
       return {
@@ -251,6 +306,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         currentQty,
         reservedQty,
         availableQty,
+        reservations,
         suggestedBuyQty: Math.max(0, Number(item.suggestedBuyQty ?? 0)),
         routeNeedQty: Math.max(0, Number(item.activeRouteNeedQty ?? 0)),
         salesVelocity: Math.max(0, Number(item.salesVelocity ?? 0)),
@@ -274,6 +330,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     out: allInventoryRows.filter((row) => row.currentQty <= 0).length,
     critical: allInventoryRows.filter((row) => row.restockSection === "critical" || row.status === "critical").length,
     low: allInventoryRows.filter((row) => row.status === "low_stock" || row.restockStatus === "low").length,
+    reserved: allInventoryRows.filter((row) => row.reservedQty > 0).length,
     fast: allInventoryRows.filter((row) => row.isFastSeller).length,
   };
 
@@ -311,11 +368,10 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
 
   const inventoryHeaders = [
     "Product",
-    "Current",
-    "Reserved",
-    "Available",
+    "In storage",
+    "Reserved in storage",
+    "Available — no route",
     "Suggested buy",
-    "Route need",
     "Velocity",
     ...(canSeeCost ? ["Last cost"] : []),
     "Status",
@@ -325,7 +381,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     <>
       <PageHeader
         title="Storage Inventory"
-        subtitle="Search applies across storage stock, operator bags, and recent movement history. Quick filters reuse the same critical, low, and fast-seller signals used by Snacky OS restock planning."
+        subtitle="Physical stock stays in storage until pickup. Reserved stock is already attached to an active route; Available means the units are not attached to any route and can be used for a new one."
         action={
           <div className="flex flex-wrap gap-2">
             <SecondaryButton href="/product-planning">Product Planning</SecondaryButton>
@@ -336,6 +392,11 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
           </div>
         }
       />
+
+      <div className="mb-6 rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950">
+        <div className="font-semibold">How route reservations work</div>
+        <p className="mt-1 leading-6">Reserved units are still physically in storage, but a route already claims them. Open the linked route to reduce or remove that reservation before assigning the same units to a more important route. Only the Available quantity has no route attached.</p>
+      </div>
 
       {queryIssues.length ? (
         <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
