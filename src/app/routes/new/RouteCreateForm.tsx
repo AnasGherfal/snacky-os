@@ -146,7 +146,7 @@ function highestPriority(current: string | null | undefined, next: string | null
 }
 
 function recommendationQuantity(row: Recommendation) {
-  return unitQuantity(row.suggested_qty);
+  return Math.max(0, recommendationTarget(row) - unitQuantity(row.current_qty));
 }
 
 function recommendationTarget(row: Recommendation) {

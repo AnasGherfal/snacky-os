@@ -162,7 +162,7 @@ async function insertRowsWithOptionalColumnFallback(
 }
 
 function recommendationQuantity(row: RecommendationRow) {
-  return planQuantity(row.suggested_qty);
+  return Math.max(0, recommendationTarget(row) - planQuantity(row.current_qty));
 }
 
 function recommendationTarget(row: RecommendationRow) {

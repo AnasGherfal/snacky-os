@@ -522,8 +522,8 @@ export default async function NewRoutePage() {
     const auditRows = auditRowsByMachine.get(machine.id) ?? [];
     const allRecommendationRows = recommendationsByMachine.get(machine.id) ?? [];
     const visibleRecommendationRows = activeRecommendationsByMachine.get(machine.id) ?? [];
-    const positiveSuggestedRows = visibleRecommendationRows.filter((row) => unitQuantity(row.suggested_qty) > 0).length;
-    const storageShortages = visibleRecommendationRows.filter((row) => unitQuantity(row.suggested_qty) > unitQuantity(row.available_storage_qty)).length;
+    const positiveSuggestedRows = visibleRecommendationRows.filter((row) => Math.max(0, unitQuantity(row.capacity ?? row.par_qty) - unitQuantity(row.current_qty)) > 0).length;
+    const storageShortages = visibleRecommendationRows.filter((row) => Math.max(0, unitQuantity(row.capacity ?? row.par_qty) - unitQuantity(row.current_qty)) > unitQuantity(row.available_storage_qty)).length;
     const unmappedProducts = auditRows.filter((row) => !row.product_id).length;
     const slotNeedsRefillCount = planogramRows.reduce((count, slot) => {
       const machineId = String(slot.machine_id ?? "").trim();
@@ -604,7 +604,7 @@ export default async function NewRoutePage() {
           ? "no_latest_stock_rows"
           : loadedRecommendations.length > 0 && activeRecommendations.length === 0
             ? "all_products_inactive"
-            : activeRecommendations.some((row) => unitQuantity(row.suggested_qty) > 0)
+            : activeRecommendations.some((row) => Math.max(0, unitQuantity(row.capacity ?? row.par_qty) - unitQuantity(row.current_qty)) > 0)
               ? "healthy"
               : machineDiagnosticsWithIssues.some((machine) => machine.reasonCode === "machine_has_no_planogram")
                 ? "machine_has_no_planogram"
