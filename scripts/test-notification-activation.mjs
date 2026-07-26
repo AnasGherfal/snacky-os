@@ -25,6 +25,14 @@ test("service worker receives push and opens the notification route", () => {
   assert.match(serviceWorker, /clients\.openWindow/);
 });
 
+test("untagged test pushes never request renotify", () => {
+  assert.match(serviceWorker, /const notificationTag/);
+  assert.match(serviceWorker, /if \(notificationTag\)/);
+  assert.match(serviceWorker, /options\.renotify = true/);
+  assert.doesNotMatch(serviceWorker, /renotify:\s*true/);
+  assert.match(serviceWorker, /Could not display rich notification/);
+});
+
 test("browser support is independent from a build-time VAPID value", () => {
   assert.match(center, /const browserSupportsPush/);
   assert.match(center, /fetch\("\/api\/push-config"/);
