@@ -443,26 +443,26 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         </div>
       </section>
 
-      <div className="mb-6 grid gap-3 md:grid-cols-4">
+      <div className="mb-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <div className="surface-card">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Visible storage units</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">In storage</div>
           <div className="mt-2 text-2xl font-semibold text-slate-900">{filteredInventoryRows.reduce((sum, row) => sum + row.currentQty, 0)}</div>
-          <p className="mt-1 text-sm text-slate-500">Units in the current product view</p>
+          <p className="mt-1 text-sm text-slate-500">Physical units currently on the storage shelves</p>
+        </div>
+        <div className="surface-card border-amber-200 bg-amber-50">
+          <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">Reserved in storage</div>
+          <div className="mt-2 text-2xl font-semibold text-amber-950">{filteredInventoryRows.reduce((sum, row) => sum + row.reservedQty, 0)}</div>
+          <p className="mt-1 text-sm text-amber-800">Still in storage, but attached to active routes</p>
+        </div>
+        <div className="surface-card border-emerald-200 bg-emerald-50">
+          <div className="text-xs font-semibold uppercase tracking-wide text-emerald-800">Available — no route</div>
+          <div className="mt-2 text-2xl font-semibold text-emerald-950">{filteredInventoryRows.reduce((sum, row) => sum + row.availableQty, 0)}</div>
+          <p className="mt-1 text-sm text-emerald-800">Free units that can be assigned to a new route</p>
         </div>
         <div className="surface-card">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Out or critical</div>
-          <div className="mt-2 text-2xl font-semibold text-slate-900">{filteredInventoryRows.filter((row) => row.currentQty <= 0 || row.status === "critical").length}</div>
-          <p className="mt-1 text-sm text-slate-500">Needs attention before routes go out</p>
-        </div>
-        <div className="surface-card">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Fast sellers</div>
-          <div className="mt-2 text-2xl font-semibold text-slate-900">{filteredInventoryRows.filter((row) => row.isFastSeller).length}</div>
-          <p className="mt-1 text-sm text-slate-500">Products moving quickly in recent sales</p>
-        </div>
-        <div className="surface-card">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Reserved for routes</div>
-          <div className="mt-2 text-2xl font-semibold text-slate-900">{filteredInventoryRows.reduce((sum, row) => sum + row.reservedQty, 0)}</div>
-          <p className="mt-1 text-sm text-slate-500">Still needed for draft or active routes</p>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Products with reservations</div>
+          <div className="mt-2 text-2xl font-semibold text-slate-900">{filteredInventoryRows.filter((row) => row.reservedQty > 0).length}</div>
+          <p className="mt-1 text-sm text-slate-500">Use the Reserved filter to review them</p>
         </div>
       </div>
 
@@ -486,7 +486,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                 </div>
                 <div className="mb-3 flex flex-wrap gap-2">
                   {row.isFastSeller ? <span className="rounded-full bg-sky-100 px-2 py-1 text-xs font-semibold text-sky-800">Fast seller</span> : null}
-                  {row.routeNeedQty > 0 ? <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-900">Needed for routes</span> : null}
+                  {row.reservedQty > 0 ? <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-900">Reserved in storage</span> : null}
                   {row.suggestedBuyQty > 0 ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800">Buy {packagedQuantity(row.suggestedBuyQty, row)}</span> : null}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
