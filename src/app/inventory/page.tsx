@@ -9,17 +9,33 @@ import { formatProductQuantity } from "@/lib/product-quantity";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { type RestockPriorityItem } from "@/lib/restock-priority";
 import { loadRestockPriorityData } from "@/lib/restock-priority-data";
+import { isRouteReservationStatus } from "@/lib/route-workflow";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
-type InventoryFilter = "all" | "out" | "critical" | "low" | "fast";
+type InventoryFilter = "all" | "out" | "critical" | "low" | "reserved" | "fast";
 
 type InventoryQueryIssue = {
   key: string;
   label: string;
   table: string;
   message: string;
+};
+
+type InventoryRouteReservation = {
+  routeId: string;
+  routeDate: string | null;
+  status: string;
+  remainingQty: number;
+};
+
+type RouteReservationSourceRow = {
+  route_id?: string | null;
+  product_id?: string | null;
+  planned_qty?: unknown;
+  picked_qty?: unknown;
+  routes?: { id?: string | null; route_date?: string | null; status?: string | null } | { id?: string | null; route_date?: string | null; status?: string | null }[] | null;
 };
 
 type InventoryRow = {
@@ -32,6 +48,7 @@ type InventoryRow = {
   currentQty: number;
   reservedQty: number;
   availableQty: number;
+  reservations: InventoryRouteReservation[];
   suggestedBuyQty: number;
   routeNeedQty: number;
   salesVelocity: number;
@@ -48,12 +65,14 @@ const inventoryFilters: { key: InventoryFilter; label: string }[] = [
   { key: "out", label: "Out of stock" },
   { key: "critical", label: "Critical" },
   { key: "low", label: "Low" },
+  { key: "reserved", label: "Reserved for routes" },
   { key: "fast", label: "Fast sellers" },
 ];
 
 function inventoryStatus(currentQty: number, reservedQty: number, availableQty: number, isCritical: boolean) {
   if (currentQty <= 0) return "out_of_stock";
-  if (isCritical || (availableQty <= 0 && reservedQty > 0)) return "critical";
+  if (availableQty <= 0 && reservedQty > 0) return "reserved";
+  if (isCritical) return "critical";
   if (availableQty <= 10) return "low_stock";
   return "available";
 }
@@ -128,11 +147,12 @@ function matchesText(values: Array<string | null | undefined>, query: string) {
 
 function filterInventoryRows(rows: InventoryRow[], filter: InventoryFilter, query: string) {
   return rows.filter((row) => {
-    const matchesQuery = matchesText([row.productName, row.sku, row.category, row.brand], query);
+    const matchesQuery = matchesText([row.productName, row.sku, row.category, row.brand, ...row.reservations.flatMap((reservation) => [reservation.routeId, reservation.routeDate, reservation.status])], query);
     if (!matchesQuery) return false;
     if (filter === "out") return row.currentQty <= 0;
     if (filter === "critical") return row.restockSection === "critical" || row.status === "critical";
     if (filter === "low") return row.status === "low_stock" || row.restockStatus === "low";
+    if (filter === "reserved") return row.reservedQty > 0;
     if (filter === "fast") return row.isFastSeller;
     return true;
   });
@@ -169,6 +189,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     { data: operatorBagRowsData, error: operatorBagError },
     { data: movementsData, error: movementsError },
     { data: packagingRowsData, error: packagingError },
+    { data: routeReservationsData, error: routeReservationsError },
   ] = await Promise.all([
     supabase
       .from("current_inventory_by_location")
@@ -188,6 +209,10 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
       .eq("active", true)
       .order("name")
       .limit(5000),
+    supabase
+      .from("route_stock_lines")
+      .select("route_id, product_id, planned_qty, picked_qty, routes!inner(id, route_date, status)")
+      .limit(10000),
   ]);
 
   const queryIssues: InventoryQueryIssue[] = [
@@ -205,6 +230,16 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
           error: operatorBagError,
           profile,
           params: { location_type: "operator_bag", order: ["location_name", "product_name"], limit: 2000 },
+        })
+      : null,
+    routeReservationsError
+      ? logInventoryQueryError({
+          key: "route_reservations",
+          label: "Could not load route reservation details",
+          table: "route_stock_lines + routes",
+          error: routeReservationsError,
+          profile,
+          params: { active_status_rule: "isRouteReservationStatus", limit: 10000 },
         })
       : null,
     movementsError
@@ -235,10 +270,30 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     category: row.category ?? null,
     caseQuantity: Math.max(1, Number(row.case_quantity ?? 1)),
   }]));
+  const reservationsByProductId = new Map<string, InventoryRouteReservation[]>();
+  ((routeReservationsData ?? []) as RouteReservationSourceRow[]).forEach((row) => {
+    const route = Array.isArray(row.routes) ? row.routes[0] : row.routes;
+    const routeId = String(route?.id ?? row.route_id ?? "").trim();
+    const productId = String(row.product_id ?? "").trim();
+    const status = String(route?.status ?? "").trim();
+    const remainingQty = Math.max(0, Math.floor(Number(row.planned_qty ?? 0)) - Math.floor(Number(row.picked_qty ?? 0)));
+    if (!routeId || !productId || remainingQty <= 0 || !isRouteReservationStatus(status)) return;
+    reservationsByProductId.set(productId, [
+      ...(reservationsByProductId.get(productId) ?? []),
+      { routeId, routeDate: route?.route_date ?? null, status, remainingQty },
+    ]);
+  });
+  reservationsByProductId.forEach((reservations) => reservations.sort((left, right) =>
+    String(left.routeDate ?? "").localeCompare(String(right.routeDate ?? "")) || left.routeId.localeCompare(right.routeId)
+  ));
+
   const allInventoryRows = restockResult.items
     .map<InventoryRow>((item) => {
       const currentQty = Math.max(0, Number(item.storageQty ?? 0));
-      const reservedQty = Math.max(0, Number(item.activeRouteNeedQty ?? 0));
+      const reservations = reservationsByProductId.get(item.productId) ?? [];
+      const reservedQty = routeReservationsError
+        ? Math.max(0, Number(item.activeRouteNeedQty ?? 0))
+        : reservations.reduce((sum, reservation) => sum + reservation.remainingQty, 0);
       const availableQty = Math.max(0, currentQty - reservedQty);
       const isCritical = item.section === "critical" || item.status === "critical";
       return {
@@ -251,6 +306,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         currentQty,
         reservedQty,
         availableQty,
+        reservations,
         suggestedBuyQty: Math.max(0, Number(item.suggestedBuyQty ?? 0)),
         routeNeedQty: Math.max(0, Number(item.activeRouteNeedQty ?? 0)),
         salesVelocity: Math.max(0, Number(item.salesVelocity ?? 0)),
@@ -274,6 +330,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     out: allInventoryRows.filter((row) => row.currentQty <= 0).length,
     critical: allInventoryRows.filter((row) => row.restockSection === "critical" || row.status === "critical").length,
     low: allInventoryRows.filter((row) => row.status === "low_stock" || row.restockStatus === "low").length,
+    reserved: allInventoryRows.filter((row) => row.reservedQty > 0).length,
     fast: allInventoryRows.filter((row) => row.isFastSeller).length,
   };
 
@@ -311,11 +368,10 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
 
   const inventoryHeaders = [
     "Product",
-    "Current",
-    "Reserved",
-    "Available",
+    "In storage",
+    "Reserved in storage",
+    "Available — no route",
     "Suggested buy",
-    "Route need",
     "Velocity",
     ...(canSeeCost ? ["Last cost"] : []),
     "Status",
@@ -325,7 +381,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     <>
       <PageHeader
         title="Storage Inventory"
-        subtitle="Search applies across storage stock, operator bags, and recent movement history. Quick filters reuse the same critical, low, and fast-seller signals used by Snacky OS restock planning."
+        subtitle="Physical stock stays in storage until pickup. Reserved stock is already attached to an active route; Available means the units are not attached to any route and can be used for a new one."
         action={
           <div className="flex flex-wrap gap-2">
             <SecondaryButton href="/product-planning">Product Planning</SecondaryButton>
@@ -336,6 +392,11 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
           </div>
         }
       />
+
+      <div className="mb-6 rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950">
+        <div className="font-semibold">How route reservations work</div>
+        <p className="mt-1 leading-6">Reserved units are still physically in storage, but a route already claims them. Open the linked route to reduce or remove that reservation before assigning the same units to a more important route. Only the Available quantity has no route attached.</p>
+      </div>
 
       {queryIssues.length ? (
         <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
@@ -382,26 +443,26 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         </div>
       </section>
 
-      <div className="mb-6 grid gap-3 md:grid-cols-4">
+      <div className="mb-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <div className="surface-card">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Visible storage units</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">In storage</div>
           <div className="mt-2 text-2xl font-semibold text-slate-900">{filteredInventoryRows.reduce((sum, row) => sum + row.currentQty, 0)}</div>
-          <p className="mt-1 text-sm text-slate-500">Units in the current product view</p>
+          <p className="mt-1 text-sm text-slate-500">Physical units currently on the storage shelves</p>
+        </div>
+        <div className="surface-card border-amber-200 bg-amber-50">
+          <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">Reserved in storage</div>
+          <div className="mt-2 text-2xl font-semibold text-amber-950">{filteredInventoryRows.reduce((sum, row) => sum + row.reservedQty, 0)}</div>
+          <p className="mt-1 text-sm text-amber-800">Still in storage, but attached to active routes</p>
+        </div>
+        <div className="surface-card border-emerald-200 bg-emerald-50">
+          <div className="text-xs font-semibold uppercase tracking-wide text-emerald-800">Available — no route</div>
+          <div className="mt-2 text-2xl font-semibold text-emerald-950">{filteredInventoryRows.reduce((sum, row) => sum + row.availableQty, 0)}</div>
+          <p className="mt-1 text-sm text-emerald-800">Free units that can be assigned to a new route</p>
         </div>
         <div className="surface-card">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Out or critical</div>
-          <div className="mt-2 text-2xl font-semibold text-slate-900">{filteredInventoryRows.filter((row) => row.currentQty <= 0 || row.status === "critical").length}</div>
-          <p className="mt-1 text-sm text-slate-500">Needs attention before routes go out</p>
-        </div>
-        <div className="surface-card">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Fast sellers</div>
-          <div className="mt-2 text-2xl font-semibold text-slate-900">{filteredInventoryRows.filter((row) => row.isFastSeller).length}</div>
-          <p className="mt-1 text-sm text-slate-500">Products moving quickly in recent sales</p>
-        </div>
-        <div className="surface-card">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Reserved for routes</div>
-          <div className="mt-2 text-2xl font-semibold text-slate-900">{filteredInventoryRows.reduce((sum, row) => sum + row.reservedQty, 0)}</div>
-          <p className="mt-1 text-sm text-slate-500">Still needed for draft or active routes</p>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Products with reservations</div>
+          <div className="mt-2 text-2xl font-semibold text-slate-900">{filteredInventoryRows.filter((row) => row.reservedQty > 0).length}</div>
+          <p className="mt-1 text-sm text-slate-500">Use the Reserved filter to review them</p>
         </div>
       </div>
 
@@ -425,17 +486,32 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                 </div>
                 <div className="mb-3 flex flex-wrap gap-2">
                   {row.isFastSeller ? <span className="rounded-full bg-sky-100 px-2 py-1 text-xs font-semibold text-sky-800">Fast seller</span> : null}
-                  {row.routeNeedQty > 0 ? <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-900">Needed for routes</span> : null}
+                  {row.reservedQty > 0 ? <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-900">Reserved in storage</span> : null}
                   {row.suggestedBuyQty > 0 ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800">Buy {packagedQuantity(row.suggestedBuyQty, row)}</span> : null}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <MobileField label="Current">{packagedQuantity(row.currentQty, row)}</MobileField>
-                  <MobileField label="Reserved">{packagedQuantity(row.reservedQty, row)}</MobileField>
-                  <MobileField label="Available"><span className="font-semibold text-slate-950">{packagedQuantity(row.availableQty, row)}</span></MobileField>
+                  <MobileField label="In storage">{packagedQuantity(row.currentQty, row)}</MobileField>
+                  <MobileField label="Reserved in storage">{packagedQuantity(row.reservedQty, row)}</MobileField>
+                  <MobileField label="Available — no route"><span className="font-semibold text-emerald-800">{packagedQuantity(row.availableQty, row)}</span></MobileField>
                   <MobileField label="Suggested buy">{packagedQuantity(row.suggestedBuyQty, row)}</MobileField>
-                  <MobileField label="Route need">{packagedQuantity(row.routeNeedQty, row)}</MobileField>
                   <MobileField label="Velocity">{row.salesVelocity > 0 ? `${row.salesVelocity.toFixed(1)}/day` : "-"}</MobileField>
                 </div>
+                {row.reservations.length ? (
+                  <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">Attached route reservations</div>
+                    <div className="mt-2 space-y-2">
+                      {row.reservations.map((reservation) => (
+                        <Link key={reservation.routeId} href={`/routes/${reservation.routeId}`} className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm hover:border-amber-300">
+                          <span className="font-medium text-slate-900">Route {reservation.routeDate ?? reservation.routeId.slice(0, 8)}</span>
+                          <span className="shrink-0 text-amber-900">{packagedQuantity(reservation.remainingQty, row)} · {reservation.status.replaceAll("_", " ")}</span>
+                        </Link>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-xs leading-5 text-amber-800">Open a route to change or release its reservation.</p>
+                  </div>
+                ) : row.availableQty > 0 ? (
+                  <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-medium text-emerald-800">Available units have no route attached.</div>
+                ) : null}
                 {canSeeCost ? <div className="mt-3"><MobileField label="Last cost">{row.lastPurchaseCost === null ? "-" : lyd(row.lastPurchaseCost)}</MobileField></div> : null}
                 {row.reasons.length ? (
                   <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -459,13 +535,31 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                   <div className="mt-2 text-xs text-slate-500">{row.reasons.join(" - ") || "No extra restock signals"}</div>
                 </td>
                 <td>{packagedQuantity(row.currentQty, row)}</td>
-                <td>{packagedQuantity(row.reservedQty, row)}</td>
-                <td className="font-semibold">{packagedQuantity(row.availableQty, row)}</td>
+                <td>
+                  <div className={row.reservedQty > 0 ? "font-semibold text-amber-900" : "text-emerald-700"}>{row.reservedQty > 0 ? packagedQuantity(row.reservedQty, row) : "None"}</div>
+                  {row.reservations.length ? (
+                    <div className="mt-2 space-y-1">
+                      {row.reservations.map((reservation) => (
+                        <Link key={reservation.routeId} href={`/routes/${reservation.routeId}`} className="block text-xs font-medium text-amber-800 underline decoration-amber-300 underline-offset-2 hover:text-amber-950">
+                          Route {reservation.routeDate ?? reservation.routeId.slice(0, 8)} · {packagedQuantity(reservation.remainingQty, row)}
+                        </Link>
+                      ))}
+                    </div>
+                  ) : null}
+                </td>
+                <td className="font-semibold text-emerald-800">
+                  {packagedQuantity(row.availableQty, row)}
+                  <div className="mt-1 text-xs font-normal text-slate-500">{row.availableQty > 0 ? "No route attached" : row.reservedQty > 0 ? "All in-storage units reserved" : "No stock"}</div>
+                </td>
                 <td>{packagedQuantity(row.suggestedBuyQty, row)}</td>
-                <td>{packagedQuantity(row.routeNeedQty, row)}</td>
                 <td>{row.salesVelocity > 0 ? `${row.salesVelocity.toFixed(1)}/day` : "-"}</td>
                 {canSeeCost ? <td>{row.lastPurchaseCost === null ? "-" : lyd(row.lastPurchaseCost)}</td> : null}
-                <td><StatusBadge status={row.status} /></td>
+                <td>
+                  <div className="flex flex-col items-start gap-1">
+                    <StatusBadge status={row.status} />
+                    {row.reservedQty > 0 && row.status !== "reserved" ? <StatusBadge status="reserved" label="Reserved in storage" /> : null}
+                  </div>
+                </td>
               </tr>
             ))}
           </DataTable>

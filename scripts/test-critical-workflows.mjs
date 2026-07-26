@@ -455,3 +455,17 @@ test("restock planning is sales-ranked with a persistent costed buying list", ()
   assert.match(buyingList, /Estimated total/);
   assert.match(buyingList, /Create purchase draft/);
 });
+
+test("inventory makes route reservations explicit and traceable", () => {
+  const inventory = readFileSync("src/app/inventory/page.tsx", "utf8");
+  const priority = readFileSync("src/lib/restock-priority.ts", "utf8");
+
+  assert.match(inventory, /Reserved in storage/);
+  assert.match(inventory, /Available — no route/);
+  assert.match(inventory, /routes!inner\(id, route_date, status\)/);
+  assert.match(inventory, /href={`\/routes\/\$\{reservation\.routeId\}`}/);
+  assert.match(inventory, /Open a route to change or release its reservation/);
+  assert.match(inventory, /isRouteReservationStatus\(status\)/);
+  assert.match(priority, /isRouteReservationStatus\(row\.route_status\)/);
+  assert.doesNotMatch(priority, /reservationStatuses = new Set/);
+});
