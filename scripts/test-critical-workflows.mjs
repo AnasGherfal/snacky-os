@@ -381,8 +381,8 @@ test("route stops can be planned before products and starting stays locked", () 
   const editor = readFileSync("src/app/routes/[id]/edit/RouteItemEditor.tsx", "utf8");
 
   assert.match(routeForm, /creationMode: "full" \| "stops_only"/);
-  assert.match(routeForm, /Math\\.max\\(0, recommendationTarget\\(row\\) - unitQuantity\\(row\\.current_qty\\)\\)/);
-  assert.match(routeApi, /Math\\.max\\(0, recommendationTarget\\(row\\) - planQuantity\\(row\\.current_qty\\)\\)/);
+  assert.match(routeForm, /function recommendationQuantity\(row: Recommendation\)[\s\S]*?Math\.max\(0, recommendationTarget\(row\) - unitQuantity\(row\.current_qty\)\)/);
+  assert.match(routeApi, /function recommendationQuantity\(row: RecommendationRow\)[\s\S]*?Math\.max\(0, recommendationTarget\(row\) - planQuantity\(row\.current_qty\)\)/);
   assert.match(routeForm, /Plan machine stops only/);
   assert.match(routeForm, /products added later at storage/);
   assert.match(routeApi, /stopsOnly && !manualMachineIds\.length/);
