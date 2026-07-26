@@ -1,4 +1,4 @@
-﻿const CACHE_NAME = "snacky-os-offline-v1";
+﻿const CACHE_NAME = "snacky-os-offline-v2";
 const OFFLINE_URL = "/offline.html";
 const CORE_ASSETS = [
   OFFLINE_URL,
@@ -77,14 +77,27 @@ self.addEventListener("push", (event) => {
     type: typeof payload.type === "string" ? payload.type : null,
   };
 
+  const notificationTag = typeof payload.type === "string" && typeof data.routeId === "string"
+    ? `${payload.type}:${data.routeId}`
+    : "";
+  const options = {
+    body,
+    icon: "/icons/icon-192.png",
+    badge: "/icons/favicon-32.png",
+    data,
+  };
+
+  // Chromium rejects renotify when there is no tag. Test pushes intentionally
+  // have no route ID, so add both options only for tagged route notifications.
+  if (notificationTag) {
+    options.tag = notificationTag;
+    options.renotify = true;
+  }
+
   event.waitUntil(
-    self.registration.showNotification(title, {
-      body,
-      icon: "/icons/icon-192.png",
-      badge: "/icons/favicon-32.png",
-      data,
-      tag: typeof payload.type === "string" && typeof data.routeId === "string" ? `${payload.type}:${data.routeId}` : undefined,
-      renotify: true,
+    self.registration.showNotification(title, options).catch((error) => {
+      console.error("[notifications] Could not display rich notification", error);
+      return self.registration.showNotification(title, { body, data });
     })
   );
 });
