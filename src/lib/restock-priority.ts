@@ -1,4 +1,4 @@
-import { isRouteReservationStatus } from "@/lib/route-workflow";
+import { isRouteReservationStatus } from "./route-workflow.ts";
 
 export type RestockPriorityLevel = "high" | "normal" | "low";
 export type RestockStatus = "out" | "critical" | "low" | "ok";
