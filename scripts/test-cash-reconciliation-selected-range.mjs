@@ -69,3 +69,17 @@ test("custom ranges recover VMS totals by combining working month selections", (
   assert.match(page, /combined by calendar month/);
   assert.match(page, /same finalized monthly VMS records that appear when each month is selected separately/);
 });
+
+test("shows the selected-period cash estimated to remain inside machines", () => {
+  assert.match(page, /estimatedCashStillInMachines/);
+  assert.match(page, /expectedMachineCashAmount/);
+  assert.match(page, /VMS cash expected minus cash counted in Finance/);
+  assert.match(page, /Estimated still in machine/);
+  assert.match(page, /Card sales are excluded when VMS payment methods are available/);
+});
+
+test("cash-in-machines estimate is read-only and never becomes negative", () => {
+  assert.match(page, /Math\.max\(0, unboundedCashBalance\)/);
+  assert.match(page, /Math\.max\(0, roundMoney\(row\.vmsSalesAmount - row\.countedCash\)\)/);
+  assert.doesNotMatch(page, /\.insert\(|\.update\(|\.delete\(|\.upsert\(/);
+});
