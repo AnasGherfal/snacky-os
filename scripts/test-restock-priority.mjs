@@ -121,3 +121,17 @@ test("counts separate critical, low, important, and normal sections", () => {
   assert.equal(counts.normal, 1);
   assert.ok(counts.important >= 1);
 });
+
+test("legacy active route statuses remain reserved while terminal routes do not", () => {
+  const items = computeRestockPriority({
+    products,
+    storageRows: [{ product_id: "water", quantity_on_hand: 40 }],
+    routeNeeds: [
+      { product_id: "water", planned_qty: 12, picked_qty: 2, route_status: "started" },
+      { product_id: "water", planned_qty: 8, picked_qty: 0, route_status: "completed" },
+      { product_id: "water", planned_qty: 6, picked_qty: 0, route_status: "cancelled" },
+    ],
+  });
+
+  assert.equal(items.find((item) => item.productId === "water").activeRouteNeedQty, 10);
+});
