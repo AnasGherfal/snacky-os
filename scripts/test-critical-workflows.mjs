@@ -469,3 +469,16 @@ test("inventory makes route reservations explicit and traceable", () => {
   assert.match(priority, /isRouteReservationStatus\(row\.route_status\)/);
   assert.doesNotMatch(priority, /reservationStatuses = new Set/);
 });
+
+test("product history uses the authenticated ledger instead of returning a false 404", () => {
+  const history = readFileSync("src/app/products/[id]/history/page.tsx", "utf8");
+  const products = readFileSync("src/app/products/page.tsx", "utf8");
+
+  assert.match(products, /href={`\/products\/\$\{product\.id\}\/history`}/);
+  assert.match(history, /getAuthenticatedSupabaseServerClient/);
+  assert.match(history, /await getAuthenticatedSupabaseServerClient\(\)/);
+  assert.doesNotMatch(history, /getSupabaseServerClient\(\)/);
+  assert.match(history, /Product history unavailable/);
+  assert.match(history, /Inventory Movements/);
+  assert.match(history, /\.eq\("product_id", id\)/);
+});
