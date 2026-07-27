@@ -2,12 +2,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ProductSourceBadge } from "@/components/ProductSourceBadge";
-import { DataTable, EmptyState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
-import { requireCurrentProfileForPath } from "@/lib/auth";
+import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
+import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
 import { canViewFinancials, hasPermission } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { activateProduct, archiveProduct, deleteProduct, getProductHistoryCounts, productHasBusinessHistory } from "@/lib/product-actions";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 
 export const dynamic = "force-dynamic";
@@ -71,10 +70,12 @@ export default async function ProductHistoryPage({
   const canEditProduct = hasPermission(profile, "products.edit");
   const canDeleteProduct = hasPermission(profile, "products.delete");
   const filters = await searchParams;
-  const supabase = getSupabaseServerClient();
-  if (!supabase) notFound();
+  const supabase = await getAuthenticatedSupabaseServerClient();
+  if (!supabase) {
+    return <ErrorState title="Product history unavailable" body="Snacky OS could not open the authenticated inventory ledger. Please sign in again and retry." action={<SecondaryButton href="/products">Back to products</SecondaryButton>} />;
+  }
 
-  const [{ data: product }, { data: users }, { data: inventory }, { data: purchaseLines }, { data: salesRows }, { data: priceLogs }, historyCounts] = await Promise.all([
+  const [{ data: product, error: productError }, { data: users }, { data: inventory }, { data: purchaseLines }, { data: salesRows }, { data: priceLogs }, historyCounts] = await Promise.all([
     supabase
       .from("products")
       .select("id, sku, name, category, case_quantity, active, import_source, last_vms_seen_at, current_selling_price_lyd, selling_price, selling_price_source, current_cost_price_lyd, last_purchase_cost_lyd, average_cost_lyd, last_purchase_date, last_supplier_id, last_supplier:suppliers!products_last_supplier_id_fkey(name), cost_price_source, price_updated_at")
@@ -104,6 +105,10 @@ export default async function ProductHistoryPage({
       .limit(100),
     getProductHistoryCounts(supabase, id),
   ]);
+  if (productError) {
+    console.error("[products:history] Failed to load product", { product_id: id, error: productError });
+    return <ErrorState title="Could not load product history" body="The product exists, but Snacky OS could not read its history. No record has been removed." action={<SecondaryButton href={`/products/${id}/history`}>Retry</SecondaryButton>} />;
+  }
   if (!product) notFound();
   const lastSupplierName = Array.isArray((product as any).last_supplier) ? (product as any).last_supplier[0]?.name : (product as any).last_supplier?.name;
   const hasBusinessHistory = await productHasBusinessHistory(historyCounts);
