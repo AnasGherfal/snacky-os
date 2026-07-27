@@ -7,12 +7,24 @@ type RouteLike = {
   route_date?: string | null;
   operator_id?: string | null;
   operator?: RelationRecord<{ full_name?: string | null }>;
+  route_stops?: {
+    id?: string | null;
+    machine_id?: string | null;
+    machine?: RelationRecord<MachineLike>;
+  }[] | {
+    id?: string | null;
+    machine_id?: string | null;
+    machine?: RelationRecord<MachineLike>;
+  } | null;
 };
 
 type PurchaseLike = {
   id?: string | null;
   receipt_number?: string | null;
   order_date?: string | null;
+  received_at?: string | null;
+  invoice_number?: string | null;
+  reference_number?: string | null;
   supplier?: RelationRecord<{ name?: string | null }>;
 };
 
@@ -27,6 +39,7 @@ type StorageLike = {
   id?: string | null;
   name?: string | null;
   location_type?: string | null;
+  related_operator_id?: string | null;
 };
 
 type TeamMemberLike = {
@@ -75,18 +88,38 @@ function teamMemberName(member: TeamMemberLike | null | undefined) {
 
 function operatorBagReference(id: string, lookups: ProductHistoryLookups) {
   const operatorName = teamMemberName(lookups.teamMembers.get(id));
-  return operatorName ? `${operatorName}'s operator bag` : `Operator bag ${shortId(id)}`;
+  if (operatorName) return `${operatorName}'s operator bag`;
+
+  const linkedStorageBag = Array.from(lookups.storages.values()).find((storage) => {
+    return String(storage.location_type ?? "").toLowerCase() === "operator_bag"
+      && (String(storage.related_operator_id ?? "") === id || String(storage.id ?? "") === id);
+  });
+
+  const linkedOperatorName = linkedStorageBag?.related_operator_id ? teamMemberName(lookups.teamMembers.get(linkedStorageBag.related_operator_id)) : null;
+  if (linkedOperatorName) return `${linkedOperatorName}'s operator bag`;
+
+  const storageName = textValue(linkedStorageBag?.name);
+  if (storageName) return storageName;
+
+  return `Operator bag ${shortId(id)}`;
 }
 
 export function formatRouteReference(route: RouteLike | null | undefined, fallbackId?: string | null) {
   const routeDate = textValue(route?.route_date);
   const operatorName = teamMemberName(relationRecord(route?.operator)) ?? null;
+  const routeStops = Array.isArray(route?.route_stops) ? route.route_stops : route?.route_stops ? [route.route_stops] : [];
+  const firstRouteStop = routeStops[0] ?? null;
+  const firstRouteMachine = relationRecord(firstRouteStop?.machine) ?? null;
+  const firstRouteMachineLabel = firstRouteMachine
+    ? formatMachineDisplayName(firstRouteMachine as any, { includeArea: true, fallbackSite: `Machine ${shortId(firstRouteStop?.machine_id ?? null)}` })
+    : null;
 
   const parts: string[] = [];
   if (routeDate) parts.push(`Route ${routeDate}`);
   else if (fallbackId) parts.push(`Route ${shortId(fallbackId)}`);
 
   if (operatorName) parts.push(operatorName);
+  else if (firstRouteMachineLabel) parts.push(firstRouteMachineLabel);
 
   return parts.length ? parts.join(" · ") : `Route ${shortId(fallbackId)}`;
 }
@@ -94,10 +127,15 @@ export function formatRouteReference(route: RouteLike | null | undefined, fallba
 export function formatPurchaseReference(purchase: PurchaseLike | null | undefined, fallbackId?: string | null) {
   const receiptNumber = textValue(purchase?.receipt_number);
   const orderDate = textValue(purchase?.order_date);
+  const receivedAt = textValue(purchase?.received_at);
+  const invoiceNumber = textValue(purchase?.invoice_number);
+  const referenceNumber = textValue(purchase?.reference_number);
   const supplierName = textValue(relationRecord(purchase?.supplier)?.name);
+  const referenceLabel = receiptNumber ?? invoiceNumber ?? referenceNumber ?? null;
 
   const parts: string[] = [];
-  if (receiptNumber) parts.push(`Purchase ${receiptNumber}`);
+  if (referenceLabel) parts.push(`Purchase ${referenceLabel}`);
+  else if (receivedAt) parts.push(`Purchase ${receivedAt.slice(0, 10)}`);
   else if (orderDate) parts.push(`Purchase ${orderDate}`);
   else if (fallbackId) parts.push(`Purchase ${shortId(fallbackId)}`);
 
