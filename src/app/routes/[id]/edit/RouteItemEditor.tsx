@@ -174,7 +174,16 @@ function ProductPicker({
                 key={product.id}
                 type="button"
                 className="flex w-full items-start justify-between gap-3 rounded-lg px-3 py-2.5 text-start hover:bg-emerald-50 focus:bg-emerald-50 focus:outline-none"
-                onClick={() => chooseProduct(product)}
+                onPointerDown={(event) => {
+                  // Keep the search input focused until selection is committed.
+                  // Mobile Safari/Chrome can fire blur before click and unmount this list.
+                  event.preventDefault();
+                  chooseProduct(product);
+                }}
+                onClick={(event) => {
+                  // Keyboard activation does not always produce pointerdown.
+                  if (event.detail === 0) chooseProduct(product);
+                }}
               >
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-semibold text-slate-900">{product.name}</span>
