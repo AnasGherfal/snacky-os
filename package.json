@@ -24,6 +24,7 @@
     "check:mojibake-ui": "node scripts/check-mojibake-ui.mjs",
     "test:route-inventory-regression": "node --test scripts/test-route-inventory-regression.mjs",
     "test:critical-workflows": "node --test scripts/test-critical-workflows.mjs",
+    "test:product-history-display": "node --experimental-strip-types --test scripts/test-product-history-display.mjs",
     "smoke:auth-pages": "node --test scripts/smoke-authenticated-pages.mjs",
     "bootstrap:production": "node scripts/bootstrap-production-data.mjs",
     "create:first-owner": "node scripts/create-first-owner.mjs",

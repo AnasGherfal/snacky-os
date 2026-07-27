@@ -7,6 +7,13 @@ import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } fr
 import { canViewFinancials, hasPermission } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { activateProduct, archiveProduct, deleteProduct, getProductHistoryCounts, productHasBusinessHistory } from "@/lib/product-actions";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
+import {
+  formatHistoryEntityLabel,
+  formatHistoryRelatedReferences,
+  sanitizeHistoryNotes,
+  shortId,
+} from "@/lib/product-history-display";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 
 export const dynamic = "force-dynamic";
@@ -27,22 +34,6 @@ const movementReasons = [
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
-}
-
-function shortId(value: string | null | undefined) {
-  return value ? value.slice(0, 8) : "-";
-}
-
-function entityLabel(type: string | null | undefined, id: string | null | undefined) {
-  if (!type) return "-";
-  return id ? `${type.replaceAll("_", " ")} ${shortId(id)}` : type.replaceAll("_", " ");
-}
-
-function relatedLabel(movement: any) {
-  if (movement.related_route_id) return `Route ${shortId(movement.related_route_id)}`;
-  if (movement.related_purchase_id) return `Purchase ${shortId(movement.related_purchase_id)}`;
-  if (movement.related_machine_id) return `Machine ${shortId(movement.related_machine_id)}`;
-  return "-";
 }
 
 function formatMoney(value: number | string | null | undefined, decimals = 2) {
@@ -116,7 +107,7 @@ export default async function ProductHistoryPage({
   let query = supabase
     .from("inventory_movements")
     .select(
-      "id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, related_route_id, related_route_stop_id, related_purchase_id, related_purchase_line_id, related_machine_id, notes, created_at, created_by_member:team_members(id, full_name)",
+      "id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, related_route_id, related_route_stop_id, related_purchase_id, related_purchase_line_id, related_machine_id, related_pickup_batch_id, notes, created_at, created_by_member:team_members(id, full_name)",
     )
     .eq("product_id", id);
 
@@ -129,11 +120,81 @@ export default async function ProductHistoryPage({
   const search = String(filters.q ?? "").trim().toLowerCase();
   const movements = (data ?? []).filter((movement: any) => {
     if (!search) return true;
-    return [movement.reason, movement.notes, movement.created_by_member?.full_name, movement.related_route_id, movement.related_purchase_id, movement.related_machine_id]
+    return [
+      movement.reason,
+      movement.notes,
+      movement.created_by_member?.full_name,
+      movement.related_route_id,
+      movement.related_purchase_id,
+      movement.related_machine_id,
+      movement.related_pickup_batch_id,
+      movement.from_entity_id,
+      movement.to_entity_id,
+    ]
       .join(" ")
       .toLowerCase()
       .includes(search);
   });
+
+  const routeIds = new Set<string>();
+  const purchaseIds = new Set<string>();
+  const machineIds = new Set<string>();
+  const storageIds = new Set<string>();
+  const batchIds = new Set<string>();
+
+  for (const movement of movements as any[]) {
+    if (movement.related_route_id) routeIds.add(String(movement.related_route_id));
+    if (movement.related_purchase_id) purchaseIds.add(String(movement.related_purchase_id));
+    if (movement.related_machine_id) machineIds.add(String(movement.related_machine_id));
+    if (movement.related_pickup_batch_id) batchIds.add(String(movement.related_pickup_batch_id));
+    if (movement.from_entity_type === "machine" && movement.from_entity_id) machineIds.add(String(movement.from_entity_id));
+    if (movement.to_entity_type === "machine" && movement.to_entity_id) machineIds.add(String(movement.to_entity_id));
+    if (movement.from_entity_type === "storage" && movement.from_entity_id) storageIds.add(String(movement.from_entity_id));
+    if (movement.to_entity_type === "storage" && movement.to_entity_id) storageIds.add(String(movement.to_entity_id));
+  }
+
+  const [
+    { data: movementRoutes },
+    { data: movementPurchases },
+    { data: movementMachines },
+    { data: movementStorages },
+    { data: movementBatches },
+  ] = await Promise.all([
+    routeIds.size
+      ? supabase.from("routes").select("id, route_date, operator_id, operator:team_members(full_name)").in("id", Array.from(routeIds)).order("route_date", { ascending: false })
+      : Promise.resolve({ data: [] }),
+    purchaseIds.size
+      ? supabase.from("purchase_orders").select("id, receipt_number, order_date, supplier:suppliers(name)").in("id", Array.from(purchaseIds))
+      : Promise.resolve({ data: [] }),
+    machineIds.size
+      ? supabase.from("machines").select("id, name, machine_code, location:locations(id, name)").in("id", Array.from(machineIds))
+      : Promise.resolve({ data: [] }),
+    storageIds.size
+      ? supabase.from("storage_locations").select("id, name, location_type").in("id", Array.from(storageIds))
+      : Promise.resolve({ data: [] }),
+    batchIds.size
+      ? supabase
+          .from("route_pickup_batches")
+          .select("id, route_id, status, confirmed_at, route:routes(id, route_date, operator_id, operator:team_members(full_name))")
+          .in("id", Array.from(batchIds))
+      : Promise.resolve({ data: [] }),
+  ]);
+
+  const routeById = new Map((movementRoutes ?? []).map((route: any) => [route.id, route]));
+  const purchaseById = new Map((movementPurchases ?? []).map((purchase: any) => [purchase.id, purchase]));
+  const machineById = new Map((movementMachines ?? []).map((machine: any) => [machine.id, machine]));
+  const storageById = new Map((movementStorages ?? []).map((storage: any) => [storage.id, storage]));
+  const batchById = new Map((movementBatches ?? []).map((batch: any) => [batch.id, batch]));
+  const teamMemberById = new Map((users ?? []).map((user: any) => [user.id, user]));
+  const lookups = {
+    routes: routeById,
+    purchases: purchaseById,
+    machines: machineById,
+    storages: storageById,
+    teamMembers: teamMemberById,
+    batches: batchById,
+    suppliers: new Map<string, { id?: string | null; name?: string | null }>(),
+  };
 
   const inventoryRows = (inventory ?? []) as any[];
   const storageQty = inventoryRows.filter((row) => row.location_type === "storage").reduce((sum, row) => sum + Number(row.quantity_on_hand ?? 0), 0);
@@ -265,18 +326,38 @@ export default async function ProductHistoryPage({
           <EmptyState title="No product movements found" body="Movements appear here only when real inventory_movements rows exist for this product." />
         ) : (
           <DataTable headers={["Date / Time", "Qty", "From", "To", "Reason", "Related", "User", "Notes"]}>
-            {movements.map((movement: any) => (
-              <tr key={movement.id}>
-                <td>{formatDate(movement.created_at)}</td>
-                <td className="font-semibold">{movement.quantity}</td>
-                <td>{entityLabel(movement.from_entity_type, movement.from_entity_id)}</td>
-                <td>{entityLabel(movement.to_entity_type, movement.to_entity_id)}</td>
-                <td><StatusBadge status={String(movement.reason).replaceAll("_", " ")} /></td>
-                <td>{relatedLabel(movement)}</td>
-                <td>{movement.created_by_member?.full_name ?? "-"}</td>
-                <td>{movement.notes ?? "-"}</td>
-              </tr>
-            ))}
+            {movements.map((movement: any) => {
+              const relatedReferences = formatHistoryRelatedReferences(movement, lookups);
+              const notes = sanitizeHistoryNotes(movement.notes, lookups);
+              return (
+                <tr key={movement.id}>
+                  <td>{formatDate(movement.created_at)}</td>
+                  <td className="font-semibold">{movement.quantity}</td>
+                  <td>{formatHistoryEntityLabel(movement.from_entity_type, movement.from_entity_id, lookups)}</td>
+                  <td>{formatHistoryEntityLabel(movement.to_entity_type, movement.to_entity_id, lookups)}</td>
+                  <td><StatusBadge status={String(movement.reason).replaceAll("_", " ")} /></td>
+                  <td>
+                    {!relatedReferences.length ? (
+                      "-"
+                    ) : (
+                      <div className="flex flex-col gap-1">
+                        {relatedReferences.map((reference) =>
+                          reference.href ? (
+                            <Link key={`${movement.id}-${reference.label}`} href={reference.href} className="link-secondary">
+                              {reference.label}
+                            </Link>
+                          ) : (
+                            <span key={`${movement.id}-${reference.label}`}>{reference.label}</span>
+                          ),
+                        )}
+                      </div>
+                    )}
+                  </td>
+                  <td>{movement.created_by_member?.full_name ?? "-"}</td>
+                  <td className="whitespace-pre-wrap break-words">{notes}</td>
+                </tr>
+              );
+            })}
           </DataTable>
         )}
       </section>
