@@ -1,0 +1,34 @@
+name: Fix route product picker tap
+
+on:
+  push:
+    branches:
+      - agent/fix-route-product-picker-tap
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-route-product-picker-tap
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Apply focused picker repair
+        run: python scripts/agent-fix-route-product-picker-tap.py
+      - name: Run focused regression
+        run: node --test scripts/test-route-product-picker-tap.mjs
+      - name: Commit repair
+        run: |
+          if git diff --quiet && [ ! -f scripts/test-route-product-picker-tap.mjs ]; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/app/routes/[id]/edit/RouteItemEditor.tsx scripts/test-route-product-picker-tap.mjs
+          git diff --cached --quiet || git commit -m "Fix route product picker touch selection"
+          git push
