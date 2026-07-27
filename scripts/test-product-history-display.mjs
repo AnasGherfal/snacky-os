@@ -60,6 +60,15 @@ const lookups = {
         location_type: "storage",
       },
     ],
+    [
+      "bag-storage-1",
+      {
+        id: "bag-storage-1",
+        name: "Noury bag",
+        location_type: "operator_bag",
+        related_operator_id: "66666666-6666-6666-6666-666666666666",
+      },
+    ],
   ]),
   teamMembers: new Map([
     [
@@ -89,6 +98,7 @@ const lookups = {
 
 test("product history helpers render readable labels", () => {
   assert.equal(formatHistoryEntityLabel("operator_bag", "66666666-6666-6666-6666-666666666666", lookups), "Noury's operator bag");
+  assert.equal(formatHistoryEntityLabel("operator_bag", "bag-storage-1", lookups), "Noury's operator bag");
 
   const machineLabel = formatHistoryEntityLabel("machine", "33333333-3333-3333-3333-333333333333", lookups);
   assert.match(machineLabel, /M-12/);
@@ -100,6 +110,8 @@ test("product history helpers render readable labels", () => {
   const routeLabel = formatRouteReference(lookups.routes.get("11111111-1111-1111-1111-111111111111"), "11111111-1111-1111-1111-111111111111");
   assert.match(routeLabel, /2026-04-09/);
   assert.match(routeLabel, /Noury/);
+  assert.equal(routeLabel.includes("Ã‚Â·"), false);
+  assert.match(routeLabel, / · /);
 
   const purchaseLabel = formatPurchaseReference(lookups.purchases.get("22222222-2222-2222-2222-222222222222"), "22222222-2222-2222-2222-222222222222");
   assert.match(purchaseLabel, /INV-2048/);

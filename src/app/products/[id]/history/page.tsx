@@ -161,16 +161,16 @@ export default async function ProductHistoryPage({
     { data: movementBatches },
   ] = await Promise.all([
     routeIds.size
-      ? supabase.from("routes").select("id, route_date, operator_id, operator:team_members(full_name)").in("id", Array.from(routeIds)).order("route_date", { ascending: false })
+      ? supabase.from("routes").select("id, route_date, operator_id, operator:team_members(full_name), route_stops(id, machine_id, machine:machines(id, name, machine_code, location:locations(id, name)))").in("id", Array.from(routeIds)).order("route_date", { ascending: false })
       : Promise.resolve({ data: [] }),
     purchaseIds.size
-      ? supabase.from("purchase_orders").select("id, receipt_number, order_date, supplier:suppliers(name)").in("id", Array.from(purchaseIds))
+      ? supabase.from("purchase_orders").select("id, receipt_number, order_date, received_at, supplier:suppliers(name)").in("id", Array.from(purchaseIds))
       : Promise.resolve({ data: [] }),
     machineIds.size
       ? supabase.from("machines").select("id, name, machine_code, location:locations(id, name)").in("id", Array.from(machineIds))
       : Promise.resolve({ data: [] }),
     storageIds.size
-      ? supabase.from("storage_locations").select("id, name, location_type").in("id", Array.from(storageIds))
+      ? supabase.from("storage_locations").select("id, name, location_type, related_operator_id").in("id", Array.from(storageIds))
       : Promise.resolve({ data: [] }),
     batchIds.size
       ? supabase
@@ -195,7 +195,6 @@ export default async function ProductHistoryPage({
     batches: batchById,
     suppliers: new Map<string, { id?: string | null; name?: string | null }>(),
   };
-
   const inventoryRows = (inventory ?? []) as any[];
   const storageQty = inventoryRows.filter((row) => row.location_type === "storage").reduce((sum, row) => sum + Number(row.quantity_on_hand ?? 0), 0);
   const machineQty = inventoryRows.filter((row) => row.location_type === "machine").reduce((sum, row) => sum + Number(row.quantity_on_hand ?? 0), 0);
