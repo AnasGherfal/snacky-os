@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import OperatorMoneyLedgerClient from "@/app/operator-money/OperatorMoneyLedgerClient";
 import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole, normalizeRoles } from "@/lib/authz";
@@ -30,11 +31,11 @@ function isVisibleHistoryRow(row: any) {
 export default async function TeamMemberProfilePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const profile = await getCurrentProfile();
-  if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
+  if (!profile) redirect(`/login?next=${encodeURIComponent(`/team/${id}`)}`);
+  const manager = isOwnerAdminRole(profile);
+  const viewingSelf = Boolean(profile.team_member_id && profile.team_member_id === id);
+  if (!manager && !viewingSelf) redirect("/unauthorized");
 
-  // This owner/admin reporting page needs a complete operational history. The
-  // normal session client can legitimately be restricted by RLS on manual sales
-  // and inventory adjustments, so prefer the service-role read client here.
   const client = getSupabaseAdminClient() ?? getSupabaseServerClient();
   if (!client) return <ErrorState title="Team profile unavailable" body="Supabase is not configured." />;
 
@@ -45,7 +46,7 @@ export default async function TeamMemberProfilePage({ params }: { params: Promis
     .maybeSingle();
 
   if (memberError || !member) {
-    return <ErrorState title="Team member not found" body="This team member could not be loaded." action={<SecondaryButton href="/team">Back to team</SecondaryButton>} />;
+    return <ErrorState title="Team member not found" body="This team member could not be loaded." action={manager ? <SecondaryButton href="/team">Back to team</SecondaryButton> : undefined} />;
   }
 
   const { data: routes, error: routesError } = await client
@@ -100,11 +101,14 @@ export default async function TeamMemberProfilePage({ params }: { params: Promis
   });
   const completedRoutes = (routes ?? []).filter((route: any) => ["completed", "verified", "payroll_pending", "paid", "reviewed"].includes(historyStatus(route.status)));
   const historyLoadError = routesError || stopsResult.error || fillsResult.error || salesResult.error || adjustmentsResult.error || movementsResult.error || machinesError;
+  const headerActions = manager
+    ? <div className="flex gap-2"><SecondaryButton href={`/team/${id}/activity`}>Activity log</SecondaryButton><SecondaryButton href={`/team/${id}/edit`}>Edit</SecondaryButton></div>
+    : <SecondaryButton href="/operator/routes">My routes</SecondaryButton>;
 
   return <div className="space-y-6">
-    <PageHeader title={member.full_name} subtitle={`${normalizeRoles(member.roles, member.role).join(", ")} · ${member.email ?? "No email"}`} breadcrumbs={[{ label: "Team", href: "/team" }, { label: member.full_name }]} action={<div className="flex gap-2"><SecondaryButton href={`/team/${id}/activity`}>Activity log</SecondaryButton><SecondaryButton href={`/team/${id}/edit`}>Edit</SecondaryButton></div>} />
+    <PageHeader title={member.full_name} subtitle={`${normalizeRoles(member.roles, member.role).join(", ")} · ${member.email ?? "No email"}`} breadcrumbs={manager ? [{ label: "Team", href: "/team" }, { label: member.full_name }] : [{ label: "My profile" }]} action={headerActions} />
 
-    {historyLoadError ? <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Some operator history could not load. Route history remains available where possible.</div> : null}
+    {historyLoadError ? <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Some operator history could not load. Available profile details are still shown.</div> : null}
 
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
       <SectionCard><div className="p-4"><div className="text-sm text-slate-500">Routes</div><div className="mt-1 text-2xl font-semibold">{(routes ?? []).length}</div></div></SectionCard>
@@ -114,6 +118,14 @@ export default async function TeamMemberProfilePage({ params }: { params: Promis
       <SectionCard><div className="p-4"><div className="text-sm text-slate-500">Manual sales</div><div className="mt-1 text-2xl font-semibold">{lyd(sum(sales, "total_amount_lyd"))}</div></div></SectionCard>
       <SectionCard><div className="p-4"><div className="text-sm text-slate-500">Damaged / returned</div><div className="mt-1 text-2xl font-semibold">{sum(damaged, "quantity")} / {sum(returned, "quantity")}</div></div></SectionCard>
     </div>
+
+    <section className="space-y-3">
+      <div>
+        <h2 className="text-lg font-semibold text-slate-900">Money, debt, purchases, and expenses</h2>
+        <p className="mt-1 text-sm text-slate-500">Personal storage purchases, operator advances, work expenses, repayments, and returned money belong to this person.</p>
+      </div>
+      <OperatorMoneyLedgerClient initialPersonId={id} lockPerson />
+    </section>
 
     <section className="surface-card p-4">
       <h2 className="text-lg font-semibold">Route history</h2>
