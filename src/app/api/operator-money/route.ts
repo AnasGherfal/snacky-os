@@ -33,7 +33,9 @@ export async function GET(request: Request) {
     ? supabase.from("team_members").select("id, full_name, role, roles, active").eq("active", true).order("full_name")
     : supabase.from("team_members").select("id, full_name, role, roles, active").eq("id", personId).limit(1);
   const productsQuery = supabase.from("products").select("id, name, brand, category, selling_price, current_selling_price_lyd, active").eq("active", true).order("name");
-  const balancesQuery = supabase.from("operator_money_balances").select("*").order("full_name");
+  const balancesQuery = personId
+    ? supabase.from("operator_money_balances").select("*").eq("person_id", personId)
+    : supabase.from("operator_money_balances").select("*").order("full_name");
   const scoped = <T extends { eq: (a: string, b: string) => T }>(query: T) => personId ? query.eq("person_id", personId) : query;
 
   const [team, products, balances, purchases, payments, advances, expenses, returns] = await Promise.all([
@@ -63,7 +65,10 @@ export async function POST(request: Request) {
   let body: Record<string, unknown>;
   try { body = await request.json(); } catch { return NextResponse.json({ success: false, error: "Invalid request." }, { status: 400 }); }
   const action = clean(body.action);
-  const personId = clean(body.personId) || clean(profile.team_member_id);
+  const manager = isOwnerAdminRole(profile);
+  const requestedPersonId = clean(body.personId);
+  const personId = manager ? requestedPersonId || clean(profile.team_member_id) : clean(profile.team_member_id);
+  if (!personId && action !== "availability") return NextResponse.json({ success: false, error: "Operator profile is not linked." }, { status: 403 });
   try {
     let result;
     if (action === "purchase") {
@@ -94,7 +99,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: "Unknown action." }, { status: 400 });
     }
     if (result.error) throw result.error;
-    revalidatePath("/operator/routes"); revalidatePath("/inventory"); revalidatePath("/inventory/movements");
+    if (personId) revalidatePath(`/team/${personId}`);
+    revalidatePath("/inventory");
+    revalidatePath("/inventory/movements");
     return NextResponse.json({ success: true, data: result.data });
   } catch (error) {
     const text = errorText(error);
