@@ -3,6 +3,7 @@ on:
   pull_request:
     branches: [master]
     paths:
+      - "src/app/operator/routes/**"
       - "src/app/operator-money/**"
       - "src/app/api/operator-money/**"
       - "src/components/module-tabs-config.ts"
