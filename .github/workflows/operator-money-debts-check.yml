@@ -1,0 +1,24 @@
+name: Operator money and debts checks
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "src/app/operator-money/**"
+      - "src/app/api/operator-money/**"
+      - "src/components/module-tabs-config.ts"
+      - "supabase/migrations/202607290003_operator_money_debts_ledger.sql"
+      - "scripts/test-operator-money-debts.mjs"
+      - ".github/workflows/operator-money-debts-check.yml"
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node --test scripts/test-operator-money-debts.mjs
+      - run: npm run build
