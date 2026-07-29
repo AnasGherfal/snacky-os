@@ -45,7 +45,6 @@ const machinesTabs: ModuleTab[] = [
 const adminTabs: ModuleTab[] = [
   { label: "Overview", href: "/admin", exact: true },
   { label: "Team", href: "/team" },
-  { label: "Operator Money & Debts", href: "/operator-money" },
   { label: "Settings", href: "/settings" },
   { label: "Activity Log", href: "/activity" },
   { label: "VMS Import", href: "/vms-import" },
@@ -82,7 +81,7 @@ export function getModuleTabGroupForPath(pathname: string, moduleParam?: string 
   if (matchesPrefix(pathname, "/finance") || matchesPrefix(pathname, "/cash-collections") || matchesPrefix(pathname, "/payroll")) return groups.finance;
   if (matchesPrefix(pathname, "/inventory") || matchesPrefix(pathname, "/product-planning") || matchesPrefix(pathname, "/restock-priority") || matchesPrefix(pathname, "/storage-locations") || matchesPrefix(pathname, "/suppliers") || matchesPrefix(pathname, "/products")) return groups.inventory;
   if (matchesPrefix(pathname, "/machines") || matchesPrefix(pathname, "/locations") || matchesPrefix(pathname, "/locations-pipeline") || matchesPrefix(pathname, "/machine-slots") || matchesPrefix(pathname, "/issues")) return groups.machines;
-  if (matchesPrefix(pathname, "/admin") || matchesPrefix(pathname, "/team") || matchesPrefix(pathname, "/operator-money") || matchesPrefix(pathname, "/settings") || matchesPrefix(pathname, "/activity") || matchesPrefix(pathname, "/vms-import") || matchesPrefix(pathname, "/vms-mappings")) return groups.admin;
+  if (matchesPrefix(pathname, "/admin") || matchesPrefix(pathname, "/team") || matchesPrefix(pathname, "/settings") || matchesPrefix(pathname, "/activity") || matchesPrefix(pathname, "/vms-import") || matchesPrefix(pathname, "/vms-mappings")) return groups.admin;
   if (matchesPrefix(pathname, "/reports") || matchesPrefix(pathname, "/sales") || matchesPrefix(pathname, "/products-dashboard") || matchesPrefix(pathname, "/machines-dashboard") || matchesPrefix(pathname, "/inventory-dashboard")) return groups.reports;
   return null;
 }
