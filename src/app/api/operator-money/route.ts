@@ -94,7 +94,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: "Unknown action." }, { status: 400 });
     }
     if (result.error) throw result.error;
-    revalidatePath("/operator-money"); revalidatePath("/inventory"); revalidatePath("/inventory/movements");
+    revalidatePath("/operator/routes"); revalidatePath("/inventory"); revalidatePath("/inventory/movements");
     return NextResponse.json({ success: true, data: result.data });
   } catch (error) {
     const text = errorText(error);
