@@ -92,7 +92,7 @@ export default async function OperatorRoutesPage() {
   const completedRoutes = assignedRoutes.filter((route) => isTerminalRouteStatus(route.status)).sort((a, b) => String(b.route_date ?? "").localeCompare(String(a.route_date ?? "")));
 
   const headerAction = <div className="flex items-center gap-2">
-    {!canManageAllRoutes && profile.team_member_id ? <SecondaryButton href={`/team/${profile.team_member_id}`}>{t("My profile")}</SecondaryButton> : null}
+    {!canManageAllRoutes && profile.team_member_id ? <SecondaryButton href={`/team/${profile.team_member_id}#my-money`}>{t("My Money")}</SecondaryButton> : null}
     <div className="hidden md:block"><NotificationCenter label={t("Notifications", "Notifications")} /></div>
   </div>;
 
