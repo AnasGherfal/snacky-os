@@ -10,6 +10,8 @@ const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "u
 
 const migration = read("supabase/migrations/202607180001_route_stop_compressor_safety.sql");
 const safetyApi = read("src/app/api/operator/routes/[id]/stops/[stopId]/safety-check/route.ts");
+const summaryApi = read("src/app/api/routes/[id]/compressor-proofs/route.ts");
+const summaryImages = read("src/components/RouteCompletionImages.tsx");
 const safetyCard = read("src/components/operator/CompressorSafetyProofCard.tsx");
 const quickActions = read("src/components/operator/RouteStopQuickActions.tsx");
 const routePage = read("src/app/operator/routes/[id]/stops/[stopId]/page.tsx");
@@ -47,6 +49,17 @@ test("operator must save a camera photo showing compressor ON after refill", () 
   assert.match(safetyCard, /uploadRefillProofPhoto/);
   assert.match(safetyCard, /\/safety-check/);
   assert.match(safetyCard, /I switched the compressor ON and verified the machine is running/);
+});
+
+test("route summary shows each saved compressor proof beside its machine stop", () => {
+  assert.match(summaryApi, /from\("route_stop_safety_checks"\)/);
+  assert.match(summaryApi, /privateStorageObjectUrl\(REFILL_PHOTO_BUCKET/);
+  assert.match(summaryApi, /routeStopId/);
+  assert.match(summaryImages, /\/compressor-proofs/);
+  assert.match(summaryImages, /proof\.routeStopId === stop\.id/);
+  assert.match(summaryImages, /Compressor ON proof/);
+  assert.match(summaryImages, /إثبات تشغيل الضاغط/);
+  assert.match(summaryImages, /kind: "compressor"/);
 });
 
 test("current route completion endpoint and payload remain intact", () => {
@@ -111,7 +124,7 @@ test("manual sales and adjustment saves refresh the new dashboards", () => {
 });
 
 test("feature does not modify pickup RPC contracts", () => {
-  for (const source of [migration, safetyApi, safetyCard, quickActions, routePage, activityPage, operationalSales]) {
+  for (const source of [migration, safetyApi, summaryApi, summaryImages, safetyCard, quickActions, routePage, activityPage, operationalSales]) {
     assert.doesNotMatch(source, /create or replace function public\.snacky_confirm_route_pickup|drop function.*snacky_confirm_route_pickup/is);
   }
 });
