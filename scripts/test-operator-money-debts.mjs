@@ -9,6 +9,7 @@ const migration=read("supabase/migrations/202607290003_operator_money_debts_ledg
 const storageRepair=read("supabase/migrations/202607300003_operator_money_storage_availability.sql");
 const allocationFix=read("supabase/migrations/202607300004_fix_operator_money_available_storage.sql");
 const api=read("src/app/api/operator-money/route.ts");
+const availability=read("src/app/api/operator-money/availability.ts");
 const ui=read("src/app/operator-money/OperatorMoneyLedgerClient.tsx");
 const moneyPage=read("src/app/operator/money/page.tsx");
 const activity=read("src/app/reports/route-product-activity/page.tsx");
@@ -17,6 +18,7 @@ test("personal purchases create debt and dedicated inventory deductions",()=>{as
 test("reserved stock is protected",()=>{assert.match(migration,/operator_money_reserved_qty/);assert.match(migration,/route_stop_items/);assert.match(migration,/planned_quantity/);});
 test("storage availability RPC returns active locations and available quantities",()=>{assert.match(storageRepair,/operator_money_available_storage/);assert.match(storageRepair,/storage_locations/);assert.match(storageRepair,/available_qty/);assert.match(storageRepair,/grant execute/);assert.match(storageRepair,/notify pgrst, 'reload schema'/);});
 test("global reservation is deducted only once across storage locations",()=>{assert.match(allocationFix,/sum\(on_hand_qty\) over/);assert.match(allocationFix,/stock_before/);assert.match(allocationFix,/total_reserved - stock_before/);assert.doesNotMatch(allocationFix,/cross join reserved/);});
+test("availability reads real inventory with the server admin client",()=>{assert.match(availability,/getSupabaseAdminClient/);assert.match(availability,/current_inventory_by_location/);assert.match(availability,/storage_locations/);assert.match(availability,/remainingReserved/);assert.match(availability,/available_qty/);assert.match(api,/getOperatorPurchaseAvailability/);assert.doesNotMatch(api,/operator_money_available_storage/);});
 test("debt supports partial payments and immutable audit history",()=>{assert.match(migration,/operator_debt_payments/);assert.match(migration,/Payment exceeds remaining debt/);assert.match(migration,/No direct insert\/update\/delete policies/);});
 test("operators submit their own purchases and expenses",()=>{assert.match(api,/The operator must submit their own personal purchases and work expenses/);assert.match(api,/You can only submit records for yourself/);assert.match(api,/p_person_id: ownPersonId/);assert.match(ui,/أخذت منتجات للاستخدام الشخصي/);assert.match(ui,/دفعت مصروفاً خاصاً بسناكي/);});
 test("standalone money page follows the live app language",()=>{assert.match(moneyPage,/OperatorMoneyLedgerClient/);assert.match(moneyPage,/locale=\{locale\}/);assert.match(moneyPage,/selfServiceOnly/);assert.match(ui,/snacky_os_language/);assert.match(ui,/browserLocale/);assert.match(ui,/MutationObserver/);assert.match(ui,/dir=\{ar\?"rtl":"ltr"\}/);assert.match(ui,/أموالي/);});
