@@ -9,20 +9,38 @@ type Tab = "overview"|"purchase"|"expense"|"history";
 
 const money=(v:unknown)=>`${Number(v??0).toFixed(2)} LYD`;
 const nowLocal=()=>new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16);
+function browserLocale(fallback:string){
+ if(typeof window==="undefined")return fallback;
+ const saved=window.localStorage.getItem("snacky_os_language");
+ const cookie=document.cookie.split(";").map(x=>x.trim()).find(x=>x.startsWith("snacky_os_language="))?.split("=")[1];
+ const html=document.documentElement.lang;
+ return [saved,cookie,html,fallback].find(x=>x==="ar"||x==="en")||"ar";
+}
 
-export default function OperatorMoneyLedgerClient({initialPersonId="",lockPerson=false,locale="en",selfServiceOnly=false}:Props){
- const ar=locale==="ar";
+export default function OperatorMoneyLedgerClient({initialPersonId="",lockPerson=false,locale="ar",selfServiceOnly=false}:Props){
+ const [activeLocale,setActiveLocale]=useState(locale);
+ const ar=activeLocale==="ar";
  const tx=(en:string,arabic:string)=>ar?arabic:en;
  const [data,setData]=useState<Snapshot|null>(null),[personId,setPersonId]=useState(initialPersonId),[loading,setLoading]=useState(true),[saving,setSaving]=useState(""),[message,setMessage]=useState(""),[tab,setTab]=useState<Tab>("overview");
+ useEffect(()=>{
+  const sync=()=>setActiveLocale(browserLocale(locale));
+  sync();
+  window.addEventListener("storage",sync);
+  window.addEventListener("focus",sync);
+  const observer=new MutationObserver(sync);
+  observer.observe(document.documentElement,{attributes:true,attributeFilter:["lang","dir"]});
+  return()=>{window.removeEventListener("storage",sync);window.removeEventListener("focus",sync);observer.disconnect()};
+ },[locale]);
  const load=useCallback(async(id?:string)=>{setLoading(true);const target=id||initialPersonId;const r=await fetch(`/api/operator-money${target?`?personId=${target}`:""}`,{cache:"no-store"});const j=await r.json();setLoading(false);if(!r.ok){setData(null);setMessage(j.error||tx("Could not load money records","تعذر تحميل السجل المالي"));return;}setData(j);setPersonId(j.selectedPersonId||target||j.currentPersonId||j.team?.[0]?.id||"");},[initialPersonId,ar]);
  useEffect(()=>{void load(initialPersonId)},[initialPersonId,load]);
  const post=async(action:string,body:Row)=>{setSaving(action);setMessage("");const r=await fetch("/api/operator-money",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action,personId,...body,clientSubmissionId:body.clientSubmissionId||`${action}:${crypto.randomUUID()}`})});const j=await r.json();setSaving("");if(!r.ok){setMessage(j.error||tx("Save failed","فشل الحفظ"));return false;}setMessage(action==="purchase"?tx("Purchase recorded successfully.","تم تسجيل المشتريات بنجاح."):tx("Expense submitted for review.","تم إرسال المصروف للمراجعة."));await load(personId);return true};
  const balance=useMemo(()=>data?.balances.find(x=>x.person_id===personId),[data,personId]);
- if(loading&&!data)return <div className="surface-card p-6">{tx("Loading…","جارٍ التحميل…")}</div>;
- if(!data)return <div className="surface-card border-red-200 p-6 text-red-700">{message||tx("Money records are unavailable.","السجل المالي غير متاح.")}</div>;
+ if(loading&&!data)return <div dir={ar?"rtl":"ltr"} className="surface-card p-6">{tx("Loading…","جارٍ التحميل…")}</div>;
+ if(!data)return <div dir={ar?"rtl":"ltr"} className="surface-card border-red-200 p-6 text-red-700">{message||tx("Money records are unavailable.","السجل المالي غير متاح.")}</div>;
  const self=!data.manager||selfServiceOnly;
  const tabs=self?[["overview",tx("Overview","نظرة عامة")],["purchase",tx("Buy from storage","شراء من المخزن")],["expense",tx("Submit expense","تسجيل مصروف")],["history",tx("History","السجل")]]:[["overview",tx("Overview","نظرة عامة")],["history",tx("History & review","السجل والمراجعة")]];
  return <div id="my-money" dir={ar?"rtl":"ltr"} className="space-y-5">
+  <div className="rounded-2xl bg-slate-900 p-5 text-white"><h1 className="text-2xl font-bold">{tx("My Money","أموالي")}</h1><p className="mt-1 text-sm text-slate-300">{tx("Record personal products and submit Snacky work expenses.","سجّل المنتجات الشخصية ومصروفات العمل الخاصة بسناكي.")}</p></div>
   {data.manager&&!lockPerson&&!selfServiceOnly?<div className="surface-card p-4"><label className="text-sm font-semibold">{tx("Operator","المشغّل")}</label><select className="input mt-2" value={personId} onChange={e=>{setPersonId(e.target.value);void load(e.target.value)}}>{data.team.map(x=><option key={x.id} value={x.id}>{x.full_name}</option>)}</select></div>:null}
   <div className="rounded-2xl border border-slate-200 bg-white p-1 shadow-sm"><div className="flex gap-1 overflow-x-auto">{tabs.map(([id,label])=><button key={id} type="button" onClick={()=>setTab(id as Tab)} className={`whitespace-nowrap rounded-xl px-4 py-2.5 text-sm font-semibold ${tab===id?"bg-slate-900 text-white":"text-slate-600 hover:bg-slate-100"}`}>{label}</button>)}</div></div>
   {message?<div className="rounded-xl border border-slate-200 bg-white p-3 text-sm">{message}</div>:null}
