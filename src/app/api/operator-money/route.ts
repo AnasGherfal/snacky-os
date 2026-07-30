@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getOperatorPurchaseAvailability } from "./availability";
 
 function clean(value: unknown) { return String(value ?? "").trim(); }
 function amount(value: unknown) { const n = Number(value ?? 0); return Number.isFinite(n) ? n : 0; }
@@ -79,6 +80,13 @@ export async function POST(request: Request) {
   }
 
   try {
+    if (action === "availability") {
+      const productId = clean(body.productId);
+      if (!productId) return NextResponse.json({ success: false, error: "Product is required." }, { status: 400 });
+      const data = await getOperatorPurchaseAvailability(productId);
+      return NextResponse.json({ success: true, data });
+    }
+
     let result;
     if (action === "purchase") {
       result = await supabase.rpc("create_operator_personal_purchase", {
@@ -102,8 +110,6 @@ export async function POST(request: Request) {
       result = await supabase.rpc("record_operator_advance_return", {
         p_person_id: personId, p_advance_id: clean(body.advanceId) || null, p_amount: amount(body.amount), p_returned_at: clean(body.date) || new Date().toISOString(), p_payment_method: clean(body.paymentMethod), p_note: clean(body.note) || null, p_client_submission_id: submissionId(body.clientSubmissionId, "operator-advance-return"),
       });
-    } else if (action === "availability") {
-      result = await supabase.rpc("operator_money_available_storage", { p_product_id: clean(body.productId) });
     } else {
       return NextResponse.json({ success: false, error: "Unknown action." }, { status: 400 });
     }
