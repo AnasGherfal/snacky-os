@@ -67,13 +67,22 @@ export async function POST(request: Request) {
   const action = clean(body.action);
   const manager = isOwnerAdminRole(profile);
   const requestedPersonId = clean(body.personId);
-  const personId = manager ? requestedPersonId || clean(profile.team_member_id) : clean(profile.team_member_id);
+  const ownPersonId = clean(profile.team_member_id);
+  const personId = manager ? requestedPersonId || ownPersonId : ownPersonId;
   if (!personId && action !== "availability") return NextResponse.json({ success: false, error: "Operator profile is not linked." }, { status: 403 });
+
+  if ((action === "purchase" || action === "expense") && manager) {
+    return NextResponse.json({ success: false, error: "The operator must submit their own personal purchases and work expenses." }, { status: 403 });
+  }
+  if ((action === "purchase" || action === "expense") && requestedPersonId && requestedPersonId !== ownPersonId) {
+    return NextResponse.json({ success: false, error: "You can only submit records for yourself." }, { status: 403 });
+  }
+
   try {
     let result;
     if (action === "purchase") {
       result = await supabase.rpc("create_operator_personal_purchase", {
-        p_person_id: personId, p_product_id: clean(body.productId), p_storage_location_id: clean(body.storageLocationId), p_quantity: Math.floor(amount(body.quantity)), p_unit_price_lyd: amount(body.unitPrice), p_note: clean(body.note) || null, p_client_submission_id: submissionId(body.clientSubmissionId, "operator-purchase"),
+        p_person_id: ownPersonId, p_product_id: clean(body.productId), p_storage_location_id: clean(body.storageLocationId), p_quantity: Math.floor(amount(body.quantity)), p_unit_price_lyd: amount(body.unitPrice), p_note: clean(body.note) || null, p_client_submission_id: submissionId(body.clientSubmissionId, "operator-purchase"),
       });
     } else if (action === "advance") {
       result = await supabase.rpc("create_operator_advance", {
@@ -81,7 +90,7 @@ export async function POST(request: Request) {
       });
     } else if (action === "expense") {
       result = await supabase.rpc("submit_operator_expense", {
-        p_person_id: personId, p_advance_id: clean(body.advanceId) || null, p_amount: amount(body.amount), p_expense_type: clean(body.expenseType), p_supplier_payee: clean(body.supplierPayee), p_spent_at: clean(body.date) || new Date().toISOString(), p_receipt_url: clean(body.receiptUrl) || null, p_note: clean(body.note), p_client_submission_id: submissionId(body.clientSubmissionId, "operator-expense"),
+        p_person_id: ownPersonId, p_advance_id: clean(body.advanceId) || null, p_amount: amount(body.amount), p_expense_type: clean(body.expenseType), p_supplier_payee: clean(body.supplierPayee), p_spent_at: clean(body.date) || new Date().toISOString(), p_receipt_url: clean(body.receiptUrl) || null, p_note: clean(body.note), p_client_submission_id: submissionId(body.clientSubmissionId, "operator-expense"),
       });
     } else if (action === "reviewExpense") {
       result = await supabase.rpc("review_operator_expense", { p_expense_id: clean(body.expenseId), p_status: clean(body.status), p_review_note: clean(body.note) || null });
@@ -99,13 +108,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: "Unknown action." }, { status: 400 });
     }
     if (result.error) throw result.error;
-    if (personId) revalidatePath(`/team/${personId}`);
+    const affectedPersonId = action === "purchase" || action === "expense" ? ownPersonId : personId;
+    if (affectedPersonId) revalidatePath(`/team/${affectedPersonId}`);
     revalidatePath("/inventory");
     revalidatePath("/inventory/movements");
     return NextResponse.json({ success: true, data: result.data });
   } catch (error) {
     const text = errorText(error);
-    const status = text.toLowerCase().includes("authorized") || text.toLowerCase().includes("only owner") || text.toLowerCase().includes("only buy") ? 403 : 400;
+    const status = text.toLowerCase().includes("authorized") || text.toLowerCase().includes("only owner") || text.toLowerCase().includes("only buy") || text.toLowerCase().includes("only submit") ? 403 : 400;
     return NextResponse.json({ success: false, error: text }, { status });
   }
 }
