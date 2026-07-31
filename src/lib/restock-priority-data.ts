@@ -1,5 +1,6 @@
 import "server-only";
 import { safeSupabaseQuery, supabaseQueryErrorMessage } from "@/lib/safe-supabase-query";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import {
   computeRestockPriority,
   type RestockMachineSlotRow,
@@ -45,6 +46,11 @@ function routeProductKey(routeId: unknown, productId: unknown) {
   const route = String(routeId ?? "").trim();
   const product = String(productId ?? "").trim();
   return route && product ? `${route}:${product}` : "";
+}
+
+function positiveWhole(value: unknown) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;
 }
 
 async function loadProducts(supabase: SupabaseLike, errors: Record<string, string>) {
@@ -94,6 +100,54 @@ async function loadProducts(supabase: SupabaseLike, errors: Record<string, strin
   return { products: fallback.data, usedFallback: true };
 }
 
+async function repairMissingRouteStockLines({
+  routeNeeds,
+  routeStopNeeds,
+  errors,
+}: {
+  routeNeeds: any[];
+  routeStopNeeds: any[];
+  errors: Record<string, string>;
+}) {
+  const existingKeys = new Set(routeNeeds.map((row) => routeProductKey(row.route_id, row.product_id)).filter(Boolean));
+  const missingByKey = new Map<string, { route_id: string; product_id: string; planned_qty: number }>();
+
+  routeStopNeeds.forEach((row) => {
+    const key = routeProductKey(row.route_id, row.product_id);
+    if (!key || existingKeys.has(key)) return;
+    const routeId = String(row.route_id ?? "").trim();
+    const productId = String(row.product_id ?? "").trim();
+    const plannedQty = positiveWhole(row.planned_quantity);
+    if (!routeId || !productId || plannedQty <= 0) return;
+    const current = missingByKey.get(key);
+    missingByKey.set(key, {
+      route_id: routeId,
+      product_id: productId,
+      planned_qty: (current?.planned_qty ?? 0) + plannedQty,
+    });
+  });
+
+  const rows = Array.from(missingByKey.values()).filter((row) => row.planned_qty > 0);
+  if (!rows.length) return;
+
+  const repairClient = getSupabaseAdminClient();
+  if (!repairClient) {
+    errors.routeStockRepair = "Some routes have product assignments but no route stock summary. Database admin access is unavailable for automatic repair.";
+    return;
+  }
+
+  const payload = rows.map((row) => ({ ...row, picked_qty: 0, returned_qty: 0, updated_at: new Date().toISOString() }));
+  const { error } = await repairClient.from("route_stock_lines").upsert(payload, {
+    onConflict: "route_id,product_id",
+    ignoreDuplicates: true,
+  });
+
+  if (error) {
+    errors.routeStockRepair = `Could not repair missing route stock summaries: ${supabaseQueryErrorMessage(error)}`;
+    console.error("[restock-priority] Missing route stock summary repair failed", { rows: payload.length, error });
+  }
+}
+
 export async function loadRestockPriorityData(supabase: SupabaseLike): Promise<RestockPriorityLoadResult> {
   const errors: Record<string, string> = {};
   const { products, usedFallback } = await loadProducts(supabase, errors);
@@ -101,40 +155,23 @@ export async function loadRestockPriorityData(supabase: SupabaseLike): Promise<R
   const [storage, recommendations, routeNeeds, routeStopNeeds, machineSlots, vmsStock, sales] = await Promise.all([
     safeSupabaseQuery<RestockStorageRow>({
       label: "restock-priority.current_inventory_by_location.storage",
-      promise: supabase
-        .from("current_inventory_by_location")
-        .select("product_id, product_name, quantity_on_hand")
-        .eq("location_type", "storage")
-        .limit(10000),
+      promise: supabase.from("current_inventory_by_location").select("product_id, product_name, quantity_on_hand").eq("location_type", "storage").limit(10000),
     }),
     safeSupabaseQuery<any>({
       label: "restock-priority.refill_recommendations",
-      promise: supabase
-        .from("refill_recommendations")
-        .select("product_id, product_name, machine_id, machine_name, current_qty, suggested_qty, final_qty_to_take, priority")
-        .limit(10000),
+      promise: supabase.from("refill_recommendations").select("product_id, product_name, machine_id, machine_name, current_qty, suggested_qty, final_qty_to_take, priority").limit(10000),
     }),
     safeSupabaseQuery<any>({
       label: "restock-priority.route_stock_lines.active",
-      promise: supabase
-        .from("route_stock_lines")
-        .select("route_id, product_id, planned_qty, picked_qty, routes!inner(status, route_date)")
-        .limit(10000),
+      promise: supabase.from("route_stock_lines").select("route_id, product_id, planned_qty, picked_qty, routes!inner(status, route_date)").limit(10000),
     }),
     safeSupabaseQuery<any>({
       label: "restock-priority.route_stop_items.active-fallback",
-      promise: supabase
-        .from("route_stop_items")
-        .select("route_id, product_id, planned_quantity, routes!inner(status, route_date)")
-        .limit(20000),
+      promise: supabase.from("route_stop_items").select("route_id, product_id, planned_quantity, routes!inner(status, route_date)").limit(20000),
     }),
     safeSupabaseQuery<any>({
       label: "restock-priority.machine_slots",
-      promise: supabase
-        .from("machine_slots")
-        .select("product_id, machine_id, active, machine:machines!machine_slots_machine_id_fkey(id, name, machine_code, status)")
-        .eq("active", true)
-        .limit(10000),
+      promise: supabase.from("machine_slots").select("product_id, machine_id, active, machine:machines!machine_slots_machine_id_fkey(id, name, machine_code, status)").eq("active", true).limit(10000),
     }),
     safeSupabaseQuery<any>({
       label: "restock-priority.latest_vms_stock_by_slot",
@@ -142,25 +179,16 @@ export async function loadRestockPriorityData(supabase: SupabaseLike): Promise<R
     }),
     safeSupabaseQuery<RestockSalesRow>({
       label: "restock-priority.kpi_product_monthly",
-      promise: supabase
-        .from("kpi_product_monthly")
-        .select("product_id, product_name, sales_month, units_sold, stock_velocity_units_per_day")
-        .order("sales_month", { ascending: false })
-        .limit(2000),
+      promise: supabase.from("kpi_product_monthly").select("product_id, product_name, sales_month, units_sold, stock_velocity_units_per_day").order("sales_month", { ascending: false }).limit(2000),
     }),
   ]);
 
-  Object.entries({
-    storage: storage.error,
-    recommendations: recommendations.error,
-    routeNeeds: routeNeeds.error,
-    routeStopNeeds: routeStopNeeds.error,
-    machineSlots: machineSlots.error,
-    vmsStock: vmsStock.error,
-    salesVelocity: sales.error,
-  }).forEach(([key, error]) => {
-    if (error) errors[key] = error;
-  });
+  Object.entries({ storage: storage.error, recommendations: recommendations.error, routeNeeds: routeNeeds.error, routeStopNeeds: routeStopNeeds.error, machineSlots: machineSlots.error, vmsStock: vmsStock.error, salesVelocity: sales.error })
+    .forEach(([key, error]) => { if (error) errors[key] = error; });
+
+  if (!routeNeeds.error && !routeStopNeeds.error) {
+    await repairMissingRouteStockLines({ routeNeeds: routeNeeds.data ?? [], routeStopNeeds: routeStopNeeds.data ?? [], errors });
+  }
 
   const normalizedMachineSlots: RestockMachineSlotRow[] = (machineSlots.data ?? []).map((row: any) => ({
     product_id: row.product_id,
@@ -207,7 +235,7 @@ export async function loadRestockPriorityData(supabase: SupabaseLike): Promise<R
     const current = stopFallbackByRouteProduct.get(key);
     stopFallbackByRouteProduct.set(key, {
       product_id: row.product_id,
-      planned_qty: Number(current?.planned_qty ?? 0) + Number(row.planned_quantity ?? 0),
+      planned_qty: Number(current?.planned_qty ?? 0) + positiveWhole(row.planned_quantity),
       picked_qty: 0,
       route_status: route?.status == null ? null : String(route.status),
       route_date: route?.route_date == null ? null : String(route.route_date),
