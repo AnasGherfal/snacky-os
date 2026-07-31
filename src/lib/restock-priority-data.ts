@@ -36,6 +36,17 @@ function isMissingRestockColumn(error: unknown) {
   return restockProductColumns.some((column) => text.includes(column));
 }
 
+function relationRow(value: unknown) {
+  if (Array.isArray(value)) return value[0] ?? null;
+  return value && typeof value === "object" ? value as Record<string, unknown> : null;
+}
+
+function routeProductKey(routeId: unknown, productId: unknown) {
+  const route = String(routeId ?? "").trim();
+  const product = String(productId ?? "").trim();
+  return route && product ? `${route}:${product}` : "";
+}
+
 async function loadProducts(supabase: SupabaseLike, errors: Record<string, string>) {
   const baseSelect = [
     "id",
@@ -87,7 +98,7 @@ export async function loadRestockPriorityData(supabase: SupabaseLike): Promise<R
   const errors: Record<string, string> = {};
   const { products, usedFallback } = await loadProducts(supabase, errors);
 
-  const [storage, recommendations, routeNeeds, machineSlots, vmsStock, sales] = await Promise.all([
+  const [storage, recommendations, routeNeeds, routeStopNeeds, machineSlots, vmsStock, sales] = await Promise.all([
     safeSupabaseQuery<RestockStorageRow>({
       label: "restock-priority.current_inventory_by_location.storage",
       promise: supabase
@@ -107,8 +118,15 @@ export async function loadRestockPriorityData(supabase: SupabaseLike): Promise<R
       label: "restock-priority.route_stock_lines.active",
       promise: supabase
         .from("route_stock_lines")
-        .select("product_id, planned_qty, picked_qty, routes!inner(status, route_date)")
+        .select("route_id, product_id, planned_qty, picked_qty, routes!inner(status, route_date)")
         .limit(10000),
+    }),
+    safeSupabaseQuery<any>({
+      label: "restock-priority.route_stop_items.active-fallback",
+      promise: supabase
+        .from("route_stop_items")
+        .select("route_id, product_id, planned_quantity, routes!inner(status, route_date)")
+        .limit(20000),
     }),
     safeSupabaseQuery<any>({
       label: "restock-priority.machine_slots",
@@ -136,6 +154,7 @@ export async function loadRestockPriorityData(supabase: SupabaseLike): Promise<R
     storage: storage.error,
     recommendations: recommendations.error,
     routeNeeds: routeNeeds.error,
+    routeStopNeeds: routeStopNeeds.error,
     machineSlots: machineSlots.error,
     vmsStock: vmsStock.error,
     salesVelocity: sales.error,
@@ -166,13 +185,35 @@ export async function loadRestockPriorityData(supabase: SupabaseLike): Promise<R
     priority: row.priority,
   }));
 
-  const normalizedRouteNeeds: RestockRouteNeedRow[] = (routeNeeds.data ?? []).map((row: any) => ({
-    product_id: row.product_id,
-    planned_qty: row.planned_qty,
-    picked_qty: row.picked_qty,
-    route_status: row.routes?.status ?? null,
-    route_date: row.routes?.route_date ?? null,
-  }));
+  const routeStockKeys = new Set<string>();
+  const normalizedRouteNeeds: RestockRouteNeedRow[] = (routeNeeds.data ?? []).map((row: any) => {
+    const key = routeProductKey(row.route_id, row.product_id);
+    if (key) routeStockKeys.add(key);
+    const route = relationRow(row.routes);
+    return {
+      product_id: row.product_id,
+      planned_qty: row.planned_qty,
+      picked_qty: row.picked_qty,
+      route_status: route?.status == null ? null : String(route.status),
+      route_date: route?.route_date == null ? null : String(route.route_date),
+    };
+  });
+
+  const stopFallbackByRouteProduct = new Map<string, RestockRouteNeedRow>();
+  (routeStopNeeds.data ?? []).forEach((row: any) => {
+    const key = routeProductKey(row.route_id, row.product_id);
+    if (!key || routeStockKeys.has(key)) return;
+    const route = relationRow(row.routes);
+    const current = stopFallbackByRouteProduct.get(key);
+    stopFallbackByRouteProduct.set(key, {
+      product_id: row.product_id,
+      planned_qty: Number(current?.planned_qty ?? 0) + Number(row.planned_quantity ?? 0),
+      picked_qty: 0,
+      route_status: route?.status == null ? null : String(route.status),
+      route_date: route?.route_date == null ? null : String(route.route_date),
+    });
+  });
+  normalizedRouteNeeds.push(...stopFallbackByRouteProduct.values());
 
   const normalizedVmsStock: RestockVmsStockRow[] = (vmsStock.data ?? []).map((row: any) => ({
     product_id: row.product_id,
