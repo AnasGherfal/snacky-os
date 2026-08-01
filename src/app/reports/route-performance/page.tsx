@@ -55,28 +55,31 @@ export default async function RoutePerformancePage({ searchParams }: { searchPar
 
   const completedStops = (stopsResult.data ?? []).filter((stop: any) => ["completed", "done"].includes(String(stop.status ?? "").toLowerCase()));
   const machineIds = Array.from(new Set(completedStops.map((stop: any) => stop.machine_id).filter(Boolean)));
-  const { data: machines } = machineIds.length
-    ? await client.from("machines").select("id, name, machine_code, location:locations(id, name, area)").in("id", machineIds)
-    : { data: [] };
+  const machinesResult = machineIds.length
+    ? await client.from("machines").select("id, name, machine_code").in("id", machineIds)
+    : { data: [], error: null };
+  if (machinesResult.error) return <ErrorState title={tr(locale, "Could not load machine names", "تعذر تحميل أسماء الأجهزة")} body={machinesResult.error.message} />;
 
   const routeById = new Map(routeRows.map((route: any) => [route.id, route]));
   const operatorById = new Map((operatorsResult.data ?? []).map((operator: any) => [operator.id, operator]));
-  const machineById = new Map((machines ?? []).map((machine: any) => [machine.id, machine]));
+  const machineById = new Map((machinesResult.data ?? []).map((machine: any) => [machine.id, machine]));
 
   const machineStats = new Map<string, { machineId: string; fills: number; operators: Set<string>; routes: Set<string> }>();
   const operatorStats = new Map<string, { operatorId: string; routes: Set<string>; stops: number; machines: Set<string> }>();
   completedStops.forEach((stop: any) => {
+    const machineId = String(stop.machine_id ?? "").trim();
+    if (!machineId) return;
     const route: any = routeById.get(stop.route_id);
-    const machine = machineStats.get(stop.machine_id) ?? { machineId: stop.machine_id, fills: 0, operators: new Set<string>(), routes: new Set<string>() };
+    const machine = machineStats.get(machineId) ?? { machineId, fills: 0, operators: new Set<string>(), routes: new Set<string>() };
     machine.fills += 1;
     machine.routes.add(stop.route_id);
     if (route?.operator_id) machine.operators.add(route.operator_id);
-    machineStats.set(stop.machine_id, machine);
+    machineStats.set(machineId, machine);
     if (route?.operator_id) {
       const operator = operatorStats.get(route.operator_id) ?? { operatorId: route.operator_id, routes: new Set<string>(), stops: 0, machines: new Set<string>() };
       operator.routes.add(stop.route_id);
       operator.stops += 1;
-      operator.machines.add(stop.machine_id);
+      operator.machines.add(machineId);
       operatorStats.set(route.operator_id, operator);
     }
   });
@@ -102,7 +105,7 @@ export default async function RoutePerformancePage({ searchParams }: { searchPar
       <SectionCard><div className="p-4"><div className="text-sm text-slate-500">{tr(locale, "Active operators", "المشغلون النشطون")}</div><div className="mt-1 text-3xl font-semibold">{operatorStats.size}</div></div></SectionCard>
     </div>
 
-    <section className="surface-card p-4"><h2 className="text-lg font-semibold">{tr(locale, "Machine fill frequency", "عدد مرات تعبئة كل جهاز")}</h2><p className="mt-1 text-sm text-slate-500">{tr(locale, "Each completed machine stop counts as one fill visit.", "يُحسب كل موقع جهاز مكتمل كزيارة تعبئة واحدة.")}</p>{!machineRows.length ? <EmptyState title={tr(locale, "No completed machine stops", "لا توجد مواقع أجهزة مكتملة")} body={tr(locale, "Completed fills for this month will appear here.", "ستظهر تعبئات هذا الشهر هنا بعد إكمالها.")} /> : <DataTable headers={[tr(locale, "Machine", "الجهاز"), tr(locale, "Fill visits", "مرات التعبئة"), tr(locale, "Routes", "الجولات"), tr(locale, "Operators", "المشغلون")] }>{machineRows.map((row) => <tr key={row.machineId}><td><Link className="link-secondary" href={`/machines/${row.machineId}`}>{formatMachineDisplayName(machineById.get(row.machineId) ?? null, { includeArea: true })}</Link></td><td className="font-semibold">{row.fills}</td><td>{row.routes.size}</td><td>{Array.from(row.operators).map((id) => operatorById.get(id)?.full_name).filter(Boolean).join("، ") || "-"}</td></tr>)}</DataTable>}</section>
+    <section className="surface-card p-4"><h2 className="text-lg font-semibold">{tr(locale, "Machine fill frequency", "عدد مرات تعبئة كل جهاز")}</h2><p className="mt-1 text-sm text-slate-500">{tr(locale, "Each completed machine stop counts as one fill visit.", "يُحسب كل موقع جهاز مكتمل كزيارة تعبئة واحدة.")}</p>{!machineRows.length ? <EmptyState title={tr(locale, "No completed machine stops", "لا توجد مواقع أجهزة مكتملة")} body={tr(locale, "Completed fills for this month will appear here.", "ستظهر تعبئات هذا الشهر هنا بعد إكمالها.")} /> : <DataTable headers={[tr(locale, "Machine", "الجهاز"), tr(locale, "Fill visits", "مرات التعبئة"), tr(locale, "Routes", "الجولات"), tr(locale, "Operators", "المشغلون")] }>{machineRows.map((row) => <tr key={row.machineId}><td><Link className="link-secondary" href={`/machines/${row.machineId}`}>{formatMachineDisplayName(machineById.get(row.machineId) ?? null, { includeArea: false, fallbackSite: tr(locale, `Machine ${row.machineId.slice(0, 8)}`, `جهاز ${row.machineId.slice(0, 8)}`) })}</Link></td><td className="font-semibold">{row.fills}</td><td>{row.routes.size}</td><td>{Array.from(row.operators).map((id) => operatorById.get(id)?.full_name).filter(Boolean).join("، ") || "-"}</td></tr>)}</DataTable>}</section>
 
     <section className="surface-card p-4"><h2 className="text-lg font-semibold">{tr(locale, "Operator performance", "أداء المشغلين")}</h2><p className="mt-1 text-sm text-slate-500">{tr(locale, "Completed routes and machine stops by operator.", "الجولات ومواقع الأجهزة المكتملة لكل مشغل.")}</p>{!operatorRows.length ? <EmptyState title={tr(locale, "No operator activity", "لا يوجد نشاط للمشغلين")} body={tr(locale, "Completed operator work for this month will appear here.", "سيظهر عمل المشغلين المكتمل لهذا الشهر هنا.")} /> : <DataTable headers={[tr(locale, "Operator", "المشغل"), tr(locale, "Routes", "الجولات"), tr(locale, "Machine stops", "مواقع الأجهزة"), tr(locale, "Unique machines", "أجهزة مختلفة")] }>{operatorRows.map((row) => <tr key={row.operatorId}><td><Link className="link-secondary" href={`/team/${row.operatorId}`}>{operatorById.get(row.operatorId)?.full_name ?? tr(locale, "Unknown operator", "مشغل غير معروف")}</Link></td><td>{row.routes.size}</td><td className="font-semibold">{row.stops}</td><td>{row.machines.size}</td></tr>)}</DataTable>}</section>
   </div>;
