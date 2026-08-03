@@ -3,7 +3,7 @@ name: Apply Growth Decisions reliability fix
 on:
   push:
     branches:
-      - agent/fix-growth-decisions-reliability
+      - master
 
 permissions:
   contents: write
@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: agent/fix-growth-decisions-reliability
+          ref: master
           fetch-depth: 0
 
       - name: Patch Growth Decisions read path
@@ -103,8 +103,6 @@ jobs:
               raise SystemExit('Settings insertion point not found exactly once')
           text = text.replace(insertion_point, replacement, 1)
 
-          # Never silently turn failed supplementary sources into zeros. A failed source can
-          # otherwise make a dangerous recommendation look valid.
           marker = '''  if (vmsProfitResult.error) {
 '''
           guard = '''  const supportingSourceErrors = [
@@ -142,4 +140,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/app/finance/growth-decisions/page.tsx .github/workflows/apply-growth-decisions-reliability-fix.yml
           git commit -m "Fix Growth Decisions reliable owner reads"
-          git push origin HEAD:agent/fix-growth-decisions-reliability
+          git push origin HEAD:master
