@@ -1,0 +1,143 @@
+name: Apply Growth Decisions reliability fix
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Patch Growth Decisions read path
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/app/finance/growth-decisions/page.tsx')
+          text = path.read_text()
+
+          replacements = [
+              (
+                  '  const settingsResult = await supabase\n    .from("growth_decision_settings")',
+                  '  // Owner/admin decision reporting must not depend on browser-session RLS.\n  // Use the service-role client when configured, with the authenticated client as a safe fallback.\n  const operationalReadClient = getSupabaseAdminClient() ?? supabase;\n\n  const settingsResult = await operationalReadClient\n    .from("growth_decision_settings")',
+              ),
+              (
+                  '  const operationalReadClient = getSupabaseAdminClient() ?? supabase;\n\n  const latestStart',
+                  '  const latestStart',
+              ),
+              (
+                  '          supabase.from(FINANCE_TRANSACTIONS_TABLE).select(columns.join(",")),',
+                  '          operationalReadClient.from(FINANCE_TRANSACTIONS_TABLE).select(columns.join(",")),',
+              ),
+              (
+                  '      client: supabase,',
+                  '      client: operationalReadClient,',
+              ),
+              (
+                  '    supabase.from("machines").select("id, name, rent_amount, status"),',
+                  '    operationalReadClient.from("machines").select("id, name, rent_amount, status"),',
+              ),
+              (
+                  '    supabase\n      .from("location_pipeline_leads")',
+                  '    operationalReadClient\n      .from("location_pipeline_leads")',
+              ),
+              (
+                  '    supabase\n      .from("issues")',
+                  '    operationalReadClient\n      .from("issues")',
+              ),
+              (
+                  '    supabase\n      .from("refill_recommendations")',
+                  '    operationalReadClient\n      .from("refill_recommendations")',
+              ),
+              (
+                  '    supabase\n      .from("investor_monthly_statements")',
+                  '    operationalReadClient\n      .from("investor_monthly_statements")',
+              ),
+              (
+                  '    supabase\n      .from("investor_payments")',
+                  '    operationalReadClient\n      .from("investor_payments")',
+              ),
+          ]
+
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'Expected exactly one match, found {count}: {old[:100]}')
+              text = text.replace(old, new, 1)
+
+          settings_guard = '''  if (settingsResult.error && setupError(settingsResult.error)) {
+'''
+          if settings_guard not in text:
+              raise SystemExit('Settings setup guard not found')
+
+          insertion_point = '''  const settings = {
+    ...DEFAULT_SETTINGS,
+    ...(settingsResult.data ?? {}),
+  } as SettingsRow;
+'''
+          replacement = '''  if (settingsResult.error) {
+    return (
+      <ErrorState
+        title={ar ? "تعذر تحميل إعدادات قرارات النمو" : "Growth decision settings could not load"}
+        body={`${ar ? "تعذر قراءة إعدادات القرار بشكل آمن. لا تعتمد على نتيجة توسع حتى يتم إصلاح المصدر." : "The decision settings could not be read safely. Do not rely on an expansion result until the source is repaired."} ${databaseErrorMessage(settingsResult.error)}`}
+      />
+    );
+  }
+
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    ...(settingsResult.data ?? {}),
+  } as SettingsRow;
+'''
+          if text.count(insertion_point) != 1:
+              raise SystemExit('Settings insertion point not found exactly once')
+          text = text.replace(insertion_point, replacement, 1)
+
+          marker = '''  if (vmsProfitResult.error) {
+'''
+          guard = '''  const supportingSourceErrors = [
+    machinesResult.error,
+    acceptedLocationsResult.error,
+    issuesResult.error,
+    refillResult.error,
+    statementsResult.error,
+    paymentsResult.error,
+  ].filter(Boolean);
+
+  if (supportingSourceErrors.length) {
+    return (
+      <ErrorState
+        title={ar ? "بيانات قرار النمو غير مكتملة" : "Growth decision data is incomplete"}
+        body={`${ar ? "فشل تحميل مصدر أو أكثر من مصادر القرار. تم إيقاف التوصية بدلاً من استخدام أصفار مضللة." : "One or more decision sources failed to load. The recommendation is stopped instead of substituting misleading zero values."} ${supportingSourceErrors.map(databaseErrorMessage).join(" | ")}`}
+      />
+    );
+  }
+
+'''
+          if text.count(marker) != 1:
+              raise SystemExit('VMS error guard not found exactly once')
+          text = text.replace(marker, guard + marker, 1)
+
+          path.write_text(text)
+          PY
+
+      - name: Remove one-time workflow
+        run: rm .github/workflows/apply-growth-decisions-reliability-fix.yml
+
+      - name: Commit patched source
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/app/finance/growth-decisions/page.tsx .github/workflows/apply-growth-decisions-reliability-fix.yml
+          git commit -m "Fix Growth Decisions reliable owner reads"
+          git push origin HEAD:master
