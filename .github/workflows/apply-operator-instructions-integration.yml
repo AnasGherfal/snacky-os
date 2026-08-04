@@ -1,0 +1,120 @@
+name: Apply operator instructions integration
+
+on:
+  push:
+    branches:
+      - agent/operator-instructions-price-tasks
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/operator-instructions-price-tasks
+          fetch-depth: 0
+
+      - name: Integrate instructions into operator routes and profiles
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path_value: str, old: str, new: str, label: str):
+              path = Path(path_value)
+              text = path.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected exactly one match, found {count}")
+              path.write_text(text.replace(old, new, 1))
+
+          route_path = "src/app/operator/routes/page.tsx"
+          replace_once(
+              route_path,
+              'import { NotificationCenter } from "@/components/NotificationCenter";\n',
+              'import { NotificationCenter } from "@/components/NotificationCenter";\nimport OperatorInstructionsPanel from "@/components/operator/OperatorInstructionsPanel";\n',
+              "route instructions import",
+          )
+          replace_once(
+              route_path,
+              'import { canExecuteRoutes, canManageOperations } from "@/lib/authz";',
+              'import { canExecuteRoutes, canManageOperations, isOwnerAdminRole } from "@/lib/authz";',
+              "route owner permission import",
+          )
+          replace_once(
+              route_path,
+              '  const canManageAllRoutes = canManageOperations(profile);\n',
+              '  const canManageAllRoutes = canManageOperations(profile);\n  const canAssignInstructions = isOwnerAdminRole(profile);\n',
+              "route owner permission flag",
+          )
+          replace_once(
+              route_path,
+              '    {assignedRoutesError || availableRoutesError ? <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{t("Some route buckets are unavailable right now. Routes that loaded are still shown.")}</div> : null}\n\n    <SectionCard>',
+              '    {assignedRoutesError || availableRoutesError ? <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{t("Some route buckets are unavailable right now. Routes that loaded are still shown.")}</div> : null}\n\n    {(!canManageAllRoutes || canAssignInstructions) ? <OperatorInstructionsPanel /> : null}\n\n    <SectionCard>',
+              "route instruction panel",
+          )
+
+          profile_path = "src/app/team/[id]/page.tsx"
+          replace_once(
+              profile_path,
+              'import OperatorMoneyLedgerClient from "@/app/operator-money/OperatorMoneyLedgerClient";\n',
+              'import OperatorMoneyLedgerClient from "@/app/operator-money/OperatorMoneyLedgerClient";\nimport OperatorInstructionsPanel from "@/components/operator/OperatorInstructionsPanel";\n',
+              "profile instructions import",
+          )
+          replace_once(
+              profile_path,
+              '  const headerActions = manager\n    ? <div className="flex gap-2"><SecondaryButton href={`/team/${id}/activity`}>Activity log</SecondaryButton><SecondaryButton href={`/team/${id}/edit`}>Edit</SecondaryButton></div>\n    : <SecondaryButton href="/operator/routes">My routes</SecondaryButton>;',
+              '  const headerActions = manager\n    ? <div className="flex flex-wrap gap-2"><SecondaryButton href="#operator-instructions">Assign instruction</SecondaryButton><SecondaryButton href={`/team/${id}/activity`}>Activity log</SecondaryButton><SecondaryButton href={`/team/${id}/edit`}>Edit</SecondaryButton></div>\n    : <div className="flex flex-wrap gap-2"><SecondaryButton href="#operator-instructions">My instructions</SecondaryButton><SecondaryButton href="/operator/routes">My routes</SecondaryButton></div>;',
+              "profile header instruction action",
+          )
+          replace_once(
+              profile_path,
+              '    <section className="space-y-3">\n      <div>\n        <h2 className="text-lg font-semibold text-slate-900">Money, debt, purchases, and expenses</h2>',
+              '    <OperatorInstructionsPanel initialOperatorId={id} lockOperator />\n\n    <section className="space-y-3">\n      <div>\n        <h2 className="text-lg font-semibold text-slate-900">Money, debt, purchases, and expenses</h2>',
+              "profile instruction panel",
+          )
+
+          panel_path = "src/components/operator/OperatorInstructionsPanel.tsx"
+          replace_once(
+              panel_path,
+              '  const advance = async (instructionId: string, action: "acknowledge" | "complete" | "cancel") => {',
+              '  const advance = async (instructionId: string, action: "acknowledge" | "complete" | "cancel", explicitNote?: string) => {',
+              "explicit instruction action note",
+          )
+          replace_once(
+              panel_path,
+              '          note: completionNotes[instructionId] || null,',
+              '          note: explicitNote ?? completionNotes[instructionId] || null,',
+              "instruction action note payload",
+          )
+          replace_once(
+              panel_path,
+              '''                            onClick={() => {
+                              const reason = window.prompt(t("Why are you cancelling this instruction? (optional)", "ما سبب إلغاء التعليمات؟ (اختياري)")) ?? "";
+                              setCompletionNotes((current) => ({ ...current, [instruction.id]: reason }));
+                              window.setTimeout(() => void advance(instruction.id, "cancel"), 0);
+                            }}''',
+              '''                            onClick={() => {
+                              const reason = window.prompt(t("Why are you cancelling this instruction? (optional)", "ما سبب إلغاء التعليمات؟ (اختياري)")) ?? "";
+                              void advance(instruction.id, "cancel", reason);
+                            }}''',
+              "reliable cancellation reason",
+          )
+          PY
+
+      - name: Run operator instruction regression tests
+        run: node --test scripts/test-operator-instructions.mjs
+
+      - name: Remove one-time workflow
+        run: rm .github/workflows/apply-operator-instructions-integration.yml
+
+      - name: Commit integrated source
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/app/operator/routes/page.tsx src/app/team/'[id]'/page.tsx src/components/operator/OperatorInstructionsPanel.tsx .github/workflows/apply-operator-instructions-integration.yml
+          git commit -m "Integrate operator instructions into daily workflow"
+          git push origin HEAD:agent/operator-instructions-price-tasks
