@@ -1,1 +1,0 @@
-Trigger the one-time carried quantity validation patch.
