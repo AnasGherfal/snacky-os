@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --webpack",
+    "prebuild": "node scripts/apply-stop-carried-quantity-patch.mjs && node --test scripts/test-stop-carried-quantity.mjs",
     "build": "node scripts/next-build.mjs",
     "start": "next start",
     "lint": "eslint",
