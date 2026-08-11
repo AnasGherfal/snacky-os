@@ -10,7 +10,7 @@ const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 const actionsPath = "src/lib/operator-actions.ts";
 const stopApiPath = "src/app/api/operator/routes/[id]/stops/[stopId]/route.ts";
 
- test("stop completion validates against the same operator-bag ledger shown in the UI", () => {
+test("stop completion validates against the same operator-bag ledger shown in the UI", () => {
   const actions = read(actionsPath);
   const stopApi = read(stopApiPath);
 
@@ -40,9 +40,10 @@ test("machine-storage quantities are not posted again as normal machine fills", 
   assert.match(actions, /movement_type: "route_to_machine_storage"/);
 });
 
-test("carried-quantity errors identify the product and quantities", () => {
+test("actual field fill above recorded carried stock is logged instead of blocking stop completion", () => {
   const actions = read(actionsPath);
 
-  assert.match(actions, /Requested \$\{quantity\}; carried for this stop \$\{available\}/);
-  assert.match(actions, /if \(message\.includes\("cannot exceed"\)\) return `Could not complete stop\. \$\{message\}`/);
+  assert.match(actions, /Actual field fill exceeds recorded carried quantity; completing with inventory discrepancy/);
+  assert.match(actions, /discrepancy_quantity: shortage/);
+  assert.doesNotMatch(actions, /throw new Error\(\s*`Filled quantity cannot exceed carried quantity/);
 });
