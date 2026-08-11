@@ -120,7 +120,6 @@ export function ManualRouteSalesSection({
   const tr = (en: string, ar: string) => t(en, locale === "ar" ? ar : en);
   const [expanded, setExpanded] = useState(Boolean(loadError));
   const [showForm, setShowForm] = useState(false);
-  const [sourceMode, setSourceMode] = useState<"preferred" | "all">("preferred");
   const [productId, setProductId] = useState("");
   const [fallbackProductName, setFallbackProductName] = useState("");
   const [quantity, setQuantity] = useState(1);
@@ -145,7 +144,7 @@ export function ManualRouteSalesSection({
     return () => window.removeEventListener("snacky:open-manual-sale", openManualSale);
   }, []);
 
-  const productChoices = sourceMode === "preferred" ? preferredProducts : allProducts;
+  const productChoices = allProducts;
   const selectedProduct = useMemo(
     () => allProducts.find((product) => product.id === productId) ?? preferredProducts.find((product) => product.id === productId) ?? null,
     [allProducts, preferredProducts, productId],
@@ -350,20 +349,15 @@ export function ManualRouteSalesSection({
 
           {showForm && !routeLocked ? (
             <div className="space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={() => setSourceMode("preferred")} className={sourceMode === "preferred" ? "btn-primary" : "btn-secondary"}>
-                  {tr("Priority products", "المنتجات ذات الأولوية") }
-                </button>
-                <button type="button" onClick={() => setSourceMode("all")} className={sourceMode === "all" ? "btn-primary" : "btn-secondary"}>
-                  {tr("Other storage products", "منتجات مخزنية أخرى")}
-                </button>
+              <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
+                {tr("Search the full active product catalog. Machine and route products are still shown first when relevant.", "ابحث في جميع المنتجات النشطة. منتجات الماكينة والجولة تبقى ظاهرة كخيارات مفضلة عند ارتباطها بالموقع.")}
               </div>
 
               <ManualSaleProductPicker
                 products={productChoices}
                 value={productId}
                 onChange={handleSelectProduct}
-                label={sourceMode === "preferred" ? tr("Product", "المنتج") : tr("Other storage products", "منتجات مخزنية أخرى")}
+                label={tr("Product", "المنتج")}
               />
 
               <label className="block">
@@ -520,8 +514,11 @@ function ManualSaleProductPicker({
   const selected = products.find((product) => product.id === value) ?? null;
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) return products.slice(0, 8);
-    return products.filter((product) => [product.name, product.sku, product.barcode, product.category, product.brand].some((field) => String(field ?? "").toLowerCase().includes(needle))).slice(0, 8);
+    if (!needle) return products.slice(0, 20);
+    return products
+      .filter((product) => [product.name, product.sku, product.barcode, product.category, product.brand]
+        .some((field) => String(field ?? "").toLowerCase().includes(needle)))
+      .slice(0, 50);
   }, [products, query]);
 
   return (
@@ -532,7 +529,7 @@ function ManualSaleProductPicker({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           className="min-h-12 w-full rounded-md border-0 px-2 py-2 text-base outline-none ring-0 md:text-sm"
-          placeholder={selected ? `${selected.name} - ${selected.sku ?? t("No SKU", "No SKU")}` : t("Search name, SKU, barcode, category, or brand", "Search name, SKU, barcode, category, or brand")}
+          placeholder={selected ? `${selected.name} - ${selected.sku ?? tr("No SKU", "بدون رمز")}` : tr("Search all products by name, SKU, barcode, category, or brand", "ابحث في كل المنتجات بالاسم أو الرمز أو الباركود أو التصنيف أو العلامة")}
         />
         <div className="mt-2 max-h-56 space-y-1 overflow-y-auto">
           {selected && !query.trim() ? (
