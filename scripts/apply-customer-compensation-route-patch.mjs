@@ -94,11 +94,11 @@ patchFile(
     {
       label: "compensation reason labels",
       oldText: `function clientId() {
-  return \`${Date.now()}-${Math.random().toString(16).slice(2)}\`;
+  return \`\${Date.now()}-\${Math.random().toString(16).slice(2)}\`;
 }
 `,
       newText: `function clientId() {
-  return \`${Date.now()}-${Math.random().toString(16).slice(2)}\`;
+  return \`\${Date.now()}-\${Math.random().toString(16).slice(2)}\`;
 }
 
 function compensationReasonLabel(value: string, locale: string) {
