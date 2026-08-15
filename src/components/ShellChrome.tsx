@@ -5,6 +5,7 @@ import { ModuleTabsLayout } from "@/components/ModuleTabsLayout";
 import { SessionGuard } from "@/components/SessionGuard";
 import { Sidebar } from "@/components/Sidebar";
 import { Topbar } from "@/components/Topbar";
+import { CustomerCompensationHistoryPanel } from "@/components/operator/CustomerCompensationHistoryPanel";
 import { AppRole } from "@/lib/authz";
 
 type ShellProfile = {
@@ -29,7 +30,12 @@ export function ShellChrome({ children, profile }: { children: ReactNode; profil
         <Topbar profile={profile} onMenuClick={() => setMobileNavOpen(true)} />
         <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
           <div className="mx-auto w-full max-w-7xl px-3 py-4 sm:px-4 md:p-8">
-            <ModuleTabsLayout profile={profile}>{children}</ModuleTabsLayout>
+            <ModuleTabsLayout profile={profile}>
+              <>
+                {children}
+                <CustomerCompensationHistoryPanel />
+              </>
+            </ModuleTabsLayout>
           </div>
         </main>
       </div>

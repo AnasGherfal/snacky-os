@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --webpack",
-    "prebuild": "node scripts/apply-stop-carried-quantity-patch.mjs && node scripts/apply-stop-overfill-discrepancy-patch.mjs && node scripts/apply-unified-route-builder-patch.mjs && node --test scripts/test-stop-carried-quantity.mjs",
+    "dev": "node scripts/apply-customer-compensation-route-patch.mjs && next dev --webpack",
+    "prebuild": "node scripts/apply-stop-carried-quantity-patch.mjs && node scripts/apply-stop-overfill-discrepancy-patch.mjs && node scripts/apply-unified-route-builder-patch.mjs && node scripts/apply-customer-compensation-route-patch.mjs && node --test scripts/test-stop-carried-quantity.mjs && node --test scripts/test-customer-compensation-route.mjs",
     "build": "node scripts/next-build.mjs",
     "start": "next start",
     "lint": "eslint",
@@ -26,6 +26,7 @@
     "test:route-inventory-regression": "node --test scripts/test-route-inventory-regression.mjs",
     "test:critical-workflows": "node --test scripts/test-critical-workflows.mjs",
     "test:product-history-display": "node --experimental-strip-types --test scripts/test-product-history-display.mjs",
+    "test:customer-compensation": "node scripts/apply-customer-compensation-route-patch.mjs && node --test scripts/test-customer-compensation-route.mjs",
     "smoke:auth-pages": "node --test scripts/smoke-authenticated-pages.mjs",
     "bootstrap:production": "node scripts/bootstrap-production-data.mjs",
     "create:first-owner": "node scripts/create-first-owner.mjs",
@@ -37,7 +38,7 @@
     "check:codex-env": "node scripts/diagnose-finance-sync.mjs --check-env",
     "test:route-product-grouping": "node --experimental-strip-types --test scripts/test-route-product-grouping.mjs",
     "test:route-inventory-summary": "node --experimental-strip-types --test scripts/test-route-inventory-summary.mjs",
-    "smoke": "npm run test:route-product-grouping && npm run test:route-inventory-summary && npm run test:critical-workflows && npm run smoke:auth-pages && npm run test:route-workflow && npm run test:route-inventory-regression && npm run test:vms-import-validation && npm run test:vms-sales-import-parser && npm run test:sales-coverage-cleanup && npm run test:finance-ledger",
+    "smoke": "npm run test:customer-compensation && npm run test:route-product-grouping && npm run test:route-inventory-summary && npm run test:critical-workflows && npm run smoke:auth-pages && npm run test:route-workflow && npm run test:route-inventory-regression && npm run test:vms-import-validation && npm run test:vms-sales-import-parser && npm run test:sales-coverage-cleanup && npm run test:finance-ledger",
     "test:vms-sales-import-parser": "node --experimental-strip-types --test scripts/test-vms-sales-import-parser.mjs",
     "test:sales-coverage-cleanup": "node --experimental-strip-types --test scripts/test-sales-coverage-cleanup.mjs"
   },
