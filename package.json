@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --webpack",
-    "prebuild": "node scripts/apply-stop-carried-quantity-patch.mjs && node scripts/apply-stop-overfill-discrepancy-patch.mjs && node --test scripts/test-stop-carried-quantity.mjs",
+    "prebuild": "node scripts/apply-stop-carried-quantity-patch.mjs && node scripts/apply-stop-overfill-discrepancy-patch.mjs && node scripts/apply-unified-route-builder-patch.mjs && node --test scripts/test-stop-carried-quantity.mjs",
     "build": "node scripts/next-build.mjs",
     "start": "next start",
     "lint": "eslint",
