@@ -56,6 +56,38 @@ test("route inventory summary normalizes historical movement aliases", () => {
   assert.equal(summary[0].remainingQty, 2);
 });
 
+test("explicit-zero stop return records zero filled and all assigned units returned", () => {
+  const summary = summarizeRouteInventoryMovements([
+    { product_id: "product-x", quantity: 5, reason: "storage_to_operator_bag", from_entity_type: "storage", to_entity_type: "operator_bag" },
+    { product_id: "product-x", quantity: 5, reason: "operator_bag_to_storage", from_entity_type: "operator_bag", to_entity_type: "storage" },
+  ]);
+
+  assert.deepEqual(summary[0], {
+    productId: "product-x",
+    loadedQty: 5,
+    filledQty: 0,
+    returnedQty: 5,
+    damagedQty: 0,
+    adjustmentInQty: 0,
+    adjustmentOutQty: 0,
+    remainingQty: 0,
+  });
+});
+
+test("machine fill corrections reduce filled quantity regardless of movement order", () => {
+  const summary = summarizeRouteInventoryMovements([
+    { product_id: "product-x", quantity: 8, reason: "manual_correction", from_entity_type: "machine", to_entity_type: "operator_bag" },
+    { product_id: "product-x", quantity: 8, reason: "operator_bag_to_storage", from_entity_type: "operator_bag", to_entity_type: "storage" },
+    { product_id: "product-x", quantity: 8, reason: "operator_bag_to_machine", from_entity_type: "operator_bag", to_entity_type: "machine" },
+    { product_id: "product-x", quantity: 8, reason: "storage_to_operator_bag", from_entity_type: "storage", to_entity_type: "operator_bag" },
+  ]);
+
+  assert.equal(summary[0].loadedQty, 8);
+  assert.equal(summary[0].filledQty, 0);
+  assert.equal(summary[0].returnedQty, 8);
+  assert.equal(summary[0].remainingQty, 0);
+});
+
 test("inventory movement helpers normalize locations and idempotency keys", () => {
   assert.equal(normalizeInventoryEntityType("route"), "operator_bag");
   assert.equal(normalizeInventoryEntityType("machine"), "machine");
