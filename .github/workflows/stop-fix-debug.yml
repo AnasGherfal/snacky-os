@@ -1,9 +1,9 @@
 name: Stop Fix Build Diagnostic
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/fix-stop-photo-storage-manual-sales
+      - master
 
 jobs:
   build:
