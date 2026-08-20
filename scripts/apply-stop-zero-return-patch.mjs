@@ -24,9 +24,13 @@ function patchFile(filePath, patches) {
 patchFile(operatorActionsPath, [
   {
     label: "explicit-zero return helper import",
-    marker: 'import { buildExplicitZeroFillReturnPlans } from "@/lib/route-stop-zero-return";',
+    marker: "buildExplicitZeroFillReturnAdjustments,",
     oldText: 'import { summarizeRouteInventoryMovements } from "@/lib/route-inventory-summary";',
-    newText: 'import { summarizeRouteInventoryMovements } from "@/lib/route-inventory-summary";\nimport { buildExplicitZeroFillReturnPlans } from "@/lib/route-stop-zero-return";',
+    newText: `import { summarizeRouteInventoryMovements } from "@/lib/route-inventory-summary";
+import {
+  buildExplicitZeroFillReturnAdjustments,
+  buildExplicitZeroFillReturnPlans,
+} from "@/lib/route-stop-zero-return";`,
   },
   {
     label: "route stock ids for explicit-zero return reconciliation",
@@ -43,7 +47,7 @@ patchFile(operatorActionsPath, [
   },
   {
     label: "explicit-zero stop return inventory reconciliation",
-    marker: "// Explicit-zero assigned fills are returned to storage immediately.",
+    marker: "// Explicit-zero assigned fills are reconciled with storage immediately.",
     oldText: `    if (movements.length) {
       await upsertInventoryMovementsWithFallback({
         supabase,
@@ -63,82 +67,126 @@ patchFile(operatorActionsPath, [
       });
     }
 
-    // Explicit-zero assigned fills are returned to storage immediately.
-    // This records the field truth that the operator brought none of this stop's assigned quantity,
-    // while partial underfills remain in the route bag for the normal leftovers workflow.
+    // Explicit-zero assigned fills are reconciled with storage immediately.
+    // Partial underfills remain in the route bag for the normal leftovers workflow.
+    // Existing return/reversal movements are read first so retries and later stop edits stay balanced.
     const zeroFillReturnPlans = buildExplicitZeroFillReturnPlans(normalizedFilledItems);
-    if (zeroFillReturnPlans.length) {
-      const { data: zeroFillStorageId, error: zeroFillStorageError } = await supabase.rpc(
-        "snacky_route_leftover_storage_location_id",
-        { p_route_id: routeId },
+    const { data: existingZeroFillMovements, error: existingZeroFillError } = await supabase
+      .from("inventory_movements")
+      .select("product_id, quantity, from_entity_type, to_entity_type, source_type")
+      .eq("related_route_id", routeId)
+      .eq("related_route_stop_id", stopId)
+      .in("source_type", ["route_stop_zero_fill_return", "route_stop_zero_fill_return_reversal"])
+      .limit(5000);
+    if (existingZeroFillError) {
+      throwActionError(existingZeroFillError, "Could not verify previous zero-fill returns.");
+    }
+
+    const existingZeroFillReturnByProduct = new Map<string, number>();
+    (existingZeroFillMovements ?? []).forEach((movement: any) => {
+      const productId = String(movement.product_id ?? "");
+      const quantity = unitQuantity(movement.quantity);
+      if (!productId || quantity <= 0) return;
+      const isReturn = movement.from_entity_type === "operator_bag" && movement.to_entity_type === "storage";
+      const isReversal = movement.from_entity_type === "storage" && movement.to_entity_type === "operator_bag";
+      if (!isReturn && !isReversal) return;
+      const delta = isReturn ? quantity : -quantity;
+      existingZeroFillReturnByProduct.set(
+        productId,
+        (existingZeroFillReturnByProduct.get(productId) ?? 0) + delta,
       );
-      if (zeroFillStorageError) {
-        throwActionError(zeroFillStorageError, "Could not load storage for the zero-fill return.");
-      }
-      if (!zeroFillStorageId) throw new Error("No active storage location found for the zero-fill return.");
+    });
 
-      const zeroFillReturnSourceId = routeSourceUuid(
-        stopId,
-        "route-stop-zero-fill-return:" + routeId + ":" + stopId,
-      );
-      const zeroFillReturnRows = zeroFillReturnPlans.map((plan) => ({
-        product_id: plan.productId,
-        quantity: plan.quantity,
-        from_entity_type: "operator_bag" as const,
-        from_entity_id: route.operator_id,
-        to_entity_type: "storage" as const,
-        to_entity_id: zeroFillStorageId,
-        reason: "operator_bag_to_storage" as const,
-        related_route_id: routeId,
-        related_route_stop_id: stopId,
-        related_machine_id: machineId,
-        related_pickup_batch_id: null,
-        idempotency_key: inventoryMovementIdempotencyKey(
-          "route-stop-zero-fill-return",
-          routeId,
-          stopId,
-          machineId,
-          plan.productId,
-          zeroFillStorageId,
-          route.operator_id ?? "",
-          plan.quantity,
-        ),
-        source_type: "route_stop_zero_fill_return",
-        source_id: zeroFillReturnSourceId,
-        created_by: route.operator_id,
-        notes: "Assigned stop quantity returned to storage because the operator recorded an explicit zero fill.",
-      }));
+    const zeroFillReturnAdjustments = buildExplicitZeroFillReturnAdjustments(
+      zeroFillReturnPlans,
+      existingZeroFillReturnByProduct,
+    );
+    const zeroFillTrackedProductIds = new Set([
+      ...zeroFillReturnPlans.map((plan) => plan.productId),
+      ...existingZeroFillReturnByProduct.keys(),
+    ]);
 
-      await upsertInventoryMovementsWithFallback({
-        supabase,
-        rows: zeroFillReturnRows,
-        routeId,
-        operationLabel: "create explicit-zero stop return movements",
-      });
-
-      zeroFillReturnPlans.forEach((plan) => {
-        logCarriedAfter.set(
-          plan.productId,
-          (logCarriedAfter.get(plan.productId) ?? 0) - plan.quantity,
+    if (zeroFillTrackedProductIds.size) {
+      let zeroFillStorageId: string | null = null;
+      if (zeroFillReturnAdjustments.length) {
+        const storageLookup = await supabase.rpc(
+          "snacky_route_leftover_storage_location_id",
+          { p_route_id: routeId },
         );
-      });
+        if (storageLookup.error) {
+          throwActionError(storageLookup.error, "Could not load storage for the zero-fill return.");
+        }
+        zeroFillStorageId = String(storageLookup.data ?? "").trim() || null;
+        if (!zeroFillStorageId) throw new Error("No active storage location found for the zero-fill return.");
 
-      const { data: refreshedReturnMovements, error: refreshedReturnError } = await supabase
-        .from("inventory_movements")
-        .select("product_id, quantity")
-        .eq("related_route_id", routeId)
-        .eq("reason", "operator_bag_to_storage")
-        .limit(5000);
-      if (refreshedReturnError) {
-        throwActionError(refreshedReturnError, "Could not reload returned route stock after the zero fill.");
+        const zeroFillReturnSourceId = routeSourceUuid(
+          stopSubmissionId,
+          "route-stop-zero-fill-return:" + routeId + ":" + stopId + ":" + stopSubmissionId,
+        );
+        const zeroFillReturnRows = zeroFillReturnAdjustments.map((adjustment) => {
+          const returning = adjustment.direction === "return";
+          return {
+            product_id: adjustment.productId,
+            quantity: adjustment.quantity,
+            from_entity_type: returning ? "operator_bag" : "storage",
+            from_entity_id: returning ? route.operator_id : zeroFillStorageId,
+            to_entity_type: returning ? "storage" : "operator_bag",
+            to_entity_id: returning ? zeroFillStorageId : route.operator_id,
+            reason: returning ? "operator_bag_to_storage" : "manual_correction",
+            related_route_id: routeId,
+            related_route_stop_id: stopId,
+            related_machine_id: machineId,
+            related_pickup_batch_id: null,
+            idempotency_key: inventoryMovementIdempotencyKey(
+              returning ? "route-stop-zero-fill-return" : "route-stop-zero-fill-return-reversal",
+              routeId,
+              stopId,
+              machineId,
+              adjustment.productId,
+              zeroFillStorageId,
+              route.operator_id ?? "",
+              adjustment.quantity,
+              stopSubmissionId,
+            ),
+            source_type: returning ? "route_stop_zero_fill_return" : "route_stop_zero_fill_return_reversal",
+            source_id: zeroFillReturnSourceId,
+            created_by: route.operator_id,
+            notes: returning
+              ? "Assigned stop quantity returned to storage because the operator recorded an explicit zero fill."
+              : "Reversed a prior explicit-zero storage return after the stop quantity was edited.",
+          };
+        });
+
+        await upsertInventoryMovementsWithFallback({
+          supabase,
+          rows: zeroFillReturnRows,
+          routeId,
+          operationLabel: "reconcile explicit-zero stop return movements",
+        });
+
+        zeroFillReturnAdjustments.forEach((adjustment) => {
+          const carriedDelta = adjustment.direction === "return" ? -adjustment.quantity : adjustment.quantity;
+          logCarriedAfter.set(
+            adjustment.productId,
+            (logCarriedAfter.get(adjustment.productId) ?? 0) + carriedDelta,
+          );
+        });
       }
 
-      const zeroFillReturnedByProduct = productQuantitiesFromMovements(refreshedReturnMovements);
-      const zeroFillProductIds = new Set(zeroFillReturnPlans.map((plan) => plan.productId));
+      const { data: refreshedRouteMovements, error: refreshedRouteMovementError } = await supabase
+        .from("inventory_movements")
+        .select("product_id, quantity, reason, from_entity_type, to_entity_type")
+        .eq("related_route_id", routeId)
+        .limit(5000);
+      if (refreshedRouteMovementError) {
+        throwActionError(refreshedRouteMovementError, "Could not reload the route summary after the zero-fill return.");
+      }
+
+      const refreshedRouteSummary = routeInventorySummaryByProduct(refreshedRouteMovements);
       for (const line of routeStockLines ?? []) {
         const productId = String(line.product_id ?? "");
-        if (!zeroFillProductIds.has(productId)) continue;
-        const returnedQty = Math.max(0, zeroFillReturnedByProduct.get(productId) ?? 0);
+        if (!zeroFillTrackedProductIds.has(productId)) continue;
+        const returnedQty = Math.max(0, refreshedRouteSummary.get(productId)?.returnedQty ?? 0);
         const { error: stockLineReturnError } = await supabase
           .from("route_stock_lines")
           .update({ returned_qty: returnedQty, updated_at: new Date().toISOString() })
@@ -148,16 +196,20 @@ patchFile(operatorActionsPath, [
         }
       }
 
-      console.info("[operator:complete-stop] Explicit-zero assigned quantities returned to storage", {
+      console.info("[operator:complete-stop] Explicit-zero assigned quantities reconciled with storage", {
         route_id: routeId,
         route_stop_id: stopId,
         machine_id: machineId,
         storage_id: zeroFillStorageId,
-        returned_items: zeroFillReturnPlans.map((plan) => ({
+        desired_returns: zeroFillReturnPlans.map((plan) => ({
           product_id: plan.productId,
           quantity: plan.quantity,
         })),
-        movement_count: zeroFillReturnRows.length,
+        saved_adjustments: zeroFillReturnAdjustments.map((adjustment) => ({
+          product_id: adjustment.productId,
+          quantity: adjustment.quantity,
+          direction: adjustment.direction,
+        })),
       });
     }
 
@@ -179,14 +231,29 @@ patchFile(adminRoutePagePath, [
     newText: '    const fills = (fillLines ?? []).filter((line: any) => String(line.machine_id ?? "") === machineId && String(line.action_type ?? "") !== "missing_product_report");',
   },
   {
-    label: "route returned totals include explicit-zero storage returns",
-    marker: 'const zeroFillReturnMovements = (movements ?? []).filter((movement: any) => String(movement.source_type ?? "") === "route_stop_zero_fill_return");',
+    label: "route returned totals include net explicit-zero storage returns",
+    marker: 'const zeroFillReturnMovementRows = (movements ?? []).filter((movement: any) => ["route_stop_zero_fill_return", "route_stop_zero_fill_return_reversal"].includes(String(movement.source_type ?? "")));',
     oldText: `  const damagedAdjustments = routeAdjustments.filter((row: any) => String(row.adjustment_type ?? "") === "damaged");
   const returnedAdjustments = routeAdjustments.filter((row: any) => String(row.adjustment_type ?? "") === "returned_from_machine");
   const machineStorageMovements = (movements ?? []).filter((movement: any) => {`,
     newText: `  const damagedAdjustments = routeAdjustments.filter((row: any) => String(row.adjustment_type ?? "") === "damaged");
   const returnedAdjustments = routeAdjustments.filter((row: any) => String(row.adjustment_type ?? "") === "returned_from_machine");
-  const zeroFillReturnMovements = (movements ?? []).filter((movement: any) => String(movement.source_type ?? "") === "route_stop_zero_fill_return");
+  const zeroFillReturnMovementRows = (movements ?? []).filter((movement: any) => ["route_stop_zero_fill_return", "route_stop_zero_fill_return_reversal"].includes(String(movement.source_type ?? "")));
+  const zeroFillReturnByScope = new Map<string, any>();
+  zeroFillReturnMovementRows.forEach((movement: any) => {
+    const productId = String(movement.product_id ?? "");
+    const stopScope = String(movement.related_route_stop_id ?? "");
+    const machineScope = String(movement.related_machine_id ?? "");
+    if (!productId) return;
+    const key = [stopScope, machineScope, productId].join(":");
+    const current = zeroFillReturnByScope.get(key) ?? { ...movement, quantity: 0 };
+    const direction = String(movement.source_type ?? "") === "route_stop_zero_fill_return_reversal" ? -1 : 1;
+    current.quantity = Number(current.quantity ?? 0) + direction * Number(movement.quantity ?? 0);
+    zeroFillReturnByScope.set(key, current);
+  });
+  const zeroFillReturnMovements = Array.from(zeroFillReturnByScope.values())
+    .map((movement: any) => ({ ...movement, quantity: Math.max(0, Number(movement.quantity ?? 0)) }))
+    .filter((movement: any) => Number(movement.quantity ?? 0) > 0);
   const machineStorageMovements = (movements ?? []).filter((movement: any) => {`,
   },
   {
