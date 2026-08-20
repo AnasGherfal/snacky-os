@@ -28,13 +28,13 @@ test("manual sales render the full supplied product catalog", () => {
   assert.match(api, /manualSaleProductOptions/);
 });
 
-test("explicit-zero return writes through the privileged ledger and verifies storage balance", () => {
+test("explicit-zero return writes through the privileged canonical inventory ledger", () => {
   const source = read("src/lib/operator-actions.ts");
   assert.match(source, /snacky:zero-fill-privileged-ledger-client/);
   assert.match(source, /const zeroFillLedgerClient = getSupabaseAdminClient\(\) \?\? supabase/);
+  assert.match(source, /snacky:zero-fill-storage-ledger-write/);
   assert.match(source, /supabase: zeroFillLedgerClient/);
-  assert.match(source, /snacky:zero-fill-storage-ledger-verification/);
-  assert.match(source, /from\("current_inventory_by_location"\)/);
-  assert.match(source, /Expected storage/);
+  assert.match(source, /reason: returning \? "operator_bag_to_storage"/);
+  assert.match(source, /refreshedRouteMovementError \} = await zeroFillLedgerClient/);
   assert.match(source, /returned_qty: returnedQty/);
 });
