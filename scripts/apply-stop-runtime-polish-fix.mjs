@@ -152,7 +152,7 @@ patchExactlyOnce(
           const afterQty = zeroFillStorageAfterByProduct.get(productId) ?? 0;
           if (afterQty !== beforeQty + expectedDelta) {
             throw new Error(
-              `Storage return verification failed for product ${productId}. Expected storage ${beforeQty + expectedDelta}, found ${afterQty}.`,
+              "Storage return verification failed for product " + productId + ". Expected storage " + (beforeQty + expectedDelta) + ", found " + afterQty + ".",
             );
           }
         }
