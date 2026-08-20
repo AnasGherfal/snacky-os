@@ -40,6 +40,16 @@ function createRow(productId: string): RouteInventorySummaryRow {
 
 function reasonBucket(movement: RouteInventoryMovementRow) {
   const reason = String(movement.reason ?? "").trim();
+  const fromType = normalizeInventoryEntityType(movement.from_entity_type);
+  const toType = normalizeInventoryEntityType(movement.to_entity_type);
+
+  if (reason === "manual_correction") {
+    if (fromType === "machine" && toType === "operator_bag") return "fill_correction" as const;
+    if (fromType === "storage" && toType === "operator_bag") return "return_correction" as const;
+    if (fromType === "operator_bag" && toType === "machine") return "filled" as const;
+    if (fromType === "operator_bag" && toType === "storage") return "returned" as const;
+  }
+
   switch (reason) {
     case "storage_to_route":
     case "storage_to_operator_bag":
@@ -88,10 +98,10 @@ export function summarizeRouteInventoryMovements(movements: RouteInventoryMoveme
     const productId = String(movement.product_id ?? "").trim();
     if (!productId) continue;
 
-    const row = rows.get(productId) ?? createRow(productId);
     const qty = quantity(movement.quantity);
     if (qty <= 0) continue;
 
+    const row = rows.get(productId) ?? createRow(productId);
     switch (reasonBucket(movement)) {
       case "loaded":
         row.loadedQty += qty;
@@ -99,28 +109,36 @@ export function summarizeRouteInventoryMovements(movements: RouteInventoryMoveme
       case "filled":
         row.filledQty += qty;
         break;
+      case "fill_correction":
+        row.filledQty -= qty;
+        break;
       case "returned":
         row.returnedQty += qty;
+        break;
+      case "return_correction":
+        row.returnedQty -= qty;
         break;
       case "damaged":
         row.damagedQty += qty;
         break;
       case "adjustment": {
         const delta = adjustmentDelta(movement);
-        if (delta > 0) {
-          row.adjustmentInQty += delta;
-        } else if (delta < 0) {
-          row.adjustmentOutQty += Math.abs(delta);
-        }
+        if (delta > 0) row.adjustmentInQty += delta;
+        else if (delta < 0) row.adjustmentOutQty += Math.abs(delta);
         break;
       }
       default:
         break;
     }
-
-    row.remainingQty = row.loadedQty + row.adjustmentInQty - row.adjustmentOutQty - row.filledQty - row.returnedQty - row.damagedQty;
     rows.set(productId, row);
   }
 
-  return Array.from(rows.values()).sort((a, b) => a.productId.localeCompare(b.productId));
+  return Array.from(rows.values())
+    .map((row) => {
+      row.filledQty = Math.max(0, row.filledQty);
+      row.returnedQty = Math.max(0, row.returnedQty);
+      row.remainingQty = row.loadedQty + row.adjustmentInQty - row.adjustmentOutQty - row.filledQty - row.returnedQty - row.damagedQty;
+      return row;
+    })
+    .sort((left, right) => left.productId.localeCompare(right.productId));
 }
