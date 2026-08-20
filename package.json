@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --webpack",
-    "prebuild": "node scripts/apply-stop-carried-quantity-patch.mjs && node scripts/apply-stop-overfill-discrepancy-patch.mjs && node scripts/apply-unified-route-builder-patch.mjs && node scripts/apply-route-stop-persistence-fix.mjs && node scripts/apply-route-summary-manual-sales-fix.mjs && node scripts/apply-stop-zero-return-patch.mjs && node --test scripts/test-stop-carried-quantity.mjs && node --test scripts/test-route-stop-persistence-fix.mjs && node --experimental-strip-types --test scripts/test-stop-zero-return.mjs && node --experimental-strip-types --test scripts/test-route-inventory-summary.mjs",
+    "prebuild": "node scripts/apply-stop-carried-quantity-patch.mjs && node scripts/apply-stop-overfill-discrepancy-patch.mjs && node scripts/apply-unified-route-builder-patch.mjs && node scripts/apply-route-stop-persistence-fix.mjs && node scripts/apply-route-summary-manual-sales-fix.mjs && node scripts/apply-stop-zero-return-patch.mjs && node scripts/apply-stop-runtime-polish-fix.mjs && node --test scripts/test-stop-carried-quantity.mjs && node --test scripts/test-route-stop-persistence-fix.mjs && node --experimental-strip-types --test scripts/test-stop-zero-return.mjs && node --experimental-strip-types --test scripts/test-route-inventory-summary.mjs && node --experimental-strip-types --test scripts/test-stop-runtime-polish.mjs",
     "build": "node scripts/next-build.mjs",
     "start": "next start",
     "lint": "eslint",
@@ -37,7 +37,7 @@
     "check:codex-env": "node scripts/diagnose-finance-sync.mjs --check-env",
     "test:route-product-grouping": "node --experimental-strip-types --test scripts/test-route-product-grouping.mjs",
     "test:route-inventory-summary": "node --experimental-strip-types --test scripts/test-route-inventory-summary.mjs",
-    "test:stop-zero-return": "node scripts/apply-stop-carried-quantity-patch.mjs && node scripts/apply-stop-overfill-discrepancy-patch.mjs && node scripts/apply-stop-zero-return-patch.mjs && node --experimental-strip-types --test scripts/test-stop-zero-return.mjs && node --experimental-strip-types --test scripts/test-route-inventory-summary.mjs",
+    "test:stop-zero-return": "node scripts/apply-stop-carried-quantity-patch.mjs && node scripts/apply-stop-overfill-discrepancy-patch.mjs && node scripts/apply-stop-zero-return-patch.mjs && node scripts/apply-stop-runtime-polish-fix.mjs && node --experimental-strip-types --test scripts/test-stop-zero-return.mjs && node --experimental-strip-types --test scripts/test-route-inventory-summary.mjs && node --experimental-strip-types --test scripts/test-stop-runtime-polish.mjs",
     "smoke": "npm run test:stop-zero-return && npm run test:route-product-grouping && npm run test:route-inventory-summary && npm run test:critical-workflows && npm run smoke:auth-pages && npm run test:route-workflow && npm run test:route-inventory-regression && npm run test:vms-import-validation && npm run test:vms-sales-import-parser && npm run test:sales-coverage-cleanup && npm run test:finance-ledger",
     "test:vms-sales-import-parser": "node --experimental-strip-types --test scripts/test-vms-sales-import-parser.mjs",
     "test:sales-coverage-cleanup": "node --experimental-strip-types --test scripts/test-sales-coverage-cleanup.mjs"
