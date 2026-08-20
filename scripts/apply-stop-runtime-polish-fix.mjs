@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const quickActionsPath = path.join(root, "src/components/operator/RouteStopQuickActions.tsx");
-const manualSalesPath = path.join(root, "src/components/operator/ManualRouteSalesSection.tsx");
 const operatorActionsPath = path.join(root, "src/lib/operator-actions.ts");
 
 function patchExactlyOnce(filePath, oldText, newText, marker, label) {
@@ -26,30 +25,6 @@ patchExactlyOnce(
       // The persisted-photo event updates the stop UI immediately; do not reload the page.`,
   "snacky:machine-photo-save-no-reload",
   "machine photo save without page reload",
-);
-
-patchExactlyOnce(
-  manualSalesPath,
-  `    return [...allProducts]
-      .filter((product) => !needle || [product.name, product.sku, product.barcode, product.category, product.brand].some((value) => String(value ?? "").toLowerCase().includes(needle)))
-      .sort((a, b) => {
-        const preference = Number(preferredProductIds.has(b.id)) - Number(preferredProductIds.has(a.id));
-        if (preference) return preference;
-        return a.name.localeCompare(b.name);
-      })
-      .slice(0, 24);`,
-  `    // snacky:manual-sales-full-catalog
-    // Manual sales search the complete catalog supplied by the stop API. Machine-preferred
-    // products are only sorted first; they never restrict or truncate the selectable catalog.
-    return [...allProducts]
-      .filter((product) => !needle || [product.name, product.sku, product.barcode, product.category, product.brand].some((value) => String(value ?? "").toLowerCase().includes(needle)))
-      .sort((a, b) => {
-        const preference = Number(preferredProductIds.has(b.id)) - Number(preferredProductIds.has(a.id));
-        if (preference) return preference;
-        return a.name.localeCompare(b.name);
-      });`,
-  "snacky:manual-sales-full-catalog",
-  "manual sales full catalog",
 );
 
 patchExactlyOnce(
@@ -111,4 +86,4 @@ patchExactlyOnce(
   "zero-fill refreshed ledger read",
 );
 
-console.log("Applied machine-photo no-reload, privileged zero-fill storage write, and full manual-sales catalog fixes.");
+console.log("Applied machine-photo no-reload and privileged zero-fill storage write fixes. Manual sales already uses the full product catalog after the existing route-summary patch.");
