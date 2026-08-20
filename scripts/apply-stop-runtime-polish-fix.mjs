@@ -59,9 +59,8 @@ patchExactlyOnce(
       .from("inventory_movements")`,
   `    const zeroFillReturnPlans = buildExplicitZeroFillReturnPlans(normalizedFilledItems);
     // snacky:zero-fill-privileged-ledger-client
-    // The operator has already passed route/stop authorization above. Use the server ledger
-    // client for the actual inventory write/read so RLS cannot leave the route summary changed
-    // while the physical storage ledger remains unchanged.
+    // Route/stop authorization has already passed above. Use the server-side ledger client for
+    // the canonical storage movement so operator RLS cannot leave only the route summary changed.
     const zeroFillLedgerClient = getSupabaseAdminClient() ?? supabase;
     const { data: existingZeroFillMovements, error: existingZeroFillError } = await zeroFillLedgerClient
       .from("inventory_movements")`,
@@ -85,81 +84,21 @@ patchExactlyOnce(
 
 patchExactlyOnce(
   operatorActionsPath,
-  `        const zeroFillReturnRows = zeroFillReturnAdjustments.map((adjustment) => {
-          const returning = adjustment.direction === "return";`,
-  `        const zeroFillProductIds = Array.from(new Set(zeroFillReturnAdjustments.map((adjustment) => adjustment.productId)));
-        const { data: zeroFillStorageBeforeRows, error: zeroFillStorageBeforeError } = zeroFillProductIds.length
-          ? await zeroFillLedgerClient
-              .from("current_inventory_by_location")
-              .select("product_id, quantity_on_hand")
-              .eq("location_type", "storage")
-              .eq("location_id", zeroFillStorageId)
-              .in("product_id", zeroFillProductIds)
-          : { data: [], error: null };
-        if (zeroFillStorageBeforeError) {
-          throwActionError(zeroFillStorageBeforeError, "Could not verify storage before the zero-fill return.");
-        }
-        const zeroFillStorageBeforeByProduct = new Map(
-          (zeroFillStorageBeforeRows ?? []).map((row: any) => [String(row.product_id ?? ""), Number(row.quantity_on_hand ?? 0)]),
-        );
-        const zeroFillExpectedStorageDeltaByProduct = new Map<string, number>();
-
-        const zeroFillReturnRows = zeroFillReturnAdjustments.map((adjustment) => {
-          const returning = adjustment.direction === "return";
-          zeroFillExpectedStorageDeltaByProduct.set(
-            adjustment.productId,
-            (zeroFillExpectedStorageDeltaByProduct.get(adjustment.productId) ?? 0) + (returning ? adjustment.quantity : -adjustment.quantity),
-          );`,
-  "zeroFillExpectedStorageDeltaByProduct",
-  "zero-fill storage verification setup",
-);
-
-patchExactlyOnce(
-  operatorActionsPath,
   `        await upsertInventoryMovementsWithFallback({
           supabase,
           rows: zeroFillReturnRows,
           routeId,
           operationLabel: "reconcile explicit-zero stop return movements",
-        });
-
-        zeroFillReturnAdjustments.forEach((adjustment) => {`,
-  `        await upsertInventoryMovementsWithFallback({
+        });`,
+  `        // snacky:zero-fill-storage-ledger-write
+        await upsertInventoryMovementsWithFallback({
           supabase: zeroFillLedgerClient,
           rows: zeroFillReturnRows,
           routeId,
           operationLabel: "reconcile explicit-zero stop return movements",
-        });
-
-        // snacky:zero-fill-storage-ledger-verification
-        const { data: zeroFillStorageAfterRows, error: zeroFillStorageAfterError } = zeroFillProductIds.length
-          ? await zeroFillLedgerClient
-              .from("current_inventory_by_location")
-              .select("product_id, quantity_on_hand")
-              .eq("location_type", "storage")
-              .eq("location_id", zeroFillStorageId)
-              .in("product_id", zeroFillProductIds)
-          : { data: [], error: null };
-        if (zeroFillStorageAfterError) {
-          throwActionError(zeroFillStorageAfterError, "Could not verify storage after the zero-fill return.");
-        }
-        const zeroFillStorageAfterByProduct = new Map(
-          (zeroFillStorageAfterRows ?? []).map((row: any) => [String(row.product_id ?? ""), Number(row.quantity_on_hand ?? 0)]),
-        );
-        for (const productId of zeroFillProductIds) {
-          const beforeQty = zeroFillStorageBeforeByProduct.get(productId) ?? 0;
-          const expectedDelta = zeroFillExpectedStorageDeltaByProduct.get(productId) ?? 0;
-          const afterQty = zeroFillStorageAfterByProduct.get(productId) ?? 0;
-          if (afterQty !== beforeQty + expectedDelta) {
-            throw new Error(
-              "Storage return verification failed for product " + productId + ". Expected storage " + (beforeQty + expectedDelta) + ", found " + afterQty + ".",
-            );
-          }
-        }
-
-        zeroFillReturnAdjustments.forEach((adjustment) => {`,
-  "snacky:zero-fill-storage-ledger-verification",
-  "zero-fill storage write and verification",
+        });`,
+  "snacky:zero-fill-storage-ledger-write",
+  "zero-fill privileged storage ledger write",
 );
 
 patchExactlyOnce(
@@ -172,4 +111,4 @@ patchExactlyOnce(
   "zero-fill refreshed ledger read",
 );
 
-console.log("Applied machine-photo no-reload, verified zero-fill storage return, and full manual-sales catalog fixes.");
+console.log("Applied machine-photo no-reload, privileged zero-fill storage write, and full manual-sales catalog fixes.");
