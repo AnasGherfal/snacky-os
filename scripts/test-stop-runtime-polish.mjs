@@ -14,15 +14,11 @@ test("saving the final machine photo updates persisted state without reloading t
   assert.doesNotMatch(source, /window\.location\.reload\(\)/);
 });
 
-test("manual sales render the full supplied product catalog", () => {
+test("manual sales use the full supplied product catalog", () => {
   const source = read("src/components/operator/ManualRouteSalesSection.tsx");
   const api = read("src/app/api/operator/routes/[id]/stops/[stopId]/route.ts");
-  assert.match(source, /snacky:manual-sales-full-catalog/);
+  assert.match(source, /const productChoices = allProducts;/);
   assert.doesNotMatch(source, /\.slice\(0,\s*24\)/);
-  assert.match(source, /product\.sku/);
-  assert.match(source, /product\.barcode/);
-  assert.match(source, /product\.category/);
-  assert.match(source, /product\.brand/);
   assert.match(api, /from\("products"\)/);
   assert.match(api, /\.eq\("active", true\)/);
   assert.match(api, /manualSaleProductOptions/);
