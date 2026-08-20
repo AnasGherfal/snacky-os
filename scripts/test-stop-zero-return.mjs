@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { buildExplicitZeroFillReturnPlans } from "../src/lib/route-stop-zero-return.ts";
+import { buildExplicitZeroFillReturnAdjustments, buildExplicitZeroFillReturnPlans } from "../src/lib/route-stop-zero-return.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
@@ -38,13 +38,31 @@ test("partial underfills remain in the operator bag for normal leftover reconcil
   );
 });
 
+test("zero-fill return reconciliation can add, keep, and reverse saved returns", () => {
+  const desired = [{ productId: "water", quantity: 5 }];
+  assert.deepEqual(
+    buildExplicitZeroFillReturnAdjustments(desired, new Map()),
+    [{ productId: "water", quantity: 5, direction: "return" }],
+  );
+  assert.deepEqual(
+    buildExplicitZeroFillReturnAdjustments(desired, new Map([["water", 5]])),
+    [],
+  );
+  assert.deepEqual(
+    buildExplicitZeroFillReturnAdjustments([], new Map([["water", 5]])),
+    [{ productId: "water", quantity: 5, direction: "reverse" }],
+  );
+});
+
 test("stop completion persists explicit-zero returns with stable inventory audit data", () => {
   const actions = read("src/lib/operator-actions.ts");
 
   assert.match(actions, /buildExplicitZeroFillReturnPlans\(normalizedFilledItems\)/);
+  assert.match(actions, /buildExplicitZeroFillReturnAdjustments/);
   assert.match(actions, /snacky_route_leftover_storage_location_id/);
-  assert.match(actions, /reason: "operator_bag_to_storage"/);
-  assert.match(actions, /source_type: "route_stop_zero_fill_return"/);
+  assert.match(actions, /operator_bag_to_storage/);
+  assert.match(actions, /route_stop_zero_fill_return_reversal/);
+  assert.match(actions, /stopSubmissionId/);
   assert.match(actions, /related_route_stop_id: stopId/);
   assert.match(actions, /route-stop-zero-fill-return/);
   assert.match(actions, /update\(\{ returned_qty: returnedQty/);
