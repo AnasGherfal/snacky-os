@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --webpack",
-    "prebuild": "node scripts/apply-stop-carried-quantity-patch.mjs && node scripts/apply-stop-overfill-discrepancy-patch.mjs && node scripts/apply-unified-route-builder-patch.mjs && node scripts/apply-route-stop-persistence-fix.mjs && node scripts/apply-route-summary-manual-sales-fix.mjs && node scripts/apply-stop-zero-return-patch.mjs && node scripts/apply-stop-runtime-polish-fix.mjs && node --test scripts/test-stop-carried-quantity.mjs && node --test scripts/test-route-stop-persistence-fix.mjs && node --experimental-strip-types --test scripts/test-stop-zero-return.mjs && node --experimental-strip-types --test scripts/test-route-inventory-summary.mjs && node --experimental-strip-types --test scripts/test-stop-runtime-polish.mjs",
+    "prebuild": "node scripts/apply-stop-carried-quantity-patch.mjs && node scripts/apply-stop-overfill-discrepancy-patch.mjs && node scripts/apply-unified-route-builder-patch.mjs && node scripts/apply-route-stop-persistence-fix.mjs && node scripts/apply-route-summary-manual-sales-fix.mjs && node scripts/apply-stop-zero-return-patch.mjs && node scripts/apply-stop-runtime-polish-fix.mjs && node --test scripts/test-stop-carried-quantity.mjs && node --test scripts/test-route-stop-persistence-fix.mjs && node --experimental-strip-types --test scripts/test-stop-zero-return.mjs && node --experimental-strip-types --test scripts/test-route-inventory-summary.mjs && node --experimental-strip-types --test scripts/test-stop-runtime-polish.mjs && node --experimental-strip-types --test scripts/test-admin-missed-route-pickup.mjs && node --test scripts/test-route-creation-guided-flow.mjs",
     "build": "node scripts/next-build.mjs",
     "start": "next start",
     "lint": "eslint",
@@ -18,6 +18,8 @@
     "test:authz-permissions": "node --experimental-strip-types --test scripts/test-authz-permissions.mjs",
     "test:restock-priority": "node --experimental-strip-types --test scripts/test-restock-priority.mjs",
     "test:route-workflow": "node --experimental-strip-types --test scripts/test-route-workflow.mjs",
+    "test:admin-missed-route-pickup": "node --experimental-strip-types --test scripts/test-admin-missed-route-pickup.mjs",
+    "test:route-creation-guided-flow": "node --test scripts/test-route-creation-guided-flow.mjs",
     "test:route-pickup-checklist": "node --test scripts/test-route-pickup-checklist-save.mjs",
     "check:route-schema": "node --experimental-strip-types scripts/check-route-workflow-schema.mjs",
     "i18n:audit": "node scripts/i18n-audit.mjs",

@@ -1,6 +1,11 @@
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { RouteCompletionImages, type RouteCompletionStop } from "@/components/RouteCompletionImages";
+import {
+  AdminMissedPickupRecorder,
+  type MissedPickupProductOption,
+  type MissedPickupStorageOption,
+} from "@/components/routes/AdminMissedPickupRecorder";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, canExecuteRoutes, isAdminRole, isOwnerAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
@@ -291,7 +296,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     productIds.length ? supabase.from("products").select("id, name").in("id", productIds) : Promise.resolve({ data: [] }),
     supabase
       .from("inventory_movements")
-      .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, movement_type, related_route_stop_id, related_machine_id, notes, created_by, created_at, product:products(name), created_by_member:team_members(full_name)")
+      .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, movement_type, source_type, related_route_stop_id, related_machine_id, notes, created_by, created_at, product:products(name), created_by_member:team_members(full_name)")
       .eq("related_route_id", id)
       .order("created_at", { ascending: false }),
     supabase
@@ -313,7 +318,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   const [manualSalesResult, adjustmentsResult] = await Promise.all([
     supportClient
       .from("route_manual_sales")
-      .select("id, route_id, route_stop_id, machine_id, product_id, product_name, quantity, unit_price_lyd, total_amount_lyd, payment_method, sale_time, status")
+      .select("id, route_id, route_stop_id, machine_id, product_id, product_name, quantity, unit_sale_price_lyd, total_amount_lyd, payment_method, sale_time, status")
       .eq("route_id", id)
       .order("sale_time", { ascending: true }),
     supportClient
@@ -387,6 +392,63 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   const productsPendingAtStorage = routeStops.length > 0 && !routeProductsPrepared && isAvailableRouteStatus(routeRow.status);
   const hasPickMovements = Boolean(movements?.some((movement: any) => movement.reason === "storage_to_operator_bag"));
   const hasReturnMovements = Boolean(movements?.some((movement: any) => movement.reason === "operator_bag_to_storage"));
+  const canRecordMissedPickup = isOwnerAdminRole(profile)
+    && Boolean(profile.team_member_id)
+    && Boolean(routeRow.operator_id)
+    && ["in_progress", "pickup_confirmed"].includes(String(routeRow.status ?? ""))
+    && routePickListItems.length > 0;
+  let missedPickupStorages: MissedPickupStorageOption[] = [];
+  let missedPickupProducts: MissedPickupProductOption[] = [];
+  let missedPickupDataError = "";
+  if (canRecordMissedPickup) {
+    const storageResult = await supabase
+      .from("storage_locations")
+      .select("id, name, location_type")
+      .eq("active", true)
+      .in("location_type", ["main_storage", "vehicle", "temporary", "other"])
+      .order("location_type")
+      .order("name");
+    if (storageResult.error) {
+      console.error("[routes:detail] Failed to load storage locations for missed pickup recorder", { id, error: storageResult.error });
+      missedPickupDataError = tr(locale, "Storage locations could not be loaded for this correction.", "تعذر تحميل مواقع التخزين لهذا التصحيح.");
+    } else {
+      missedPickupStorages = (storageResult.data ?? []).map((storage: { id: string; name: string | null }) => ({ id: String(storage.id), name: String(storage.name ?? tr(locale, "Storage", "المخزن")) }));
+      const activeStorageIds = missedPickupStorages.map((storage) => storage.id);
+      const [catalogResult, inventoryResult] = await Promise.all([
+        supabase.from("products").select("id, name, sku, barcode, category, brand, image_url").eq("active", true).order("name"),
+        activeStorageIds.length
+          ? supabase
+              .from("current_inventory_by_location")
+              .select("product_id, location_id, quantity_on_hand")
+              .eq("location_type", "storage")
+              .in("location_id", activeStorageIds)
+          : Promise.resolve({ data: [], error: null }),
+      ]);
+      if (catalogResult.error || inventoryResult.error) {
+        console.error("[routes:detail] Failed to load products for missed pickup recorder", { id, catalogError: catalogResult.error, inventoryError: inventoryResult.error });
+        missedPickupDataError = tr(locale, "The active product catalog or storage balance could not be loaded.", "تعذر تحميل المنتجات النشطة أو رصيد المخزون.");
+      } else {
+        const quantityByProductAndStorage = new Map<string, number>();
+        (inventoryResult.data ?? []).forEach((row: { product_id: string | null; location_id: string | null; quantity_on_hand: number | string | null }) => {
+          const productId = String(row.product_id ?? "");
+          const storageId = String(row.location_id ?? "");
+          if (!productId || !storageId) return;
+          const key = `${productId}:${storageId}`;
+          quantityByProductAndStorage.set(key, Math.max(0, Number(quantityByProductAndStorage.get(key) ?? 0) + Number(row.quantity_on_hand ?? 0)));
+        });
+        missedPickupProducts = (catalogResult.data ?? []).map((product: { id: string; name: string | null; sku: string | null; barcode: string | null; category: string | null; brand: string | null; image_url: string | null }) => ({
+          id: String(product.id),
+          name: String(product.name ?? tr(locale, "Unknown product", "منتج غير معروف")),
+          sku: product.sku ?? null,
+          barcode: product.barcode ?? null,
+          category: product.category ?? null,
+          brand: product.brand ?? null,
+          imageUrl: product.image_url ?? null,
+          quantityByStorageId: Object.fromEntries(activeStorageIds.map((storageId) => [storageId, Math.max(0, Math.floor(quantityByProductAndStorage.get(`${product.id}:${storageId}`) ?? 0))])),
+        }));
+      }
+    }
+  }
   const canStartRoute = canExecuteRoutes(profile) && Boolean(profile.team_member_id) && isAvailableRouteStatus(routeRow.status) && routeProductsPrepared;
   const continueHref = canExecuteRoutes(profile) && routeProductsPrepared
     ? nextOperatorRouteHref({ routeId: id, status: routeRow.status, hasPickup: hasPickMovements, stops: routeStops, start: true })
@@ -396,6 +458,22 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   const manualSalesTotal = confirmedManualSales.reduce((sum: number, sale: any) => sum + Number(sale.total_amount_lyd ?? 0), 0);
   const damagedAdjustments = routeAdjustments.filter((row: any) => String(row.adjustment_type ?? "") === "damaged");
   const returnedAdjustments = routeAdjustments.filter((row: any) => String(row.adjustment_type ?? "") === "returned_from_machine");
+  const zeroFillReturnMovementRows = (movements ?? []).filter((movement: any) => ["route_stop_zero_fill_return", "route_stop_zero_fill_return_reversal"].includes(String(movement.source_type ?? "")));
+  const zeroFillReturnByScope = new Map<string, any>();
+  zeroFillReturnMovementRows.forEach((movement: any) => {
+    const productId = String(movement.product_id ?? "");
+    const stopScope = String(movement.related_route_stop_id ?? "");
+    const machineScope = String(movement.related_machine_id ?? "");
+    if (!productId) return;
+    const key = [stopScope, machineScope, productId].join(":");
+    const current = zeroFillReturnByScope.get(key) ?? { ...movement, quantity: 0 };
+    const direction = String(movement.source_type ?? "") === "route_stop_zero_fill_return_reversal" ? -1 : 1;
+    current.quantity = Number(current.quantity ?? 0) + direction * Number(movement.quantity ?? 0);
+    zeroFillReturnByScope.set(key, current);
+  });
+  const zeroFillReturnMovements = Array.from(zeroFillReturnByScope.values())
+    .map((movement: any) => ({ ...movement, quantity: Math.max(0, Number(movement.quantity ?? 0)) }))
+    .filter((movement: any) => Number(movement.quantity ?? 0) > 0);
   const machineStorageMovements = (movements ?? []).filter((movement: any) => {
     const reason = String(movement.reason ?? "").toLowerCase();
     return movement.to_entity_type === "machine_storage"
@@ -404,14 +482,23 @@ export default async function RouteDetailPage({ params, searchParams }: { params
       || reason === "machine_storage";
   });
   const damagedTotalQty = damagedAdjustments.reduce((sum: number, row: any) => sum + Number(row.quantity ?? 0), 0);
-  const returnedTotalQty = returnedAdjustments.reduce((sum: number, row: any) => sum + Number(row.quantity ?? 0), 0);
+  const returnedTotalQty = returnedAdjustments.reduce((sum: number, row: any) => sum + Number(row.quantity ?? 0), 0)
+    + zeroFillReturnMovements.reduce((sum: number, row: any) => sum + Number(row.quantity ?? 0), 0);
   const machineStorageTotalQty = machineStorageMovements.reduce((sum: number, row: any) => sum + Number(row.quantity ?? 0), 0);
   const outcomeByMachine = routeStops.map((stop: any) => {
     const machineId = String(stop.machine_id ?? "");
-    const fills = (fillLines ?? []).filter((line: any) => String(line.machine_id ?? "") === machineId && Number(line.actual_qty ?? 0) > 0);
+    const fills = (fillLines ?? []).filter((line: any) => String(line.machine_id ?? "") === machineId && String(line.action_type ?? "") !== "missing_product_report");
     const sales = confirmedManualSales.filter((sale: any) => String(sale.machine_id ?? "") === machineId);
     const damaged = damagedAdjustments.filter((row: any) => String(row.machine_id ?? "") === machineId || String(row.route_stop_id ?? "") === String(stop.id));
-    const returned = returnedAdjustments.filter((row: any) => String(row.machine_id ?? "") === machineId || String(row.route_stop_id ?? "") === String(stop.id));
+    const returned = [
+      ...returnedAdjustments.filter((row: any) => String(row.machine_id ?? "") === machineId || String(row.route_stop_id ?? "") === String(stop.id)),
+      ...zeroFillReturnMovements
+        .filter((row: any) => String(row.related_machine_id ?? "") === machineId || String(row.related_route_stop_id ?? "") === String(stop.id))
+        .map((row: any) => ({
+          ...row,
+          product_name: firstRelation(row.product)?.name ?? tr(locale, "Product", "منتج"),
+        })),
+    ];
     const machineStorage = machineStorageMovements.filter((row: any) => String(row.related_machine_id ?? "") === machineId || String(row.related_route_stop_id ?? "") === String(stop.id));
     return {
       stop,
@@ -694,6 +781,22 @@ export default async function RouteDetailPage({ params, searchParams }: { params
             </DataTable>
           )}
         </section>
+
+        {canRecordMissedPickup ? (
+          missedPickupDataError || !missedPickupStorages.length ? (
+            <section className="surface-card border-amber-200 bg-amber-50 p-4">
+              <h2 className="text-lg font-semibold text-amber-950">{tr(locale, "Missed pickup correction unavailable", "تصحيح الكمية المنسية غير متاح")}</h2>
+              <p className="mt-1 text-sm text-amber-900">{missedPickupDataError || tr(locale, "Add or activate a storage location before recording products taken by the operator.", "أضف موقع تخزين أو فعّله قبل تسجيل المنتجات التي أخذها المشغّل.")}</p>
+            </section>
+          ) : (
+            <AdminMissedPickupRecorder
+              routeId={id}
+              operatorName={operator?.full_name ?? tr(locale, "the assigned operator", "المشغّل المسند")}
+              storages={missedPickupStorages}
+              products={missedPickupProducts}
+            />
+          )
+        ) : null}
 
         <section className="surface-card p-4">
           <h2 className="text-lg font-semibold">{tr(locale, "Machine-level planned items", "عناصر التخطيط حسب الجهاز")}</h2>
