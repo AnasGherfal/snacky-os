@@ -6,6 +6,18 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const file = path.join(root, "src/app/routes/new/RouteCreateForm.tsx");
 let source = fs.readFileSync(file, "utf8");
 
+// The guided builder supersedes this older one-time runtime transform while keeping
+// its machine-scoped product behavior. Treat the committed guided source as canonical
+// so production prebuild remains idempotent.
+if (
+  source.includes('type RouteBuilderStep = "details" | "machines" | "products" | "review"')
+  && source.includes("const applySuggestedQuantities =")
+  && source.includes('builderStep === "review"')
+) {
+  console.log("Guided route builder is already applied.");
+  process.exit(0);
+}
+
 function once(oldText, newText, label) {
   if (source.includes(newText)) return;
   const first = source.indexOf(oldText);

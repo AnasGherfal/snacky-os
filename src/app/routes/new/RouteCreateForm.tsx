@@ -109,7 +109,10 @@ type ManualStopItem = {
   quantity: number;
 };
 
+type RouteBuilderStep = "details" | "machines" | "products" | "review";
+
 type RouteCreateDraft = {
+  builderStep: RouteBuilderStep;
   routeDate: string;
   creationMode: "full" | "stops_only";
   assignmentMode: "unassigned" | "assigned";
@@ -233,6 +236,7 @@ export function RouteCreateForm({
   const router = useRouter();
   const { locale } = useLanguage();
   const saveErrorRef = useRef<HTMLDivElement | null>(null);
+  const [builderStep, setBuilderStep] = useState<RouteBuilderStep>("details");
   const [routeDate, setRouteDate] = useState(defaultRouteDate);
   const [creationMode, setCreationMode] = useState<"full" | "stops_only">("full");
   const [assignmentMode, setAssignmentMode] = useState<"unassigned" | "assigned">("unassigned");
@@ -262,6 +266,7 @@ export function RouteCreateForm({
   const draftKey = useDraftKey("route", ["new"]);
 
   const routeDraft = useMemo<RouteCreateDraft>(() => ({
+    builderStep,
     routeDate,
     creationMode,
     assignmentMode,
@@ -285,6 +290,7 @@ export function RouteCreateForm({
     adminOverride,
     assignmentMode,
     barcode,
+    builderStep,
     creationMode,
     expandedRecommendationGroups,
     finalTakeByRecommendationGroup,
@@ -306,6 +312,7 @@ export function RouteCreateForm({
   const shouldSaveRouteDraft = useCallback((draft: RouteCreateDraft) => {
     return Boolean(
       draft.routeDate !== defaultRouteDate ||
+        draft.builderStep !== "details" ||
         draft.creationMode !== "full" ||
         draft.assignmentMode !== "unassigned" ||
         draft.operatorId ||
@@ -332,15 +339,21 @@ export function RouteCreateForm({
     value: routeDraft,
     shouldSave: shouldSaveRouteDraft,
     onRestore: (draft) => {
+      const restoredCreationMode = draft.creationMode === "stops_only" ? "stops_only" : "full";
+      const restoredMachineIds = Array.isArray(draft.machineIds) ? draft.machineIds : [];
+      const restoredStep: RouteBuilderStep = ["details", "machines", "products", "review"].includes(draft.builderStep) ? draft.builderStep : "details";
+      setBuilderStep(restoredCreationMode === "stops_only" && restoredStep === "products" ? "machines" : restoredStep);
       setRouteDate(draft.routeDate || defaultRouteDate);
-      setCreationMode(draft.creationMode === "stops_only" ? "stops_only" : "full");
+      setCreationMode(restoredCreationMode);
       setAssignmentMode(draft.assignmentMode === "assigned" ? "assigned" : "unassigned");
       setOperatorId(draft.operatorId ?? "");
-      setMachineIds(Array.isArray(draft.machineIds) ? draft.machineIds : []);
-      setRecommendationKeys(Array.isArray(draft.recommendationKeys) ? draft.recommendationKeys : []);
-      setFinalTakeByRecommendationGroup(draft.finalTakeByRecommendationGroup ?? {});
-      setManualStopItems(Array.isArray(draft.manualStopItems) ? draft.manualStopItems : []);
-      setManualMachineId(draft.manualMachineId ?? "");
+      setMachineIds(restoredMachineIds);
+      // Route creation now has one machine-scoped product plan. Legacy drafts must not
+      // restore the old separate recommendation selection and double-count quantities.
+      setRecommendationKeys([]);
+      setFinalTakeByRecommendationGroup({});
+      setManualStopItems((Array.isArray(draft.manualStopItems) ? draft.manualStopItems : []).filter((item) => restoredMachineIds.includes(item.machineId)));
+      setManualMachineId(restoredMachineIds.includes(draft.manualMachineId) ? draft.manualMachineId : restoredMachineIds[0] ?? "");
       setSearch(draft.search ?? "");
       setBarcode(draft.barcode ?? "");
       setRecommendationMachineFilter(draft.recommendationMachineFilter ?? "");
@@ -587,11 +600,6 @@ export function RouteCreateForm({
     };
   }, [filteredRecommendationGroups]);
 
-  const selectedStopCount = useMemo(() => {
-    const recommendedMachines = selectedRecommendationGroups.map((group) => group.machineId);
-    return new Set([...machineIds, ...recommendedMachines]).size;
-  }, [machineIds, selectedRecommendationGroups]);
-
   const machinePlanogramRowsByMachine = useMemo(() => {
     const rowsByMachine = new Map<string, MachinePlanogramRow[]>();
     machinePlanogramRows.forEach((row) => {
@@ -619,24 +627,12 @@ export function RouteCreateForm({
   }, [manualStopItems]);
 
   const manualSectionMachineIds = useMemo(() => {
-    const visibleMachineIds = new Set<string>();
-    machineIds.forEach((machineId) => {
-      if (machineId) visibleMachineIds.add(machineId);
-    });
-    selectedRecommendationGroups.forEach((group) => {
-      if (group.machineId) visibleMachineIds.add(group.machineId);
-    });
-    manualStopItems.forEach((item) => {
-      if (item.machineId) visibleMachineIds.add(item.machineId);
-    });
-    if (manualMachineId) visibleMachineIds.add(manualMachineId);
-
     return machines
       .map((machine) => machine.id)
-      .filter((machineId) => visibleMachineIds.has(machineId));
-  }, [machineIds, machines, manualMachineId, manualStopItems, selectedRecommendationGroups]);
+      .filter((machineId) => machineIds.includes(machineId));
+  }, [machineIds, machines]);
 
-  const selectedManualMachineId = manualMachineId || manualSectionMachineIds[0] || machineIds[0] || "";
+  const selectedManualMachineId = (manualMachineId && machineIds.includes(manualMachineId) ? manualMachineId : "") || manualSectionMachineIds[0] || machineIds[0] || "";
   const selectedManualMachine = selectedManualMachineId ? machinesById.get(selectedManualMachineId) ?? null : null;
   const selectedManualPlanogramRows = useMemo(
     () => (selectedManualMachineId ? (machinePlanogramRowsByMachine.get(selectedManualMachineId) ?? []) : []),
@@ -651,6 +647,13 @@ export function RouteCreateForm({
     [manualItemsByMachine, selectedManualMachineId],
   );
   const manualSearchQuery = deferredSearch.trim().toLowerCase();
+
+  const focusManualMachine = (machineId: string) => {
+    setManualMachineId(machineId);
+    setSearch("");
+    setBarcode("");
+    setNotFoundQuery("");
+  };
 
   const machineScopedProductCandidates = useMemo(() => {
     const candidates = new Map<string, {
@@ -872,6 +875,104 @@ export function RouteCreateForm({
   const showMissingProduct = Boolean(notFoundQuery)
     || (Boolean(search.trim()) && selectedManualMachineId !== "" && machineScopedSearchResults.length === 0 && machineFallbackProducts.length === 0);
 
+  const toggleRouteMachine = (machineId: string) => {
+    if (!machineIds.includes(machineId)) {
+      setMachineIds((current) => [...current, machineId]);
+      focusManualMachine(machineId);
+      setError("");
+      return;
+    }
+
+    const assignedItems = manualItemsByMachine.get(machineId) ?? [];
+    if (assignedItems.length && !window.confirm(tr(
+      locale,
+      `Remove this machine and its ${assignedItems.length} planned products from the route?`,
+      `هل تريد إزالة هذا الجهاز ومنتجاته المخططة وعددها ${assignedItems.length} من الجولة؟`,
+    ))) return;
+
+    setMachineIds((current) => current.filter((id) => id !== machineId));
+    setManualStopItems((current) => current.filter((item) => item.machineId !== machineId));
+    if (manualMachineId === machineId) focusManualMachine("");
+    setError("");
+  };
+
+  const applySuggestedQuantities = (targetMachineIds: string[]) => {
+    const selectedTargets = targetMachineIds.filter((machineId) => machineIds.includes(machineId));
+    if (!selectedTargets.length) return;
+
+    setManualStopItems((current) => {
+      const next = current.filter((item) => machineIds.includes(item.machineId));
+      const itemIndexByKey = new Map(next.map((item, index) => [`${item.machineId}:${item.productId}`, index]));
+      const usedByProduct = new Map<string, number>();
+      next.forEach((item) => usedByProduct.set(item.productId, (usedByProduct.get(item.productId) ?? 0) + unitQuantity(item.quantity)));
+
+      selectedTargets.forEach((machineId) => {
+        (recommendationGroupsByMachine.get(machineId) ?? [])
+          .filter((group) => group.defaultFinalTakeTotal > 0)
+          .forEach((group) => {
+            const key = `${machineId}:${group.productId}`;
+            const existingIndex = itemIndexByKey.get(key);
+            const existingQty = existingIndex === undefined ? 0 : unitQuantity(next[existingIndex]?.quantity);
+            const desiredQty = unitQuantity(group.defaultFinalTakeTotal);
+            const additionalNeeded = Math.max(0, desiredQty - existingQty);
+            const available = unitQuantity(productsById.get(group.productId)?.availableQty);
+            const remainingAvailable = adminOverride ? additionalNeeded : Math.max(0, available - (usedByProduct.get(group.productId) ?? 0));
+            const additionalQty = Math.min(additionalNeeded, remainingAvailable);
+            if (additionalQty <= 0) return;
+            const updatedQty = existingQty + additionalQty;
+            if (existingIndex === undefined) {
+              itemIndexByKey.set(key, next.length);
+              next.push({ machineId, productId: group.productId, quantity: updatedQty });
+            } else {
+              next[existingIndex] = { ...next[existingIndex], quantity: updatedQty };
+            }
+            usedByProduct.set(group.productId, (usedByProduct.get(group.productId) ?? 0) + additionalQty);
+          });
+      });
+      return next;
+    });
+    setError("");
+  };
+
+  const showStepError = (message: string, stockIssues: StockValidationIssue[] = []) => {
+    setStockErrors(stockIssues);
+    setError(message);
+    setScrollErrorIntoView(true);
+  };
+
+  const continueFromDetails = () => {
+    if (!routeDate) return showStepError(tr(locale, "Route date is required.", "تاريخ الجولة مطلوب."));
+    if (assignmentMode === "assigned" && !operatorId) return showStepError(tr(locale, "Choose a route performer or leave the route unassigned.", "اختر منفذ الجولة أو اترك الجولة غير مسندة."));
+    setError("");
+    setBuilderStep("machines");
+  };
+
+  const continueFromMachines = () => {
+    if (!machineIds.length) return showStepError(tr(locale, "Choose at least one machine stop.", "اختر موقع جهاز واحدًا على الأقل."));
+    setError("");
+    if (creationMode === "stops_only") setBuilderStep("review");
+    else {
+      focusManualMachine(manualMachineId && machineIds.includes(manualMachineId) ? manualMachineId : machineIds[0]);
+      setBuilderStep("products");
+    }
+  };
+
+  const continueFromProducts = () => {
+    if (!plannedRouteStock.length) return showStepError(tr(locale, "Add at least one product and quantity for this route.", "أضف منتجًا واحدًا على الأقل وكمية لهذه الجولة."));
+    const issues = validateStock();
+    if (issues.length) return showStepError(stockErrorMessage(issues), issues);
+    setError("");
+    setStockErrors([]);
+    setBuilderStep("review");
+  };
+
+  const goBackOneStep = () => {
+    setError("");
+    if (builderStep === "review") setBuilderStep(creationMode === "full" ? "products" : "machines");
+    else if (builderStep === "products") setBuilderStep("machines");
+    else if (builderStep === "machines") setBuilderStep("details");
+  };
+
   const validateStock = () => {
     if (adminOverride) return [];
     const issues: StockValidationIssue[] = [];
@@ -910,8 +1011,8 @@ export function RouteCreateForm({
   const validate = () => {
     if (!routeDate) return "Route date is required.";
     if (assignmentMode === "assigned" && !operatorId) return "Choose a route performer or leave this route unassigned.";
+    if (!machineIds.length) return "Choose at least one machine stop for the route plan.";
     if (creationMode === "stops_only") {
-      if (!machineIds.length) return "Choose at least one machine stop for the route plan.";
       return "";
     }
     if (!plannedRouteStock.length) {
@@ -927,6 +1028,13 @@ export function RouteCreateForm({
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
+    if (builderStep !== "review") {
+      if (builderStep === "details") continueFromDetails();
+      else if (builderStep === "machines") continueFromMachines();
+      else continueFromProducts();
+      return;
+    }
 
     setStockErrors([]);
     const validationError = validate();
@@ -1006,27 +1114,60 @@ export function RouteCreateForm({
     [machinesById, manualStopItems, productsById],
   );
 
+  const builderSteps: { id: RouteBuilderStep; label: string; helper: string }[] = [
+    { id: "details", label: tr(locale, "1. Details", "1. التفاصيل"), helper: tr(locale, "Date and assignment", "التاريخ والإسناد") },
+    { id: "machines", label: tr(locale, "2. Machines", "2. الأجهزة"), helper: tr(locale, "Stops to visit", "المواقع المطلوب زيارتها") },
+    ...(creationMode === "full" ? [{ id: "products" as const, label: tr(locale, "3. Products", "3. المنتجات"), helper: tr(locale, "Exact unit quantities", "كميات الوحدات الدقيقة") }] : []),
+    { id: "review", label: creationMode === "full" ? tr(locale, "4. Review", "4. المراجعة") : tr(locale, "3. Review", "3. المراجعة"), helper: tr(locale, "Confirm and create", "تأكيد وإنشاء") },
+  ];
+  const activeBuilderStepIndex = Math.max(0, builderSteps.findIndex((step) => step.id === builderStep));
+
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       <DraftRestoreBanner pendingDraft={localDraft.pendingDraft} onRestore={localDraft.restoreDraft} onDiscard={localDraft.discardDraft} />
       {!localDraft.pendingDraft ? <DraftSaveStatus status={localDraft.status} /> : null}
       {error ? (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm font-medium whitespace-pre-line text-rose-800" role="alert" aria-live="assertive">
-          {error}
-        </div>
-      ) : null}
-      {error ? (
-        <div className="fixed inset-x-3 bottom-3 z-50 max-h-[60vh] overflow-y-auto rounded-xl border border-rose-200 bg-white p-4 text-sm shadow-2xl md:left-auto md:right-4 md:w-[440px]" role="alert" aria-live="assertive">
+        <div ref={saveErrorRef} className="fixed inset-x-3 bottom-3 z-50 max-h-[60vh] overflow-y-auto rounded-xl border border-rose-200 bg-white p-4 text-sm shadow-2xl md:left-auto md:right-4 md:w-[440px]" role="alert" aria-live="assertive">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <div className="font-semibold text-rose-800">Save failed</div>
+              <div className="font-semibold text-rose-800">{tr(locale, "Could not continue", "تعذر المتابعة")}</div>
               <div className="mt-1 whitespace-pre-line text-rose-700">{error}</div>
             </div>
-            <button type="button" className="link-secondary shrink-0" onClick={() => setError("")}>Dismiss</button>
+            <button type="button" className="link-secondary shrink-0" onClick={() => setError("")}>{tr(locale, "Dismiss", "إغلاق")}</button>
           </div>
         </div>
       ) : null}
 
+      <nav aria-label={tr(locale, "Route creation progress", "تقدم إنشاء الجولة")} className="surface-card p-2">
+        <ol className={`grid gap-2 ${builderSteps.length === 4 ? "sm:grid-cols-4" : "sm:grid-cols-3"}`}>
+          {builderSteps.map((step, index) => {
+            const active = step.id === builderStep;
+            const completed = index < activeBuilderStepIndex;
+            return (
+              <li key={step.id}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (index <= activeBuilderStepIndex) {
+                      setError("");
+                      setBuilderStep(step.id);
+                    }
+                  }}
+                  disabled={saving || index > activeBuilderStepIndex}
+                  aria-current={active ? "step" : undefined}
+                  className={`w-full rounded-xl border px-3 py-3 text-start transition ${active ? "border-[var(--snacky-primary)] bg-emerald-50" : completed ? "border-emerald-200 bg-white" : "border-slate-200 bg-slate-50"} disabled:cursor-default`}
+                >
+                  <span className={`block text-sm font-semibold ${active || completed ? "text-slate-950" : "text-slate-500"}`}>{step.label}</span>
+                  <span className="mt-0.5 block text-xs text-slate-500">{completed ? tr(locale, "Complete", "مكتمل") : step.helper}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      </nav>
+
+      {builderStep === "details" ? (
+      <>
       <FormSection title="Route overview">
         <div className="grid gap-4 md:grid-cols-2">
           <FormField label="Route date" required>
@@ -1106,10 +1247,13 @@ export function RouteCreateForm({
           <p className="mt-1 leading-6">{tr(locale, "The operator can see the assigned machine stops immediately. Snacky OS will keep Start Route locked until the exact product quantities are saved from the route page.", "يمكن للمشغل رؤية مواقع الأجهزة المسندة فورًا. سيبقي Snacky OS زر بدء الجولة مقفلاً حتى يتم حفظ كميات المنتجات الدقيقة من صفحة الجولة.")}</p>
         </div>
       ) : null}
+      </>
+      ) : null}
 
-      <div className={creationMode === "stops_only" ? "hidden" : "contents"}>
-      <FormSection title="Manual machine refill items">
-        <p className="text-sm text-slate-500">{tr(locale, "Manual products must be assigned to a machine stop. The route pick list is calculated from these stop plans plus selected recommendations.", "يجب ربط المنتجات اليدوية بموقع جهاز. تُحسب قائمة التحميل من خطط المواقع هذه بالإضافة إلى التوصيات المختارة.")}</p>
+      {builderStep === "products" && creationMode === "full" ? (
+      <div>
+      <FormSection title={tr(locale, "Set products for each selected machine", "حدد منتجات كل جهاز مختار")}>
+        <p className="text-sm text-slate-500">{tr(locale, "Focus one selected machine at a time, then add every product and exact unit quantity for that stop. Recommendations and the full storage catalog are in the same picker.", "ركز على جهاز مختار واحد في كل مرة، ثم أضف كل منتج والكمية الدقيقة لذلك الموقع. التوصيات وكامل منتجات المخزن موجودة في نفس المحدد.")}</p>
 
         {!products.length ? (
           <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
@@ -1118,18 +1262,15 @@ export function RouteCreateForm({
         ) : (
           <div className="space-y-5">
             <div className="grid gap-3 lg:grid-cols-[1fr_280px]">
-              <FormField label="Add or focus a machine stop" required>
+              <FormField label={tr(locale, "Focus a selected machine", "ركز على جهاز مختار")} required>
                 <select
                   value={selectedManualMachineId}
-                  onChange={(event) => {
-                    setManualMachineId(event.target.value);
-                    setMachineIds((current) => current.includes(event.target.value) ? current : [...current, event.target.value]);
-                  }}
+                  onChange={(event) => focusManualMachine(event.target.value)}
                   className="field-input"
                   disabled={saving}
                 >
-                  <option value="">{tr(locale, "Choose machine", "اختر الجهاز")}</option>
-                  {machines.map((machine) => (
+                  <option value="">{tr(locale, "Choose a selected machine", "اختر جهازًا محددًا")}</option>
+                  {machines.filter((machine) => machineIds.includes(machine.id)).map((machine) => (
                     <option key={machine.id} value={machine.id}>{machineLabel(machine)} - {locationLabel(machine.location_name)}</option>
                   ))}
                 </select>
@@ -1154,7 +1295,7 @@ export function RouteCreateForm({
                     <button
                       key={machineId}
                       type="button"
-                      onClick={() => setManualMachineId(machineId)}
+                      onClick={() => focusManualMachine(machineId)}
                       className={`rounded-full border px-3 py-2 text-left text-sm transition ${selected ? "border-[var(--snacky-primary)] bg-emerald-50 text-slate-950" : "border-slate-200 bg-white text-slate-700 hover:border-slate-400"}`}
                     >
                       <div className="font-medium">{machineLabel(machine)}</div>
@@ -1176,6 +1317,11 @@ export function RouteCreateForm({
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr(locale, "Machine stop", "موقع الجهاز")}</div>
                     <div className="mt-1 text-lg font-semibold text-slate-900">{machineLabel(selectedManualMachine)}</div>
                     <div className="text-sm text-slate-500">{selectedManualMachine.machine_code} - {locationLabel(selectedManualMachine.location_name)}</div>
+                    {selectedManualRecommendationGroups.some((group) => group.defaultFinalTakeTotal > 0) ? (
+                      <button type="button" className="btn-secondary mt-3" onClick={() => applySuggestedQuantities([selectedManualMachineId])} disabled={saving}>
+                        {tr(locale, "Use suggested quantities", "استخدام الكميات المقترحة")}
+                      </button>
+                    ) : null}
                   </div>
                   <div className="grid gap-2 text-sm text-slate-600 sm:grid-cols-3">
                     <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
@@ -1251,8 +1397,13 @@ export function RouteCreateForm({
                         <button
                           key={candidate.product.id}
                           type="button"
-                          onClick={() => addProductQty(candidate.product.id, 1)}
-                          className="rounded-lg border border-slate-200 bg-white p-3 text-left transition hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-50"
+                          onClick={() => {
+                            const nextQty = candidate.recommendedQty > 0
+                              ? candidate.recommendedQty
+                              : Math.max(1, candidate.selectedQty + 1);
+                            setDesiredManualQty(selectedManualMachineId, candidate.product.id, nextQty);
+                          }}
+                          className={`rounded-lg border p-3 text-left transition disabled:cursor-not-allowed disabled:opacity-50 ${candidate.selectedQty > 0 ? "border-emerald-300 bg-emerald-50/70" : "border-slate-200 bg-white hover:border-slate-400"}`}
                           disabled={saving || (!adminOverride && candidate.product.availableQty <= 0)}
                         >
                           <div className="flex gap-3">
@@ -1267,8 +1418,11 @@ export function RouteCreateForm({
                               </div>
                               <div className="mt-2 flex flex-wrap gap-2 text-xs">
                                 {candidate.sourceKinds.has("planogram") ? <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-700">Planogram</span> : null}
-                                {candidate.recommendedQty > 0 ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-800">Recommended {candidate.recommendedQty}</span> : null}
-                                {candidate.selectedQty > 0 ? <span className="rounded-full bg-amber-100 px-2 py-1 text-amber-900">Selected {candidate.selectedQty}</span> : null}
+                                {candidate.recommendedQty > 0 ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-800">{tr(locale, "Suggested", "المقترح")} {candidate.recommendedQty}</span> : null}
+                                {candidate.selectedQty > 0 ? <span className="rounded-full bg-amber-100 px-2 py-1 text-amber-900">{tr(locale, "Assigned", "المحدد")} {candidate.selectedQty}</span> : null}
+                                <span className="rounded-full bg-slate-100 px-2 py-1 font-medium text-slate-700">
+                                  {candidate.recommendedQty > 0 ? tr(locale, "Tap to use suggested qty", "اضغط لاستخدام الكمية المقترحة") : tr(locale, "Tap to add", "اضغط للإضافة")}
+                                </span>
                                 {candidate.slotCodes.size ? (
                                   <span className="rounded-full bg-sky-100 px-2 py-1 text-sky-800">
                                     {tr(locale, "Slots", "الفتحات")} {Array.from(candidate.slotCodes).slice(0, 3).join(", ")}{candidate.slotCodes.size > 3 ? ` +${candidate.slotCodes.size - 3}` : ""}
@@ -1344,14 +1498,16 @@ export function RouteCreateForm({
                   </tr>
                 </thead>
                 <tbody>
-                  {!sortedManualStopItems.length ? (
+                  {!selectedManualItems.length ? (
                     <tr>
                       <td colSpan={5} className="px-3 py-8 text-center text-slate-500">
-                        {tr(locale, "No manual machine refill items selected yet.", "لم يتم تحديد أي عناصر تعبئة يدوية للجهاز بعد.")}
+                        {selectedManualMachine
+                          ? tr(locale, "No products assigned to this machine yet.", "لم يتم تحديد منتجات لهذا الجهاز بعد.")
+                          : tr(locale, "Choose a machine first.", "اختر جهازًا أولاً.")}
                       </td>
                     </tr>
                   ) : (
-                    sortedManualStopItems.map((item) => {
+                    selectedManualItems.map((item) => {
                       const product = productsById.get(item.productId);
                       const machine = machinesById.get(item.machineId);
                       const stockIssue = stockErrorByProduct.get(item.productId);
@@ -1406,6 +1562,7 @@ export function RouteCreateForm({
         )}
       </FormSection>
 
+      <div className="hidden" aria-hidden="true">
       <FormSection title="Refill recommendation rows">
         <p className="text-sm text-slate-500">Grouped by machine and product so you can review what each stop needs and adjust the final take when storage is short.</p>
         {!recommendationGroups.length ? (
@@ -1857,56 +2014,160 @@ export function RouteCreateForm({
         )}
       </FormSection>
       </div>
-
-      <FormSection title={creationMode === "stops_only" ? tr(locale, "Choose planned machine stops", "اختر مواقع الأجهزة المخططة") : tr(locale, "Add machine stops manually", "إضافة مواقع الأجهزة يدويًا")}>
-        <p className="text-sm text-slate-500">{creationMode === "stops_only" ? tr(locale, "Select every machine the operator should visit. You can add the exact products later at storage.", "حدد كل جهاز يجب على المشغل زيارته. يمكنك إضافة المنتجات الدقيقة لاحقًا في المخزن.") : tr(locale, "Choose machines that should be included in the route even if there is no recommendation row.", "اختر الأجهزة التي يجب تضمينها في الجولة حتى لو لم توجد لها توصية.")}</p>
-        {!machines.length ? (
-          <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
-            {tr(locale, "No active machines found. Create a machine first.", "لم يتم العثور على أجهزة نشطة. أنشئ جهازًا أولًا.")}
-          </div>
-        ) : (
-          <div className="grid gap-2">
-            {machines.map((machine) => (
-              <label key={machine.id} className="inline-flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm hover:border-slate-400">
-                <input
-                  type="checkbox"
-                  checked={machineIds.includes(machine.id)}
-                  onChange={() => setMachineIds((current) => toggleValue(current, machine.id))}
-                  className="h-4 w-4"
-                  disabled={saving}
-                />
-                <span>
-                  {machineLabel(machine)}
-                  <span className="block text-xs text-slate-500">{locationLabel(machine.location_name)}</span>
-                </span>
-              </label>
-            ))}
-          </div>
-        )}
-      </FormSection>
-
-      <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
-        {tr(locale, "Selected stops:", "المواقع المحددة:")} <span className="font-semibold text-slate-900">{selectedStopCount}</span>
-        <span className="mx-2 text-slate-300">/</span>
-        {creationMode === "stops_only" ? tr(locale, "Products: add at storage", "المنتجات: تضاف في المخزن") : <>{tr(locale, "Route pick-list products:", "منتجات قائمة التحميل:")} <span className="font-semibold text-slate-900">{selectedProducts.length}</span></>}
       </div>
+      ) : null}
 
-      {error ? (
-        <div ref={saveErrorRef} className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm font-medium whitespace-pre-line text-rose-800" role="alert" aria-live="assertive">
-          {error}
-        </div>
+      {builderStep === "machines" ? (
+        <FormSection title={tr(locale, "Choose route machines", "اختر أجهزة الجولة")} description={creationMode === "stops_only" ? tr(locale, "Select every machine the operator should visit. Exact products can be added later at storage.", "حدد كل جهاز يجب على المشغّل زيارته. يمكن إضافة المنتجات الدقيقة لاحقًا في المخزن.") : tr(locale, "Select the stops first. Product planning in the next step will stay separated by machine.", "حدد المواقع أولًا. سيبقى تخطيط المنتجات في الخطوة التالية منفصلًا حسب الجهاز.")}>
+          {!machines.length ? (
+            <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
+              {tr(locale, "No active machines found. Create a machine first.", "لم يتم العثور على أجهزة نشطة. أنشئ جهازًا أولًا.")}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="text-sm font-semibold text-slate-950">{tr(locale, `${machineIds.length} of ${machines.length} machines selected`, `تم تحديد ${machineIds.length} من ${machines.length} أجهزة`)}</div>
+                  <div className="mt-1 text-xs text-slate-500">{tr(locale, "Tap a machine once to include it. There is no second machine selector later.", "اضغط على الجهاز مرة واحدة لتضمينه. لن يوجد محدد أجهزة ثانٍ لاحقًا.")}</div>
+                </div>
+                {creationMode === "full" && machineIds.some((machineId) => (recommendationGroupsByMachine.get(machineId) ?? []).some((group) => group.defaultFinalTakeTotal > 0)) ? (
+                  <button type="button" className="btn-secondary justify-center" onClick={() => applySuggestedQuantities(machineIds)} disabled={saving}>
+                    {tr(locale, "Add suggestions for selected machines", "إضافة مقترحات الأجهزة المحددة")}
+                  </button>
+                ) : null}
+              </div>
+
+              <div className="grid gap-3 lg:grid-cols-2">
+                {machines.map((machine) => {
+                  const selected = machineIds.includes(machine.id);
+                  const recommendationsForMachine = (recommendationGroupsByMachine.get(machine.id) ?? []).filter((group) => group.defaultFinalTakeTotal > 0);
+                  const recommendedUnits = recommendationsForMachine.reduce((sum, group) => sum + unitQuantity(group.defaultFinalTakeTotal), 0);
+                  const assignedItems = manualItemsByMachine.get(machine.id) ?? [];
+                  const assignedUnits = assignedItems.reduce((sum, item) => sum + unitQuantity(item.quantity), 0);
+                  return (
+                    <div key={machine.id} className={`rounded-2xl border p-4 transition ${selected ? "border-[var(--snacky-primary)] bg-emerald-50/70" : "border-slate-200 bg-white hover:border-slate-400"}`}>
+                      <div className="flex items-start gap-3">
+                        <input
+                          id={`route-machine-${machine.id}`}
+                          type="checkbox"
+                          checked={selected}
+                          onChange={() => toggleRouteMachine(machine.id)}
+                          className="mt-1 h-5 w-5 shrink-0"
+                          disabled={saving}
+                        />
+                        <label htmlFor={`route-machine-${machine.id}`} className="min-w-0 flex-1 cursor-pointer">
+                          <span className="block font-semibold text-slate-950">{machineLabel(machine)}</span>
+                          <span className="mt-0.5 block text-xs text-slate-500">{machine.machine_code} · {locationLabel(machine.location_name)}</span>
+                        </label>
+                        {selected ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800">{tr(locale, "Included", "مضاف")}</span> : null}
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-600">
+                          <span className="block text-slate-500">{tr(locale, "Suggested", "المقترح")}</span>
+                          <span className="font-semibold text-slate-900">{recommendationsForMachine.length} {tr(locale, "products", "منتجات")} · {recommendedUnits} {tr(locale, "units", "وحدة")}</span>
+                        </div>
+                        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-600">
+                          <span className="block text-slate-500">{tr(locale, "Selected", "المحدد")}</span>
+                          <span className="font-semibold text-slate-900">{assignedItems.length} {tr(locale, "products", "منتجات")} · {assignedUnits} {tr(locale, "units", "وحدة")}</span>
+                        </div>
+                      </div>
+                      {selected && creationMode === "full" && recommendationsForMachine.length ? (
+                        <button type="button" className="btn-secondary mt-3 w-full justify-center" onClick={() => applySuggestedQuantities([machine.id])} disabled={saving}>
+                          {tr(locale, "Use suggested quantities", "استخدام الكميات المقترحة")}
+                        </button>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </FormSection>
+      ) : null}
+
+      {builderStep === "review" ? (
+        <FormSection title={tr(locale, "Review route before creating", "راجع الجولة قبل الإنشاء")} description={tr(locale, "Confirm the assignment, machine stops, and exact physical product quantities. Go back to change anything.", "أكد الإسناد ومواقع الأجهزة وكميات المنتجات الفعلية الدقيقة. ارجع لتغيير أي شيء.")}>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr(locale, "Route date", "تاريخ الجولة")}</div>
+              <div className="mt-1 font-semibold text-slate-950">{routeDate || "-"}</div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr(locale, "Assignment", "الإسناد")}</div>
+              <div className="mt-1 font-semibold text-slate-950">{assignmentMode === "assigned" ? operators.find((operator) => operator.id === operatorId)?.full_name ?? tr(locale, "Missing performer", "المنفذ غير محدد") : tr(locale, "Unassigned / claimable", "غير مسندة / قابلة للاستلام")}</div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr(locale, "Machine stops", "مواقع الأجهزة")}</div>
+              <div className="mt-1 font-semibold text-slate-950">{machineIds.length}</div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr(locale, "Route products", "منتجات الجولة")}</div>
+              <div className="mt-1 font-semibold text-slate-950">{creationMode === "stops_only" ? tr(locale, "Add later at storage", "تُضاف لاحقًا في المخزن") : tr(locale, `${selectedProducts.length} products · ${plannedRouteStock.reduce((sum, item) => sum + unitQuantity(item.quantity), 0)} units`, `${selectedProducts.length} منتجات · ${plannedRouteStock.reduce((sum, item) => sum + unitQuantity(item.quantity), 0)} وحدة`)}</div>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {machineIds.map((machineId, index) => {
+              const machine = machinesById.get(machineId);
+              if (!machine) return null;
+              const items = sortedManualStopItems.filter((item) => item.machineId === machineId);
+              const units = items.reduce((sum, item) => sum + unitQuantity(item.quantity), 0);
+              return (
+                <article key={machineId} className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr(locale, `Stop ${index + 1}`, `الموقع ${index + 1}`)}</div>
+                      <div className="mt-1 font-semibold text-slate-950">{machineLabel(machine)}</div>
+                      <div className="text-xs text-slate-500">{machine.machine_code} · {locationLabel(machine.location_name)}</div>
+                    </div>
+                    <div className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700">
+                      {creationMode === "stops_only" ? tr(locale, "Products later", "المنتجات لاحقًا") : tr(locale, `${items.length} products · ${units} units`, `${items.length} منتجات · ${units} وحدة`)}
+                    </div>
+                  </div>
+                  {creationMode === "full" ? (
+                    items.length ? (
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                        {items.map((item) => {
+                          const product = productsById.get(item.productId);
+                          return (
+                            <div key={`${machineId}:${item.productId}`} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                              <span className="min-w-0 truncate text-slate-800">{product?.name ?? tr(locale, "Unknown product", "منتج غير معروف")}</span>
+                              <span className="shrink-0 rounded-full bg-white px-2 py-1 font-semibold text-slate-950">{item.quantity}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="mt-3 rounded-xl border border-dashed border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">{tr(locale, "This machine has no products. It will still be included as a planned stop.", "لا توجد منتجات لهذا الجهاز. سيبقى مضافًا كموقع مخطط.")}</div>
+                    )
+                  ) : null}
+                </article>
+              );
+            })}
+          </div>
+
+          {adminOverride && creationMode === "full" ? (
+            <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm font-medium text-amber-950">{tr(locale, "Admin stock override is enabled for this route.", "تجاوز مخزون الإدارة مفعّل لهذه الجولة.")}</div>
+          ) : null}
+        </FormSection>
       ) : null}
 
       <div className="sticky bottom-3 z-20 -mx-3 flex flex-col gap-3 border-t border-slate-200 bg-slate-100/95 px-3 py-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:border-0 sm:bg-transparent sm:p-0">
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 sm:flex-1">
           <div className="font-semibold text-slate-900">
-            {creationMode === "stops_only" ? `${machineIds.length} machine stops planned · products added later at storage` : `${selectedProducts.length} items selected · ${plannedRouteStock.reduce((sum, item) => sum + unitQuantity(item.quantity), 0)} total units`}
+            {builderStep === "details" ? tr(locale, "Start with the route date and assignment", "ابدأ بتاريخ الجولة والإسناد") : builderStep === "machines" ? tr(locale, `${machineIds.length} machine stops selected`, `تم تحديد ${machineIds.length} مواقع أجهزة`) : creationMode === "stops_only" ? tr(locale, `${machineIds.length} machine stops planned · products added later at storage`, `${machineIds.length} مواقع أجهزة مخططة · تضاف المنتجات لاحقًا في المخزن`) : tr(locale, `${selectedProducts.length} products selected · ${plannedRouteStock.reduce((sum, item) => sum + unitQuantity(item.quantity), 0)} total units`, `${selectedProducts.length} منتجات محددة · ${plannedRouteStock.reduce((sum, item) => sum + unitQuantity(item.quantity), 0)} وحدة إجمالًا`)}
           </div>
-          <div className="mt-1 text-xs text-slate-500">{tr(locale, "The create button stays visible on phones while you review the route.", "يبقى زر الإنشاء ظاهرًا على الهواتف أثناء مراجعة الجولة.")}</div>
+          <div className="mt-1 text-xs text-slate-500">{tr(locale, `Step ${activeBuilderStepIndex + 1} of ${builderSteps.length}`, `الخطوة ${activeBuilderStepIndex + 1} من ${builderSteps.length}`)}</div>
         </div>
-        <button type="submit" className="btn-primary disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto" disabled={saving}>
-          {saving ? tr(locale, "Creating route...", "جارٍ إنشاء الجولة...") : creationMode === "stops_only" ? tr(locale, "Plan route stops", "تخطيط مواقع الجولة") : tr(locale, "Create route", "إنشاء جولة")}
-        </button>
+        {builderStep !== "details" ? <button type="button" className="btn-secondary justify-center" onClick={goBackOneStep} disabled={saving}>{tr(locale, "Back", "رجوع")}</button> : null}
+        {builderStep === "details" ? <button type="button" className="btn-primary justify-center" onClick={continueFromDetails} disabled={saving}>{tr(locale, "Choose machines", "اختر الأجهزة")}</button> : null}
+        {builderStep === "machines" ? <button type="button" className="btn-primary justify-center" onClick={continueFromMachines} disabled={saving}>{creationMode === "full" ? tr(locale, "Choose products", "اختر المنتجات") : tr(locale, "Review route", "راجع الجولة")}</button> : null}
+        {builderStep === "products" ? <button type="button" className="btn-primary justify-center" onClick={continueFromProducts} disabled={saving}>{tr(locale, "Review route", "راجع الجولة")}</button> : null}
+        {builderStep === "review" ? (
+          <button type="submit" className="btn-primary justify-center disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto" disabled={saving}>
+            {saving ? tr(locale, "Creating route...", "جارٍ إنشاء الجولة...") : creationMode === "stops_only" ? tr(locale, "Plan route stops", "تخطيط مواقع الجولة") : tr(locale, "Create route", "إنشاء جولة")}
+          </button>
+        ) : null}
         <SecondaryButton href="/routes">{tr(locale, "Cancel", "إلغاء")}</SecondaryButton>
       </div>
     </form>

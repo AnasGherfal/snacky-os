@@ -357,10 +357,15 @@ function salesRangeForCash(range: CashRange, now = new Date()): SalesDateRange {
   };
 }
 
-function applyCountedAtRange(query: any, range: CashRange) {
-  let next = query.not("counted_at", "is", null).neq("review_status", "voided");
-  if (range.start) next = next.gte("counted_at", `${range.start}T00:00:00.000Z`);
-  if (range.end) next = next.lt("counted_at", `${shiftIsoDate(range.end, 1)}T00:00:00.000Z`);
+function applyCountedCollectionRange(query: any, range: CashRange) {
+  // A pickup belongs to the day cash physically left the machine. Counting may
+  // happen later in the office and must not move a July pickup into August.
+  let next = query
+    .not("counted_at", "is", null)
+    .not("actual_cash_collected", "is", null)
+    .neq("review_status", "voided");
+  if (range.start) next = next.gte("collected_at", `${range.start}T00:00:00.000Z`);
+  if (range.end) next = next.lt("collected_at", `${shiftIsoDate(range.end, 1)}T00:00:00.000Z`);
   return next;
 }
 
@@ -548,8 +553,8 @@ function comparisonMetrics(selected: RangeSummary, comparison: RangeSummary): Co
     { label: "VMS sales", selected: lyd(selected.vmsSalesAmount), comparison: lyd(comparison.vmsSalesAmount), delta: formatDelta(selected.vmsSalesAmount - comparison.vmsSalesAmount) },
     { label: "Estimated cash still in machines", selected: lyd(selected.estimatedCashStillInMachines), comparison: lyd(comparison.estimatedCashStillInMachines), delta: formatDelta(selected.estimatedCashStillInMachines - comparison.estimatedCashStillInMachines) },
     { label: "Finance LYD In", selected: lyd(selected.cashCountedAmount), comparison: lyd(comparison.cashCountedAmount), delta: formatDelta(selected.cashCountedAmount - comparison.cashCountedAmount) },
-    { label: "Difference", selected: formatDelta(selected.varianceAmount), comparison: formatDelta(comparison.varianceAmount), delta: formatDelta(selected.varianceAmount - comparison.varianceAmount) },
-    { label: "Match rate", selected: formatPercent(selected.accuracy), comparison: formatPercent(comparison.accuracy), delta: selected.accuracy === null || comparison.accuracy === null ? "-" : `${((selected.accuracy - comparison.accuracy) * 100).toFixed(1)} pp` },
+    { label: "Period cash position", selected: formatDelta(selected.varianceAmount), comparison: formatDelta(comparison.varianceAmount), delta: formatDelta(selected.varianceAmount - comparison.varianceAmount) },
+    { label: "Collection coverage", selected: formatPercent(selected.accuracy), comparison: formatPercent(comparison.accuracy), delta: selected.accuracy === null || comparison.accuracy === null ? "-" : `${((selected.accuracy - comparison.accuracy) * 100).toFixed(1)} pp` },
     { label: "Counted collections", selected: formatInteger(selected.countedCollectionCount), comparison: formatInteger(comparison.countedCollectionCount), delta: formatInteger(selected.countedCollectionCount - comparison.countedCollectionCount) },
     { label: "Pending counts", selected: formatInteger(selected.pendingCollectionCount), comparison: formatInteger(comparison.pendingCollectionCount), delta: formatInteger(selected.pendingCollectionCount - comparison.pendingCollectionCount) },
   ];
@@ -564,14 +569,15 @@ function createRangeHref(range: string) {
 }
 
 function differenceClass(value: number) {
-  return value < 0 ? "font-semibold text-rose-700" : value > 0 ? "font-semibold text-amber-700" : "font-medium text-emerald-700";
+  return value < 0 ? "font-semibold text-sky-700" : value > 0 ? "font-semibold text-amber-700" : "font-medium text-emerald-700";
 }
 
 function machineStatus(vmsSales: number, countedCash: number, variance: number) {
-  if (vmsSales <= 0 && countedCash > 0) return "cash only";
-  if (vmsSales > 0 && countedCash <= 0) return "no cash counted";
-  if (Math.abs(variance) >= 10) return "variance review";
-  return "matched";
+  if (vmsSales <= 0 && countedCash > 0) return "earlier-period cash";
+  if (vmsSales > 0 && countedCash <= 0) return "not collected yet";
+  if (variance < -10) return "cash remaining";
+  if (variance > 10) return "includes earlier cash";
+  return "period covered";
 }
 
 export default async function CashReconciliationPage({
@@ -599,11 +605,11 @@ export default async function CashReconciliationPage({
   const selectedRange = resolveCashReconciliationRange(params);
   const comparisonRange = buildCashComparisonRange(selectedRange);
 
-  const selectedCashQuery = applyCountedAtRange(
+  const selectedCashQuery = applyCountedCollectionRange(
     supabase
       .from("cash_collections")
       .select("id, machine_id, collected_at, counted_at, actual_cash_collected, vms_expected_cash, variance, review_status, machine:machines(id, name, machine_code, location:locations(id, name))")
-      .order("counted_at", { ascending: false })
+      .order("collected_at", { ascending: false })
       .limit(10000),
     selectedRange,
   );
@@ -616,11 +622,11 @@ export default async function CashReconciliationPage({
     selectedRange,
   );
   const comparisonCashQuery = comparisonRange
-    ? applyCountedAtRange(
+    ? applyCountedCollectionRange(
         supabase
           .from("cash_collections")
           .select("id, machine_id, collected_at, counted_at, actual_cash_collected, vms_expected_cash, variance, review_status")
-          .order("counted_at", { ascending: false })
+          .order("collected_at", { ascending: false })
           .limit(10000),
         comparisonRange,
       )
@@ -820,7 +826,7 @@ export default async function CashReconciliationPage({
     <>
       <PageHeader
         title={"Cash Reconciliation / \u0645\u0637\u0627\u0628\u0642\u0629 \u0627\u0644\u0643\u0627\u0634"}
-        subtitle="Compare VMS sales with the same active LYD In total shown in Finance for the selected transaction dates."
+        subtitle="Compare VMS sales with cash physically removed from machines during the same selected collection dates."
         action={<SecondaryButton href="/cash-collections">Cash collections</SecondaryButton>}
       />
 
@@ -880,7 +886,7 @@ export default async function CashReconciliationPage({
             <div className="text-sm font-semibold text-emerald-100">Estimated cash still in machines / الكاش المتوقع داخل الماكينات</div>
             <div className="mt-2 text-4xl font-bold tracking-tight">{lyd(selectedSummary.estimatedCashStillInMachines)}</div>
             <p className="mt-2 max-w-xl text-sm leading-6 text-emerald-100">
-              For {selectedRange.label.toLowerCase()}: VMS cash expected minus active Finance LYD In. Card sales are excluded when VMS payment methods are available.
+              For {selectedRange.label.toLowerCase()}: VMS cash expected minus cash removed from machines in the same collection-date range. A later office count does not move a pickup into another month. Card sales are excluded when VMS payment methods are available.
             </p>
           </div>
           <div className="grid gap-3 sm:grid-cols-3">
@@ -907,9 +913,9 @@ export default async function CashReconciliationPage({
 
       <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <section className="surface-card"><div className="text-sm text-slate-500">VMS sales / مبيعات VMS</div><div className="mt-2 text-3xl font-semibold text-slate-950">{lyd(selectedSummary.vmsSalesAmount)}</div><div className="mt-1 text-xs text-slate-500">{formatInteger(selectedSummary.vmsUnits)} units · {formatInteger(selectedSummary.vmsTransactionCount)} successful sales</div></section>
-        <section className="surface-card"><div className="text-sm text-slate-500">Cash counted (Finance LYD In) / الكاش المعدود</div><div className="mt-2 text-3xl font-semibold text-slate-950">{lyd(selectedSummary.cashCountedAmount)}</div><div className="mt-1 text-xs text-slate-500">{formatInteger(selectedSummary.countedCollectionCount)} active LYD money-in record(s), using the same Finance source and transaction dates.</div></section>
-        <section className="surface-card"><div className="text-sm text-slate-500">Difference / الفرق</div><div className={`mt-2 text-3xl font-semibold ${differenceClass(selectedSummary.varianceAmount)}`}>{formatDelta(selectedSummary.varianceAmount)}</div><div className="mt-1 text-xs text-slate-500">Finance LYD In minus VMS sales</div></section>
-        <section className="surface-card"><div className="text-sm text-slate-500">Match rate / نسبة المطابقة</div><div className="mt-2 text-3xl font-semibold text-slate-950">{formatPercent(selectedSummary.accuracy)}</div><div className="mt-1 text-xs text-slate-500">Finance LYD In divided by VMS sales</div></section>
+        <section className="surface-card"><div className="text-sm text-slate-500">Cash removed and counted / الكاش المسحوب والمعدود</div><div className="mt-2 text-3xl font-semibold text-slate-950">{lyd(selectedSummary.cashCountedAmount)}</div><div className="mt-1 text-xs text-slate-500">{formatInteger(selectedSummary.countedCollectionCount)} active LYD cash record(s), assigned by the pickup&apos;s collection date.</div></section>
+        <section className="surface-card"><div className="text-sm text-slate-500">Period cash position / صافي كاش الفترة</div><div className={`mt-2 text-3xl font-semibold ${differenceClass(selectedSummary.varianceAmount)}`}>{formatDelta(selectedSummary.varianceAmount)}</div><div className="mt-1 text-xs text-slate-500">Cash removed minus VMS sales. A negative value is not a confirmed shortage; it normally means cash remains in machines.</div></section>
+        <section className="surface-card"><div className="text-sm text-slate-500">Collection coverage / نسبة التحصيل</div><div className="mt-2 text-3xl font-semibold text-slate-950">{formatPercent(selectedSummary.accuracy)}</div><div className="mt-1 text-xs text-slate-500">Cash removed divided by VMS sales; provisional until the final pickup in the period.</div></section>
         <section className="surface-card"><div className="text-sm text-slate-500">Pending cash counts</div><div className="mt-2 text-3xl font-semibold text-slate-950">{formatInteger(selectedSummary.pendingCollectionCount)}</div><div className="mt-1 text-xs text-slate-500">Removed in this period but not counted; excluded from counted cash</div></section>
         <section className="surface-card"><div className="text-sm text-slate-500">Variance review records</div><div className="mt-2 text-3xl font-semibold text-slate-950">{formatInteger(selectedSummary.varianceReviewCount)}</div><div className="mt-1 text-xs text-slate-500">Counted collections already flagged for review</div></section>
         <section className="surface-card sm:col-span-2"><div className="text-sm text-slate-500">VMS source</div><div className="mt-2 text-xl font-semibold text-slate-950">{selectedSourceReportType.replaceAll("_", " ")}{selectedMonthlyCalendarFallbackUsed ? " · combined by calendar month" : ""}</div><div className="mt-1 text-xs text-slate-500">{selectedMonthlyCalendarFallbackUsed ? "The exact custom-range source returned no VMS activity, so Snacky OS combined the same finalized monthly VMS records that appear when each month is selected separately." : "Selected dates are passed to the same finalized VMS sales source used by the Sales Dashboard."}</div></section>
@@ -927,7 +933,7 @@ export default async function CashReconciliationPage({
 
       <SectionCard>
         <div className="p-4 text-sm leading-6 text-slate-700">
-          <strong>Cash-in-machines rule:</strong> VMS uses sale/business dates inside the selected range. Counted cash uses the same active LYD <code>money_in</code> ledger rows and <code>transaction_date</code> rules as Finance. Estimated cash still in machines = VMS cash sales + unknown-payment sales − Finance LYD In, never below zero. If VMS has no payment-method split, total VMS sales are treated as cash. A count containing sales from before the selected period can make this a period estimate rather than an exact physical balance.
+          <strong>Cash date rule:</strong> a cash pickup belongs to <code>collected_at</code>, the date the money physically left the machine. <code>counted_at</code> only records when the office finished counting and never changes the pickup&apos;s reporting month. VMS uses sale/business dates inside the selected range. Estimated cash still in machines = VMS cash sales + unknown-payment sales − cash removed in the same collection-date range, never below zero. If VMS has no payment-method split, total VMS sales are treated as cash. A pickup containing sales from before the selected period can still make this a period estimate rather than an exact physical balance.
         </div>
       </SectionCard>
 
@@ -953,8 +959,8 @@ export default async function CashReconciliationPage({
 
           <section className="surface-card">
             <div className="border-b border-slate-200 pb-4">
-              <h2 className="text-base font-semibold text-slate-950">Which machine has the difference?</h2>
-              <p className="mt-1 text-sm text-slate-500">Each row compares that machine's VMS expected sales with the cash Finance counted for that machine during the selected dates. Largest differences appear first.</p>
+              <h2 className="text-base font-semibold text-slate-950">Cash position by machine</h2>
+              <p className="mt-1 text-sm text-slate-500">Each row compares that machine&apos;s VMS sales with cash physically removed during the selected collection dates. The later office counting date cannot pull a previous month&apos;s pickup into this range. Largest open period positions appear first.</p>
             </div>
             {Math.abs(financeToMachineDifference) >= 0.01 ? (
               <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
@@ -963,7 +969,7 @@ export default async function CashReconciliationPage({
             ) : null}
             {machineRows.length ? (
               <div className="mt-4">
-                <DataTable sortable showSummary headers={["Machine", "Location", "VMS expected sales for machine", "VMS units", "Cash counted for machine", "Estimated still in machine", "Difference for machine", "Match rate", "Counted pickups", "Latest finance count", "Result"]}>
+                <DataTable sortable showSummary headers={["Machine", "Location", "VMS sales for selected range", "VMS units", "Cash removed in selected range", "Estimated still in machine", "Period cash position", "Collection coverage", "Pickups removed", "Latest office count", "Result"]}>
                   {[...machineRows].sort((left, right) => Math.abs(right.rangeVariance) - Math.abs(left.rangeVariance) || right.vmsSalesAmount - left.vmsSalesAmount || left.machineLabel.localeCompare(right.machineLabel)).map((row) => (
                     <tr key={row.key}>
                       <td className="font-medium"><div>{row.machineLabel}</div><div className="mt-1 text-xs text-slate-500">{row.machineCode ?? row.machineId ?? "Unmatched VMS/cash machine — fix mapping"}</div></td>
@@ -987,10 +993,10 @@ export default async function CashReconciliationPage({
           <section className="surface-card">
             <div className="border-b border-slate-200 pb-4">
               <h2 className="text-base font-semibold text-slate-950">Daily comparison</h2>
-              <p className="mt-1 text-sm text-slate-500">Finance LYD In is grouped by transaction date.</p>
+              <p className="mt-1 text-sm text-slate-500">Cash is grouped by the pickup collection date used by its Finance transaction.</p>
             </div>
             {showDayBreakdown ? (
-              dayRows.length ? <div className="mt-4"><DataTable headers={["Day", "VMS sales", "Finance LYD In", "Difference", "Finance records"]}>{dayRows.map((row) => <tr key={row.key}><td className="font-medium">{row.label}</td><td>{lyd(row.vmsSalesAmount)}</td><td>{lyd(row.cashCountedAmount)}</td><td className={differenceClass(row.varianceAmount)}>{formatDelta(row.varianceAmount)}</td><td>{formatInteger(row.countedCollectionCount)}</td></tr>)}</DataTable></div> : <p className="mt-4 text-sm text-slate-500">No daily rows found.</p>
+              dayRows.length ? <div className="mt-4"><DataTable headers={["Day", "VMS sales", "Cash removed", "Period cash position", "Cash records"]}>{dayRows.map((row) => <tr key={row.key}><td className="font-medium">{row.label}</td><td>{lyd(row.vmsSalesAmount)}</td><td>{lyd(row.cashCountedAmount)}</td><td className={differenceClass(row.varianceAmount)}>{formatDelta(row.varianceAmount)}</td><td>{formatInteger(row.countedCollectionCount)}</td></tr>)}</DataTable></div> : <p className="mt-4 text-sm text-slate-500">No daily rows found.</p>
             ) : <p className="mt-4 text-sm text-slate-500">Daily VMS detail requires a detailed sales source and a selected range of 62 days or fewer.</p>}
           </section>
 
@@ -999,7 +1005,7 @@ export default async function CashReconciliationPage({
               <h2 className="text-base font-semibold text-slate-950">Monthly comparison</h2>
               <p className="mt-1 text-sm text-slate-500">Useful for year and all-time selections.</p>
             </div>
-            {monthRows.length ? <div className="mt-4"><DataTable headers={["Month", "VMS sales", "Finance LYD In", "Difference", "Finance records"]}>{monthRows.map((row) => <tr key={row.key}><td className="font-medium">{row.label}</td><td>{lyd(row.vmsSalesAmount)}</td><td>{lyd(row.cashCountedAmount)}</td><td className={differenceClass(row.varianceAmount)}>{formatDelta(row.varianceAmount)}</td><td>{formatInteger(row.countedCollectionCount)}</td></tr>)}</DataTable></div> : <p className="mt-4 text-sm text-slate-500">No monthly rows found.</p>}
+            {monthRows.length ? <div className="mt-4"><DataTable headers={["Month", "VMS sales", "Cash removed", "Period cash position", "Cash records"]}>{monthRows.map((row) => <tr key={row.key}><td className="font-medium">{row.label}</td><td>{lyd(row.vmsSalesAmount)}</td><td>{lyd(row.cashCountedAmount)}</td><td className={differenceClass(row.varianceAmount)}>{formatDelta(row.varianceAmount)}</td><td>{formatInteger(row.countedCollectionCount)}</td></tr>)}</DataTable></div> : <p className="mt-4 text-sm text-slate-500">No monthly rows found.</p>}
           </section>
         </div>
       )}
