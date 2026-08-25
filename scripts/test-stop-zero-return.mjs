@@ -60,6 +60,8 @@ test("stop completion persists explicit-zero returns with stable inventory audit
   assert.match(actions, /buildExplicitZeroFillReturnPlans\(normalizedFilledItems\)/);
   assert.match(actions, /buildExplicitZeroFillReturnAdjustments/);
   assert.match(actions, /snacky_route_leftover_storage_location_id/);
+  assert.match(actions, /const storageLookup = await supabase\.rpc\([\s\S]*?"snacky_route_leftover_storage_location_id"/);
+  assert.doesNotMatch(actions, /zeroFillLedgerClient\.rpc\([\s\S]*?"snacky_route_leftover_storage_location_id"/);
   assert.match(actions, /operator_bag_to_storage/);
   assert.match(actions, /route_stop_zero_fill_return_reversal/);
   assert.match(actions, /stopSubmissionId/);

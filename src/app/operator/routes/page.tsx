@@ -344,7 +344,7 @@ export default async function OperatorRoutesPage() {
       ) : null}
 
       {!canManageAllRoutes || canAssignInstructions ? (
-        <OperatorInstructionsPanel />
+        <OperatorInstructionsPanel hideSetupWarning />
       ) : null}
 
       <SectionCard>

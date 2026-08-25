@@ -75,8 +75,11 @@ export function RouteStopQuickActions() {
       .then((payload) => {
         if (!payload) return;
         setMachineId(String(payload.machineId ?? ""));
-        setPhotoSaved(Boolean(payload.saved));
+        const persistedSaved = Boolean(payload.saved);
+        setPhotoSaved(persistedSaved);
         setPhotoSavedAt(payload.savedAt ?? null);
+        // snacky:machine-photo-persisted-loaded
+        window.dispatchEvent(new CustomEvent("snacky:machine-photo-persisted", { detail: { saved: persistedSaved } }));
       })
       .catch(() => undefined);
   }, [scope?.routeId, scope?.stopId]);
@@ -135,7 +138,10 @@ export function RouteStopQuickActions() {
       setPhotoSaved(true);
       setPhotoSavedAt(payload?.savedAt ?? new Date().toISOString());
       setPhotoFile(null);
-      window.setTimeout(() => window.location.reload(), 500);
+      // snacky:machine-photo-persisted-saved
+      window.dispatchEvent(new CustomEvent("snacky:machine-photo-persisted", { detail: { saved: true } }));
+      // snacky:machine-photo-save-no-reload
+      // The persisted-photo event updates the stop UI immediately; do not reload the page.
     } catch (error) {
       setPhotoError(error instanceof Error ? error.message : tr("Could not save machine photo.", "تعذر حفظ صورة الماكينة."));
     } finally {

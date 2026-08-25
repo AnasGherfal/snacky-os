@@ -570,7 +570,7 @@ export default async function OperatorRouteDetailPage({
               {sortedPickItems.map((item) => (
                 <div key={item.id} className="flex flex-col gap-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
                   <span className="min-w-0 break-words font-medium text-slate-900">{item.product?.name ?? t("Unknown product")}</span>
-                  <span className="shrink-0 text-slate-600">{item.picked_qty || item.planned_qty} / {item.planned_qty} {t("picked")}</span>
+                  <span className="shrink-0 text-slate-600">{Number(item.picked_qty ?? item.planned_qty ?? 0)} / {Number(item.planned_qty ?? 0)} {t("picked")} · {Number(item.returned_qty ?? 0)} {t("returned")} · {Math.max(0, Number(item.picked_qty ?? item.planned_qty ?? 0) - Number(item.returned_qty ?? 0))} {t("remaining")}</span>
                 </div>
               ))}
             </div>

@@ -112,6 +112,8 @@ function reasonLabel(code: RouteRecommendationDiagnosticReasonCode) {
       return "Recommendations healthy";
     case "no_active_stock_snapshot":
       return "No active stock snapshot";
+    case "stale_stock_snapshot":
+      return "Stock snapshot is stale";
     case "no_latest_stock_rows":
       return "No latest stock rows";
     case "machine_mapping_missing":
@@ -133,6 +135,14 @@ function reasonLabel(code: RouteRecommendationDiagnosticReasonCode) {
 
 function batchTimestamp(batch: VmsDashboardBatch | null) {
   return batch?.detected_max_datetime ?? batch?.detected_min_datetime ?? batch?.imported_at ?? batch?.uploaded_at ?? null;
+}
+
+const STOCK_SNAPSHOT_MAX_AGE_MS = 72 * 60 * 60 * 1000;
+
+function isStaleStockSnapshot(value: string | null | undefined, now = Date.now()) {
+  if (!value) return false;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && now - timestamp > STOCK_SNAPSHOT_MAX_AGE_MS;
 }
 
 type VmsImportBatchSourceRow = {
@@ -419,6 +429,7 @@ export default async function NewRoutePage() {
       })
     : { data: [] as MachineStockAuditRow[], count: 0, error: null as string | null };
   const batchAuditRows = (batchAuditResult.data ?? []) as MachineStockAuditRow[];
+  const stockSnapshotIsStale = isStaleStockSnapshot(batchTimestamp(latestActiveStockBatch));
   const today = new Date().toISOString().slice(0, 10);
   const productRows = (products ?? []) as ProductRow[];
   const activeProductIds = new Set(productRows.map((product) => product.id));
@@ -536,9 +547,13 @@ export default async function NewRoutePage() {
       if (!targetQty) return count;
       return unitQuantity(currentRow.current_qty) < targetQty ? count + 1 : count;
     }, 0);
+    const latestRow = [...latestRows].sort((a, b) => String(b.imported_at ?? "").localeCompare(String(a.imported_at ?? "")))[0] ?? null;
+    const snapshotTime = latestRow?.imported_at ?? batchTimestamp(diagnosticBatch);
     let reasonCode: RouteRecommendationDiagnosticReasonCode = "healthy";
     if (!latestActiveStockBatch) {
       reasonCode = "no_active_stock_snapshot";
+    } else if (isStaleStockSnapshot(snapshotTime)) {
+      reasonCode = "stale_stock_snapshot";
     } else if (!machine.vms_machine_id) {
       reasonCode = "machine_mapping_missing";
     } else if (!planogramRows.length) {
@@ -556,12 +571,10 @@ export default async function NewRoutePage() {
     } else if (!positiveSuggestedRows) {
       reasonCode = "no_positive_recommendations";
     }
-    const latestRow = [...latestRows].sort((a, b) => String(b.imported_at ?? "").localeCompare(String(a.imported_at ?? "")))[0] ?? null;
-    const diagnosticBatchStockRows = Number(batchStockRowsResult.count ?? 0);
-    const diagnosticBatchAuditRows = batchAuditRows.length;
     const reasonMessageByCode: Record<RouteRecommendationDiagnosticReasonCode, string> = {
       healthy: "Route creation can use this machine's latest stock and recommendation rows.",
       no_active_stock_snapshot: "No active stock snapshot is available yet.",
+      stale_stock_snapshot: "The latest stock snapshot is more than 72 hours old. Import fresh VMS stock before using automatic quantities.",
       no_latest_stock_rows: "The latest stock snapshot did not produce refill recommendations for this machine.",
       machine_mapping_missing: "This machine still needs a VMS mapping.",
       machine_has_no_planogram: "This machine has not been configured yet.",
@@ -585,7 +598,7 @@ export default async function NewRoutePage() {
       storageShortages,
       unmappedProducts,
       sourceFileName: latestRow?.source_file_name ?? (diagnosticBatch ? sourceFileName(diagnosticBatch) : null),
-      snapshotTime: latestRow?.imported_at ?? batchTimestamp(diagnosticBatch),
+      snapshotTime,
       reasonCode,
       reasonLabel: reasonLabel(reasonCode),
       reasonMessage: reasonMessageByCode[reasonCode],
@@ -600,6 +613,8 @@ export default async function NewRoutePage() {
       ? "unknown"
       : !latestActiveStockBatch
         ? "no_active_stock_snapshot"
+        : stockSnapshotIsStale
+          ? "stale_stock_snapshot"
         : latestStockRows.length === 0
           ? "no_latest_stock_rows"
           : loadedRecommendations.length > 0 && activeRecommendations.length === 0
@@ -620,6 +635,8 @@ export default async function NewRoutePage() {
       ? "Recommendation data is partially unavailable right now."
       : summaryReasonCode === "healthy"
         ? "Latest stock rows and refill recommendations are available for route creation."
+        : summaryReasonCode === "stale_stock_snapshot"
+          ? "The latest stock snapshot is more than 72 hours old. Import fresh VMS stock before using automatic quantities."
         : machineDiagnosticsWithIssues.find((machine) => machine.reasonCode === summaryReasonCode)?.reasonMessage
           ?? (summaryReasonCode === "no_active_stock_snapshot"
             ? "No active stock snapshot is available yet."

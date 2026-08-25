@@ -290,7 +290,7 @@ function buildStorageIssues(storageRows: StorageInventoryRow[], reservationRows:
     .filter((row) => numberValue(row.quantity_on_hand) < 0)
     .slice(0, 25)
     .map((row, index) => ({
-      key: `negative-${row.product_id ?? row.product_name ?? index}`,
+      key: `negative-${row.location_type ?? "unknown"}-${row.location_name ?? "unknown"}-${row.product_id ?? row.product_name ?? index}`,
       kind: "negative_balance",
       productId: textValue(row.product_id),
       productName: row.product_name ?? "Unknown product",
@@ -298,13 +298,15 @@ function buildStorageIssues(storageRows: StorageInventoryRow[], reservationRows:
       quantity: numberValue(row.quantity_on_hand),
       storageQty: row.location_type === "storage" ? numberValue(row.quantity_on_hand) : numberValue(storageByProduct.get(String(row.product_id ?? ""))?.storageQty),
       reservedQty: 0,
-      issue: "Ledger balance is negative and needs investigation.",
+      issue: row.location_type === "operator_bag"
+        ? "Operator bag is negative. Review route pickup, refill, return, and correction movements for this operator."
+        : "Ledger balance is negative and needs investigation.",
     }));
 
   const reservedByProduct = new Map<string, { productName: string; reservedQty: number }>();
   reservationRows.forEach((row) => {
     const route = relationRecord<{ status?: string | null }>(row.routes);
-    if (!ROUTE_RESERVATION_STATUSES.includes(String(route?.status ?? "") as any)) return;
+    if (!(ROUTE_RESERVATION_STATUSES as readonly string[]).includes(String(route?.status ?? ""))) return;
     const outstanding = Math.max(0, numberValue(row.planned_qty) - numberValue(row.picked_qty));
     if (!outstanding) return;
     const productId = String(row.product_id ?? "");
@@ -623,7 +625,7 @@ export default async function SystemHealthPage({
           <div className="mt-2 text-3xl font-semibold text-slate-900">{costGaps.length}</div>
         </div>
         <div className="surface-card">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Storage inconsistencies</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Inventory inconsistencies</div>
           <div className="mt-2 text-3xl font-semibold text-slate-900">{storageIssues.length}</div>
         </div>
         <div className="surface-card">
@@ -904,8 +906,8 @@ export default async function SystemHealthPage({
       <section className="mb-6">
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">Storage inconsistencies</h2>
-            <p className="mt-1 text-sm text-slate-500">Negative balances and route reservations larger than storage are the two fastest signals that inventory needs repair.</p>
+            <h2 className="text-lg font-semibold text-slate-900">Inventory inconsistencies</h2>
+            <p className="mt-1 text-sm text-slate-500">Negative storage or operator-bag balances and route reservations larger than storage are the fastest signals that inventory needs repair.</p>
           </div>
           <form action={recalculateStorageBalances}>
             <HiddenReturnTo />
@@ -914,14 +916,15 @@ export default async function SystemHealthPage({
           </form>
         </div>
         {!storageIssues.length ? (
-          <EmptyState title="No storage inconsistencies" body="Storage balances are non-negative and current route reservations fit within visible storage quantities." />
+          <EmptyState title="No inventory inconsistencies" body="Storage and operator-bag balances are non-negative, and current route reservations fit within visible storage quantities." />
         ) : (
-          <DataTable headers={["Type", "Product", "Location / signal", "Storage qty", "Reserved qty", "Issue"]}>
+          <DataTable headers={["Type", "Product", "Location / signal", "Location qty", "Storage qty", "Reserved qty", "Issue"]}>
             {storageIssues.map((row) => (
               <tr key={row.key}>
                 <td><StatusBadge status={row.kind === "negative_balance" ? "negative balance" : "over reserved"} /></td>
                 <td className="font-medium text-slate-900">{row.productName}</td>
                 <td>{row.locationLabel}</td>
+                <td>{row.quantity}</td>
                 <td>{row.storageQty}</td>
                 <td>{row.reservedQty || "-"}</td>
                 <td className="max-w-xl text-xs text-slate-700">{row.issue}</td>

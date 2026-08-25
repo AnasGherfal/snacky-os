@@ -445,6 +445,10 @@ export function RouteCreateForm({
     () => new Map(diagnostics.machineDiagnostics.map((machine) => [machine.machineId, machine])),
     [diagnostics.machineDiagnostics],
   );
+  const staleRecommendationMachineIds = useMemo(
+    () => new Set(diagnostics.machineDiagnostics.filter((machine) => machine.reasonCode === "stale_stock_snapshot").map((machine) => machine.machineId)),
+    [diagnostics.machineDiagnostics],
+  );
 
   const filteredRecommendationGroups = useMemo(() => {
     const productSearch = deferredRecommendationSearch.trim().toLowerCase();
@@ -897,8 +901,11 @@ export function RouteCreateForm({
   };
 
   const applySuggestedQuantities = (targetMachineIds: string[]) => {
-    const selectedTargets = targetMachineIds.filter((machineId) => machineIds.includes(machineId));
-    if (!selectedTargets.length) return;
+    const selectedTargets = targetMachineIds.filter((machineId) => machineIds.includes(machineId) && !staleRecommendationMachineIds.has(machineId));
+    if (!selectedTargets.length) {
+      setError(tr(locale, "Import a fresh VMS stock snapshot before using automatic quantities. You can still enter verified quantities manually.", "استورد لقطة مخزون حديثة من VMS قبل استخدام الكميات التلقائية. لا يزال بإمكانك إدخال الكميات التي تم التحقق منها يدويًا."));
+      return;
+    }
 
     setManualStopItems((current) => {
       const next = current.filter((item) => machineIds.includes(item.machineId));
@@ -1318,9 +1325,12 @@ export function RouteCreateForm({
                     <div className="mt-1 text-lg font-semibold text-slate-900">{machineLabel(selectedManualMachine)}</div>
                     <div className="text-sm text-slate-500">{selectedManualMachine.machine_code} - {locationLabel(selectedManualMachine.location_name)}</div>
                     {selectedManualRecommendationGroups.some((group) => group.defaultFinalTakeTotal > 0) ? (
-                      <button type="button" className="btn-secondary mt-3" onClick={() => applySuggestedQuantities([selectedManualMachineId])} disabled={saving}>
+                      <button type="button" className="btn-secondary mt-3" onClick={() => applySuggestedQuantities([selectedManualMachineId])} disabled={saving || staleRecommendationMachineIds.has(selectedManualMachineId)}>
                         {tr(locale, "Use suggested quantities", "استخدام الكميات المقترحة")}
                       </button>
+                    ) : null}
+                    {staleRecommendationMachineIds.has(selectedManualMachineId) ? (
+                      <p className="mt-3 max-w-xl text-xs font-medium text-amber-700">{tr(locale, "Automatic quantities are paused because this machine's stock snapshot is more than 72 hours old. Import fresh VMS stock or enter verified quantities manually.", "تم إيقاف الكميات التلقائية لأن لقطة مخزون هذا الجهاز أقدم من 72 ساعة. استورد مخزون VMS حديثًا أو أدخل الكميات التي تم التحقق منها يدويًا.")}</p>
                     ) : null}
                   </div>
                   <div className="grid gap-2 text-sm text-slate-600 sm:grid-cols-3">
@@ -2025,13 +2035,20 @@ export function RouteCreateForm({
             </div>
           ) : (
             <div className="space-y-4">
+              {machineIds.some((machineId) => staleRecommendationMachineIds.has(machineId)) ? (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+                  <div className="font-semibold">{tr(locale, "Fresh VMS stock required for automatic quantities", "مطلوب مخزون VMS حديث للكميات التلقائية")}</div>
+                  <p className="mt-1">{tr(locale, "One or more selected machines have a stock snapshot older than 72 hours. Manual route planning remains available, but Snacky OS will not apply stale suggestions.", "لدى جهاز واحد أو أكثر من الأجهزة المحددة لقطة مخزون أقدم من 72 ساعة. يظل التخطيط اليدوي للجولة متاحًا، لكن Snacky OS لن يطبق مقترحات قديمة.")}</p>
+                  <Link href="/vms-import" className="mt-2 inline-flex font-semibold underline">{tr(locale, "Import fresh VMS stock", "استيراد مخزون VMS حديث")}</Link>
+                </div>
+              ) : null}
               <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <div className="text-sm font-semibold text-slate-950">{tr(locale, `${machineIds.length} of ${machines.length} machines selected`, `تم تحديد ${machineIds.length} من ${machines.length} أجهزة`)}</div>
                   <div className="mt-1 text-xs text-slate-500">{tr(locale, "Tap a machine once to include it. There is no second machine selector later.", "اضغط على الجهاز مرة واحدة لتضمينه. لن يوجد محدد أجهزة ثانٍ لاحقًا.")}</div>
                 </div>
                 {creationMode === "full" && machineIds.some((machineId) => (recommendationGroupsByMachine.get(machineId) ?? []).some((group) => group.defaultFinalTakeTotal > 0)) ? (
-                  <button type="button" className="btn-secondary justify-center" onClick={() => applySuggestedQuantities(machineIds)} disabled={saving}>
+                  <button type="button" className="btn-secondary justify-center" onClick={() => applySuggestedQuantities(machineIds)} disabled={saving || machineIds.every((machineId) => staleRecommendationMachineIds.has(machineId))}>
                     {tr(locale, "Add suggestions for selected machines", "إضافة مقترحات الأجهزة المحددة")}
                   </button>
                 ) : null}
@@ -2041,6 +2058,7 @@ export function RouteCreateForm({
                 {machines.map((machine) => {
                   const selected = machineIds.includes(machine.id);
                   const recommendationsForMachine = (recommendationGroupsByMachine.get(machine.id) ?? []).filter((group) => group.defaultFinalTakeTotal > 0);
+                  const recommendationsAreStale = staleRecommendationMachineIds.has(machine.id);
                   const recommendedUnits = recommendationsForMachine.reduce((sum, group) => sum + unitQuantity(group.defaultFinalTakeTotal), 0);
                   const assignedItems = manualItemsByMachine.get(machine.id) ?? [];
                   const assignedUnits = assignedItems.reduce((sum, item) => sum + unitQuantity(item.quantity), 0);
@@ -2072,10 +2090,11 @@ export function RouteCreateForm({
                         </div>
                       </div>
                       {selected && creationMode === "full" && recommendationsForMachine.length ? (
-                        <button type="button" className="btn-secondary mt-3 w-full justify-center" onClick={() => applySuggestedQuantities([machine.id])} disabled={saving}>
+                        <button type="button" className="btn-secondary mt-3 w-full justify-center" onClick={() => applySuggestedQuantities([machine.id])} disabled={saving || recommendationsAreStale}>
                           {tr(locale, "Use suggested quantities", "استخدام الكميات المقترحة")}
                         </button>
                       ) : null}
+                      {recommendationsAreStale ? <p className="mt-2 text-xs font-medium text-amber-700">{tr(locale, "Snapshot older than 72 hours — enter verified quantities manually.", "لقطة المخزون أقدم من 72 ساعة — أدخل الكميات التي تم التحقق منها يدويًا.")}</p> : null}
                     </div>
                   );
                 })}

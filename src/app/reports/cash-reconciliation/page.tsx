@@ -45,6 +45,11 @@ type CashReconciliationSearchParams = {
   date_to?: string;
 };
 
+type RpcRowsResult<T = any> = {
+  data: T[] | null;
+  error: any;
+};
+
 type CashRangeKey =
   | "today"
   | "yesterday"
@@ -701,7 +706,13 @@ export default async function CashReconciliationPage({
   const comparisonSourceMode: SalesDashboardSourceMode | null = comparisonSourceReportType === "monthly_product_profit" ? "monthly" : comparisonSourceReportType ? "detailed" : null;
   const comparisonSummaryRpc = comparisonSourceMode === "monthly" ? "sales_dashboard_monthly_summary" : "sales_dashboard_summary";
 
-  let [selectedVmsSummaryResult, selectedVmsDayResult, selectedVmsMonthResult, selectedVmsMachineResult, comparisonVmsSummaryResult] = await Promise.all([
+  let [selectedVmsSummaryResult, selectedVmsDayResult, selectedVmsMonthResult, selectedVmsMachineResult, comparisonVmsSummaryResult]: [
+    RpcRowsResult<SalesSummaryRow>,
+    RpcRowsResult<VmsMachineSalesRow>,
+    RpcRowsResult<VmsMachineSalesRow>,
+    RpcRowsResult<VmsMachineSalesRow>,
+    RpcRowsResult<SalesSummaryRow>,
+  ] = await Promise.all([
     supabase.rpc(selectedSummaryRpc, { p_date_from: selectedSalesRange.start, p_date_to: selectedSalesRange.end }),
     selectedSourceMode === "monthly"
       ? Promise.resolve({ data: [], error: null })

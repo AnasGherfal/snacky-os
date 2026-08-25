@@ -570,6 +570,16 @@ export default function MachineStopPage() {
   const [finalPhotoFile, setFinalPhotoFile] = useState<File | null>(null);
   const [compressorSafetyInstalled, setCompressorSafetyInstalled] = useState(false);
   const [compressorProofReady, setCompressorProofReady] = useState(false);
+  const [persistedMachinePhotoReady, setPersistedMachinePhotoReady] = useState(false);
+
+  useEffect(() => {
+    const handlePersistedMachinePhoto = (event: Event) => {
+      const detail = (event as CustomEvent<{ saved?: boolean }>).detail;
+      setPersistedMachinePhotoReady(Boolean(detail?.saved));
+    };
+    window.addEventListener("snacky:machine-photo-persisted", handlePersistedMachinePhoto);
+    return () => window.removeEventListener("snacky:machine-photo-persisted", handlePersistedMachinePhoto);
+  }, []);
   const initialStopDraftRef = useRef<string>("");
   const clientSubmissionIdRef = useRef(newClientId());
   const draftKey = useDraftKey("route-stop", [routeId || "missing-route", stopId || "missing-stop"]);
@@ -684,9 +694,9 @@ export default function MachineStopPage() {
       extraUnits: extraProducts.reduce((sum, item) => sum + Math.max(0, Number(item.quantity ?? 0)), 0),
       missingReportCount: missingReports.filter((item) => item.productName.trim()).length,
       adjustmentCount: stopData.adjustments?.length ?? 0,
-      proofReady: Boolean(finalPhotoFile || stopData.hasCompletionPhoto),
+      proofReady: Boolean(finalPhotoFile || persistedMachinePhotoReady || stopData.hasCompletionPhoto),
     };
-  }, [extraProducts, filledQtys, finalPhotoFile, missingReports, stopData, unavailableProducts]);
+  }, [extraProducts, filledQtys, finalPhotoFile, persistedMachinePhotoReady, missingReports, stopData, unavailableProducts]);
 
   useEffect(() => {
     const fetchStopData = async () => {
@@ -827,7 +837,8 @@ export default function MachineStopPage() {
 
   const handleCompleteStop = async () => {
     if (!stopData) return;
-    const canReuseCompletedProof = stopData.stopStatus === ROUTE_STOP_COMPLETED_STATUS && stopData.hasCompletionPhoto;
+    const hasPersistedMachineProof = persistedMachinePhotoReady || Boolean(stopData.hasCompletionPhoto);
+    const canReuseCompletedProof = hasPersistedMachineProof;
     if (!cleaningDone && stopData.stopStatus !== ROUTE_STOP_COMPLETED_STATUS) {
       setError(tr("Please complete the cleaning checklist before finishing.", "أكمل قائمة التنظيف والفحص قبل الإنهاء."));
       return;
@@ -1327,13 +1338,13 @@ export default function MachineStopPage() {
                 className="field-input"
               />
               {finalPhotoFile ? <p className="mt-2 text-sm text-slate-600">{tr("Selected", "المحدد")}: {finalPhotoFile.name}</p> : null}
-              {!finalPhotoFile && stopData.hasCompletionPhoto ? <p className="mt-2 text-sm text-slate-600">{tr("A completion photo is already saved for this stop. Add a new photo only if you want to replace it.", "تم حفظ صورة إنهاء لهذا الموقع بالفعل. أضف صورة جديدة فقط عند الرغبة في استبدالها.")}</p> : null}
-              {!finalPhotoFile && !stopData.hasCompletionPhoto ? <p className="mt-2 text-sm text-amber-700">{tr("Final photo is required before completion.", "الصورة النهائية مطلوبة قبل الإنهاء.")}</p> : null}
+              {!finalPhotoFile && (persistedMachinePhotoReady || stopData.hasCompletionPhoto) ? <p className="mt-2 text-sm text-slate-600">{tr("A completion photo is already saved for this stop. Add a new photo only if you want to replace it.", "تم حفظ صورة إنهاء لهذا الموقع بالفعل. أضف صورة جديدة فقط عند الرغبة في استبدالها.")}</p> : null}
+              {!finalPhotoFile && !persistedMachinePhotoReady && !stopData.hasCompletionPhoto ? <p className="mt-2 text-sm text-amber-700">{tr("Final photo is required before completion.", "الصورة النهائية مطلوبة قبل الإنهاء.")}</p> : null}
             </div>
             <div className={stopExecutionSummary.proofReady ? "rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900" : "rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"}>
               <div className="text-xs font-semibold uppercase tracking-wide">{stopExecutionSummary.proofReady ? tr("Photo ready", "الصورة جاهزة") : tr("Photo still needed", "ما زالت الصورة مطلوبة")}</div>
               <div className="mt-2 font-semibold">
-                {finalPhotoFile ? tr("New proof photo will upload with this save.", "سيتم رفع صورة إثبات جديدة مع هذا الحفظ.") : stopData.hasCompletionPhoto ? tr("Existing proof photo is already attached.", "صورة الإثبات الحالية مرفقة بالفعل.") : tr("Take a completion photo before finishing this stop.", "التقط صورة إنهاء قبل إتمام هذا الموقع.")}
+                {finalPhotoFile ? tr("New proof photo will upload with this save.", "سيتم رفع صورة إثبات جديدة مع هذا الحفظ.") : persistedMachinePhotoReady || stopData.hasCompletionPhoto ? tr("Existing proof photo is already attached.", "صورة الإثبات الحالية مرفقة بالفعل.") : tr("Take a completion photo before finishing this stop.", "التقط صورة إنهاء قبل إتمام هذا الموقع.")}
               </div>
               <div className="mt-2 text-xs">
                 {tr("Completion photos stay visible later from the route details page.", "ستظل صور الإنهاء ظاهرة لاحقاً في صفحة تفاصيل الجولة.")}

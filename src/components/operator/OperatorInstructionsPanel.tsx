@@ -36,6 +36,7 @@ type Props = {
   initialOperatorId?: string;
   lockOperator?: boolean;
   className?: string;
+  hideSetupWarning?: boolean;
 };
 
 type InstructionType = "task" | "price_change" | "note";
@@ -99,6 +100,7 @@ export default function OperatorInstructionsPanel({
   initialOperatorId = "",
   lockOperator = false,
   className = "",
+  hideSetupWarning = false,
 }: Props) {
   const { locale } = useLanguage();
   const ar = locale === "ar";
@@ -319,6 +321,8 @@ export default function OperatorInstructionsPanel({
       </section>
     );
   }
+
+  if (!snapshot && setupRequired && hideSetupWarning) return null;
 
   if (!snapshot) {
     return (

@@ -73,7 +73,7 @@ type MachineRow = {
   id: string;
   name?: string | null;
   machine_code?: string | null;
-  location?: { id?: string | null; name?: string | null } | null;
+  location?: { id?: string | null; name?: string | null } | { id?: string | null; name?: string | null }[] | null;
 };
 
 type LocationRow = { id: string; name?: string | null };
@@ -81,6 +81,14 @@ type LocationRow = { id: string; name?: string | null };
 type CashCollectionQueryRow = FinanceCashCollectionRow & {
   machine?: MachineRow | null;
 };
+
+type CashCollectionQueryResultRow = FinanceCashCollectionRow & {
+  machine?: MachineRow | MachineRow[] | null;
+};
+
+function relationRecord<T>(value: T | T[] | null | undefined): T | null {
+  return Array.isArray(value) ? value[0] ?? null : value ?? null;
+}
 
 function numeric(value: number | string | null | undefined) {
   const parsed = Number(value ?? 0);
@@ -282,9 +290,10 @@ export default async function FinanceOperationsPage({
     id: machine.id,
     name: machine.name,
     machine_code: machine.machine_code,
-    location_name: machine.location?.name ?? null,
+    location_name: relationRecord(machine.location)?.name ?? null,
   }));
-  const countedCashRows = (countedCashResult.data ?? []) as CashCollectionQueryRow[];
+  const countedCashRows: CashCollectionQueryRow[] = ((countedCashResult.data ?? []) as CashCollectionQueryResultRow[])
+    .map((row) => ({ ...row, machine: relationRecord(row.machine) }));
   const ledgerRows = (ledgerResult.data ?? []) as FinanceOperationsLedgerRow[];
   const locations = new Map(((locationResult.data ?? []) as LocationRow[]).map((location) => [location.id, location.name || "Unknown location"]));
 
