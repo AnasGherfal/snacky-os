@@ -1,6 +1,7 @@
 export type RouteRecommendationDiagnosticReasonCode =
   | "healthy"
   | "no_active_stock_snapshot"
+  | "stale_stock_snapshot"
   | "no_latest_stock_rows"
   | "machine_mapping_missing"
   | "machine_has_no_planogram"

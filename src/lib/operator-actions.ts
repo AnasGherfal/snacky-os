@@ -36,6 +36,10 @@ import {
 import { ISSUE_PHOTO_BUCKET, REFILL_PHOTO_BUCKET } from "@/lib/storage-buckets";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { summarizeRouteInventoryMovements } from "@/lib/route-inventory-summary";
+import {
+  buildExplicitZeroFillReturnAdjustments,
+  buildExplicitZeroFillReturnPlans,
+} from "@/lib/route-stop-zero-return";
 
 const REFILL_PHOTO_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"];
 const REFILL_PHOTO_MAX_SIZE = 10 * 1024 * 1024;
@@ -831,7 +835,7 @@ export async function confirmPickList(
     });
 
     const pickedStopItems = new Map<string, PickedStopItem>();
-    const legacyPickedByProduct = new Map<string, { productId: string; quantity: number; plannedQty?: number; reason?: string; notes?: string }>();
+    const legacyPickedByProduct = new Map<string, { productId: string; quantity: number; plannedQty?: number; reason?: string; notes?: string; isChecked?: boolean }>();
     const addPickedStopItem = (item: Omit<PickedStopItem, "quantity"> & { quantity: number }) => {
       const key = item.id || routeStopProductKey(item.routeStopId, item.productId);
       const current = pickedStopItems.get(key);
@@ -885,6 +889,7 @@ export async function confirmPickList(
         plannedQty: current?.plannedQty ?? plannedQty,
         reason: item.reason || current?.reason,
         notes: mergeNotes(current?.notes, item.notes),
+        isChecked: Boolean(current?.isChecked || item.isChecked),
       });
     });
 
@@ -2356,7 +2361,7 @@ function completeStopPublicError(error: unknown) {
   if (message.includes("not in progress")) return "Could not complete stop because this route is not in progress.";
   if (message.includes("does not belong")) return "Could not complete stop because stop data is incomplete.";
   if (message.includes("stock is missing")) return "Could not complete stop because product stock is missing.";
-  if (message.includes("cannot exceed")) return "Could not complete stop because filled quantity exceeds carried quantity.";
+  if (message.includes("cannot exceed")) return `Could not complete stop. ${message}`;
   if (message.includes("missing a product") || message.includes("not found")) return "Could not complete stop because stop data is incomplete.";
   return message;
 }
@@ -2517,18 +2522,25 @@ export async function completeStop({
         .map((item: any) => String(item.product_id));
     }
 
+    // Explicit-zero stop returns need route stock row ids for immediate summary reconciliation.
     const { data: routeStockLines, error: stockError } = await supabase
       .from("route_stock_lines")
-      .select("product_id, picked_qty, returned_qty")
+      .select("id, product_id, picked_qty, returned_qty")
       .eq("route_id", routeId);
     if (stockError) throwActionError(stockError, "Could not load picked stock for this route.");
 
-    const { data: existingRouteFills, error: fillsError } = await supabase
+    // Use the same route movement ledger that powers the operator's visible bag balance.
+    // route_stock_lines is retained only as a legacy fallback for routes created before pickup movements existed.
+    const { data: routeInventoryMovements, error: routeInventoryMovementsError } = await supabase
       .from("inventory_movements")
       .select("product_id, quantity, related_route_stop_id, reason, from_entity_type, to_entity_type")
       .eq("related_route_id", routeId)
-      .in("reason", ["operator_bag_to_machine", "manual_correction"]);
-    if (fillsError) throwActionError(fillsError, "Could not verify previous machine fills.");
+      .limit(5000);
+    if (routeInventoryMovementsError) throwActionError(routeInventoryMovementsError, "Could not verify carried route stock.");
+    const routeMovementRows = routeInventoryMovements ?? [];
+    const existingRouteFills = routeMovementRows.filter((movement: any) =>
+      ["operator_bag_to_machine", "manual_correction"].includes(String(movement.reason ?? "")),
+    );
 
     const filledSoFar = new Map<string, number>();
     const currentStopFilled = new Map<string, number>();
@@ -2539,10 +2551,12 @@ export async function completeStop({
       if (movement.related_route_stop_id === stopId) currentStopFilled.set(productId, (currentStopFilled.get(productId) ?? 0) + qty);
     });
 
-    const actualFillLines = [
-      ...normalizedFilledItems.map((item) => ({ productId: item.productId, quantity: item.quantity })),
-      ...normalizedExtraItems.map((item) => ({ productId: item.productId, quantity: item.quantity })),
-    ];
+    // Assigned fills go into machine slots. Explicit machine-storage rows are a separate
+    // destination and must never be posted again as normal machine fills.
+    const actualFillLines = normalizedFilledItems.map((item) => ({
+      productId: item.productId,
+      quantity: item.quantity,
+    }));
 
     const requestedFills = new Map<string, number>();
     actualFillLines.forEach((item) => {
@@ -2551,8 +2565,73 @@ export async function completeStop({
       if (productId && quantity > 0) requestedFills.set(productId, (requestedFills.get(productId) ?? 0) + quantity);
     });
 
-    const stockByProduct = new Map((routeStockLines ?? []).map((line: any) => [String(line.product_id), unitQuantity(line.picked_qty) - unitQuantity(line.returned_qty)]));
-    const submittedProductIds = Array.from(new Set([...normalizedFilledItems.map((item) => item.productId), ...normalizedExtraItems.map((item) => item.productId)]));
+    const requestedMachineStorage = new Map<string, number>();
+    normalizedExtraItems.forEach((item) => {
+      const productId = String(item.productId);
+      const quantity = Math.max(0, Number(item.quantity ?? 0));
+      if (productId && quantity > 0) {
+        requestedMachineStorage.set(productId, (requestedMachineStorage.get(productId) ?? 0) + quantity);
+      }
+    });
+
+    const requestedBagUse = new Map(requestedFills);
+    requestedMachineStorage.forEach((quantity, productId) => {
+      requestedBagUse.set(productId, (requestedBagUse.get(productId) ?? 0) + quantity);
+    });
+
+    const legacyStockByProduct = new Map(
+      (routeStockLines ?? []).map((line: any) => [
+        String(line.product_id),
+        unitQuantity(line.picked_qty) - unitQuantity(line.returned_qty),
+      ]),
+    );
+    const routeBagBalances = routeBagBalanceFromMovements(routeMovementRows);
+    const canonicalPickupProductIds = new Set<string>();
+    routeMovementRows.forEach((movement: any) => {
+      const productId = String(movement.product_id ?? "");
+      if (!productId) return;
+      const isPickupIntoBag =
+        movement.to_entity_type === "operator_bag" &&
+        movement.from_entity_type !== "operator_bag" &&
+        (movement.from_entity_type === "storage" || movement.reason === "storage_to_operator_bag");
+      if (isPickupIntoBag) canonicalPickupProductIds.add(productId);
+    });
+
+    const currentStopMachineStorageByProduct = new Map<string, number>();
+    routeMovementRows.forEach((movement: any) => {
+      if (String(movement.related_route_stop_id ?? "") !== stopId) return;
+      const productId = String(movement.product_id ?? "");
+      const quantity = unitQuantity(movement.quantity);
+      if (!productId || quantity <= 0) return;
+      if (movement.from_entity_type === "operator_bag" && movement.to_entity_type === "machine_storage") {
+        currentStopMachineStorageByProduct.set(
+          productId,
+          (currentStopMachineStorageByProduct.get(productId) ?? 0) + quantity,
+        );
+      }
+      if (movement.from_entity_type === "machine_storage" && movement.to_entity_type === "operator_bag") {
+        currentStopMachineStorageByProduct.set(
+          productId,
+          (currentStopMachineStorageByProduct.get(productId) ?? 0) - quantity,
+        );
+      }
+    });
+
+    const currentStopCommittedByProduct = new Map<string, number>();
+    new Set([...currentStopFilled.keys(), ...currentStopMachineStorageByProduct.keys()]).forEach((productId) => {
+      currentStopCommittedByProduct.set(
+        productId,
+        Math.max(0, currentStopFilled.get(productId) ?? 0) +
+          Math.max(0, currentStopMachineStorageByProduct.get(productId) ?? 0),
+      );
+    });
+
+    const submittedProductIds = Array.from(
+      new Set([
+        ...normalizedFilledItems.map((item) => item.productId),
+        ...normalizedExtraItems.map((item) => item.productId),
+      ]),
+    );
     const { data: submittedProducts, error: submittedProductsError } = submittedProductIds.length
       ? await supabase.from("products").select("id, name").in("id", submittedProductIds)
       : { data: [], error: null };
@@ -2564,26 +2643,43 @@ export async function completeStop({
       throw new Error("Submitted product not found. Remove it from the stop and add it again.");
     }
 
-    const routeProductIds = new Set([...Array.from(stockByProduct.keys()), ...Array.from(filledSoFar.keys()), ...submittedProductIds]);
+    const routeProductIds = new Set([
+      ...legacyStockByProduct.keys(),
+      ...routeBagBalances.keys(),
+      ...filledSoFar.keys(),
+      ...currentStopMachineStorageByProduct.keys(),
+      ...submittedProductIds,
+    ]);
+    const carriedAvailableByProduct = new Map<string, number>();
     routeProductIds.forEach((productId) => {
-      const stockQty = stockByProduct.get(productId) ?? 0;
-      const beforeQty = stockQty - (filledSoFar.get(productId) ?? 0);
+      const currentStopCommitted = currentStopCommittedByProduct.get(productId) ?? 0;
+      const canonicalAvailable = Math.max(0, routeBagBalances.get(productId) ?? 0) + currentStopCommitted;
       const filledByOtherStops = (filledSoFar.get(productId) ?? 0) - (currentStopFilled.get(productId) ?? 0);
-      const afterQty = stockQty - filledByOtherStops - (requestedFills.get(productId) ?? 0);
-      logCarriedBefore.set(productId, beforeQty);
-      logCarriedAfter.set(productId, afterQty);
+      const legacyAvailable = Math.max(0, (legacyStockByProduct.get(productId) ?? 0) - filledByOtherStops);
+      const available = canonicalPickupProductIds.has(productId) ? canonicalAvailable : legacyAvailable;
+      const requested = requestedBagUse.get(productId) ?? 0;
+      carriedAvailableByProduct.set(productId, available);
+      logCarriedBefore.set(productId, available);
+      logCarriedAfter.set(productId, available - requested);
     });
 
-    for (const [productId, quantity] of requestedFills) {
-      const filledByOtherStops = (filledSoFar.get(productId) ?? 0) - (currentStopFilled.get(productId) ?? 0);
-      const available = (stockByProduct.get(productId) ?? 0) - filledByOtherStops;
-      if (!stockByProduct.has(productId)) {
+    for (const [productId, quantity] of requestedBagUse) {
+      const hasCanonicalPickup = canonicalPickupProductIds.has(productId);
+      if (!hasCanonicalPickup && !legacyStockByProduct.has(productId)) {
         const product = submittedProductById.get(productId);
         throw new Error(`Route stock is missing for ${product?.name ?? "selected product"}.`);
       }
+      const available = carriedAvailableByProduct.get(productId) ?? 0;
       if (quantity > available) {
-        const product = submittedProductById.get(productId);
-        throw new Error(`Filled quantity cannot exceed carried quantity for ${product?.name ?? "selected product"}.`);
+        const shortage = quantity - available;
+        console.warn("[operator:complete-stop] Actual field fill exceeds recorded carried quantity; completing with inventory discrepancy", {
+          route_id: routeId,
+          route_stop_id: stopId,
+          product_id: productId,
+          requested_quantity: quantity,
+          recorded_carried_quantity: available,
+          discrepancy_quantity: shortage,
+        });
       }
     }
 
@@ -2708,6 +2804,160 @@ export async function completeStop({
         rows: movements,
         routeId,
         operationLabel: 'create machine fill inventory movements',
+      });
+    }
+
+    // Explicit-zero assigned fills are reconciled with storage immediately.
+    // Partial underfills remain in the route bag for the normal leftovers workflow.
+    // Existing return/reversal movements are read first so retries and later stop edits stay balanced.
+    const zeroFillReturnPlans = buildExplicitZeroFillReturnPlans(normalizedFilledItems);
+    // snacky:zero-fill-privileged-ledger-client
+    // Route/stop authorization has already passed above. Use the server-side ledger client for
+    // the canonical storage movement so operator RLS cannot leave only the route summary changed.
+    const zeroFillLedgerClient = getSupabaseAdminClient() ?? supabase;
+    const { data: existingZeroFillMovements, error: existingZeroFillError } = await zeroFillLedgerClient
+      .from("inventory_movements")
+      .select("product_id, quantity, from_entity_type, to_entity_type, source_type")
+      .eq("related_route_id", routeId)
+      .eq("related_route_stop_id", stopId)
+      .in("source_type", ["route_stop_zero_fill_return", "route_stop_zero_fill_return_reversal"])
+      .limit(5000);
+    if (existingZeroFillError) {
+      throwActionError(existingZeroFillError, "Could not verify previous zero-fill returns.");
+    }
+
+    const existingZeroFillReturnByProduct = new Map<string, number>();
+    (existingZeroFillMovements ?? []).forEach((movement: any) => {
+      const productId = String(movement.product_id ?? "");
+      const quantity = unitQuantity(movement.quantity);
+      if (!productId || quantity <= 0) return;
+      const isReturn = movement.from_entity_type === "operator_bag" && movement.to_entity_type === "storage";
+      const isReversal = movement.from_entity_type === "storage" && movement.to_entity_type === "operator_bag";
+      if (!isReturn && !isReversal) return;
+      const delta = isReturn ? quantity : -quantity;
+      existingZeroFillReturnByProduct.set(
+        productId,
+        (existingZeroFillReturnByProduct.get(productId) ?? 0) + delta,
+      );
+    });
+
+    const zeroFillReturnAdjustments = buildExplicitZeroFillReturnAdjustments(
+      zeroFillReturnPlans,
+      existingZeroFillReturnByProduct,
+    );
+    const zeroFillTrackedProductIds = new Set([
+      ...zeroFillReturnPlans.map((plan) => plan.productId),
+      ...existingZeroFillReturnByProduct.keys(),
+    ]);
+
+    if (zeroFillTrackedProductIds.size) {
+      let zeroFillStorageId: string | null = null;
+      if (zeroFillReturnAdjustments.length) {
+        // This SECURITY DEFINER RPC authorizes with auth.uid(), so it must use the
+        // operator's authenticated client. The privileged client is intentionally
+        // limited to the already-authorized ledger read/write below.
+        const storageLookup = await supabase.rpc(
+          "snacky_route_leftover_storage_location_id",
+          { p_route_id: routeId },
+        );
+        if (storageLookup.error) {
+          throwActionError(storageLookup.error, "Could not load storage for the zero-fill return.");
+        }
+        zeroFillStorageId = String(storageLookup.data ?? "").trim() || null;
+        if (!zeroFillStorageId) throw new Error("No active storage location found for the zero-fill return.");
+
+        const zeroFillReturnSourceId = routeSourceUuid(
+          stopSubmissionId,
+          "route-stop-zero-fill-return:" + routeId + ":" + stopId + ":" + stopSubmissionId,
+        );
+        const zeroFillReturnRows = zeroFillReturnAdjustments.map((adjustment) => {
+          const returning = adjustment.direction === "return";
+          return {
+            product_id: adjustment.productId,
+            quantity: adjustment.quantity,
+            from_entity_type: returning ? "operator_bag" : "storage",
+            from_entity_id: returning ? route.operator_id : zeroFillStorageId,
+            to_entity_type: returning ? "storage" : "operator_bag",
+            to_entity_id: returning ? zeroFillStorageId : route.operator_id,
+            reason: returning ? "operator_bag_to_storage" : "manual_correction",
+            related_route_id: routeId,
+            related_route_stop_id: stopId,
+            related_machine_id: machineId,
+            related_pickup_batch_id: null,
+            idempotency_key: inventoryMovementIdempotencyKey(
+              returning ? "route-stop-zero-fill-return" : "route-stop-zero-fill-return-reversal",
+              routeId,
+              stopId,
+              machineId,
+              adjustment.productId,
+              zeroFillStorageId,
+              route.operator_id ?? "",
+              adjustment.quantity,
+              stopSubmissionId,
+            ),
+            source_type: returning ? "route_stop_zero_fill_return" : "route_stop_zero_fill_return_reversal",
+            source_id: zeroFillReturnSourceId,
+            created_by: route.operator_id,
+            notes: returning
+              ? "Assigned stop quantity returned to storage because the operator recorded an explicit zero fill."
+              : "Reversed a prior explicit-zero storage return after the stop quantity was edited.",
+          };
+        });
+
+        // snacky:zero-fill-storage-ledger-write
+        await upsertInventoryMovementsWithFallback({
+          supabase: zeroFillLedgerClient,
+          rows: zeroFillReturnRows,
+          routeId,
+          operationLabel: "reconcile explicit-zero stop return movements",
+        });
+
+        zeroFillReturnAdjustments.forEach((adjustment) => {
+          const carriedDelta = adjustment.direction === "return" ? -adjustment.quantity : adjustment.quantity;
+          logCarriedAfter.set(
+            adjustment.productId,
+            (logCarriedAfter.get(adjustment.productId) ?? 0) + carriedDelta,
+          );
+        });
+      }
+
+      const { data: refreshedRouteMovements, error: refreshedRouteMovementError } = await zeroFillLedgerClient
+        .from("inventory_movements")
+        .select("product_id, quantity, reason, from_entity_type, to_entity_type")
+        .eq("related_route_id", routeId)
+        .limit(5000);
+      if (refreshedRouteMovementError) {
+        throwActionError(refreshedRouteMovementError, "Could not reload the route summary after the zero-fill return.");
+      }
+
+      const refreshedRouteSummary = routeInventorySummaryByProduct(refreshedRouteMovements);
+      for (const line of routeStockLines ?? []) {
+        const productId = String(line.product_id ?? "");
+        if (!zeroFillTrackedProductIds.has(productId)) continue;
+        const returnedQty = Math.max(0, refreshedRouteSummary.get(productId)?.returnedQty ?? 0);
+        const { error: stockLineReturnError } = await supabase
+          .from("route_stock_lines")
+          .update({ returned_qty: returnedQty, updated_at: new Date().toISOString() })
+          .eq("id", line.id);
+        if (stockLineReturnError) {
+          throwActionError(stockLineReturnError, "Could not update the route summary after the zero-fill return.");
+        }
+      }
+
+      console.info("[operator:complete-stop] Explicit-zero assigned quantities reconciled with storage", {
+        route_id: routeId,
+        route_stop_id: stopId,
+        machine_id: machineId,
+        storage_id: zeroFillStorageId,
+        desired_returns: zeroFillReturnPlans.map((plan) => ({
+          product_id: plan.productId,
+          quantity: plan.quantity,
+        })),
+        saved_adjustments: zeroFillReturnAdjustments.map((adjustment) => ({
+          product_id: adjustment.productId,
+          quantity: adjustment.quantity,
+          direction: adjustment.direction,
+        })),
       });
     }
 

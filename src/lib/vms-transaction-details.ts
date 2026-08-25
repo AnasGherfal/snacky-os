@@ -319,12 +319,7 @@ function transactionDetailsLineIdentity(row: Record<string, string>) {
 export function createVmsMonthlyTransactionDuplicateHash(row: Record<string, string>) {
   const thirdPartyOrderNo = monthlyTransactionValue(row, monthlyTransactionAliases.thirdPartyOrderNo);
   const thirdPartyTransaction = monthlyTransactionValue(row, monthlyTransactionAliases.thirdPartyTransaction);
-  const machineCode = monthlyTransactionValue(row, monthlyTransactionAliases.machineCode);
-  const productNumber = monthlyTransactionValue(row, monthlyTransactionAliases.productNumber);
-  const productName = monthlyTransactionValue(row, monthlyTransactionAliases.productName);
-  const paymentTime = monthlyTransactionValue(row, monthlyTransactionAliases.paymentTime);
-  const paymentAmount = monthlyTransactionPaymentAmount(row);
-  const cargoLane = monthlyTransactionValue(row, monthlyTransactionAliases.cargoLane);
+  const lineIdentity = transactionDetailsLineIdentity(row);
 
   if (thirdPartyOrderNo || thirdPartyTransaction) {
     return createHash("sha256").update(JSON.stringify({
@@ -332,20 +327,25 @@ export function createVmsMonthlyTransactionDuplicateHash(row: Record<string, str
       key: thirdPartyOrderNo ? "third_party_order_no_line" : "third_party_transaction_number_line",
       third_party_order_no: stableText(thirdPartyOrderNo),
       third_party_transaction_number: stableText(thirdPartyTransaction),
-      ...transactionDetailsLineIdentity(row),
+      ...lineIdentity,
     })).digest("hex");
   }
 
   return createHash("sha256").update(JSON.stringify({
     type: "vms_order_details",
     key: "fallback",
-    machine_code: stableText(machineCode),
-    product_number: stableText(productNumber),
-    product_name: stableText(productName),
-    payment_time: stableText(paymentTime),
-    payment_amount: String(paymentAmount ?? 0),
-    cargo_lane: stableText(cargoLane),
-    ...transactionDetailsLineIdentity(row),
+    machine_code: lineIdentity.machine_code,
+    product_number: lineIdentity.product_number,
+    product_name: lineIdentity.product_name,
+    payment_time: lineIdentity.payment_time,
+    payment_amount: lineIdentity.payment_amount,
+    cargo_lane: lineIdentity.cargo_lane,
+    business_date: lineIdentity.business_date,
+    logic_card_number: lineIdentity.logic_card_number,
+    mode_of_payment: lineIdentity.mode_of_payment,
+    refund_amount: lineIdentity.refund_amount,
+    refund_time: lineIdentity.refund_time,
+    quantity: lineIdentity.quantity,
   })).digest("hex");
 }
 

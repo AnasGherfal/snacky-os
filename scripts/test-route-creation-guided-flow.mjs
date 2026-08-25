@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = fs.readFileSync(path.join(repoRoot, "src/app/routes/new/RouteCreateForm.tsx"), "utf8");
-const patchSource = fs.readFileSync(path.join(repoRoot, "scripts/apply-unified-route-builder-patch.mjs"), "utf8");
+const pageSource = fs.readFileSync(path.join(repoRoot, "src/app/routes/new/page.tsx"), "utf8");
+const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 
 test("route creation is a resumable details, machines, products, review flow", () => {
   assert.match(source, /type RouteBuilderStep = "details" \| "machines" \| "products" \| "review"/);
@@ -37,8 +38,15 @@ test("the existing route API payload and stock validation remain canonical", () 
   assert.match(source, /const issues = validateStock\(\)/);
 });
 
-test("the legacy prebuild transform recognizes the committed guided builder", () => {
-  assert.match(patchSource, /Guided route builder is already applied/);
-  assert.match(patchSource, /type RouteBuilderStep/);
-  assert.match(patchSource, /process\.exit\(0\)/);
+test("production builds use committed source without runtime patch scripts", () => {
+  assert.doesNotMatch(packageJson.scripts.prebuild, /scripts\/apply-/);
+  assert.doesNotMatch(packageJson.scripts["test:stop-zero-return"], /scripts\/apply-/);
+});
+
+test("stale VMS stock cannot silently populate route quantities", () => {
+  assert.match(pageSource, /STOCK_SNAPSHOT_MAX_AGE_MS = 72 \* 60 \* 60 \* 1000/);
+  assert.match(pageSource, /stale_stock_snapshot/);
+  assert.match(source, /staleRecommendationMachineIds/);
+  assert.match(source, /Import a fresh VMS stock snapshot before using automatic quantities/);
+  assert.match(source, /!staleRecommendationMachineIds\.has\(machineId\)/);
 });

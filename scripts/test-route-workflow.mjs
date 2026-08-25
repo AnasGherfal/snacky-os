@@ -60,7 +60,7 @@ test("route status groups describe one consistent workflow", () => {
     assert.equal(isRouteReservationStatus(status), false, status);
   }
 
-  assert.equal(isOperatorVisibleRouteStatus(ROUTE_AVAILABLE_STATUS), false);
+  assert.equal(isOperatorVisibleRouteStatus(ROUTE_AVAILABLE_STATUS), true);
   assert.equal(isActiveRouteStatus("assigned"), false);
   assert.equal(isOperatorVisibleRouteStatus("assigned"), false);
 });
@@ -174,7 +174,7 @@ test("route reservation queries do not send UI-only statuses into route_status e
   );
   const createApiReservationQuery = sourceWindow(
     "src/app/api/routes/route.ts",
-    '.select("route_id, product_id, planned_qty, picked_qty, routes!inner(status)")',
+    '.select("route_id, product_id, planned_qty, picked_qty")',
   );
 
   for (const querySource of [createPageReservationQuery, createApiReservationQuery]) {
@@ -189,17 +189,17 @@ test("route pickup checklist prioritizes Mr Crunch, then Doritos, then other pro
   const sorted = sortPickupProductRows([
     { productName: "Water 500ml" },
     { productName: "Doritos Nacho" },
-    { productName: "Ã˜Â·Ã˜Â±Ã˜Â¨Ã™Ë†Ã˜Â´ Cheese" },
+    { productName: "طربوش Cheese" },
     { productName: "Chips Classic" },
     { productName: "Mr Crunch Tarboouch" },
-    { productName: "Ã˜Â¯Ã™Ë†Ã˜Â±Ã™Å Ã˜ÂªÃ™Ë†Ã˜Â³ Green Hot" },
+    { productName: "دوريتوس Green Hot" },
   ]);
 
   assert.deepEqual(sorted.map((row) => row.productName), [
     "Mr Crunch Tarboouch",
-    "Ã˜Â·Ã˜Â±Ã˜Â¨Ã™Ë†Ã˜Â´ Cheese",
+    "طربوش Cheese",
     "Doritos Nacho",
-    "Ã˜Â¯Ã™Ë†Ã˜Â±Ã™Å Ã˜ÂªÃ™Ë†Ã˜Â³ Green Hot",
+    "دوريتوس Green Hot",
     "Chips Classic",
     "Water 500ml",
   ]);

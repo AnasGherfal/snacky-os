@@ -922,7 +922,7 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
           </KpiSection>
 
           <KpiSection title={t("Machines needing refill now")} subtitle={t("The route builder should pull from the same live recommendation queue shown here.")}>
-            <SectionLoadError message={errors.refill} />
+            <SectionLoadError message={errors.refill} prefix={t("This section could not load:")} />
             {errors.refill ? null : !recentRefillRows.length ? (
               <SectionEmpty title={t("No refill pressure")} body={t("No active machine refill recommendations are asking for stock right now.")} />
             ) : (

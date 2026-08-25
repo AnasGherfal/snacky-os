@@ -70,6 +70,7 @@ export type VmsMachineSalesRow = {
   successful_sales_amount?: number | string | null;
   successful_sales_count?: number | string | null;
   units_sold?: number | string | null;
+  rows_used?: number | string | null;
 };
 
 export type MachineIdentity = {

@@ -27,11 +27,6 @@ if (process.env.NODE_ENV === "production") {
 }
 
 const nextConfig: NextConfig = {
-  // Temporary Windows build workaround: the native SWC addon fails here, so
-  // we let the build continue with the WASM path and keep the app shipping.
-  typescript: {
-    ignoreBuildErrors: true,
-  },
   experimental: {
     serverActions: {
       bodySizeLimit: "12mb",

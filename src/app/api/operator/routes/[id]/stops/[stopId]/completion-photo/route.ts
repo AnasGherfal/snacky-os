@@ -54,7 +54,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const context = await loadContext(routeId, stopId);
   if ("error" in context) return context.error;
 
-  const { data, error } = await context.client
+  // Persisted completion proof must be read with the same server client used to write it.
+  // Operators can have narrower RLS access than the server-side persistence path.
+  const { data, error } = await context.writeClient
     .from("machine_refill_history")
     .select("machine_photo_url, machine_photo_path, updated_at")
     .eq("legacy_refill_id", `route_stop:${stopId}`)

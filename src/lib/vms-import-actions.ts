@@ -5574,7 +5574,6 @@ async function ensureConfirmedStockImportBatchIsUsable({
       rowsFound: Math.max(summary.rowsFound, effectiveImportedRows),
       rowCount: Math.max(summary.rowsFound, summary.totalRows, effectiveImportedRows),
       rowsImported: effectiveImportedRows,
-      reportType,
       detectedMinDatetime: repairedDetectedMinDatetime,
       detectedMaxDatetime: repairedDetectedMaxDatetime,
     });
@@ -6208,7 +6207,6 @@ export async function updateVmsImportBatchState(formData: FormData) {
       profile,
       batchId,
       batch: objectRecord(beforeBatch),
-      reportType: beforeReportType,
     });
     return;
   } else if ((action === "enable" || action === "restore")
@@ -6219,7 +6217,6 @@ export async function updateVmsImportBatchState(formData: FormData) {
       profile,
       batchId,
       batch: objectRecord(beforeBatch),
-      reportType: beforeReportType,
     });
     return;
   } else if ((action === "enable" || action === "restore")
@@ -6741,5 +6738,4 @@ export async function reprocessVmsImportBatch(formData: FormData) {
     batch: batch as SavedVmsImportBatchRow,
   });
 }
-
 
