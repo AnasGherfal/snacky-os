@@ -27,7 +27,7 @@ test("route localization source is valid UTF-8 without mojibake markers", () => 
 });
 
 test("quick route actions are explicit language pairs", () => {
-  for (const label of ["Quick product actions", "Manual sale", "Damaged", "Return"]) hasPair(quick, label);
+  for (const label of ["Quick stop actions", "Manual sale", "Damaged", "Return"]) hasPair(quick, label);
 });
 
 test("manual sales use locale-aware labels and validation", () => {

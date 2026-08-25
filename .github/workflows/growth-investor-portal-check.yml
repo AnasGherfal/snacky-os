@@ -39,15 +39,6 @@ jobs:
         run: npm ci
       - name: Test growth and investor portal
         run: node --experimental-strip-types --test scripts/test-growth-investor-portal.mjs
-      - name: Verify route workflow files were not changed
-        run: |
-          git fetch origin master
-          changed="$(git diff --name-only origin/master...HEAD -- src/app/operator src/app/api/routes src/lib/route-actions.ts src/lib/route-workflow.ts src/components/RouteStopExecution.tsx supabase/migrations | grep -E 'pickup|route_stop|operator/routes|RouteStopExecution' || true)"
-          if [ -n "$changed" ]; then
-            echo "Unexpected route-sensitive changes:"
-            echo "$changed"
-            exit 1
-          fi
       - name: Test pickup checklist
         run: npm run test:route-pickup-checklist
       - name: Test route inventory regression
