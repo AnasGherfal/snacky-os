@@ -15,7 +15,7 @@ import {
   type FinanceHealthDiagnostics,
 } from "@/lib/finance-health";
 import { ROUTE_RESERVATION_STATUSES } from "@/lib/route-workflow";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { reprocessVmsImportBatch } from "@/lib/vms-import-actions";
 
 export const dynamic = "force-dynamic";
@@ -239,7 +239,7 @@ function entityHref(row: Pick<ActivityLogRow, "entity_type" | "entity_id">) {
   return null;
 }
 
-async function loadRouteRows(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>) {
+async function loadRouteRows(supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>) {
   const withError = await supabase
     .from("routes")
     .select("id, route_date, status, started_at, updated_at, completed_at, last_completion_error, operator_id, operator:team_members(full_name)")
@@ -255,7 +255,7 @@ async function loadRouteRows(supabase: NonNullable<ReturnType<typeof getSupabase
     .limit(80);
 }
 
-async function loadImportRows(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>) {
+async function loadImportRows(supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>) {
   const preferred = await supabase
     .from("vms_import_batches")
     .select("id, file_name, original_file_name, report_type, status, is_active, rows_found, rows_imported, rows_skipped_duplicate, rows_needing_review, error_count, latest_error, last_error, uploaded_at, imported_at")
@@ -467,7 +467,7 @@ export default async function SystemHealthPage({
   if (!profile || !isOwnerAdminRole(profile)) redirect("/unauthorized");
 
   const { success = "", error = "" } = await searchParams;
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
   if (!supabase) {
     return (
       <EmptyState

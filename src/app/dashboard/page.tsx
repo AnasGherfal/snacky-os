@@ -4,6 +4,7 @@ import { StatCard } from "@/components/StatCard";
 import { VmsDataSourceCard } from "@/components/VmsDataSourceCard";
 import { EmptyState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import {
   loadFinanceHealthDiagnostics,
   type FinanceHealthDiagnostics,
@@ -450,7 +451,7 @@ async function loadIssueRows(
 
 async function getDashboardData() {
   await requireCurrentProfileForPath("/dashboard");
-  const supabase = await getAuthenticatedSupabaseServerClient();
+  const supabase = getSupabaseAdminClient() ?? await getAuthenticatedSupabaseServerClient();
   if (!supabase) return { data: null };
 
   const today = dateOnlyUtc(new Date());

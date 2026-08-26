@@ -322,6 +322,11 @@ export async function GET(
       );
     }
 
+    // This read happens only after route assignment is verified. Use the
+    // server-only client so security-invoker reporting views do not require
+    // broad raw VMS access for the operator role.
+    const operationalReadClient = getSupabaseAdminClient() ?? supabase;
+
     if (stop.status === ROUTE_STOP_PENDING_STATUS) {
       let { data: legacyPickupRows, error: legacyPickupError }: { data: LegacyPickupRow[] | null; error: DbErrorLike | null } = await supabase
         .from("route_pick_list_items")
@@ -546,7 +551,7 @@ export async function GET(
         .select("machine_photo_url, machine_photo_path")
         .eq("legacy_refill_id", `route_stop:${stopId}`)
         .maybeSingle(),
-      supabase
+      operationalReadClient
         .from("latest_vms_stock_by_slot")
         .select("product_id")
         .eq("machine_id", stop.machine_id)
@@ -969,6 +974,5 @@ export async function POST(
     );
   }
 }
-
 
 

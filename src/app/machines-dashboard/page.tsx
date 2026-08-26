@@ -2,16 +2,16 @@ import { ChartCard, HorizontalBarChart } from "@/components/DecisionCharts";
 import { KpiLoadWarning, KpiSection } from "@/components/KpiDashboard";
 import { VmsDataSourceCard } from "@/components/VmsDataSourceCard";
 import { DataTable, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
-import { requireCurrentProfileForPath } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
 import { formatInteger, formatLydOrDash, groupCount, latestObservedMonth, monthKey, salesAmount } from "@/lib/kpi";
 import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
 import { type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 
 export default async function MachinesDashboardPage() {
   await requireCurrentProfileForPath("/machines-dashboard");
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient() ?? await getAuthenticatedSupabaseServerClient();
   const [salesResult, machinesResult, refillResult, historicalRefillResult, stockResult, issuesResult, cashResult, batchResult] = supabase
     ? await Promise.all([
         safeSupabaseQuery<any>({

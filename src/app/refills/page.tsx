@@ -2,6 +2,7 @@ import { PaginationControls } from "@/components/PaginationControls";
 import { VmsDataSourceCard } from "@/components/VmsDataSourceCard";
 import { DataTable, EmptyState, MobileCardList, MobileField, MobileRecordCard, PageHeader, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
@@ -186,7 +187,7 @@ async function RefillsPageContent({ searchParams }: { searchParams: Promise<Sear
   const params = cleanSearchParams(await searchParams);
   const { page, pageSize, from, to } = getPagination(params);
   await requireCurrentProfileForPath("/refills");
-  const supabase = await getAuthenticatedSupabaseServerClient();
+  const supabase = getSupabaseAdminClient() ?? await getAuthenticatedSupabaseServerClient();
   const [recommendationsResult, stockCountResult, historyResult, historyCountResult, historyIssueCountResult, batchResult] = supabase
     ? await Promise.all([
         loadRefillRecommendations(supabase),

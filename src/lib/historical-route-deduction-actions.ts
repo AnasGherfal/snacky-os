@@ -7,7 +7,7 @@ import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
 import { HISTORICAL_DEDUCTION_NOTE, parseHistoricalRouteDeductionText } from "@/lib/historical-route-deduction";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 
 function clean(value: FormDataEntryValue | null) {
   return String(value ?? "").trim();
@@ -24,12 +24,12 @@ function contentHash(value: string) {
 async function requireOwnerAdmin(path: string) {
   const profile = await getCurrentProfile();
   if (!profile || !isOwnerAdminRole(profile)) redirect("/unauthorized");
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
   if (!supabase) fail(path, "Supabase is not configured.");
   return { profile, supabase };
 }
 
-async function getDefaultStorage(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>) {
+async function getDefaultStorage(supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>) {
   const { data: mainStorage, error: mainStorageError } = await supabase
     .from("storage_locations")
     .select("id, name")
