@@ -4,7 +4,7 @@ import { DataTable, EmptyState, ErrorState, PageHeader, StatusBadge } from "@/co
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { getXyVmsConfig } from "@/lib/xy-vms-api";
 import { getXyWebApiConfig } from "@/lib/xy-web-api";
 import {
@@ -159,7 +159,7 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
   const webConfig = getXyWebApiConfig();
   const status = connectionStatus(config);
   const webStatus = webConnectionStatus(webConfig);
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
   if (!supabase) {
     return (
       <>

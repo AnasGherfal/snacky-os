@@ -6,7 +6,7 @@ import { DataTable, ErrorState, FormField, PageHeader, SecondaryButton, StatusBa
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
 import { applyHistoricalRouteDeduction, cancelHistoricalRouteDeduction, previewHistoricalRouteDeduction } from "@/lib/historical-route-deduction-actions";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 
 export const dynamic = "force-dynamic";
@@ -120,7 +120,7 @@ export default async function HistoricalRouteDeductionPage({ searchParams }: { s
   if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
 
   const params = await searchParams;
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
   if (!supabase) {
     return <ErrorState title="Historical deduction unavailable" body="Supabase is not configured, so Snacky OS cannot preview or apply storage deductions." />;
   }

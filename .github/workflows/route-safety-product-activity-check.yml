@@ -20,9 +20,11 @@ on:
       - "supabase/migrations/202607180001_route_stop_compressor_safety.sql"
       - "supabase/migrations/202608260001_route_rls_and_rpc_exposure_hardening.sql"
       - "supabase/migrations/202608260002_security_invoker_view_hardening.sql"
+      - "supabase/migrations/202608260003_anonymous_table_exposure_hardening.sql"
       - "scripts/test-route-safety-product-activity.mjs"
       - "scripts/test-route-rls-hardening.mjs"
       - "scripts/test-security-invoker-view-hardening.mjs"
+      - "scripts/test-anonymous-table-exposure-hardening.mjs"
       - ".github/workflows/route-safety-product-activity-check.yml"
   push:
     branches:
@@ -46,6 +48,8 @@ jobs:
         run: node --test scripts/test-route-rls-hardening.mjs
       - name: Test security-invoker view hardening
         run: node --test scripts/test-security-invoker-view-hardening.mjs
+      - name: Test anonymous table exposure hardening
+        run: node --test scripts/test-anonymous-table-exposure-hardening.mjs
       - name: Run route pickup regression checks
         run: |
           for test_file in scripts/test-route-pickup-*.mjs; do

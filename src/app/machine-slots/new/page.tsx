@@ -3,13 +3,14 @@ import { redirect } from "next/navigation";
 import { LocalDraftForm } from "@/components/LocalDraft";
 import { FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
 import { logActivity } from "@/lib/activity-log";
-import { getCurrentProfile } from "@/lib/auth";
+import { getCurrentProfile, requireCurrentProfileForPath } from "@/lib/auth";
 import { parseMachineSlotForm, validateMachineSlot } from "@/lib/machine-slots";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 
 async function createSlot(fd: FormData) {
   "use server";
-  const supabase = getSupabaseServerClient();
+  await requireCurrentProfileForPath("/machine-slots/new");
+  const supabase = getSupabaseAdminClient();
   if (!supabase) redirect("/machine-slots/new?error=Supabase%20is%20not%20configured.");
   const profile = await getCurrentProfile();
 
@@ -41,8 +42,9 @@ async function createSlot(fd: FormData) {
 }
 
 export default async function NewMachineSlotPage({ searchParams }: { searchParams: Promise<{ machine_id?: string; error?: string }> }) {
+  await requireCurrentProfileForPath("/machine-slots/new");
   const { machine_id = "", error } = await searchParams;
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
   const [{ data: machines }, { data: products }] = supabase
     ? await Promise.all([
         supabase.from("machines").select("id, name, machine_code").order("name"),

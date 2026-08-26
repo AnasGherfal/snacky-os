@@ -1,15 +1,17 @@
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
+import { requireCurrentProfileForPath } from "@/lib/auth";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { isRouteReservationStatus } from "@/lib/route-workflow";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
 export default async function WarehousePickListsPage({ searchParams }: { searchParams: Promise<SearchParamsRecord> }) {
+  await requireCurrentProfileForPath("/warehouse/pick-lists");
   const params = cleanSearchParams(await searchParams);
   const { page, pageSize, from, to } = getPagination(params);
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
   const { data: routes, count } = supabase
     ? await supabase
         .from("routes")

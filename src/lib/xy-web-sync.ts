@@ -2,10 +2,10 @@ import "server-only";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "@/lib/activity-log";
 import type { UserProfile } from "@/lib/auth";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { callXyWebApi, getXyWebApiConfig, type XyWebApiConfig, type XyWebApiResult } from "@/lib/xy-web-api";
 
-type SupabaseServer = NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+type SupabaseServer = NonNullable<ReturnType<typeof getSupabaseAdminClient>>;
 type JsonRecord = Record<string, unknown>;
 
 type SyncOptions = {
@@ -160,7 +160,7 @@ function revalidateWebTestPages() {
 }
 
 export async function testXyWebDashboard(options: SyncOptions = {}) {
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
   if (!supabase) throw new Error("Supabase is not configured.");
 
   const profile = options.profile ?? null;

@@ -2,10 +2,10 @@ import "server-only";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "@/lib/activity-log";
 import type { UserProfile } from "@/lib/auth";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { XyApiError, assertXyVmsReady, buildXyRequestDebug, callXyApi, callXyApiRaw, getXyVmsConfig, type XyApiRawResult, type XyRequestDebug, type XyVmsConfig, type XyVmsEndpoint, type XyVmsParams } from "@/lib/xy-vms-api";
 
-type SupabaseServer = NonNullable<ReturnType<typeof getSupabaseServerClient>>;
+type SupabaseServer = NonNullable<ReturnType<typeof getSupabaseAdminClient>>;
 type SyncRunStatus = "running" | "completed" | "completed_with_warnings" | "failed";
 type SyncType = "machines" | "products" | "machine_goods" | "machine_status" | "test_official" | "test_unsigned" | "all";
 type JsonRecord = Record<string, unknown>;
@@ -640,7 +640,7 @@ function revalidateXyPages() {
 }
 
 async function runXySync(syncType: SyncType, options: SyncOptions, work: (context: SyncContext) => Promise<SyncStats>) {
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
   if (!supabase) throw new Error("Supabase is not configured.");
 
   const profile = options.profile ?? null;

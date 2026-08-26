@@ -7,7 +7,7 @@ import { getCurrentProfile } from "@/lib/auth";
 import type { AppPermission } from "@/lib/authz";
 import { getEffectivePermissions, isOwnerAdminRole, normalizeRoles } from "@/lib/authz";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { formatLastLogin, tempPasswordCookie } from "@/lib/team";
 
 export const dynamic = "force-dynamic";
@@ -36,7 +36,7 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
   const cookieStore = await cookies();
   const tempPassword = parseTempPasswordCookie(cookieStore.get(tempPasswordCookie)?.value);
 
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
   if (!supabase) {
     return (
       <>

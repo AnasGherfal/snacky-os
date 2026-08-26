@@ -2,7 +2,7 @@
 
 import { headers } from "next/headers";
 import { UserProfile } from "@/lib/auth";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 
 type ActivityInput = {
   profile?: UserProfile | null;
@@ -42,7 +42,7 @@ function sanitize(value: unknown): unknown {
 }
 
 export async function logActivity(input: ActivityInput) {
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
   if (!supabase) return;
 
   const requestHeaders = await headers();

@@ -18,7 +18,6 @@ import {
 } from "@/lib/finance-ledger";
 import {
   getSupabaseAdminClient,
-  getSupabaseServerClient,
 } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -68,7 +67,7 @@ function textValue(value: unknown) {
 }
 
 async function countRows(
-  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>,
+  supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
   table: string,
 ) {
   const { count, error } = await supabase
@@ -79,7 +78,7 @@ async function countRows(
 }
 
 async function loadFallbackHealth(
-  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>,
+  supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
 ) {
   const [purchases, cashCollections, transactions] = await Promise.all([
     countRows(supabase, "purchase_orders"),
@@ -139,8 +138,7 @@ export default async function FinanceHealthPage() {
   const profile = await getCurrentProfile();
   if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
 
-  const supabase =
-    getSupabaseAdminClient() ?? getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
   if (!supabase) {
     return (
       <EmptyState

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getCurrentProfile } from "@/lib/auth";
 import { AppRole, canAccessOperatorRoute, canViewVmsImports, hasAnyRole, isOperatorRole, isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
 import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
-import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import {
   ISSUE_PHOTO_BUCKET,
   MACHINE_PHOTO_BUCKET,
@@ -26,7 +26,7 @@ async function canReadRoutePhoto(bucket: string, objectPath: string) {
   if (isOwnerAdminRole(profile) || isSupervisorRole(profile)) return true;
   if (!isOperatorRole(profile)) return false;
 
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
   if (!supabase) return false;
   const routeAccessProfile = await buildOperatorRouteAccessContext(supabase, profile);
 

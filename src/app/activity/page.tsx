@@ -5,7 +5,7 @@ import { EmptyState, ErrorState, PageHeader, SecondaryButton } from "@/component
 import { getCurrentProfile } from "@/lib/auth";
 import { AppRole, appRoles, isOwnerAdminRole } from "@/lib/authz";
 import { cleanSearchParams, getPagination, SearchParamsRecord, supabaseLikePattern } from "@/lib/pagination";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +30,7 @@ export default async function ActivityLogPage({
   const date_from = String(params.date_from ?? "");
   const date_to = String(params.date_to ?? "");
   const q = String(params.q ?? "");
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
   if (!supabase) {
     return (
       <>

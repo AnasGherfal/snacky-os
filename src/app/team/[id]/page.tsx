@@ -15,10 +15,7 @@ import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole, normalizeRoles } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
-import {
-  getSupabaseAdminClient,
-  getSupabaseServerClient,
-} from "@/lib/supabase-server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
@@ -66,7 +63,7 @@ export default async function TeamMemberProfilePage({
   );
   if (!manager && !viewingSelf) redirect("/unauthorized");
 
-  const client = getSupabaseAdminClient() ?? getSupabaseServerClient();
+  const client = getSupabaseAdminClient();
   if (!client) {
     return (
       <ErrorState
