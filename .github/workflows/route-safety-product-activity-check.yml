@@ -18,7 +18,9 @@ on:
       - "src/app/reports/route-product-activity/page.tsx"
       - "src/components/module-tabs-config.ts"
       - "supabase/migrations/202607180001_route_stop_compressor_safety.sql"
+      - "supabase/migrations/202608260001_route_rls_and_rpc_exposure_hardening.sql"
       - "scripts/test-route-safety-product-activity.mjs"
+      - "scripts/test-route-rls-hardening.mjs"
       - ".github/workflows/route-safety-product-activity-check.yml"
   push:
     branches:
@@ -38,6 +40,8 @@ jobs:
         run: npm ci
       - name: Test route safety and product activity
         run: node --test scripts/test-route-safety-product-activity.mjs
+      - name: Test route RLS hardening
+        run: node --test scripts/test-route-rls-hardening.mjs
       - name: Run route pickup regression checks
         run: |
           for test_file in scripts/test-route-pickup-*.mjs; do
