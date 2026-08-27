@@ -205,8 +205,7 @@ function hasKnownStorage(value: unknown) {
 }
 
 function defaultRecommendationFinalTake(recommendedTotal: number, storageAvailable: number, storageKnown: boolean) {
-  if (!storageKnown) return recommendedTotal;
-  if (storageAvailable <= 0) return recommendedTotal;
+  if (!storageKnown || storageAvailable <= 0) return 0;
   return Math.min(recommendedTotal, storageAvailable);
 }
 
@@ -509,10 +508,9 @@ export function RouteCreateForm({
 
   const clampRecommendationFinalTake = useCallback((group: RecommendationGroup, value: number) => {
     const safeValue = unitQuantity(value);
-    if (adminOverride) return safeValue;
-    if (!group.storageKnown || unitQuantity(group.storageAvailable) <= 0) return safeValue;
+    if (!group.storageKnown || unitQuantity(group.storageAvailable) <= 0) return 0;
     return Math.min(safeValue, unitQuantity(group.storageAvailable));
-  }, [adminOverride]);
+  }, []);
 
   const finalTakeForGroup = useCallback(
     (group: RecommendationGroup) => clampRecommendationFinalTake(group, finalTakeByRecommendationGroup[group.groupKey] ?? group.defaultFinalTakeTotal),
@@ -782,7 +780,7 @@ export function RouteCreateForm({
   const machineFallbackProducts = useMemo(() => {
     const fallbackSource = products.filter((product) => {
       if (machineScopedProductIds.has(product.id)) return false;
-      if (!adminOverride && product.storageKnown && product.availableQty <= 0 && product.storageQty <= 0) return false;
+      if (!product.storageKnown || product.availableQty <= 0) return false;
       return true;
     });
     if (manualSearchQuery) {
@@ -804,7 +802,7 @@ export function RouteCreateForm({
         { productName: b.name, productCategory: b.category, productBrand: b.brand },
       ) || b.availableQty - a.availableQty || a.name.localeCompare(b.name));
     return [...recent, ...remaining].slice(0, 12);
-  }, [adminOverride, machineScopedProductIds, manualSearchQuery, products, recentFallbackProducts]);
+  }, [machineScopedProductIds, manualSearchQuery, products, recentFallbackProducts]);
 
   const toggleValue = (values: string[], value: string) => (values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
   const toggleRecommendationFamily = (groupKey: string, defaultExpanded = false) => {
@@ -814,7 +812,11 @@ export function RouteCreateForm({
     }));
   };
   const isRecommendationGroupSelected = (group: RecommendationGroup) => group.recommendationKeys.every((key) => recommendationKeys.includes(key));
-  const recommendationGroupSelectable = (group: RecommendationGroup) => group.recommendedTotal > 0;
+  const recommendationGroupSelectable = (group: RecommendationGroup) => (
+    group.recommendedTotal > 0
+    && group.storageKnown
+    && unitQuantity(group.storageAvailable) > 0
+  );
   const setRecommendationFinalTake = (group: RecommendationGroup, value: number) => {
     setFinalTakeByRecommendationGroup((current) => ({
       ...current,
@@ -873,11 +875,14 @@ export function RouteCreateForm({
   const setDesiredManualQty = (machineId: string, productId: string, desiredManual: number) => {
     const product = productsById.get(productId);
     const availableForMachine = availableStockForMachine(productId, machineId);
-    const maxTotal = adminOverride || product?.storageKnown === false || availableForMachine === null
-      ? Number.MAX_SAFE_INTEGER
-      : availableForMachine;
+    if (!product?.storageKnown || availableForMachine === null) {
+      setError(tr(locale, "Storage quantity is not verified. Product assignment is locked until the real balance loads.", "كمية المخزون غير مؤكدة. إضافة المنتج مقفلة حتى يتم تحميل الرصيد الحقيقي."));
+      setManualStopQty(machineId, productId, 0);
+      return;
+    }
+    const maxTotal = availableForMachine;
     const safeTotal = Math.min(unitQuantity(desiredManual), maxTotal);
-    if (!adminOverride && availableForMachine !== null && unitQuantity(desiredManual) > availableForMachine) {
+    if (unitQuantity(desiredManual) > availableForMachine) {
       setError(tr(
         locale,
         `Only ${availableForMachine} units remain available for this machine after the other route stops.`,
@@ -970,9 +975,9 @@ export function RouteCreateForm({
             const additionalNeeded = Math.max(0, desiredQty - existingQty);
             const product = productsById.get(group.productId);
             const available = unitQuantity(product?.availableQty);
-            const remainingAvailable = adminOverride || product?.storageKnown === false
-              ? additionalNeeded
-              : Math.max(0, available - (usedByProduct.get(group.productId) ?? 0));
+            const remainingAvailable = product?.storageKnown === true
+              ? Math.max(0, available - (usedByProduct.get(group.productId) ?? 0))
+              : 0;
             const additionalQty = Math.min(additionalNeeded, remainingAvailable);
             if (additionalQty <= 0) return;
             const updatedQty = existingQty + additionalQty;
@@ -1015,6 +1020,7 @@ export function RouteCreateForm({
 
   const continueFromProducts = () => {
     if (!plannedRouteStock.length) return showStepError(tr(locale, "Add at least one product and quantity for this route.", "أضف منتجًا واحدًا على الأقل وكمية لهذه الجولة."));
+    if (plannedRouteStock.some((item) => !item.storageKnown)) return showStepError(tr(locale, "Storage quantities must be verified before products can be assigned. Retry the page, or create a stops-only route.", "يجب التحقق من كميات المخزون قبل إضافة المنتجات. أعد تحميل الصفحة أو أنشئ جولة بالمواقع فقط."));
     const issues = validateStock();
     if (issues.length) return showStepError(stockErrorMessage(issues), issues);
     setError("");
@@ -1030,7 +1036,6 @@ export function RouteCreateForm({
   };
 
   const validateStock = () => {
-    if (adminOverride) return [];
     const issues: StockValidationIssue[] = [];
 
     plannedRouteStock.forEach((item) => {
@@ -1078,6 +1083,7 @@ export function RouteCreateForm({
       }
       return "Choose products to take from storage for this route.";
     }
+    if (plannedRouteStock.some((item) => !item.storageKnown)) return "Storage quantities must be verified before products can be assigned. Retry the page, or create a stops-only route.";
     const stockIssues = validateStock();
     if (stockIssues.length) return stockErrorMessage(stockIssues);
     return "";
@@ -1145,9 +1151,7 @@ export function RouteCreateForm({
         "snacky-route-created",
         creationMode === "stops_only"
           ? "Route stops planned. Add exact product quantities at storage before starting."
-          : result.stockValidationDeferred
-            ? "Route created. Live storage validation was temporarily unavailable, so verify quantities before pickup."
-            : "Route created successfully.",
+          : "Route created successfully.",
       );
       localDraft.clearDraft();
       router.replace(`/routes/${result.routeId}`);
@@ -1484,7 +1488,7 @@ export function RouteCreateForm({
                             setDesiredManualQty(selectedManualMachineId, candidate.product.id, nextQty);
                           }}
                           className={`rounded-lg border p-3 text-left transition disabled:cursor-not-allowed disabled:opacity-50 ${candidate.selectedQty > 0 ? "border-emerald-300 bg-emerald-50/70" : "border-slate-200 bg-white hover:border-slate-400"}`}
-                          disabled={saving || (!adminOverride && availableForMachine !== null && availableForMachine <= 0 && candidate.selectedQty <= 0)}
+                          disabled={saving || availableForMachine === null || (availableForMachine <= 0 && candidate.selectedQty <= 0)}
                         >
                           <div className="flex gap-3">
                             <ProductThumbnail imageUrl={candidate.product.imageUrl} name={candidate.product.name} size="md" />
@@ -1544,7 +1548,7 @@ export function RouteCreateForm({
                           type="button"
                           onClick={() => addProductQty(product.id, 1)}
                           className="rounded-lg border border-dashed border-slate-200 bg-white p-3 text-left transition hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-50"
-                          disabled={saving || (!adminOverride && availableForMachine !== null && availableForMachine <= 0)}
+                          disabled={saving || availableForMachine === null || availableForMachine <= 0}
                         >
                           <div className="flex gap-3">
                             <ProductThumbnail imageUrl={product.imageUrl} name={product.name} size="md" />
@@ -1578,7 +1582,7 @@ export function RouteCreateForm({
                 <input type="checkbox" checked={adminOverride} onChange={(event) => setAdminOverride(event.target.checked)} className="mt-1" disabled={saving} />
                 <span>
                   <span className="block font-semibold">{tr(locale, "Admin override", "تجاوز إداري")}</span>
-                  {tr(locale, "Allow quantities above available storage for a supervised count correction.", "السماح بكميات أعلى من المخزون المتاح لتصحيح عدٍّ تحت الإشراف.")}
+                  {tr(locale, "Allow a supervised quantity above the VMS recommendation. Verified storage remains the hard limit.", "السماح بكمية أعلى من توصية VMS تحت الإشراف. يظل المخزون المؤكد هو الحد الأقصى.")}
                 </span>
               </label>
             ) : null}
@@ -1624,23 +1628,23 @@ export function RouteCreateForm({
                               </div>
                             </div>
                           </td>
-                          <td className={`px-3 py-2 ${exceeds && !adminOverride ? "font-semibold text-rose-700" : ""}`}>{storageKnown ? available : tr(locale, "Unknown", "غير معروف")}</td>
+                          <td className={`px-3 py-2 ${exceeds ? "font-semibold text-rose-700" : ""}`}>{storageKnown ? available : tr(locale, "Unknown", "غير معروف")}</td>
                           <td className="px-3 py-2">
                             <div className="flex flex-wrap items-center gap-2">
                               {[-1, 1, 5, 10].map((delta) => (
-                                <button key={delta} type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setDesiredManualQty(item.machineId, item.productId, item.quantity + delta)} disabled={saving || (!adminOverride && storageKnown && delta > 0 && item.quantity >= available)}>
+                                <button key={delta} type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setDesiredManualQty(item.machineId, item.productId, item.quantity + delta)} disabled={saving || !storageKnown || (delta > 0 && item.quantity >= available)}>
                                   {delta > 0 ? `+${delta}` : delta}
                                 </button>
                               ))}
                               <input
                                 type="number"
                                 min={0}
-                                max={adminOverride || !storageKnown ? undefined : available}
+                                max={storageKnown ? available : 0}
                                 step={1}
                                 value={item.quantity}
                                 onChange={(event) => setDesiredManualQty(item.machineId, item.productId, Number(event.target.value) || 0)}
-                                className={`field-input w-24 ${exceeds && !adminOverride ? "border-rose-300 bg-rose-50" : ""}`}
-                                disabled={saving}
+                                className={`field-input w-24 ${exceeds ? "border-rose-300 bg-rose-50" : ""}`}
+                                disabled={saving || !storageKnown}
                               />
                             </div>
                           </td>
@@ -1869,7 +1873,7 @@ export function RouteCreateForm({
                                   <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Slots</div>
                                   <div className="mt-1 text-sm text-slate-700">{recommendationGroup.slotsCount} slot{recommendationGroup.slotsCount === 1 ? "" : "s"} in this machine/location group</div>
                                   <div className="mt-1 text-sm text-slate-700">
-                                    {storageUnknown ? tr(locale, `Storage is unknown. Needed quantity stays at ${recommendationGroup.recommendedTotal} until stock is confirmed.`, `المخزون غير معروف. ستبقى الكمية المطلوبة ${recommendationGroup.recommendedTotal} حتى يتم تأكيد المخزون.`) : tr(locale, `Storage available ${storageAvailable} vs recommended ${recommendationGroup.recommendedTotal}`, `المخزون المتاح ${storageAvailable} مقابل التوصية ${recommendationGroup.recommendedTotal}`)}
+                                    {storageUnknown ? tr(locale, "Storage is unverified. Product assignment is locked until the real balance loads.", "المخزون غير مؤكد. إضافة المنتجات مقفلة حتى يتم تحميل الرصيد الحقيقي.") : tr(locale, `Storage available ${storageAvailable} vs recommended ${recommendationGroup.recommendedTotal}`, `المخزون المتاح ${storageAvailable} مقابل التوصية ${recommendationGroup.recommendedTotal}`)}
                                   </div>
                                 </div>
 
@@ -1879,12 +1883,12 @@ export function RouteCreateForm({
                                     <input
                                       type="number"
                                       min={0}
-                                      max={adminOverride || !storageKnown || storageAvailable <= 0 ? undefined : storageAvailable}
+                                      max={storageKnown ? storageAvailable : 0}
                                       step={1}
                                       value={finalTake}
                                       onChange={(event) => setRecommendationFinalTake(recommendationGroup, Number(event.target.value) || 0)}
-                                      className={`field-input w-full ${(finalExceedsStorage || stockIssue) && !adminOverride ? "border-rose-300 bg-rose-50" : ""}`}
-                                      disabled={saving || !selected}
+                                      className={`field-input w-full ${finalExceedsStorage || stockIssue ? "border-rose-300 bg-rose-50" : ""}`}
+                                      disabled={saving || !selected || !storageKnown}
                                       aria-label={`Final take for ${recommendationGroup.productName} at ${recommendationGroup.machineName}`}
                                     />
                                   </label>
@@ -1897,8 +1901,8 @@ export function RouteCreateForm({
                               {finalIsZero ? <div className="text-xs font-medium text-amber-700">{tr(locale, "Final take is 0.", "الكمية النهائية تساوي 0.")}</div> : null}
                               {finalHigherThanRecommended ? <div className="text-xs font-medium text-amber-700">{tr(locale, "Final take is higher than recommended.", "الكمية النهائية أعلى من التوصية.")}</div> : null}
                               {finalLowerThanRecommended ? <div className="text-xs text-slate-500">{tr(locale, "Taking less than recommended.", "يتم أخذ أقل من التوصية.")}</div> : null}
-                              {storageUnknown ? <div className="text-xs font-medium text-amber-700">{tr(locale, "Storage is unknown, so Snacky OS is keeping the full needed quantity visible.", "المخزون غير معروف، لذا يعرض Snacky OS كامل الكمية المطلوبة.")}</div> : null}
-                              {noStorageAvailable ? <div className="text-xs font-medium text-amber-700">{tr(locale, `Storage is currently 0, but this machine still needs ${recommendationGroup.recommendedTotal}. Replenish storage or override it after verifying stock.`, `المخزون حاليًا 0، لكن هذا الجهاز ما زال يحتاج ${recommendationGroup.recommendedTotal}. عبئ المخزن أو تجاوز ذلك بعد التحقق من المخزون.`)}</div> : null}
+                              {storageUnknown ? <div className="text-xs font-medium text-amber-700">{tr(locale, "Storage is unverified, so product assignment is locked until the real balance loads.", "المخزون غير مؤكد، لذلك إضافة المنتجات مقفلة حتى يتم تحميل الرصيد الحقيقي.")}</div> : null}
+                              {noStorageAvailable ? <div className="text-xs font-medium text-amber-700">{tr(locale, `Storage is currently 0, while this machine needs ${recommendationGroup.recommendedTotal}. Replenish storage before assigning it.`, `المخزون حاليًا 0، بينما يحتاج هذا الجهاز ${recommendationGroup.recommendedTotal}. عبئ المخزن قبل إضافته.`)}</div> : null}
                               {!noStorageAvailable && recommendationShortage > 0 ? <div className="text-xs text-amber-700">{tr(locale, `Storage has ${storageAvailable}; recommendation needs ${recommendationGroup.recommendedTotal}. Short by ${recommendationShortage}.`, `المخزون المتاح ${storageAvailable}؛ والتوصية تحتاج ${recommendationGroup.recommendedTotal}. النقص ${recommendationShortage}.`)}</div> : null}
                                   {stockIssue ? <div className="text-xs font-medium text-rose-700">Selected {stockIssue.selected_qty}, available {stockIssue.available_qty}, shortage {stockIssue.shortage_qty}.</div> : null}
                                 </div>
@@ -2022,12 +2026,12 @@ export function RouteCreateForm({
                                 <input
                                   type="number"
                                   min={0}
-                                  max={adminOverride || !storageKnown || storageAvailable <= 0 ? undefined : storageAvailable}
+                                  max={storageKnown ? storageAvailable : 0}
                                   step={1}
                                   value={finalTake}
                                   onChange={(event) => setRecommendationFinalTake(group, Number(event.target.value) || 0)}
-                                  className={`field-input w-24 ${(finalExceedsStorage || showStockIssue) && !adminOverride ? "border-rose-300 bg-rose-50" : ""}`}
-                                  disabled={saving || !selected}
+                                  className={`field-input w-24 ${finalExceedsStorage || showStockIssue ? "border-rose-300 bg-rose-50" : ""}`}
+                                  disabled={saving || !selected || !storageKnown}
                                   aria-label={`Final take for ${group.productName} at ${group.machineName}`}
                                 />
                                 <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setRecommendationFinalTake(group, group.recommendedTotal)} disabled={saving || !selected}>{tr(locale, "Use recommended", "استخدم التوصية")}</button>
@@ -2038,12 +2042,12 @@ export function RouteCreateForm({
                               {finalIsZero ? <div className="mt-1 text-xs font-medium text-amber-700">{tr(locale, "Final take is 0.", "الكمية النهائية تساوي 0.")}</div> : null}
                               {finalHigherThanRecommended ? <div className="mt-1 text-xs font-medium text-amber-700">{tr(locale, "Final take is higher than recommended.", "الكمية النهائية أعلى من التوصية.")}</div> : null}
                               {finalLowerThanRecommended ? <div className="mt-1 text-xs text-slate-500">{tr(locale, "Taking less than recommended.", "يتم أخذ أقل من التوصية.")}</div> : null}
-                              {storageUnknown ? <div className="mt-1 text-xs font-medium text-amber-700">{tr(locale, "Storage is unknown, so Snacky OS is keeping the full needed quantity visible.", "المخزون غير معروف، لذا يعرض Snacky OS كامل الكمية المطلوبة.")}</div> : null}
-                              {noStorageAvailable ? <div className="mt-1 text-xs font-medium text-amber-700">{tr(locale, `Storage is currently 0, but this machine still needs ${group.recommendedTotal}. Replenish storage or override it after verifying stock.`, `المخزون حاليًا 0، لكن هذا الجهاز ما زال يحتاج ${group.recommendedTotal}. عبئ المخزن أو تجاوز ذلك بعد التحقق من المخزون.`)}</div> : null}
+                              {storageUnknown ? <div className="mt-1 text-xs font-medium text-amber-700">{tr(locale, "Storage is unverified, so product assignment is locked until the real balance loads.", "المخزون غير مؤكد، لذلك إضافة المنتجات مقفلة حتى يتم تحميل الرصيد الحقيقي.")}</div> : null}
+                              {noStorageAvailable ? <div className="mt-1 text-xs font-medium text-amber-700">{tr(locale, `Storage is currently 0, while this machine needs ${group.recommendedTotal}. Replenish storage before assigning it.`, `المخزون حاليًا 0، بينما يحتاج هذا الجهاز ${group.recommendedTotal}. عبئ المخزن قبل إضافته.`)}</div> : null}
                               {!noStorageAvailable && recommendationShortage > 0 ? <div className="mt-1 text-xs text-amber-700">{tr(locale, `Storage has ${storageAvailable}; recommendation needs ${group.recommendedTotal}. Short by ${recommendationShortage}.`, `المخزون المتاح ${storageAvailable}؛ والتوصية تحتاج ${group.recommendedTotal}. النقص ${recommendationShortage}.`)}</div> : null}
                               {stockIssue ? <div className="mt-1 text-xs font-medium text-rose-700">Selected {stockIssue.selected_qty}, available {stockIssue.available_qty}, shortage {stockIssue.shortage_qty}.</div> : null}
                             </td>
-                            <td className={`px-3 py-2 ${(finalExceedsStorage || showStockIssue) && !adminOverride ? "font-semibold text-rose-700" : ""}`}>{storageUnknown ? "Unknown" : storageAvailable}</td>
+                            <td className={`px-3 py-2 ${finalExceedsStorage || showStockIssue ? "font-semibold text-rose-700" : ""}`}>{storageUnknown ? "Unknown" : storageAvailable}</td>
                             <td className="px-3 py-2">{group.priority}</td>
                             <td className="px-3 py-2">
                               <button
@@ -2254,7 +2258,7 @@ export function RouteCreateForm({
           </div>
 
           {adminOverride && creationMode === "full" ? (
-            <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm font-medium text-amber-950">{tr(locale, "Admin stock override is enabled for this route.", "تجاوز مخزون الإدارة مفعّل لهذه الجولة.")}</div>
+            <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm font-medium text-amber-950">{tr(locale, "Recommendation override is enabled. Verified storage remains the hard limit.", "تجاوز التوصية مفعّل. يظل المخزون المؤكد هو الحد الأقصى.")}</div>
           ) : null}
         </FormSection>
       ) : null}

@@ -21,6 +21,7 @@ export type RestockPriorityLoadResult = {
   items: RestockPriorityItem[];
   errors: Record<string, string>;
   productCount: number;
+  storageLoaded: boolean;
   usedProductFallback: boolean;
 };
 
@@ -151,11 +152,15 @@ async function repairMissingRouteStockLines({
 export async function loadRestockPriorityData(supabase: SupabaseLike): Promise<RestockPriorityLoadResult> {
   const errors: Record<string, string> = {};
   const { products, usedFallback } = await loadProducts(supabase, errors);
+  // The calling pages are already authorized. Use the server-only client for
+  // the authoritative ledger aggregate so per-row RLS work cannot turn a slow
+  // or failed stock read into an empty result.
+  const inventoryReadClient = getSupabaseAdminClient() ?? supabase;
 
   const [storage, recommendations, routeNeeds, routeStopNeeds, machineSlots, vmsStock, sales] = await Promise.all([
     safeSupabaseQuery<RestockStorageRow>({
-      label: "restock-priority.current_inventory_by_location.storage",
-      promise: supabase.from("current_inventory_by_location").select("product_id, product_name, quantity_on_hand").eq("location_type", "storage").limit(10000),
+      label: "restock-priority.route_storage_stock_by_product",
+      promise: inventoryReadClient.from("route_storage_stock_by_product").select("product_id, quantity_on_hand").limit(5000),
     }),
     safeSupabaseQuery<any>({
       label: "restock-priority.refill_recommendations",
@@ -263,6 +268,7 @@ export async function loadRestockPriorityData(supabase: SupabaseLike): Promise<R
     }),
     errors,
     productCount: products.length,
+    storageLoaded: !storage.error,
     usedProductFallback: usedFallback,
   };
 }

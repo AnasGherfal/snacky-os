@@ -10,7 +10,7 @@ import {
   routeStatusForNewRoute,
   type RouteStatus,
 } from "@/lib/route-workflow";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 import { notifyRouteAssigned } from "@/lib/notification-delivery";
 
 type CreateRoutePayload = {
@@ -51,7 +51,6 @@ type StockValidationIssue = {
 type StockValidationResult = {
   issues: StockValidationIssue[];
   availableByProduct: Map<string, number>;
-  validationDeferred?: boolean;
   error?: string;
   status?: number;
 };
@@ -241,26 +240,28 @@ async function validateRouteStock(
 
   if (storageResult.error) {
     console.error("[routes:create] Failed to verify storage inventory", { error: storageResult.error });
-    if (isStatementTimeout(storageResult.error)) {
-      console.warn("[routes:create] Storage validation timed out; route planning will continue and pickup will perform the canonical atomic stock check", { productIds });
-      return { issues: [], availableByProduct, validationDeferred: true };
-    }
-    return { issues: [], availableByProduct, error: "Could not verify storage inventory.", status: 500 };
+    return {
+      issues: [],
+      availableByProduct,
+      error: isStatementTimeout(storageResult.error)
+        ? "Storage quantities could not be verified in time. Retry, or create a stops-only route."
+        : "Could not verify storage inventory.",
+      status: isStatementTimeout(storageResult.error) ? 503 : 500,
+    };
   }
   if (reservedResult.error) {
     console.error("[routes:create] Failed to verify reserved route stock", { error: reservedResult.error });
-    if (isStatementTimeout(reservedResult.error)) {
-      console.warn("[routes:create] Reservation validation timed out; route planning will continue and pickup will perform the canonical atomic stock check", { productIds });
-      return { issues: [], availableByProduct, validationDeferred: true };
-    }
-    return { issues: [], availableByProduct, error: "Could not verify existing route reservations.", status: 500 };
+    return {
+      issues: [],
+      availableByProduct,
+      error: isStatementTimeout(reservedResult.error)
+        ? "Existing route reservations could not be verified in time. Retry, or create a stops-only route."
+        : "Could not verify existing route reservations.",
+      status: isStatementTimeout(reservedResult.error) ? 503 : 500,
+    };
   }
   if (productsResult.error) {
     console.error("[routes:create] Failed to load product names for stock validation", { error: productsResult.error });
-    if (isStatementTimeout(productsResult.error)) {
-      console.warn("[routes:create] Product-name enrichment timed out; route planning will continue and pickup will perform the canonical atomic stock check", { productIds });
-      return { issues: [], availableByProduct, validationDeferred: true };
-    }
     return { issues: [], availableByProduct, error: "Could not verify selected products.", status: 500 };
   }
 
@@ -410,6 +411,7 @@ export async function POST(request: Request) {
 
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) return jsonError("Supabase is not configured.", 500);
+  const planningReadClient = getSupabaseAdminClient() ?? supabase;
 
   let payload: CreateRoutePayload;
 
@@ -445,17 +447,17 @@ export async function POST(request: Request) {
 
   if (!routeDate) return jsonError("Route date is required.");
   if (assignmentMode === "assigned" && !operatorId) return jsonError("Choose a route performer or leave this route unassigned.");
-  if (adminOverride && !isOwnerAdminRole(profile)) return jsonError("Only owner or admin can override storage availability.", 403);
+  if (adminOverride && !isOwnerAdminRole(profile)) return jsonError("Only owner or admin can override the VMS recommendation.", 403);
   if (stopsOnly && !manualMachineIds.length) return jsonError("Choose at least one machine stop for this route plan.");
   if (!stopsOnly && !recommendationKeys.length && !legacyRecommendationSlotIds.length && !manualStopItems.length) return jsonError("Choose machine-level refill items for this route.");
 
   const recommendationsResult = recommendationKeys.length
-    ? await supabase
+    ? await planningReadClient
         .from("refill_recommendations")
         .select("recommendation_key, machine_id, machine_slot_id, slot_code, product_id, current_qty, capacity, par_qty, suggested_qty, available_storage_qty, final_qty_to_take, priority")
         .in("recommendation_key", recommendationKeys)
     : legacyRecommendationSlotIds.length
-      ? await supabase
+      ? await planningReadClient
           .from("refill_recommendations")
           .select("recommendation_key, machine_id, machine_slot_id, slot_code, product_id, current_qty, capacity, par_qty, suggested_qty, available_storage_qty, final_qty_to_take, priority")
           .in("machine_slot_id", legacyRecommendationSlotIds)
@@ -539,11 +541,9 @@ export async function POST(request: Request) {
   if (!selectedMachineIds.length) return jsonError("Choose at least one machine stop with a planned refill quantity greater than zero.");
 
   let availableUnitsByProduct = new Map<string, number>();
-  let stockValidationDeferred = false;
-  if (!stopsOnly && !adminOverride) {
-    const stockValidation = await validateRouteStock(supabase, stockByProduct);
+  if (!stopsOnly) {
+    const stockValidation = await validateRouteStock(planningReadClient, stockByProduct);
     availableUnitsByProduct = stockValidation.availableByProduct;
-    stockValidationDeferred = Boolean(stockValidation.validationDeferred);
     if (stockValidation.error) return jsonError(stockValidation.error, stockValidation.status ?? 500);
     if (stockValidation.issues.length) {
       return jsonError(stockValidationMessage(stockValidation.issues), 400, { code: "stock_exceeded", stockErrors: stockValidation.issues });
@@ -684,8 +684,8 @@ export async function POST(request: Request) {
     if (stopItemsInsert.error) {
       console.error("[routes:create] Failed to insert route stop items", { routeId, error: stopItemsInsert.error });
       if (!isMissingRouteStopItems(stopItemsInsert.error)) {
-        if (!adminOverride) {
-          const stockValidation = await validateRouteStock(supabase, stockByProduct, routeId);
+        {
+          const stockValidation = await validateRouteStock(planningReadClient, stockByProduct, routeId);
           if (stockValidation.error) console.error("[routes:create] Stock recheck after planned item insert failure failed", { routeId, error: stockValidation.error });
           if (stockValidation.issues.length) {
             await cleanupRoute();
@@ -789,8 +789,8 @@ export async function POST(request: Request) {
 
     if (routeStockInsert.error) {
       console.error("[routes:create] Failed to insert route stock lines", { routeId, error: routeStockInsert.error });
-      if (!adminOverride) {
-        const stockValidation = await validateRouteStock(supabase, stockByProduct, routeId);
+      {
+        const stockValidation = await validateRouteStock(planningReadClient, stockByProduct, routeId);
         if (stockValidation.error) console.error("[routes:create] Stock recheck after route stock insert failure failed", { routeId, error: stockValidation.error });
         if (stockValidation.issues.length) {
           await cleanupRoute();
@@ -835,7 +835,6 @@ export async function POST(request: Request) {
       assignment_mode: assignmentMode,
       creation_mode: creationMode,
       products_deferred_until_storage: stopsOnly,
-      stock_validation_deferred: stockValidationDeferred,
     },
     summary: operatorId
       ? `Created assigned route for ${routeDate} with ${selectedMachineIds.length} stops`
@@ -860,7 +859,7 @@ export async function POST(request: Request) {
   revalidatePath("/operator/routes");
   revalidatePath(`/routes/${routeId}`);
 
-  return NextResponse.json({ routeId, productsDeferred: stopsOnly, stockValidationDeferred });
+  return NextResponse.json({ routeId, productsDeferred: stopsOnly });
 }
 
 // TODO: Add update_route activity logging when Snacky OS gets a route edit/update endpoint.
