@@ -51,6 +51,7 @@ type StockValidationIssue = {
 type StockValidationResult = {
   issues: StockValidationIssue[];
   availableByProduct: Map<string, number>;
+  validationDeferred?: boolean;
   error?: string;
   status?: number;
 };
@@ -118,6 +119,17 @@ function errorText(error: unknown) {
 
 function isMissingRouteStopItems(error: unknown) {
   return recordValue(error, "code") === "PGRST205" && errorText(error).includes("route_stop_items");
+}
+
+function isStatementTimeout(error: unknown) {
+  const text = errorText(error).toLowerCase();
+  return recordValue(error, "code") === "57014" || text.includes("statement timeout") || text.includes("canceling statement due to statement timeout");
+}
+
+function isMissingPlanningStockView(error: unknown) {
+  const text = errorText(error).toLowerCase();
+  return ["42P01", "PGRST205"].includes(String(recordValue(error, "code") ?? ""))
+    && text.includes("route_storage_stock_by_product");
 }
 
 function missingOptionalColumn(error: unknown, optionalColumns: string[]) {
@@ -203,29 +215,52 @@ async function validateRouteStock(
     .in("product_id", productIds);
   if (excludeRouteId) reservedQuery = reservedQuery.neq("route_id", excludeRouteId);
 
-  const [storageResult, reservedResult, productsResult] = await Promise.all([
-    supabase
-      .from("current_inventory_by_location")
-      .select("product_id, quantity_on_hand")
-      .eq("location_type", "storage")
-      .in("product_id", productIds),
+  let storagePromise = supabase
+    .from("route_storage_stock_by_product")
+    .select("product_id, quantity_on_hand")
+    .in("product_id", productIds);
+  const [initialStorageResult, reservedResult, productsResult] = await Promise.all([
+    storagePromise,
     reservedQuery,
     supabase
       .from("products")
       .select("id, name")
       .in("id", productIds),
   ]);
+  let storageResult = initialStorageResult;
+
+  if (storageResult.error && isMissingPlanningStockView(storageResult.error)) {
+    console.warn("[routes:create] Narrow storage planning view is not deployed; using the legacy inventory view", { error: storageResult.error });
+    storagePromise = supabase
+      .from("current_inventory_by_location")
+      .select("product_id, quantity_on_hand")
+      .eq("location_type", "storage")
+      .in("product_id", productIds);
+    storageResult = await storagePromise;
+  }
 
   if (storageResult.error) {
     console.error("[routes:create] Failed to verify storage inventory", { error: storageResult.error });
+    if (isStatementTimeout(storageResult.error)) {
+      console.warn("[routes:create] Storage validation timed out; route planning will continue and pickup will perform the canonical atomic stock check", { productIds });
+      return { issues: [], availableByProduct, validationDeferred: true };
+    }
     return { issues: [], availableByProduct, error: "Could not verify storage inventory.", status: 500 };
   }
   if (reservedResult.error) {
     console.error("[routes:create] Failed to verify reserved route stock", { error: reservedResult.error });
+    if (isStatementTimeout(reservedResult.error)) {
+      console.warn("[routes:create] Reservation validation timed out; route planning will continue and pickup will perform the canonical atomic stock check", { productIds });
+      return { issues: [], availableByProduct, validationDeferred: true };
+    }
     return { issues: [], availableByProduct, error: "Could not verify existing route reservations.", status: 500 };
   }
   if (productsResult.error) {
     console.error("[routes:create] Failed to load product names for stock validation", { error: productsResult.error });
+    if (isStatementTimeout(productsResult.error)) {
+      console.warn("[routes:create] Product-name enrichment timed out; route planning will continue and pickup will perform the canonical atomic stock check", { productIds });
+      return { issues: [], availableByProduct, validationDeferred: true };
+    }
     return { issues: [], availableByProduct, error: "Could not verify selected products.", status: 500 };
   }
 
@@ -504,9 +539,11 @@ export async function POST(request: Request) {
   if (!selectedMachineIds.length) return jsonError("Choose at least one machine stop with a planned refill quantity greater than zero.");
 
   let availableUnitsByProduct = new Map<string, number>();
+  let stockValidationDeferred = false;
   if (!stopsOnly && !adminOverride) {
     const stockValidation = await validateRouteStock(supabase, stockByProduct);
     availableUnitsByProduct = stockValidation.availableByProduct;
+    stockValidationDeferred = Boolean(stockValidation.validationDeferred);
     if (stockValidation.error) return jsonError(stockValidation.error, stockValidation.status ?? 500);
     if (stockValidation.issues.length) {
       return jsonError(stockValidationMessage(stockValidation.issues), 400, { code: "stock_exceeded", stockErrors: stockValidation.issues });
@@ -798,6 +835,7 @@ export async function POST(request: Request) {
       assignment_mode: assignmentMode,
       creation_mode: creationMode,
       products_deferred_until_storage: stopsOnly,
+      stock_validation_deferred: stockValidationDeferred,
     },
     summary: operatorId
       ? `Created assigned route for ${routeDate} with ${selectedMachineIds.length} stops`
@@ -822,7 +860,7 @@ export async function POST(request: Request) {
   revalidatePath("/operator/routes");
   revalidatePath(`/routes/${routeId}`);
 
-  return NextResponse.json({ routeId, productsDeferred: stopsOnly });
+  return NextResponse.json({ routeId, productsDeferred: stopsOnly, stockValidationDeferred });
 }
 
 // TODO: Add update_route activity logging when Snacky OS gets a route edit/update endpoint.

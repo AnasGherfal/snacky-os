@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = fs.readFileSync(path.join(repoRoot, "src/app/routes/new/RouteCreateForm.tsx"), "utf8");
 const pageSource = fs.readFileSync(path.join(repoRoot, "src/app/routes/new/page.tsx"), "utf8");
+const apiSource = fs.readFileSync(path.join(repoRoot, "src/app/api/routes/route.ts"), "utf8");
+const resilienceMigration = fs.readFileSync(path.join(repoRoot, "supabase/migrations/20260827153537_route_builder_timeout_resilience.sql"), "utf8");
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 
 test("route creation is a resumable details, machines, products, review flow", () => {
@@ -49,4 +51,29 @@ test("stale VMS stock cannot silently populate route quantities", () => {
   assert.match(source, /staleRecommendationMachineIds/);
   assert.match(source, /Import a fresh VMS stock snapshot before using automatic quantities/);
   assert.match(source, /!staleRecommendationMachineIds\.has\(machineId\)/);
+});
+
+test("optional planning timeouts never replace the route builder", () => {
+  assert.match(pageSource, /const blockingQueryIssues = queryIssues\.filter\(\(issue\) => issue\.key === "machines"\)/);
+  assert.doesNotMatch(pageSource, /if \(queryIssues\.length\)/);
+  assert.match(source, /Route creation is still available/);
+  assert.match(source, /product\.storageKnown && product\.availableQty <= 0/);
+  assert.match(source, /if \(!item\.storageKnown\) return/);
+});
+
+test("route creation defers timed-out stock enrichment to canonical pickup validation", () => {
+  assert.match(apiSource, /function isStatementTimeout/);
+  assert.match(apiSource, /validationDeferred: true/);
+  assert.match(apiSource, /pickup will perform the canonical atomic stock check/);
+  assert.match(apiSource, /stockValidationDeferred/);
+});
+
+test("route planning uses narrow storage balances and the latest active VMS batch", () => {
+  assert.match(pageSource, /from\("route_storage_stock_by_product"\)/);
+  assert.match(apiSource, /from\("route_storage_stock_by_product"\)/);
+  assert.match(resilienceMigration, /create or replace view public\.route_storage_stock_by_product/);
+  assert.match(resilienceMigration, /with latest_batch as/);
+  assert.match(resilienceMigration, /join latest_batch lb on lb\.id = vss\.import_batch_id/);
+  assert.match(resilienceMigration, /security_invoker = true/);
+  assert.match(resilienceMigration, /revoke all on table public\.refill_recommendations from public, anon/);
 });

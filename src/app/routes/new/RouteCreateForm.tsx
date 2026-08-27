@@ -64,12 +64,14 @@ type ProductPickOption = {
   imageUrl?: string | null;
   storageQty: number;
   availableQty: number;
+  storageKnown: boolean;
 };
 
 type PlannedStock = {
   productId: string;
   quantity: number;
   available: number;
+  storageKnown: boolean;
   recommendationQty: number;
   manualQty: number;
 };
@@ -221,6 +223,8 @@ export function RouteCreateForm({
   recentProductIds,
   allowAdminOverride,
   defaultRouteDate,
+  availabilityWarnings,
+  fullRouteAvailable,
 }: {
   operators: Operator[];
   machines: Machine[];
@@ -232,13 +236,15 @@ export function RouteCreateForm({
   recentProductIds: string[];
   allowAdminOverride: boolean;
   defaultRouteDate: string;
+  availabilityWarnings: string[];
+  fullRouteAvailable: boolean;
   }) {
   const router = useRouter();
   const { locale } = useLanguage();
   const saveErrorRef = useRef<HTMLDivElement | null>(null);
   const [builderStep, setBuilderStep] = useState<RouteBuilderStep>("details");
   const [routeDate, setRouteDate] = useState(defaultRouteDate);
-  const [creationMode, setCreationMode] = useState<"full" | "stops_only">("full");
+  const [creationMode, setCreationMode] = useState<"full" | "stops_only">(fullRouteAvailable ? "full" : "stops_only");
   const [assignmentMode, setAssignmentMode] = useState<"unassigned" | "assigned">("unassigned");
   const [operatorId, setOperatorId] = useState("");
   const [machineIds, setMachineIds] = useState<string[]>([]);
@@ -313,7 +319,7 @@ export function RouteCreateForm({
     return Boolean(
       draft.routeDate !== defaultRouteDate ||
         draft.builderStep !== "details" ||
-        draft.creationMode !== "full" ||
+        draft.creationMode !== (fullRouteAvailable ? "full" : "stops_only") ||
         draft.assignmentMode !== "unassigned" ||
         draft.operatorId ||
         draft.machineIds.length ||
@@ -332,14 +338,14 @@ export function RouteCreateForm({
         draft.adminOverride ||
         draft.notFoundQuery
     );
-  }, [defaultRouteDate]);
+  }, [defaultRouteDate, fullRouteAvailable]);
 
   const localDraft = useLocalDraft<RouteCreateDraft>({
     key: draftKey,
     value: routeDraft,
     shouldSave: shouldSaveRouteDraft,
     onRestore: (draft) => {
-      const restoredCreationMode = draft.creationMode === "stops_only" ? "stops_only" : "full";
+      const restoredCreationMode = !fullRouteAvailable || draft.creationMode === "stops_only" ? "stops_only" : "full";
       const restoredMachineIds = Array.isArray(draft.machineIds) ? draft.machineIds : [];
       const restoredStep: RouteBuilderStep = ["details", "machines", "products", "review"].includes(draft.builderStep) ? draft.builderStep : "details";
       setBuilderStep(restoredCreationMode === "stops_only" && restoredStep === "products" ? "machines" : restoredStep);
@@ -394,7 +400,7 @@ export function RouteCreateForm({
         recommendedTotal: 0,
         defaultFinalTakeTotal: 0,
         storageAvailable: unitQuantity(product?.availableQty ?? row.available_storage_qty),
-        storageKnown: typeof product?.availableQty === "number" || hasKnownStorage(row.available_storage_qty),
+        storageKnown: product?.storageKnown ?? hasKnownStorage(row.available_storage_qty),
         priority: "low",
       };
 
@@ -404,7 +410,7 @@ export function RouteCreateForm({
       current.targetTotal += recommendationTarget(row);
       current.recommendedTotal += recommendationQuantity(row);
       current.storageAvailable = unitQuantity(product?.availableQty ?? Math.max(current.storageAvailable, unitQuantity(row.available_storage_qty)));
-      current.storageKnown = current.storageKnown || typeof product?.availableQty === "number" || hasKnownStorage(row.available_storage_qty);
+      current.storageKnown = current.storageKnown || product?.storageKnown === true || hasKnownStorage(row.available_storage_qty);
       current.priority = highestPriority(current.priority, row.priority);
       groups.set(groupKey, current);
     });
@@ -543,6 +549,7 @@ export function RouteCreateForm({
           productId,
           quantity: recommendationQty + manualQty,
           available: unitQuantity(product?.availableQty),
+          storageKnown: product?.storageKnown === true,
           recommendationQty,
           manualQty,
         };
@@ -746,7 +753,7 @@ export function RouteCreateForm({
   const machineFallbackProducts = useMemo(() => {
     const fallbackSource = products.filter((product) => {
       if (machineScopedProductIds.has(product.id)) return false;
-      if (!adminOverride && product.availableQty <= 0 && product.storageQty <= 0) return false;
+      if (!adminOverride && product.storageKnown && product.availableQty <= 0 && product.storageQty <= 0) return false;
       return true;
     });
     if (manualSearchQuery) {
@@ -836,7 +843,7 @@ export function RouteCreateForm({
 
   const setDesiredManualQty = (machineId: string, productId: string, desiredManual: number) => {
     const product = productsById.get(productId);
-    const maxTotal = adminOverride ? Number.MAX_SAFE_INTEGER : unitQuantity(product?.availableQty);
+    const maxTotal = adminOverride || product?.storageKnown === false ? Number.MAX_SAFE_INTEGER : unitQuantity(product?.availableQty);
     const safeTotal = Math.min(unitQuantity(desiredManual), maxTotal);
     setManualStopQty(machineId, productId, safeTotal);
   };
@@ -922,8 +929,11 @@ export function RouteCreateForm({
             const existingQty = existingIndex === undefined ? 0 : unitQuantity(next[existingIndex]?.quantity);
             const desiredQty = unitQuantity(group.defaultFinalTakeTotal);
             const additionalNeeded = Math.max(0, desiredQty - existingQty);
-            const available = unitQuantity(productsById.get(group.productId)?.availableQty);
-            const remainingAvailable = adminOverride ? additionalNeeded : Math.max(0, available - (usedByProduct.get(group.productId) ?? 0));
+            const product = productsById.get(group.productId);
+            const available = unitQuantity(product?.availableQty);
+            const remainingAvailable = adminOverride || product?.storageKnown === false
+              ? additionalNeeded
+              : Math.max(0, available - (usedByProduct.get(group.productId) ?? 0));
             const additionalQty = Math.min(additionalNeeded, remainingAvailable);
             if (additionalQty <= 0) return;
             const updatedQty = existingQty + additionalQty;
@@ -987,6 +997,7 @@ export function RouteCreateForm({
     plannedRouteStock.forEach((item) => {
       const product = productsById.get(item.productId);
       const selectedQty = unitQuantity(item.quantity);
+      if (!item.storageKnown) return;
       const availableQty = unitQuantity(item.available);
       const shortageQty = Math.max(0, selectedQty - availableQty);
 
@@ -1091,7 +1102,14 @@ export function RouteCreateForm({
         throw new Error(result.error || "Could not create the route.");
       }
 
-      window.sessionStorage.setItem("snacky-route-created", creationMode === "stops_only" ? "Route stops planned. Add exact product quantities at storage before starting." : "Route created successfully.");
+      window.sessionStorage.setItem(
+        "snacky-route-created",
+        creationMode === "stops_only"
+          ? "Route stops planned. Add exact product quantities at storage before starting."
+          : result.stockValidationDeferred
+            ? "Route created. Live storage validation was temporarily unavailable, so verify quantities before pickup."
+            : "Route created successfully.",
+      );
       localDraft.clearDraft();
       router.replace(`/routes/${result.routeId}`);
     } catch (err) {
@@ -1133,6 +1151,14 @@ export function RouteCreateForm({
     <form onSubmit={handleSubmit} className="space-y-6">
       <DraftRestoreBanner pendingDraft={localDraft.pendingDraft} onRestore={localDraft.restoreDraft} onDiscard={localDraft.discardDraft} />
       {!localDraft.pendingDraft ? <DraftSaveStatus status={localDraft.status} /> : null}
+      {availabilityWarnings.length ? (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950" role="status">
+          <div className="font-semibold">{tr(locale, "Route creation is still available", "لا يزال إنشاء الجولة متاحًا")}</div>
+          <ul className="mt-2 list-disc space-y-1 ps-5">
+            {availabilityWarnings.map((warning) => <li key={warning}>{warning}</li>)}
+          </ul>
+        </div>
+      ) : null}
       {error ? (
         <div ref={saveErrorRef} className="fixed inset-x-3 bottom-3 z-50 max-h-[60vh] overflow-y-auto rounded-xl border border-rose-200 bg-white p-4 text-sm shadow-2xl md:left-auto md:right-4 md:w-[440px]" role="alert" aria-live="assertive">
           <div className="flex items-start justify-between gap-3">
@@ -1241,9 +1267,11 @@ export function RouteCreateForm({
             <span className="mt-1 block text-xs text-slate-500">{tr(locale, "Tell the operator which machines are planned. Add exact products and quantities later when you reach storage.", "أخبر المشغل بالأجهزة المخططة، ثم أضف المنتجات والكميات الدقيقة لاحقًا عند الوصول إلى المخزن.")}</span>
           </label>
           <label className={`rounded-2xl border p-4 text-sm transition ${creationMode === "full" ? "border-[var(--snacky-primary)] bg-emerald-50 text-slate-950" : "border-slate-200 bg-white text-slate-700"}`}>
-            <input type="radio" name="creation_mode" value="full" checked={creationMode === "full"} onChange={() => setCreationMode("full")} className="mr-2" disabled={saving} />
+            <input type="radio" name="creation_mode" value="full" checked={creationMode === "full"} onChange={() => setCreationMode("full")} className="mr-2" disabled={saving || !fullRouteAvailable} />
             <span className="font-semibold">{tr(locale, "Build full route now", "إنشاء الجولة الكاملة الآن")}</span>
-            <span className="mt-1 block text-xs text-slate-500">{tr(locale, "Choose products and exact quantities before saving the route.", "اختر المنتجات والكميات الدقيقة قبل حفظ الجولة.")}</span>
+            <span className="mt-1 block text-xs text-slate-500">{fullRouteAvailable
+              ? tr(locale, "Choose products and exact quantities before saving the route.", "اختر المنتجات والكميات الدقيقة قبل حفظ الجولة.")
+              : tr(locale, "Temporarily unavailable because the product catalog did not load. Create stops now and add products later.", "غير متاح مؤقتًا لأن دليل المنتجات لم يتم تحميله. أنشئ المواقع الآن وأضف المنتجات لاحقًا.")}</span>
           </label>
         </div>
       </FormSection>
@@ -1414,7 +1442,7 @@ export function RouteCreateForm({
                             setDesiredManualQty(selectedManualMachineId, candidate.product.id, nextQty);
                           }}
                           className={`rounded-lg border p-3 text-left transition disabled:cursor-not-allowed disabled:opacity-50 ${candidate.selectedQty > 0 ? "border-emerald-300 bg-emerald-50/70" : "border-slate-200 bg-white hover:border-slate-400"}`}
-                          disabled={saving || (!adminOverride && candidate.product.availableQty <= 0)}
+                          disabled={saving || (!adminOverride && candidate.product.storageKnown && candidate.product.availableQty <= 0)}
                         >
                           <div className="flex gap-3">
                             <ProductThumbnail imageUrl={candidate.product.imageUrl} name={candidate.product.name} size="md" />
@@ -1424,7 +1452,9 @@ export function RouteCreateForm({
                                 {candidate.product.sku ?? tr(locale, "No SKU", "لا يوجد SKU")} - {candidate.product.category ?? tr(locale, "Uncategorized", "غير مصنف")} {candidate.product.brand ? `- ${candidate.product.brand}` : ""}
                               </div>
                               <div className="mt-1 text-xs text-slate-600">
-                                Storage {candidate.product.storageQty} / Available {candidate.product.availableQty}
+                                {candidate.product.storageKnown
+                                  ? `Storage ${candidate.product.storageQty} / Available ${candidate.product.availableQty}`
+                                  : tr(locale, "Storage quantity temporarily unknown", "كمية المخزون غير معروفة مؤقتًا")}
                               </div>
                               <div className="mt-2 flex flex-wrap gap-2 text-xs">
                                 {candidate.sourceKinds.has("planogram") ? <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-700">Planogram</span> : null}
@@ -1464,7 +1494,7 @@ export function RouteCreateForm({
                           type="button"
                           onClick={() => addProductQty(product.id, 1)}
                           className="rounded-lg border border-dashed border-slate-200 bg-white p-3 text-left transition hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-50"
-                          disabled={saving || (!adminOverride && product.availableQty <= 0)}
+                          disabled={saving || (!adminOverride && product.storageKnown && product.availableQty <= 0)}
                         >
                           <div className="flex gap-3">
                             <ProductThumbnail imageUrl={product.imageUrl} name={product.name} size="md" />
@@ -1474,7 +1504,9 @@ export function RouteCreateForm({
                                 {product.sku ?? tr(locale, "No SKU", "لا يوجد SKU")} - {product.category ?? tr(locale, "Uncategorized", "غير مصنف")} {product.brand ? `- ${product.brand}` : ""}
                               </div>
                               <div className="mt-1 text-xs text-slate-600">
-                                Storage {product.storageQty} / Available {product.availableQty}
+                                {product.storageKnown
+                                  ? `Storage ${product.storageQty} / Available ${product.availableQty}`
+                                  : tr(locale, "Storage quantity temporarily unknown", "كمية المخزون غير معروفة مؤقتًا")}
                               </div>
                             </div>
                           </div>
@@ -1522,7 +1554,8 @@ export function RouteCreateForm({
                       const machine = machinesById.get(item.machineId);
                       const stockIssue = stockErrorByProduct.get(item.productId);
                       const available = stockIssue?.available_qty ?? unitQuantity(product?.availableQty);
-                      const exceeds = Boolean(stockIssue) || unitQuantity(item.quantity) > available;
+                      const storageKnown = Boolean(stockIssue) || product?.storageKnown === true;
+                      const exceeds = storageKnown && (Boolean(stockIssue) || unitQuantity(item.quantity) > available);
                       return (
                         <tr key={`${item.machineId}-${item.productId}`} className={`border-t border-slate-200 ${stockIssue ? "bg-rose-50" : ""}`}>
                           <td className="px-3 py-2">{machineLabel(machine)}</td>
@@ -1536,7 +1569,7 @@ export function RouteCreateForm({
                               </div>
                             </div>
                           </td>
-                          <td className={`px-3 py-2 ${exceeds && !adminOverride ? "font-semibold text-rose-700" : ""}`}>{available}</td>
+                          <td className={`px-3 py-2 ${exceeds && !adminOverride ? "font-semibold text-rose-700" : ""}`}>{storageKnown ? available : tr(locale, "Unknown", "غير معروف")}</td>
                           <td className="px-3 py-2">
                             <div className="flex flex-wrap items-center gap-2">
                               {[-1, 1, 5, 10].map((delta) => (
@@ -1547,7 +1580,7 @@ export function RouteCreateForm({
                               <input
                                 type="number"
                                 min={0}
-                                max={adminOverride ? undefined : available}
+                                max={adminOverride || !storageKnown ? undefined : available}
                                 step={1}
                                 value={item.quantity}
                                 onChange={(event) => setDesiredManualQty(item.machineId, item.productId, Number(event.target.value) || 0)}
