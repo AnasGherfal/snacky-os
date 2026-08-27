@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { availableRouteStockForMachine, remainingRouteStock } from "../src/lib/route-stock-allocation.ts";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = fs.readFileSync(path.join(repoRoot, "src/app/routes/new/RouteCreateForm.tsx"), "utf8");
@@ -59,6 +60,29 @@ test("optional planning timeouts never replace the route builder", () => {
   assert.match(source, /Route creation is still available/);
   assert.match(source, /product\.storageKnown && product\.availableQty <= 0/);
   assert.match(source, /if \(!item\.storageKnown\) return/);
+});
+
+test("storage is allocated once across every machine in the route", () => {
+  const waterForMachineA = [{ machineId: "machine-a", productId: "water", quantity: 10 }];
+  assert.equal(remainingRouteStock(waterForMachineA, "water", 10), 0);
+  assert.equal(availableRouteStockForMachine(waterForMachineA, "water", "machine-b", 10), 0);
+  assert.equal(availableRouteStockForMachine(waterForMachineA, "water", "machine-a", 10), 10);
+
+  const splitWater = [
+    { machineId: "machine-a", productId: "water", quantity: 6 },
+    { machineId: "machine-b", productId: "water", quantity: 4 },
+  ];
+  assert.equal(remainingRouteStock(splitWater, "water", 10), 0);
+  assert.equal(availableRouteStockForMachine(splitWater, "water", "machine-a", 10), 6);
+  assert.equal(availableRouteStockForMachine(splitWater, "water", "machine-b", 10), 4);
+});
+
+test("manual product controls display and enforce machine-specific remaining stock", () => {
+  assert.match(source, /availableStockForMachine/);
+  assert.match(source, /Available for this machine/);
+  assert.match(source, /Unassigned after route/);
+  assert.match(source, /availableForMachine <= 0/);
+  assert.match(source, /Only \$\{availableForMachine\} units remain available for this machine after the other route stops/);
 });
 
 test("route creation defers timed-out stock enrichment to canonical pickup validation", () => {
