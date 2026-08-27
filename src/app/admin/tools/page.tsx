@@ -4,7 +4,7 @@ import { DataTable, EmptyState, PageHeader, SecondaryButton, StatusBadge } from 
 import { FormSubmitButton } from "@/components/FormSubmitButton";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { reprocessVmsImportBatch, updateVmsImportBatchState } from "@/lib/vms-import-actions";
 import {
   backfillMissingFinanceTransactions,
@@ -109,7 +109,7 @@ export default async function AdminToolsPage({
   if (!profile || !isOwnerAdminRole(profile)) redirect("/unauthorized");
 
   const { success = "", error = "" } = await searchParams;
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
 
   const [routesResult, batchesResult, storageResult] = supabase
     ? await Promise.all([

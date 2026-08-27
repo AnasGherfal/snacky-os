@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { DataTable, ErrorState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +32,7 @@ function publicSupabaseHost() {
   }
 }
 
-async function countRows(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>, table: string, label: string): Promise<CountCheck> {
+async function countRows(supabase: NonNullable<ReturnType<typeof getSupabaseAdminClient>>, table: string, label: string): Promise<CountCheck> {
   const { count, error } = await supabase.from(table).select("id", { count: "exact", head: true });
   return {
     label,
@@ -47,7 +47,7 @@ export default async function AdminDiagnosticsPage() {
   const profile = await getCurrentProfile();
   if (!profile || !isOwnerAdminRole(profile)) redirect("/unauthorized");
 
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
   if (!supabase) {
     return (
       <>

@@ -3,7 +3,7 @@ import { EmptyState, PageHeader, SecondaryButton, StatusBadge } from "@/componen
 import { getCurrentProfile } from "@/lib/auth";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { isOperatorRole } from "@/lib/authz";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 
 function formatDate(value: string | null) {
   if (!value) return "-";
@@ -14,7 +14,7 @@ export default async function OperatorIssuesPage() {
   const profile = await getCurrentProfile();
   if (!profile) redirect("/login");
 
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
   let query = supabase
     ?.from("issues")
     .select("id, issue_type, priority, status, description, created_at, sla_due_at, machine:machines(id, name, machine_code, location:locations(id, name))")

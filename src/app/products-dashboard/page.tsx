@@ -1,16 +1,16 @@
 import { BarList, KpiLoadWarning, KpiSection } from "@/components/KpiDashboard";
 import { VmsDataSourceCard } from "@/components/VmsDataSourceCard";
 import { DataTable, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
-import { requireCurrentProfileForPath } from "@/lib/auth";
+import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
 import { lyd } from "@/lib/format";
 import { formatDays, formatInteger, formatLydOrDash, formatPctOrDash, groupCount, observedDayCount, salesAmount, soldQty } from "@/lib/kpi";
 import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
 import { type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 
 export default async function ProductsDashboardPage() {
   await requireCurrentProfileForPath("/products-dashboard");
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient() ?? await getAuthenticatedSupabaseServerClient();
   const [salesResult, productsResult, inventoryResult, stockResult, batchResult] = supabase
     ? await Promise.all([
         safeSupabaseQuery<any>({

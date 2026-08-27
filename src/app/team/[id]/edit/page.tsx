@@ -3,7 +3,7 @@ import { TeamMemberForm } from "@/components/TeamMemberForm";
 import { ErrorState, FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
 import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole, normalizeRoles, parseAppRole } from "@/lib/authz";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { updateTeamMember } from "@/lib/team-actions";
 
 export const dynamic = "force-dynamic";
@@ -20,7 +20,7 @@ export default async function EditTeamMemberPage({
   const profile = await getCurrentProfile();
   if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
 
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
 
   if (!supabase) {
     return (

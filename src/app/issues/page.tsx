@@ -1,13 +1,15 @@
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
+import { requireCurrentProfileForPath } from "@/lib/auth";
 import { cleanSearchParams, getPagination, SearchParamsRecord, supabaseLikePattern } from "@/lib/pagination";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 
 export default async function IssuesPage({ searchParams }: { searchParams: Promise<SearchParamsRecord & { type?: string }> }) {
+  await requireCurrentProfileForPath("/issues");
   const params = cleanSearchParams(await searchParams);
   const { page, pageSize, from, to } = getPagination(params);
   const type = String(params.type ?? "");
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
   if (!supabase) {
     return (
       <>

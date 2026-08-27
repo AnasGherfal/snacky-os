@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@supabase/supabase-js";
 import { logActivity } from "@/lib/activity-log";
 import { accessTokenCookie, getAuthenticatedSupabaseServerClient, getCurrentProfile, refreshTokenCookie } from "@/lib/auth";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { deactivatePushSubscriptionsForUser } from "@/lib/notification-delivery";
 
 function getAuthenticatedSupabaseClient(accessToken: string, refreshToken: string | null) {
@@ -41,7 +41,7 @@ export async function changeOwnPassword(formData: FormData) {
     redirect("/account?error=Could%20not%20change%20password.");
   }
 
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
   if (supabase) {
     await supabase.from("profiles").update({ must_change_password: false, updated_at: new Date().toISOString() }).eq("id", profile.id);
     if (profile.team_member_id) {
@@ -80,4 +80,3 @@ export async function logoutFromAccount() {
   cookieStore.delete(refreshTokenCookie);
   redirect("/login");
 }
-

@@ -1,16 +1,18 @@
 import Link from "next/link";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, PageHeader, PrimaryButton, SectionCard, StatusBadge } from "@/components/ui";
+import { requireCurrentProfileForPath } from "@/lib/auth";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
 export default async function MachinePlanogramsPage({ searchParams }: { searchParams: Promise<SearchParamsRecord & { machine_id?: string }> }) {
+  await requireCurrentProfileForPath("/machine-slots");
   const params = cleanSearchParams(await searchParams);
   const { page, pageSize, from, to } = getPagination(params);
   const machine_id = String(params.machine_id ?? "");
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
   const { data: machines } = supabase
     ? await supabase.from("machines").select("id, name, machine_code, status").order("name").limit(500)
     : { data: [] };

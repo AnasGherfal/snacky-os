@@ -3,13 +3,14 @@ import { revalidatePath } from "next/cache";
 import { LocalDraftForm } from "@/components/LocalDraft";
 import { FormField, FormPageLayout, FormSection, PageHeader, PrimaryButton, SecondaryButton } from "@/components/ui";
 import { logActivity } from "@/lib/activity-log";
-import { getCurrentProfile } from "@/lib/auth";
+import { getCurrentProfile, requireCurrentProfileForPath } from "@/lib/auth";
 import { parseMachineSlotForm, validateMachineSlot } from "@/lib/machine-slots";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 
 async function updateSlot(fd: FormData) {
   "use server";
-  const supabase = getSupabaseServerClient();
+  await requireCurrentProfileForPath("/machine-slots");
+  const supabase = getSupabaseAdminClient();
   if (!supabase) return;
   const profile = await getCurrentProfile();
 
@@ -42,9 +43,10 @@ async function updateSlot(fd: FormData) {
 }
 
 export default async function EditMachineSlotPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string }> }) {
+  await requireCurrentProfileForPath("/machine-slots");
   const { id } = await params;
   const { error } = await searchParams;
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
   if (!supabase) notFound();
 
   const [{ data: slot }, { data: machines }, { data: products }] = await Promise.all([

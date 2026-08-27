@@ -6,7 +6,7 @@ import { getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { isCompletedRouteStatus } from "@/lib/route-workflow";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 
 export const dynamic = "force-dynamic";
@@ -44,7 +44,7 @@ export default async function TeamMemberActivityPage({
   const filters = await searchParams;
   const dateFrom = filters.date_from ?? "";
   const dateTo = filters.date_to ?? "";
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
   if (!supabase) notFound();
 
   const { data: member } = await supabase.from("team_members").select("id, full_name, email, role, active_status").eq("id", id).maybeSingle();

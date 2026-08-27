@@ -6,7 +6,7 @@ import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
 import { hasAnyRole, isOwnerAdminRole, normalizeRoles } from "@/lib/authz";
-import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { tempPasswordCookie } from "@/lib/team";
 
 function teamPayload(formData: FormData) {
@@ -91,7 +91,7 @@ async function createOrResetAuthUser(teamMemberId: string, payload: ReturnType<t
 }
 
 async function syncProfile(teamMemberId: string, payload: ReturnType<typeof teamPayload>, authUserId?: string | null) {
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
   if (!supabase) return;
 
   await supabase
@@ -114,7 +114,7 @@ export async function createTeamMember(formData: FormData) {
   const profile = await getCurrentProfile();
   if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
 
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
   if (!supabase) redirect("/team/new?error=Supabase%20is%20not%20configured.");
 
   const payload = teamPayload(formData);
@@ -155,7 +155,7 @@ export async function updateTeamMember(formData: FormData) {
   const profile = await getCurrentProfile();
   if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
 
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
   const id = String(formData.get("id") || "");
   if (!supabase) redirect(`/team/${id}/edit?error=Supabase%20is%20not%20configured.`);
   if (!id) redirect("/team?error=Missing%20team%20member.");
@@ -214,7 +214,7 @@ export async function deactivateTeamMember(formData: FormData) {
   if (id === profile?.team_member_id) redirect(`/team/${id}?error=You%20cannot%20deactivate%20your%20own%20account.`);
   const reason = requireConfirmedReason(formData, `/team/${id}`);
 
-  const supabase = getSupabaseServerClient();
+  const supabase = getSupabaseAdminClient();
   if (!supabase) redirect(`/team/${id}?error=Supabase%20is%20not%20configured.`);
 
   const { data: before } = await supabase.from("team_members").select("*").eq("id", id).maybeSingle();
