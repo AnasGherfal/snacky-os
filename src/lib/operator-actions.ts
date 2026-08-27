@@ -2462,6 +2462,11 @@ export async function completeStop({
       throw new Error("This route is not in progress.");
     }
 
+    // Route assignment has been verified above. Cash reconciliation tables are
+    // intentionally hidden from the raw operator Data API, so the protected
+    // server action performs only the scoped VMS lookup and cash write.
+    const cashWorkflowClient = getSupabaseAdminClient() ?? supabase;
+
     const { data: stop, error: stopError } = await supabase.from("route_stops").select("id, route_id, machine_id, status").eq("id", stopId).maybeSingle();
     if (stopError) throwActionError(stopError, "Could not load this stop.");
     if (!stop || stop.route_id !== routeId || stop.machine_id !== machineId) {
@@ -3055,7 +3060,7 @@ export async function completeStop({
     }
 
     // Get expected cash from latest VMS sales
-    const { data: sales } = await supabase
+    const { data: sales } = await cashWorkflowClient
       .from("vms_sales_snapshots")
       .select("cash_sales_amount")
       .eq("machine_id", machineId)
@@ -3067,7 +3072,7 @@ export async function completeStop({
       ? null
       : Number(sales?.[0]?.cash_sales_amount ?? 0);
 
-    const { data: existingCashCollection, error: existingCashError } = await supabase
+    const { data: existingCashCollection, error: existingCashError } = await cashWorkflowClient
       .from("cash_collections")
       .select("id, actual_cash_collected, review_status")
       .eq("route_id", routeId)
@@ -3099,13 +3104,13 @@ export async function completeStop({
         notes,
       };
       const { data, error: cashError } = existingCashCollection?.id
-        ? await supabase
+        ? await cashWorkflowClient
             .from("cash_collections")
             .update(cashPayload)
             .eq("id", existingCashCollection.id)
             .select("id, route_id, machine_id, operator_id, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, collected_at")
             .single()
-        : await supabase
+        : await cashWorkflowClient
             .from("cash_collections")
             .insert({ ...cashPayload, actual_cash_collected: null })
             .select("id, route_id, machine_id, operator_id, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, collected_at")
