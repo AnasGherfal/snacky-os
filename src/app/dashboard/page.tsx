@@ -379,7 +379,7 @@ async function safeRestockPriorityForDashboard(
     const message = errorMessage(error);
     console.error("[dashboard] Restock priority failed", { section: "restockPriority", error });
     errors.restockPriority = message;
-    return { items: [], errors: {}, productCount: 0, usedProductFallback: false };
+    return { items: [], errors: {}, productCount: 0, storageLoaded: false, usedProductFallback: false };
   }
 }
 

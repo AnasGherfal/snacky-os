@@ -185,6 +185,15 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
 
   const canSeeCost = canViewFinancials(userContext);
   const restockResult = await loadRestockPriorityData(supabase);
+  if (!restockResult.storageLoaded) {
+    return (
+      <ErrorState
+        title="Storage inventory could not be verified"
+        body="Snacky OS did not receive an authoritative ledger balance. No products have been changed and no missing result is being shown as zero. Retry to load the real storage quantities."
+        action={<SecondaryButton href="/inventory">Retry</SecondaryButton>}
+      />
+    );
+  }
   const [
     { data: operatorBagRowsData, error: operatorBagError },
     { data: movementsData, error: movementsError },

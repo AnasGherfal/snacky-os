@@ -9,6 +9,8 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const source = fs.readFileSync(path.join(repoRoot, "src/app/routes/new/RouteCreateForm.tsx"), "utf8");
 const pageSource = fs.readFileSync(path.join(repoRoot, "src/app/routes/new/page.tsx"), "utf8");
 const apiSource = fs.readFileSync(path.join(repoRoot, "src/app/api/routes/route.ts"), "utf8");
+const inventoryPageSource = fs.readFileSync(path.join(repoRoot, "src/app/inventory/page.tsx"), "utf8");
+const restockLoaderSource = fs.readFileSync(path.join(repoRoot, "src/lib/restock-priority-data.ts"), "utf8");
 const resilienceMigration = fs.readFileSync(path.join(repoRoot, "supabase/migrations/20260827153537_route_builder_timeout_resilience.sql"), "utf8");
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 
@@ -58,8 +60,9 @@ test("optional planning timeouts never replace the route builder", () => {
   assert.match(pageSource, /const blockingQueryIssues = queryIssues\.filter\(\(issue\) => issue\.key === "machines"\)/);
   assert.doesNotMatch(pageSource, /if \(queryIssues\.length\)/);
   assert.match(source, /Route creation is still available/);
-  assert.match(source, /product\.storageKnown && product\.availableQty <= 0/);
-  assert.match(source, /if \(!item\.storageKnown\) return/);
+  assert.match(pageSource, /fullRouteAvailable=\{!productsError && !storageError\}/);
+  assert.match(source, /Storage quantities must be verified before products can be assigned/);
+  assert.match(source, /if \(!storageKnown \|\| storageAvailable <= 0\) return 0/);
 });
 
 test("storage is allocated once across every machine in the route", () => {
@@ -85,11 +88,20 @@ test("manual product controls display and enforce machine-specific remaining sto
   assert.match(source, /Only \$\{availableForMachine\} units remain available for this machine after the other route stops/);
 });
 
-test("route creation defers timed-out stock enrichment to canonical pickup validation", () => {
+test("route creation fails closed when stock cannot be verified", () => {
   assert.match(apiSource, /function isStatementTimeout/);
-  assert.match(apiSource, /validationDeferred: true/);
-  assert.match(apiSource, /pickup will perform the canonical atomic stock check/);
-  assert.match(apiSource, /stockValidationDeferred/);
+  assert.match(apiSource, /Storage quantities could not be verified in time\. Retry, or create a stops-only route\./);
+  assert.doesNotMatch(apiSource, /validationDeferred: true/);
+  assert.match(apiSource, /const planningReadClient = getSupabaseAdminClient\(\) \?\? supabase/);
+  assert.match(apiSource, /validateRouteStock\(planningReadClient, stockByProduct\)/);
+});
+
+test("inventory failures cannot masquerade as zero stock", () => {
+  assert.match(restockLoaderSource, /getSupabaseAdminClient\(\) \?\? supabase/);
+  assert.match(restockLoaderSource, /from\("route_storage_stock_by_product"\)/);
+  assert.match(restockLoaderSource, /storageLoaded: !storage\.error/);
+  assert.match(inventoryPageSource, /if \(!restockResult\.storageLoaded\)/);
+  assert.match(inventoryPageSource, /no missing result is being shown as zero/i);
 });
 
 test("route planning uses narrow storage balances and the latest active VMS batch", () => {

@@ -7,6 +7,7 @@ import { activeStockBatches, queryVmsDashboardBatches, sourceFileName, type VmsD
 import { RouteCreateForm } from "@/app/routes/new/RouteCreateForm";
 import { formatSiteLabel, formatMachineDisplayName } from "@/lib/machine-site-display";
 import { getServerI18n } from "@/lib/i18n/server";
+import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import type {
   RouteRecommendationDiagnosticReasonCode,
   RouteRecommendationDiagnostics,
@@ -276,6 +277,9 @@ export default async function NewRoutePage() {
       </>
     );
   }
+  // Authorization is complete above. Read planning stock with the server-only
+  // client so RLS helper cost cannot make valid ledger balances disappear.
+  const planningReadClient = getSupabaseAdminClient() ?? supabase;
   const [
     { data: operators, error: operatorsError },
     { data: machines, error: machinesError },
@@ -290,11 +294,11 @@ export default async function NewRoutePage() {
   ] = await Promise.all([
     supabase.from("team_members").select("id, full_name, role, roles").or("role.in.(owner,admin,supervisor,operator),roles.ov.{owner,admin,supervisor,operator}").eq("active", true).order("full_name"),
     supabase.from("machines").select("*, location:locations(*)").eq("status", "active").order("machine_code"),
-    loadRouteRecommendations(supabase),
-    supabase
+    loadRouteRecommendations(planningReadClient),
+    planningReadClient
       .from("route_storage_stock_by_product")
       .select("product_id, quantity_on_hand"),
-    supabase
+    planningReadClient
       .from("route_stock_lines")
       .select("route_id, product_id, planned_qty, picked_qty"),
     supabase.from("products").select("id, sku, barcode, name, category, brand, image_url, active").eq("active", true).order("name"),
@@ -410,8 +414,8 @@ export default async function NewRoutePage() {
       : null,
     storageError
       ? (locale === "ar"
-          ? "تعذر تحميل كميات المخزون مؤقتًا. يمكنك متابعة التخطيط، وسيعيد Snacky OS التحقق من المخزون قبل السحب."
-          : "Live storage quantities are temporarily unavailable. You can keep planning; Snacky OS will recheck stock before pickup.")
+          ? "تعذر التحقق من كميات المخزون. يمكنك إنشاء جولة بالمواقع فقط، لكن إضافة المنتجات مقفلة حتى تظهر الكميات الحقيقية."
+          : "Storage quantities could not be verified. You can create a stops-only route, but product assignment is locked until the real quantities load.")
       : null,
     productsError
       ? (locale === "ar"
@@ -741,7 +745,7 @@ export default async function NewRoutePage() {
           allowAdminOverride={isOwnerAdminRole(profile)}
           defaultRouteDate={today}
           availabilityWarnings={availabilityWarnings}
-          fullRouteAvailable={!productsError}
+          fullRouteAvailable={!productsError && !storageError}
         />
       </FormPageLayout>
     </>
