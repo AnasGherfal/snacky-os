@@ -10,6 +10,7 @@ import { FormField, FormSection, SecondaryButton } from "@/components/ui";
 import { useLanguage } from "@/components/I18nProvider";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { comparePickupProductRows, groupRouteItemsForDisplay } from "@/lib/route-pickup-checklist";
+import { availableRouteStockForMachine, remainingRouteStock } from "@/lib/route-stock-allocation";
 
 type Operator = {
   id: string;
@@ -659,6 +660,34 @@ export function RouteCreateForm({
   );
   const manualSearchQuery = deferredSearch.trim().toLowerCase();
 
+  const availableStockForProduct = useCallback((productId: string) => {
+    const stockIssue = stockErrorByProduct.get(productId);
+    return unitQuantity(stockIssue?.available_qty ?? productsById.get(productId)?.availableQty);
+  }, [productsById, stockErrorByProduct]);
+
+  const remainingStockForRoute = useCallback((productId: string) => {
+    const product = productsById.get(productId);
+    if (!product?.storageKnown) return null;
+    return remainingRouteStock(
+      manualStopItems,
+      productId,
+      availableStockForProduct(productId),
+      recommendationQtyByProduct.get(productId),
+    );
+  }, [availableStockForProduct, manualStopItems, productsById, recommendationQtyByProduct]);
+
+  const availableStockForMachine = useCallback((productId: string, machineId: string) => {
+    const product = productsById.get(productId);
+    if (!product?.storageKnown) return null;
+    return availableRouteStockForMachine(
+      manualStopItems,
+      productId,
+      machineId,
+      availableStockForProduct(productId),
+      recommendationQtyByProduct.get(productId),
+    );
+  }, [availableStockForProduct, manualStopItems, productsById, recommendationQtyByProduct]);
+
   const focusManualMachine = (machineId: string) => {
     setManualMachineId(machineId);
     setSearch("");
@@ -843,8 +872,18 @@ export function RouteCreateForm({
 
   const setDesiredManualQty = (machineId: string, productId: string, desiredManual: number) => {
     const product = productsById.get(productId);
-    const maxTotal = adminOverride || product?.storageKnown === false ? Number.MAX_SAFE_INTEGER : unitQuantity(product?.availableQty);
+    const availableForMachine = availableStockForMachine(productId, machineId);
+    const maxTotal = adminOverride || product?.storageKnown === false || availableForMachine === null
+      ? Number.MAX_SAFE_INTEGER
+      : availableForMachine;
     const safeTotal = Math.min(unitQuantity(desiredManual), maxTotal);
+    if (!adminOverride && availableForMachine !== null && unitQuantity(desiredManual) > availableForMachine) {
+      setError(tr(
+        locale,
+        `Only ${availableForMachine} units remain available for this machine after the other route stops.`,
+        `المتاح لهذا الجهاز هو ${availableForMachine} وحدة فقط بعد كميات أجهزة الجولة الأخرى.`,
+      ));
+    }
     setManualStopQty(machineId, productId, safeTotal);
   };
 
@@ -1431,7 +1470,10 @@ export function RouteCreateForm({
                     </div>
                   ) : (
                     <div className="grid gap-2 md:grid-cols-2">
-                      {machineScopedSearchResults.map((candidate) => (
+                      {machineScopedSearchResults.map((candidate) => {
+                        const availableForMachine = availableStockForMachine(candidate.product.id, selectedManualMachineId);
+                        const remainingAfterRoute = remainingStockForRoute(candidate.product.id);
+                        return (
                         <button
                           key={candidate.product.id}
                           type="button"
@@ -1442,7 +1484,7 @@ export function RouteCreateForm({
                             setDesiredManualQty(selectedManualMachineId, candidate.product.id, nextQty);
                           }}
                           className={`rounded-lg border p-3 text-left transition disabled:cursor-not-allowed disabled:opacity-50 ${candidate.selectedQty > 0 ? "border-emerald-300 bg-emerald-50/70" : "border-slate-200 bg-white hover:border-slate-400"}`}
-                          disabled={saving || (!adminOverride && candidate.product.storageKnown && candidate.product.availableQty <= 0)}
+                          disabled={saving || (!adminOverride && availableForMachine !== null && availableForMachine <= 0 && candidate.selectedQty <= 0)}
                         >
                           <div className="flex gap-3">
                             <ProductThumbnail imageUrl={candidate.product.imageUrl} name={candidate.product.name} size="md" />
@@ -1453,7 +1495,11 @@ export function RouteCreateForm({
                               </div>
                               <div className="mt-1 text-xs text-slate-600">
                                 {candidate.product.storageKnown
-                                  ? `Storage ${candidate.product.storageQty} / Available ${candidate.product.availableQty}`
+                                  ? tr(
+                                      locale,
+                                      `Storage ${candidate.product.storageQty} / Available for this machine ${availableForMachine ?? 0} / Unassigned after route ${remainingAfterRoute ?? 0}`,
+                                      `المخزون ${candidate.product.storageQty} / المتاح لهذا الجهاز ${availableForMachine ?? 0} / غير المخصص بعد الجولة ${remainingAfterRoute ?? 0}`,
+                                    )
                                   : tr(locale, "Storage quantity temporarily unknown", "كمية المخزون غير معروفة مؤقتًا")}
                               </div>
                               <div className="mt-2 flex flex-wrap gap-2 text-xs">
@@ -1472,7 +1518,8 @@ export function RouteCreateForm({
                             </div>
                           </div>
                         </button>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -1488,13 +1535,16 @@ export function RouteCreateForm({
                     </div>
                   ) : (
                     <div className="grid gap-2 md:grid-cols-2">
-                      {machineFallbackProducts.map((product) => (
+                      {machineFallbackProducts.map((product) => {
+                        const availableForMachine = availableStockForMachine(product.id, selectedManualMachineId);
+                        const remainingAfterRoute = remainingStockForRoute(product.id);
+                        return (
                         <button
                           key={product.id}
                           type="button"
                           onClick={() => addProductQty(product.id, 1)}
                           className="rounded-lg border border-dashed border-slate-200 bg-white p-3 text-left transition hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-50"
-                          disabled={saving || (!adminOverride && product.storageKnown && product.availableQty <= 0)}
+                          disabled={saving || (!adminOverride && availableForMachine !== null && availableForMachine <= 0)}
                         >
                           <div className="flex gap-3">
                             <ProductThumbnail imageUrl={product.imageUrl} name={product.name} size="md" />
@@ -1505,13 +1555,18 @@ export function RouteCreateForm({
                               </div>
                               <div className="mt-1 text-xs text-slate-600">
                                 {product.storageKnown
-                                  ? `Storage ${product.storageQty} / Available ${product.availableQty}`
+                                  ? tr(
+                                      locale,
+                                      `Storage ${product.storageQty} / Available for this machine ${availableForMachine ?? 0} / Unassigned after route ${remainingAfterRoute ?? 0}`,
+                                      `المخزون ${product.storageQty} / المتاح لهذا الجهاز ${availableForMachine ?? 0} / غير المخصص بعد الجولة ${remainingAfterRoute ?? 0}`,
+                                    )
                                   : tr(locale, "Storage quantity temporarily unknown", "كمية المخزون غير معروفة مؤقتًا")}
                               </div>
                             </div>
                           </div>
                         </button>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -1553,7 +1608,7 @@ export function RouteCreateForm({
                       const product = productsById.get(item.productId);
                       const machine = machinesById.get(item.machineId);
                       const stockIssue = stockErrorByProduct.get(item.productId);
-                      const available = stockIssue?.available_qty ?? unitQuantity(product?.availableQty);
+                      const available = availableStockForMachine(item.productId, item.machineId) ?? unitQuantity(stockIssue?.available_qty ?? product?.availableQty);
                       const storageKnown = Boolean(stockIssue) || product?.storageKnown === true;
                       const exceeds = storageKnown && (Boolean(stockIssue) || unitQuantity(item.quantity) > available);
                       return (
@@ -1573,7 +1628,7 @@ export function RouteCreateForm({
                           <td className="px-3 py-2">
                             <div className="flex flex-wrap items-center gap-2">
                               {[-1, 1, 5, 10].map((delta) => (
-                                <button key={delta} type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setDesiredManualQty(item.machineId, item.productId, item.quantity + delta)} disabled={saving}>
+                                <button key={delta} type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setDesiredManualQty(item.machineId, item.productId, item.quantity + delta)} disabled={saving || (!adminOverride && storageKnown && delta > 0 && item.quantity >= available)}>
                                   {delta > 0 ? `+${delta}` : delta}
                                 </button>
                               ))}
