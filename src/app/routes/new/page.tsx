@@ -196,7 +196,6 @@ async function loadRouteRecommendations(supabase: Awaited<ReturnType<typeof getA
 
 type StorageInventoryRow = {
   product_id: string;
-  product_name: string;
   quantity_on_hand: unknown;
 };
 
@@ -293,10 +292,8 @@ export default async function NewRoutePage() {
     supabase.from("machines").select("*, location:locations(*)").eq("status", "active").order("machine_code"),
     loadRouteRecommendations(supabase),
     supabase
-      .from("current_inventory_by_location")
-      .select("product_id, product_name, quantity_on_hand")
-      .eq("location_type", "storage")
-      .order("product_name"),
+      .from("route_storage_stock_by_product")
+      .select("product_id, quantity_on_hand"),
     supabase
       .from("route_stock_lines")
       .select("route_id, product_id, planned_qty, picked_qty"),
@@ -358,10 +355,10 @@ export default async function NewRoutePage() {
       ? logRouteBuilderQueryError({
           key: "storage_inventory",
           label: "Could not load storage stock",
-          table: "current_inventory_by_location",
+          table: "route_storage_stock_by_product",
           error: storageError,
           profile,
-          params: { location_type: "storage", order: "product_name" },
+          params: { aggregation: "storage_by_product" },
         })
       : null,
     reservedError
@@ -392,17 +389,41 @@ export default async function NewRoutePage() {
       : null,
   ].filter((issue): issue is RouteBuilderQueryIssue => Boolean(issue));
 
-  if (queryIssues.length) {
+  const blockingQueryIssues = queryIssues.filter((issue) => issue.key === "machines");
+  if (blockingQueryIssues.length) {
     return (
       <>
         <ErrorState
-          title={queryIssues[0].label}
-          body={queryIssues.map((issue) => issue.message).join(" ")}
+          title={blockingQueryIssues[0].label}
+          body={blockingQueryIssues.map((issue) => issue.message).join(" ")}
           action={<SecondaryButton href="/routes/new">Retry</SecondaryButton>}
         />
       </>
     );
   }
+
+  const availabilityWarnings = [
+    recommendationsError
+      ? (locale === "ar"
+          ? "توصيات التعبئة غير متاحة مؤقتًا. لا يزال بإمكانك اختيار الأجهزة وإدخال المنتجات والكميات يدويًا."
+          : "Refill recommendations are temporarily unavailable. You can still choose machines and enter products and quantities manually.")
+      : null,
+    storageError
+      ? (locale === "ar"
+          ? "تعذر تحميل كميات المخزون مؤقتًا. يمكنك متابعة التخطيط، وسيعيد Snacky OS التحقق من المخزون قبل السحب."
+          : "Live storage quantities are temporarily unavailable. You can keep planning; Snacky OS will recheck stock before pickup.")
+      : null,
+    productsError
+      ? (locale === "ar"
+          ? "دليل المنتجات غير متاح مؤقتًا. لا يزال بإمكانك إنشاء جولة بالمواقع فقط وإضافة المنتجات لاحقًا في المخزن."
+          : "The product catalog is temporarily unavailable. You can still create a stops-only route and add products later at storage.")
+      : null,
+    operatorsError
+      ? (locale === "ar"
+          ? "قائمة المنفذين غير متاحة مؤقتًا. أنشئ الجولة دون إسناد ويمكن إسنادها لاحقًا."
+          : "The performer list is temporarily unavailable. Create the route unassigned and assign it later.")
+      : null,
+  ].filter((warning): warning is string => Boolean(warning));
 
   const stockBatches = ((batchResult.data ?? []) as VmsDashboardBatch[])
     .filter((batch) => ["stock", "machine_stock_snapshot"].includes(String(batch.report_type ?? "")));
@@ -432,6 +453,7 @@ export default async function NewRoutePage() {
   const stockSnapshotIsStale = isStaleStockSnapshot(batchTimestamp(latestActiveStockBatch));
   const today = new Date().toISOString().slice(0, 10);
   const productRows = (products ?? []) as ProductRow[];
+  const productById = new Map(productRows.map((product) => [product.id, product]));
   const activeProductIds = new Set(productRows.map((product) => product.id));
   const loadedRecommendations = (recommendations ?? []) as RecommendationRow[];
   const activeRecommendations = loadedRecommendations.filter((recommendation) => activeProductIds.has(recommendation.product_id));
@@ -440,7 +462,7 @@ export default async function NewRoutePage() {
     const current = storageByProduct.get(row.product_id);
     storageByProduct.set(row.product_id, {
       product_id: row.product_id,
-      product_name: row.product_name,
+      product_name: productById.get(row.product_id)?.name ?? "Unknown product",
       quantity_on_hand: (current?.quantity_on_hand ?? 0) + signedQuantity(row.quantity_on_hand),
     });
   });
@@ -699,6 +721,7 @@ export default async function NewRoutePage() {
       imageUrl: product.image_url,
       availableQty: unitQuantity(availableByProduct.get(product.id)),
       storageQty: unitQuantity(storageByProduct.get(product.id)?.quantity_on_hand),
+      storageKnown: !storageError,
     }));
   const recentProductIds = Array.from(new Set(((recentMovements ?? []) as RecentMovementRow[]).map((row) => row.product_id).filter((productId): productId is string => Boolean(productId)))).slice(0, 12);
 
@@ -717,6 +740,8 @@ export default async function NewRoutePage() {
           recentProductIds={recentProductIds}
           allowAdminOverride={isOwnerAdminRole(profile)}
           defaultRouteDate={today}
+          availabilityWarnings={availabilityWarnings}
+          fullRouteAvailable={!productsError}
         />
       </FormPageLayout>
     </>
