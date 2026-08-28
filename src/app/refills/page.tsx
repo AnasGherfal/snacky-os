@@ -1,4 +1,5 @@
 import { PaginationControls } from "@/components/PaginationControls";
+import { RefillForecastDashboard } from "@/components/RefillForecastDashboard";
 import { VmsDataSourceCard } from "@/components/VmsDataSourceCard";
 import { DataTable, EmptyState, MobileCardList, MobileField, MobileRecordCard, PageHeader, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
@@ -6,6 +7,7 @@ import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
+import { buildMachineRefillForecasts, type RefillFillLine, type RefillMachine, type RefillStockHistory } from "@/lib/refill-forecast";
 import { queryVmsDashboardBatches, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
 
 export const dynamic = "force-dynamic";
@@ -76,9 +78,14 @@ type MachineRefillHistoryRow = {
   issue_notes: string | null;
   machine_photo_url: string | null;
   machine_photo_path: string | null;
-  machine?: { name?: string | null; machine_code?: string | null } | null;
+  machine?: { name?: string | null; machine_code?: string | null; location?: { id?: string | null; name?: string | null } | { id?: string | null; name?: string | null }[] | null } | null;
   operator?: { full_name?: string | null; email?: string | null } | null;
 };
+
+function refillHistoryMachineName(row: MachineRefillHistoryRow) {
+  const formatted = formatMachineDisplayName(row.machine, { includeArea: true });
+  return formatted === "Unknown machine" ? row.machine_name ?? "Unknown machine" : formatted;
+}
 
 type ProductRecommendationRow = {
   productKey: string;
@@ -158,6 +165,21 @@ async function loadRefillRecommendations(supabase: NonNullable<Awaited<ReturnTyp
     .limit(1000);
 }
 
+async function loadForecastMachines(supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>) {
+  const enriched = await supabase
+    .from("machines")
+    .select("id, name, machine_code, status, refill_open_days, refill_critical_percent, refill_today_percent, refill_target_percent, refill_minimum_units, refill_manual_daily_units")
+    .eq("status", "active")
+    .order("name");
+  if (!enriched.error || !isMissingRecommendationMetadataError(enriched.error)) return enriched;
+  return supabase.from("machines").select("id, name, machine_code, status").eq("status", "active").order("name");
+}
+
+function refillForecastClock() {
+  const now = new Date();
+  return { now, since: new Date(now.getTime() - 28 * 24 * 60 * 60 * 1000).toISOString() };
+}
+
 async function attachRecommendationSources(supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>, rows: RefillRecommendationRow[]) {
   const batchIds = Array.from(new Set(rows.map((row) => row.import_batch_id).filter((id): id is string => Boolean(id))));
   if (!batchIds.length) return rows;
@@ -186,9 +208,10 @@ async function attachRecommendationSources(supabase: NonNullable<Awaited<ReturnT
 async function RefillsPageContent({ searchParams }: { searchParams: Promise<SearchParamsRecord> }) {
   const params = cleanSearchParams(await searchParams);
   const { page, pageSize, from, to } = getPagination(params);
+  const forecastClock = refillForecastClock();
   await requireCurrentProfileForPath("/refills");
   const supabase = getSupabaseAdminClient() ?? await getAuthenticatedSupabaseServerClient();
-  const [recommendationsResult, stockCountResult, historyResult, historyCountResult, historyIssueCountResult, batchResult] = supabase
+  const [recommendationsResult, stockCountResult, historyResult, historyCountResult, historyIssueCountResult, batchResult, forecastMachinesResult, forecastLatestStockResult, forecastHistoryResult, forecastFillResult] = supabase
     ? await Promise.all([
         loadRefillRecommendations(supabase),
         supabase
@@ -215,8 +238,32 @@ async function RefillsPageContent({ searchParams }: { searchParams: Promise<Sear
             ascending: false,
           }),
         }),
+        loadForecastMachines(supabase),
+        safeSupabaseQuery<RefillStockHistory>({
+          label: "refills.forecast.latest_vms_stock_by_slot",
+          promise: supabase.from("latest_vms_stock_by_slot").select("machine_id, product_id, slot_code, current_qty, capacity, captured_at"),
+        }),
+        safeSupabaseQuery<RefillStockHistory>({
+          label: "refills.forecast.vms_stock_snapshots",
+          promise: supabase
+            .from("vms_stock_snapshots")
+            .select("machine_id, product_id, slot_code, current_qty, capacity, captured_at, import_batch_id, sync_run_id")
+            .eq("import_row_status", "imported")
+            .gte("captured_at", forecastClock.since)
+            .order("captured_at", { ascending: true })
+            .limit(10000),
+        }),
+        safeSupabaseQuery<RefillFillLine>({
+          label: "refills.forecast.route_stop_fill_lines",
+          promise: supabase
+            .from("route_stop_fill_lines")
+            .select("machine_id, product_id, actual_qty, created_at")
+            .gte("created_at", forecastClock.since)
+            .order("created_at", { ascending: true })
+            .limit(5000),
+        }),
       ])
-    : [{ data: null, error: null, count: 0 }, { count: 0, error: null }, { data: null, error: null }, { count: 0, error: null }, { count: 0, error: null }, { data: [], error: null, count: 0 }];
+    : [{ data: null, error: null, count: 0 }, { count: 0, error: null }, { data: null, error: null }, { count: 0, error: null }, { count: 0, error: null }, { data: [], error: null, count: 0 }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }];
   const { data: recommendations, error } = recommendationsResult;
   const rawRecommendationRows = (recommendations ?? []) as RefillRecommendationRow[];
   const recommendationRows = supabase ? await attachRecommendationSources(supabase, rawRecommendationRows) : rawRecommendationRows;
@@ -225,6 +272,23 @@ async function RefillsPageContent({ searchParams }: { searchParams: Promise<Sear
   const latestRecommendationSource = recommendationRows.find((row) => formatSource(row) !== "Unknown" || row.source_uploaded_at);
   const historyUnavailable = historyResult.error?.code === "PGRST205";
   const historyRows = historyUnavailable ? [] : ((historyResult.data ?? []) as MachineRefillHistoryRow[]);
+  const coverageByMachine = new Map<string, { machineId: string; requestedUnits: number; fillableUnits: number }>();
+  recommendationRows.forEach((row) => {
+    if (!row.machine_id) return;
+    const current = coverageByMachine.get(row.machine_id) ?? { machineId: row.machine_id, requestedUnits: 0, fillableUnits: 0 };
+    current.requestedUnits += unitQuantity(row.suggested_qty);
+    current.fillableUnits += unitQuantity(row.final_qty_to_take);
+    coverageByMachine.set(row.machine_id, current);
+  });
+  const forecasts = buildMachineRefillForecasts({
+    machines: (forecastMachinesResult.data ?? []) as RefillMachine[],
+    latestStock: (forecastLatestStockResult.data ?? []) as RefillStockHistory[],
+    stockHistory: (forecastHistoryResult.data ?? []) as RefillStockHistory[],
+    fills: (forecastFillResult.data ?? []) as RefillFillLine[],
+    storageCoverage: Array.from(coverageByMachine.values()),
+    now: forecastClock.now,
+  });
+  const forecastError = forecastMachinesResult.error ?? forecastLatestStockResult.error ?? forecastHistoryResult.error ?? forecastFillResult.error;
 
   if (error ?? stockCountResult.error) console.error("[refills] Failed to load refill recommendations", error ?? stockCountResult.error);
   if (historyResult.error && !historyUnavailable) console.error("[refills] Failed to load machine refill history", historyResult.error);
@@ -236,6 +300,11 @@ async function RefillsPageContent({ searchParams }: { searchParams: Promise<Sear
         <EmptyState title="Connect Supabase to activate refills" body="Add environment variables and restart the app." />
       ) : (
         <div className="space-y-6">
+          {forecastError ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">The refill forecast could not load every trend source. Existing product recommendations remain available below.</div>
+          ) : (
+            <RefillForecastDashboard forecasts={forecasts} />
+          )}
           <VmsDataSourceCard
             batches={(batchResult.data ?? []) as VmsDashboardBatch[]}
             error={batchResult.error}
@@ -319,7 +388,7 @@ async function RefillsPageContent({ searchParams }: { searchParams: Promise<Sear
                     <MobileRecordCard key={row.id}>
                       <div className="mb-3 flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <h3 className="break-words font-semibold text-slate-900">{formatMachineDisplayName(row.machine as any, { includeArea: true }) === "Unknown machine" ? row.machine_name ?? "Unknown machine" : formatMachineDisplayName(row.machine as any, { includeArea: true })}</h3>
+                          <h3 className="break-words font-semibold text-slate-900">{refillHistoryMachineName(row)}</h3>
                           <p className="mt-1 text-sm text-slate-500">{row.refill_at ? new Date(row.refill_at).toLocaleString("en-US") : "-"}</p>
                         </div>
                         <StatusBadge status={row.fill_status || "unknown"} />
@@ -341,7 +410,7 @@ async function RefillsPageContent({ searchParams }: { searchParams: Promise<Sear
                   {historyRows.map((row) => (
                     <tr key={row.id}>
                       <td>{row.refill_at ? new Date(row.refill_at).toLocaleString("en-US") : "-"}</td>
-                      <td className="font-medium">{formatMachineDisplayName(row.machine as any, { includeArea: true }) === "Unknown machine" ? row.machine_name ?? "Unknown machine" : formatMachineDisplayName(row.machine as any, { includeArea: true })}</td>
+                      <td className="font-medium">{refillHistoryMachineName(row)}</td>
                       <td>{row.operator?.full_name ?? row.operator_email ?? "-"}</td>
                       <td><StatusBadge status={row.fill_status || "unknown"} /></td>
                       <td>{row.issues_found ? <StatusBadge status="review" /> : <StatusBadge status="ok" />}{row.issue_notes ? <div className="mt-1 max-w-xs text-xs text-slate-500">{row.issue_notes}</div> : null}</td>
