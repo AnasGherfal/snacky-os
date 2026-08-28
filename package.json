@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --webpack",
-    "prebuild": "node --experimental-strip-types --test scripts/test-xy-vms-protocol.mjs scripts/test-xy-vms-data.mjs scripts/test-xy-vms-route-automation.mjs && node --test scripts/test-stop-carried-quantity.mjs && node --test scripts/test-route-stop-persistence-fix.mjs && node --experimental-strip-types --test scripts/test-stop-zero-return.mjs && node --experimental-strip-types --test scripts/test-route-inventory-summary.mjs && node --experimental-strip-types --test scripts/test-stop-runtime-polish.mjs && node --experimental-strip-types --test scripts/test-admin-missed-route-pickup.mjs && node --experimental-strip-types --test scripts/test-route-creation-guided-flow.mjs",
+    "prebuild": "node --experimental-strip-types --test scripts/test-xy-vms-protocol.mjs scripts/test-xy-vms-data.mjs scripts/test-xy-vms-route-automation.mjs scripts/test-route-machine-catalog.mjs && node --test scripts/test-stop-carried-quantity.mjs && node --test scripts/test-route-stop-persistence-fix.mjs && node --experimental-strip-types --test scripts/test-stop-zero-return.mjs && node --experimental-strip-types --test scripts/test-route-inventory-summary.mjs && node --experimental-strip-types --test scripts/test-stop-runtime-polish.mjs && node --experimental-strip-types --test scripts/test-admin-missed-route-pickup.mjs && node --experimental-strip-types --test scripts/test-route-creation-guided-flow.mjs",
     "build": "node scripts/next-build.mjs",
     "start": "next start",
     "lint": "eslint",
@@ -21,6 +21,7 @@
     "test:route-workflow": "node --experimental-strip-types --test scripts/test-route-workflow.mjs",
     "test:admin-missed-route-pickup": "node --experimental-strip-types --test scripts/test-admin-missed-route-pickup.mjs",
     "test:route-creation-guided-flow": "node --experimental-strip-types --test scripts/test-route-creation-guided-flow.mjs",
+    "test:route-machine-catalog": "node --experimental-strip-types --test scripts/test-route-machine-catalog.mjs",
     "test:route-pickup-checklist": "node --test scripts/test-route-pickup-checklist-save.mjs",
     "check:route-schema": "node --experimental-strip-types scripts/check-route-workflow-schema.mjs",
     "i18n:audit": "node scripts/i18n-audit.mjs",

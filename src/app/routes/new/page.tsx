@@ -6,6 +6,7 @@ import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
 import { activeStockBatches, queryVmsDashboardBatches, sourceFileName, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
 import { RouteCreateForm } from "@/app/routes/new/RouteCreateForm";
 import { formatSiteLabel, formatMachineDisplayName } from "@/lib/machine-site-display";
+import { buildRouteMachineCatalog } from "@/lib/route-machine-catalog";
 import { getServerI18n } from "@/lib/i18n/server";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import type {
@@ -44,10 +45,12 @@ type ProductRow = {
 
 type MachineRow = {
   id: string;
-  name: string;
-  machine_code: string;
+  name: string | null;
+  machine_code: string | null;
   machine_display_name?: string | null;
   vms_machine_id?: string | null;
+  vms_location_name?: string | null;
+  vms_raw_metadata?: unknown;
   location?: Record<string, unknown> | Record<string, unknown>[] | null;
 };
 
@@ -502,16 +505,8 @@ export default async function NewRoutePage() {
     .filter((row) => row.quantity_on_hand > 0);
   const availableByProduct = new Map(availableStorage.map((row) => [row.product_id, row.quantity_on_hand]));
   const machineRows = (machines ?? []) as MachineRow[];
-  const machineCatalog = machineRows.map((machine) => {
-    const location = Array.isArray(machine.location) ? machine.location[0] : machine.location;
-    return {
-      id: machine.id,
-      name: machine.name,
-      machine_display_name: machine.machine_display_name ?? null,
-      machine_code: machine.machine_code,
-      location_name: formatSiteLabel(location ?? null, { includeArea: true }),
-    };
-  });
+  const machineCatalog = buildRouteMachineCatalog(machineRows);
+  const machineCatalogById = new Map(machineCatalog.map((machine) => [machine.id, machine]));
   const latestStockByMachine = new Map<string, LatestStockRow[]>();
   latestStockRows.forEach((row) => {
     const machineId = String(row.machine_id ?? "").trim();
@@ -554,6 +549,7 @@ export default async function NewRoutePage() {
   });
   const machineDiagnostics: RouteRecommendationMachineDiagnostic[] = machineRows.map((machine) => {
     const location = Array.isArray(machine.location) ? machine.location[0] : machine.location;
+    const catalogMachine = machineCatalogById.get(machine.id);
     const latestRows = latestStockByMachine.get(machine.id) ?? [];
     const planogramRows = machineSlotsByMachine.get(machine.id) ?? [];
     const auditRows = auditRowsByMachine.get(machine.id) ?? [];
@@ -612,8 +608,8 @@ export default async function NewRoutePage() {
     };
     return {
       machineId: machine.id,
-      machineName: formatMachineDisplayName(machine, { includeArea: true }),
-      machineCode: machine.machine_code,
+      machineName: catalogMachine?.name ?? formatMachineDisplayName(machine, { includeArea: true }),
+      machineCode: catalogMachine?.machine_code ?? machine.vms_machine_id ?? "Machine",
       locationName: formatSiteLabel(location ?? null, { includeArea: true }),
       machineMapped: Boolean(machine.vms_machine_id),
       latestStockRowsFound: latestRows.length,
