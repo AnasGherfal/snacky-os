@@ -165,12 +165,22 @@ function formatRecommendationQty(value: number | null | undefined) {
 }
 
 function locationLabel(value: string | null | undefined) {
-  return String(value ?? "").trim() || "No location";
+  return optionalLocationLabel(value) || "Location not linked";
+}
+
+function optionalLocationLabel(value: string | null | undefined) {
+  const label = String(value ?? "").trim();
+  if (["unknown", "unknown location", "no location", "-"].includes(label.toLowerCase())) return "";
+  return label;
 }
 
 function machineLabel(machine: Machine | null | undefined) {
   if (!machine) return "Unknown machine";
   return formatMachineDisplayName(machine, { includeArea: true });
+}
+
+function machineMetaLabel(machine: Machine) {
+  return [machine.machine_code, optionalLocationLabel(machine.location_name)].filter(Boolean).join(" · ");
 }
 
 function recommendationReasonSummary(group: RecommendationGroup) {
@@ -479,7 +489,7 @@ export function RouteCreateForm({
         seen.add(group.machineId);
         return true;
       })
-      .map((group) => ({ id: group.machineId, label: `${group.machineName} - ${locationLabel(group.locationName)}` }))
+      .map((group) => ({ id: group.machineId, label: [group.machineName, optionalLocationLabel(group.locationName)].filter(Boolean).join(" - ") }))
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [recommendationGroups]);
   const machineDiagnosticsById = useMemo(
@@ -1420,7 +1430,7 @@ export function RouteCreateForm({
                 >
                   <option value="">{tr(locale, "Choose a selected machine", "اختر جهازًا محددًا")}</option>
                   {machines.filter((machine) => machineIds.includes(machine.id)).map((machine) => (
-                    <option key={machine.id} value={machine.id}>{machineLabel(machine)} - {locationLabel(machine.location_name)}</option>
+                    <option key={machine.id} value={machine.id}>{machineLabel(machine)}</option>
                   ))}
                 </select>
               </FormField>
@@ -1465,7 +1475,7 @@ export function RouteCreateForm({
                   <div>
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr(locale, "Machine stop", "موقع الجهاز")}</div>
                     <div className="mt-1 text-lg font-semibold text-slate-900">{machineLabel(selectedManualMachine)}</div>
-                    <div className="text-sm text-slate-500">{selectedManualMachine.machine_code} - {locationLabel(selectedManualMachine.location_name)}</div>
+                    <div className="text-sm text-slate-500">{machineMetaLabel(selectedManualMachine)}</div>
                     {selectedManualRecommendationGroups.some((group) => group.defaultFinalTakeTotal > 0) ? (
                       <button type="button" className="btn-secondary mt-3" onClick={() => applySuggestedQuantities([selectedManualMachineId])} disabled={saving || staleRecommendationMachineIds.has(selectedManualMachineId)}>
                         {tr(locale, "Use suggested quantities", "استخدام الكميات المقترحة")}
@@ -2082,7 +2092,9 @@ export function RouteCreateForm({
                   ) : (
                     pagedRecommendationGroups.map((group, index) => {
                       const previousGroup = index > 0 ? pagedRecommendationGroups[index - 1] : null;
-                      const showLocationHeader = !previousGroup || locationLabel(previousGroup.locationName) !== locationLabel(group.locationName);
+                      const locationSectionLabel = optionalLocationLabel(group.locationName) || group.machineName;
+                      const previousLocationSectionLabel = previousGroup ? optionalLocationLabel(previousGroup.locationName) || previousGroup.machineName : null;
+                      const showLocationHeader = previousLocationSectionLabel !== locationSectionLabel;
                       const selected = isRecommendationGroupSelected(group);
                       const expanded = expandedRecommendationGroups.includes(group.groupKey);
                       const selectable = recommendationGroupSelectable(group);
@@ -2104,7 +2116,7 @@ export function RouteCreateForm({
                           {showLocationHeader ? (
                             <tr className="border-t border-slate-200 bg-slate-100/80">
                               <td colSpan={11} className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-600">
-                                {locationLabel(group.locationName)}
+                                {locationSectionLabel}
                               </td>
                             </tr>
                           ) : null}
@@ -2122,7 +2134,7 @@ export function RouteCreateForm({
                             <td className="px-3 py-2 font-medium">
                               <div>{group.machineName}</div>
                               <div className="text-xs font-normal text-slate-500">{group.machineCode}</div>
-                              <div className="text-xs font-normal text-slate-500">{locationLabel(group.locationName)}</div>
+                              {optionalLocationLabel(group.locationName) ? <div className="text-xs font-normal text-slate-500">{optionalLocationLabel(group.locationName)}</div> : null}
                             </td>
                             <td className="px-3 py-2">
                               <div className="font-medium text-slate-900">{group.productName}</div>
@@ -2279,7 +2291,7 @@ export function RouteCreateForm({
                         />
                         <label htmlFor={`route-machine-${machine.id}`} className="min-w-0 flex-1 cursor-pointer">
                           <span className="block font-semibold text-slate-950">{machineLabel(machine)}</span>
-                          <span className="mt-0.5 block text-xs text-slate-500">{machine.machine_code} · {locationLabel(machine.location_name)}</span>
+                          <span className="mt-0.5 block text-xs text-slate-500">{machineMetaLabel(machine)}</span>
                         </label>
                         {selected ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800">{tr(locale, "Included", "مضاف")}</span> : null}
                       </div>
@@ -2341,7 +2353,7 @@ export function RouteCreateForm({
                     <div>
                       <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr(locale, `Stop ${index + 1}`, `الموقع ${index + 1}`)}</div>
                       <div className="mt-1 font-semibold text-slate-950">{machineLabel(machine)}</div>
-                      <div className="text-xs text-slate-500">{machine.machine_code} · {locationLabel(machine.location_name)}</div>
+                      <div className="text-xs text-slate-500">{machineMetaLabel(machine)}</div>
                     </div>
                     <div className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700">
                       {creationMode === "stops_only" ? tr(locale, "Products later", "المنتجات لاحقًا") : tr(locale, `${items.length} products · ${units} units`, `${items.length} منتجات · ${units} وحدة`)}
