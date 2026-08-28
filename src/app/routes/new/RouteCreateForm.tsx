@@ -11,6 +11,7 @@ import { useLanguage } from "@/components/I18nProvider";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { comparePickupProductRows, groupRouteItemsForDisplay } from "@/lib/route-pickup-checklist";
 import { availableRouteStockForMachine, remainingRouteStock } from "@/lib/route-stock-allocation";
+import { refreshXyRoutePlanningDataAction } from "@/lib/xy-vms-actions";
 
 type Operator = {
   id: string;
@@ -267,9 +268,43 @@ export function RouteCreateForm({
   const [stockErrors, setStockErrors] = useState<StockValidationIssue[]>([]);
   const [scrollErrorIntoView, setScrollErrorIntoView] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [xyRefreshStatus, setXyRefreshStatus] = useState<"refreshing" | "fresh" | "warning">("refreshing");
+  const [xyRefreshMessage, setXyRefreshMessage] = useState(tr(locale, "Refreshing XY lane quantities automatically…", "يتم تحديث كميات فتحات XY تلقائيًا…"));
+  const xyRefreshStarted = useRef(false);
   const deferredSearch = useDeferredValue(search);
   const deferredRecommendationSearch = useDeferredValue(recommendationSearch);
   const draftKey = useDraftKey("route", ["new"]);
+
+  useEffect(() => {
+    if (xyRefreshStarted.current) return;
+    xyRefreshStarted.current = true;
+    let cancelled = false;
+
+    void refreshXyRoutePlanningDataAction()
+      .then((result) => {
+        if (cancelled) return;
+        if (result.refreshed) {
+          setXyRefreshStatus("fresh");
+          setXyRefreshMessage(tr(locale, "XY lane quantities refreshed. Updating the route plan…", "تم تحديث كميات فتحات XY. يتم تحديث خطة الجولة…"));
+          router.refresh();
+          return;
+        }
+        const alreadyFresh = String(result.skipped ?? "").toLowerCase().includes("already fresh");
+        setXyRefreshStatus(alreadyFresh ? "fresh" : "warning");
+        setXyRefreshMessage(alreadyFresh
+          ? tr(locale, "XY lane quantities are current.", "كميات فتحات XY محدثة.")
+          : tr(locale, "Could not refresh XY right now. The latest verified snapshot remains in use; stale data will not be auto-applied.", "تعذر تحديث XY الآن. سيستمر استخدام آخر لقطة مؤكدة، ولن يتم تطبيق البيانات القديمة تلقائيًا."));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setXyRefreshStatus("warning");
+        setXyRefreshMessage(tr(locale, "Could not refresh XY right now. The latest verified snapshot remains in use; stale data will not be auto-applied.", "تعذر تحديث XY الآن. سيستمر استخدام آخر لقطة مؤكدة، ولن يتم تطبيق البيانات القديمة تلقائيًا."));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [locale, router]);
 
   const routeDraft = useMemo<RouteCreateDraft>(() => ({
     builderStep,
@@ -636,6 +671,23 @@ export function RouteCreateForm({
     return itemsByMachine;
   }, [manualStopItems]);
 
+  const automaticShortagesByMachine = useMemo(() => {
+    const shortages = new Map<string, Array<RecommendationGroup & { assignedQty: number; shortageQty: number }>>();
+    machineIds.forEach((machineId) => {
+      if (staleRecommendationMachineIds.has(machineId)) return;
+      (recommendationGroupsByMachine.get(machineId) ?? []).forEach((group) => {
+        if (group.recommendedTotal <= 0) return;
+        const assignedQty = unitQuantity(
+          manualItemsByMachine.get(machineId)?.find((item) => item.productId === group.productId)?.quantity,
+        );
+        const shortageQty = Math.max(0, group.recommendedTotal - assignedQty);
+        if (shortageQty <= 0) return;
+        shortages.set(machineId, [...(shortages.get(machineId) ?? []), { ...group, assignedQty, shortageQty }]);
+      });
+    });
+    return shortages;
+  }, [machineIds, manualItemsByMachine, recommendationGroupsByMachine, staleRecommendationMachineIds]);
+
   const manualSectionMachineIds = useMemo(() => {
     return machines
       .map((machine) => machine.id)
@@ -700,6 +752,7 @@ export function RouteCreateForm({
       recommendedQty: number;
       sourceKinds: Set<string>;
       slotCodes: Set<string>;
+      lanes: Array<{ slotCode: string; currentQty: number; capacity: number; neededQty: number }>;
     }>();
     const ensureCandidate = (productId: string) => {
       const product = productsById.get(productId);
@@ -712,6 +765,7 @@ export function RouteCreateForm({
         recommendedQty: 0,
         sourceKinds: new Set<string>(),
         slotCodes: new Set<string>(),
+        lanes: [],
       };
       candidates.set(productId, next);
       return next;
@@ -734,7 +788,15 @@ export function RouteCreateForm({
       candidate.recommendedQty += group.recommendedTotal;
       group.rows.forEach((row) => {
         const slotCode = String(row.slot_code ?? "").trim();
-        if (slotCode) candidate.slotCodes.add(slotCode);
+        if (slotCode) {
+          candidate.slotCodes.add(slotCode);
+          candidate.lanes.push({
+            slotCode,
+            currentQty: unitQuantity(row.current_qty),
+            capacity: recommendationTarget(row),
+            neededQty: recommendationQuantity(row),
+          });
+        }
       });
     });
 
@@ -932,8 +994,12 @@ export function RouteCreateForm({
 
   const toggleRouteMachine = (machineId: string) => {
     if (!machineIds.includes(machineId)) {
-      setMachineIds((current) => [...current, machineId]);
+      const nextMachineIds = [...machineIds, machineId];
+      setMachineIds(nextMachineIds);
       focusManualMachine(machineId);
+      if (creationMode === "full" && !staleRecommendationMachineIds.has(machineId)) {
+        applySuggestedQuantities([machineId], nextMachineIds);
+      }
       setError("");
       return;
     }
@@ -951,15 +1017,16 @@ export function RouteCreateForm({
     setError("");
   };
 
-  const applySuggestedQuantities = (targetMachineIds: string[]) => {
-    const selectedTargets = targetMachineIds.filter((machineId) => machineIds.includes(machineId) && !staleRecommendationMachineIds.has(machineId));
+  const applySuggestedQuantities = (targetMachineIds: string[], allowedMachineIds = machineIds) => {
+    const allowedMachineIdSet = new Set(allowedMachineIds);
+    const selectedTargets = targetMachineIds.filter((machineId) => allowedMachineIdSet.has(machineId) && !staleRecommendationMachineIds.has(machineId));
     if (!selectedTargets.length) {
       setError(tr(locale, "Import a fresh VMS stock snapshot before using automatic quantities. You can still enter verified quantities manually.", "استورد لقطة مخزون حديثة من VMS قبل استخدام الكميات التلقائية. لا يزال بإمكانك إدخال الكميات التي تم التحقق منها يدويًا."));
       return;
     }
 
     setManualStopItems((current) => {
-      const next = current.filter((item) => machineIds.includes(item.machineId));
+      const next = current.filter((item) => allowedMachineIdSet.has(item.machineId));
       const itemIndexByKey = new Map(next.map((item, index) => [`${item.machineId}:${item.productId}`, index]));
       const usedByProduct = new Map<string, number>();
       next.forEach((item) => usedByProduct.set(item.productId, (usedByProduct.get(item.productId) ?? 0) + unitQuantity(item.quantity)));
@@ -1194,6 +1261,10 @@ export function RouteCreateForm({
     <form onSubmit={handleSubmit} className="space-y-6">
       <DraftRestoreBanner pendingDraft={localDraft.pendingDraft} onRestore={localDraft.restoreDraft} onDiscard={localDraft.discardDraft} />
       {!localDraft.pendingDraft ? <DraftSaveStatus status={localDraft.status} /> : null}
+      <div className={`rounded-xl border p-3 text-sm ${xyRefreshStatus === "warning" ? "border-amber-200 bg-amber-50 text-amber-950" : "border-sky-200 bg-sky-50 text-sky-950"}`} role="status" aria-live="polite">
+        <span className="font-semibold">{xyRefreshStatus === "refreshing" ? tr(locale, "Live machine refresh", "تحديث الأجهزة المباشر") : tr(locale, "XY machine data", "بيانات أجهزة XY")}</span>
+        <span className="ms-2">{xyRefreshMessage}</span>
+      </div>
       {availabilityWarnings.length ? (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950" role="status">
           <div className="font-semibold">{tr(locale, "Route creation is still available", "لا يزال إنشاء الجولة متاحًا")}</div>
@@ -1420,6 +1491,36 @@ export function RouteCreateForm({
                   </div>
                 </div>
 
+                {(automaticShortagesByMachine.get(selectedManualMachineId) ?? []).length ? (
+                  <div className="space-y-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+                    <div>
+                      <div className="font-semibold">{tr(locale, "Storage shortage — choose what to do", "نقص في المخزون — اختر الإجراء")}</div>
+                      <p className="mt-1 text-xs">{tr(locale, "Snacky OS used every verified available unit it could. Keep the partial amount, set the original product to 0, or set it to 0 and choose another storage product below.", "استخدم Snacky OS كل الوحدات المؤكدة المتاحة. احتفظ بالكمية الجزئية، أو اجعل المنتج الأصلي 0، أو اجعله 0 واختر منتجًا آخر من المخزن أدناه.")}</p>
+                    </div>
+                    {(automaticShortagesByMachine.get(selectedManualMachineId) ?? []).map((shortage) => (
+                      <div key={shortage.groupKey} className="rounded-lg border border-amber-200 bg-white p-3">
+                        <div className="font-semibold text-slate-950">{shortage.productName}</div>
+                        <div className="mt-1 text-xs text-slate-600">
+                          {tr(locale, `XY needs ${shortage.recommendedTotal} · assigned ${shortage.assignedQty} · short ${shortage.shortageQty}`, `XY يحتاج ${shortage.recommendedTotal} · المحدد ${shortage.assignedQty} · النقص ${shortage.shortageQty}`)}
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {shortage.assignedQty > 0 ? <span className="rounded-lg bg-emerald-100 px-3 py-2 text-xs font-semibold text-emerald-900">{tr(locale, `Keep ${shortage.assignedQty}`, `الاحتفاظ بـ ${shortage.assignedQty}`)}</span> : null}
+                          <button type="button" className="btn-secondary text-xs" onClick={() => setManualStopQty(selectedManualMachineId, shortage.productId, 0)} disabled={saving}>
+                            {tr(locale, "Make original 0", "جعل الأصلي 0")}
+                          </button>
+                          <button type="button" className="btn-secondary text-xs" onClick={() => {
+                            setManualStopQty(selectedManualMachineId, shortage.productId, 0);
+                            focusManualMachine(selectedManualMachineId);
+                            setError(tr(locale, `Choose a replacement for ${shortage.productName} from the storage products below.`, `اختر بديلًا لـ ${shortage.productName} من منتجات المخزن أدناه.`));
+                          }} disabled={saving}>
+                            {tr(locale, "Swap from storage", "استبدال من المخزن")}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
                 <div className="grid gap-3 lg:grid-cols-[1fr_280px]">
                   <FormField label={`Search ${machineLabel(selectedManualMachine)} products`}>
                     <input
@@ -1519,6 +1620,17 @@ export function RouteCreateForm({
                                   </span>
                                 ) : null}
                               </div>
+                              {candidate.lanes.length ? (
+                                <div className="mt-2 space-y-1 rounded-lg border border-sky-100 bg-sky-50 p-2 text-xs text-sky-950">
+                                  {candidate.lanes.slice(0, 6).map((lane) => (
+                                    <div key={lane.slotCode} className="flex flex-wrap items-center justify-between gap-2">
+                                      <span className="font-semibold">{tr(locale, "Lane", "الفتحة")} {lane.slotCode}</span>
+                                      <span>{tr(locale, `Current ${lane.currentQty} / Capacity ${lane.capacity} / Bring ${lane.neededQty}`, `الحالي ${lane.currentQty} / السعة ${lane.capacity} / أحضر ${lane.neededQty}`)}</span>
+                                    </div>
+                                  ))}
+                                  {candidate.lanes.length > 6 ? <div>+{candidate.lanes.length - 6} {tr(locale, "more lanes", "فتحات إضافية")}</div> : null}
+                                </div>
+                              ) : null}
                             </div>
                           </div>
                         </button>

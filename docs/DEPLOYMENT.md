@@ -118,6 +118,7 @@ XY_VMS_KEY=your-xy-key
 XY_VMS_SECRET=your-xy-secret
 XY_VMS_SIGNING_MODE=signed
 XY_VMS_TIMEOUT_MS=20000
+CRON_SECRET=generate-a-long-random-value
 ```
 
 To add the XY variables in an existing Vercel project:
@@ -129,6 +130,10 @@ To add the XY variables in an existing Vercel project:
 5. Save the variables.
 6. Go to **Deployments**, open the latest production deployment, and choose **Redeploy** so the server receives the new values.
 7. Sign in to Snacky OS as owner/admin, open `/admin/vms-api`, and run **Test official API**. A healthy connection reports XY code `1` and a non-zero machine row count.
+
+Snacky OS refreshes machine lane stock automatically when an authorized planner opens **Create route** and the last XY stock snapshot is older than 10 minutes. Vercel also calls `/api/cron/xy-vms` once each day to refresh machines, confirmed product prices, and lane stock without anyone pressing Sync. `CRON_SECRET` must be present in the Vercel Production environment; Vercel sends it as the protected bearer token for the cron request.
+
+XY is authoritative for configured machine lanes, lane product, lane capacity, current machine quantity, XY purchase price, and XY selling price. Snacky OS remains authoritative for warehouse inventory and ledger movements. Unmatched XY products stay in mapping review and do not become active Snacky products automatically.
 
 Optional server-side XY web dashboard fallback variables:
 

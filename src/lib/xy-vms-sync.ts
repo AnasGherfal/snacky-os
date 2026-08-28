@@ -4,6 +4,7 @@ import { logActivity } from "@/lib/activity-log";
 import type { UserProfile } from "@/lib/auth";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { XyApiError, assertXyVmsReady, buildXyRequestDebug, callXyApi, callXyApiRaw, getXyVmsConfig, type XyApiRawResult, type XyRequestDebug, type XyVmsConfig, type XyVmsEndpoint, type XyVmsParams } from "@/lib/xy-vms-api";
+import { classifyXyLane, xyProductIdentity } from "@/lib/xy-vms-data";
 
 type SupabaseServer = NonNullable<ReturnType<typeof getSupabaseAdminClient>>;
 type SyncRunStatus = "running" | "completed" | "completed_with_warnings" | "failed";
@@ -12,6 +13,12 @@ type JsonRecord = Record<string, unknown>;
 
 type SyncOptions = {
   profile?: UserProfile | null;
+};
+
+type RoutePlanningRefreshOptions = SyncOptions & {
+  stockMaxAgeMs?: number;
+  productMaxAgeMs?: number;
+  machineMaxAgeMs?: number;
 };
 
 type SyncContext = {
@@ -64,6 +71,16 @@ type XyMachineReference = {
   name: string;
   machine_code: string;
   vms_machine_id: string;
+};
+
+type MachineSlotReference = {
+  id: string;
+  machine_id: string;
+  slot_code: string;
+  product_id: string;
+  capacity: number;
+  min_qty: number;
+  par_qty: number;
 };
 
 type ProductResolver = {
@@ -278,45 +295,6 @@ function findMapping(resolver: ProductResolver, vmsProductId: string, vmsProduct
   );
 }
 
-function xyProductIdentity(row: JsonRecord) {
-  return {
-    vmsProductId: firstText(row, ["spbh", "vms_product_id", "product_id"]),
-    thirdPartyProductId: firstText(row, ["dsfspbh", "third_party_product_id", "sku"]),
-    productName: firstText(row, ["spmc", "product_name", "name"]),
-    barcode: firstText(row, ["sptxm", "barcode", "bar_code"]),
-    imageUrl: firstText(row, ["fjlj", "sptp", "image_url", "image"]),
-    sellingPrice: numberValue(row.spjg ?? row.spsj ?? row.selling_price),
-  };
-}
-
-function cleanProductText(input: unknown) {
-  return String(input ?? "").trim();
-}
-
-function stableProductHash(input: string) {
-  let hash = 5381;
-  for (let index = 0; index < input.length; index += 1) {
-    hash = (hash * 33) ^ input.charCodeAt(index);
-  }
-  return (hash >>> 0).toString(36).toUpperCase();
-}
-
-function generatedXyProductSku(identity: ReturnType<typeof xyProductIdentity>) {
-  const directSource = cleanProductText(identity.thirdPartyProductId) || cleanProductText(identity.vmsProductId) || cleanProductText(identity.barcode);
-  if (directSource) return directSource.slice(0, 96);
-
-  const productName = cleanProductText(identity.productName);
-  const asciiName = productName
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 36);
-  const hash = stableProductHash(productName || "xy-product");
-  return asciiName ? `XY-${asciiName}-${hash}` : `XY-${hash}`;
-}
-
 function addProductReference(resolver: ProductResolver, product: ProductReference) {
   resolver.productsById.set(product.id, product);
   const skuKey = normalizeKey(product.sku);
@@ -327,17 +305,10 @@ function addProductReference(resolver: ProductResolver, product: ProductReferenc
   if (nameKey) resolver.productsByName.set(nameKey, product);
 }
 
-function xyProductCategory(row: JsonRecord) {
-  return firstText(row, ["spfl", "splb", "lbmc", "category", "product_category", "type"]) || "snack";
-}
-
-function xyProductBrand(row: JsonRecord) {
-  return firstText(row, ["pp", "ppmc", "brand", "manufacturer"]);
-}
-
 function findProduct(resolver: ProductResolver, row: JsonRecord) {
   const identity = xyProductIdentity(row);
   const mapping = findMapping(resolver, identity.vmsProductId, identity.productName);
+  if (mapping?.match_status === "ignored") return null;
   if (mapping?.product_id && mapping.match_status === "confirmed") {
     return resolver.productsById.get(mapping.product_id) ?? { id: mapping.product_id };
   }
@@ -389,58 +360,6 @@ async function loadProductResolver(supabase: SupabaseServer): Promise<ProductRes
   return resolver;
 }
 
-async function createMissingXyProductFromRow(supabase: SupabaseServer, resolver: ProductResolver, row: JsonRecord, capturedAt: string) {
-  const identity = xyProductIdentity(row);
-  const productName = identity.productName || identity.thirdPartyProductId || identity.vmsProductId || identity.barcode;
-  if (!productName) return { product: null, action: "skipped" as const, error: "XY product row is missing a product name and identifier." };
-
-  const sku = generatedXyProductSku(identity);
-  const now = new Date().toISOString();
-  const sellingPrice = identity.sellingPrice !== null && identity.sellingPrice >= 0 ? identity.sellingPrice : 0;
-  const payload = {
-    sku,
-    barcode: identity.barcode || null,
-    name: productName,
-    category: xyProductCategory(row),
-    brand: xyProductBrand(row) || null,
-    cost_price: 0,
-    selling_price: sellingPrice,
-    current_cost_price_lyd: 0,
-    current_selling_price_lyd: sellingPrice,
-    cost_price_source: "initial_import",
-    selling_price_source: identity.sellingPrice !== null && identity.sellingPrice >= 0 ? "vms" : "initial_import",
-    price_updated_at: identity.sellingPrice !== null && identity.sellingPrice >= 0 ? now : null,
-    vms_selling_price_lyd: identity.sellingPrice !== null && identity.sellingPrice >= 0 ? identity.sellingPrice : null,
-    image_url: identity.imageUrl || null,
-    import_source: "vms_import",
-    last_vms_seen_at: capturedAt,
-    active: true,
-  };
-
-  const { data, error } = await supabase
-    .from("products")
-    .insert(payload)
-    .select("id, sku, barcode, name")
-    .maybeSingle();
-
-  if (error) {
-    const { data: duplicate, error: duplicateError } = await supabase
-      .from("products")
-      .select("id, sku, barcode, name")
-      .eq("sku", sku)
-      .maybeSingle();
-    if (duplicateError) return { product: null, action: "invalid" as const, error: duplicateError.message };
-    if (duplicate?.id) {
-      addProductReference(resolver, duplicate);
-      return { product: duplicate as ProductReference, action: "updated" as const, error: null };
-    }
-    return { product: null, action: "invalid" as const, error: error.message };
-  }
-
-  if (data) addProductReference(resolver, data);
-  return { product: data as ProductReference | null, action: "created" as const, error: null };
-}
-
 async function upsertXyProductMapping({
   supabase,
   resolver,
@@ -471,6 +390,7 @@ async function upsertXyProductMapping({
     product_id: productId,
     match_status: matchStatus,
     vms_selling_price_lyd: identity.sellingPrice !== null && identity.sellingPrice >= 0 ? identity.sellingPrice : null,
+    vms_cost_price_lyd: identity.costPrice !== null && identity.costPrice >= 0 ? identity.costPrice : null,
     latest_machine_id: machine?.id ?? null,
     latest_vms_machine_id: machine?.vms_machine_id ?? null,
     latest_machine_name: machine?.name ?? null,
@@ -512,12 +432,20 @@ async function updateMatchedProductFromXy(supabase: SupabaseServer, productId: s
   if (identity.barcode) payload.barcode = identity.barcode;
   if (identity.imageUrl) payload.image_url = identity.imageUrl;
   if (identity.productName) payload.name = identity.productName;
-  if (identity.sellingPrice !== null && identity.sellingPrice >= 0) {
+  if (identity.sellingPrice !== null && identity.sellingPrice > 0) {
     Object.assign(payload, {
       selling_price: identity.sellingPrice,
       current_selling_price_lyd: identity.sellingPrice,
       vms_selling_price_lyd: identity.sellingPrice,
       selling_price_source: "vms",
+      price_updated_at: new Date().toISOString(),
+    });
+  }
+  if (identity.costPrice !== null && identity.costPrice > 0) {
+    Object.assign(payload, {
+      cost_price: identity.costPrice,
+      current_cost_price_lyd: identity.costPrice,
+      cost_price_source: "vms",
       price_updated_at: new Date().toISOString(),
     });
   }
@@ -770,6 +698,7 @@ async function syncMachinesWork(context: SyncContext) {
       vms_location_name: locationName || null,
       vms_longitude: numberValue(row.dwjd),
       vms_latitude: numberValue(row.dwwd),
+      vms_online_status: text(row, "wlzt") || null,
       vms_raw_metadata: { provider: "xy", sync_run_id: context.syncRunId, raw: row },
       vms_last_synced_at: context.capturedAt,
       updated_at: new Date().toISOString(),
@@ -822,20 +751,9 @@ async function syncProductsWork(context: SyncContext) {
   for (const row of rows) {
     const identity = xyProductIdentity(row);
     const product = findProduct(resolver, row);
-    let productId = product?.id ?? null;
+    const productId = product?.id ?? null;
 
     try {
-      if (!productId) {
-        const created = await createMissingXyProductFromRow(context.supabase, resolver, row, context.capturedAt);
-        if (created.product?.id) {
-          productId = created.product.id;
-          if (created.action === "created") stats.rowsImported += 1;
-          else stats.rowsUpdated += 1;
-        } else if (created.error) {
-          stats.errors.push(`Product ${identity.productName || identity.vmsProductId || "unknown"} was not auto-created: ${created.error}`);
-        }
-      }
-
       await upsertXyProductMapping({
         supabase: context.supabase,
         resolver,
@@ -849,6 +767,8 @@ async function syncProductsWork(context: SyncContext) {
       if (productId) {
         await updateMatchedProductFromXy(context.supabase, productId, row, context.capturedAt);
         stats.rowsUpdated += 1;
+      } else {
+        stats.rowsSkipped += 1;
       }
     } catch (error) {
       stats.rowsSkipped += 1;
@@ -969,7 +889,20 @@ async function syncMachineGoodsWork(context: SyncContext) {
   const resolver = await loadProductResolver(context.supabase);
   const batchId = await createStockImportBatch(context);
   const snapshots: JsonRecord[] = [];
+  const machineSlotUpserts: JsonRecord[] = [];
   let rowNumber = 0;
+  let placeholderRows = 0;
+  let invalidLaneRows = 0;
+
+  const machineIds = machines.map((machine) => machine.id);
+  const { data: existingSlots, error: existingSlotsError } = await context.supabase
+    .from("machine_slots")
+    .select("id, machine_id, slot_code, product_id, capacity, min_qty, par_qty")
+    .in("machine_id", machineIds);
+  if (existingSlotsError) throw new Error(`Could not load existing machine lanes: ${existingSlotsError.message}`);
+  const existingSlotByKey = new Map(
+    ((existingSlots ?? []) as MachineSlotReference[]).map((slot) => [`${slot.machine_id}:${slot.slot_code}`, slot]),
+  );
 
   for (const machine of machines) {
     try {
@@ -982,17 +915,24 @@ async function syncMachineGoodsWork(context: SyncContext) {
 
       for (const row of rows) {
         rowNumber += 1;
-        const identity = xyProductIdentity(row);
-        const product = findProduct(resolver, row);
-        const productId = product?.id ?? null;
-        const currentQty = integerValue(row.hdkc);
-        const capacity = integerValue(row.hdrl);
-
-        if (currentQty === null) {
+        const lane = classifyXyLane(row);
+        if (lane.kind === "placeholder") {
+          placeholderRows += 1;
           stats.rowsSkipped += 1;
-          stats.errors.push(`Machine ${machine.vms_machine_id} slot ${text(row, "hdbh") || rowNumber} missing hdkc.`);
           continue;
         }
+        if (lane.kind === "invalid") {
+          invalidLaneRows += 1;
+          stats.rowsSkipped += 1;
+          stats.errors.push(`Machine ${machine.vms_machine_id} lane ${lane.slotCode || rowNumber}: ${lane.reason}.`);
+          continue;
+        }
+
+        const identity = lane.identity;
+        const product = findProduct(resolver, row);
+        const productId = product?.id ?? null;
+        const currentQty = lane.currentQty;
+        const capacity = lane.capacity;
 
         try {
           await upsertXyProductMapping({
@@ -1016,7 +956,7 @@ async function syncMachineGoodsWork(context: SyncContext) {
           source_provider: "xy",
           machine_id: machine.id,
           vms_machine_id: machine.vms_machine_id,
-          slot_code: text(row, "hdbh") || null,
+          slot_code: lane.slotCode,
           vms_product_id: identity.vmsProductId || null,
           third_party_product_id: identity.thirdPartyProductId || null,
           vms_product_name: identity.productName || null,
@@ -1032,6 +972,20 @@ async function syncMachineGoodsWork(context: SyncContext) {
           tray_status: text(row, "hdzt") || null,
           metadata: { provider: "xy", raw: row },
         });
+
+        if (productId) {
+          const existingSlot = existingSlotByKey.get(`${machine.id}:${lane.slotCode}`);
+          machineSlotUpserts.push({
+            ...(existingSlot?.id ? { id: existingSlot.id } : {}),
+            machine_id: machine.id,
+            slot_code: lane.slotCode,
+            product_id: productId,
+            capacity,
+            min_qty: Math.min(integerValue(existingSlot?.min_qty) ?? 2, capacity),
+            par_qty: capacity,
+            active: true,
+          });
+        }
       }
 
       stats.responseSummary[machine.vms_machine_id] = { rows: rows.length, message: response.message };
@@ -1044,6 +998,21 @@ async function syncMachineGoodsWork(context: SyncContext) {
     await insertChunks(context.supabase, "vms_stock_snapshots", snapshots);
     stats.rowsImported += snapshots.length;
   }
+  if (machineSlotUpserts.length) {
+    for (let index = 0; index < machineSlotUpserts.length; index += 200) {
+      const chunk = machineSlotUpserts.slice(index, index + 200);
+      const { error } = await context.supabase.from("machine_slots").upsert(chunk, { onConflict: "machine_id,slot_code" });
+      if (error) throw new Error(`Could not synchronize XY machine lanes: ${error.message}`);
+    }
+    stats.rowsUpdated += machineSlotUpserts.length;
+  }
+
+  stats.responseSummary.laneValidation = {
+    configured_rows: snapshots.length,
+    planogram_rows_updated: machineSlotUpserts.length,
+    placeholder_rows_skipped: placeholderRows,
+    invalid_rows_skipped: invalidLaneRows,
+  };
 
   await finishStockImportBatch(context, batchId, stats);
   return stats;
@@ -1060,7 +1029,13 @@ async function syncMachineStatusWork(context: SyncContext) {
         shbh: context.config.merchantId,
         jqbh: machine.vms_machine_id,
       });
-      const state = arrayify(response.data)[0] ?? {};
+      const stateRows = arrayify(response.data);
+      if (!stateRows.length) {
+        stats.rowsSkipped += 1;
+        stats.responseSummary[machine.vms_machine_id] = { message: response.message, rows: 0, skipped: "XY returned no status data" };
+        continue;
+      }
+      const state = stateRows[0];
       stats.rowCount += 1;
 
       const networkStatus = text(state, "wlzt");
@@ -1235,7 +1210,6 @@ export async function syncXyAll(options: SyncOptions = {}) {
       ["machines", syncMachinesWork],
       ["products", syncProductsWork],
       ["machine_goods", syncMachineGoodsWork],
-      ["machine_status", syncMachineStatusWork],
     ];
 
     for (const [name, step] of steps) {
@@ -1250,4 +1224,68 @@ export async function syncXyAll(options: SyncOptions = {}) {
 
     return aggregate;
   });
+}
+
+function completedRecently(completedAt: unknown, maxAgeMs: number, now = Date.now()) {
+  const timestamp = Date.parse(String(completedAt ?? ""));
+  return Number.isFinite(timestamp) && now - timestamp <= maxAgeMs;
+}
+
+export async function ensureFreshXyRoutePlanningData({
+  profile = null,
+  stockMaxAgeMs = 10 * 60 * 1000,
+  productMaxAgeMs = 24 * 60 * 60 * 1000,
+  machineMaxAgeMs = 6 * 60 * 60 * 1000,
+}: RoutePlanningRefreshOptions = {}) {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return { refreshed: false, skipped: "Supabase is not configured.", results: [] };
+
+  const { data: recentRuns, error } = await supabase
+    .from("vms_sync_runs")
+    .select("sync_type, status, started_at, completed_at, rows_imported, rows_updated")
+    .eq("provider", "xy")
+    .in("sync_type", ["machines", "products", "machine_goods", "all"])
+    .order("started_at", { ascending: false })
+    .limit(30);
+  if (error) throw new Error(`Could not check XY sync freshness: ${error.message}`);
+
+  const rows = recentRuns ?? [];
+  const activeStockSync = rows.find((row) => (
+    ["machine_goods", "all"].includes(String(row.sync_type))
+    && String(row.status) === "running"
+    && completedRecently(row.started_at, 5 * 60 * 1000)
+  ));
+  if (activeStockSync) return { refreshed: false, skipped: "XY stock refresh is already running.", results: [] };
+
+  const latestCompleted = (syncTypes: string[]) => rows.find((row) => (
+    syncTypes.includes(String(row.sync_type))
+    && ["completed", "completed_with_warnings"].includes(String(row.status))
+    && Number(row.rows_imported ?? 0) + Number(row.rows_updated ?? 0) > 0
+  ));
+  const latestStock = latestCompleted(["machine_goods", "all"]);
+  if (latestStock && completedRecently(latestStock.completed_at, stockMaxAgeMs)) {
+    return { refreshed: false, skipped: "XY lane stock is already fresh.", results: [] };
+  }
+
+  const results: Array<{ type: string; status: string }> = [];
+  const latestMachines = latestCompleted(["machines", "all"]);
+  if (!latestMachines || !completedRecently(latestMachines.completed_at, machineMaxAgeMs)) {
+    const result = await syncXyMachines({ profile });
+    results.push({ type: "machines", status: result.status });
+  }
+
+  const latestProducts = latestCompleted(["products", "all"]);
+  if (!latestProducts || !completedRecently(latestProducts.completed_at, productMaxAgeMs)) {
+    const result = await syncXyProducts({ profile });
+    results.push({ type: "products", status: result.status });
+  }
+
+  const stockResult = await syncXyMachineGoods({ profile });
+  results.push({ type: "machine_goods", status: stockResult.status });
+  const refreshed = stockResult.rowsImported > 0 && stockResult.status !== "failed";
+  return {
+    refreshed,
+    skipped: refreshed ? null : "XY did not return an importable lane snapshot.",
+    results,
+  };
 }
