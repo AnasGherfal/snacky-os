@@ -2,8 +2,9 @@
 
 import { redirect } from "next/navigation";
 import { getCurrentProfile } from "@/lib/auth";
-import { isOwnerAdminRole } from "@/lib/authz";
+import { hasPermission, isOwnerAdminRole } from "@/lib/authz";
 import {
+  ensureFreshXyRoutePlanningData,
   syncXyAll,
   syncXyMachineGoods,
   syncXyMachines,
@@ -58,4 +59,10 @@ export async function testXyUnsignedMerchantAction() {
 export async function testXyWebDashboardAction() {
   const profile = await requireOwnerAdmin();
   await testXyWebDashboard({ profile });
+}
+
+export async function refreshXyRoutePlanningDataAction() {
+  const profile = await getCurrentProfile();
+  if (!profile || !hasPermission(profile, "routes.create")) return { refreshed: false, skipped: "Not authorized.", results: [] };
+  return ensureFreshXyRoutePlanningData({ profile });
 }
