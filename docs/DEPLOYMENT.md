@@ -120,6 +120,16 @@ XY_VMS_SIGNING_MODE=signed
 XY_VMS_TIMEOUT_MS=20000
 ```
 
+To add the XY variables in an existing Vercel project:
+
+1. Open the project in Vercel.
+2. Go to **Settings → Environment Variables**.
+3. Add each `XY_VMS_*` variable above as a separate entry. Paste the real key and secret only into Vercel, never into GitHub or a `.env` file that will be committed.
+4. Select **Production**. Also select **Preview** only if XY should be callable from pull-request deployments.
+5. Save the variables.
+6. Go to **Deployments**, open the latest production deployment, and choose **Redeploy** so the server receives the new values.
+7. Sign in to Snacky OS as owner/admin, open `/admin/vms-api`, and run **Test official API**. A healthy connection reports XY code `1` and a non-zero machine row count.
+
 Optional server-side XY web dashboard fallback variables:
 
 ```bash
