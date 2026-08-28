@@ -1,5 +1,7 @@
 import "server-only";
-import crypto from "crypto";
+import { buildXyReqData, buildXySign, normalizeXyApiResponse } from "@/lib/xy-vms-protocol";
+
+export { buildXyReqData, buildXySign, normalizeXyApiResponse } from "@/lib/xy-vms-protocol";
 
 export type XyVmsEndpoint =
   | "queryMachine"
@@ -94,25 +96,6 @@ function cleanBaseUrl(baseUrl: string) {
   return baseUrl.replace(/\/+$/, "");
 }
 
-function responseHasNestedEnvelope(value: XyApiResponse) {
-  return (
-    value.data &&
-    typeof value.data === "object" &&
-    !Array.isArray(value.data) &&
-    ("code" in value.data || "message" in value.data || "data" in value.data)
-  );
-}
-
-function normalizeXyApiResponse<T = unknown>(value: XyApiResponse): XyApiResponse<T> {
-  if (!responseHasNestedEnvelope(value)) return value as XyApiResponse<T>;
-
-  const nested = value.data as XyApiResponse<T>;
-  return {
-    ...nested,
-    rawEnvelope: value,
-  };
-}
-
 function cleanParams(params: XyVmsParams, options: { excludeSigningFields?: boolean } = {}) {
   return Object.fromEntries(
     Object.entries(params).filter(([key, value]) => {
@@ -121,13 +104,6 @@ function cleanParams(params: XyVmsParams, options: { excludeSigningFields?: bool
       return !(options.excludeSigningFields && signingFields.has(key));
     }),
   ) as Record<string, string | number | boolean>;
-}
-
-export function buildXyReqData(params: XyVmsParams) {
-  return Object.entries(cleanParams(params, { excludeSigningFields: true }))
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, value]) => `${key}=${String(value)}`)
-    .join("&");
 }
 
 function timestamp13() {
@@ -140,13 +116,6 @@ export function maskSecret(value: string | null | undefined) {
   if (text.length <= 4) return "*".repeat(text.length);
   if (text.length <= 8) return `${text.slice(0, 2)}${"*".repeat(text.length - 4)}${text.slice(-2)}`;
   return `${text.slice(0, 3)}${"*".repeat(Math.max(3, text.length - 6))}${text.slice(-3)}`;
-}
-
-export function buildXySign(secret: string, timestamp: string | number, params: XyVmsParams) {
-  return crypto
-    .createHash("md5")
-    .update(`${secret}${String(timestamp)}${buildXyReqData(params)}`, "utf8")
-    .digest("hex");
 }
 
 export function buildXyRequestDebug(endpoint: XyVmsEndpoint, params: XyVmsParams, config = getXyVmsConfig(), timestamp = timestamp13()): XyRequestDebug {
