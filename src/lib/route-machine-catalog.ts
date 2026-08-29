@@ -43,7 +43,11 @@ export function buildRouteMachineCatalog(machines: RouteMachineSource[]): RouteM
     const location = Array.isArray(machine.location) ? machine.location[0] : machine.location;
     const machineCode = cleanText(machine.machine_code) ?? cleanText(machine.vms_machine_id) ?? "Machine";
     const displayName = cleanText(machine.machine_display_name);
-    const name = displayName ?? cleanText(machine.name) ?? xyMachineName(machine) ?? machineCode;
+    const storedName = cleanText(machine.name);
+    const snackyName = [displayName, storedName].find((value) => value && value !== machineCode) ?? null;
+    // Some historical machine rows saved the serial/code in the name field. Treat that as a
+    // fallback, not a real name, so the XY machine name remains visible to operators.
+    const name = snackyName ?? xyMachineName(machine) ?? displayName ?? storedName ?? machineCode;
     const locationName = cleanText(formatSiteLabel(location ?? null, { includeArea: true, fallback: "" }))
       ?? cleanText(machine.vms_location_name);
 

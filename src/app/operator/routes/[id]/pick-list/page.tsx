@@ -279,7 +279,7 @@ function writeLocalPickupChecklist(routeId: string, state: LocalPickupChecklistS
 
 export default function PickListPage() {
   const router = useRouter();
-  const { t } = useLanguage();
+  const { t, locale } = useLanguage();
   const params = useParams<{ id?: string | string[] }>();
   const searchParams = useSearchParams();
   const rawRouteId = params?.id;
@@ -1039,7 +1039,9 @@ export default function PickListPage() {
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                       <div>
                         <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{locationGroup.locationName}</div>
-                        <div className="mt-1 text-sm font-medium text-slate-900">{selectedCount} of {locationStopIds.length} stops selected</div>
+                        <div className="mt-1 text-sm font-medium text-slate-900">
+                          {locale === "ar" ? `تم تحديد ${selectedCount} من ${locationStopIds.length} مواقع` : `${selectedCount} of ${locationStopIds.length} stops selected`}
+                        </div>
                       </div>
                       <div className="flex gap-2">
                         <button type="button" className="btn-secondary px-3 py-2 text-xs" onClick={() => toggleLocationSelection(locationStopIds, true)} disabled={checklistFrozen || !locationStopIds.length || allSelected}>Select location</button>
@@ -1059,8 +1061,11 @@ export default function PickListPage() {
                         <label key={stopId || group.machineId || group.machineName} className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm ${checked ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}>
                           <input type="checkbox" checked={checked} onChange={() => stopId && toggleStopSelection(stopId)} disabled={checklistFrozen || locked} className="mt-1 h-6 w-6 rounded accent-emerald-600" />
                           <span className="min-w-0">
-                            <span className="block font-semibold text-slate-900">Stop {group.stopOrder || "-"} - {group.machineName}</span>
-                            <span className="block break-words text-slate-500">{planned} units planned</span>
+                            <span className="block font-semibold text-slate-900">{locale === "ar" ? `الموقع ${group.stopOrder || "-"} - ${group.machineName}` : `Stop ${group.stopOrder || "-"} - ${group.machineName}`}</span>
+                            <span className="block break-words text-slate-500">
+                              {group.machineCode && group.machineCode !== "-" && group.machineCode !== group.machineName ? `${group.machineCode} · ` : ""}
+                              {locale === "ar" ? `${planned} وحدة مخططة` : `${planned} units planned`}
+                            </span>
                           </span>
                         </label>
                       );

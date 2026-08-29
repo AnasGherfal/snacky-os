@@ -4,7 +4,7 @@ import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute } from "@/lib/authz";
 import { buildOperatorRouteAccessContext } from "@/lib/operator-route-access";
 import { isRouteStopDoneStatus, isTerminalRouteStatus, ROUTE_STOP_PENDING_STATUS } from "@/lib/route-workflow";
-import { formatMachineDisplayName } from "@/lib/machine-site-display";
+import { buildRouteMachineCatalog } from "@/lib/route-machine-catalog";
 
 function isMissingTable(error: any, tableName: string) {
   return error?.code === "PGRST205" && String(error?.message ?? "").includes(tableName);
@@ -492,8 +492,22 @@ export async function GET(
       failingResource = "machines";
       let machinesResponse: any = await readClient
         .from("machines")
-        .select("id, name, machine_code, location_id")
+        .select("id, name, machine_display_name, machine_code, location_id, vms_machine_id, vms_location_name, vms_raw_metadata")
         .in("id", machineIds);
+
+      if (machinesResponse.error && isMissingColumn(machinesResponse.error, ["machine_display_name"])) {
+        machinesResponse = await readClient
+          .from("machines")
+          .select("id, name, machine_code, location_id, vms_machine_id, vms_location_name, vms_raw_metadata")
+          .in("id", machineIds);
+      }
+
+      if (machinesResponse.error && isMissingColumn(machinesResponse.error, ["vms_machine_id", "vms_location_name", "vms_raw_metadata"])) {
+        machinesResponse = await readClient
+          .from("machines")
+          .select("id, name, machine_code, location_id")
+          .in("id", machineIds);
+      }
 
       if (machinesResponse.error && isMissingColumn(machinesResponse.error, ["location_id"])) {
         machinesResponse = await readClient
@@ -531,6 +545,25 @@ export async function GET(
         });
       }
     }
+
+    const machineCatalogById = new Map(
+      buildRouteMachineCatalog(Array.from(machineById.values()).map((machine: any) => ({
+        ...machine,
+        location: machine.location_id ? locationById.get(String(machine.location_id)) ?? null : null,
+      }))).map((machine) => [machine.id, machine]),
+    );
+
+    const pickupMachinePresentation = (machineId: string) => {
+      const machine = machineById.get(machineId) ?? null;
+      const catalog = machineCatalogById.get(machineId) ?? null;
+      const machineName = catalog?.name ?? String(machine?.name ?? machine?.machine_code ?? "Unknown machine");
+      return {
+        machineName,
+        machineCode: catalog?.machine_code ?? String(machine?.machine_code ?? "-"),
+        // A missing site must never be converted into a fake location that hides the machine name.
+        locationName: catalog?.location_name ?? machineName,
+      };
+    };
 
     if (productIds.length) {
       failingStep = "load_products_for_route_items";
@@ -739,16 +772,15 @@ export async function GET(
 
     const stopGroupsById = new Map<string, any>();
     stops.forEach((stop: any) => {
-      const machine = machineById.get(String(stop.machine_id ?? "")) ?? null;
-      const location = machine?.location_id ? locationById.get(String(machine.location_id)) ?? null : null;
-      const locationName = location?.name ?? "Unknown location";
+      const machineId = String(stop.machine_id ?? "");
+      const presentation = pickupMachinePresentation(machineId);
       stopGroupsById.set(String(stop.id), {
         route_stop_id: stop.id,
         machine_id: stop.machine_id,
         stop_status: stop.status,
-        machine_name: formatMachineDisplayName({ ...machine, location_name: locationName }, { includeArea: true }),
-        machine_code: machine?.machine_code ?? "-",
-        location_name: locationName,
+        machine_name: presentation.machineName,
+        machine_code: presentation.machineCode,
+        location_name: presentation.locationName,
         stop_order: Number(stop.stop_order ?? 0),
         items: [],
       });
@@ -765,9 +797,7 @@ export async function GET(
       if (stop && !includesRelevantStop(String(stop.id ?? ""))) return;
 
       const machineId = String(line.machine_id ?? stop?.machine_id ?? "");
-      const machine = machineById.get(machineId) ?? null;
-      const location = machine?.location_id ? locationById.get(String(machine.location_id)) ?? null : null;
-      const locationName = location?.name ?? "Unknown location";
+      const presentation = pickupMachinePresentation(machineId);
       const product = productById.get(productId) ?? null;
       const savedPick =
         (routeStopItemId ? pickedByStopItem.get(routeStopItemId) : undefined) ??
@@ -780,9 +810,9 @@ export async function GET(
         route_stop_id: routeStopId,
         machine_id: machineId || null,
         stop_status: stop?.status ?? null,
-        machine_name: formatMachineDisplayName({ ...machine, location_name: locationName }, { includeArea: true }),
-        machine_code: machine?.machine_code ?? "-",
-        location_name: locationName,
+        machine_name: presentation.machineName,
+        machine_code: presentation.machineCode,
+        location_name: presentation.locationName,
         stop_order: Number(stop?.stop_order ?? 0),
         items: [],
       };
@@ -826,9 +856,9 @@ export async function GET(
         route_stop_item_id: routeStopItemId,
         route_stop_id: routeStopId,
         machine_id: machineId || null,
-        machine_name: formatMachineDisplayName({ ...machine, location_name: locationName }, { includeArea: true }),
-        machine_code: machine?.machine_code ?? "-",
-        location_name: locationName,
+        machine_name: presentation.machineName,
+        machine_code: presentation.machineCode,
+        location_name: presentation.locationName,
         planned_qty: plannedQty,
         picked_qty: savedPick ? savedPick.quantity : null,
         is_checked: Boolean(line.is_checked ?? savedPick?.isChecked ?? false),
@@ -1100,5 +1130,3 @@ export async function PATCH(
     );
   }
 }
-
-
