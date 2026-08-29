@@ -8,6 +8,7 @@ import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagi
 import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { buildMachineRefillForecasts, type RefillFillLine, type RefillMachine, type RefillStockHistory } from "@/lib/refill-forecast";
+import { getServerI18n } from "@/lib/i18n/server";
 import { queryVmsDashboardBatches, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
 
 export const dynamic = "force-dynamic";
@@ -206,6 +207,7 @@ async function attachRecommendationSources(supabase: NonNullable<Awaited<ReturnT
 }
 
 async function RefillsPageContent({ searchParams }: { searchParams: Promise<SearchParamsRecord> }) {
+  const { locale } = await getServerI18n();
   const params = cleanSearchParams(await searchParams);
   const { page, pageSize, from, to } = getPagination(params);
   const forecastClock = refillForecastClock();
@@ -303,7 +305,7 @@ async function RefillsPageContent({ searchParams }: { searchParams: Promise<Sear
           {forecastError ? (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">The refill forecast could not load every trend source. Existing product recommendations remain available below.</div>
           ) : (
-            <RefillForecastDashboard forecasts={forecasts} />
+            <RefillForecastDashboard forecasts={forecasts} locale={locale} />
           )}
           <VmsDataSourceCard
             batches={(batchResult.data ?? []) as VmsDashboardBatch[]}

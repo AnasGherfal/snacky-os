@@ -94,8 +94,21 @@ test("next operating date skips configured closure days", () => {
 
 test("the main dashboard leads with the live refill forecast", async () => {
   const dashboard = await readFile(new URL("../src/app/dashboard/page.tsx", import.meta.url), "utf8");
-  const forecastPosition = dashboard.indexOf('<RefillForecastDashboard forecasts={data.refillForecasts} variant="overview" />');
+  const forecastPosition = dashboard.indexOf('<RefillForecastDashboard forecasts={data.refillForecasts} variant="overview" locale={locale} />');
   const prioritiesPosition = dashboard.indexOf('{t("Other priorities today")}');
   assert.ok(forecastPosition >= 0, "main dashboard must render the refill forecast overview");
   assert.ok(prioritiesPosition > forecastPosition, "refill decisions must appear before secondary dashboard priorities");
+});
+
+test("dashboard and refill page pass Arabic locale into the forecast UI", async () => {
+  const [dashboard, refills, component] = await Promise.all([
+    readFile(new URL("../src/app/dashboard/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/refills/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/RefillForecastDashboard.tsx", import.meta.url), "utf8"),
+  ]);
+  assert.match(dashboard, /variant="overview" locale=\{locale\}/);
+  assert.match(refills, /forecasts=\{forecasts\} locale=\{locale\}/);
+  assert.match(component, /"عبّئ الآن"/);
+  assert.match(component, /"ما الماكينات التي يجب تعبئتها؟"/);
+  assert.match(component, /"أيام العمل"/);
 });
