@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { KpiSection } from "@/components/KpiDashboard";
+import { RefillForecastDashboard } from "@/components/RefillForecastDashboard";
 import { StatCard } from "@/components/StatCard";
 import { VmsDataSourceCard } from "@/components/VmsDataSourceCard";
 import { EmptyState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
@@ -10,6 +11,13 @@ import {
   type FinanceHealthDiagnostics,
 } from "@/lib/finance-health";
 import { lyd } from "@/lib/format";
+import {
+  buildMachineRefillForecasts,
+  type MachineRefillForecast,
+  type RefillFillLine,
+  type RefillMachine,
+  type RefillStockHistory,
+} from "@/lib/refill-forecast";
 import { restockCounts, type RestockPriorityItem } from "@/lib/restock-priority";
 import {
   loadRestockPriorityData,
@@ -84,6 +92,7 @@ type DashboardSection =
   | "recentIssues"
   | "criticalIssues"
   | "refill"
+  | "refillForecast"
   | "missingCost"
   | "vmsBatches"
   | "restockPriority"
@@ -104,6 +113,7 @@ type DashboardData = {
   recentIssues: IssueRow[];
   criticalIssueCount: number;
   refillRows: RefillRow[];
+  refillForecasts: MachineRefillForecast[];
   missingCostRows: MissingCostRow[];
   vmsBatchRows: VmsDashboardBatch[];
   restockItems: RestockPriorityItem[];
@@ -137,6 +147,7 @@ const dashboardSectionLabels: Record<DashboardSection, string> = {
   recentIssues: "Recent issues",
   criticalIssues: "Critical issues",
   refill: "Refill recommendations",
+  refillForecast: "Machine refill forecast",
   missingCost: "Missing product cost",
   vmsBatches: "VMS imports",
   restockPriority: "Restock priority",
@@ -243,10 +254,6 @@ function trimText(value: string | null | undefined, max = 140) {
   return text.length > max ? `${text.slice(0, max - 1)}...` : text;
 }
 
-function routeOperatorName(route: RouteRow) {
-  return textValue(relationRecord<{ full_name?: string | null }>(route.operator)?.full_name) ?? "غير مسندة";
-}
-
 function routeIsPending(route: RouteRow) {
   return ROUTE_PENDING_STATUSES.has(String(route.status ?? ""));
 }
@@ -320,7 +327,7 @@ async function safeDashboardQuery<T>({
 }: {
   key: DashboardSection;
   label: string;
-  promise: PromiseLike<any>;
+  promise: PromiseLike<{ data?: T | null; error?: unknown; count?: number | null }>;
   fallback: T;
   errors: DashboardErrors;
 }) {
@@ -349,7 +356,7 @@ async function safeDashboardCount({
 }: {
   key: DashboardSection;
   label: string;
-  promise: PromiseLike<any>;
+  promise: PromiseLike<{ error?: unknown; count?: number | null }>;
   errors: DashboardErrors;
 }) {
   try {
@@ -449,6 +456,39 @@ async function loadIssueRows(
     .limit(6);
 }
 
+async function loadForecastMachines(
+  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>,
+) {
+  const enriched = await supabase
+    .from("machines")
+    .select("id, name, machine_code, status, refill_open_days, refill_critical_percent, refill_today_percent, refill_target_percent, refill_minimum_units, refill_manual_daily_units")
+    .eq("status", "active")
+    .order("name");
+
+  if (!enriched.error || !isMissingColumn(enriched.error, [
+    "refill_open_days",
+    "refill_critical_percent",
+    "refill_today_percent",
+    "refill_target_percent",
+    "refill_minimum_units",
+    "refill_manual_daily_units",
+  ])) return enriched;
+
+  return supabase
+    .from("machines")
+    .select("id, name, machine_code, status")
+    .eq("status", "active")
+    .order("name");
+}
+
+function refillForecastClock() {
+  const now = new Date();
+  return {
+    now,
+    since: new Date(now.getTime() - 28 * 24 * 60 * 60 * 1000).toISOString(),
+  };
+}
+
 async function getDashboardData() {
   await requireCurrentProfileForPath("/dashboard");
   const supabase = getSupabaseAdminClient() ?? await getAuthenticatedSupabaseServerClient();
@@ -458,6 +498,7 @@ async function getDashboardData() {
   const weekStart = weekStartUtc(new Date());
   const monthStart = monthStartUtc(today);
   const revenueStart = weekStart < monthStart ? weekStart : monthStart;
+  const forecastClock = refillForecastClock();
   const errors: DashboardErrors = {};
 
   const [
@@ -470,6 +511,10 @@ async function getDashboardData() {
     recentIssues,
     criticalIssueCount,
     refillRows,
+    forecastMachines,
+    forecastLatestStock,
+    forecastStockHistory,
+    forecastFillLines,
     missingCostRows,
     vmsBatchRows,
     restockPriority,
@@ -559,6 +604,47 @@ async function getDashboardData() {
       fallback: [],
       errors,
     }),
+    safeDashboardQuery<RefillMachine[]>({
+      key: "refillForecast",
+      label: "machines refill forecast policies",
+      promise: loadForecastMachines(supabase),
+      fallback: [],
+      errors,
+    }),
+    safeDashboardQuery<RefillStockHistory[]>({
+      key: "refillForecast",
+      label: "latest_vms_stock_by_slot refill forecast",
+      promise: supabase
+        .from("latest_vms_stock_by_slot")
+        .select("machine_id, product_id, slot_code, current_qty, capacity, captured_at"),
+      fallback: [],
+      errors,
+    }),
+    safeDashboardQuery<RefillStockHistory[]>({
+      key: "refillForecast",
+      label: "vms_stock_snapshots refill trend",
+      promise: supabase
+        .from("vms_stock_snapshots")
+        .select("machine_id, product_id, slot_code, current_qty, capacity, captured_at, import_batch_id, sync_run_id")
+        .eq("import_row_status", "imported")
+        .gte("captured_at", forecastClock.since)
+        .order("captured_at", { ascending: true })
+        .limit(10000),
+      fallback: [],
+      errors,
+    }),
+    safeDashboardQuery<RefillFillLine[]>({
+      key: "refillForecast",
+      label: "route_stop_fill_lines refill trend",
+      promise: supabase
+        .from("route_stop_fill_lines")
+        .select("machine_id, product_id, actual_qty, created_at")
+        .gte("created_at", forecastClock.since)
+        .order("created_at", { ascending: true })
+        .limit(5000),
+      fallback: [],
+      errors,
+    }),
     safeDashboardQuery<MissingCostRow[]>({
       key: "missingCost",
       label: "vms_sales_clean missing cost products",
@@ -583,6 +669,24 @@ async function getDashboardData() {
     safeFinanceHealthForDashboard(supabase, errors),
   ]);
 
+  const storageCoverageByMachine = new Map<string, { machineId: string; requestedUnits: number; fillableUnits: number }>();
+  refillRows.data.forEach((row) => {
+    const machineId = textValue(row.machine_id);
+    if (!machineId) return;
+    const current = storageCoverageByMachine.get(machineId) ?? { machineId, requestedUnits: 0, fillableUnits: 0 };
+    current.requestedUnits += Math.max(0, numberValue(row.suggested_qty));
+    current.fillableUnits += Math.max(0, numberValue(row.final_qty_to_take));
+    storageCoverageByMachine.set(machineId, current);
+  });
+  const refillForecasts = buildMachineRefillForecasts({
+    machines: forecastMachines.data,
+    latestStock: forecastLatestStock.data,
+    stockHistory: forecastStockHistory.data,
+    fills: forecastFillLines.data,
+    storageCoverage: Array.from(storageCoverageByMachine.values()),
+    now: forecastClock.now,
+  });
+
   return {
     data: {
       today,
@@ -597,6 +701,7 @@ async function getDashboardData() {
       recentIssues: recentIssues.data,
       criticalIssueCount,
       refillRows: refillRows.data,
+      refillForecasts,
       missingCostRows: missingCostRows.data,
       vmsBatchRows: vmsBatchRows.data,
       restockItems: restockPriority.items,
@@ -777,25 +882,12 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
   const revenueUnavailable = Boolean(errors.revenue);
   const criticalProductsUnavailable = Boolean(errors.restockPriority);
   const routesUnavailable = Boolean(errors.routes);
-  const refillUnavailable = Boolean(errors.refill);
-  const heroRevenueSummary = revenueUnavailable
-    ? t("Revenue is waiting for the next healthy detailed VMS sales load.")
-    : localize(
-      `Snacky made ${lyd(todayRevenue)} today, ${lyd(weekRevenue)} this week, and ${lyd(monthRevenue)} this month.`,
-      `حققت Snacky ${lyd(todayRevenue)} اليوم، و${lyd(weekRevenue)} هذا الأسبوع، و${lyd(monthRevenue)} هذا الشهر.`,
-    );
-  const heroAttentionSummary = [
-    data.cashWaitingCount ? localize(`${data.cashWaitingCount} cash pickup${data.cashWaitingCount === 1 ? "" : "s"} waiting`, `${data.cashWaitingCount} عملية تحصيل نقد في الانتظار`) : null,
-    restockSummary.critical ? localize(`${restockSummary.critical} critical product${restockSummary.critical === 1 ? "" : "s"}`, `${restockSummary.critical} منتج حرِج`) : null,
-    pendingRoutes.length ? localize(`${pendingRoutes.length} route${pendingRoutes.length === 1 ? "" : "s"} still open`, `${pendingRoutes.length} جولة ما زالت مفتوحة`) : null,
-    brokenRouteCount ? localize(`${brokenRouteCount} broken route${brokenRouteCount === 1 ? "" : "s"}`, `${brokenRouteCount} جولة معطوبة`) : null,
-  ].filter(Boolean).join(" / ") || t("No urgent operational queue is blocking the day right now.");
 
   return (
     <>
       <PageHeader
         title={t("Dashboard")}
-        subtitle={t("How much money Snacky made, what needs attention, and what should happen next.")}
+        subtitle={t("What needs action today, which machines should be filled, and what is blocking operations.")}
         action={(
           <div className="flex flex-wrap gap-2">
             <PrimaryButton href="/routes/new">{t("Create Route")}</PrimaryButton>
@@ -804,70 +896,56 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
         )}
       />
 
-      <section className="mb-6 overflow-hidden rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-emerald-50 p-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-3xl">
-            <div className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-700">{t("Snacky Today")}</div>
-            <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">{heroRevenueSummary}</h2>
-            <p className="mt-3 text-sm leading-6 text-slate-600">{heroAttentionSummary}</p>
-            <div className="mt-3 text-xs text-slate-500">
-              {t("Latest detailed sales date")}: {latestSaleDate ?? t("Not available")} / {t("Active stock snapshot files")}: {activeStockCount}
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <SecondaryButton href="/cash-collections?status=collected_pending_count">{t("Count cash")}</SecondaryButton>
-            <SecondaryButton href="/admin/system-health">{t("System health")}</SecondaryButton>
-          </div>
-        </div>
-      </section>
+      <div className="mb-6">
+        {errors.refillForecast ? (
+          <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
+            <div className="text-lg font-semibold text-amber-950">{t("Machine refill forecast needs attention")}</div>
+            <p className="mt-1 text-sm text-amber-900">{t("Snacky OS could not safely calculate machine timing from the latest XY data. Product assignment remains protected by storage validation.")}</p>
+            <div className="mt-4 flex flex-wrap gap-2"><SecondaryButton href="/refills">{t("Open refill dashboard")}</SecondaryButton><SecondaryButton href="/vms-import/sources">{t("Check XY data")}</SecondaryButton></div>
+          </section>
+        ) : (
+          <RefillForecastDashboard forecasts={data.refillForecasts} variant="overview" />
+        )}
+      </div>
 
       <section className="mb-6">
         <div className="mb-3">
-          <h2 className="text-lg font-semibold text-slate-900">{t("Top Cards")}</h2>
-          <p className="mt-1 text-sm text-slate-500">{t("The eight numbers that should explain today's trading and backlog in one glance.")}</p>
+          <h2 className="text-lg font-semibold text-slate-900">{t("Other priorities today")}</h2>
+          <p className="mt-1 text-sm text-slate-500">{t("Only the queues that can change today's work, purchasing, cash, or machine availability.")}</p>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <StatCard
-            label={t("Revenue today")}
-            value={revenueUnavailable ? "-" : lyd(todayRevenue)}
-            note={latestSaleDate ? localize(`Detailed sales through ${latestSaleDate}`, `المبيعات التفصيلية حتى ${latestSaleDate}`) : t("Waiting for detailed VMS sales")}
+            label={t("Critical products")}
+            value={criticalProductsUnavailable ? "-" : restockSummary.critical.toLocaleString("en-US")}
+            note={criticalProductsUnavailable ? t("Restock engine unavailable") : localize(`${restockSummary.low} more products are low`, `${restockSummary.low} منتجات منخفضة إضافية`)}
           />
           <StatCard
-            label={t("Revenue week")}
-            value={revenueUnavailable ? "-" : lyd(weekRevenue)}
-            note={localize(`From ${data.weekStart} to ${data.today}`, `من ${data.weekStart} إلى ${data.today}`)}
+            label={t("Routes still open")}
+            value={routesUnavailable ? "-" : pendingRoutes.length.toLocaleString("en-US")}
+            note={routesUnavailable ? t("Route queue unavailable") : localize(`${overdueRouteCount} overdue · ${brokenRouteCount} with errors`, `${overdueRouteCount} متأخرة · ${brokenRouteCount} بها أخطاء`)}
           />
           <StatCard
-            label={t("Revenue month")}
-            value={revenueUnavailable ? "-" : lyd(monthRevenue)}
-            note={localize(`From ${data.monthStart} to ${data.today}`, `من ${data.monthStart} إلى ${data.today}`)}
+            label={t("Critical machine issues")}
+            value={errors.criticalIssues ? "-" : data.criticalIssueCount.toLocaleString("en-US")}
+            note={t("Unresolved issues that can stop sales or filling")}
           />
           <StatCard
-            label={t("Cash collected waiting")}
+            label={t("Cash waiting to be counted")}
             value={errors.cashWaiting ? "-" : data.cashWaitingCount.toLocaleString("en-US")}
             note={errors.cashVariance ? t("Variance review unavailable") : localize(`${data.varianceReviewCount} in variance review`, `${data.varianceReviewCount} قيد مراجعة الفروقات`)}
           />
           <StatCard
             label={t("Purchases waiting")}
             value={errors.purchaseDrafts || errors.purchaseUnpaid ? "-" : purchasesWaitingCount.toLocaleString("en-US")}
-            note={localize(`Draft ${data.draftPurchaseCount} / unpaid received ${data.unpaidPurchaseCount}`, `مسودات ${data.draftPurchaseCount} / غير مسددة ${data.unpaidPurchaseCount}`)}
+            note={localize(`Draft ${data.draftPurchaseCount} · unpaid received ${data.unpaidPurchaseCount}`, `مسودات ${data.draftPurchaseCount} · مستلمة غير مسددة ${data.unpaidPurchaseCount}`)}
           />
           <StatCard
-            label={t("Critical products")}
-            value={criticalProductsUnavailable ? "-" : restockSummary.critical.toLocaleString("en-US")}
-            note={criticalProductsUnavailable ? t("Restock engine unavailable") : localize(`${restockSummary.low} more low products`, `${restockSummary.low} منتجات منخفضة إضافية`)}
-          />
-          <StatCard
-            label={t("Routes pending")}
-            value={routesUnavailable ? "-" : pendingRoutes.length.toLocaleString("en-US")}
-            note={routesUnavailable ? t("Route queue unavailable") : overdueRouteCount ? localize(`${overdueRouteCount} overdue`, `${overdueRouteCount} متأخرة`) : t("No overdue routes")}
-          />
-          <StatCard
-            label={t("Machines needing refill")}
-            value={refillUnavailable ? "-" : machinesNeedingRefillCount.toLocaleString("en-US")}
-            note={refillUnavailable ? t("Refill recommendations unavailable") : localize(`${recentRefillRows.length} recommendation rows on deck`, `${recentRefillRows.length} صف توصية جاهز`)}
+            label={t("Sales today")}
+            value={revenueUnavailable ? "-" : lyd(todayRevenue)}
+            note={revenueUnavailable ? t("Waiting for detailed XY sales") : localize(`${lyd(weekRevenue)} this week · ${lyd(monthRevenue)} this month`, `${lyd(weekRevenue)} هذا الأسبوع · ${lyd(monthRevenue)} هذا الشهر`)}
           />
         </div>
+        <div className="mt-3 text-xs text-slate-500">{t("Latest detailed sales date")}: {latestSaleDate ?? t("Not available")} · {t("Active stock snapshot files")}: {activeStockCount}</div>
       </section>
 
       {partialSections.length ? (

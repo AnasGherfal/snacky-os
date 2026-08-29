@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { buildMachineRefillForecasts, nextOperatingDate } from "../src/lib/refill-forecast.ts";
@@ -89,4 +90,12 @@ test("recorded fills are added back when estimating actual depletion", () => {
 
 test("next operating date skips configured closure days", () => {
   assert.equal(nextOperatingDate("2026-08-27", [1, 2, 3, 4, 6, 7], false), "2026-08-29");
+});
+
+test("the main dashboard leads with the live refill forecast", async () => {
+  const dashboard = await readFile(new URL("../src/app/dashboard/page.tsx", import.meta.url), "utf8");
+  const forecastPosition = dashboard.indexOf('<RefillForecastDashboard forecasts={data.refillForecasts} variant="overview" />');
+  const prioritiesPosition = dashboard.indexOf('{t("Other priorities today")}');
+  assert.ok(forecastPosition >= 0, "main dashboard must render the refill forecast overview");
+  assert.ok(prioritiesPosition > forecastPosition, "refill decisions must appear before secondary dashboard priorities");
 });

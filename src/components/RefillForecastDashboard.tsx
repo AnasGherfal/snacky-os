@@ -41,13 +41,81 @@ function snapshotAge(value: number | null) {
   return `${Math.round(value / 24)}d old`;
 }
 
-export function RefillForecastDashboard({ forecasts }: { forecasts: MachineRefillForecast[] }) {
+export function RefillForecastDashboard({
+  forecasts,
+  variant = "full",
+}: {
+  forecasts: MachineRefillForecast[];
+  variant?: "full" | "overview";
+}) {
   const fillNow = forecasts.filter((row) => row.status === "fill_now").length;
   const fillToday = forecasts.filter((row) => row.status === "fill_today").length;
   const canWait = forecasts.filter((row) => row.status === "fill_next_open" || row.status === "monitor").length;
   const stale = forecasts.filter((row) => row.status === "data_stale").length;
+  const storageShortages = forecasts.filter((row) => row.storageShortageUnits > 0).length;
   const observed = forecasts.filter((row) => row.averageDailyUnits > 0).sort((a, b) => b.averageDailyUnits - a.averageDailyUnits);
   const remaining = forecasts.filter((row) => row.daysToEmpty !== null && row.status !== "data_stale").sort((a, b) => (a.daysToEmpty ?? 0) - (b.daysToEmpty ?? 0));
+  const urgentAll = forecasts.filter((row) => row.status !== "healthy");
+  const urgent = urgentAll.slice(0, 6);
+
+  if (variant === "overview") {
+    return (
+      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+        <div className="border-b border-slate-200 bg-gradient-to-br from-orange-50 via-white to-emerald-50 p-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-orange-700">Today&apos;s operating decision</div>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">Which machines should be filled?</h2>
+              <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">Live XY stock, lane capacity, observed depletion, site opening days, and storage availability—ordered by what needs action first.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Link href="/routes/new" className="btn-primary">Create today&apos;s route</Link>
+              <Link href="/refills" className="btn-secondary">Open full refill dashboard</Link>
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-3 grid-cols-2 xl:grid-cols-5">
+            <div className="rounded-xl border border-rose-200 bg-rose-50 p-3"><div className="text-xs font-semibold text-rose-700">Fill now</div><div className="mt-1 text-2xl font-semibold text-rose-950">{fillNow}</div></div>
+            <div className="rounded-xl border border-orange-200 bg-orange-50 p-3"><div className="text-xs font-semibold text-orange-700">Fill today</div><div className="mt-1 text-2xl font-semibold text-orange-950">{fillToday}</div></div>
+            <div className="rounded-xl border border-sky-200 bg-sky-50 p-3"><div className="text-xs font-semibold text-sky-700">Can wait</div><div className="mt-1 text-2xl font-semibold text-sky-950">{canWait}</div></div>
+            <div className={`rounded-xl border p-3 ${storageShortages ? "border-rose-200 bg-rose-50" : "border-emerald-200 bg-emerald-50"}`}><div className={`text-xs font-semibold ${storageShortages ? "text-rose-700" : "text-emerald-700"}`}>Storage shortage</div><div className={`mt-1 text-2xl font-semibold ${storageShortages ? "text-rose-950" : "text-emerald-950"}`}>{storageShortages}</div></div>
+            <div className={`col-span-2 rounded-xl border p-3 xl:col-span-1 ${stale ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}><div className={`text-xs font-semibold ${stale ? "text-amber-700" : "text-emerald-700"}`}>Refresh XY data</div><div className={`mt-1 text-2xl font-semibold ${stale ? "text-amber-950" : "text-emerald-950"}`}>{stale}</div></div>
+          </div>
+        </div>
+
+        <div className="p-5">
+          {!forecasts.length ? (
+            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-5 text-center text-sm text-slate-600">No active machines are available for refill forecasting.</div>
+          ) : !urgent.length ? (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900">Every machine is healthy. No refill visit is currently needed.</div>
+          ) : (
+            <div className="grid gap-3 lg:grid-cols-2">
+              {urgent.map((row) => (
+                <div key={row.machineId} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <Link href={`/machines/${row.machineId}`} className="font-semibold text-slate-950 hover:underline">{row.machineName}</Link>
+                      <div className="mt-0.5 text-xs text-slate-500">{row.machineCode || "No machine code"} · action {row.actionDate}</div>
+                    </div>
+                    <StatusPill forecast={row} />
+                  </div>
+                  <p className="mt-3 text-sm text-slate-700">{row.reason}</p>
+                  <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-4">
+                    <div><div className="text-xs text-slate-500">Stock</div><div className="font-semibold text-slate-900">{row.currentUnits}/{row.capacityUnits} · {percent(row.stockPercent)}</div></div>
+                    <div><div className="text-xs text-slate-500">Runway</div><div className="font-semibold text-slate-900">{days(row.daysToEmpty)}</div></div>
+                    <div><div className="text-xs text-slate-500">Bring</div><div className="font-semibold text-slate-900">{row.unitsToTarget} units</div></div>
+                    <div><div className="text-xs text-slate-500">Empty lanes</div><div className="font-semibold text-slate-900">{row.emptyLanes}</div></div>
+                  </div>
+                  {row.storageShortageUnits > 0 ? <div className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-800">Storage is short by {row.storageShortageUnits} units. Swap unavailable products or reduce them to 0.</div> : null}
+                </div>
+              ))}
+            </div>
+          )}
+          {urgentAll.length > urgent.length ? <div className="mt-4 text-right"><Link href="/refills" className="link-secondary">View all {urgentAll.length} machines needing attention</Link></div> : null}
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="space-y-4">
