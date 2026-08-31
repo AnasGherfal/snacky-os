@@ -20,6 +20,18 @@ export function xyNumber(value: unknown) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function xyNativeMoney(row: XyDataRow, nativeKeys: string[], normalizedKeys: string[]) {
+  for (const key of nativeKeys) {
+    const parsed = xyNumber(row[key]);
+    if (parsed !== null) return parsed / 100;
+  }
+  for (const key of normalizedKeys) {
+    const parsed = xyNumber(row[key]);
+    if (parsed !== null) return parsed;
+  }
+  return null;
+}
+
 export function xyInteger(value: unknown) {
   const parsed = xyNumber(value);
   return parsed === null ? null : Math.max(0, Math.floor(parsed));
@@ -32,8 +44,9 @@ export function xyProductIdentity(row: XyDataRow) {
     productName: xyFirstText(row, ["spmc", "product_name", "name"]),
     barcode: xyFirstText(row, ["sptxm", "barcode", "bar_code"]),
     imageUrl: xyFirstText(row, ["fjlj", "sptp", "image_url", "image"]),
-    sellingPrice: xyNumber(row.spjg ?? row.spsj ?? row.selling_price),
-    costPrice: xyNumber(row.spjj ?? row.cost_price ?? row.purchase_price),
+    // XY's native price fields are integer minor units: 300 means 3.00 LYD.
+    sellingPrice: xyNativeMoney(row, ["spjg", "spsj"], ["selling_price"]),
+    costPrice: xyNativeMoney(row, ["spjj"], ["cost_price", "purchase_price"]),
   };
 }
 
