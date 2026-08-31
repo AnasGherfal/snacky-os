@@ -105,5 +105,5 @@ test("monthly operations is visible, bilingual, and paginates beyond Supabase's 
   assert.match(reports, /href: "\/reports\/route-performance"/);
   assert.match(reports, /ابدأ من هنا/);
   assert.match(tabs, /href: "\/reports\/route-performance"/);
-  assert.match(tabs, /label: "Monthly Operations", labelAr: "التقرير التشغيلي الشهري"/);
+  assert.match(tabs, /label: "Monthly Operations", href: "\/reports\/route-performance", labelAr: "التقرير التشغيلي الشهري"/);
 });
