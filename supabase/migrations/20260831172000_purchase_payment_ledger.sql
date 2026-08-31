@@ -20,9 +20,13 @@ create table public.purchase_payments (
   void_reason text
 );
 create index purchase_payments_purchase_date_idx
-  on public.purchase_payments(purchase_order_id,paid_at desc) where voided_at is null;
+  on public.purchase_payments(purchase_order_id,paid_at desc);
 create unique index purchase_payments_finance_transaction_uidx
   on public.purchase_payments(finance_transaction_id) where finance_transaction_id is not null;
+create index purchase_payments_recorded_by_idx
+  on public.purchase_payments(recorded_by) where recorded_by is not null;
+create index purchase_payments_voided_by_idx
+  on public.purchase_payments(voided_by) where voided_by is not null;
 
 create or replace view public.purchase_payment_summary
 with(security_invoker=true) as
