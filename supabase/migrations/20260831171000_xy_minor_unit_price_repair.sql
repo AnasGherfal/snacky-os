@@ -90,16 +90,13 @@ do $$
 begin
   if exists(
     select 1
-    from public.products p
-    where p.id in(
-      select s.product_id
-      from public.vms_product_catalog_snapshots s
-      join public.vms_sync_runs r on r.id=s.sync_run_id and r.provider='xy'
-      where s.product_id is not null
-    )
-    and p.selling_price_source='vms'
-    and p.current_selling_price_lyd>=100
-  ) then raise exception 'XY product selling-price repair left unconverted values'; end if;
+    from public.operator_personal_purchases p
+    join public.vms_product_catalog_snapshots s on s.product_id=p.product_id
+    join public.vms_sync_runs r on r.id=s.sync_run_id and r.provider='xy'
+    where (s.raw_data->>'spjg') ~ '^[0-9]+(\\.[0-9]+)?$'
+      and p.unit_price_lyd>=100
+      and p.unit_price_lyd=(s.raw_data->>'spjg')::numeric
+  ) then raise exception 'XY operator-purchase repair left a proven inflated value'; end if;
 end $$;
 
 notify pgrst,'reload schema';
