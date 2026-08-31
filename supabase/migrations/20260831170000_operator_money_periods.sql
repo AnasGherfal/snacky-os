@@ -25,6 +25,10 @@ create unique index operator_money_periods_one_open_per_person_idx
   on public.operator_money_periods(person_id) where lifecycle_status='open';
 create index operator_money_periods_person_start_idx
   on public.operator_money_periods(person_id,period_start desc);
+create index operator_money_periods_closed_by_idx
+  on public.operator_money_periods(closed_by) where closed_by is not null;
+create index operator_money_periods_settled_by_idx
+  on public.operator_money_periods(settled_by) where settled_by is not null;
 
 alter table public.operator_personal_purchases add column period_id uuid references public.operator_money_periods(id) on delete restrict;
 alter table public.operator_debt_payments add column period_id uuid references public.operator_money_periods(id) on delete restrict;
@@ -112,6 +116,7 @@ create table public.operator_debt_payment_allocations (
 create index operator_debt_allocations_payment_idx on public.operator_debt_payment_allocations(payment_id);
 create index operator_debt_allocations_purchase_idx on public.operator_debt_payment_allocations(purchase_id);
 create index operator_debt_allocations_period_idx on public.operator_debt_payment_allocations(period_id);
+create index operator_debt_allocations_person_idx on public.operator_debt_payment_allocations(person_id);
 
 create table public.operator_expense_reimbursements (
   id uuid primary key default gen_random_uuid(),
@@ -127,6 +132,10 @@ create table public.operator_expense_reimbursements (
 );
 create index operator_expense_reimbursements_period_date_idx
   on public.operator_expense_reimbursements(period_id,paid_at desc);
+create index operator_expense_reimbursements_person_idx
+  on public.operator_expense_reimbursements(person_id);
+create index operator_expense_reimbursements_recorded_by_idx
+  on public.operator_expense_reimbursements(recorded_by);
 
 create table public.operator_expense_reimbursement_allocations (
   id uuid primary key default gen_random_uuid(),
@@ -144,6 +153,8 @@ create index operator_expense_reimbursement_allocations_expense_idx
   on public.operator_expense_reimbursement_allocations(expense_id);
 create index operator_expense_reimbursement_allocations_period_idx
   on public.operator_expense_reimbursement_allocations(period_id);
+create index operator_expense_reimbursement_allocations_person_idx
+  on public.operator_expense_reimbursement_allocations(person_id);
 
 create table public.operator_money_period_events (
   id uuid primary key default gen_random_uuid(),
@@ -157,6 +168,10 @@ create table public.operator_money_period_events (
 );
 create index operator_money_period_events_period_date_idx
   on public.operator_money_period_events(period_id,acted_at desc);
+create index operator_money_period_events_person_idx
+  on public.operator_money_period_events(person_id);
+create index operator_money_period_events_acted_by_idx
+  on public.operator_money_period_events(acted_by);
 
 create table public.operator_personal_purchase_corrections (
   id uuid primary key default gen_random_uuid(),
@@ -172,6 +187,12 @@ create table public.operator_personal_purchase_corrections (
 );
 create index operator_purchase_corrections_purchase_idx
   on public.operator_personal_purchase_corrections(purchase_id,corrected_at desc);
+create index operator_purchase_corrections_person_idx
+  on public.operator_personal_purchase_corrections(person_id);
+create index operator_purchase_corrections_period_idx
+  on public.operator_personal_purchase_corrections(period_id);
+create index operator_purchase_corrections_corrected_by_idx
+  on public.operator_personal_purchase_corrections(corrected_by) where corrected_by is not null;
 
 create or replace view public.operator_personal_purchase_status
 with(security_invoker=true) as
