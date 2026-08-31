@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
-import { canAddProducts, canManagePurchases } from "@/lib/authz";
+import { canAddProducts, canManagePurchases, canRecordPurchasePayments } from "@/lib/authz";
 import { financeAccountId } from "@/lib/finance-balance";
 import { createPurchaseFinancialTransaction } from "@/lib/finance-actions";
 import { resolvePurchaseUnitCost, type ProductCostMemory } from "@/lib/purchase-cost-memory";
@@ -591,6 +591,23 @@ async function requirePurchaseAccess() {
   return { profile, supabase };
 }
 
+async function requirePurchasePaymentAccess() {
+  const profile = await getCurrentProfile();
+  if (!profile || !canRecordPurchasePayments(profile)) redirect("/unauthorized");
+  const accessToken = await getAuthAccessToken();
+  const supabase = getSupabaseServerClient(accessToken);
+  if (!supabase) redirect("/purchases?error=Supabase%20is%20not%20configured.");
+  return { profile, supabase };
+}
+
+function parseSupplierPaymentTimestamp(value: FormDataEntryValue | null) {
+  const raw = clean(value);
+  if (!raw) return new Date().toISOString();
+  const candidate = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T12:00:00+02:00` : raw;
+  const parsed = new Date(candidate);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
 function purchaseFinanceLinkFilter(purchaseId: string) {
   return `linked_purchase_id.eq.${purchaseId},and(source_type.eq.purchase,source_id.eq.${purchaseId})`;
 }
@@ -1107,64 +1124,67 @@ export async function receivePurchase(fd: FormData) {
   }
 }
 
-export async function markPurchasePaid(fd: FormData) {
-  const { profile, supabase } = await requirePurchaseAccess();
-  const id = String(fd.get("id") || "");
+export async function recordPurchasePayment(fd: FormData) {
+  const { profile, supabase } = await requirePurchasePaymentAccess();
+  const id = clean(fd.get("purchase_order_id") ?? fd.get("id"));
   if (!id) redirect("/purchases");
+
+  const moduleName = clean(fd.get("module"));
   const path = `/purchases/${id}`;
-  const reason = requireConfirmedReason(fd, path);
-
-  const { data: purchase, error: purchaseError } = await supabase
-    .from("purchase_orders")
-    .select("*")
-    .eq("id", id)
-    .maybeSingle();
-  if (purchaseError || !purchase) fail("/purchases", "Purchase not found.");
-  if (purchase.status !== "received") fail(path, "Only received purchases can be marked paid.");
-  if (purchase.payment_status === "voided" || purchase.status === "voided") fail(path, "Voided purchases cannot be paid.");
-
-  const paidPurchase = {
-    ...purchase,
-    payment_status: "paid",
-  };
-  const purchaseTotal = Number(purchase.manual_total_lyd ?? purchase.total_amount ?? purchase.calculated_total_lyd ?? 0);
-
-  const { data: after, error: updateError } = await supabase
-    .from("purchase_orders")
-    .update({ payment_status: "paid", updated_at: new Date().toISOString() })
-    .eq("id", id)
-    .eq("status", "received")
-    .select("*")
-    .single();
-  if (updateError) {
-    console.error("[purchases] Failed to mark purchase paid", updateError);
-    fail(path, "Could not mark purchase as paid.");
+  const amount = roundMoney(Number(clean(fd.get("amount"))));
+  const paidAt = parseSupplierPaymentTimestamp(fd.get("paid_at"));
+  const paymentMethod = clean(fd.get("payment_method")) || "cash";
+  const requestedAccountId = clean(fd.get("account_id"));
+  if (requestedAccountId && !["snacky_lyd", "owner_lyd"].includes(requestedAccountId)) {
+    fail(path, "Supplier payments are recorded in LYD. Choose Snacky LYD or Owner LYD.");
   }
+  const accountId = requestedAccountId || "snacky_lyd";
+  const reference = clean(fd.get("reference")) || null;
+  const note = clean(fd.get("note")) || null;
+  const clientSubmissionId = clean(fd.get("client_submission_id")) || crypto.randomUUID();
 
-  try {
-    await createPurchaseFinancialTransaction(supabase, profile, { ...paidPurchase, ...after }, purchaseTotal);
-  } catch (error) {
-    console.error("[purchases] Failed to create payment transaction", error);
-    fail(path, "Purchase was marked paid, but the money-out finance transaction could not be created.");
+  if (!Number.isFinite(amount) || amount <= 0) fail(path, "Payment amount must be greater than zero.");
+  if (!paidAt) fail(path, "Payment date is invalid.");
+
+  const { data: payment, error } = await supabase.rpc("record_purchase_payment", {
+    p_purchase_order_id: id,
+    p_amount: amount,
+    p_paid_at: paidAt,
+    p_payment_method: paymentMethod,
+    p_account_id: accountId,
+    p_reference: reference,
+    p_note: note,
+    p_client_submission_id: clientSubmissionId,
+  });
+
+  if (error || !payment) {
+    console.error("[purchases] Failed to record supplier payment", error);
+    const message = error?.message?.includes("remaining supplier balance")
+      ? "Payment is greater than the remaining supplier balance."
+      : error?.message?.includes("received")
+        ? "Only a received, non-void purchase can be paid."
+        : "Could not record the supplier payment. No payment was saved.";
+    fail(path, message);
   }
 
   await logActivity({
     profile,
-    action: "pay_purchase",
+    action: "record_purchase_payment",
     entityType: "purchase",
     entityId: id,
-    entityLabel: purchase.receipt_number ?? id.slice(0, 8),
-    beforeData: purchase,
-    afterData: after,
-    metadata: { reason, amount: purchaseTotal },
-    summary: "Marked purchase paid and ensured money-out finance transaction",
+    entityLabel: id.slice(0, 8),
+    afterData: payment,
+    metadata: { amount, payment_method: paymentMethod, account_id: accountId },
+    summary: `Recorded supplier payment of ${amount.toFixed(2)} LYD`,
   });
 
   revalidatePath("/purchases");
-  revalidatePath(`/purchases/${id}`);
+  revalidatePath(path);
   revalidatePath("/finance");
   revalidatePath("/finance/transactions");
-  redirect(`/purchases/${id}`);
+  const query = new URLSearchParams({ paymentRecorded: "1" });
+  if (moduleName === "finance") query.set("module", "finance");
+  redirect(`${path}?${query.toString()}`);
 }
 
 export async function cancelPurchase(fd: FormData) {

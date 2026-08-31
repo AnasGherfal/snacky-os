@@ -4,11 +4,25 @@ on:
     branches: [master]
     paths:
       - "src/app/operator/routes/**"
+      - "src/app/operator/money/**"
       - "src/app/operator-money/**"
       - "src/app/api/operator-money/**"
+      - "src/app/team/**"
+      - "src/app/purchases/**"
+      - "src/lib/authz.ts"
+      - "src/lib/purchase-actions.ts"
+      - "src/lib/xy-vms-data.ts"
       - "src/components/module-tabs-config.ts"
       - "supabase/migrations/202607290003_operator_money_debts_ledger.sql"
+      - "supabase/migrations/202607300003_operator_money_storage_availability.sql"
+      - "supabase/migrations/202607300004_fix_operator_money_available_storage.sql"
+      - "supabase/migrations/20260831170000_operator_money_periods.sql"
+      - "supabase/migrations/20260831171000_xy_minor_unit_price_repair.sql"
+      - "supabase/migrations/20260831172000_purchase_payment_ledger.sql"
       - "scripts/test-operator-money-debts.mjs"
+      - "scripts/test-operator-money-periods.mjs"
+      - "scripts/test-purchase-payment-ledger.mjs"
+      - "scripts/test-xy-vms-data.mjs"
       - ".github/workflows/operator-money-debts-check.yml"
 jobs:
   test-and-build:
@@ -21,5 +35,11 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: node --test scripts/test-operator-money-debts.mjs
+      - name: Operator money, supplier payment, and XY price regressions
+        run: >-
+          node --test
+          scripts/test-operator-money-debts.mjs
+          scripts/test-operator-money-periods.mjs
+          scripts/test-purchase-payment-ledger.mjs
+          scripts/test-xy-vms-data.mjs
       - run: npm run build

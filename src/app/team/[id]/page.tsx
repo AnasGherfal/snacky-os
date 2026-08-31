@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import OperatorMoneyLedgerClient from "@/app/operator-money/OperatorMoneyLedgerClient";
 import OperatorInstructionsPanel from "@/components/operator/OperatorInstructionsPanel";
 import {
   DataTable,
@@ -230,6 +229,9 @@ export default async function TeamMemberProfilePage({
       <SecondaryButton href={`/team/${id}/activity`}>
         Activity log
       </SecondaryButton>
+      <SecondaryButton href={`/team/${id}/money`}>
+        Money ledger
+      </SecondaryButton>
       <SecondaryButton href={`/team/${id}/edit`}>Edit</SecondaryButton>
     </div>
   ) : (
@@ -237,6 +239,7 @@ export default async function TeamMemberProfilePage({
       <SecondaryButton href="#operator-instructions">
         My instructions
       </SecondaryButton>
+      <SecondaryButton href={`/team/${id}/money`}>My money</SecondaryButton>
       <SecondaryButton href="/operator/routes">My routes</SecondaryButton>
     </div>
   );
@@ -317,18 +320,23 @@ export default async function TeamMemberProfilePage({
 
       <OperatorInstructionsPanel initialOperatorId={id} lockOperator />
 
-      <section className="space-y-3">
-        <div>
-          <h2 className="text-lg font-semibold text-slate-900">
-            Money, debt, purchases, and expenses
-          </h2>
-          <p className="mt-1 text-sm text-slate-500">
-            Personal storage purchases, operator advances, work expenses,
-            repayments, and returned money belong to this person.
-          </p>
+      <SectionCard>
+        <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">
+              Money, debt, purchases, and expenses
+            </h2>
+            <p className="mt-1 max-w-3xl text-sm text-slate-500">
+              Open the dedicated ledger to review monthly periods, personal
+              purchases, debt payments, work advances, expenses, reimbursements,
+              and settlements.
+            </p>
+          </div>
+          <SecondaryButton href={`/team/${id}/money`}>
+            Open money ledger
+          </SecondaryButton>
         </div>
-        <OperatorMoneyLedgerClient initialPersonId={id} lockPerson />
-      </section>
+      </SectionCard>
 
       <section className="surface-card p-4">
         <h2 className="text-lg font-semibold">Route history</h2>
