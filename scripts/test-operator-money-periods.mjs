@@ -130,7 +130,7 @@ test("the API and UI support manager entries and period settlement actions", () 
   ]) {
     assert.match(ui, new RegExp(label, "i"));
   }
-  assert.match(ui, /reimburseExpense|reimbursement/i);
+  assert.match(ui, /reimbursement/i);
   assert.match(ui, /toISOString\(\)/);
 });
 
