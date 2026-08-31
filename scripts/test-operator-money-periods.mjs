@@ -14,6 +14,7 @@ const xyRepair = read(
   "supabase/migrations/20260831171000_xy_minor_unit_price_repair.sql",
 );
 const api = read("src/app/api/operator-money/route.ts");
+const authz = read("src/lib/authz.ts");
 const ui = read("src/app/operator-money/OperatorMoneyLedgerClient.tsx");
 const teamMoneyPage = read("src/app/team/[id]/money/page.tsx");
 const teamProfilePage = read("src/app/team/[id]/page.tsx");
@@ -142,6 +143,8 @@ test("team money has a dedicated owner-or-self authorized page", () => {
   assert.match(teamMoneyPage, /initialPersonId=\{id\}/);
   assert.match(teamMoneyPage, /lockPerson/);
   assert.match(teamMoneyPage, /selfServiceOnly=\{viewingSelf && !manager\}/);
+  assert.match(authz, /const selfTeamProfile = pathname\.match/);
+  assert.match(authz, /selfTeamProfile\[1\] === user\.teamMemberId/);
 
   assert.match(teamProfilePage, /href=\{\`\/team\/\$\{id\}\/money\`\}/);
   assert.doesNotMatch(teamProfilePage, /OperatorMoneyLedgerClient/);
