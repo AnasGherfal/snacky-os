@@ -1,27 +1,30 @@
 -- XY returns spjg/spjj in minor units (300 means 3.00 LYD).
 -- Preserve raw provider JSON and repair only products/snapshots proven to come from XY.
 
-with xy_products as (
-  select distinct s.product_id
+with latest_xy as (
+  select distinct on(s.product_id)
+    s.product_id,(s.raw_data->>'spjg')::numeric raw_selling,
+    nullif(s.raw_data->>'spjj','')::numeric raw_cost
   from public.vms_product_catalog_snapshots s
   join public.vms_sync_runs r on r.id=s.sync_run_id and r.provider='xy'
-  where s.product_id is not null and (s.raw_data->>'spjg') ~ '^[0-9]+(\.[0-9]+)?$'
+  where s.product_id is not null and (s.raw_data->>'spjg') ~ '^[0-9]+(\\.[0-9]+)?$'
+  order by s.product_id,s.captured_at desc,s.id desc
 )
 update public.products p
 set
-  selling_price=case when p.selling_price_source='vms' and p.selling_price>=100 then round(p.selling_price/100,2) else p.selling_price end,
-  current_selling_price_lyd=case when p.selling_price_source='vms' and p.current_selling_price_lyd>=100 then round(p.current_selling_price_lyd/100,2) else p.current_selling_price_lyd end,
-  vms_selling_price_lyd=case when p.vms_selling_price_lyd>=100 then round(p.vms_selling_price_lyd/100,2) else p.vms_selling_price_lyd end,
-  cost_price=case when p.cost_price_source='vms' and p.cost_price>=10 then round(p.cost_price/100,4) else p.cost_price end,
-  current_cost_price_lyd=case when p.cost_price_source='vms' and p.current_cost_price_lyd>=10 then round(p.current_cost_price_lyd/100,4) else p.current_cost_price_lyd end,
-  price_updated_at=now(),
-  updated_at=now()
-from xy_products x
+  selling_price=case when p.selling_price_source='vms' and p.selling_price=x.raw_selling then round(x.raw_selling/100,2) else p.selling_price end,
+  current_selling_price_lyd=case when p.selling_price_source='vms' and p.current_selling_price_lyd=x.raw_selling then round(x.raw_selling/100,2) else p.current_selling_price_lyd end,
+  vms_selling_price_lyd=case when p.vms_selling_price_lyd=x.raw_selling then round(x.raw_selling/100,2) else p.vms_selling_price_lyd end,
+  cost_price=case when p.cost_price_source='vms' and x.raw_cost is not null and p.cost_price=x.raw_cost then round(x.raw_cost/100,4) else p.cost_price end,
+  current_cost_price_lyd=case when p.cost_price_source='vms' and x.raw_cost is not null and p.current_cost_price_lyd=x.raw_cost then round(x.raw_cost/100,4) else p.current_cost_price_lyd end,
+  price_updated_at=now(),updated_at=now()
+from latest_xy x
 where p.id=x.product_id
   and (
-    (p.selling_price_source='vms' and (p.selling_price>=100 or p.current_selling_price_lyd>=100))
-    or p.vms_selling_price_lyd>=100
-    or (p.cost_price_source='vms' and (p.cost_price>=10 or p.current_cost_price_lyd>=10))
+    (p.selling_price_source='vms' and (p.selling_price=x.raw_selling or p.current_selling_price_lyd=x.raw_selling))
+    or p.vms_selling_price_lyd=x.raw_selling
+    or (p.cost_price_source='vms' and x.raw_cost is not null
+      and (p.cost_price=x.raw_cost or p.current_cost_price_lyd=x.raw_cost))
   );
 
 update public.vms_product_catalog_snapshots s
