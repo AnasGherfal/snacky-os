@@ -372,6 +372,14 @@ export function canAccessPath(user: AuthUserContext | null | undefined, pathname
   if (matchesPrefix(pathname, ["/finance", "/cash-collections"])) return hasPermission(user, "finance.view");
   if (matchesPrefix(pathname, ["/payroll"])) return canManagePayroll(user);
 
+  const selfTeamProfile = pathname.match(/^\/team\/([^/]+)(?:\/money)?\/?$/);
+  if (
+    selfTeamProfile &&
+    user.teamMemberId &&
+    selfTeamProfile[1] === user.teamMemberId
+  ) {
+    return true;
+  }
   if (matchesPrefix(pathname, ["/team"])) return hasPermission(user, "team.manage");
   if (matchesPrefix(pathname, ["/activity"])) return hasPermission(user, "activity.view");
   if (matchesPrefix(pathname, ["/vms-import"])) return canViewVmsImports(user);
