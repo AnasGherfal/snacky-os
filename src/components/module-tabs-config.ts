@@ -55,14 +55,14 @@ const adminTabs: ModuleTab[] = [
 ];
 
 const reportsTabs: ModuleTab[] = [
-  { label: "Overview", href: "/reports", exact: true },
-  { label: "Sales", href: "/sales" },
-  { label: "Cash Reconciliation", href: "/reports/cash-reconciliation" },
-  { label: "Route Performance", href: "/reports/route-performance" },
-  { label: "Product Activity", href: "/reports/route-product-activity" },
-  { label: "Products", href: "/products-dashboard" },
-  { label: "Machines", href: "/machines-dashboard" },
-  { label: "Inventory", href: "/inventory-dashboard" },
+  { label: "Overview", href: "/reports", labelAr: "نظرة عامة", exact: true },
+  { label: "Sales", href: "/sales", labelAr: "المبيعات" },
+  { label: "Cash Reconciliation", href: "/reports/cash-reconciliation", labelAr: "مطابقة النقدية" },
+  { label: "Monthly Operations", href: "/reports/route-performance", labelAr: "التقرير التشغيلي الشهري" },
+  { label: "Product Activity", href: "/reports/route-product-activity", labelAr: "نشاط المنتجات" },
+  { label: "Products", href: "/products-dashboard", labelAr: "المنتجات" },
+  { label: "Machines", href: "/machines-dashboard", labelAr: "الأجهزة" },
+  { label: "Inventory", href: "/inventory-dashboard", labelAr: "المخزون" },
 ];
 
 const groups = {
