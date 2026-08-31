@@ -52,6 +52,15 @@ const nowLocal = () =>
     .toISOString()
     .slice(0, 16);
 
+function purchaseDateForPeriod(period?: Row) {
+  const current = nowLocal();
+  const today = current.slice(0, 10);
+  const start = String(period?.period_start || "");
+  const end = String(period?.period_end || "");
+  if (!start || !end || (today >= start && today <= end)) return current;
+  return end + "T12:00";
+}
+
 function browserLocale(fallback: string) {
   if (typeof window === "undefined") return fallback;
   const saved = window.localStorage.getItem("snacky_os_language");
@@ -468,12 +477,14 @@ export default function OperatorMoneyLedgerClient({
       ) : null}
       {tab === "purchase" ? (
         <PurchasePanel
+          key={periodId || "legacy"}
           ar={ar}
           products={data.products}
           saving={saving === "purchase"}
           onPost={post}
           allowed={openForEntries}
           manager={!self}
+          period={selectedPeriod}
         />
       ) : null}
       {tab === "expense" && self ? (
@@ -775,6 +786,7 @@ function PurchasePanel({
   onPost,
   allowed,
   manager,
+  period,
 }: {
   ar: boolean;
   products: Row[];
@@ -782,6 +794,7 @@ function PurchasePanel({
   onPost: (action: string, body: Row) => Promise<boolean>;
   allowed: boolean;
   manager: boolean;
+  period?: Row;
 }) {
   const t = (english: string, arabic: string) => translated(ar, english, arabic);
   const [query, setQuery] = useState("");
@@ -971,6 +984,24 @@ function PurchasePanel({
                 )}
               </div>
             )}
+            {manager ? (
+              <label className="text-sm font-semibold">
+                {t("Item taken date", "تاريخ أخذ المنتج")}
+                <input
+                  className="input mt-2"
+                  name="date"
+                  type="datetime-local"
+                  defaultValue={purchaseDateForPeriod(period)}
+                  required
+                />
+                <span className="mt-1 block text-xs font-normal text-slate-500">
+                  {t(
+                    "The date must be inside the selected open money period.",
+                    "يجب أن يكون التاريخ داخل الفترة المالية المفتوحة المختارة.",
+                  )}
+                </span>
+              </label>
+            ) : null}
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="text-sm font-semibold">
                 {t("Quantity", "الكمية")}
