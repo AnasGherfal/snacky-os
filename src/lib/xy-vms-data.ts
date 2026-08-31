@@ -16,7 +16,9 @@ export function xyFirstText(row: XyDataRow, keys: string[]) {
 export function xyNumber(value: unknown) {
   const raw = String(value ?? "").trim();
   if (!raw) return null;
-  const parsed = Number(raw.replace(/[^\d.-]/g, ""));
+  const normalized = raw.replace(/[^\d.-]/g, "");
+  if (!normalized || !/\d/.test(normalized)) return null;
+  const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
