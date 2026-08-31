@@ -122,8 +122,9 @@ begin
   if p_amount is null or p_amount<=0 or p_amount>v_remaining then
     raise exception 'Payment exceeds the remaining supplier balance' using errcode='23514';
   end if;
-  if coalesce(nullif(trim(p_account_id),''),'snacky_lyd') not in ('snacky_lyd','snacky_usd','owner_lyd','owner_usd') then
-    raise exception 'Invalid payment account' using errcode='23514';
+  if coalesce(nullif(trim(p_account_id),''),'snacky_lyd') not in ('snacky_lyd','owner_lyd') then
+    raise exception 'Supplier payments currently support LYD accounts only; record FX conversion separately before enabling USD'
+      using errcode='23514';
   end if;
 
   insert into public.purchase_payments(
@@ -132,7 +133,7 @@ begin
   ) values(
     po.id,p_amount,p_paid_at,coalesce(nullif(trim(p_payment_method),''),po.payment_method),
     coalesce(nullif(trim(p_account_id),''),'snacky_lyd'),
-    case when lower(coalesce(nullif(trim(p_account_id),''),'snacky_lyd')) like '%usd%' then 'USD' else 'LYD' end,
+    'LYD',
     nullif(trim(coalesce(p_reference,'')),''),nullif(trim(coalesce(p_note,'')),''),
     p_client_submission_id,a
   ) returning * into row;
