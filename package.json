@@ -22,6 +22,7 @@
     "test:admin-missed-route-pickup": "node --experimental-strip-types --test scripts/test-admin-missed-route-pickup.mjs",
     "test:route-creation-guided-flow": "node --experimental-strip-types --test scripts/test-route-creation-guided-flow.mjs",
     "test:route-machine-catalog": "node --experimental-strip-types --test scripts/test-route-machine-catalog.mjs",
+    "test:monthly-operations-report": "node --experimental-strip-types --test scripts/test-route-performance-dashboard.mjs",
     "test:refill-forecast": "node --experimental-strip-types --test scripts/test-refill-forecast.mjs",
     "test:route-pickup-checklist": "node --test scripts/test-route-pickup-checklist-save.mjs",
     "check:route-schema": "node --experimental-strip-types scripts/check-route-workflow-schema.mjs",
