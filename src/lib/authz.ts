@@ -257,6 +257,10 @@ export function canManagePurchases(input: RoleInput) {
   return hasPermission(input, "purchases.create") || hasPermission(input, "purchases.receive");
 }
 
+export function canRecordPurchasePayments(input: RoleInput) {
+  return hasAnyRole(input, ["owner", "admin", "finance"]);
+}
+
 export function canScanReceipts(input: RoleInput) {
   return canManagePurchases(input);
 }
