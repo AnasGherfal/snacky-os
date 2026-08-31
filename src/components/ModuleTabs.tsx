@@ -3,9 +3,11 @@
 import Link, { useLinkStatus } from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useLanguage } from "@/components/I18nProvider";
 
 export type ModuleTab = {
   label: string;
+  labelAr?: string;
   href: string;
   exact?: boolean;
   match?: string[];
@@ -54,11 +56,11 @@ export function ModuleTabs({
   moduleName: string;
 }) {
   const router = useRouter();
-  const [optimisticHref, setOptimisticHref] = useState<string | null>(null);
-
-  useEffect(() => {
-    setOptimisticHref(null);
-  }, [currentPath, currentSearch]);
+  const { locale } = useLanguage();
+  const [optimisticNavigation, setOptimisticNavigation] = useState<{ href: string; path: string; search: string } | null>(null);
+  const optimisticHref = optimisticNavigation?.path === currentPath && optimisticNavigation.search === currentSearch
+    ? optimisticNavigation.href
+    : null;
 
   useEffect(() => {
     tabs.forEach((tab) => router.prefetch(tab.href));
@@ -83,7 +85,7 @@ export function ModuleTabs({
               prefetch={true}
               onClick={(event) => {
                 if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
-                setOptimisticHref(tab.href);
+                setOptimisticNavigation({ href: tab.href, path: currentPath, search: currentSearch });
               }}
               role="tab"
               aria-selected={active}
@@ -94,7 +96,7 @@ export function ModuleTabs({
                   : "inline-flex min-h-11 shrink-0 items-center gap-2 border-b-2 border-transparent px-3 py-2 text-sm font-medium text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
               }
             >
-              <span>{tab.label}</span>
+              <span>{locale === "ar" && tab.labelAr ? tab.labelAr : tab.label}</span>
               <TabPendingIndicator />
             </Link>
           );
