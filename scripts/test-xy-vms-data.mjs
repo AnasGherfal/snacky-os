@@ -2,11 +2,22 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { classifyXyLane, xyProductIdentity } from "../src/lib/xy-vms-data.ts";
 
-test("XY catalogue exposes selling and purchase prices", () => {
-  const identity = xyProductIdentity({ spbh: "42", spmc: "Water", spjg: "2.500", spjj: "1.250" });
+test("XY native catalogue prices convert minor units to LYD", () => {
+  const identity = xyProductIdentity({ spbh: "42", spmc: "Water", spjg: "300", spjj: "175" });
   assert.equal(identity.vmsProductId, "42");
-  assert.equal(identity.sellingPrice, 2.5);
-  assert.equal(identity.costPrice, 1.25);
+  assert.equal(identity.sellingPrice, 3);
+  assert.equal(identity.costPrice, 1.75);
+});
+
+test("XY alternate native selling field also converts minor units", () => {
+  const identity = xyProductIdentity({ spsj: "450" });
+  assert.equal(identity.sellingPrice, 4.5);
+});
+
+test("already-normalized generic price aliases remain unchanged", () => {
+  const identity = xyProductIdentity({ spjg: "", spjj: "invalid", selling_price: "3.50", cost_price: "2.25" });
+  assert.equal(identity.sellingPrice, 3.5);
+  assert.equal(identity.costPrice, 2.25);
 });
 
 test("configured XY lane preserves exact lane, quantity, and capacity", () => {
