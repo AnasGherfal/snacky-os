@@ -146,6 +146,10 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
     purchaseRow.status === "received" &&
     derivedPaymentStatus !== "voided" &&
     Number(remainingAmount ?? 0) > 0;
+  const existingPaymentAccount = String(purchaseRow.payment_account_id ?? "");
+  const paymentAccountDefault = ["snacky_lyd", "owner_lyd"].includes(existingPaymentAccount)
+    ? existingPaymentAccount
+    : "snacky_lyd";
 
   const receiptUploadMessage =
     receiptUpload === "storage-unavailable"
@@ -252,11 +256,9 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
                 </label>
                 <label className="mt-3 block text-xs font-medium text-slate-700">
                   Paying account
-                  <select className="input mt-1 w-full" name="account_id" defaultValue={purchaseRow.payment_account_id ?? "snacky_lyd"}>
+                  <select className="input mt-1 w-full" name="account_id" defaultValue={paymentAccountDefault}>
                     <option value="snacky_lyd">Snacky LYD</option>
                     <option value="owner_lyd">Owner LYD</option>
-                    <option value="snacky_usd">Snacky USD</option>
-                    <option value="owner_usd">Owner USD</option>
                   </select>
                 </label>
                 <label className="mt-3 block text-xs font-medium text-slate-700">
