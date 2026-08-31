@@ -13,6 +13,9 @@ const migration = read(
 const xyRepair = read(
   "supabase/migrations/20260831171000_xy_minor_unit_price_repair.sql",
 );
+const backdatedPurchases = read(
+  "supabase/migrations/20260901001000_operator_money_backdated_personal_purchases.sql",
+);
 const api = read("src/app/api/operator-money/route.ts");
 const authz = read("src/lib/authz.ts");
 const ui = read("src/app/operator-money/OperatorMoneyLedgerClient.tsx");
@@ -133,6 +136,25 @@ test("the API and UI support manager entries and period settlement actions", () 
   }
   assert.match(ui, /reimbursement/i);
   assert.match(ui, /toISOString\(\)/);
+});
+
+test("managers can add an item to the selected reopened period with an audited date", () => {
+  assert.match(
+    backdatedPurchases,
+    /create or replace function public\.create_operator_personal_purchase_for_period/i,
+  );
+  assert.match(backdatedPurchases, /Only owner\/admin can add an item to a selected money period/i);
+  assert.match(backdatedPurchases, /lifecycle_status<>'open'/i);
+  assert.match(backdatedPurchases, /p_purchased_at at time zone 'Africa\/Tripoli'/i);
+  assert.match(backdatedPurchases, /between|period_start/i);
+  assert.match(backdatedPurchases, /purchased_at\s*\)/i);
+  assert.match(backdatedPurchases, /operator_money_reserved_qty/i);
+  assert.match(backdatedPurchases, /current_selling_price_lyd,selling_price/i);
+  assert.match(api, /create_operator_personal_purchase_for_period/i);
+  assert.match(api, /p_period_id:\s*periodId/i);
+  assert.match(api, /p_purchased_at:\s*eventTimestamp\(body\.date\)/i);
+  assert.match(ui, /Item taken date/i);
+  assert.match(ui, /purchaseDateForPeriod\(period\)/i);
 });
 
 test("team money has a dedicated owner-or-self authorized page", () => {

@@ -19,6 +19,7 @@ on:
       - "supabase/migrations/20260831170000_operator_money_periods.sql"
       - "supabase/migrations/20260831171000_xy_minor_unit_price_repair.sql"
       - "supabase/migrations/20260831172000_purchase_payment_ledger.sql"
+      - "supabase/migrations/20260901001000_operator_money_backdated_personal_purchases.sql"
       - "scripts/test-operator-money-debts.mjs"
       - "scripts/test-operator-money-periods.mjs"
       - "scripts/test-purchase-payment-ledger.mjs"

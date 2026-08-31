@@ -471,16 +471,26 @@ export async function POST(request: Request) {
     let result;
 
     if (action === "purchase") {
-      result = await supabase.rpc("create_operator_personal_purchase", {
+      const purchase = {
         p_person_id: personId,
         p_product_id: clean(body.productId),
         p_storage_location_id: clean(body.storageLocationId),
         p_quantity: Math.floor(amount(body.quantity)),
-        // The database owns the canonical selling price. Never trust a browser-supplied price.
-        p_unit_price_lyd: null,
         p_note: clean(body.note) || null,
         p_client_submission_id: submissionId(body.clientSubmissionId, "operator-purchase"),
-      });
+      };
+      result =
+        manager && periodId && periodId !== "legacy"
+          ? await supabase.rpc("create_operator_personal_purchase_for_period", {
+              ...purchase,
+              p_period_id: periodId,
+              p_purchased_at: eventTimestamp(body.date),
+            })
+          : await supabase.rpc("create_operator_personal_purchase", {
+              ...purchase,
+              // The database owns the canonical selling price. Never trust a browser-supplied price.
+              p_unit_price_lyd: null,
+            });
     } else if (action === "advance") {
       result = await supabase.rpc("create_operator_advance", {
         p_person_id: personId,
