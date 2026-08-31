@@ -126,7 +126,11 @@ function statusText(status: unknown, ar: boolean) {
 function StatusBadge({ status, ar }: { status: unknown; ar: boolean }) {
   const value = String(status || "").toLowerCase();
   const color =
-    value === "paid" || value === "settled" || value === "approved" || value === "ready_to_settle"
+    value === "paid" ||
+    value === "settled" ||
+    value === "approved" ||
+    value === "covered_by_advance" ||
+    value === "ready_to_settle"
       ? "bg-emerald-100 text-emerald-800"
       : value === "unpaid" || value === "unsettled" || value === "rejected"
         ? "bg-red-100 text-red-800"
