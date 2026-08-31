@@ -1134,7 +1134,11 @@ export async function recordPurchasePayment(fd: FormData) {
   const amount = roundMoney(Number(clean(fd.get("amount"))));
   const paidAt = parseSupplierPaymentTimestamp(fd.get("paid_at"));
   const paymentMethod = clean(fd.get("payment_method")) || "cash";
-  const accountId = parsePaymentAccountId(fd.get("account_id"));
+  const requestedAccountId = clean(fd.get("account_id"));
+  if (requestedAccountId && !["snacky_lyd", "owner_lyd"].includes(requestedAccountId)) {
+    fail(path, "Supplier payments are recorded in LYD. Choose Snacky LYD or Owner LYD.");
+  }
+  const accountId = requestedAccountId || "snacky_lyd";
   const reference = clean(fd.get("reference")) || null;
   const note = clean(fd.get("note")) || null;
   const clientSubmissionId = clean(fd.get("client_submission_id")) || crypto.randomUUID();
