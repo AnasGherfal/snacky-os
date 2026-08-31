@@ -254,7 +254,7 @@ export async function GET(request: Request) {
           .order("given_at", { ascending: false })
           .limit(500),
         supabase
-          .from("operator_expenses")
+          .from("operator_expense_status")
           .select("*")
           .eq("period_id", selectedPeriodId)
           .order("spent_at", { ascending: false })
