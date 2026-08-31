@@ -112,7 +112,7 @@ test("the API and UI support manager entries and period settlement actions", () 
   assert.match(api, /periodId/i);
   assert.match(api, /p_unit_price_lyd:\s*null/i);
   assert.match(api, /periodEvents/i);
-  assert.match(api, /case "reimbursement"/i);
+  assert.match(api, /action === "reimbursement"/i);
   assert.match(api, /closePeriod/i);
   assert.match(api, /reopenPeriod/i);
   assert.match(api, /settlePeriod/i);
