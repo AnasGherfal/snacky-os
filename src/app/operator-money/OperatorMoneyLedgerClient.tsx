@@ -1625,10 +1625,20 @@ function buildEntries(data: Snapshot, personId: string, ar: boolean) {
       label: t("Snacky work expense", "مصروف عمل سناكي"),
       details:
         String(row.expense_type || "") +
-        (row.supplier_payee ? " · " + row.supplier_payee : ""),
+        (row.supplier_payee ? " · " + row.supplier_payee : "") +
+        (row.remaining_reimbursement_lyd !== undefined &&
+        Number(row.operator_funded_amount_lyd ?? 0) > 0
+          ? " · " +
+            t("Reimbursement remaining", "تعويض متبقٍ") +
+            " " +
+            money(row.remaining_reimbursement_lyd)
+          : ""),
       amount: Number(row.amount_lyd ?? 0),
       date: String(row.spent_at || row.created_at || ""),
-      status: row.status,
+      status:
+        row.status === "approved" && row.reimbursement_status
+          ? row.reimbursement_status
+          : row.status,
       expenseId: String(row.id),
     });
   });
