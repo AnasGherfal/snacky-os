@@ -73,7 +73,7 @@ test("legacy paid purchases are backfilled and checked without duplicating cash-
   assert.match(migration, /Historical supplier-payment backfill total mismatch/i);
   assert.match(
     migration,
-    /create or replace function public\.finance_purchase_should_sync[\s\S]*return false/i,
+    /create or replace function public\.finance_purchase_should_sync[\s\S]*select false/i,
   );
 });
 
