@@ -113,6 +113,7 @@ function statusText(status: unknown, ar: boolean) {
     unpaid: ["Unpaid", "غير مدفوع"],
     partially_paid: ["Partially paid", "مدفوع جزئياً"],
     paid: ["Paid", "مدفوع"],
+    covered_by_advance: ["Covered by work advance", "مغطى من عهدة العمل"],
     submitted: ["Pending review", "قيد المراجعة"],
     approved: ["Approved", "معتمد"],
     rejected: ["Rejected", "مرفوض"],
