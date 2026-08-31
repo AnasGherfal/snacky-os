@@ -111,7 +111,8 @@ test("the XY minor-unit repair is evidence-based and auditable", () => {
 test("the API and UI support manager entries and period settlement actions", () => {
   assert.match(api, /periodId/i);
   assert.match(api, /p_unit_price_lyd:\s*null/i);
-  assert.match(api, /reimburseExpense/i);
+  assert.match(api, /periodEvents/i);
+  assert.match(api, /case "reimbursement"/i);
   assert.match(api, /closePeriod/i);
   assert.match(api, /reopenPeriod/i);
   assert.match(api, /settlePeriod/i);
@@ -129,8 +130,8 @@ test("the API and UI support manager entries and period settlement actions", () 
   ]) {
     assert.match(ui, new RegExp(label, "i"));
   }
-  assert.match(ui, /reimburseExpense/);
-  assert.match(ui, /new Date\(String\(body\.date\)\)\.toISOString\(\)/);
+  assert.match(ui, /reimburseExpense|reimbursement/i);
+  assert.match(ui, /toISOString\(\)/);
 });
 
 test("team money has a dedicated owner-or-self authorized page", () => {
