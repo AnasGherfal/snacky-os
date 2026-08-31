@@ -8,6 +8,8 @@ type Snapshot = {
   currentPersonId: string | null;
   selectedPersonId: string | null;
   selectedPeriodId: string | null;
+  periodSupport: boolean;
+  periodWarning: string | null;
   team: Row[];
   products: Row[];
   balances: Row[];
@@ -82,6 +84,8 @@ function normalizeSnapshot(value: any): Snapshot {
     currentPersonId: value?.currentPersonId || null,
     selectedPersonId: value?.selectedPersonId || null,
     selectedPeriodId: value?.selectedPeriodId || null,
+    periodSupport: value?.periodSupport !== false,
+    periodWarning: value?.periodWarning || null,
     team: rows("team"),
     products: rows("products"),
     balances: rows("balances"),
@@ -416,6 +420,14 @@ export default function OperatorMoneyLedgerClient({
         </div>
       </nav>
 
+      {!data.periodSupport && data.periodWarning ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          {ar
+            ? "الفترات الشهرية غير مفعّلة بعد. يتم عرض كل السجل الحالي ويمكن متابعة الشراء والمصروفات."
+            : data.periodWarning}
+        </div>
+      ) : null}
+
       {notice ? (
         <div
           className={
@@ -446,6 +458,7 @@ export default function OperatorMoneyLedgerClient({
           personId={personId}
           post={post}
           saving={saving}
+          periodSupport={data.periodSupport}
         />
       ) : null}
       {tab === "purchase" ? (
@@ -540,6 +553,7 @@ function Overview({
   personId,
   post,
   saving,
+  periodSupport,
 }: {
   ar: boolean;
   summary: Row;
@@ -550,6 +564,7 @@ function Overview({
   personId: string;
   post: (action: string, body: Row) => Promise<boolean>;
   saving: string;
+  periodSupport: boolean;
 }) {
   const t = (english: string, arabic: string) => translated(ar, english, arabic);
   const personalCharged = summary.personal_purchases_lyd ?? 0;
@@ -700,6 +715,7 @@ function Overview({
           summary={summary}
           post={post}
           saving={saving}
+          periodSupport={periodSupport}
           onAddItem={() => onTab("purchase")}
         />
       )}
@@ -1140,6 +1156,7 @@ function ManagerActions({
   summary,
   post,
   saving,
+  periodSupport,
   onAddItem,
 }: {
   ar: boolean;
@@ -1149,6 +1166,7 @@ function ManagerActions({
   summary: Row;
   post: (action: string, body: Row) => Promise<boolean>;
   saving: string;
+  periodSupport: boolean;
   onAddItem: () => void;
 }) {
   const t = (english: string, arabic: string) => translated(ar, english, arabic);
@@ -1177,7 +1195,7 @@ function ManagerActions({
 
   return (
     <div className="space-y-4">
-      {period ? (
+      {period && periodSupport ? (
         <PeriodControls
           ar={ar}
           period={period}
@@ -1283,7 +1301,7 @@ function ManagerActions({
           />
         </ActionForm>
 
-        <ActionForm
+        {periodSupport ? <ActionForm
           title={t("Reimburse operator", "سداد مستحقات المشغّل")}
           note={t(
             "Pays approved work expenses the operator covered personally.",
@@ -1311,7 +1329,7 @@ function ManagerActions({
             name="note"
             placeholder={t("Optional note", "ملاحظة اختيارية")}
           />
-        </ActionForm>
+        </ActionForm> : null}
       </div>
     </div>
   );
