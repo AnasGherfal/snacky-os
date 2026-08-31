@@ -128,6 +128,23 @@ create table public.operator_expense_reimbursements (
 create index operator_expense_reimbursements_period_date_idx
   on public.operator_expense_reimbursements(period_id,paid_at desc);
 
+create table public.operator_expense_reimbursement_allocations (
+  id uuid primary key default gen_random_uuid(),
+  person_id uuid not null references public.team_members(id) on delete restrict,
+  period_id uuid not null references public.operator_money_periods(id) on delete restrict,
+  reimbursement_id uuid not null references public.operator_expense_reimbursements(id) on delete restrict,
+  expense_id uuid not null references public.operator_expenses(id) on delete restrict,
+  amount_lyd numeric(12,2) not null check(amount_lyd>0),
+  created_at timestamptz not null default now(),
+  unique(reimbursement_id,expense_id)
+);
+create index operator_expense_reimbursement_allocations_reimbursement_idx
+  on public.operator_expense_reimbursement_allocations(reimbursement_id);
+create index operator_expense_reimbursement_allocations_expense_idx
+  on public.operator_expense_reimbursement_allocations(expense_id);
+create index operator_expense_reimbursement_allocations_period_idx
+  on public.operator_expense_reimbursement_allocations(period_id);
+
 create table public.operator_money_period_events (
   id uuid primary key default gen_random_uuid(),
   period_id uuid not null references public.operator_money_periods(id) on delete restrict,
@@ -178,6 +195,66 @@ left join lateral(
   order by x.corrected_at desc,x.id desc limit 1
 ) c on true;
 
+create or replace view public.operator_expense_status
+with(security_invoker=true) as
+with funded as (
+  select e.*,
+    greatest(
+      coalesce((select sum(a.amount_lyd) from public.operator_advances a where a.period_id=e.period_id),0)
+      -coalesce((select sum(r.amount_lyd) from public.operator_advance_returns r where r.period_id=e.period_id),0),
+      0
+    )::numeric(12,2) net_advance_available_lyd,
+    coalesce(
+      sum(e.amount_lyd) filter(where e.status='approved' and e.advance_id is not null)
+        over(
+          partition by e.period_id
+          order by e.spent_at,e.id
+          rows between unbounded preceding and 1 preceding
+        ),
+      0
+    )::numeric(12,2) prior_linked_approved_expenses_lyd
+  from public.operator_expenses e
+), obligations as (
+  select f.*,
+    case
+      when f.status<>'approved' then 0
+      when f.advance_id is null then f.amount_lyd
+      else greatest(
+        f.amount_lyd
+        -least(
+          f.amount_lyd,
+          greatest(f.net_advance_available_lyd-f.prior_linked_approved_expenses_lyd,0)
+        ),
+        0
+      )
+    end::numeric(12,2) operator_funded_amount_lyd
+  from funded f
+), allocated as (
+  select expense_id,coalesce(sum(amount_lyd),0)::numeric(12,2) reimbursed_amount_lyd
+  from public.operator_expense_reimbursement_allocations
+  group by expense_id
+)
+select o.id,o.person_id,o.period_id,o.advance_id,o.amount_lyd,o.expense_type,
+  o.supplier_payee,o.spent_at,o.receipt_url,o.note,o.status,o.review_note,
+  o.reviewed_by,o.reviewed_at,o.client_submission_id,o.submitted_by,o.created_at,
+  case when o.status='approved'
+    then greatest(o.amount_lyd-o.operator_funded_amount_lyd,0)
+    else 0 end::numeric(12,2) advance_covered_amount_lyd,
+  o.operator_funded_amount_lyd,
+  least(coalesce(a.reimbursed_amount_lyd,0),o.operator_funded_amount_lyd)::numeric(12,2)
+    reimbursed_amount_lyd,
+  greatest(o.operator_funded_amount_lyd-coalesce(a.reimbursed_amount_lyd,0),0)::numeric(12,2)
+    remaining_reimbursement_lyd,
+  case
+    when o.status<>'approved' then o.status
+    when o.operator_funded_amount_lyd=0 then 'covered_by_advance'
+    when coalesce(a.reimbursed_amount_lyd,0)>=o.operator_funded_amount_lyd then 'paid'
+    when coalesce(a.reimbursed_amount_lyd,0)>0 then 'partially_paid'
+    else 'unpaid'
+  end reimbursement_status
+from obligations o
+left join allocated a on a.expense_id=o.id;
+
 create or replace view public.operator_money_period_summary
 with(security_invoker=true) as
 with purchases as (
@@ -201,7 +278,7 @@ with purchases as (
   from public.operator_advance_returns group by period_id
 ), reimbursements as (
   select period_id,coalesce(sum(amount_lyd),0)::numeric(12,2) reimbursed_lyd
-  from public.operator_expense_reimbursements group by period_id
+  from public.operator_expense_reimbursement_allocations group by period_id
 )
 select p.id period_id,p.person_id,tm.full_name,p.label,p.period_start,p.period_end,
   p.lifecycle_status,p.closed_at,p.closed_by,p.close_note,p.closing_snapshot,
@@ -485,8 +562,15 @@ end $$;
 create or replace function public.record_operator_expense_reimbursement(
   p_person_id uuid,p_period_id uuid,p_amount numeric,p_paid_at timestamptz,
   p_payment_method text,p_note text,p_client_submission_id text
-) returns public.operator_expense_reimbursements language plpgsql security definer set search_path=public,auth as $$
-declare a uuid:=public.snacky_current_team_member_id(); v_due numeric; row public.operator_expense_reimbursements;
+) returns public.operator_expense_reimbursements language plpgsql security definer set search_path=public,auth as $reimbursement$
+declare
+  a uuid:=public.snacky_current_team_member_id();
+  v_due numeric;
+  v_amount numeric(12,2):=round(p_amount,2);
+  v_left numeric(12,2);
+  v_allocate numeric(12,2);
+  v_expense record;
+  row public.operator_expense_reimbursements;
 begin
   if a is null then raise exception 'Not authenticated' using errcode='28000'; end if;
   if not public.snacky_operator_money_is_manager() then raise exception 'Only owner/admin can record reimbursement' using errcode='42501'; end if;
@@ -495,19 +579,44 @@ begin
   perform 1 from public.operator_money_periods
   where id=p_period_id and person_id=p_person_id and settled_at is null for update;
   if not found then raise exception 'Money period not found or already settled' using errcode='P0002'; end if;
+  perform 1 from public.operator_expenses
+  where period_id=p_period_id and person_id=p_person_id and status='approved'
+  order by spent_at,id for update;
   select reimbursement_due_to_operator_lyd into v_due
   from public.operator_money_period_summary where period_id=p_period_id;
-  if p_amount<=0 or p_amount>greatest(coalesce(v_due,0),0) then
-    raise exception 'Reimbursement exceeds the amount Snacky owes for this period' using errcode='23514';
+  if p_amount is null or v_amount<=0 or p_amount<>v_amount
+    or v_amount>greatest(coalesce(v_due,0),0) then
+    raise exception 'Reimbursement must be a positive two-decimal amount within the amount Snacky owes for this period'
+      using errcode='23514';
   end if;
   insert into public.operator_expense_reimbursements(
     person_id,period_id,amount_lyd,paid_at,payment_method,note,client_submission_id,recorded_by
   ) values(
-    p_person_id,p_period_id,p_amount,p_paid_at,p_payment_method,
+    p_person_id,p_period_id,v_amount,p_paid_at,coalesce(nullif(trim(p_payment_method),''),'cash'),
     nullif(trim(coalesce(p_note,'')),''),p_client_submission_id,a
   ) returning * into row;
+
+  v_left:=v_amount;
+  for v_expense in
+    select id,remaining_reimbursement_lyd
+    from public.operator_expense_status
+    where period_id=p_period_id and person_id=p_person_id
+      and status='approved' and remaining_reimbursement_lyd>0
+    order by spent_at,id
+  loop
+    v_allocate:=least(v_left,v_expense.remaining_reimbursement_lyd);
+    insert into public.operator_expense_reimbursement_allocations(
+      person_id,period_id,reimbursement_id,expense_id,amount_lyd
+    ) values(p_person_id,p_period_id,row.id,v_expense.id,v_allocate);
+    v_left:=v_left-v_allocate;
+    exit when v_left=0;
+  end loop;
+  if v_left<>0 then
+    raise exception 'Reimbursement could not be allocated to individual expense obligations'
+      using errcode='23514';
+  end if;
   return row;
-end $$;
+end $reimbursement$;
 
 create or replace function public.close_operator_money_period(p_period_id uuid,p_note text)
 returns public.operator_money_periods language plpgsql security definer set search_path=public,auth as $$
@@ -576,6 +685,7 @@ end $$;
 alter table public.operator_money_periods enable row level security;
 alter table public.operator_debt_payment_allocations enable row level security;
 alter table public.operator_expense_reimbursements enable row level security;
+alter table public.operator_expense_reimbursement_allocations enable row level security;
 alter table public.operator_money_period_events enable row level security;
 alter table public.operator_personal_purchase_corrections enable row level security;
 
@@ -585,20 +695,22 @@ create policy operator_debt_payment_allocations_read on public.operator_debt_pay
   using(public.snacky_operator_money_can_view(person_id));
 create policy operator_expense_reimbursements_read on public.operator_expense_reimbursements for select to authenticated
   using(public.snacky_operator_money_can_view(person_id));
+create policy operator_expense_reimbursement_allocations_read on public.operator_expense_reimbursement_allocations for select to authenticated
+  using(public.snacky_operator_money_can_view(person_id));
 create policy operator_money_period_events_read on public.operator_money_period_events for select to authenticated
   using(public.snacky_operator_money_can_view(person_id));
 create policy operator_personal_purchase_corrections_read on public.operator_personal_purchase_corrections for select to authenticated
   using(public.snacky_operator_money_can_view(person_id));
 
 revoke all on public.operator_money_periods,public.operator_debt_payment_allocations,
-  public.operator_expense_reimbursements,public.operator_money_period_events,
-  public.operator_personal_purchase_corrections from public,anon;
+  public.operator_expense_reimbursements,public.operator_expense_reimbursement_allocations,
+  public.operator_money_period_events,public.operator_personal_purchase_corrections from public,anon;
 revoke insert,update,delete on public.operator_money_periods,public.operator_debt_payment_allocations,
-  public.operator_expense_reimbursements,public.operator_money_period_events,
-  public.operator_personal_purchase_corrections from authenticated;
+  public.operator_expense_reimbursements,public.operator_expense_reimbursement_allocations,
+  public.operator_money_period_events,public.operator_personal_purchase_corrections from authenticated;
 grant select on public.operator_money_periods,public.operator_debt_payment_allocations,
-  public.operator_expense_reimbursements,public.operator_money_period_events,
-  public.operator_personal_purchase_corrections to authenticated;
+  public.operator_expense_reimbursements,public.operator_expense_reimbursement_allocations,
+  public.operator_money_period_events,public.operator_personal_purchase_corrections to authenticated;
 
 revoke all on public.operator_personal_purchases,public.operator_debt_payments,
   public.operator_advances,public.operator_expenses,public.operator_advance_returns from anon;
@@ -607,10 +719,10 @@ revoke insert,update,delete on public.operator_personal_purchases,public.operato
 grant select on public.operator_personal_purchases,public.operator_debt_payments,
   public.operator_advances,public.operator_expenses,public.operator_advance_returns to authenticated;
 
-revoke all on public.operator_personal_purchase_status,public.operator_money_period_summary,
-  public.operator_money_balances from public,anon;
-grant select on public.operator_personal_purchase_status,public.operator_money_period_summary,
-  public.operator_money_balances to authenticated;
+revoke all on public.operator_personal_purchase_status,public.operator_expense_status,
+  public.operator_money_period_summary,public.operator_money_balances from public,anon;
+grant select on public.operator_personal_purchase_status,public.operator_expense_status,
+  public.operator_money_period_summary,public.operator_money_balances to authenticated;
 
 revoke all on function public.snacky_operator_money_period_for_timestamp(uuid,timestamptz,boolean) from public,anon,authenticated;
 revoke all on function public.create_operator_personal_purchase(uuid,uuid,uuid,integer,numeric,text,text) from public,anon;
