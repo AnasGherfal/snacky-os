@@ -1,14 +1,25 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { cancelPurchase, deleteDraftPurchase, markPurchasePaid, receivePurchase, voidReceivedPurchase } from "@/lib/purchase-actions";
+import { cancelPurchase, deleteDraftPurchase, receivePurchase, recordPurchasePayment, voidReceivedPurchase } from "@/lib/purchase-actions";
 import { DataTable, EmptyState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
-import { canManagePurchases } from "@/lib/authz";
+import { canManagePurchases, canRecordPurchasePayments } from "@/lib/authz";
 import { accountLabel } from "@/lib/finance-balance";
 import { lyd } from "@/lib/format";
 import { dateOnly } from "@/lib/purchase-finance-date";
 import { privateStorageObjectUrl, RECEIPT_IMAGE_BUCKET } from "@/lib/storage-buckets";
+
+function tripoliDateInputValue(value = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Africa/Tripoli",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(value);
+  const part = (type: "year" | "month" | "day") => parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
 
 function formatReceiptType(url: string | null | undefined, contentType?: string | null) {
   const explicit = String(contentType ?? "").trim();
@@ -55,16 +66,24 @@ function ReceiptPreviewSection({ purchase }: { purchase: any }) {
 
 export const dynamic = "force-dynamic";
 
-export default async function PurchaseDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; financeWarning?: string; receiptUpload?: string; module?: string; purchaseSaved?: string; financeSync?: string }> }) {
+export default async function PurchaseDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; financeWarning?: string; receiptUpload?: string; module?: string; purchaseSaved?: string; financeSync?: string; paymentRecorded?: string }> }) {
   const { id } = await params;
-  const { error = "", financeWarning = "", receiptUpload = "", module = "", purchaseSaved = "", financeSync = "" } = await searchParams;
+  const { error = "", financeWarning = "", receiptUpload = "", module = "", purchaseSaved = "", financeSync = "", paymentRecorded = "" } = await searchParams;
   const moduleQuery = module === "finance" ? "?module=finance" : "";
   const profile = await requireCurrentProfileForPath(`/purchases/${id}`);
   const canManagePurchase = canManagePurchases(profile);
+  const canRecordPayment = canRecordPurchasePayments(profile);
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) notFound();
 
-  const [{ data: purchase }, { data: lines }, { data: movements, count: movementCount }, { data: financeRows }] = await Promise.all([
+  const [
+    { data: purchase },
+    { data: lines },
+    { data: movements, count: movementCount },
+    { data: financeRows },
+    { data: paymentSummary, error: paymentSummaryError },
+    { data: payments, error: paymentsError },
+  ] = await Promise.all([
     supabase
       .from("purchase_orders")
       .select("*, supplier:suppliers(name), created_by_member:team_members!purchase_orders_created_by_fkey(full_name), received_by_member:team_members!purchase_orders_received_by_fkey(full_name)")
@@ -86,6 +105,17 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
       .select("id, amount, signed_amount, transaction_date, transaction_status, review_status, related_purchase_id, linked_purchase_id, source_type, source_id")
       .or(`related_purchase_id.eq.${id},linked_purchase_id.eq.${id},and(source_type.eq.purchase,source_id.eq.${id})`)
       .order("transaction_date", { ascending: false }),
+    supabase
+      .from("purchase_payment_summary")
+      .select("purchase_order_id, total_amount_lyd, paid_amount_lyd, remaining_amount_lyd, payment_status, last_paid_at, payment_count")
+      .eq("purchase_order_id", id)
+      .maybeSingle(),
+    supabase
+      .from("purchase_payments")
+      .select("id, amount_lyd, paid_at, payment_method, account_id, reference, note, finance_transaction_id, created_at, voided_at, void_reason, recorded_by_member:team_members!purchase_payments_recorded_by_fkey(full_name)")
+      .eq("purchase_order_id", id)
+      .order("paid_at", { ascending: false })
+      .order("created_at", { ascending: false }),
   ]);
   if (!purchase) notFound();
 
@@ -103,6 +133,20 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
   const calculatedTotal = Number(purchaseRow.calculated_total_lyd ?? purchaseRow.total_amount ?? 0);
   const displayTotal = Number(purchaseRow.manual_total_lyd ?? purchaseRow.total_amount ?? calculatedTotal);
   const totalAdjustment = Number(purchaseRow.total_adjustment_lyd ?? displayTotal - calculatedTotal);
+  const paymentSummaryAvailable = !paymentSummaryError && Boolean(paymentSummary);
+  const paymentHistoryAvailable = !paymentsError;
+  const paymentSummaryRow = paymentSummary as any;
+  const paymentRows = (payments ?? []) as any[];
+  const paidAmount = paymentSummaryAvailable ? Number(paymentSummaryRow.paid_amount_lyd ?? 0) : null;
+  const remainingAmount = paymentSummaryAvailable ? Number(paymentSummaryRow.remaining_amount_lyd ?? 0) : null;
+  const derivedPaymentStatus = paymentSummaryAvailable ? String(paymentSummaryRow.payment_status ?? "unknown") : "unknown";
+  const canAddPayment =
+    canRecordPayment &&
+    paymentSummaryAvailable &&
+    purchaseRow.status === "received" &&
+    derivedPaymentStatus !== "voided" &&
+    Number(remainingAmount ?? 0) > 0;
+
   const receiptUploadMessage =
     receiptUpload === "storage-unavailable"
       ? "Storage is not configured in this environment. Use receipt URL for now."
@@ -125,6 +169,12 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
       />
       {purchaseSaved === "draft" ? <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">Purchase saved as draft.</div> : null}
       {purchaseSaved === "received" ? <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">Purchase received and inventory updated.</div> : null}
+      {paymentRecorded === "1" ? <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">Supplier payment recorded. Paid and remaining balances were recalculated.</div> : null}
+      {!paymentSummaryAvailable ? (
+        <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm font-medium text-amber-900">
+          Payment totals are unavailable. Recording is disabled so Snacky OS cannot accidentally overpay this purchase.
+        </div>
+      ) : null}
       {financeWarning === "manual-review" ? <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Finance transaction was not created automatically. Review finance manually.</div> : null}
       {error ? <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{error}</div> : null}
       {financeSync === "needs-repair" ? <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900">Purchase saved, finance sync needs repair. Use the finance repair action on this purchase when the finance schema is fixed.</div> : null}
@@ -137,8 +187,10 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
             <div><div className="text-xs font-medium uppercase text-slate-500">Supplier</div><div className="font-medium">{purchaseRow.supplier?.name ?? "-"}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Payment method</div><div className="font-medium">{String(purchaseRow.payment_method ?? "-").replaceAll("_", " ")}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Paying account</div><div className="font-medium">{accountLabel(purchaseRow.payment_account_id ?? "snacky_lyd")}</div></div>
-            <div><div className="text-xs font-medium uppercase text-slate-500">Payment status</div><StatusBadge status={purchaseRow.payment_status ?? "paid"} /></div>
-            <div><div className="text-xs font-medium uppercase text-slate-500">Payment date</div><div className="font-medium">{paymentDate ?? "-"}</div></div>
+            <div><div className="text-xs font-medium uppercase text-slate-500">Payment status</div><StatusBadge status={derivedPaymentStatus} /></div>
+            <div><div className="text-xs font-medium uppercase text-slate-500">Paid</div><div className="font-medium">{paidAmount === null ? "-" : lyd(paidAmount)}</div></div>
+            <div><div className="text-xs font-medium uppercase text-slate-500">Remaining</div><div className="font-medium">{remainingAmount === null ? "-" : lyd(remainingAmount)}</div></div>
+            <div><div className="text-xs font-medium uppercase text-slate-500">Last paid</div><div className="font-medium">{paymentSummaryAvailable && paymentSummaryRow.last_paid_at ? new Date(paymentSummaryRow.last_paid_at).toLocaleString("en-US") : paymentDate ?? "-"}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Linked finance transaction date</div><div className="font-medium">{linkedFinanceTransactionDate ?? "-"}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Status</div><StatusBadge status={purchaseRow.status} /></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Created by</div><div>{purchaseRow.created_by_member?.full_name ?? "-"}</div></div>
@@ -172,29 +224,51 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
                 <button className="btn-primary w-full">Receive into storage</button>
               </form>
             ) : null}
-            {canManagePurchase && purchaseRow.status === "received" && purchaseRow.payment_status !== "paid" && purchaseRow.payment_status !== "voided" ? (
-              <ConfirmDialog
-                action={markPurchasePaid}
-                triggerLabel="Mark paid"
-                title="Mark purchase paid?"
-                description="Snacky OS will mark the purchase paid and create the linked money-out financial transaction if it does not already exist."
-                confirmLabel="Mark paid"
-                buttonClassName="btn-primary w-full"
-                confirmButtonClassName="btn-primary"
-                hiddenFields={[{ name: "id", value: id }]}
-              />
-            ) : null}
-            {canManagePurchase && purchaseRow.status === "received" && purchaseRow.payment_status === "paid" && !hasActiveFinance ? (
-              <ConfirmDialog
-                action={markPurchasePaid}
-                triggerLabel="Create payment transaction"
-                title="Create missing payment transaction?"
-                description="The purchase is marked paid but has no active product-purchase finance transaction. Snacky OS will create one without duplicating existing active records."
-                confirmLabel="Create transaction"
-                buttonClassName="btn-secondary w-full"
-                confirmButtonClassName="btn-primary"
-                hiddenFields={[{ name: "id", value: id }]}
-              />
+            {canAddPayment ? (
+              <form action={recordPurchasePayment} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <input type="hidden" name="purchase_order_id" value={id} />
+                <input type="hidden" name="client_submission_id" value={crypto.randomUUID()} />
+                {module === "finance" ? <input type="hidden" name="module" value="finance" /> : null}
+                <div className="mb-3">
+                  <div className="text-sm font-semibold text-slate-900">Record supplier payment</div>
+                  <div className="mt-1 text-xs text-slate-600">Remaining: {lyd(Number(remainingAmount ?? 0))}</div>
+                </div>
+                <label className="block text-xs font-medium text-slate-700">
+                  Amount (LYD)
+                  <input className="input mt-1 w-full" type="number" name="amount" min="0.01" max={Number(remainingAmount ?? 0).toFixed(2)} step="0.01" defaultValue={Number(remainingAmount ?? 0).toFixed(2)} required />
+                </label>
+                <label className="mt-3 block text-xs font-medium text-slate-700">
+                  Payment date
+                  <input className="input mt-1 w-full" type="date" name="paid_at" defaultValue={tripoliDateInputValue()} required />
+                </label>
+                <label className="mt-3 block text-xs font-medium text-slate-700">
+                  Method
+                  <select className="input mt-1 w-full" name="payment_method" defaultValue={purchaseRow.payment_method ?? "cash"}>
+                    <option value="cash">Cash</option>
+                    <option value="bank_transfer">Bank transfer</option>
+                    <option value="card">Card</option>
+                    <option value="other">Other</option>
+                  </select>
+                </label>
+                <label className="mt-3 block text-xs font-medium text-slate-700">
+                  Paying account
+                  <select className="input mt-1 w-full" name="account_id" defaultValue={purchaseRow.payment_account_id ?? "snacky_lyd"}>
+                    <option value="snacky_lyd">Snacky LYD</option>
+                    <option value="owner_lyd">Owner LYD</option>
+                    <option value="snacky_usd">Snacky USD</option>
+                    <option value="owner_usd">Owner USD</option>
+                  </select>
+                </label>
+                <label className="mt-3 block text-xs font-medium text-slate-700">
+                  Reference
+                  <input className="input mt-1 w-full" name="reference" placeholder="Receipt or transfer reference" />
+                </label>
+                <label className="mt-3 block text-xs font-medium text-slate-700">
+                  Note
+                  <textarea className="input mt-1 min-h-20 w-full" name="note" placeholder="Optional payment note" />
+                </label>
+                <button className="btn-primary mt-4 w-full" type="submit">Record payment</button>
+              </form>
             ) : null}
             {canManagePurchase && isDraft ? (
               <ConfirmDialog
@@ -236,6 +310,36 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
           </div>
         </section>
       </div>
+
+      <section className="surface-card mt-6">
+        <div className="mb-4">
+          <h2 className="text-lg font-semibold text-slate-900">Supplier payment history</h2>
+          <p className="text-sm text-slate-500">Each payment is posted separately to Finance. Partial payments remain visible until the balance reaches zero.</p>
+        </div>
+        {!paymentHistoryAvailable ? (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm font-medium text-amber-900">
+            Payment history is unavailable. No payment status is inferred from the old purchase label.
+          </div>
+        ) : !paymentRows.length ? (
+          <EmptyState title="No payments recorded" body="This supplier purchase has not been settled yet." />
+        ) : (
+          <DataTable headers={["Paid at", "Amount", "Method", "Account", "Reference", "Recorded by", "Finance", "Status", "Note"]}>
+            {paymentRows.map((payment: any) => (
+              <tr key={payment.id}>
+                <td>{new Date(payment.paid_at).toLocaleString("en-US")}</td>
+                <td className="font-semibold">{lyd(Number(payment.amount_lyd ?? 0))}</td>
+                <td>{String(payment.payment_method ?? "-").replaceAll("_", " ")}</td>
+                <td>{accountLabel(payment.account_id ?? "snacky_lyd")}</td>
+                <td>{payment.reference ?? "-"}</td>
+                <td>{payment.recorded_by_member?.full_name ?? "-"}</td>
+                <td>{payment.finance_transaction_id ? <Link href={`/finance/transactions/${payment.finance_transaction_id}`} className="link-secondary">View</Link> : "-"}</td>
+                <td><StatusBadge status={payment.voided_at ? "voided" : "active"} /></td>
+                <td>{payment.void_reason ?? payment.note ?? "-"}</td>
+              </tr>
+            ))}
+          </DataTable>
+        )}
+      </section>
 
       <ReceiptPreviewSection purchase={purchaseRow} />
 
