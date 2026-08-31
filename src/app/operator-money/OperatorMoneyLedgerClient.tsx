@@ -92,7 +92,7 @@ function normalizeSnapshot(value: any): Snapshot {
     expenses: rows("expenses"),
     returns: rows("returns"),
     reimbursements: rows("reimbursements"),
-    events: rows("events"),
+    events: rows("events").length ? rows("events") : rows("periodEvents"),
   };
 }
 
@@ -267,7 +267,7 @@ export default function OperatorMoneyLedgerClient({
         advance: ["Work advance recorded.", "تم تسجيل عهدة العمل."],
         debtPayment: ["Personal payment recorded.", "تم تسجيل سداد المشتريات الشخصية."],
         advanceReturn: ["Returned work money recorded.", "تم تسجيل أموال العمل المرجعة."],
-        reimburseExpense: ["Operator reimbursement recorded.", "تم تسجيل سداد مستحقات المشغّل."],
+        reimbursement: ["Operator reimbursement recorded.", "تم تسجيل سداد مستحقات المشغّل."],
         reviewExpense: ["Expense review saved.", "تم حفظ مراجعة المصروف."],
         closePeriod: ["Period closed.", "تم إغلاق الفترة."],
         reopenPeriod: ["Period reopened.", "تمت إعادة فتح الفترة."],
@@ -1289,12 +1289,12 @@ function ManagerActions({
             "Pays approved work expenses the operator covered personally.",
             "سداد مصروفات عمل معتمدة دفعها المشغّل من ماله.",
           )}
-          onSubmit={submit("reimburseExpense")}
+          onSubmit={submit("reimbursement")}
           disabled={
             !periodAvailable ||
             settled ||
             reimbursementDue <= 0 ||
-            saving === "reimburseExpense"
+            saving === "reimbursement"
           }
           submitLabel={t("Record reimbursement", "تسجيل السداد للمشغّل")}
         >
