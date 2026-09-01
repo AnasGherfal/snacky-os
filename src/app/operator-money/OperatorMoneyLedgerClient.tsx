@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Row = Record<string, any>;
 type Snapshot = {
@@ -169,6 +169,7 @@ export default function OperatorMoneyLedgerClient({
   const [saving, setSaving] = useState("");
   const [notice, setNotice] = useState<Notice>(null);
   const [tab, setTab] = useState<Tab>("overview");
+  const loadRequestId = useRef(0);
 
   useEffect(() => {
     const sync = () => setActiveLocale(browserLocale(locale));
@@ -189,6 +190,7 @@ export default function OperatorMoneyLedgerClient({
 
   const load = useCallback(
     async (requestedPersonId?: string, requestedPeriodId?: string) => {
+      const requestId = ++loadRequestId.current;
       setLoading(true);
       const query = new URLSearchParams();
       const targetPerson = requestedPersonId || initialPersonId;
@@ -200,6 +202,7 @@ export default function OperatorMoneyLedgerClient({
           { cache: "no-store" },
         );
         const json = await response.json().catch(() => ({}));
+        if (requestId !== loadRequestId.current) return;
         if (!response.ok) {
           setData(null);
           setNotice({
@@ -207,7 +210,7 @@ export default function OperatorMoneyLedgerClient({
             text:
               json.error ||
               translated(
-                activeLocale === "ar",
+                browserLocale(locale) === "ar",
                 "Could not load money records.",
                 "تعذر تحميل السجل المالي.",
               ),
@@ -227,6 +230,7 @@ export default function OperatorMoneyLedgerClient({
           String(snapshot.selectedPeriodId || requestedPeriodId || ""),
         );
       } catch (error) {
+        if (requestId !== loadRequestId.current) return;
         setData(null);
         setNotice({
           kind: "error",
@@ -234,16 +238,16 @@ export default function OperatorMoneyLedgerClient({
             error instanceof Error
               ? error.message
               : translated(
-                  activeLocale === "ar",
+                  browserLocale(locale) === "ar",
                   "Could not load money records.",
                   "تعذر تحميل السجل المالي.",
                 ),
         });
       } finally {
-        setLoading(false);
+        if (requestId === loadRequestId.current) setLoading(false);
       }
     },
-    [activeLocale, initialPersonId],
+    [initialPersonId, locale],
   );
 
   useEffect(() => {
@@ -280,7 +284,10 @@ export default function OperatorMoneyLedgerClient({
         return false;
       }
       const messages: Record<string, [string, string]> = {
-        purchase: ["Personal item recorded.", "تم تسجيل المنتج الشخصي."],
+        purchase: [
+          "Personal item recorded. Storage was reduced immediately; payment only settles the debt.",
+          "تم تسجيل المنتج وخصمه من المخزن فوراً. السداد يخفض الدين فقط ولا يغيّر المخزون.",
+        ],
         expense: ["Expense submitted for review.", "تم إرسال المصروف للمراجعة."],
         advance: ["Work advance recorded.", "تم تسجيل عهدة العمل."],
         debtPayment: ["Personal payment recorded.", "تم تسجيل سداد المشتريات الشخصية."],
@@ -485,6 +492,8 @@ export default function OperatorMoneyLedgerClient({
           allowed={openForEntries}
           manager={!self}
           period={selectedPeriod}
+          purchases={data.purchases}
+          personId={personId}
         />
       ) : null}
       {tab === "expense" && self ? (
@@ -787,6 +796,8 @@ function PurchasePanel({
   allowed,
   manager,
   period,
+  purchases,
+  personId,
 }: {
   ar: boolean;
   products: Row[];
@@ -795,6 +806,8 @@ function PurchasePanel({
   allowed: boolean;
   manager: boolean;
   period?: Row;
+  purchases: Row[];
+  personId: string;
 }) {
   const t = (english: string, arabic: string) => translated(ar, english, arabic);
   const [query, setQuery] = useState("");
@@ -833,6 +846,17 @@ function PurchasePanel({
   const selected = products.find((product) => String(product.id) === productId);
   const price = Number(
     selected?.current_selling_price_lyd ?? selected?.selling_price ?? 0,
+  );
+  const periodPurchases = useMemo(
+    () =>
+      purchases.filter(
+        (row) => !row.person_id || String(row.person_id) === personId,
+      ),
+    [purchases, personId],
+  );
+  const periodPurchaseTotal = periodPurchases.reduce(
+    (sum, row) => sum + Number(row.total_lyd ?? 0),
+    0,
   );
 
   const choose = async (product: Row) => {
@@ -874,6 +898,15 @@ function PurchasePanel({
             "يُستخدم سعر البيع الرسمي للمنتج تلقائياً ولا يمكن إدخاله أو تغييره هنا.",
           )}
         </p>
+        <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+          <strong>{t("What happens when you confirm", "ماذا يحدث عند التأكيد")}</strong>
+          <p className="mt-1">
+            {t(
+              "Storage decreases immediately and the same amount becomes personal debt. Recording payment later only reduces the debt; it never changes inventory.",
+              "تنخفض كمية المخزن فوراً وتُسجل القيمة كدين شخصي. تسجيل السداد لاحقاً يخفض الدين فقط ولا يغيّر المخزون.",
+            )}
+          </p>
+        </div>
         {!allowed ? (
           <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
             {t(
@@ -945,10 +978,8 @@ function PurchasePanel({
               const body = Object.fromEntries(new FormData(form).entries());
               void onPost("purchase", body).then((ok) => {
                 if (ok) {
-                  setProductId("");
-                  setQuery("");
                   setQuantity(1);
-                  setSource(null);
+                  void choose(selected);
                 }
               });
             }}
@@ -1044,6 +1075,67 @@ function PurchasePanel({
             </button>
           </form>
         ) : null}
+      </div>
+
+      <div className="mt-6 border-t border-slate-200 pt-5">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-bold">
+              {t("Recorded personal items in this period", "المنتجات الشخصية المسجلة في هذه الفترة")}
+            </h3>
+            <p className="mt-1 text-sm text-slate-500">
+              {t(
+                "These rows are already deducted from storage. Paid/unpaid changes only the debt balance.",
+                "هذه المنتجات خُصمت بالفعل من المخزن. حالة السداد تغيّر رصيد الدين فقط.",
+              )}
+            </p>
+          </div>
+          <div className="text-end text-sm">
+            <div className="text-slate-500">
+              {periodPurchases.length} {t("records", "حركة")}
+            </div>
+            <div className="font-extrabold">{money(periodPurchaseTotal)}</div>
+          </div>
+        </div>
+        {periodPurchases.length ? (
+          <div className="mt-4 max-h-[32rem] divide-y overflow-y-auto rounded-xl border border-slate-200 bg-white">
+            {periodPurchases.map((row) => {
+              const productName =
+                row.product_name || row.product?.name || t("Product", "منتج");
+              return (
+                <div
+                  key={row.id}
+                  className="flex flex-wrap items-start justify-between gap-3 p-3"
+                >
+                  <div>
+                    <div className="font-semibold">
+                      {productName} × {row.quantity}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {formatDate(row.purchased_at || row.created_at, ar)}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {money(row.unit_price_lyd)} {t("per item", "للوحدة")}
+                    </div>
+                  </div>
+                  <div className="text-end">
+                    <div className="font-extrabold">{money(row.total_lyd)}</div>
+                    <div className="mt-1">
+                      <StatusBadge status={row.payment_status || "unpaid"} ar={ar} />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="mt-4 rounded-xl bg-slate-50 p-4 text-sm text-slate-500">
+            {t(
+              "No personal items are recorded in the selected period.",
+              "لا توجد منتجات شخصية مسجلة في الفترة المحددة.",
+            )}
+          </p>
+        )}
       </div>
     </section>
   );
