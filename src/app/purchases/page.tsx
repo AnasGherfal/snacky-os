@@ -65,11 +65,11 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
   return (
     <>
       <PageHeader
-        title="Purchases"
-        subtitle="Receive supplier stock and track every supplier payment separately."
+        title="Supplier Stock Purchases"
+        subtitle="Stock bought from suppliers for Snacky storage. Operator personal items are recorded separately in Operator Money."
         breadcrumbs={[
           { label: sourceModule === "finance" ? "Finance" : "Inventory", href: sourceModule === "finance" ? "/finance" : "/inventory" },
-          { label: "Purchases" },
+          { label: "Supplier Stock Purchases" },
         ]}
         action={canCreatePurchase ? <PrimaryButton href={`/purchases/new${moduleQuery}`}>New purchase</PrimaryButton> : null}
       />
@@ -80,7 +80,7 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
         </div>
       ) : null}
       {!purchases?.length ? (
-        <EmptyState title="No purchases yet" body="Create a purchase when stock arrives from a supplier." />
+        <EmptyState title="No supplier stock purchases yet" body="Create a supplier stock purchase when products arrive for Snacky storage. Operator personal items appear in Operator Money, not here." />
       ) : (
         <>
           <MobileCardList>
