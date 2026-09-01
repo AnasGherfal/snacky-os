@@ -21,6 +21,7 @@ const authz = read("src/lib/authz.ts");
 const ui = read("src/app/operator-money/OperatorMoneyLedgerClient.tsx");
 const teamMoneyPage = read("src/app/team/[id]/money/page.tsx");
 const teamProfilePage = read("src/app/team/[id]/page.tsx");
+const supplierPurchasesPage = read("src/app/purchases/page.tsx");
 
 test("operator money is organized into auditable Libya-month periods", () => {
   assert.match(migration, /create table public\.operator_money_periods/i);
@@ -155,6 +156,18 @@ test("managers can add an item to the selected reopened period with an audited d
   assert.match(api, /p_purchased_at:\s*eventTimestamp\(body\.date\)/i);
   assert.match(ui, /Item taken date/i);
   assert.match(ui, /purchaseDateForPeriod\(period\)/i);
+});
+
+test("operator personal items stay visible and explain their immediate stock effect", () => {
+  assert.match(ui, /Recorded personal items in this period/i);
+  assert.match(ui, /Storage was reduced immediately/i);
+  assert.match(ui, /payment only settles the debt/i);
+  assert.match(ui, /void choose\(selected\)/);
+  assert.match(ui, /loadRequestId = useRef\(0\)/);
+  assert.match(ui, /requestId !== loadRequestId\.current/);
+  assert.match(ui, /\[initialPersonId, locale\]/);
+  assert.match(supplierPurchasesPage, /Supplier Stock Purchases/);
+  assert.match(supplierPurchasesPage, /Operator personal items are recorded separately in Operator Money/);
 });
 
 test("team money has a dedicated owner-or-self authorized page", () => {
