@@ -5,7 +5,8 @@ import { ModuleTabsLayout } from "@/components/ModuleTabsLayout";
 import { SessionGuard } from "@/components/SessionGuard";
 import { Sidebar } from "@/components/Sidebar";
 import { Topbar } from "@/components/Topbar";
-import { AppRole } from "@/lib/authz";
+import { XyBackgroundSync } from "@/components/XyBackgroundSync";
+import { AppRole, hasPermission } from "@/lib/authz";
 
 type ShellProfile = {
   id: string;
@@ -19,8 +20,9 @@ type ShellProfile = {
   team_member_id: string | null;
 };
 
-export function ShellChrome({ children, profile }: { children: ReactNode; profile: ShellProfile }) {
+export function ShellChrome({ children, profile, pathname }: { children: ReactNode; profile: ShellProfile; pathname: string }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const canRefreshXy = pathname !== "/routes/new" && hasPermission(profile, "routes.create");
 
   return (
     <div className="app-shell flex h-dvh min-h-0 overflow-hidden bg-slate-100/70">
@@ -34,6 +36,7 @@ export function ShellChrome({ children, profile }: { children: ReactNode; profil
         </main>
       </div>
       <SessionGuard />
+      <XyBackgroundSync enabled={canRefreshXy} />
     </div>
   );
 }

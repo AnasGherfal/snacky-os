@@ -5,6 +5,8 @@ import test from "node:test";
 const syncSource = fs.readFileSync(new URL("../src/lib/xy-vms-sync.ts", import.meta.url), "utf8");
 const routeSource = fs.readFileSync(new URL("../src/app/routes/new/RouteCreateForm.tsx", import.meta.url), "utf8");
 const cronSource = fs.readFileSync(new URL("../src/app/api/cron/xy-vms/route.ts", import.meta.url), "utf8");
+const backgroundSyncSource = fs.readFileSync(new URL("../src/components/XyBackgroundSync.tsx", import.meta.url), "utf8");
+const shellSource = fs.readFileSync(new URL("../src/components/ShellChrome.tsx", import.meta.url), "utf8");
 const vercelConfig = JSON.parse(fs.readFileSync(new URL("../vercel.json", import.meta.url), "utf8"));
 
 test("XY catalogue changes only matched products and preserves both prices", () => {
@@ -20,6 +22,8 @@ test("configured XY lanes update the planogram and placeholders are skipped", ()
   assert.match(syncSource, /from\("machine_slots"\)\.upsert\(chunk, \{ onConflict: "machine_id,slot_code" \}\)/);
   assert.match(syncSource, /slot_code: lane\.slotCode/);
   assert.match(syncSource, /par_qty: capacity/);
+  assert.match(syncSource, /id: existingSlot\?\.id \?\? randomUUID\(\)/);
+  assert.doesNotMatch(syncSource, /\.\.\.\(existingSlot\?\.id \? \{ id: existingSlot\.id \} : \{\}\)/);
 });
 
 test("route creation refreshes and allocates XY quantities automatically", () => {
@@ -35,4 +39,12 @@ test("unattended XY sync requires a protected cron secret", () => {
   assert.match(cronSource, /process\.env\.CRON_SECRET/);
   assert.match(cronSource, /authorization/);
   assert.deepEqual(vercelConfig.crons, [{ path: "/api/cron/xy-vms", schedule: "0 4 * * *" }]);
+});
+
+test("authorized planners refresh XY in the background without pressing sync", () => {
+  assert.match(backgroundSyncSource, /refreshXyRoutePlanningDataAction\(\)/);
+  assert.match(backgroundSyncSource, /10 \* 60 \* 1000/);
+  assert.match(backgroundSyncSource, /visibilitychange/);
+  assert.match(shellSource, /hasPermission\(profile, "routes\.create"\)/);
+  assert.match(shellSource, /<XyBackgroundSync enabled=\{canRefreshXy\}/);
 });

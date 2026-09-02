@@ -35,5 +35,5 @@ async function requireShellProfile(pathname: string) {
 export async function RootAppShell({ children, pathname }: { children: ReactNode; pathname: string }) {
   const profile = await requireShellProfile(pathname);
 
-  return <ShellChrome profile={profile}>{children}</ShellChrome>;
+  return <ShellChrome profile={profile} pathname={pathname}>{children}</ShellChrome>;
 }
