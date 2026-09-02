@@ -1,4 +1,5 @@
 import "server-only";
+import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { logActivity } from "@/lib/activity-log";
 import type { UserProfile } from "@/lib/auth";
@@ -976,7 +977,10 @@ async function syncMachineGoodsWork(context: SyncContext) {
         if (productId) {
           const existingSlot = existingSlotByKey.get(`${machine.id}:${lane.slotCode}`);
           machineSlotUpserts.push({
-            ...(existingSlot?.id ? { id: existingSlot.id } : {}),
+            // Every row in a bulk PostgREST upsert must carry an id. If some rows
+            // include it and others omit it, the omitted values are normalized to
+            // null instead of using the database default.
+            id: existingSlot?.id ?? randomUUID(),
             machine_id: machine.id,
             slot_code: lane.slotCode,
             product_id: productId,
