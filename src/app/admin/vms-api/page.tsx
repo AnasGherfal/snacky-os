@@ -295,10 +295,10 @@ export default async function AdminVmsApiPage({ searchParams }: { searchParams: 
       <section className="surface-card mb-6">
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-base font-semibold text-slate-900">Manual Sync</h2>
-            <p className="mt-1 text-sm leading-6 text-slate-500">Buttons run on the Next.js server. Machine status is manual only for now, not polled.</p>
+            <h2 className="text-base font-semibold text-slate-900">Automatic XY Sync</h2>
+            <p className="mt-1 text-sm leading-6 text-slate-500">Machine lanes refresh automatically when an authorized planner opens Snacky OS, every 10 minutes while it remains open, and through the daily protected server job. The buttons below are emergency/manual tools only.</p>
           </div>
-          <span className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Server-side</span>
+          <span className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Automatic</span>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <SyncForm action={testXyOfficialApiAction} label="Test Official Signed API" primary />
