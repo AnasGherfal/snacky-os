@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --webpack",
-    "prebuild": "node --experimental-strip-types --test scripts/test-xy-vms-protocol.mjs scripts/test-xy-vms-data.mjs scripts/test-xy-vms-route-automation.mjs scripts/test-route-machine-catalog.mjs scripts/test-refill-forecast.mjs && node --test scripts/test-stop-carried-quantity.mjs && node --test scripts/test-route-stop-persistence-fix.mjs && node --experimental-strip-types --test scripts/test-stop-zero-return.mjs && node --experimental-strip-types --test scripts/test-route-inventory-summary.mjs && node --experimental-strip-types --test scripts/test-stop-runtime-polish.mjs && node --experimental-strip-types --test scripts/test-admin-missed-route-pickup.mjs && node --experimental-strip-types --test scripts/test-route-creation-guided-flow.mjs",
+    "prebuild": "node --experimental-strip-types --test scripts/test-xy-vms-protocol.mjs scripts/test-xy-vms-data.mjs scripts/test-xy-vms-safety.mjs scripts/test-xy-vms-route-automation.mjs scripts/test-route-machine-catalog.mjs scripts/test-refill-forecast.mjs && node --test scripts/test-stop-carried-quantity.mjs && node --test scripts/test-route-stop-persistence-fix.mjs && node --experimental-strip-types --test scripts/test-stop-zero-return.mjs && node --experimental-strip-types --test scripts/test-route-inventory-summary.mjs && node --experimental-strip-types --test scripts/test-stop-runtime-polish.mjs && node --experimental-strip-types --test scripts/test-admin-missed-route-pickup.mjs && node --experimental-strip-types --test scripts/test-route-creation-guided-flow.mjs",
     "build": "node scripts/next-build.mjs",
     "start": "next start",
     "lint": "eslint",
@@ -46,7 +46,7 @@
     "test:stop-zero-return": "node --experimental-strip-types --test scripts/test-stop-zero-return.mjs && node --experimental-strip-types --test scripts/test-route-inventory-summary.mjs && node --experimental-strip-types --test scripts/test-stop-runtime-polish.mjs",
     "smoke": "npm run test:stop-zero-return && npm run test:route-product-grouping && npm run test:route-inventory-summary && npm run test:critical-workflows && npm run smoke:auth-pages && npm run test:route-workflow && npm run test:route-inventory-regression && npm run test:vms-import-validation && npm run test:vms-sales-import-parser && npm run test:sales-coverage-cleanup && npm run test:finance-ledger",
     "test:vms-sales-import-parser": "node --experimental-strip-types --test scripts/test-vms-sales-import-parser.mjs",
-    "test:xy-vms-protocol": "node --experimental-strip-types --test scripts/test-xy-vms-protocol.mjs scripts/test-xy-vms-data.mjs scripts/test-xy-vms-route-automation.mjs",
+    "test:xy-vms-protocol": "node --experimental-strip-types --test scripts/test-xy-vms-protocol.mjs scripts/test-xy-vms-data.mjs scripts/test-xy-vms-safety.mjs scripts/test-xy-vms-route-automation.mjs",
     "test:sales-coverage-cleanup": "node --experimental-strip-types --test scripts/test-sales-coverage-cleanup.mjs"
   },
   "dependencies": {

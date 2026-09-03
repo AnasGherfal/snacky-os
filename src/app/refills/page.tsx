@@ -217,9 +217,9 @@ async function RefillsPageContent({ searchParams }: { searchParams: Promise<Sear
     ? await Promise.all([
         loadRefillRecommendations(supabase),
         supabase
-          .from("vms_stock_snapshots")
+          .from("latest_vms_stock_by_slot")
           .select("id", { count: "exact", head: true })
-          .eq("import_row_status", "imported"),
+          .eq("source_provider", "xy"),
         supabase
           .from("machine_refill_history")
           .select("id, legacy_refill_id, refill_at, machine_name, operator_email, fill_status, issues_found, issue_notes, machine_photo_url, machine_photo_path, linked_issue_id, machine:machines(name, machine_code, location:locations(id, name)), operator:team_members(full_name, email)")
@@ -243,14 +243,17 @@ async function RefillsPageContent({ searchParams }: { searchParams: Promise<Sear
         loadForecastMachines(supabase),
         safeSupabaseQuery<RefillStockHistory>({
           label: "refills.forecast.latest_vms_stock_by_slot",
-          promise: supabase.from("latest_vms_stock_by_slot").select("machine_id, product_id, slot_code, current_qty, capacity, captured_at"),
+          promise: supabase.from("latest_vms_stock_by_slot").select("machine_id, product_id, slot_code, current_qty, capacity, captured_at, import_batch_id").eq("source_provider", "xy"),
         }),
         safeSupabaseQuery<RefillStockHistory>({
           label: "refills.forecast.vms_stock_snapshots",
           promise: supabase
             .from("vms_stock_snapshots")
-            .select("machine_id, product_id, slot_code, current_qty, capacity, captured_at, import_batch_id, sync_run_id")
+            .select("machine_id, product_id, slot_code, current_qty, capacity, captured_at, import_batch_id, sync_run_id, batch:vms_import_batches!inner(status, deleted_at)")
+            .eq("source_provider", "xy")
             .eq("import_row_status", "imported")
+            .in("batch.status", ["imported", "imported_with_warnings"])
+            .is("batch.deleted_at", null)
             .gte("captured_at", forecastClock.since)
             .order("captured_at", { ascending: true })
             .limit(10000),
@@ -267,7 +270,18 @@ async function RefillsPageContent({ searchParams }: { searchParams: Promise<Sear
       ])
     : [{ data: null, error: null, count: 0 }, { count: 0, error: null }, { data: null, error: null }, { count: 0, error: null }, { count: 0, error: null }, { data: [], error: null, count: 0 }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }];
   const { data: recommendations, error } = recommendationsResult;
-  const rawRecommendationRows = (recommendations ?? []) as RefillRecommendationRow[];
+  const latestXyBatchIds = new Set(
+    (forecastLatestStockResult.data ?? [])
+      .map((row) => String((row as RefillStockHistory).import_batch_id ?? ""))
+      .filter(Boolean),
+  );
+  const loadedRecommendationRows = (recommendations ?? []) as RefillRecommendationRow[];
+  const canIdentifyRecommendationBatch = loadedRecommendationRows.some((row) => Boolean(row.import_batch_id));
+  const rawRecommendationRows = latestXyBatchIds.size > 0 && canIdentifyRecommendationBatch
+    ? loadedRecommendationRows.filter((row) => Boolean(row.import_batch_id && latestXyBatchIds.has(row.import_batch_id)))
+    : latestXyBatchIds.size > 0
+      ? loadedRecommendationRows
+      : [];
   const recommendationRows = supabase ? await attachRecommendationSources(supabase, rawRecommendationRows) : rawRecommendationRows;
   const productRecommendationRows = groupRecommendationsByProduct(recommendationRows);
   const hasVmsStock = Boolean((stockCountResult.count ?? 0) > 0);

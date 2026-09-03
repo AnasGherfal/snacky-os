@@ -290,26 +290,47 @@ export function RouteCreateForm({
     xyRefreshStarted.current = true;
     let cancelled = false;
 
-    void refreshXyRoutePlanningDataAction()
-      .then((result) => {
-        if (cancelled) return;
-        if (result.refreshed) {
-          setXyRefreshStatus("fresh");
-          setXyRefreshMessage(tr(locale, "XY lane quantities refreshed. Updating the route plan…", "تم تحديث كميات فتحات XY. يتم تحديث خطة الجولة…"));
-          router.refresh();
+    const refresh = async () => {
+      try {
+        for (let attempt = 0; attempt < 8; attempt += 1) {
+          const result = await refreshXyRoutePlanningDataAction();
+          if (cancelled) return;
+          if (result.outcome === "in_progress") {
+            setXyRefreshStatus("refreshing");
+            setXyRefreshMessage(tr(locale, "Another automatic XY refresh is running. Waiting for its verified quantities…", "تحديث XY تلقائي آخر قيد التشغيل. جارٍ انتظار الكميات المؤكدة…"));
+            await new Promise<void>((resolve) => window.setTimeout(resolve, 15_000));
+            if (cancelled) return;
+            continue;
+          }
+          if (result.outcome === "refreshed") {
+            setXyRefreshStatus("fresh");
+            setXyRefreshMessage(tr(locale, "XY lane quantities refreshed. Updating the route plan…", "تم تحديث كميات فتحات XY. يتم تحديث خطة الجولة…"));
+            router.refresh();
+            return;
+          }
+          const alreadyFresh = result.outcome === "already_fresh";
+          if (alreadyFresh && attempt > 0) {
+            setXyRefreshStatus("fresh");
+            setXyRefreshMessage(tr(locale, "XY lane quantities are current. Updating the route plan…", "كميات فتحات XY محدثة. يتم تحديث خطة الجولة…"));
+            router.refresh();
+            return;
+          }
+          setXyRefreshStatus(alreadyFresh ? "fresh" : "warning");
+          setXyRefreshMessage(alreadyFresh
+            ? tr(locale, "XY lane quantities are current.", "كميات فتحات XY محدثة.")
+            : tr(locale, "Could not refresh XY right now. The latest verified snapshot remains in use; stale data will not be auto-applied.", "تعذر تحديث XY الآن. سيستمر استخدام آخر لقطة مؤكدة، ولن يتم تطبيق البيانات القديمة تلقائيًا."));
           return;
         }
-        const alreadyFresh = String(result.skipped ?? "").toLowerCase().includes("already fresh");
-        setXyRefreshStatus(alreadyFresh ? "fresh" : "warning");
-        setXyRefreshMessage(alreadyFresh
-          ? tr(locale, "XY lane quantities are current.", "كميات فتحات XY محدثة.")
-          : tr(locale, "Could not refresh XY right now. The latest verified snapshot remains in use; stale data will not be auto-applied.", "تعذر تحديث XY الآن. سيستمر استخدام آخر لقطة مؤكدة، ولن يتم تطبيق البيانات القديمة تلقائيًا."));
-      })
-      .catch(() => {
+        setXyRefreshStatus("warning");
+        setXyRefreshMessage(tr(locale, "XY is still refreshing. Reload this page shortly; stale quantities will not be auto-applied.", "لا يزال تحديث XY قيد التشغيل. أعد تحميل الصفحة بعد قليل؛ لن يتم تطبيق الكميات القديمة تلقائيًا."));
+      } catch {
         if (cancelled) return;
         setXyRefreshStatus("warning");
         setXyRefreshMessage(tr(locale, "Could not refresh XY right now. The latest verified snapshot remains in use; stale data will not be auto-applied.", "تعذر تحديث XY الآن. سيستمر استخدام آخر لقطة مؤكدة، ولن يتم تطبيق البيانات القديمة تلقائيًا."));
-      });
+      }
+    };
+
+    void refresh();
 
     return () => {
       cancelled = true;

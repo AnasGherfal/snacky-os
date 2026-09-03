@@ -46,6 +46,7 @@ type RevenueDailyRow = {
 type RefillRow = {
   machine_id: string | null;
   machine_name: string | null;
+  import_batch_id?: string | null;
   product_name: string | null;
   current_qty: number | string | null;
   capacity: number | string | null;
@@ -599,7 +600,7 @@ async function getDashboardData() {
       label: "refill_recommendations current",
       promise: supabase
         .from("refill_recommendations")
-        .select("machine_id, machine_name, product_name, current_qty, capacity, available_storage_qty, suggested_qty, final_qty_to_take, priority")
+        .select("machine_id, machine_name, import_batch_id, product_name, current_qty, capacity, available_storage_qty, suggested_qty, final_qty_to_take, priority")
         .limit(4000),
       fallback: [],
       errors,
@@ -616,7 +617,8 @@ async function getDashboardData() {
       label: "latest_vms_stock_by_slot refill forecast",
       promise: supabase
         .from("latest_vms_stock_by_slot")
-        .select("machine_id, product_id, slot_code, current_qty, capacity, captured_at"),
+        .select("machine_id, product_id, slot_code, current_qty, capacity, captured_at, import_batch_id")
+        .eq("source_provider", "xy"),
       fallback: [],
       errors,
     }),
@@ -625,8 +627,11 @@ async function getDashboardData() {
       label: "vms_stock_snapshots refill trend",
       promise: supabase
         .from("vms_stock_snapshots")
-        .select("machine_id, product_id, slot_code, current_qty, capacity, captured_at, import_batch_id, sync_run_id")
+        .select("machine_id, product_id, slot_code, current_qty, capacity, captured_at, import_batch_id, sync_run_id, batch:vms_import_batches!inner(status, deleted_at)")
+        .eq("source_provider", "xy")
         .eq("import_row_status", "imported")
+        .in("batch.status", ["imported", "imported_with_warnings"])
+        .is("batch.deleted_at", null)
         .gte("captured_at", forecastClock.since)
         .order("captured_at", { ascending: true })
         .limit(10000),
@@ -669,8 +674,14 @@ async function getDashboardData() {
     safeFinanceHealthForDashboard(supabase, errors),
   ]);
 
+  const latestXyBatchIds = new Set(
+    forecastLatestStock.data.map((row) => textValue(row.import_batch_id)).filter((id): id is string => Boolean(id)),
+  );
+  const xyRefillRows = latestXyBatchIds.size > 0
+    ? refillRows.data.filter((row) => row.import_batch_id && latestXyBatchIds.has(row.import_batch_id))
+    : [];
   const storageCoverageByMachine = new Map<string, { machineId: string; requestedUnits: number; fillableUnits: number }>();
-  refillRows.data.forEach((row) => {
+  xyRefillRows.forEach((row) => {
     const machineId = textValue(row.machine_id);
     if (!machineId) return;
     const current = storageCoverageByMachine.get(machineId) ?? { machineId, requestedUnits: 0, fillableUnits: 0 };
@@ -700,7 +711,7 @@ async function getDashboardData() {
       routeRows: routeRows.data,
       recentIssues: recentIssues.data,
       criticalIssueCount,
-      refillRows: refillRows.data,
+      refillRows: xyRefillRows,
       refillForecasts,
       missingCostRows: missingCostRows.data,
       vmsBatchRows: vmsBatchRows.data,

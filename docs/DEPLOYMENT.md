@@ -131,7 +131,14 @@ To add the XY variables in an existing Vercel project:
 6. Go to **Deployments**, open the latest production deployment, and choose **Redeploy** so the server receives the new values.
 7. Sign in to Snacky OS as owner/admin, open `/admin/vms-api`, and run **Test official API**. A healthy connection reports XY code `1` and a non-zero machine row count.
 
-Snacky OS refreshes machine lane stock automatically when an authorized planner opens **Create route** and the last XY stock snapshot is older than 10 minutes. Vercel also calls `/api/cron/xy-vms` once each day to refresh machines, confirmed product prices, and lane stock without anyone pressing Sync. `CRON_SECRET` must be present in the Vercel Production environment; Vercel sends it as the protected bearer token for the cron request.
+Snacky OS refreshes XY data automatically when an authorized planner opens the dashboard, refills, machine, inventory, or **Create route** screens. If a refresh changes the active XY snapshot, the visible page refreshes itself; nobody needs to press Sync. A Supabase Cron job also calls `/api/cron/xy-vms` hourly when nobody has the app open. The daily Vercel cron remains as a second fallback.
+
+The Supabase scheduler requires migration `20260902150000_xy_vms_durable_scheduler.sql` and these two Vault entries:
+
+- `xy_vms_scheduler_url`: the production `/api/cron/xy-vms` URL.
+- `xy_vms_scheduler_token`: an independent random 256-bit token. Never reuse the XY vendor key or secret.
+
+Only the scheduler token's SHA-256 digest is present in the Next.js endpoint source. The plaintext token remains in Supabase Vault. After rotating it, update the digest and redeploy the app before re-enabling the cron job. `CRON_SECRET` must still be present in Vercel Production for Vercel's own daily cron request.
 
 XY is authoritative for configured machine lanes, lane product, lane capacity, current machine quantity, XY purchase price, and XY selling price. Snacky OS remains authoritative for warehouse inventory and ledger movements. Unmatched XY products stay in mapping review and do not become active Snacky products automatically.
 

@@ -63,6 +63,8 @@ export async function testXyWebDashboardAction() {
 
 export async function refreshXyRoutePlanningDataAction() {
   const profile = await getCurrentProfile();
-  if (!profile || !hasPermission(profile, "routes.create")) return { refreshed: false, skipped: "Not authorized.", results: [] };
+  if (!profile || !hasPermission(profile, "routes.create")) {
+    return { outcome: "unavailable" as const, refreshed: false, skipped: "Not authorized.", results: [] };
+  }
   return ensureFreshXyRoutePlanningData({ profile });
 }

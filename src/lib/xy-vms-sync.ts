@@ -6,6 +6,7 @@ import type { UserProfile } from "@/lib/auth";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { XyApiError, assertXyVmsReady, buildXyRequestDebug, callXyApi, callXyApiRaw, getXyVmsConfig, type XyApiRawResult, type XyRequestDebug, type XyVmsConfig, type XyVmsEndpoint, type XyVmsParams } from "@/lib/xy-vms-api";
 import { classifyXyLane, xyProductIdentity } from "@/lib/xy-vms-data";
+import { assessXyLaneSnapshot } from "@/lib/xy-vms-safety";
 
 type SupabaseServer = NonNullable<ReturnType<typeof getSupabaseAdminClient>>;
 type SyncRunStatus = "running" | "completed" | "completed_with_warnings" | "failed";
@@ -21,6 +22,15 @@ type RoutePlanningRefreshOptions = SyncOptions & {
   productMaxAgeMs?: number;
   machineMaxAgeMs?: number;
 };
+
+type RoutePlanningRefreshOutcome = "refreshed" | "already_fresh" | "in_progress" | "unavailable" | "failed";
+
+class XySyncAlreadyRunningError extends Error {
+  constructor() {
+    super("An XY synchronization is already running.");
+    this.name = "XySyncAlreadyRunningError";
+  }
+}
 
 type SyncContext = {
   supabase: SupabaseServer;
@@ -492,6 +502,7 @@ async function createSyncRun(supabase: SupabaseServer, syncType: SyncType, profi
     .select("id")
     .single();
 
+  if (error?.code === "23505") throw new XySyncAlreadyRunningError();
   if (error || !data?.id) throw new Error(`Could not create XY sync run: ${error?.message ?? "missing id"}`);
 
   await logActivity({
@@ -833,13 +844,20 @@ async function createStockImportBatch(context: SyncContext) {
   return data.id as string;
 }
 
-async function finishStockImportBatch(context: SyncContext, batchId: string, stats: SyncStats) {
+async function finishStockImportBatch(
+  context: SyncContext,
+  batchId: string,
+  stats: SyncStats,
+  activationEligible: boolean,
+) {
   const importedAt = new Date().toISOString();
-  const status: "failed" | "imported" =
-    stats.rowsImported > 0
-      ? "imported"
-      : (stats.errors.length ? "failed" : "imported");
-  const shouldActivate = stats.rowsImported > 0;
+  const status: "failed" | "partially_imported" | "imported" | "imported_with_warnings" =
+    activationEligible && stats.rowsImported > 0
+      ? (stats.errors.length ? "imported_with_warnings" : "imported")
+      : stats.rowsImported > 0
+        ? "partially_imported"
+        : "failed";
+  const shouldActivate = activationEligible && stats.rowsImported > 0;
   const { error } = await context.supabase
     .from("vms_import_batches")
     .update({
@@ -864,6 +882,7 @@ async function finishStockImportBatch(context: SyncContext, batchId: string, sta
     .in("report_type", ["stock", "machine_stock_snapshot"])
     .in("status", ["imported", "imported_with_warnings", "partially_imported"])
     .eq("is_active", true)
+    .is("deleted_at", null)
     .neq("id", batchId);
   if (activeBatchError) {
     console.warn("[xy-vms-sync] Could not load older active VMS stock batches", { batchId, error: activeBatchError });
@@ -888,12 +907,24 @@ async function syncMachineGoodsWork(context: SyncContext) {
   const stats = emptyStats();
   const machines = await loadXyMachines(context.supabase);
   const resolver = await loadProductResolver(context.supabase);
+  const { data: displayedStockRows, error: displayedStockError } = await context.supabase
+    .from("latest_vms_stock_by_slot")
+    .select("machine_id")
+    .eq("source_provider", "xy")
+    .limit(1000);
+  if (displayedStockError) throw new Error(`Could not verify the currently displayed XY machine coverage: ${displayedStockError.message}`);
+  const previouslyDisplayedMachineIds = new Set(
+    (displayedStockRows ?? []).map((row) => String(row.machine_id ?? "")).filter(Boolean),
+  );
   const batchId = await createStockImportBatch(context);
   const snapshots: JsonRecord[] = [];
   const machineSlotUpserts: JsonRecord[] = [];
+  const snapshotMachineIds = new Set<string>();
   let rowNumber = 0;
   let placeholderRows = 0;
   let invalidLaneRows = 0;
+  let successfulMachineFetches = 0;
+  const failedMachineIds: string[] = [];
 
   const machineIds = machines.map((machine) => machine.id);
   const { data: existingSlots, error: existingSlotsError } = await context.supabase
@@ -911,6 +942,7 @@ async function syncMachineGoodsWork(context: SyncContext) {
         shbh: context.config.merchantId,
         jqbh: machine.vms_machine_id,
       });
+      successfulMachineFetches += 1;
       const rows = arrayify(response.data);
       stats.rowCount += rows.length;
 
@@ -973,6 +1005,7 @@ async function syncMachineGoodsWork(context: SyncContext) {
           tray_status: text(row, "hdzt") || null,
           metadata: { provider: "xy", raw: row },
         });
+        snapshotMachineIds.add(machine.id);
 
         if (productId) {
           const existingSlot = existingSlotByKey.get(`${machine.id}:${lane.slotCode}`);
@@ -994,15 +1027,35 @@ async function syncMachineGoodsWork(context: SyncContext) {
 
       stats.responseSummary[machine.vms_machine_id] = { rows: rows.length, message: response.message };
     } catch (error) {
+      failedMachineIds.push(machine.vms_machine_id);
       stats.errors.push(`Machine ${machine.vms_machine_id}: ${safeErrorMessage(error)}`);
     }
+  }
+
+  const activation = assessXyLaneSnapshot({
+    configuredMachineCount: machines.length,
+    successfulMachineFetches,
+    failedMachineIds,
+    invalidLaneRows,
+    previouslyDisplayedMachineIds: Array.from(previouslyDisplayedMachineIds),
+    snapshotMachineIds: Array.from(snapshotMachineIds),
+    snapshotCount: snapshots.length,
+  });
+  const { activationEligible, minimumMachineCoverage, missingPreviouslyDisplayedMachines } = activation;
+  if (missingPreviouslyDisplayedMachines.length > 0) {
+    stats.errors.push(
+      `XY returned no configured lanes for ${missingPreviouslyDisplayedMachines.length} previously displayed machine(s); the previous verified snapshot remains active.`,
+    );
+  }
+  if (!activationEligible && failedMachineIds.length === 0 && invalidLaneRows === 0 && missingPreviouslyDisplayedMachines.length === 0) {
+    stats.errors.push("XY returned no complete lane snapshot; the previous verified snapshot remains active.");
   }
 
   if (snapshots.length) {
     await insertChunks(context.supabase, "vms_stock_snapshots", snapshots);
     stats.rowsImported += snapshots.length;
   }
-  if (machineSlotUpserts.length) {
+  if (activationEligible && machineSlotUpserts.length) {
     for (let index = 0; index < machineSlotUpserts.length; index += 200) {
       const chunk = machineSlotUpserts.slice(index, index + 200);
       const { error } = await context.supabase.from("machine_slots").upsert(chunk, { onConflict: "machine_id,slot_code" });
@@ -1013,12 +1066,21 @@ async function syncMachineGoodsWork(context: SyncContext) {
 
   stats.responseSummary.laneValidation = {
     configured_rows: snapshots.length,
-    planogram_rows_updated: machineSlotUpserts.length,
+    planogram_rows_updated: activationEligible ? machineSlotUpserts.length : 0,
     placeholder_rows_skipped: placeholderRows,
     invalid_rows_skipped: invalidLaneRows,
+    machine_fetches_expected: machines.length,
+    machine_fetches_succeeded: successfulMachineFetches,
+    machine_fetches_failed: failedMachineIds,
+    previously_displayed_machines: previouslyDisplayedMachineIds.size,
+    snapshot_machines: snapshotMachineIds.size,
+    minimum_machine_coverage: minimumMachineCoverage,
+    missing_previously_displayed_machines: missingPreviouslyDisplayedMachines,
+    activation_blockers: activation.blockers,
+    activation_eligible: activationEligible,
   };
 
-  await finishStockImportBatch(context, batchId, stats);
+  await finishStockImportBatch(context, batchId, stats, activationEligible);
   return stats;
 }
 
@@ -1235,22 +1297,44 @@ function completedRecently(completedAt: unknown, maxAgeMs: number, now = Date.no
   return Number.isFinite(timestamp) && now - timestamp <= maxAgeMs;
 }
 
+async function latestDisplayedXyStockSnapshot(supabase: SupabaseServer) {
+  const { data: snapshot, error: snapshotError } = await supabase
+    .from("latest_vms_stock_by_slot")
+    .select("import_batch_id, captured_at, source_provider")
+    .eq("source_provider", "xy")
+    .order("captured_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (snapshotError) throw new Error(`Could not check the XY stock displayed by the dashboard: ${snapshotError.message}`);
+  return snapshot;
+}
+
 export async function ensureFreshXyRoutePlanningData({
   profile = null,
   stockMaxAgeMs = 10 * 60 * 1000,
   productMaxAgeMs = 24 * 60 * 60 * 1000,
   machineMaxAgeMs = 6 * 60 * 60 * 1000,
-}: RoutePlanningRefreshOptions = {}) {
+}: RoutePlanningRefreshOptions = {}): Promise<{
+  outcome: RoutePlanningRefreshOutcome;
+  refreshed: boolean;
+  skipped: string | null;
+  results: Array<{ type: string; status: string }>;
+}> {
   const supabase = getSupabaseAdminClient();
-  if (!supabase) return { refreshed: false, skipped: "Supabase is not configured.", results: [] };
+  if (!supabase) {
+    return { outcome: "unavailable", refreshed: false, skipped: "Supabase is not configured.", results: [] };
+  }
 
-  const { data: recentRuns, error } = await supabase
-    .from("vms_sync_runs")
-    .select("sync_type, status, started_at, completed_at, rows_imported, rows_updated")
-    .eq("provider", "xy")
-    .in("sync_type", ["machines", "products", "machine_goods", "all"])
-    .order("started_at", { ascending: false })
-    .limit(30);
+  const [{ data: recentRuns, error }, activeStockSnapshot] = await Promise.all([
+    supabase
+      .from("vms_sync_runs")
+      .select("sync_type, status, started_at, completed_at, rows_imported, rows_updated")
+      .eq("provider", "xy")
+      .in("sync_type", ["machines", "products", "machine_goods", "all"])
+      .order("started_at", { ascending: false })
+      .limit(30),
+    latestDisplayedXyStockSnapshot(supabase),
+  ]);
   if (error) throw new Error(`Could not check XY sync freshness: ${error.message}`);
 
   const rows = recentRuns ?? [];
@@ -1259,37 +1343,49 @@ export async function ensureFreshXyRoutePlanningData({
     && String(row.status) === "running"
     && completedRecently(row.started_at, 5 * 60 * 1000)
   ));
-  if (activeStockSync) return { refreshed: false, skipped: "XY stock refresh is already running.", results: [] };
+  if (activeStockSync) {
+    return { outcome: "in_progress", refreshed: false, skipped: "XY stock refresh is already running.", results: [] };
+  }
 
   const latestCompleted = (syncTypes: string[]) => rows.find((row) => (
     syncTypes.includes(String(row.sync_type))
     && ["completed", "completed_with_warnings"].includes(String(row.status))
     && Number(row.rows_imported ?? 0) + Number(row.rows_updated ?? 0) > 0
   ));
-  const latestStock = latestCompleted(["machine_goods", "all"]);
-  if (latestStock && completedRecently(latestStock.completed_at, stockMaxAgeMs)) {
-    return { refreshed: false, skipped: "XY lane stock is already fresh.", results: [] };
+  if (activeStockSnapshot && completedRecently(activeStockSnapshot.captured_at, stockMaxAgeMs)) {
+    return { outcome: "already_fresh", refreshed: false, skipped: "XY lane stock is already fresh.", results: [] };
   }
 
   const results: Array<{ type: string; status: string }> = [];
-  const latestMachines = latestCompleted(["machines", "all"]);
-  if (!latestMachines || !completedRecently(latestMachines.completed_at, machineMaxAgeMs)) {
-    const result = await syncXyMachines({ profile });
-    results.push({ type: "machines", status: result.status });
-  }
+  try {
+    const latestMachines = latestCompleted(["machines", "all"]);
+    if (!latestMachines || !completedRecently(latestMachines.completed_at, machineMaxAgeMs)) {
+      const result = await syncXyMachines({ profile });
+      results.push({ type: "machines", status: result.status });
+    }
 
-  const latestProducts = latestCompleted(["products", "all"]);
-  if (!latestProducts || !completedRecently(latestProducts.completed_at, productMaxAgeMs)) {
-    const result = await syncXyProducts({ profile });
-    results.push({ type: "products", status: result.status });
-  }
+    const latestProducts = latestCompleted(["products", "all"]);
+    if (!latestProducts || !completedRecently(latestProducts.completed_at, productMaxAgeMs)) {
+      const result = await syncXyProducts({ profile });
+      results.push({ type: "products", status: result.status });
+    }
 
-  const stockResult = await syncXyMachineGoods({ profile });
-  results.push({ type: "machine_goods", status: stockResult.status });
-  const refreshed = stockResult.rowsImported > 0 && stockResult.status !== "failed";
-  return {
-    refreshed,
-    skipped: refreshed ? null : "XY did not return an importable lane snapshot.",
-    results,
-  };
+    const stockResult = await syncXyMachineGoods({ profile });
+    results.push({ type: "machine_goods", status: stockResult.status });
+    const refreshedSnapshot = await latestDisplayedXyStockSnapshot(supabase);
+    const refreshed = stockResult.status !== "failed"
+      && Boolean(refreshedSnapshot)
+      && completedRecently(refreshedSnapshot?.captured_at, stockMaxAgeMs);
+    return {
+      outcome: refreshed ? "refreshed" : stockResult.status === "failed" ? "failed" : "unavailable",
+      refreshed,
+      skipped: refreshed ? null : "XY did not return an importable lane snapshot.",
+      results,
+    };
+  } catch (error) {
+    if (error instanceof XySyncAlreadyRunningError) {
+      return { outcome: "in_progress", refreshed: false, skipped: error.message, results };
+    }
+    throw error;
+  }
 }
