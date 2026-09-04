@@ -151,11 +151,13 @@ async function repairMissingRouteStockLines({
 
 export async function loadRestockPriorityData(supabase: SupabaseLike): Promise<RestockPriorityLoadResult> {
   const errors: Record<string, string> = {};
-  const { products, usedFallback } = await loadProducts(supabase, errors);
-  // The calling pages are already authorized. Use the server-only client for
-  // the authoritative ledger aggregate so per-row RLS work cannot turn a slow
-  // or failed stock read into an empty result.
+  // Every caller authorizes its page before reaching this server-only helper.
+  // Use one protected read client for the internal operational aggregates so
+  // security-invoker views do not repeat profile-policy lookups thousands of
+  // times and hit PostgREST's statement timeout. If the protected client is
+  // unavailable, the caller-scoped client and its RLS policies remain valid.
   const inventoryReadClient = getSupabaseAdminClient() ?? supabase;
+  const { products, usedFallback } = await loadProducts(inventoryReadClient, errors);
 
   const [storage, recommendations, routeNeeds, routeStopNeeds, machineSlots, vmsStock, sales] = await Promise.all([
     safeSupabaseQuery<RestockStorageRow>({
@@ -164,27 +166,27 @@ export async function loadRestockPriorityData(supabase: SupabaseLike): Promise<R
     }),
     safeSupabaseQuery<any>({
       label: "restock-priority.refill_recommendations",
-      promise: supabase.from("refill_recommendations").select("product_id, product_name, machine_id, machine_name, current_qty, suggested_qty, final_qty_to_take, priority").limit(10000),
+      promise: inventoryReadClient.from("refill_recommendations").select("product_id, product_name, machine_id, machine_name, current_qty, suggested_qty, final_qty_to_take, priority").limit(10000),
     }),
     safeSupabaseQuery<any>({
       label: "restock-priority.route_stock_lines.active",
-      promise: supabase.from("route_stock_lines").select("route_id, product_id, planned_qty, picked_qty, routes!inner(status, route_date)").limit(10000),
+      promise: inventoryReadClient.from("route_stock_lines").select("route_id, product_id, planned_qty, picked_qty, routes!inner(status, route_date)").limit(10000),
     }),
     safeSupabaseQuery<any>({
       label: "restock-priority.route_stop_items.active-fallback",
-      promise: supabase.from("route_stop_items").select("route_id, product_id, planned_quantity, routes!inner(status, route_date)").limit(20000),
+      promise: inventoryReadClient.from("route_stop_items").select("route_id, product_id, planned_quantity, routes!inner(status, route_date)").limit(20000),
     }),
     safeSupabaseQuery<any>({
       label: "restock-priority.machine_slots",
-      promise: supabase.from("machine_slots").select("product_id, machine_id, active, machine:machines!machine_slots_machine_id_fkey(id, name, machine_code, status)").eq("active", true).limit(10000),
+      promise: inventoryReadClient.from("machine_slots").select("product_id, machine_id, active, machine:machines!machine_slots_machine_id_fkey(id, name, machine_code, status)").eq("active", true).limit(10000),
     }),
     safeSupabaseQuery<any>({
       label: "restock-priority.latest_vms_stock_by_slot",
-      promise: supabase.from("latest_vms_stock_by_slot").select("product_id, machine_id, current_qty, capacity").limit(10000),
+      promise: inventoryReadClient.from("latest_vms_stock_by_slot").select("product_id, machine_id, current_qty, capacity").limit(10000),
     }),
     safeSupabaseQuery<RestockSalesRow>({
       label: "restock-priority.kpi_product_monthly",
-      promise: supabase.from("kpi_product_monthly").select("product_id, product_name, sales_month, units_sold, stock_velocity_units_per_day").order("sales_month", { ascending: false }).limit(2000),
+      promise: inventoryReadClient.from("kpi_product_monthly").select("product_id, product_name, sales_month, units_sold, stock_velocity_units_per_day").order("sales_month", { ascending: false }).limit(2000),
     }),
   ]);
 

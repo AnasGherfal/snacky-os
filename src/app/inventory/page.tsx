@@ -10,7 +10,7 @@ import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagi
 import { type RestockPriorityItem } from "@/lib/restock-priority";
 import { loadRestockPriorityData } from "@/lib/restock-priority-data";
 import { isRouteReservationStatus } from "@/lib/route-workflow";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
 
@@ -182,9 +182,13 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
       </>
     );
   }
+  // This page has already enforced inventory access. Use the protected server
+  // client for the operational ledger reads so large security-invoker views do
+  // not evaluate the same profile policy once per movement row.
+  const inventoryReadClient = getSupabaseAdminClient() ?? supabase;
 
   const canSeeCost = canViewFinancials(userContext);
-  const restockResult = await loadRestockPriorityData(supabase);
+  const restockResult = await loadRestockPriorityData(inventoryReadClient);
   if (!restockResult.storageLoaded) {
     return (
       <ErrorState
@@ -200,25 +204,25 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     { data: packagingRowsData, error: packagingError },
     { data: routeReservationsData, error: routeReservationsError },
   ] = await Promise.all([
-    supabase
+    inventoryReadClient
       .from("current_inventory_by_location")
       .select("product_id, product_name, location_type, location_id, location_name, quantity_on_hand")
       .eq("location_type", "operator_bag")
       .order("location_name")
       .order("product_name")
       .limit(2000),
-    supabase
+    inventoryReadClient
       .from("inventory_movements")
       .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, related_route_id, created_at, product:products(name)")
       .order("created_at", { ascending: false })
       .limit(250),
-    supabase
+    inventoryReadClient
       .from("products")
       .select("id, name, category, case_quantity")
       .eq("active", true)
       .order("name")
       .limit(5000),
-    supabase
+    inventoryReadClient
       .from("route_stock_lines")
       .select("route_id, product_id, planned_qty, picked_qty, routes!inner(id, route_date, status)")
       .limit(10000),
