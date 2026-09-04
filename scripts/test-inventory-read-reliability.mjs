@@ -3,6 +3,8 @@ import fs from "node:fs";
 import test from "node:test";
 
 const inventoryPage = fs.readFileSync(new URL("../src/app/inventory/page.tsx", import.meta.url), "utf8");
+const newMovementPage = fs.readFileSync(new URL("../src/app/inventory/movements/new/page.tsx", import.meta.url), "utf8");
+const stockMovementForm = fs.readFileSync(new URL("../src/components/StockMovementForm.tsx", import.meta.url), "utf8");
 const restockLoader = fs.readFileSync(new URL("../src/lib/restock-priority-data.ts", import.meta.url), "utf8");
 const rlsMigration = fs.readFileSync(new URL("../supabase/migrations/20260904082626_optimize_inventory_rls_reads.sql", import.meta.url), "utf8");
 
@@ -12,6 +14,14 @@ test("authorized inventory pages use protected server reads for expensive aggreg
   assert.match(inventoryPage, /inventoryReadClient\s*\.from\("inventory_movements"\)/);
   assert.match(restockLoader, /loadProducts\(inventoryReadClient, errors\)/);
   assert.match(restockLoader, /inventoryReadClient\.from\("refill_recommendations"\)/);
+  assert.match(newMovementPage, /const inventoryReadClient = getSupabaseAdminClient\(\) \?\? supabase/);
+  assert.match(newMovementPage, /inventoryReadClient\.from\("current_inventory_by_location"\)/);
+  assert.match(newMovementPage, /const stockError = productsResult\.error \?\? storageResult\.error/);
+  assert.match(newMovementPage, /No product has been shown as zero/);
+  assert.match(stockMovementForm, /fromLocation\.startsWith\("storage:"\).*selectedProduct.*!adminOverride/s);
+  assert.match(stockMovementForm, /No verified storage stock is available for this product/);
+  assert.match(stockMovementForm, /setSimpleQuantity\(adjustmentType === "set_exact" \? Math\.max\(0, Math\.floor\(product\.storageQty\)\) : 1\)/);
+  assert.doesNotMatch(stockMovementForm, /max \|\| next/);
 });
 
 test("inventory RLS caches row-independent authorization checks", () => {
