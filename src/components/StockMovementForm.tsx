@@ -204,6 +204,10 @@ export function StockMovementForm({
     setSelectedProductId(product.id);
     setQuery(product.name);
     setMissingProduct("");
+    setSimpleQuantity(adjustmentType === "set_exact" ? Math.max(0, Math.floor(product.storageQty)) : 1);
+    if (fromLocation.startsWith("storage:") && !adminOverride) {
+      setQuantity(Math.min(Math.max(1, quantity), Math.max(0, Math.floor(product.storageQty))));
+    }
   };
 
   const handleBarcode = () => {
@@ -219,9 +223,19 @@ export function StockMovementForm({
   };
 
   const setSafeQuantity = (next: number) => {
-    const max = selectedProduct?.storageQty ?? Number.MAX_SAFE_INTEGER;
-    setQuantity(Math.max(1, Math.min(next, max || next)));
+    const requested = Math.max(1, Math.floor(next));
+    if (fromLocation.startsWith("storage:") && selectedProduct && !adminOverride) {
+      setQuantity(Math.min(requested, Math.max(0, Math.floor(selectedProduct.storageQty))));
+      return;
+    }
+    setQuantity(requested);
   };
+
+  const storageSourceUnavailable = mode === "advanced"
+    && fromLocation.startsWith("storage:")
+    && Boolean(selectedProduct)
+    && (selectedProduct?.storageQty ?? 0) <= 0
+    && !adminOverride;
 
   const quickAddAction = (formData: FormData) => {
     startTransition(async () => {
@@ -311,7 +325,11 @@ export function StockMovementForm({
           {mode === "simple" ? (
             <>
               <FormField label="Adjustment type" required>
-                <select name="adjustment_type" required className="field-input" value={adjustmentType} onChange={(event) => setAdjustmentType(event.target.value as typeof adjustmentType)}>
+                <select name="adjustment_type" required className="field-input" value={adjustmentType} onChange={(event) => {
+                  const nextType = event.target.value as typeof adjustmentType;
+                  setAdjustmentType(nextType);
+                  setSimpleQuantity(nextType === "set_exact" ? Math.max(0, Math.floor(selectedProduct?.storageQty ?? 0)) : 1);
+                }}>
                   <option value="set_exact">Set exact count</option>
                   <option value="add">Add quantity</option>
                   <option value="remove">Remove quantity</option>
@@ -348,6 +366,7 @@ export function StockMovementForm({
                   <input type="number" min="1" value={quantity} onChange={(event) => setSafeQuantity(Number(event.target.value) || 1)} className="field-input w-28" />
                 </div>
                 {selectedProduct ? <p className="mt-1 text-xs text-slate-500">Current storage quantity: {selectedProduct.storageQty}</p> : null}
+                {storageSourceUnavailable ? <p className="mt-1 text-xs font-medium text-rose-700">No verified storage stock is available for this product.</p> : null}
               </FormField>
               <FormField label="Reason" required>
                 <select name="movement_type" required className="field-input" value={movementType} onChange={(event) => setMovementType(event.target.value)}>
@@ -368,7 +387,13 @@ export function StockMovementForm({
       {mode === "advanced" ? <FormSection title="From and to" description="Stock must move between explicit locations so balances remain audit-friendly.">
         <div className="grid gap-4 md:grid-cols-2">
           <FormField label="From location/type" required>
-            <select name="from_location" required className="field-input" value={fromLocation} onChange={(event) => setFromLocation(event.target.value)}>
+            <select name="from_location" required className="field-input" value={fromLocation} onChange={(event) => {
+              const nextLocation = event.target.value;
+              setFromLocation(nextLocation);
+              if (nextLocation.startsWith("storage:") && selectedProduct && !adminOverride) {
+                setQuantity(Math.min(Math.max(1, quantity), Math.max(0, Math.floor(selectedProduct.storageQty))));
+              }
+            }}>
               <option value="">Select source</option>
               <optgroup label="Storage">{storages.map((storage) => <option key={storage.id} value={optionValue("storage", storage.id)}>Storage - {storage.name}</option>)}</optgroup>
               <optgroup label="Operator bags">{operators.map((operator) => <option key={operator.id} value={optionValue("operator_bag", operator.id)}>Operator bag - {operator.full_name}</option>)}</optgroup>
@@ -403,7 +428,7 @@ export function StockMovementForm({
       </FormSection>
 
       <div className="flex flex-col gap-3 sm:flex-row">
-        <button className="btn-primary" disabled={!selectedProductId}>{mode === "simple" ? "Save adjustment" : "Create movement"}</button>
+        <button className="btn-primary" disabled={!selectedProductId || storageSourceUnavailable || (mode === "simple" && adjustmentType !== "set_exact" && simpleQuantity < 1)}>{mode === "simple" ? "Save adjustment" : "Create movement"}</button>
         <SecondaryButton href="/inventory">Cancel</SecondaryButton>
       </div>
 
