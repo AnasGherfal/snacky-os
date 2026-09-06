@@ -65,6 +65,17 @@ export const ACTIVE_ROUTE_STATUSES = [
   ROUTE_PICKUP_CONFIRMED_STATUS,
 ] as const;
 
+// Exact statuses accepted by the atomic terminal inventory RPC. Keep this
+// narrower than the general legacy-active family: partially-completed legacy
+// routes still need an explicit repair before they can be finalized safely.
+export const ROUTE_INVENTORY_FINALIZABLE_STATUSES = [
+  ROUTE_IN_PROGRESS_STATUS,
+  ROUTE_PICKUP_CONFIRMED_STATUS,
+  "started",
+  "filling",
+  "machine_filling",
+] as const;
+
 export const TERMINAL_ROUTE_STATUSES = [
   ROUTE_COMPLETED_STATUS,
   ROUTE_VERIFIED_STATUS,
@@ -174,6 +185,10 @@ function includesStatus<const T extends readonly string[]>(statuses: T, status: 
 
 export function isRouteStatus(status: string | null | undefined): status is RouteStatus {
   return includesStatus(ROUTE_STATUS_VALUES, status);
+}
+
+export function isRouteInventoryFinalizableStatus(status: string | null | undefined) {
+  return includesStatus(ROUTE_INVENTORY_FINALIZABLE_STATUSES, status);
 }
 
 export function routeStatusForNewRoute(operatorId: string | null | undefined): RouteDatabaseWriteStatus {

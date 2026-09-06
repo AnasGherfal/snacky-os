@@ -23,8 +23,12 @@ function amount(value: unknown) {
   return Number.isFinite(number) ? number : 0;
 }
 
-function submissionId(value: unknown, prefix: string) {
-  return clean(value) || prefix + ":" + crypto.randomUUID();
+function submissionId(value: unknown) {
+  const id = clean(value);
+  if (!id || id.length > 200) {
+    throw new Error("A valid client submission id is required. Reload the page and try again.");
+  }
+  return id;
 }
 
 function errorText(error: unknown) {
@@ -477,7 +481,7 @@ export async function POST(request: Request) {
         p_storage_location_id: clean(body.storageLocationId),
         p_quantity: Math.floor(amount(body.quantity)),
         p_note: clean(body.note) || null,
-        p_client_submission_id: submissionId(body.clientSubmissionId, "operator-purchase"),
+        p_client_submission_id: submissionId(body.clientSubmissionId),
       };
       result =
         manager && periodId && periodId !== "legacy"
@@ -498,7 +502,7 @@ export async function POST(request: Request) {
         p_given_at: eventTimestamp(body.date),
         p_purpose: clean(body.purpose),
         p_note: clean(body.note) || null,
-        p_client_submission_id: submissionId(body.clientSubmissionId, "operator-advance"),
+        p_client_submission_id: submissionId(body.clientSubmissionId),
       });
     } else if (action === "expense") {
       result = await supabase.rpc("submit_operator_expense", {
@@ -510,7 +514,7 @@ export async function POST(request: Request) {
         p_spent_at: eventTimestamp(body.date),
         p_receipt_url: clean(body.receiptUrl) || null,
         p_note: clean(body.note),
-        p_client_submission_id: submissionId(body.clientSubmissionId, "operator-expense"),
+        p_client_submission_id: submissionId(body.clientSubmissionId),
       });
     } else if (action === "reviewExpense") {
       result = await supabase.rpc("review_operator_expense", {
@@ -525,7 +529,7 @@ export async function POST(request: Request) {
         p_paid_at: eventTimestamp(body.date),
         p_payment_method: clean(body.paymentMethod),
         p_note: clean(body.note) || null,
-        p_client_submission_id: submissionId(body.clientSubmissionId, "operator-debt-payment"),
+        p_client_submission_id: submissionId(body.clientSubmissionId),
       };
       result =
         periodId && periodId !== "legacy"
@@ -542,7 +546,7 @@ export async function POST(request: Request) {
         p_returned_at: eventTimestamp(body.date),
         p_payment_method: clean(body.paymentMethod),
         p_note: clean(body.note) || null,
-        p_client_submission_id: submissionId(body.clientSubmissionId, "operator-advance-return"),
+        p_client_submission_id: submissionId(body.clientSubmissionId),
       };
       result =
         periodId && periodId !== "legacy"
@@ -565,7 +569,7 @@ export async function POST(request: Request) {
         p_paid_at: eventTimestamp(body.date),
         p_payment_method: clean(body.paymentMethod),
         p_note: clean(body.note) || null,
-        p_client_submission_id: submissionId(body.clientSubmissionId, "operator-reimbursement"),
+        p_client_submission_id: submissionId(body.clientSubmissionId),
       });
     } else if (action === "closePeriod") {
       if (!periodId || periodId === "legacy") {

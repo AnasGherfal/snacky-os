@@ -90,10 +90,8 @@ const rolePermissions = {
     "inventory.view",
     "inventory.full_edit",
     "storage.view",
-    "storage.adjust",
     "storage.location.manage",
     "storage.movement.view",
-    "storage.movement.create",
     "purchase_items.view",
     "purchases.view",
     "purchases.create",
@@ -125,10 +123,8 @@ const rolePermissions = {
     "products.edit",
     "inventory.view",
     "storage.view",
-    "storage.adjust",
     "storage.location.manage",
     "storage.movement.view",
-    "storage.movement.create",
     "purchase_items.view",
     "purchases.view",
     "purchases.create",
@@ -335,7 +331,7 @@ export function canAccessPath(user: AuthUserContext | null | undefined, pathname
   if (matchesPrefix(pathname, ["/products"])) return hasPermission(user, "products.view");
 
   if (pathname === "/inventory/movements/new" || pathname.startsWith("/inventory/movements/new/")) {
-    return hasPermission(user, "storage.movement.create") || hasPermission(user, "storage.adjust");
+    return isOwnerAdminRole(user);
   }
   if (matchesPrefix(pathname, ["/inventory/movements"])) return hasPermission(user, "storage.movement.view");
   if (matchesPrefix(pathname, ["/product-planning"])) return hasPermission(user, "products.view") || hasPermission(user, "inventory.view") || hasPermission(user, "storage.view") || hasPermission(user, "purchases.view") || hasPermission(user, "finance.view");

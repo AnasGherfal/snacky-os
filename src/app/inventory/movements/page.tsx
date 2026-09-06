@@ -88,6 +88,142 @@ function machineLabel(id: string | null | undefined, machineById: Map<string, an
   return machine ? formatMachineDisplayName(machine, { includeArea: true }) : shortId(id);
 }
 
+type ManagedMovementGuidance = {
+  message: string;
+  href?: string;
+  linkLabel?: string;
+};
+
+type MovementCorrectionSourceRow = {
+  id: string;
+  reason?: string | null;
+  source_type?: string | null;
+  from_entity_type?: string | null;
+  from_entity_id?: string | null;
+  to_entity_type?: string | null;
+  to_entity_id?: string | null;
+  related_route_id?: string | null;
+  related_route_stop_id?: string | null;
+  related_purchase_id?: string | null;
+  related_purchase_line_id?: string | null;
+  related_refill_order_id?: string | null;
+  related_pickup_batch_id?: string | null;
+  import_batch_id?: string | null;
+  historical_route_deduction_line_id?: string | null;
+  reversed_movement_id?: string | null;
+};
+
+function managedMovementGuidance(movement: MovementCorrectionSourceRow): ManagedMovementGuidance | null {
+  const sourceType = String(movement.source_type ?? "").trim();
+  const reason = String(movement.reason ?? "").trim();
+
+  if (movement.reversed_movement_id) {
+    return { message: "This row is already a reversal. Review its source record instead." };
+  }
+  if (movement.related_purchase_id || movement.related_purchase_line_id) {
+    return {
+      message: "Purchase stock is controlled by the purchase lifecycle.",
+      href: movement.related_purchase_id ? `/purchases/${movement.related_purchase_id}` : "/purchases",
+      linkLabel: "Open purchase to void",
+    };
+  }
+  if (
+    reason === "operator_personal_purchase"
+    || sourceType === "operator_personal_purchase"
+    || movement.from_entity_type === "operator_personal_purchase"
+    || movement.to_entity_type === "operator_personal_purchase"
+  ) {
+    const personId = movement.to_entity_type === "operator_personal_purchase"
+      ? movement.to_entity_id
+      : movement.from_entity_type === "operator_personal_purchase"
+        ? movement.from_entity_id
+        : null;
+    return {
+      message: "Personal stock is controlled by Operator Money. Review the item there. Voiding a personal purchase is not available yet; contact an admin for a documented correction.",
+      href: personId ? `/team/${personId}/money` : "/team",
+      linkLabel: "Review in Operator Money",
+    };
+  }
+  if (sourceType === "inventory_adjustment" || sourceType === "inventory_adjustment_cancel") {
+    return {
+      message: "This stock is controlled by its route adjustment.",
+      href: movement.related_route_id ? `/routes/${movement.related_route_id}` : "/reports/inventory-adjustments",
+      linkLabel: "Open adjustment workflow",
+    };
+  }
+  if (
+    reason === "historical_route_deduction"
+    || sourceType === "historical_route_deduction"
+    || movement.historical_route_deduction_line_id
+  ) {
+    return {
+      message: "Historical deductions are controlled by their import batch.",
+      href: "/admin/historical-route-deduction",
+      linkLabel: "Open historical deductions",
+    };
+  }
+  if (movement.related_refill_order_id) {
+    return {
+      message: "Refill stock is controlled by its refill order.",
+      href: "/refills",
+      linkLabel: "Open refill workflow",
+    };
+  }
+  if (movement.import_batch_id) {
+    return {
+      message: "Imported stock is controlled by its import batch.",
+      href: "/vms-import",
+      linkLabel: "Open import review",
+    };
+  }
+  if (
+    movement.related_route_id
+    || movement.related_route_stop_id
+    || movement.related_pickup_batch_id
+    || sourceType.startsWith("route_")
+    || reason === "manual_sale"
+    || reason === "customer_compensation"
+  ) {
+    return {
+      message: "Route stock must be handled through route inventory review.",
+      href: movement.related_route_id
+        ? `/routes/inventory-review?route=${movement.related_route_id}`
+        : "/routes/inventory-review",
+      linkLabel: "Open inventory review",
+    };
+  }
+  return null;
+}
+
+function CorrectionAction({ movement, fullWidth = false }: { movement: MovementCorrectionSourceRow; fullWidth?: boolean }) {
+  const guidance = managedMovementGuidance(movement);
+  if (guidance) {
+    return (
+      <div className={`text-xs leading-5 text-slate-600${fullWidth ? " rounded-lg bg-slate-50 p-3" : " max-w-48"}`}>
+        <div>{guidance.message}</div>
+        {guidance.href && guidance.linkLabel ? (
+          <Link href={guidance.href} className="link-secondary mt-1 inline-block text-xs">
+            {guidance.linkLabel}
+          </Link>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <ConfirmDialog
+      action={createInventoryMovementCorrection}
+      triggerLabel="Create Correction"
+      title="Create correction movement?"
+      description="This will add a new opposite ledger movement. The original inventory movement will stay unchanged."
+      confirmLabel="Create correction"
+      buttonClassName={`btn-secondary px-3 py-2${fullWidth ? " w-full" : ""}`}
+      confirmButtonClassName="btn-danger"
+      hiddenFields={[{ name: "id", value: movement.id }]}
+    />
+  );
+}
+
 export default async function InventoryMovementsPage({
   searchParams,
 }: {
@@ -168,7 +304,7 @@ export default async function InventoryMovementsPage({
 
   let movementQuery = supabase
     ?.from("inventory_movements")
-    .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, movement_type, related_route_id, related_route_stop_id, related_purchase_id, related_purchase_line_id, related_machine_id, reversed_movement_id, correction_reason, notes, created_by, created_at, product:products(id, sku, name), created_by_member:team_members(id, full_name)", { count: "exact" })
+    .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, movement_type, source_type, source_id, related_route_id, related_route_stop_id, related_purchase_id, related_purchase_line_id, related_machine_id, related_refill_order_id, related_pickup_batch_id, import_batch_id, historical_route_deduction_line_id, reversed_movement_id, correction_reason, notes, created_by, created_at, product:products(id, sku, name), created_by_member:team_members(id, full_name)", { count: "exact" })
     .order("created_at", { ascending: false });
 
   if (movementQuery && params.product_id) movementQuery = movementQuery.eq("product_id", params.product_id);
@@ -212,7 +348,7 @@ export default async function InventoryMovementsPage({
       <PageHeader
         title="Inventory Movement Log"
         subtitle="Append-only product movement ledger for purchases, route picks, fills, returns, waste, and corrections."
-        action={<PrimaryButton href="/inventory/movements/new">New correction movement</PrimaryButton>}
+        action={canCreateCorrections ? <PrimaryButton href="/inventory/movements/new">New storage adjustment</PrimaryButton> : undefined}
       />
 
       {params.error ? <div className="mb-5 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{params.error}</div> : null}
@@ -310,16 +446,7 @@ export default async function InventoryMovementsPage({
                 </div>
                 {canCreateCorrections ? (
                   <div className="mt-4">
-                    <ConfirmDialog
-                      action={createInventoryMovementCorrection}
-                      triggerLabel="Create Correction"
-                      title="Create correction movement?"
-                      description="This will add a new opposite ledger movement. The original inventory movement will stay unchanged."
-                      confirmLabel="Create correction"
-                      buttonClassName="btn-secondary w-full px-3 py-2"
-                      confirmButtonClassName="btn-danger"
-                      hiddenFields={[{ name: "id", value: movement.id }]}
-                    />
+                    <CorrectionAction movement={movement} fullWidth />
                   </div>
                 ) : null}
               </article>
@@ -354,16 +481,7 @@ export default async function InventoryMovementsPage({
                   <td>{movement.notes ?? "-"}</td>
                   <td>
                     {canCreateCorrections ? (
-                      <ConfirmDialog
-                        action={createInventoryMovementCorrection}
-                        triggerLabel="Create Correction"
-                        title="Create correction movement?"
-                        description="This will add a new opposite ledger movement. The original inventory movement will stay unchanged."
-                        confirmLabel="Create correction"
-                        buttonClassName="btn-secondary px-3 py-2"
-                        confirmButtonClassName="btn-danger"
-                        hiddenFields={[{ name: "id", value: movement.id }]}
-                      />
+                      <CorrectionAction movement={movement} />
                     ) : (
                       <span className="text-sm text-slate-500">-</span>
                     )}
@@ -378,4 +496,3 @@ export default async function InventoryMovementsPage({
     </>
   );
 }
-

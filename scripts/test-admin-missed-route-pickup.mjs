@@ -106,7 +106,8 @@ test("the canonical checklist guard rejects an incomplete existing pickup", () =
 test("server action enforces owner/admin and uses the canonical pickup RPC", () => {
   const actionSource = fs.readFileSync(path.join(repoRoot, "src/lib/admin-route-pickup-actions.ts"), "utf8");
   assert.match(actionSource, /isOwnerAdminRole\(profile\)/);
-  assert.match(actionSource, /snacky_confirm_route_pickup_batch_v2/);
-  assert.match(actionSource, /correctionAlreadyRecorded/);
+  assert.match(actionSource, /snacky_confirm_route_pickup_batch_v3/);
+  assert.doesNotMatch(actionSource, /correctionAlreadyRecorded/,
+    "only the immutable V3 receipt may decide whether a correction is an exact retry");
   assert.doesNotMatch(actionSource, /financial_transactions|route_manual_sales/);
 });

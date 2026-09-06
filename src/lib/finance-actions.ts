@@ -8,7 +8,7 @@ import { canEditFinancialTransactions, canViewFinancials } from "@/lib/authz";
 import { buildCashCollectionFinanceTransactionPayload } from "@/lib/cash-finance";
 import { accountCurrency, financeAccountId, type FinanceAccountId, type FinanceTransactionEffect } from "@/lib/finance-balance";
 import { categoryTypeForDirection, type FinanceCategoryType } from "@/lib/finance-categories";
-import { buildPurchaseFinanceTransactionPayload } from "@/lib/purchase-finance-sync";
+import { getRequiredFinanceWriteClient } from "@/lib/finance-write-client";
 import {
   buildFinanceClarificationPrompts,
   buildFinanceImportStageRow,
@@ -23,8 +23,7 @@ import {
   readFinanceImportRows,
   type ParsedFinanceRow,
 } from "@/lib/finance-import";
-import { resolvePurchaseFinanceTransactionDate } from "@/lib/purchase-finance-date";
-import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 function requireFinance(profile: Awaited<ReturnType<typeof getCurrentProfile>>) {
   if (!profile || !canViewFinancials({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) {
@@ -50,10 +49,6 @@ async function getAuthenticatedFinanceSupabaseOrThrow(message = "Supabase is not
   const supabase = getSupabaseServerClient(accessToken);
   if (!supabase) throw new Error(message);
   return supabase;
-}
-
-function getFinanceSyncSupabase<T extends NonNullable<ReturnType<typeof getSupabaseServerClient>>>(supabase: T) {
-  return (getSupabaseAdminClient() ?? supabase) as T;
 }
 
 function toOptionalAmount(value: FormDataEntryValue | null) {
@@ -87,6 +82,32 @@ function optionalUuid(value: FormDataEntryValue | null) {
 function optionalText(value: FormDataEntryValue | null) {
   const raw = String(value ?? "").trim();
   return raw || null;
+}
+
+async function assertFinanceTransactionIsNotSupplierPayment(
+  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>,
+  transactionId: string,
+  transaction?: { source_type?: string | null } | null,
+) {
+  if (transaction?.source_type === "purchase_payment") {
+    throw new Error("Supplier-payment finance entries must be corrected from the purchase payment history.");
+  }
+
+  const { data: ownedPayment, error } = await supabase
+    .from("purchase_payments")
+    .select("id")
+    .eq("finance_transaction_id", transactionId)
+    .maybeSingle();
+  if (error) {
+    console.error("[finance] Could not verify supplier-payment ownership before a finance edit", {
+      financial_transaction_id: transactionId,
+      error,
+    });
+    throw new Error("Could not safely verify this transaction's source. Nothing was changed.");
+  }
+  if (ownedPayment) {
+    throw new Error("Supplier-payment finance entries must be corrected from the purchase payment history.");
+  }
 }
 
 function parseTransactionAmount(value: FormDataEntryValue | null, fallback: unknown = 0) {
@@ -238,6 +259,7 @@ async function runFinanceImportRows(rows: ParsedFinanceRow[], mode: "import" | "
   const profile = await getCurrentProfile();
   requireFinance(profile);
   const supabase = await getAuthenticatedFinanceSupabase("/finance/import?error=Supabase%20is%20not%20configured.");
+  const financeWriteSupabase = getRequiredFinanceWriteClient();
   if (!rows.length) redirect("/finance/import?error=No%20transaction%20rows%20were%20found%20in%20the%20CSV.");
 
   const sourceFile = rows[0]?.sourceFile ?? FINANCE_SOURCE_FILE;
@@ -280,7 +302,7 @@ async function runFinanceImportRows(rows: ParsedFinanceRow[], mode: "import" | "
   let insertedTransactions: any[] = [];
 
   if (transactionRows.length) {
-    const { data: inserted, error } = await supabase
+    const { data: inserted, error } = await financeWriteSupabase
       .from("financial_transactions")
       .insert(transactionRows)
       .select("id, source_file, source_sheet, source_row");
@@ -386,10 +408,6 @@ function importRowRawText(row: any, normalizedKey: string, sourceHeader?: string
   return optionalText(raw[normalizedKey]) ?? optionalText(sourceHeader ? raw[sourceHeader] : null);
 }
 
-function normalizedFinanceName(value: string | null | undefined) {
-  return String(value ?? "").trim().toLowerCase().replace(/[\s_-]+/g, "");
-}
-
 function importRowReturnPath(row: any) {
   const suffix = row?.source_row ? `?row=${encodeURIComponent(String(row.source_row))}` : "";
   return `/finance/import/review${suffix}`;
@@ -399,6 +417,7 @@ export async function confirmFinanceImportRow(formData: FormData) {
   const profile = await getCurrentProfile();
   requireFinanceEdit(profile);
   const supabase = await getAuthenticatedFinanceSupabase("/finance/import/review?error=Supabase%20is%20not%20configured.");
+  const financeWriteSupabase = getRequiredFinanceWriteClient();
 
   const rowId = String(formData.get("row_id") || formData.get("id") || "").trim();
   if (!rowId) redirect("/finance/import/review?error=Import%20row%20is%20required.");
@@ -502,11 +521,23 @@ export async function confirmFinanceImportRow(formData: FormData) {
 
   let savedTransaction: any;
   if (transactionId) {
-    const { data, error } = await supabase.from("financial_transactions").update({ ...payload, updated_at: new Date().toISOString() }).eq("id", transactionId).select("*").single();
+    const { data: existingTransaction, error: existingTransactionError } = await supabase
+      .from("financial_transactions")
+      .select("id, source_type")
+      .eq("id", transactionId)
+      .maybeSingle();
+    if (existingTransactionError) redirect(`${returnPath}&error=${encodeURIComponent(existingTransactionError.message)}`);
+    try {
+      await assertFinanceTransactionIsNotSupplierPayment(supabase, transactionId, existingTransaction);
+    } catch (ownershipError) {
+      const message = ownershipError instanceof Error ? ownershipError.message : "This transaction cannot be changed from Finance.";
+      redirect(`${returnPath}&error=${encodeURIComponent(message)}`);
+    }
+    const { data, error } = await financeWriteSupabase.from("financial_transactions").update({ ...payload, updated_at: new Date().toISOString() }).eq("id", transactionId).select("*").single();
     if (error) redirect(`${returnPath}&error=${encodeURIComponent(error.message)}`);
     savedTransaction = data;
   } else {
-    const { data, error } = await supabase.from("financial_transactions").insert(payload).select("*").single();
+    const { data, error } = await financeWriteSupabase.from("financial_transactions").insert(payload).select("*").single();
     if (error) redirect(`${returnPath}&error=${encodeURIComponent(error.message)}`);
     savedTransaction = data;
     transactionId = data.id;
@@ -564,6 +595,7 @@ export async function ignoreFinanceImportRow(formData: FormData) {
   const profile = await getCurrentProfile();
   requireFinanceEdit(profile);
   const supabase = await getAuthenticatedFinanceSupabase("/finance/import/review?error=Supabase%20is%20not%20configured.");
+  const financeWriteSupabase = getRequiredFinanceWriteClient();
 
   const rowId = String(formData.get("row_id") || formData.get("id") || "").trim();
   if (!rowId) redirect("/finance/import/review?error=Import%20row%20is%20required.");
@@ -574,7 +606,7 @@ export async function ignoreFinanceImportRow(formData: FormData) {
 
   const reason = optionalText(formData.get("ignore_reason")) ?? "Manually ignored during row-by-row finance import review.";
   if (row.financial_transaction_id) {
-    const { error: transactionError } = await supabase
+    const { error: transactionError } = await financeWriteSupabase
       .from("financial_transactions")
       .update({
         import_status: "ignored",
@@ -677,81 +709,77 @@ export async function createManualFinancialTransaction(formData: FormData) {
   requireFinanceEdit(profile);
   const supabase = await getAuthenticatedFinanceSupabase("/finance/transactions/new?error=Supabase%20is%20not%20configured.");
 
+  const clientSubmissionId = String(formData.get("client_submission_id") ?? "").trim();
   const amount = parseTransactionAmount(formData.get("amount"));
   const transactionDate = String(formData.get("transaction_date") || "").trim();
   const ledgerFields = resolveManualLedgerFields(formData);
-  const categoryRecord = await resolveFinanceCategory(supabase, formData, ledgerFields.flowDirection);
-  const category = categoryRecord.name;
+  const selectedCategory = optionalText(formData.get("category"));
+  const category = selectedCategory === "__new__" ? optionalText(formData.get("new_category_name")) : selectedCategory;
   const ledgerError = validateManualLedgerFields(ledgerFields, category);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clientSubmissionId)) {
+    redirect("/finance/transactions/new?error=Could%20not%20prepare%20a%20safe%20finance%20submission.%20Reload%20and%20try%20again.");
+  }
   if (!transactionDate) redirect("/finance/transactions/new?error=Transaction%20date%20is%20required.");
   if (ledgerError) redirect(`/finance/transactions/new?error=${encodeURIComponent(ledgerError)}`);
-  if (!Number.isFinite(amount) || amount < 0) redirect("/finance/transactions/new?error=Amount%20must%20be%20greater%20than%20or%20equal%20to%200.");
+  if (!Number.isFinite(amount) || amount <= 0) redirect("/finance/transactions/new?error=Amount%20must%20be%20greater%20than%20zero.");
   if (!category) redirect("/finance/transactions/new?error=Category%20is%20required.");
+  if (optionalUuid(formData.get("related_purchase_id"))) {
+    redirect("/finance/transactions/new?error=Supplier%20payments%20must%20be%20recorded%20from%20the%20purchase%20payment%20history.");
+  }
   const counterparty = counterpartyFields(formData, ledgerFields);
 
-  const payload = {
-    transaction_date: transactionDate,
-    transaction_datetime: transactionDateTimeFromDate(transactionDate),
-    direction: ledgerFields.direction,
-    transaction_kind: ledgerFields.direction === "money_in" ? "manual_money_in" : "manual_money_out",
-    transaction_type: optionalText(formData.get("transaction_type")),
-    location: optionalText(formData.get("location")),
-    description: optionalText(formData.get("description")) ?? counterparty.counterpartyText,
-    notes: optionalText(formData.get("notes")),
-    payment_method: optionalText(formData.get("payment_method")),
-    amount,
-    signed_amount: ledgerFields.direction === "money_out" ? -amount : amount,
-    currency: ledgerFields.currency,
-    account_id: ledgerFields.accountId,
-    account_key: ledgerFields.accountId,
-    transaction_effect: ledgerFields.transactionEffect,
-    source_account_id: ledgerFields.sourceAccountId,
-    destination_account_id: ledgerFields.destinationAccountId,
-    finance_category_id: categoryRecord.id,
-    payer_text: counterparty.payerText,
-    payee_text: counterparty.payeeText,
-    paid_to_text: counterparty.paidToText,
-    counterparty_text: counterparty.counterpartyText,
-    bucket: optionalText(formData.get("bucket")),
-    category,
-    final_bucket: category,
-    review_status: "confirmed",
-    needs_review: false,
-    transaction_status: "active",
-    related_purchase_id: optionalUuid(formData.get("related_purchase_id")),
-    related_route_id: optionalUuid(formData.get("related_route_id")),
-    related_machine_id: optionalUuid(formData.get("related_machine_id")),
-    related_location_id: optionalUuid(formData.get("related_location_id")),
-    receipt_url: optionalText(formData.get("receipt_url")),
-    source_type: "manual",
-    created_by: profile?.team_member_id ?? null,
-  };
-
-  const { data, error } = await supabase.from("financial_transactions").insert(payload).select("id").single();
-  if (error) redirect(`/finance/transactions/new?error=${encodeURIComponent(error.message)}`);
+  const { data, error } = await supabase.rpc("snacky_create_manual_finance_transaction_v1", {
+    p_client_submission_id: clientSubmissionId,
+    p_transaction_date: transactionDate,
+    p_direction: ledgerFields.flowDirection,
+    p_amount: amount,
+    p_account_id: ledgerFields.accountId,
+    p_source_account_id: ledgerFields.sourceAccountId,
+    p_destination_account_id: ledgerFields.destinationAccountId,
+    p_category: category,
+    p_transaction_type: optionalText(formData.get("transaction_type")),
+    p_location: optionalText(formData.get("location")),
+    p_description: optionalText(formData.get("description")),
+    p_notes: optionalText(formData.get("notes")),
+    p_payment_method: optionalText(formData.get("payment_method")),
+    p_payer_text: counterparty.payerText,
+    p_payee_text: counterparty.payeeText,
+    p_counterparty_text: counterparty.counterpartyText,
+    p_bucket: optionalText(formData.get("bucket")),
+    p_related_route_id: optionalUuid(formData.get("related_route_id")),
+    p_related_machine_id: optionalUuid(formData.get("related_machine_id")),
+    p_related_location_id: optionalUuid(formData.get("related_location_id")),
+    p_receipt_url: optionalText(formData.get("receipt_url")),
+  });
+  if (error || !data?.id) {
+    redirect(`/finance/transactions/new?error=${encodeURIComponent(error?.message ?? "Could not save the finance transaction. Nothing was changed.")}`);
+  }
 
   await logActivity({
     profile,
+    idempotencyKey: `manual-finance-create:v1:${clientSubmissionId}`,
     action: "create",
     entityType: "financial_transaction",
     entityId: data.id,
     entityLabel: "Financial transaction",
-    afterData: payload,
+    afterData: data,
     summary: `Created manual ${ledgerFields.transactionEffect === "transfer" ? "transfer" : ledgerFields.direction.replace("_", " ")} transaction`,
   });
 
   revalidatePath("/finance");
   revalidatePath("/finance/transactions");
-  redirect(`/finance/transactions/${data.id}?created=1`);
+  redirect(`/finance/transactions/${data.id}?created=1&finance_submission_id=${encodeURIComponent(clientSubmissionId)}`);
 }
 
 export async function reviewFinancialTransaction(formData: FormData) {
   const profile = await getCurrentProfile();
   requireFinanceEdit(profile);
   const supabase = await getAuthenticatedFinanceSupabaseOrThrow();
+  const financeWriteSupabase = getRequiredFinanceWriteClient();
 
   const id = String(formData.get("id") || "");
   const { data: before } = await supabase.from("financial_transactions").select("*").eq("id", id).maybeSingle();
+  await assertFinanceTransactionIsNotSupplierPayment(supabase, id, before);
   const amount = parseTransactionAmount(formData.get("amount"), before?.amount);
   const ledgerFields = resolveManualLedgerFields(formData, before);
   const transactionDate = String(formData.get("transaction_date") || before?.transaction_date || "").trim();
@@ -793,7 +821,6 @@ export async function reviewFinancialTransaction(formData: FormData) {
     reviewed_at: new Date().toISOString(),
     review_notes: optionalText(formData.get("review_notes")),
     import_status: before?.transaction_kind === "spreadsheet_import" ? "imported" : before?.import_status ?? null,
-    related_purchase_id: optionalUuid(formData.get("related_purchase_id")),
     related_route_id: optionalUuid(formData.get("related_route_id")),
     related_machine_id: optionalUuid(formData.get("related_machine_id")),
     related_location_id: optionalUuid(formData.get("related_location_id")),
@@ -801,7 +828,7 @@ export async function reviewFinancialTransaction(formData: FormData) {
     updated_at: new Date().toISOString(),
   };
 
-  const { data: after, error } = await supabase.from("financial_transactions").update(payload).eq("id", id).select("*").single();
+  const { data: after, error } = await financeWriteSupabase.from("financial_transactions").update(payload).eq("id", id).select("*").single();
   if (error) throw error;
 
   await logActivity({
@@ -823,10 +850,17 @@ export async function updateFinancialTransaction(formData: FormData) {
   const profile = await getCurrentProfile();
   requireFinanceEdit(profile);
   const supabase = await getAuthenticatedFinanceSupabase("/finance/transactions?error=Supabase%20is%20not%20configured.");
+  const financeWriteSupabase = getRequiredFinanceWriteClient();
 
   const id = String(formData.get("id") || "");
   const { data: before } = await supabase.from("financial_transactions").select("*").eq("id", id).maybeSingle();
   if (!before) redirect("/finance/transactions?error=Transaction%20not%20found.");
+  try {
+    await assertFinanceTransactionIsNotSupplierPayment(supabase, id, before);
+  } catch (ownershipError) {
+    const message = ownershipError instanceof Error ? ownershipError.message : "This transaction cannot be edited from Finance.";
+    redirect(`/finance/transactions/${id}?error=${encodeURIComponent(message)}`);
+  }
 
   const amount = parseTransactionAmount(formData.get("amount"), before.amount);
   const ledgerFields = resolveManualLedgerFields(formData, before);
@@ -875,7 +909,6 @@ export async function updateFinancialTransaction(formData: FormData) {
     reviewed_at: markReviewed ? new Date().toISOString() : before.reviewed_at,
     review_notes: optionalText(formData.get("review_notes")),
     import_status: before.transaction_kind === "spreadsheet_import" ? (reviewStatus === "needs_review" ? "needs_review" : "imported") : before.import_status ?? null,
-    related_purchase_id: optionalUuid(formData.get("related_purchase_id")),
     related_route_id: optionalUuid(formData.get("related_route_id")),
     related_machine_id: optionalUuid(formData.get("related_machine_id")),
     related_location_id: optionalUuid(formData.get("related_location_id")),
@@ -883,7 +916,7 @@ export async function updateFinancialTransaction(formData: FormData) {
     updated_at: new Date().toISOString(),
   };
 
-  const { data: after, error } = await supabase.from("financial_transactions").update(payload).eq("id", id).select("*").single();
+  const { data: after, error } = await financeWriteSupabase.from("financial_transactions").update(payload).eq("id", id).select("*").single();
   if (error) redirect(`/finance/transactions/${id}/edit?error=${encodeURIComponent(error.message)}`);
 
   await logActivity({
@@ -911,6 +944,7 @@ export async function updateFinancialTransactionStatus(formData: FormData) {
   const profile = await getCurrentProfile();
   requireFinanceEdit(profile);
   const supabase = await getAuthenticatedFinanceSupabase("/finance/transactions?error=Supabase%20is%20not%20configured.");
+  const financeWriteSupabase = getRequiredFinanceWriteClient();
 
   const id = String(formData.get("id") || "");
   const status = String(formData.get("transaction_status") || "");
@@ -922,6 +956,12 @@ export async function updateFinancialTransactionStatus(formData: FormData) {
 
   const { data: before } = await supabase.from("financial_transactions").select("*").eq("id", id).maybeSingle();
   if (!before) redirect("/finance/transactions?error=Transaction%20not%20found.");
+  try {
+    await assertFinanceTransactionIsNotSupplierPayment(supabase, id, before);
+  } catch (ownershipError) {
+    const message = ownershipError instanceof Error ? ownershipError.message : "This transaction cannot be changed from Finance.";
+    redirect(`/finance/transactions/${id}?error=${encodeURIComponent(message)}`);
+  }
   if ((before.transaction_status ?? "active") !== "active") redirect(`/finance/transactions/${id}?error=Only%20active%20transactions%20can%20be%20voided%20or%20archived.`);
 
   const now = new Date().toISOString();
@@ -944,7 +984,7 @@ export async function updateFinancialTransactionStatus(formData: FormData) {
           updated_at: now,
         };
 
-  const { data: after, error } = await supabase.from("financial_transactions").update(payload).eq("id", id).select("*").single();
+  const { data: after, error } = await financeWriteSupabase.from("financial_transactions").update(payload).eq("id", id).select("*").single();
   if (error) redirect(`/finance/transactions/${id}?error=${encodeURIComponent(error.message)}`);
 
   await logActivity({
@@ -965,98 +1005,10 @@ export async function updateFinancialTransactionStatus(formData: FormData) {
   redirect(`/finance/transactions/${id}?status=${status}`);
 }
 
-async function loadPurchaseSupplierName(
-  supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>,
-  purchase: {
-    supplier_id?: string | null;
-    supplier_name?: string | null;
-    supplier?: { name?: string | null } | null;
-  },
-) {
-  const inlineName = String(purchase.supplier_name ?? purchase.supplier?.name ?? "").trim();
-  if (inlineName) return inlineName;
-  const supplierId = String(purchase.supplier_id ?? "").trim();
-  if (!supplierId) return null;
-  const { data, error } = await supabase.from("suppliers").select("name").eq("id", supplierId).maybeSingle();
-  if (error) {
-    console.warn("[finance] Could not load supplier name for purchase finance transaction", error);
-    return null;
-  }
-  return String(data?.name ?? "").trim() || null;
-}
-
 function isMissingFinanceEnsureRpc(error: unknown) {
   const code = String((error as { code?: unknown } | null)?.code ?? "");
   const message = String((error as { message?: unknown } | null)?.message ?? "").toLowerCase();
   return code === "42883" || message.includes("function public.ensure_") || message.includes("could not find the function");
-}
-
-export async function createPurchaseFinancialTransaction(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>, profile: Awaited<ReturnType<typeof getCurrentProfile>>, purchase: any, amount: number) {
-  if (!purchase?.id || !amount || amount <= 0) return;
-  const financeSupabase = getFinanceSyncSupabase(supabase);
-
-  const ensureResult = await financeSupabase.rpc("ensure_purchase_finance_transaction", { p_purchase_id: purchase.id });
-  if (!ensureResult.error && ensureResult.data) {
-    revalidatePath("/finance");
-    revalidatePath("/finance/transactions");
-    return;
-  }
-  if (ensureResult.error && !isMissingFinanceEnsureRpc(ensureResult.error)) throw ensureResult.error;
-  console.warn(
-    ensureResult.error
-      ? "[finance] ensure_purchase_finance_transaction RPC is unavailable; falling back to app-side purchase finance sync"
-      : "[finance] ensure_purchase_finance_transaction returned no transaction id; falling back to app-side purchase finance sync",
-    ensureResult.error ?? { purchase_id: purchase.id },
-  );
-
-  const transactionDate = String(purchase.order_date ?? "").trim() || resolvePurchaseFinanceTransactionDate(purchase);
-  const supplierName = await loadPurchaseSupplierName(financeSupabase, purchase);
-  const payload = buildPurchaseFinanceTransactionPayload({
-    purchase,
-    amount,
-    transactionDate,
-    supplierName,
-    createdBy: profile?.team_member_id ?? null,
-  });
-  const purchaseLinkFilter = `linked_purchase_id.eq.${purchase.id},and(source_type.eq.purchase,source_id.eq.${purchase.id})`;
-  const { data: existingRows, error: existingError } = await financeSupabase
-    .from("financial_transactions")
-    .select("id, transaction_status, created_at")
-    .eq("transaction_kind", "product_purchase")
-    .or(purchaseLinkFilter)
-    .order("created_at", { ascending: true });
-  if (existingError) throw existingError;
-  const linkedRows = (existingRows ?? []) as Array<{ id: string; transaction_status?: string | null }>;
-  const existing = linkedRows.find((row) => (row.transaction_status ?? "active") === "active") ?? linkedRows[0];
-  const duplicateActiveIds = linkedRows
-    .filter((row) => row.id !== existing?.id && (row.transaction_status ?? "active") === "active")
-    .map((row) => row.id);
-
-  if (duplicateActiveIds.length) {
-    const { error } = await financeSupabase
-      .from("financial_transactions")
-      .update({
-        transaction_status: "voided",
-        is_void: true,
-        voided_at: new Date().toISOString(),
-        voided_by: profile?.team_member_id ?? null,
-        void_reason: "Duplicate purchase finance transaction superseded by the linked transaction.",
-        status_reason: "Duplicate purchase finance transaction superseded by the linked transaction.",
-        updated_at: new Date().toISOString(),
-      })
-      .in("id", duplicateActiveIds);
-    if (error) throw error;
-  }
-
-  if (existing?.id) {
-    const { error } = await financeSupabase.from("financial_transactions").update(payload).eq("id", existing.id);
-    if (error) throw error;
-  } else {
-    const { error } = await financeSupabase.from("financial_transactions").upsert(payload, { onConflict: "linked_purchase_id" });
-    if (error) throw error;
-  }
-  revalidatePath("/finance");
-  revalidatePath("/finance/transactions");
 }
 
 async function loadCashCollectionFinanceContext(
@@ -1084,9 +1036,9 @@ async function loadCashCollectionFinanceContext(
 
 export async function createCashCollectionFinancialTransaction(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>, profile: Awaited<ReturnType<typeof getCurrentProfile>>, cash: any) {
   if (!cash?.id) return;
-  const financeSupabase = getFinanceSyncSupabase(supabase);
+  const financeWriteSupabase = getRequiredFinanceWriteClient();
 
-  const ensureResult = await financeSupabase.rpc("ensure_cash_collection_finance_transaction", { p_cash_collection_id: cash.id });
+  const ensureResult = await financeWriteSupabase.rpc("ensure_cash_collection_finance_transaction", { p_cash_collection_id: cash.id });
   if (!ensureResult.error && ensureResult.data) {
     revalidatePath("/finance");
     revalidatePath("/finance/transactions");
@@ -1102,14 +1054,14 @@ export async function createCashCollectionFinancialTransaction(supabase: NonNull
 
   const parsedAmount = Number(cash?.actual_cash_collected ?? cash?.counted_amount_lyd ?? 0);
   const amount = Number.isFinite(parsedAmount) ? Math.max(0, Math.round(parsedAmount * 100) / 100) : 0;
-  const enrichedCash = await loadCashCollectionFinanceContext(financeSupabase, cash);
+  const enrichedCash = await loadCashCollectionFinanceContext(financeWriteSupabase, cash);
   const payload = buildCashCollectionFinanceTransactionPayload({
     cash: enrichedCash,
     amount,
     createdBy: profile?.team_member_id ?? cash.operator_id ?? null,
   });
   const cashLinkFilter = `linked_cash_collection_id.eq.${cash.id},and(source_type.eq.cash_collection,source_id.eq.${cash.id})`;
-  const { data: existingRows, error: existingError } = await financeSupabase
+  const { data: existingRows, error: existingError } = await financeWriteSupabase
     .from("financial_transactions")
     .select("id, transaction_status, is_void, created_at")
     .eq("transaction_kind", "cash_collection")
@@ -1124,7 +1076,7 @@ export async function createCashCollectionFinancialTransaction(supabase: NonNull
     .map((row) => row.id);
 
   if (duplicateActiveIds.length) {
-    const { error: duplicateError } = await financeSupabase
+    const { error: duplicateError } = await financeWriteSupabase
       .from("financial_transactions")
       .update({
         transaction_status: "voided",
@@ -1140,10 +1092,10 @@ export async function createCashCollectionFinancialTransaction(supabase: NonNull
   }
 
   if (existing?.id) {
-    const { error } = await financeSupabase.from("financial_transactions").update(payload).eq("id", existing.id);
+    const { error } = await financeWriteSupabase.from("financial_transactions").update(payload).eq("id", existing.id);
     if (error) throw error;
   } else {
-    const { error } = await financeSupabase.from("financial_transactions").upsert(payload, { onConflict: "linked_cash_collection_id" });
+    const { error } = await financeWriteSupabase.from("financial_transactions").upsert(payload, { onConflict: "linked_cash_collection_id" });
     if (error) throw error;
   }
   revalidatePath("/finance");
@@ -1156,9 +1108,9 @@ export async function clearCashCollectionFinancialTransaction(
   cashCollectionId: string,
   reason = "Cash count was cleared before finance confirmation.",
 ) {
-  const financeSupabase = getFinanceSyncSupabase(supabase);
+  const financeWriteSupabase = getRequiredFinanceWriteClient();
   const cashLinkFilter = `linked_cash_collection_id.eq.${cashCollectionId},and(source_type.eq.cash_collection,source_id.eq.${cashCollectionId})`;
-  const { data: activeRows, error: activeError } = await financeSupabase
+  const { data: activeRows, error: activeError } = await financeWriteSupabase
     .from("financial_transactions")
     .select("*")
     .eq("transaction_kind", "cash_collection")
@@ -1169,7 +1121,7 @@ export async function clearCashCollectionFinancialTransaction(
 
   const now = new Date().toISOString();
   const activeIds = activeRows.map((row: any) => row.id);
-  const { data: updatedRows, error: updateError } = await financeSupabase
+  const { data: updatedRows, error: updateError } = await financeWriteSupabase
     .from("financial_transactions")
     .update({
       transaction_status: "voided",

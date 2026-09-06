@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLanguage } from "@/components/I18nProvider";
+import { claimDurableClientOperation, completeDurableClientOperation } from "@/lib/durable-client-operation";
 import { uploadRefillProofPhoto } from "@/lib/operator-actions";
 
 function openSection(eventName: string, targetId: string, detail?: Record<string, unknown>) {
@@ -13,10 +14,6 @@ function routeScope() {
   if (typeof window === "undefined") return null;
   const match = window.location.pathname.match(/\/operator\/routes\/([^/]+)\/stops\/([^/]+)/);
   return match ? { routeId: match[1], stopId: match[2] } : null;
-}
-
-function clientId() {
-  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 type Product = {
@@ -65,8 +62,10 @@ export function RouteStopQuickActions() {
   const [compSaving, setCompSaving] = useState(false);
   const [compError, setCompError] = useState("");
   const [compWarning, setCompWarning] = useState("");
-  const submissionId = useRef(clientId());
   const scope = routeScope();
+  const compensationOperationKey = scope
+    ? `snacky:route-compensation:${scope.routeId}:${scope.stopId}`
+    : "snacky:route-compensation:unscoped";
 
   useEffect(() => {
     if (!scope) return;
@@ -163,29 +162,44 @@ export function RouteStopQuickActions() {
     setCompError("");
     setCompWarning("");
     try {
+      const immutableRequest = {
+        productId,
+        quantity,
+        claimType,
+        claimedAmountLyd: claimedAmount.trim() || null,
+        notes: notes.trim() || null,
+      };
+      const clientSubmissionId = claimDurableClientOperation(compensationOperationKey, immutableRequest);
       const response = await fetch(`/api/operator/routes/${scope.routeId}/stops/${scope.stopId}/compensations`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({
-          productId,
-          quantity,
-          claimType,
-          claimedAmountLyd: claimedAmount || null,
-          notes,
-          clientSubmissionId: submissionId.current,
-        }),
+        body: JSON.stringify({ ...immutableRequest, clientSubmissionId }),
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok || payload?.success === false) throw new Error(payload?.error || tr("Could not save compensation.", "تعذر حفظ التعويض."));
       if (payload?.warning) setCompWarning(String(payload.warning));
+      const savedRecord = payload?.record as CompensationRecord | undefined;
+      if (savedRecord?.id) {
+        setRecords((current) => [savedRecord, ...current.filter((record) => record.id !== savedRecord.id)]);
+      }
+      completeDurableClientOperation(compensationOperationKey, clientSubmissionId);
       setProductId("");
       setProductQuery("");
       setQuantity(1);
       setClaimType("paid_no_product");
       setClaimedAmount("");
       setNotes("");
-      submissionId.current = clientId();
-      await loadCompensations();
+      try {
+        await loadCompensations();
+      } catch (refreshError) {
+        const detail = refreshError instanceof Error ? refreshError.message : "";
+        setCompWarning(
+          tr(
+            `Compensation was saved, but the latest list could not be refreshed.${detail ? ` ${detail}` : ""}`,
+            `تم حفظ التعويض، لكن تعذر تحديث أحدث قائمة.${detail ? ` ${detail}` : ""}`,
+          ),
+        );
+      }
     } catch (error) {
       setCompError(error instanceof Error ? error.message : tr("Could not save compensation.", "تعذر حفظ التعويض."));
     } finally {

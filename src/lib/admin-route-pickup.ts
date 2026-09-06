@@ -228,6 +228,7 @@ export function buildAdminMissedPickupRpcPayload(input: BuildAdminMissedPickupPa
         id: pickupBatchId,
         route_id: routeId,
         operator_id: operatorId,
+        workflow_kind: "admin_missed_pickup",
         status: "confirmed",
         selected_stop_ids: [],
         product_summary: productSummary,

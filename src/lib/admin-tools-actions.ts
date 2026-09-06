@@ -5,7 +5,6 @@ import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
-import { ROUTE_COMPLETED_STATUS, ROUTE_STOP_SKIPPED_STATUS, isRouteStopDoneStatus } from "@/lib/route-workflow";
 
 function clean(value: FormDataEntryValue | null) {
   return String(value ?? "").trim();
@@ -48,12 +47,6 @@ function quantity(value: unknown) {
   const parsed = Number(value ?? 0);
   if (!Number.isFinite(parsed)) return 0;
   return Math.max(0, Math.floor(parsed));
-}
-
-function machineFillDelta(movement: any) {
-  const qty = quantity(movement?.quantity);
-  if (movement?.reason === "manual_correction" && movement?.from_entity_type === "machine" && movement?.to_entity_type === "operator_bag") return -qty;
-  return qty;
 }
 
 function routeAdminPaths(routeId?: string | null) {
@@ -252,164 +245,6 @@ async function recalculateRouteInventoryLedgerRows({
   return { route, rows, movementCount: routeMovements?.length ?? 0 };
 }
 
-function routeBagBalanceFromMovements(movements: any[]) {
-  const balanceByProduct = new Map<string, number>();
-  movements.forEach((movement) => {
-    const productId = String(movement.product_id ?? "");
-    const qty = quantity(movement.quantity);
-    if (!productId || qty <= 0) return;
-    if (movement.to_entity_type === "operator_bag" && movement.from_entity_type !== "operator_bag") {
-      balanceByProduct.set(productId, (balanceByProduct.get(productId) ?? 0) + qty);
-    }
-    if (movement.from_entity_type === "operator_bag" && movement.to_entity_type !== "operator_bag") {
-      balanceByProduct.set(productId, (balanceByProduct.get(productId) ?? 0) - qty);
-    }
-  });
-  return balanceByProduct;
-}
-
-async function returnOutstandingRouteBagStock({
-  supabase,
-  routeId,
-  operatorId,
-  actorTeamMemberId,
-  reason,
-}: {
-  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>;
-  routeId: string;
-  operatorId: string | null;
-  actorTeamMemberId: string | null;
-  reason: string;
-}) {
-  const [
-    { data: movements, error: movementError },
-    { data: storages, error: storageError },
-  ] = await Promise.all([
-    supabase
-      .from("inventory_movements")
-      .select("product_id, quantity, reason, from_entity_type, from_entity_id, to_entity_type, to_entity_id")
-      .eq("related_route_id", routeId)
-      .limit(5000),
-    supabase
-      .from("storage_locations")
-      .select("id")
-      .eq("active", true)
-      .in("location_type", ["main_storage", "vehicle", "temporary", "other"])
-      .order("location_type")
-      .order("name")
-      .limit(1),
-  ]);
-  if (movementError) throw movementError;
-  if (storageError) throw storageError;
-
-  const fallbackStorageId = storages?.[0]?.id ? String(storages[0].id) : null;
-  const balanceByProduct = routeBagBalanceFromMovements((movements ?? []) as any[]);
-  const pickedOriginsByProduct = new Map<string, { storageId: string; quantity: number }[]>();
-  (movements ?? []).forEach((movement: any) => {
-    const productId = String(movement.product_id ?? "");
-    const storageId = movement.from_entity_type === "storage" ? String(movement.from_entity_id ?? "") : "";
-    if (!productId || !storageId || movement.to_entity_type !== "operator_bag") return;
-    pickedOriginsByProduct.set(productId, [
-      ...(pickedOriginsByProduct.get(productId) ?? []),
-      { storageId, quantity: quantity(movement.quantity) },
-    ]);
-  });
-
-  const returnRows: any[] = [];
-  for (const [productId, balance] of balanceByProduct.entries()) {
-    let remaining = Math.max(0, balance);
-    if (remaining <= 0) continue;
-
-    const origins = pickedOriginsByProduct.get(productId) ?? [];
-    for (const origin of origins) {
-      if (remaining <= 0) break;
-      const returnedQty = Math.min(remaining, origin.quantity);
-      if (returnedQty <= 0) continue;
-      returnRows.push({
-        product_id: productId,
-        quantity: returnedQty,
-        from_entity_type: "operator_bag",
-        from_entity_id: operatorId,
-        to_entity_type: "storage",
-        to_entity_id: origin.storageId,
-        reason: "operator_bag_to_storage",
-        related_route_id: routeId,
-        created_by: actorTeamMemberId,
-        source_type: "admin_force_route_completion",
-        source_id: routeId,
-        idempotency_key: `admin-force-route-completion:${routeId}:${productId}:${origin.storageId}:${returnRows.length}`,
-        notes: `Admin force completion return. ${reason}`,
-      });
-      remaining -= returnedQty;
-    }
-
-    if (remaining > 0) {
-      if (!fallbackStorageId) throw new Error("No active storage location found for forced leftover return.");
-      returnRows.push({
-        product_id: productId,
-        quantity: remaining,
-        from_entity_type: "operator_bag",
-        from_entity_id: operatorId,
-        to_entity_type: "storage",
-        to_entity_id: fallbackStorageId,
-        reason: "operator_bag_to_storage",
-        related_route_id: routeId,
-        created_by: actorTeamMemberId,
-        source_type: "admin_force_route_completion",
-        source_id: routeId,
-        idempotency_key: `admin-force-route-completion:${routeId}:${productId}:fallback`,
-        notes: `Admin force completion return. ${reason}`,
-      });
-    }
-  }
-
-  if (returnRows.length) {
-    const insertResult = await supabase.from("inventory_movements").upsert(returnRows, { onConflict: "idempotency_key", ignoreDuplicates: true });
-    if (insertResult.error && isMissingColumnError(insertResult.error, ["source_type", "source_id", "idempotency_key"])) {
-      const fallbackRows = returnRows.map(({ source_type, source_id, idempotency_key, ...row }) => row);
-      const fallbackResult = await supabase.from("inventory_movements").insert(fallbackRows);
-      if (fallbackResult.error) throw fallbackResult.error;
-    } else if (insertResult.error) {
-      throw insertResult.error;
-    }
-  }
-
-  return returnRows;
-}
-
-async function updateRouteCompleted({
-  supabase,
-  routeId,
-  actorTeamMemberId,
-  reason,
-}: {
-  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>;
-  routeId: string;
-  actorTeamMemberId: string | null;
-  reason: string;
-}) {
-  const now = new Date().toISOString();
-  const payload = {
-    status: ROUTE_COMPLETED_STATUS,
-    completed_at: now,
-    completed_by: actorTeamMemberId,
-    repaired_at: now,
-    repaired_by: actorTeamMemberId,
-    last_completion_error: null,
-  };
-  let result = await supabase.from("routes").update(payload).eq("id", routeId).select("*").maybeSingle();
-  if (result.error && isMissingColumnError(result.error, ["completed_by", "repaired_at", "repaired_by", "last_completion_error"])) {
-    result = await supabase
-      .from("routes")
-      .update({ status: ROUTE_COMPLETED_STATUS, completed_at: now })
-      .eq("id", routeId)
-      .select("*")
-      .maybeSingle();
-  }
-  if (result.error) throw result.error;
-  return result.data;
-}
-
 export async function recalculateRouteInventoryLedger(formData: FormData) {
   const returnTo = safeReturnTo(formData.get("return_to"));
   const routeId = requireRouteId(formData, returnTo);
@@ -471,68 +306,11 @@ export async function repairStuckRoute(formData: FormData) {
 export async function forceCompleteRouteWithAudit(formData: FormData) {
   const returnTo = safeReturnTo(formData.get("return_to"));
   const routeId = requireRouteId(formData, returnTo);
-  const reason = requireReason(formData, returnTo);
-  const confirmation = clean(formData.get("confirmation"));
-  if (confirmation !== "FORCE COMPLETE") redirectTools({ error: "Type FORCE COMPLETE to force-complete a route." }, returnTo);
-  const { profile, supabase } = await requireAdmin(returnTo);
+  await requireAdmin(returnTo);
 
-  try {
-    const { data: route, error: routeError } = await supabase.from("routes").select("*").eq("id", routeId).maybeSingle();
-    if (routeError) throw routeError;
-    if (!route?.id) throw new Error("Route not found.");
-
-    const { data: stops, error: stopsError } = await supabase.from("route_stops").select("*").eq("route_id", routeId);
-    if (stopsError) throw stopsError;
-    const unfinishedStops = (stops ?? []).filter((stop: any) => !isRouteStopDoneStatus(stop.status));
-
-    if (unfinishedStops.length) {
-      const { error } = await supabase
-        .from("route_stops")
-        .update({ status: ROUTE_STOP_SKIPPED_STATUS, completed_at: new Date().toISOString(), notes: `Admin force completed route. ${reason}` })
-        .eq("route_id", routeId)
-        .in("id", unfinishedStops.map((stop: any) => stop.id));
-      if (error) throw error;
-    }
-
-    const returnRows = await returnOutstandingRouteBagStock({
-      supabase,
-      routeId,
-      operatorId: route.operator_id ?? null,
-      actorTeamMemberId: profile.team_member_id,
-      reason,
-    });
-    const ledgerResult = await recalculateRouteInventoryLedgerRows({ supabase, routeId });
-    const completedRoute = await updateRouteCompleted({
-      supabase,
-      routeId,
-      actorTeamMemberId: profile.team_member_id,
-      reason: `Admin force completion: ${reason}`,
-    });
-
-    await logActivity({
-      profile,
-      action: "force_complete_route",
-      entityType: "route",
-      entityId: routeId,
-      entityLabel: `Route ${routeId.slice(0, 8)}`,
-      beforeData: { route, unfinished_stops: unfinishedStops },
-      afterData: {
-        route: completedRoute,
-        skipped_stop_count: unfinishedStops.length,
-        returned_movement_count: returnRows.length,
-        stock_lines: ledgerResult.rows,
-      },
-      metadata: { reason },
-      summary: `Force completed route with ${returnRows.length} leftover return movement(s)`,
-    });
-
-    routeAdminPaths(routeId);
-    dashboardPaths();
-    redirectTools({ success: "Route force-completed with audit and ledger reconciliation." }, returnTo);
-  } catch (error) {
-    console.error("[admin-tools] Force route completion failed", { routeId, error });
-    redirectTools({ error: "Could not complete the route. Please try again." }, returnTo);
-  }
+  // Completion always requires a person to enter and confirm the physical bag
+  // count. A zero ledger is not proof that the physical bag is empty.
+  redirect(`/operator/routes/${routeId}/leftovers?mode=complete`);
 }
 
 export async function recalculateStorageBalances(formData: FormData) {

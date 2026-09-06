@@ -24,13 +24,46 @@ test("manual sales use the full supplied product catalog", () => {
   assert.match(api, /manualSaleProductOptions/);
 });
 
-test("explicit-zero return writes through the privileged canonical inventory ledger", () => {
+test("stop inventory is committed once and an explicit zero stays in route custody", () => {
   const source = read("src/lib/operator-actions.ts");
-  assert.match(source, /snacky:zero-fill-privileged-ledger-client/);
-  assert.match(source, /const zeroFillLedgerClient = getSupabaseAdminClient\(\) \?\? supabase/);
-  assert.match(source, /snacky:zero-fill-storage-ledger-write/);
-  assert.match(source, /supabase: zeroFillLedgerClient/);
-  assert.match(source, /reason: returning \? "operator_bag_to_storage"/);
-  assert.match(source, /refreshedRouteMovementError \} = await zeroFillLedgerClient/);
-  assert.match(source, /returned_qty: returnedQty/);
+  const start = source.indexOf("export async function completeStop");
+  const end = source.indexOf("\nexport async function ", start + 1);
+  assert.notEqual(start, -1, "completeStop must exist");
+  const completeStop = source.slice(start, end === -1 ? source.length : end);
+
+  assert.match(completeStop, /snacky_commit_route_stop_inventory_v1/);
+  assert.match(completeStop, /p_fill_lines/);
+  assert.doesNotMatch(completeStop, /zeroFillLedgerClient/);
+  assert.doesNotMatch(completeStop, /route_stop_zero_fill_return/);
+  assert.doesNotMatch(completeStop, /reason:\s*returning\s*\?\s*"operator_bag_to_storage"/);
+});
+
+test("terminal stop outcomes stay reachable and use Arabic status labels", () => {
+  const route = read("src/app/operator/routes/[id]/page.tsx");
+  const stop = read("src/app/operator/routes/[id]/stops/[stopId]/page.tsx");
+  const arabic = read("src/lib/i18n/ar.ts");
+  const compactRoute = route.replace(/\s+/g, " ");
+
+  assert.match(
+    compactRoute,
+    /isRouteStopDoneStatus\(stop\.status\) \? \( <div className="mt-1"> <Link href=\{`\/operator\/routes\/\$\{routeId\}\/stops\/\$\{stop\.id\}`\}/,
+  );
+  assert.match(compactRoute, /\{t\("View stop outcome"\)\}/);
+  assert.match(stop, /<StatusBadge status=\{stopData\.stopStatus\} label=\{t\(stopData\.stopStatus, stopData\.stopStatus\)\} \/>/);
+  assert.match(arabic, /"View stop outcome": "عرض نتيجة الموقع"/);
+  assert.match(arabic, /completed:\s*"مكتمل"/);
+  assert.match(arabic, /skipped:\s*"تم التجاوز"/);
+  assert.match(arabic, /canceled:\s*"ملغاة?"/);
+});
+
+test("starting a stop never reports success after a failed compare-and-set", () => {
+  const source = read("src/lib/operator-actions.ts");
+  const start = source.indexOf("export async function markStopInProgress");
+  const end = source.indexOf("\nexport async function ", start + 1);
+  const body = source.slice(start, end === -1 ? source.length : end);
+
+  assert.match(body, /This route is not active, so the stop cannot be started/);
+  assert.match(body, /\.eq\("status", ROUTE_STOP_PICKED_STATUS\)[\s\S]*\.select\("id, status"\)[\s\S]*\.maybeSingle\(\)/);
+  assert.match(body, /if \(!startedStop\)[\s\S]*This stop changed while it was being started/);
+  assert.doesNotMatch(body, /String\(stop\.status \?\? ""\) !== ROUTE_STOP_PICKED_STATUS\) return \{ success: true \}/);
 });

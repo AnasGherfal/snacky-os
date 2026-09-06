@@ -1,6 +1,11 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  getOrCreateOperatorMoneyOperationId,
+  isOperatorMoneyReceiptAction,
+  rotateOperatorMoneyOperationId,
+} from "@/lib/operator-money-operation-id";
 
 type Row = Record<string, any>;
 type Snapshot = {
@@ -262,9 +267,31 @@ export default function OperatorMoneyLedgerClient({
       personId,
       ...body,
       periodId: body.periodId || periodId || undefined,
-      clientSubmissionId:
-        body.clientSubmissionId || action + ":" + crypto.randomUUID(),
     };
+    let pendingOperation: { storageKey: string; operationId: string } | null = null;
+    if (isOperatorMoneyReceiptAction(action)) {
+      try {
+        pendingOperation = getOrCreateOperatorMoneyOperationId({
+          storage: window.localStorage,
+          action,
+          personId,
+          periodId: String(payload.periodId ?? ""),
+          createId: () => crypto.randomUUID(),
+        });
+        payload.clientSubmissionId = pendingOperation.operationId;
+      } catch (error) {
+        setNotice({
+          kind: "error",
+          text: t(
+            "This browser could not safely preserve the operation receipt. Nothing was sent. Check browser storage and try again.",
+            "تعذر على المتصفح حفظ إيصال العملية بأمان. لم يتم إرسال أي شيء. تحقق من تخزين المتصفح ثم حاول مجدداً.",
+          ),
+        });
+        console.error("[operator-money] Could not persist the pending operation receipt", error);
+        setSaving("");
+        return false;
+      }
+    }
     if (typeof payload.date === "string" && payload.date) {
       const localDate = new Date(payload.date);
       if (!Number.isNaN(localDate.getTime())) payload.date = localDate.toISOString();
@@ -282,6 +309,20 @@ export default function OperatorMoneyLedgerClient({
           text: json.error || t("Save failed.", "فشل الحفظ."),
         });
         return false;
+      }
+      if (pendingOperation) {
+        try {
+          rotateOperatorMoneyOperationId({
+            storage: window.localStorage,
+            storageKey: pendingOperation.storageKey,
+            completedOperationId: pendingOperation.operationId,
+            createId: () => crypto.randomUUID(),
+          });
+        } catch (error) {
+          // The server already confirmed the command. Keep the success result;
+          // reusing the old receipt is safer than pretending the save failed.
+          console.error("[operator-money] Could not rotate the completed operation receipt", error);
+        }
       }
       const messages: Record<string, [string, string]> = {
         purchase: [
@@ -816,6 +857,8 @@ function PurchasePanel({
   const [quantity, setQuantity] = useState(1);
   const [source, setSource] = useState<Row | null>(null);
   const [checking, setChecking] = useState(false);
+  const [availabilityError, setAvailabilityError] = useState("");
+  const availabilityRequestId = useRef(0);
   const categories = useMemo(
     () => [
       "all",
@@ -861,9 +904,11 @@ function PurchasePanel({
 
   const choose = async (product: Row) => {
     if (!allowed) return;
+    const requestId = ++availabilityRequestId.current;
     setProductId(String(product.id));
     setSource(null);
     setQuantity(1);
+    setAvailabilityError("");
     setChecking(true);
     try {
       const response = await fetch("/api/operator-money", {
@@ -872,15 +917,30 @@ function PurchasePanel({
         body: JSON.stringify({ action: "availability", productId: product.id }),
       });
       const json = await response.json().catch(() => ({}));
-      const best = (response.ok && Array.isArray(json.data) ? json.data : [])
+      if (!response.ok) {
+        throw new Error(String(json.error || t("Storage availability could not be verified.", "تعذر التحقق من مخزون المنتج.")));
+      }
+      if (!Array.isArray(json.data)) {
+        throw new Error(t("Storage availability returned an invalid response.", "أعاد التحقق من المخزون استجابة غير صالحة."));
+      }
+      const best = json.data
         .filter((row: Row) => Number(row.available_qty) > 0)
         .sort(
           (left: Row, right: Row) =>
             Number(right.available_qty) - Number(left.available_qty),
         )[0];
+      if (requestId !== availabilityRequestId.current) return;
       setSource(best || null);
+    } catch (error) {
+      if (requestId !== availabilityRequestId.current) return;
+      setSource(null);
+      setAvailabilityError(
+        error instanceof Error
+          ? error.message
+          : t("Storage availability could not be verified.", "تعذر التحقق من مخزون المنتج."),
+      );
     } finally {
-      setChecking(false);
+      if (requestId === availabilityRequestId.current) setChecking(false);
     }
   };
 
@@ -999,6 +1059,23 @@ function PurchasePanel({
             {checking ? (
               <div className="rounded-xl bg-white p-3 text-sm">
                 {t("Checking available stock…", "جارٍ التحقق من الكمية المتاحة…")}
+              </div>
+            ) : availabilityError ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                <div className="font-semibold">
+                  {t(
+                    "Storage quantity is temporarily unavailable. Nothing can be recorded until verified stock loads.",
+                    "كمية المخزون غير متاحة مؤقتاً. لا يمكن تسجيل المنتج حتى يتم تحميل المخزون المؤكد.",
+                  )}
+                </div>
+                <div className="mt-1 text-xs opacity-80">{availabilityError}</div>
+                <button
+                  type="button"
+                  className="btn-secondary mt-3"
+                  onClick={() => void choose(selected)}
+                >
+                  {t("Retry stock check", "إعادة التحقق من المخزون")}
+                </button>
               </div>
             ) : source ? (
               <div className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">
