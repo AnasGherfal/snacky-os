@@ -13,6 +13,10 @@ const migrationName = fs
 assert.ok(migrationName, "role-based internal-table RLS migration is missing");
 const migration = fs.readFileSync(path.join(migrationsDir, migrationName), "utf8");
 const operatorActions = fs.readFileSync(path.join(root, "src", "lib", "operator-actions.ts"), "utf8");
+const completeStopAction = operatorActions.slice(
+  operatorActions.indexOf("export async function completeStop("),
+  operatorActions.indexOf("export async function finalizeRouteInventory("),
+);
 
 const financeTables = [
   "cash_collections",
@@ -33,9 +37,11 @@ test("finance and cash tables are RLS protected by finance-capable roles", () =>
 });
 
 test("authorized route completion writes cash through the protected server client", () => {
-  assert.match(operatorActions, /const cashWorkflowClient = getSupabaseAdminClient\(\) \?\? supabase/);
-  assert.match(operatorActions, /cashWorkflowClient\s*\n\s*\.from\("vms_sales_snapshots"\)/);
-  assert.match(operatorActions, /cashWorkflowClient\s*\n\s*\.from\("cash_collections"\)/);
+  assert.match(completeStopAction, /const completionWorkflowClient = getSupabaseAdminClient\(\)/);
+  assert.match(completeStopAction, /if \(!completionWorkflowClient\) \{[\s\S]*?protected stop-completion workflow is not configured/);
+  assert.doesNotMatch(completeStopAction, /getSupabaseAdminClient\(\) \?\? supabase/);
+  assert.match(completeStopAction, /completionWorkflowClient\s*\n\s*\.from\("vms_sales_snapshots"\)/);
+  assert.match(completeStopAction, /completionWorkflowClient\s*\n\s*\.from\("cash_collections"\)/);
 });
 
 test("team members preserve self read and restrict mutations to owner/admin", () => {

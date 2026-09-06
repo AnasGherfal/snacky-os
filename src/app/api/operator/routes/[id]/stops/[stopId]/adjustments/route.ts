@@ -94,7 +94,7 @@ export async function POST(
   let payload: AdjustmentPayload;
   try {
     payload = await request.json() as AdjustmentPayload;
-  } catch (error) {
+  } catch {
     return NextResponse.json({ success: false, code: "INVALID_JSON", error: "Invalid adjustment payload." }, { status: 400 });
   }
 
@@ -147,6 +147,16 @@ export async function POST(
   if (quantity <= 0) {
     return NextResponse.json({ success: false, code: "INVALID_QUANTITY", error: "Quantity must be greater than 0." }, { status: 400 });
   }
+  if (!clientSubmissionId || clientSubmissionId.length > 200) {
+    return NextResponse.json(
+      {
+        success: false,
+        code: "INVALID_SUBMISSION_ID",
+        error: "A stable submission id is required. Refresh the stop and try again.",
+      },
+      { status: 400 },
+    );
+  }
 
   if (rawAdjustmentId && !adjustmentId) {
     console.warn("[operator:inventory-adjustment] Ignoring non-UUID adjustmentId", {
@@ -170,7 +180,7 @@ export async function POST(
       p_reason: reason,
       p_notes: notes || null,
       p_photo_url: photoUrl || null,
-      p_client_submission_id: clientSubmissionId || `route-inventory-adjustment:${routeId}:${stopId}:${productId}:${adjustmentType}`,
+      p_client_submission_id: clientSubmissionId,
     });
 
     if (error) throw error;

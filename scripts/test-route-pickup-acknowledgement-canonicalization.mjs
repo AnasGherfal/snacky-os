@@ -59,7 +59,7 @@ test("operator action calls only the new single-signature pickup RPC", () => {
   assert.match(actionSource, /buildServerCanonicalAcknowledgedPickupLineIds/);
   assert.match(actionSource, /serverCanonicalAcknowledgedPickupLineIds/);
   assert.match(actionSource, /p_acknowledged_pickup_line_ids:\s*serverCanonicalAcknowledgedPickupLineIds/);
-  assert.match(actionSource, /snacky_confirm_route_pickup_batch_v2/);
+  assert.match(actionSource, /snacky_confirm_route_pickup_batch_v3/);
   assert.doesNotMatch(actionSource, /p_acknowledged_pickup_line_ids:\s*\[\]/);
   assert.doesNotMatch(actionSource, /confirm_route_pickup_batch\("/);
   assert.doesNotMatch(actionSource, /confirm_route_pickup_batch_core\("/);

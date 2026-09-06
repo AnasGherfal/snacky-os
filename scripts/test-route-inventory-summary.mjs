@@ -17,6 +17,10 @@ test("route inventory summary keeps pickup, fill, and return balances aligned", 
     filledQty: 15,
     returnedQty: 5,
     damagedQty: 0,
+    soldQty: 0,
+    compensatedQty: 0,
+    machineStorageQty: 0,
+    machineReturnQty: 0,
     adjustmentInQty: 0,
     adjustmentOutQty: 0,
     remainingQty: 0,
@@ -51,12 +55,13 @@ test("route inventory summary normalizes historical movement aliases", () => {
   assert.equal(summary.length, 1);
   assert.equal(summary[0].loadedQty, 20);
   assert.equal(summary[0].filledQty, 12);
-  assert.equal(summary[0].returnedQty, 5);
+  assert.equal(summary[0].returnedQty, 3);
+  assert.equal(summary[0].machineReturnQty, 2);
   assert.equal(summary[0].damagedQty, 1);
-  assert.equal(summary[0].remainingQty, 2);
+  assert.equal(summary[0].remainingQty, 4);
 });
 
-test("explicit-zero stop return records zero filled and all assigned units returned", () => {
+test("a physical terminal return moves counted bag stock back to storage", () => {
   const summary = summarizeRouteInventoryMovements([
     { product_id: "product-x", quantity: 5, reason: "storage_to_operator_bag", from_entity_type: "storage", to_entity_type: "operator_bag" },
     { product_id: "product-x", quantity: 5, reason: "operator_bag_to_storage", from_entity_type: "operator_bag", to_entity_type: "storage" },
@@ -68,6 +73,10 @@ test("explicit-zero stop return records zero filled and all assigned units retur
     filledQty: 0,
     returnedQty: 5,
     damagedQty: 0,
+    soldQty: 0,
+    compensatedQty: 0,
+    machineStorageQty: 0,
+    machineReturnQty: 0,
     adjustmentInQty: 0,
     adjustmentOutQty: 0,
     remainingQty: 0,
@@ -86,6 +95,43 @@ test("machine fill corrections reduce filled quantity regardless of movement ord
   assert.equal(summary[0].filledQty, 0);
   assert.equal(summary[0].returnedQty, 8);
   assert.equal(summary[0].remainingQty, 0);
+});
+
+test("remaining route stock is derived from every operator-bag endpoint", () => {
+  const summary = summarizeRouteInventoryMovements([
+    { product_id: "product-x", quantity: 20, reason: "storage_to_operator_bag", from_entity_type: "storage", to_entity_type: "operator_bag" },
+    { product_id: "product-x", quantity: 6, reason: "operator_bag_to_machine", from_entity_type: "operator_bag", to_entity_type: "machine" },
+    { product_id: "product-x", quantity: 3, reason: "manual_sale", from_entity_type: "operator_bag", to_entity_type: "customer" },
+    { product_id: "product-x", quantity: 2, reason: "customer_compensation", from_entity_type: "operator_bag", to_entity_type: "customer" },
+    { product_id: "product-x", quantity: 4, reason: "extra_stock_left_at_machine", from_entity_type: "operator_bag", to_entity_type: "machine_storage" },
+    { product_id: "product-x", quantity: 1, reason: "damaged", from_entity_type: "operator_bag", to_entity_type: "waste" },
+  ]);
+
+  assert.equal(summary[0].filledQty, 6);
+  assert.equal(summary[0].soldQty, 3);
+  assert.equal(summary[0].compensatedQty, 2);
+  assert.equal(summary[0].machineStorageQty, 4);
+  assert.equal(summary[0].damagedQty, 1);
+  assert.equal(summary[0].remainingQty, 4);
+});
+
+test("a legacy machine return transit does not reduce the bag twice", () => {
+  const summary = summarizeRouteInventoryMovements([
+    { product_id: "product-x", quantity: 3, reason: "returned_from_machine", from_entity_type: "machine", to_entity_type: "operator_bag" },
+    { product_id: "product-x", quantity: 3, reason: "operator_bag_to_storage", from_entity_type: "operator_bag", to_entity_type: "storage" },
+  ]);
+
+  assert.equal(summary[0].machineReturnQty, 3);
+  assert.equal(summary[0].returnedQty, 3);
+  assert.equal(summary[0].remainingQty, 0);
+});
+
+test("negative route bag balances remain visible", () => {
+  const summary = summarizeRouteInventoryMovements([
+    { product_id: "product-x", quantity: 2, reason: "manual_sale", from_entity_type: "operator_bag", to_entity_type: "customer" },
+  ]);
+
+  assert.equal(summary[0].remainingQty, -2);
 });
 
 test("inventory movement helpers normalize locations and idempotency keys", () => {

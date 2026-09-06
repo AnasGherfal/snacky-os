@@ -194,12 +194,10 @@ export default async function AdminToolsPage({
           </form>
         </ToolCard>
 
-        <ToolCard title="Force Complete Route With Audit" description="Returns outstanding operator bag stock to storage, skips unfinished stops, reconciles stock lines, and completes the route." danger>
+        <ToolCard title="Complete Route With Physical Count" description="Opens the protected count-and-return workflow. Every carried product, including an expected zero, must be physically confirmed before completion.">
           <form action={forceCompleteRouteWithAudit} className="space-y-3">
             <RouteSelect routes={routes} />
-            <ReasonInput placeholder="Reason for force completion" />
-            <input name="confirmation" required className="field-input" placeholder="Type FORCE COMPLETE" />
-            <FormSubmitButton className="btn-primary" pendingLabel="Force completing route...">Force complete route</FormSubmitButton>
+            <FormSubmitButton className="btn-primary" pendingLabel="Opening physical count...">Open physical count</FormSubmitButton>
           </form>
         </ToolCard>
 

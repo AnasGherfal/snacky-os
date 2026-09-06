@@ -44,10 +44,22 @@ export default async function FinanceTransactionDetailPage({
   const { data: transaction } = await supabase.from("financial_transactions").select("*").eq("id", id).maybeSingle();
   if (!transaction) notFound();
   const row = transaction as any;
+  const { data: supplierPayment, error: supplierPaymentError } = await supabase
+    .from("purchase_payments")
+    .select("id, purchase_order_id")
+    .eq("finance_transaction_id", id)
+    .maybeSingle();
+  if (supplierPaymentError) {
+    console.error("[finance:transaction] Could not verify supplier-payment ownership", {
+      financial_transaction_id: id,
+      error: supplierPaymentError,
+    });
+  }
+  const isSupplierPayment = row.source_type === "purchase_payment" || Boolean(supplierPayment);
   const affectsBalance = isFinanceLedgerTransaction(row, FINANCE_RECONCILIATION_CUTOFF_DATE);
-  const canEdit = canEditFinancialTransactions({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status });
+  const canEdit = !supplierPaymentError && !isSupplierPayment && canEditFinancialTransactions({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status });
 
-  const relatedPurchaseId = row.related_purchase_id ?? row.linked_purchase_id ?? (row.source_type === "purchase" ? row.source_id : null);
+  const relatedPurchaseId = supplierPayment?.purchase_order_id ?? row.related_purchase_id ?? row.linked_purchase_id ?? (row.source_type === "purchase" ? row.source_id : null);
   const [purchase, route, machine, location] = await Promise.all([
     relatedPurchaseId ? supabase.from("purchase_orders").select("id, receipt_number, order_date, payment_method, payment_account_id, receipt_url").eq("id", relatedPurchaseId).maybeSingle() : Promise.resolve({ data: null }),
     row.related_route_id ? supabase.from("routes").select("id, route_date, status").eq("id", row.related_route_id).maybeSingle() : Promise.resolve({ data: null }),
@@ -100,7 +112,18 @@ export default async function FinanceTransactionDetailPage({
           <h2 className="text-base font-semibold text-slate-900">Actions</h2>
           <div className="mt-4 space-y-3">
             {canEdit ? <Link href={`/finance/transactions/${id}/edit`} className="btn-primary w-full">Edit transaction</Link> : null}
-            {canEdit ? <FinanceTransactionStatusActions id={id} status={row.transaction_status ?? "active"} /> : <p className="text-sm text-slate-500">Only owner/admin/finance users can edit finance transactions.</p>}
+            {canEdit ? <FinanceTransactionStatusActions id={id} status={row.transaction_status ?? "active"} /> : null}
+            {!canEdit && !isSupplierPayment && !supplierPaymentError ? <p className="text-sm text-slate-500">Only owner/admin/finance users can edit finance transactions.</p> : null}
+            {isSupplierPayment ? (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">
+                This finance entry is owned by a supplier payment. Correct or void it from the linked purchase payment history so the purchase balance and finance ledger stay together.
+              </p>
+            ) : null}
+            {supplierPaymentError ? (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">
+                Editing is locked because Snacky OS could not safely verify this transaction&apos;s source.
+              </p>
+            ) : null}
           </div>
         </section>
       </div>

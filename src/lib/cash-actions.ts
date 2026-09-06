@@ -7,6 +7,7 @@ import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/a
 import { canViewFinancials } from "@/lib/authz";
 import { calculateCashVariance, statusForConfirmedCash } from "@/lib/cash-collections";
 import { clearCashCollectionFinancialTransaction, createCashCollectionFinancialTransaction } from "@/lib/finance-actions";
+import { getRequiredFinanceWriteClient } from "@/lib/finance-write-client";
 
 function clean(value: FormDataEntryValue | null) {
   return String(value ?? "").trim();
@@ -263,6 +264,7 @@ export async function voidCashCollection(formData: FormData) {
   const path = `/cash-collections/${id}`;
   const reason = requireConfirmedReason(formData, path);
   const { profile, supabase } = await requireCashReviewAccess(path);
+  const financeWriteSupabase = getRequiredFinanceWriteClient();
 
   const { data: before, error: beforeError } = await supabase.from("cash_collections").select("*").eq("id", id).maybeSingle();
   if (beforeError || !before) fail("/cash-collections", "Cash collection not found.");
@@ -294,7 +296,7 @@ export async function voidCashCollection(formData: FormData) {
 
   if (financeBefore?.length) {
     const financeIds = financeBefore.map((row: any) => row.id);
-    const { data: financeAfter, error: financeError } = await supabase
+    const { data: financeAfter, error: financeError } = await financeWriteSupabase
       .from("financial_transactions")
       .update({
         transaction_status: "voided",

@@ -63,6 +63,7 @@ type RefillOrderFallbackRow = { refill_order_lines?: RefillOrderLineRow[] | null
 type SlotRow = { id?: string | null; slot_code?: string | null; product_id?: string | null };
 type FillLineRow = { product_id?: string | null; action_type?: string | null; actual_qty?: unknown; reason?: string | null; notes?: string | null; assigned_product_id?: string | null };
 type MovementRow = { product_id?: string | null; quantity?: unknown; related_route_stop_id?: string | null; reason?: string | null; from_entity_type?: string | null; to_entity_type?: string | null };
+type RouteBagBalanceRow = { product_id?: string | null; signed_quantity?: unknown };
 type ProductOptionRow = { id: string; sku?: string | null; barcode?: string | null; name: string; category?: string | null; brand?: string | null; image_url?: string | null; selling_price?: number | null; current_selling_price_lyd?: number | null; vms_selling_price_lyd?: number | null };
 type MachineProductSignalRow = { product_id?: string | null };
 type AdjustmentRow = {
@@ -78,18 +79,6 @@ type AdjustmentRow = {
   created_at?: string | null;
   product?: ProductOptionRow | ProductOptionRow[] | null;
 };
-type MachineStorageStockRow = {
-  id?: string | null;
-  machine_id?: string | null;
-  location_id?: string | null;
-  product_id?: string | null;
-  product_name?: string | null;
-  quantity?: unknown;
-  notes?: string | null;
-  updated_at?: string | null;
-  created_at?: string | null;
-};
-
 type PlannedProductLine = {
   refillOrderLineId: string | null;
   routeStopItemId?: string | null;
@@ -521,7 +510,7 @@ export async function GET(
     });
 
     const [
-      { data: routeMovements, error: movementError },
+      { data: routeBagBalances, error: routeBagBalancesError },
       { data: fillMovements, error: fillMovementsError },
       { data: products, error: productsError },
       { data: refillHistory, error: refillHistoryError },
@@ -531,11 +520,7 @@ export async function GET(
       manualSalesResult,
       manualMachineSalesResult,
     ] = await Promise.all([
-      supabase
-        .from("inventory_movements")
-        .select("product_id, quantity, related_route_stop_id, reason, from_entity_type, to_entity_type")
-        .eq("related_route_id", routeId)
-        .limit(5000),
+      supabase.rpc("snacky_route_bag_balances", { p_route_id: routeId }),
       supabase
         .from("inventory_movements")
         .select("product_id, quantity, related_route_stop_id, reason, from_entity_type, to_entity_type")
@@ -584,7 +569,9 @@ export async function GET(
         .order("sale_time", { ascending: false })
         .limit(200),
     ]);
-    if (movementError) logOptionalStopDataIssue({ step: "load_route_movements", query: "inventory_movements", routeId, stopId, profile, route, stop, error: movementError });
+    if (routeBagBalancesError) {
+      throw new Error(`Could not load the authoritative route inventory balance: ${errorMessage(routeBagBalancesError)}`);
+    }
     if (fillMovementsError) logOptionalStopDataIssue({ step: "load_fill_movements", query: "inventory_movements", routeId, stopId, profile, route, stop, error: fillMovementsError });
     let productRows = productsError ? [] : (products ?? []) as ProductOptionRow[];
     if (productsError) {
@@ -638,17 +625,11 @@ export async function GET(
     });
 
     const bagBalanceByProduct = new Map<string, number>();
-    const routeMovementRows = movementError ? [] : (routeMovements ?? []) as MovementRow[];
-    routeMovementRows.forEach((movement) => {
-      const productId = String(movement.product_id ?? "");
-      const qty = movementQuantity(movement.quantity);
-      if (!productId || qty <= 0) return;
-      if (movement.to_entity_type === "operator_bag" && movement.from_entity_type !== "operator_bag") {
-        bagBalanceByProduct.set(productId, (bagBalanceByProduct.get(productId) ?? 0) + qty);
-      }
-      if (movement.from_entity_type === "operator_bag" && movement.to_entity_type !== "operator_bag") {
-        bagBalanceByProduct.set(productId, (bagBalanceByProduct.get(productId) ?? 0) - qty);
-      }
+    ((routeBagBalances ?? []) as RouteBagBalanceRow[]).forEach((balance) => {
+      const productId = String(balance.product_id ?? "");
+      const signedQuantity = Number(balance.signed_quantity ?? 0);
+      if (!productId || !Number.isFinite(signedQuantity)) return;
+      bagBalanceByProduct.set(productId, (bagBalanceByProduct.get(productId) ?? 0) + signedQuantity);
     });
 
     const availableByProduct = new Map<string, number>();
@@ -974,5 +955,3 @@ export async function POST(
     );
   }
 }
-
-

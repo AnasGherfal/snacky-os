@@ -49,6 +49,18 @@ export default async function EditFinanceTransactionPage({
   ]);
   if (!transaction) notFound();
 
+  const { data: supplierPayment, error: supplierPaymentError } = await supabase
+    .from("purchase_payments")
+    .select("id, purchase_order_id")
+    .eq("finance_transaction_id", id)
+    .maybeSingle();
+  if (supplierPaymentError) {
+    redirect(`/finance/transactions/${id}?error=${encodeURIComponent("Editing is locked because Snacky OS could not safely verify this transaction's source.")}`);
+  }
+  if (transaction.source_type === "purchase_payment" || supplierPayment) {
+    redirect(`/finance/transactions/${id}?error=${encodeURIComponent("Supplier-payment entries must be corrected from the linked purchase payment history.")}`);
+  }
+
   const row = transaction as any;
   const linkedPurchase = row.related_purchase_id ? (purchases ?? []).find((purchase: any) => purchase.id === row.related_purchase_id) : null;
   const linkedSource = row.related_purchase_id ? "purchase" : row.related_cash_collection_id ? "cash collection" : "";
@@ -124,12 +136,6 @@ export default async function EditFinanceTransactionPage({
                 </select>
               </FormField>
               <FormField label="Transaction type"><input name="transaction_type" defaultValue={row.transaction_type ?? ""} className="field-input" /></FormField>
-              <FormField label="Related purchase">
-                <select name="related_purchase_id" defaultValue={row.related_purchase_id ?? ""} className="field-input">
-                  <option value="">None</option>
-                  {(purchases ?? []).map((purchase: any) => <option key={purchase.id} value={purchase.id}>{purchase.receipt_number ?? purchase.id.slice(0, 8)} - {purchase.order_date}</option>)}
-                </select>
-              </FormField>
               <FormField label="Related route">
                 <select name="related_route_id" defaultValue={row.related_route_id ?? ""} className="field-input">
                   <option value="">None</option>

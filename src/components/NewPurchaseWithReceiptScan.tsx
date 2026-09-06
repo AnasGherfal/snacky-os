@@ -8,6 +8,7 @@ import type { PurchaseSubmitResult } from "@/lib/purchase-actions";
 import type { ReceiptConfidenceLabel, ReceiptScanDraft } from "@/lib/receipt-scan-types";
 
 type SupplierOption = { id: string; name: string };
+type StorageLocationOption = { id: string; name: string; locationType: string };
 type ProductOption = {
   id: string;
   sku: string | null;
@@ -31,7 +32,7 @@ type ProductOption = {
   last_supplier_id?: string | null;
   lastSupplierName?: string | null;
   last_supplier_name?: string | null;
-  currentStorageQty: number;
+  currentStorageQty: number | null;
   vmsNames: string[];
 };
 
@@ -54,12 +55,14 @@ export function NewPurchaseWithReceiptScan({
   action,
   suppliers,
   products,
+  storageLocations,
   canAddProducts = false,
   prefillSource,
 }: {
   action: (formData: FormData) => Promise<PurchaseSubmitResult>;
   suppliers: SupplierOption[];
   products: ProductOption[];
+  storageLocations: StorageLocationOption[];
   canAddProducts?: boolean;
   prefillSource?: string | null;
 }) {
@@ -105,6 +108,7 @@ export function NewPurchaseWithReceiptScan({
         action={action}
         suppliers={suppliers}
         products={products}
+        storageLocations={storageLocations}
         receiptScan={appliedScan}
         appliedScanKey={appliedScanKey}
         canAddProducts={canAddProducts}

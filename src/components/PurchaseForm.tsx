@@ -13,6 +13,7 @@ import type { ReceiptConfidenceLabel, ReceiptLineAction, ReceiptScanDraft } from
 import { readRestockShoppingList, type RestockShoppingListItem } from "@/lib/restock-shopping-list";
 
 type SupplierOption = { id: string; name: string };
+type StorageLocationOption = { id: string; name: string; locationType: string };
 type ProductOption = {
   id: string;
   sku: string | null;
@@ -36,7 +37,7 @@ type ProductOption = {
   last_supplier_id?: string | null;
   lastSupplierName?: string | null;
   last_supplier_name?: string | null;
-  currentStorageQty: number;
+  currentStorageQty: number | null;
   vmsNames: string[];
 };
 type PurchaseLine = {
@@ -67,12 +68,14 @@ type PurchaseLine = {
 };
 type InitialPurchase = {
   id?: string;
+  updatedAt?: string | null;
   supplierId?: string | null;
   purchaseDate?: string | null;
   receiptNumber?: string | null;
   paymentMethod?: string | null;
   paymentStatus?: string | null;
   paymentAccountId?: string | null;
+  receivingStorageLocationId?: string | null;
   receiptUrl?: string | null;
   receiptFileName?: string | null;
   receiptContentType?: string | null;
@@ -88,6 +91,7 @@ type PurchaseDetailsState = {
   paymentMethod: string;
   paymentStatus: string;
   paymentAccountId: string;
+  receivingStorageLocationId: string;
   receiptUrl: string;
   notes: string;
 };
@@ -102,6 +106,7 @@ type ReceiptPreviewState = {
 };
 
 type LocalPurchaseDraft = {
+  clientSubmissionId: string;
   details: PurchaseDetailsState;
   manualTotal: string;
   lines: PurchaseLine[];
@@ -109,6 +114,16 @@ type LocalPurchaseDraft = {
   receiptPreview: ReceiptPreviewState | null;
   updatedAt: string;
 };
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function newClientSubmissionId() {
+  return globalThis.crypto?.randomUUID?.() ?? "";
+}
+
+function validClientSubmissionId(value: unknown) {
+  return UUID_PATTERN.test(String(value ?? "").trim());
+}
 
 function newLine(line?: Partial<PurchaseLine>): PurchaseLine {
   const receiptLineName = line?.receiptLineName ?? null;
@@ -154,14 +169,15 @@ function todayDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function detailsFromInitial(initialPurchase?: InitialPurchase): PurchaseDetailsState {
+function detailsFromInitial(initialPurchase?: InitialPurchase, defaultReceivingStorageLocationId = ""): PurchaseDetailsState {
   return {
     supplierId: initialPurchase?.supplierId ?? "",
     purchaseDate: initialPurchase?.purchaseDate ?? todayDate(),
     receiptNumber: initialPurchase?.receiptNumber ?? "",
     paymentMethod: initialPurchase?.paymentMethod ?? "cash",
-    paymentStatus: initialPurchase?.paymentStatus ?? "paid",
+    paymentStatus: "unpaid",
     paymentAccountId: initialPurchase?.paymentAccountId ?? "snacky_lyd",
+    receivingStorageLocationId: initialPurchase?.receivingStorageLocationId ?? defaultReceivingStorageLocationId,
     receiptUrl: initialPurchase?.receiptUrl ?? "",
     notes: initialPurchase?.notes ?? "",
   };
@@ -184,7 +200,7 @@ function hasPurchaseDraftContent(draft: Pick<LocalPurchaseDraft, "details" | "ma
       details.receiptUrl.trim() ||
       details.notes.trim() ||
       details.paymentMethod !== "cash" ||
-      details.paymentStatus !== "paid" ||
+      details.paymentStatus !== "unpaid" ||
       details.paymentAccountId !== "snacky_lyd" ||
       draft.manualTotal.trim() ||
       Object.values(draft.searchByLine ?? {}).some((value) => value.trim()) ||
@@ -197,7 +213,11 @@ function comparablePurchaseDraft(draft: LocalPurchaseDraft) {
     details: draft.details,
     manualTotal: draft.manualTotal,
     searchByLine: draft.searchByLine,
-    lines: draft.lines.map(({ id: _id, ...line }) => line),
+    lines: draft.lines.map((line) => {
+      const comparableLine: Partial<PurchaseLine> = { ...line };
+      delete comparableLine.id;
+      return comparableLine;
+    }),
     receiptPreview: draft.receiptPreview
       ? {
           type: draft.receiptPreview.type,
@@ -456,7 +476,7 @@ function ProductCombobox({
                     {product.sku ?? "No SKU"} | {product.barcode ?? "No barcode"} | {product.brand ?? product.category ?? "Uncategorized"}
                   </span>
                   <span className={`mt-1 block whitespace-normal text-xs leading-4 ${selected ? "text-white/85" : "text-slate-600"}`}>
-                    Case {productUnitsPerBox(product)} | Storage {Number(product.currentStorageQty || 0)} | Last purchase {lastPurchaseCost === null ? "-" : money(Number(lastPurchaseCost))}
+                    Case {productUnitsPerBox(product)} | Storage {product.currentStorageQty === null ? "Unavailable" : Number(product.currentStorageQty)} | Last purchase {lastPurchaseCost === null ? "-" : money(Number(lastPurchaseCost))}
                   </span>
                   {lastPurchaseDate || lastSupplierName ? (
                     <span className={`mt-1 block whitespace-normal text-xs leading-4 ${selected ? "text-white/80" : "text-slate-500"}`}>
@@ -578,6 +598,7 @@ export function PurchaseForm({
   action,
   suppliers,
   products,
+  storageLocations = [],
   initialPurchase,
   initialLines,
   receiptScan,
@@ -589,6 +610,7 @@ export function PurchaseForm({
   action: (formData: FormData) => Promise<PurchaseSubmitResult>;
   suppliers: SupplierOption[];
   products: ProductOption[];
+  storageLocations?: StorageLocationOption[];
   initialPurchase?: InitialPurchase;
   initialLines?: Partial<PurchaseLine>[];
   receiptScan?: ReceiptScanDraft | null;
@@ -604,13 +626,15 @@ export function PurchaseForm({
   const lastAppliedScanKey = useRef(0);
   const restockPrefillAppliedRef = useRef(false);
   const receiptObjectUrlRef = useRef<string | null>(null);
-  const [details, setDetails] = useState<PurchaseDetailsState>(() => detailsFromInitial(initialPurchase));
+  const defaultReceivingStorageLocationId = storageLocations.length === 1 ? storageLocations[0].id : "";
+  const [clientSubmissionId, setClientSubmissionId] = useState("");
+  const [details, setDetails] = useState<PurchaseDetailsState>(() => detailsFromInitial(initialPurchase, defaultReceivingStorageLocationId));
   const [lines, setLines] = useState<PurchaseLine[]>(() => initialLines?.length ? initialLines.map((line) => newLine(line)) : [newLine()]);
   const [manualTotal, setManualTotal] = useState<string>(() => initialPurchase?.manualTotalLyd === null || initialPurchase?.manualTotalLyd === undefined ? "" : String(initialPurchase.manualTotalLyd));
   const [searchByLine, setSearchByLine] = useState<Record<string, string>>({});
   const [submitIntent, setSubmitIntent] = useState<"draft" | "received" | null>(null);
   const [submitMessage, setSubmitMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [detailsErrors, setDetailsErrors] = useState<{ purchaseDate?: string }>({});
+  const [detailsErrors, setDetailsErrors] = useState<{ supplierId?: string; purchaseDate?: string; receivingStorageLocationId?: string }>({});
   const [lineErrors, setLineErrors] = useState<Record<string, string>>({});
   const [receiptPreview, setReceiptPreview] = useState<ReceiptPreviewState | null>(() => {
     const receiptUrl = initialPurchase?.receiptUrl?.trim();
@@ -626,17 +650,28 @@ export function PurchaseForm({
     const initialReceiptUrl = initialPurchase.receiptUrl?.trim() ?? "";
     const initialReceiptType = initialPurchase.receiptContentType?.trim() || (initialReceiptUrl ? inferReceiptType(initialReceiptUrl) : "");
     return comparablePurchaseDraft({
-      details: detailsFromInitial(initialPurchase),
+      clientSubmissionId: "",
+      details: detailsFromInitial(initialPurchase, defaultReceivingStorageLocationId),
       manualTotal: initialPurchase.manualTotalLyd === null || initialPurchase.manualTotalLyd === undefined ? "" : String(initialPurchase.manualTotalLyd),
       lines: initialLines?.length ? initialLines.map((line) => newLine(line)) : [newLine()],
       searchByLine: {},
       receiptPreview: initialReceiptUrl ? { url: initialReceiptUrl, type: initialReceiptType, name: initialPurchase.receiptFileName || "Saved receipt", source: "url" } : null,
       updatedAt: "",
     });
-  }, [initialLines, initialPurchase]);
+  }, [defaultReceivingStorageLocationId, initialLines, initialPurchase]);
 
   const applyLocalDraft = (draft: LocalPurchaseDraft) => {
-    setDetails(draft.details);
+    if (validClientSubmissionId(draft.clientSubmissionId)) {
+      setClientSubmissionId(draft.clientSubmissionId);
+    }
+    setDetails({
+      ...detailsFromInitial(initialPurchase, defaultReceivingStorageLocationId),
+      ...draft.details,
+      receivingStorageLocationId:
+        draft.details?.receivingStorageLocationId ||
+        initialPurchase?.receivingStorageLocationId ||
+        defaultReceivingStorageLocationId,
+    });
     setManualTotal(draft.manualTotal);
     setLines(draft.lines.length ? draft.lines.map((line) => newLine(line)) : [newLine()]);
     setSearchByLine(draft.searchByLine ?? {});
@@ -644,6 +679,7 @@ export function PurchaseForm({
   };
 
   const localPurchaseDraft = useMemo<LocalPurchaseDraft>(() => ({
+    clientSubmissionId,
     details,
     manualTotal,
     lines,
@@ -656,7 +692,7 @@ export function PurchaseForm({
       reselectRequired: true,
     } : null,
     updatedAt: new Date().toISOString(),
-  }), [details, lines, manualTotal, receiptPreview, searchByLine]);
+  }), [clientSubmissionId, details, lines, manualTotal, receiptPreview, searchByLine]);
 
   const shouldSaveLocalPurchaseDraft = useCallback((draft: LocalPurchaseDraft) => {
     if (!hasPurchaseDraftContent(draft)) return false;
@@ -673,6 +709,14 @@ export function PurchaseForm({
   });
 
   useEffect(() => {
+    if (validClientSubmissionId(clientSubmissionId)) return;
+    const nextSubmissionId = newClientSubmissionId();
+    if (!nextSubmissionId) return;
+    const timer = window.setTimeout(() => setClientSubmissionId(nextSubmissionId), 0);
+    return () => window.clearTimeout(timer);
+  }, [clientSubmissionId]);
+
+  useEffect(() => {
     if (!receiptScan || appliedScanKey <= 0 || appliedScanKey === lastAppliedScanKey.current) return;
     lastAppliedScanKey.current = appliedScanKey;
     const timer = window.setTimeout(() => {
@@ -683,6 +727,7 @@ export function PurchaseForm({
         paymentMethod: current.paymentMethod,
         paymentStatus: current.paymentStatus,
         paymentAccountId: current.paymentAccountId,
+        receivingStorageLocationId: current.receivingStorageLocationId,
         receiptUrl: current.receiptUrl || receiptScan.fileUrl || "",
         notes: current.notes,
       }));
@@ -885,15 +930,9 @@ export function PurchaseForm({
     }
 
     if (action === "create") {
-      if (!canAddProducts) {
-        setSubmitMessage({ type: "error", text: "You do not have permission to create products from purchase lines." });
-        return;
-      }
-      updateLine(line.id, {
-        matchAction: "create",
-        productId: "",
-        newProductName: line.newProductName || line.receiptLineName || "",
-        newProductCaseQuantity: Math.max(1, line.newProductCaseQuantity || line.unitsPerBox || 1),
+      setSubmitMessage({
+        type: "error",
+        text: "Create the product from Products first, then return and select it here. This keeps product creation separate and retry-safe.",
       });
       return;
     }
@@ -1028,13 +1067,25 @@ export function PurchaseForm({
     </>
   );
 
-  const validateBeforeSubmit = () => {
+  const validateBeforeSubmit = (intent: "draft" | "received") => {
     const nextDetailsErrors: typeof detailsErrors = {};
     const nextLineErrors: Record<string, string> = {};
     const setLineError = (id: string, message: string) => {
       if (!nextLineErrors[id]) nextLineErrors[id] = message;
     };
 
+    if (!validClientSubmissionId(clientSubmissionId)) {
+      return "Could not prepare a safe purchase submission. Reload this page and try again.";
+    }
+    if (intent === "received" && !details.supplierId) {
+      nextDetailsErrors.supplierId = "Choose a supplier before receiving stock.";
+    }
+    if (
+      intent === "received" &&
+      !storageLocations.some((location) => location.id === details.receivingStorageLocationId)
+    ) {
+      nextDetailsErrors.receivingStorageLocationId = "Choose the physical storage location that will receive this purchase.";
+    }
     if (!details.purchaseDate) nextDetailsErrors.purchaseDate = "Enter a purchase date.";
 
     for (const line of enrichedLines) {
@@ -1042,17 +1093,18 @@ export function PurchaseForm({
       const started = lineHasManualInput(line) || typedSearch.length > 0;
       if (line.matchAction === "ignore" || !started) continue;
       if (line.matchAction === "create") {
-        if (!line.newProductName.trim()) setLineError(line.id, "Enter the new product name before saving.");
+        setLineError(line.id, "Create this item from Products first, then return and select the saved product.");
+        continue;
       } else if (!line.productId) {
         setLineError(line.id, "Choose a product from the search results. Typed text alone is only a search.");
       }
-      if ((line.productId || line.matchAction === "create") && line.totalUnits <= 0) {
+      if (line.productId && line.totalUnits <= 0) {
         setLineError(line.id, "Quantity must be greater than zero.");
       }
-      if ((line.productId || line.matchAction === "create") && line.totalUnits > 0) {
+      if (line.productId && line.totalUnits > 0) {
         const costDecision = resolvePurchaseUnitCost({
           product: line.product,
-          productName: line.matchAction === "create" ? line.newProductName || line.receiptLineName : line.product?.name,
+          productName: line.product?.name,
           unitCost: line.unitCost,
           unitCostBlank: line.unitCostBlank,
           unitCostZeroConfirmed: line.unitCostZeroConfirmed,
@@ -1066,21 +1118,24 @@ export function PurchaseForm({
 
     setDetailsErrors(nextDetailsErrors);
     setLineErrors(nextLineErrors);
+    if (nextDetailsErrors.supplierId) return nextDetailsErrors.supplierId;
+    if (nextDetailsErrors.receivingStorageLocationId) return nextDetailsErrors.receivingStorageLocationId;
     if (nextDetailsErrors.purchaseDate) return "Enter a purchase date.";
     if (Object.keys(nextLineErrors).length) return "Fix the highlighted purchase lines.";
 
     const included = enrichedLines.filter((line) => line.included);
     if (!included.length) return "Add at least one purchased item.";
-    const missingProduct = included.find((line) => line.matchAction !== "create" && !line.productId);
+    if (included.some((line) => line.matchAction === "create")) {
+      return "Create every new item from Products first, then return and select it on the receipt line.";
+    }
+    const missingProduct = included.find((line) => !line.productId);
     if (missingProduct) return "Select a Snacky product for every included line, or ignore the line.";
-    const missingCreatedProduct = included.find((line) => line.matchAction === "create" && !line.newProductName.trim());
-    if (missingCreatedProduct) return "Enter a product name for every product you create from a receipt line.";
     const emptyQuantity = included.find((line) => line.totalUnits <= 0);
     if (emptyQuantity) return "Quantity must be greater than zero for every included line.";
     const invalidCost = included.find((line) => {
       const costDecision = resolvePurchaseUnitCost({
         product: line.product,
-        productName: line.matchAction === "create" ? line.newProductName || line.receiptLineName : line.product?.name,
+        productName: line.product?.name,
         unitCost: line.unitCost,
         unitCostBlank: line.unitCostBlank,
         unitCostZeroConfirmed: line.unitCostZeroConfirmed,
@@ -1100,7 +1155,7 @@ export function PurchaseForm({
 
     const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
     const intent = submitter?.value === "received" ? "received" : "draft";
-    const validationError = validateBeforeSubmit();
+    const validationError = validateBeforeSubmit(intent);
     if (validationError) {
       setSubmitMessage({ type: "error", text: validationError });
       return;
@@ -1109,6 +1164,7 @@ export function PurchaseForm({
     const form = formRef.current;
     if (!form) return;
     const formData = new FormData(form);
+    formData.set("client_submission_id", clientSubmissionId);
     formData.set("submit_action", intent);
     formData.set("supplier_id", details.supplierId);
     formData.set("purchase_date", details.purchaseDate || todayDate());
@@ -1116,6 +1172,7 @@ export function PurchaseForm({
     formData.set("payment_method", details.paymentMethod);
     formData.set("payment_status", details.paymentStatus);
     formData.set("payment_account_id", details.paymentAccountId);
+    formData.set("receiving_storage_location_id", details.receivingStorageLocationId);
     formData.set("receipt_url", details.receiptUrl);
     formData.set("notes", details.notes);
     formData.set("manual_total_lyd", manualTotal);
@@ -1149,6 +1206,8 @@ export function PurchaseForm({
   return (
     <form id="manual-purchase-entry" ref={formRef} onSubmit={handleSubmit} className="space-y-5" noValidate>
       {initialPurchase?.id ? <input type="hidden" name="id" value={initialPurchase.id} /> : null}
+      {initialPurchase?.id ? <input type="hidden" name="expected_updated_at" value={initialPurchase.updatedAt ?? ""} /> : null}
+      <input type="hidden" name="client_submission_id" value={clientSubmissionId} />
       <input type="hidden" name="receipt_scan_result_id" value={receiptScan?.scanResultId ?? ""} />
       <input type="hidden" name="current_receipt_url" value={initialPurchase?.receiptUrl ?? ""} />
       <input type="hidden" name="current_receipt_file_name" value={initialPurchase?.receiptFileName ?? ""} />
@@ -1173,6 +1232,7 @@ export function PurchaseForm({
               <option value="">Select supplier</option>
               {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
             </select>
+            {detailsErrors.supplierId ? <p className="mt-2 text-xs font-medium text-rose-700">{detailsErrors.supplierId}</p> : null}
           </FormField>
           <FormField label="Purchase date" required>
             <input name="purchase_date" type="date" required value={details.purchaseDate} onChange={(event) => setDetails((current) => ({ ...current, purchaseDate: event.target.value }))} className="field-input" />
@@ -1190,21 +1250,53 @@ export function PurchaseForm({
               <option value="other">Other</option>
             </select>
           </FormField>
-          <FormField label="Paying account" hint="Used for the linked finance transaction when the purchase is confirmed.">
-            <select name="payment_account_id" className="field-input" value={details.paymentAccountId} onChange={(event) => setDetails((current) => ({ ...current, paymentAccountId: event.target.value }))}>
-              {FINANCE_ACCOUNTS.map((account) => (
-                <option key={account.id} value={account.id}>
-                  {account.label}
+          <FormField label="Paying account" hint="Used when an actual supplier payment is recorded. Saving or receiving stock does not create a money-out row.">
+            {initialPurchase?.id ? (
+              <>
+                <input type="hidden" name="payment_account_id" value={details.paymentAccountId} />
+                <div className="flex min-h-11 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-800">
+                  {FINANCE_ACCOUNTS.find((account) => account.id === details.paymentAccountId)?.label ?? "Choose when recording payment"} — change this when recording the actual supplier payment
+                </div>
+              </>
+            ) : (
+              <select name="payment_account_id" className="field-input" value={details.paymentAccountId} onChange={(event) => setDetails((current) => ({ ...current, paymentAccountId: event.target.value }))}>
+                {FINANCE_ACCOUNTS.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.label}
+                  </option>
+                ))}
+              </select>
+            )}
+          </FormField>
+          <FormField label="Payment status" hint="Payment status is derived only from actual supplier payments recorded after the purchase is received.">
+            <input type="hidden" name="payment_status" value="unpaid" />
+            <div className="flex min-h-11 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-800">
+              Unpaid — record the actual supplier payment from the purchase page / غير مدفوع — سجّل الدفعة الفعلية من صفحة المشتريات
+            </div>
+          </FormField>
+          <FormField
+            label="Receiving storage / مخزن الاستلام"
+            hint="Required for Save and receive. Choose the physical destination; Snacky OS will not guess when several storages exist. / مطلوب للحفظ والاستلام؛ اختر المخزن الفعلي."
+          >
+            <select
+              name="receiving_storage_location_id"
+              className="field-input"
+              value={details.receivingStorageLocationId}
+              onChange={(event) => setDetails((current) => ({ ...current, receivingStorageLocationId: event.target.value }))}
+            >
+              <option value="">Select receiving storage / اختر مخزن الاستلام</option>
+              {storageLocations.map((location) => (
+                <option key={location.id} value={location.id}>
+                  {location.name} ({location.locationType.replaceAll("_", " ")})
                 </option>
               ))}
             </select>
-          </FormField>
-          <FormField label="Payment status" hint="Only paid purchases create a finance money-out transaction when received.">
-            <select name="payment_status" className="field-input" value={details.paymentStatus} onChange={(event) => setDetails((current) => ({ ...current, paymentStatus: event.target.value }))}>
-              <option value="paid">Paid</option>
-              <option value="unpaid">Unpaid / supplier credit</option>
-              <option value="partially_paid">Partially paid</option>
-            </select>
+            {!storageLocations.length ? (
+              <p className="mt-2 text-xs font-medium text-amber-800">
+                Receiving locations are unavailable. You can save a draft, but receiving is locked. / مواقع الاستلام غير متاحة؛ يمكنك حفظ مسودة فقط.
+              </p>
+            ) : null}
+            {detailsErrors.receivingStorageLocationId ? <p className="mt-2 text-xs font-medium text-rose-700">{detailsErrors.receivingStorageLocationId}</p> : null}
           </FormField>
           <FormField label="Receipt upload" hint="Stored privately in receipt-images when Supabase Storage is configured. PNG, JPG, WEBP, or PDF. Maximum 5MB.">
             <input name="receipt_file" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" className="field-input" onChange={(event) => handleReceiptFileChange(event.target.files?.[0] ?? null)} />
@@ -1288,7 +1380,7 @@ export function PurchaseForm({
                     <select value={line.matchAction} onChange={(event) => setLineAction(line, event.target.value as ReceiptLineAction)} className="field-input">
                       <option value="accept" disabled={!line.suggestedProductId}>Accept suggested match</option>
                       <option value="change">Change product</option>
-                      <option value="create" disabled={!canAddProducts}>Create product</option>
+                      <option value="create" disabled>Create in Products first</option>
                       <option value="ignore">Ignore line</option>
                     </select>
                   </FormField>
@@ -1296,32 +1388,10 @@ export function PurchaseForm({
 
                 <div className="mt-3 grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-[minmax(260px,2fr)_repeat(6,minmax(0,1fr))]">
                   {line.matchAction === "create" ? (
-                    <div className="min-w-0 space-y-3 md:col-span-2 xl:col-span-4 2xl:col-span-1">
-                      <FormField label="New product name" required>
-                        <input value={line.newProductName} onChange={(event) => updateLine(line.id, { newProductName: event.target.value })} className="field-input" />
-                      </FormField>
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <FormField label="SKU">
-                          <input value={line.newProductSku} onChange={(event) => updateLine(line.id, { newProductSku: event.target.value })} className="field-input" placeholder="Auto if blank" />
-                          <p className="mt-1 text-xs text-slate-500">Product code will be generated automatically.</p>
-                        </FormField>
-                        <FormField label="Barcode">
-                          <input value={line.newProductBarcode} onChange={(event) => updateLine(line.id, { newProductBarcode: event.target.value })} className="field-input" />
-                        </FormField>
-                        <FormField label="Brand">
-                          <input value={line.newProductBrand} onChange={(event) => updateLine(line.id, { newProductBrand: event.target.value })} className="field-input" />
-                        </FormField>
-                        <FormField label="Category">
-                          <select value={line.newProductCategory} onChange={(event) => updateLine(line.id, { newProductCategory: event.target.value })} className="field-input">
-                            <option>drink</option>
-                            <option>snack</option>
-                            <option>chocolate</option>
-                            <option>biscuit</option>
-                            <option>coffee</option>
-                            <option>other</option>
-                          </select>
-                        </FormField>
-                      </div>
+                    <div className="min-w-0 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 md:col-span-2 xl:col-span-4 2xl:col-span-1">
+                      <div className="font-medium">Create this product before saving the purchase.</div>
+                      <div className="mt-1">Product creation is a separate retry-safe workflow; return here afterward and select it.</div>
+                      {canAddProducts ? <Link href="/products/new?returnTo=/purchases/new" className="btn-secondary mt-3 inline-flex">Open new product</Link> : <div className="mt-2 text-xs font-medium">Ask an owner/admin to add this product.</div>}
                     </div>
                   ) : line.matchAction === "ignore" ? (
                     <div className="min-w-0 rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-500 md:col-span-2 xl:col-span-4 2xl:col-span-1">This receipt line will not be added to the purchase.</div>
@@ -1403,10 +1473,10 @@ export function PurchaseForm({
       </div>
 
       <div className="sticky bottom-3 z-10 -mx-3 flex flex-col gap-3 border-t border-slate-200 bg-slate-100/95 px-3 py-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:border-0 sm:bg-transparent sm:p-0">
-        <button className="btn-secondary" name="submit_action" value="draft" disabled={Boolean(submitIntent)}>
+        <button className="btn-secondary" name="submit_action" value="draft" disabled={Boolean(submitIntent) || !validClientSubmissionId(clientSubmissionId)}>
           {submitIntent === "draft" ? "Saving draft..." : submitLabel}
         </button>
-        <button className="btn-primary" name="submit_action" value="received" disabled={Boolean(submitIntent)}>
+        <button className="btn-primary" name="submit_action" value="received" disabled={Boolean(submitIntent) || !validClientSubmissionId(clientSubmissionId)}>
           {submitIntent === "received" ? "Receiving..." : "Save and receive"}
         </button>
       </div>

@@ -3,80 +3,81 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { buildExplicitZeroFillReturnAdjustments, buildExplicitZeroFillReturnPlans } from "../src/lib/route-stop-zero-return.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 
-test("explicit zero returns the full quantity assigned to that stop", () => {
-  assert.deepEqual(
-    buildExplicitZeroFillReturnPlans([
-      { productId: "water", assignedQty: 6, quantity: 0 },
-      { productId: "chips", assignedQty: 4, quantity: 2 },
-      { productId: "juice", assignedQty: 0, quantity: 0 },
-    ]),
-    [{ productId: "water", quantity: 6 }],
-  );
+function sourceFunctionBody(source, functionName) {
+  const start = source.indexOf(`export async function ${functionName}`);
+  assert.notEqual(start, -1, `${functionName} must be exported`);
+  const next = source.indexOf("\nexport async function ", start + 1);
+  return source.slice(start, next === -1 ? source.length : next);
+}
+
+function sqlFunctionBody(source, functionName) {
+  const startPattern = new RegExp(`create\\s+or\\s+replace\\s+function\\s+public\\.${functionName}\\s*\\(`, "i");
+  const start = source.search(startPattern);
+  assert.notEqual(start, -1, `${functionName} must be defined`);
+  const definition = source.slice(start);
+  const body = definition.match(/\bas\s+(\$[A-Za-z0-9_]*\$)([\s\S]*?)\1\s*;/i);
+  assert.ok(body, `${functionName} must use a dollar-quoted SQL body`);
+  return body[2];
+}
+
+test("an explicit zero fill never manufactures a return from planned or assigned quantity", () => {
+  const actions = sourceFunctionBody(read("src/lib/operator-actions.ts"), "completeStop");
+
+  assert.match(actions, /rpc\(\s*"snacky_commit_route_stop_inventory_v1"/);
+  assert.match(actions, /p_fill_lines/);
+  assert.match(actions, /const rpcStopId = requireUuidValue\(stopId,\s*"Stop id"\)/);
+  assert.match(actions, /p_route_stop_id:\s*rpcStopId/);
+  assert.doesNotMatch(actions, /\bp_stop_id\s*:/);
+  assert.doesNotMatch(actions, /buildExplicitZeroFillReturn/);
+  assert.doesNotMatch(actions, /route_stop_zero_fill_return/);
+  assert.doesNotMatch(actions, /zeroFillReturn|zero_fill_return/i);
+  assert.doesNotMatch(actions, /assigned[^\n]{0,100}operator_bag_to_storage/i);
 });
 
-test("duplicate planned rows for one product are returned once as an aggregated plan", () => {
-  assert.deepEqual(
-    buildExplicitZeroFillReturnPlans([
-      { productId: "water", assignedQty: 3, quantity: 0 },
-      { productId: "water", assignedQty: 2, quantity: 0 },
-    ]),
-    [{ productId: "water", quantity: 5 }],
-  );
+test("the atomic stop commit has no zero-fill storage-return branch", () => {
+  const migration = read("supabase/migrations/20260905091000_route_stop_inventory_commit.sql");
+  const body = sqlFunctionBody(migration, "snacky_commit_route_stop_inventory_v1");
+
+  assert.match(body, /route_stop_fill_lines/i, "an actual zero must still be persisted as field truth");
+  assert.doesNotMatch(body, /route_stop_zero_fill_return/i);
+  assert.doesNotMatch(body, /actual_(quantity|qty)\s*=\s*0[\s\S]{0,800}operator_bag_to_storage/i);
+  assert.doesNotMatch(body, /operator_bag_to_storage[\s\S]{0,800}actual_(quantity|qty)\s*=\s*0/i);
 });
 
-test("partial underfills remain in the operator bag for normal leftover reconciliation", () => {
-  assert.deepEqual(
-    buildExplicitZeroFillReturnPlans([
-      { productId: "water", assignedQty: 6, quantity: 2 },
-    ]),
-    [],
-  );
+test("bag stock moves back to storage only after a physical terminal count", () => {
+  const terminalMigration = read("supabase/migrations/20260905090000_route_terminal_inventory_reconciliation.sql");
+  const finalizer = sqlFunctionBody(terminalMigration, "snacky_finalize_route_inventory");
+  const leftoversPage = read("src/app/operator/routes/[id]/leftovers/page.tsx");
+
+  assert.match(finalizer, /jsonb_to_recordset\s*\(\s*v_counts/i);
+  assert.match(finalizer, /counted_quantity/i);
+  assert.match(finalizer, /operator_bag_to_storage/i);
+  assert.match(leftoversPage, /physical route-bag count/i);
+  assert.match(leftoversPage, /finalizeRouteInventory\(\{/);
+  assert.doesNotMatch(leftoversPage, /recordLeftovers\(\{/);
 });
 
-test("zero-fill return reconciliation can add, keep, and reverse saved returns", () => {
-  const desired = [{ productId: "water", quantity: 5 }];
-  assert.deepEqual(
-    buildExplicitZeroFillReturnAdjustments(desired, new Map()),
-    [{ productId: "water", quantity: 5, direction: "return" }],
-  );
-  assert.deepEqual(
-    buildExplicitZeroFillReturnAdjustments(desired, new Map([["water", 5]])),
-    [],
-  );
-  assert.deepEqual(
-    buildExplicitZeroFillReturnAdjustments([], new Map([["water", 5]])),
-    [{ productId: "water", quantity: 5, direction: "reverse" }],
-  );
-});
-
-test("stop completion persists explicit-zero returns with stable inventory audit data", () => {
-  const actions = read("src/lib/operator-actions.ts");
-
-  assert.match(actions, /buildExplicitZeroFillReturnPlans\(normalizedFilledItems\)/);
-  assert.match(actions, /buildExplicitZeroFillReturnAdjustments/);
-  assert.match(actions, /snacky_route_leftover_storage_location_id/);
-  assert.match(actions, /const storageLookup = await supabase\.rpc\([\s\S]*?"snacky_route_leftover_storage_location_id"/);
-  assert.doesNotMatch(actions, /zeroFillLedgerClient\.rpc\([\s\S]*?"snacky_route_leftover_storage_location_id"/);
-  assert.match(actions, /operator_bag_to_storage/);
-  assert.match(actions, /route_stop_zero_fill_return_reversal/);
-  assert.match(actions, /stopSubmissionId/);
-  assert.match(actions, /related_route_stop_id: stopId/);
-  assert.match(actions, /route-stop-zero-fill-return/);
-  assert.match(actions, /update\(\{ returned_qty: returnedQty/);
-});
-
-test("route summaries display explicit zero and returned quantity", () => {
+test("legacy zero-fill movements remain visible as history but never define current custody", () => {
   const adminSummary = read("src/app/routes/[id]/page.tsx");
   const operatorSummary = read("src/app/operator/routes/[id]/page.tsx");
+  const pickedItemsApi = read("src/app/api/operator/routes/[id]/picked-items/route.ts");
 
-  assert.match(adminSummary, /String\(line\.action_type \?\? ""\) !== "missing_product_report"/);
   assert.match(adminSummary, /route_stop_zero_fill_return/);
-  assert.match(adminSummary, /zeroFillReturnMovements\.reduce/);
   assert.match(operatorSummary, /Number\(item\.returned_qty \?\? 0\)/);
   assert.doesNotMatch(operatorSummary, /item\.picked_qty \|\| item\.planned_qty/);
+  assert.match(pickedItemsApi, /snacky_route_bag_snapshot/);
+  assert.match(pickedItemsApi, /const bagHistoryItems = allCustodyItems/);
+  assert.match(pickedItemsApi, /signed_quantity/);
+});
+
+test("the obsolete planned-quantity zero-return helper is gone", () => {
+  assert.equal(
+    fs.existsSync(path.join(root, "src/lib/route-stop-zero-return.ts")),
+    false,
+    "planned quantities must never be reusable as an automatic storage return",
+  );
 });

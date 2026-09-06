@@ -27,7 +27,25 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const baseUrl = process.env.SNACKY_SMOKE_BASE_URL ?? "http://127.0.0.1:3001";
-const canRun = Boolean(supabaseUrl && anonKey && serviceRoleKey);
+
+function isLoopbackUrl(value) {
+  try {
+    const hostname = new URL(value).hostname;
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+  } catch {
+    return false;
+  }
+}
+
+// Canonical inventory commands leave immutable receipts and ledger history.
+// Keep these fixtures on the disposable local stack; cleanup is a local
+// `supabase db reset`, never privileged deletion from a shared ledger.
+const hasFixtureEnv = Boolean(supabaseUrl && anonKey && serviceRoleKey);
+const usesDisposableLocalStack = isLoopbackUrl(supabaseUrl) && isLoopbackUrl(baseUrl);
+const canRun = hasFixtureEnv && usesDisposableLocalStack;
+const skipReason = hasFixtureEnv && !usesDisposableLocalStack
+  ? "Route inventory fixtures are restricted to the disposable local Supabase and app."
+  : "Supabase local env is not configured.";
 
 function supabaseClient(key) {
   return createClient(supabaseUrl, key, {
@@ -160,40 +178,167 @@ async function confirmedStorageLocationForProduct(service, productId) {
   return data[0].location_id;
 }
 
-async function cleanup(service, created) {
-  for (const routeId of created.routeIds) {
-    await service.from("route_stop_fill_lines").delete().eq("route_id", routeId);
-    await service.from("cash_collections").delete().eq("route_id", routeId);
-    await service.from("machine_refill_history").delete().eq("route_id", routeId);
-    await service.from("route_pick_list_items").delete().eq("route_id", routeId);
-    await service.from("route_stop_items").delete().eq("route_id", routeId);
-    await service.from("route_stock_lines").delete().eq("route_id", routeId);
-    const { data: refillOrders } = await service.from("refill_orders").select("id").eq("route_id", routeId);
-    const refillOrderIds = (refillOrders ?? []).map((row) => row.id);
-    if (refillOrderIds.length) await service.from("refill_order_lines").delete().in("refill_order_id", refillOrderIds);
-    await service.from("refill_orders").delete().eq("route_id", routeId);
-    await service.from("inventory_movements").delete().eq("related_route_id", routeId);
-    await service.from("route_stops").delete().eq("route_id", routeId);
-    await service.from("routes").delete().eq("id", routeId);
+async function recordAdminPickup({ owner, routeId, operatorId, productRows }) {
+  const pickupBatchId = randomUUID();
+  const confirmedAt = new Date().toISOString();
+  const { data: plannedItems, error: plannedItemsError } = await owner.client
+    .from("route_stop_items")
+    .select("id, route_stop_id, machine_id, product_id, planned_quantity")
+    .eq("route_id", routeId);
+  assert.ifError(plannedItemsError);
+
+  for (const row of productRows.filter((entry) => entry.plannedQuantity > 0)) {
+    const plannedTotal = (plannedItems ?? [])
+      .filter((item) => item.product_id === row.productId)
+      .reduce((sum, item) => sum + Number(item.planned_quantity ?? 0), 0);
+    assert.equal(plannedTotal, row.plannedQuantity, "fixture pickup must match the persisted route plan");
   }
 
-  for (const purchaseId of created.purchaseIds) {
-    await service.from("inventory_movements").delete().eq("related_purchase_id", purchaseId);
-    await service.from("purchase_order_lines").delete().eq("purchase_order_id", purchaseId);
-    await service.from("purchase_orders").delete().eq("id", purchaseId);
-  }
+  const productSummary = productRows.map((row) => ({
+    product_id: row.productId,
+    product_name: row.productName,
+    quantity: row.quantity,
+  }));
+  const plannedPickListRows = (plannedItems ?? []).map((item) => ({
+    id: randomUUID(),
+    route_id: routeId,
+    route_stop_id: item.route_stop_id,
+    route_stop_item_id: item.id,
+    machine_id: item.machine_id,
+    product_id: item.product_id,
+    planned_qty: Number(item.planned_quantity ?? 0),
+    picked_qty: Number(item.planned_quantity ?? 0),
+    action_type: "planned_pick",
+    pickup_batch_id: pickupBatchId,
+    reason: null,
+    notes: "Local route regression fixture",
+    needs_review: false,
+    is_checked: true,
+    checked_at: confirmedAt,
+    checked_by: owner.authUserId,
+    created_by: owner.teamMemberId,
+  }));
+  const extraPickListRows = productRows
+    .filter((row) => row.plannedQuantity === 0)
+    .map((row) => ({
+      id: randomUUID(),
+      route_id: routeId,
+      route_stop_id: null,
+      route_stop_item_id: null,
+      machine_id: null,
+      product_id: row.productId,
+      planned_qty: 0,
+      picked_qty: row.quantity,
+      action_type: "extra_product",
+      pickup_batch_id: pickupBatchId,
+      reason: "QA additive inventory fixture",
+      notes: "Local route regression fixture",
+      needs_review: true,
+      is_checked: true,
+      checked_at: confirmedAt,
+      checked_by: owner.authUserId,
+      created_by: owner.teamMemberId,
+    }));
+  const pickListRows = [...plannedPickListRows, ...extraPickListRows];
+  const inventoryMovements = productRows.map((row) => ({
+    product_id: row.productId,
+    quantity: row.quantity,
+    from_entity_type: "storage",
+    from_entity_id: row.storageLocationId,
+    to_entity_type: "operator_bag",
+    to_entity_id: operatorId,
+    reason: "storage_to_operator_bag",
+  }));
+  const stockLineRows = productRows.map((row) => ({
+    route_id: routeId,
+    product_id: row.productId,
+    planned_qty: row.plannedQuantity,
+    picked_qty: row.quantity,
+    updated_at: confirmedAt,
+  }));
 
-  if (created.machineIds.length) await service.from("machines").delete().in("id", created.machineIds);
-  if (created.locationIds.length) await service.from("locations").delete().in("id", created.locationIds);
-  if (created.productIds.length) await service.from("products").delete().in("id", created.productIds);
-  if (created.supplierIds.length) await service.from("suppliers").delete().in("id", created.supplierIds);
-  if (created.storageIds.length) await service.from("storage_locations").delete().in("id", created.storageIds);
-  if (created.authUserIds.length) await service.from("profiles").delete().in("id", created.authUserIds);
-  if (created.teamMemberIds.length) await service.from("team_members").delete().in("id", created.teamMemberIds);
-  for (const authUserId of created.authUserIds) await service.auth.admin.deleteUser(authUserId);
+  const { data, error } = await owner.client.rpc("snacky_confirm_route_pickup_batch_v3", {
+    p_route_id: routeId,
+    p_expected_route_status: "in_progress",
+    p_next_route_status: "in_progress",
+    p_started_at: confirmedAt,
+    p_replace_pick_list: false,
+    p_pickup_batch: {
+      id: pickupBatchId,
+      route_id: routeId,
+      operator_id: operatorId,
+      status: "confirmed",
+      workflow_kind: "admin_missed_pickup",
+      selected_stop_ids: [],
+      product_summary: productSummary,
+      storage_deducted: true,
+      confirmed_at: confirmedAt,
+    },
+    p_batch_stop_ids: [],
+    p_new_stop_item_rows: [],
+    p_inventory_movements: inventoryMovements,
+    p_pick_list_rows: pickListRows,
+    p_stock_line_rows: stockLineRows,
+    p_stop_item_picks: [],
+    p_refill_line_picks: [],
+    p_selected_stop_ids: [],
+    p_acknowledged_pickup_line_ids: [],
+    p_selected_machine_ids: [],
+  });
+  assert.ifError(error);
+  const result = Array.isArray(data) ? data[0] : data;
+  assert.equal(result?.pickup_batch_id, pickupBatchId);
+  assert.equal(result?.route_status, "in_progress");
+  return pickupBatchId;
 }
 
-test("route, inventory, purchase, and additive role regression flow", { skip: canRun ? false : "Supabase local env is not configured." }, async () => {
+async function commitStopInventory({ operator, service, routeId, stop, fillLines, machineStorageLines = [] }) {
+  const submissionId = `qa-route-stop:${randomUUID()}`;
+  const { data: commitData, error: commitError } = await operator.client.rpc(
+    "snacky_commit_route_stop_inventory_v1",
+    {
+      p_route_id: routeId,
+      p_route_stop_id: stop.id,
+      p_machine_id: stop.machine_id,
+      p_submission_id: submissionId,
+      p_fill_lines: fillLines,
+      p_machine_storage_lines: machineStorageLines,
+    },
+  );
+  assert.ifError(commitError);
+  const commit = Array.isArray(commitData) ? commitData[0] : commitData;
+  assert.equal(commit?.inventory_committed, true);
+  assert.equal(commit?.route_stop_id, stop.id);
+
+  const completedAt = String(commit?.inventory_committed_at ?? "");
+  assert.ok(Number.isFinite(Date.parse(completedAt)), "stop inventory commit should return its event timestamp");
+  const { data: finalizedData, error: finalizedError } = await service.rpc(
+    "snacky_finalize_route_stop_workflow_v1",
+    {
+      p_route_id: routeId,
+      p_route_stop_id: stop.id,
+      p_machine_id: stop.machine_id,
+      p_completed_at: completedAt,
+      p_notes: "Local route regression fixture",
+      p_client_submission_id: submissionId,
+    },
+  );
+  assert.ifError(finalizedError);
+  const finalized = Array.isArray(finalizedData) ? finalizedData[0] : finalizedData;
+  assert.equal(finalized?.stop_status, "completed");
+}
+
+test("route inventory regression fixtures stay local and use canonical ledger writers", () => {
+  const source = readFileSync(new URL(import.meta.url), "utf8");
+  assert.doesNotMatch(source, /\.from\(["']inventory_movements["']\)\s*\.insert\(/);
+  assert.doesNotMatch(source, /\.from\(["']inventory_movements["']\)\s*\.delete\(/);
+  assert.match(source, /snacky_confirm_route_pickup_batch_v3/);
+  assert.match(source, /snacky_commit_route_stop_inventory_v1/);
+  assert.match(source, /snacky_finalize_route_stop_workflow_v1/);
+  assert.match(source, /usesDisposableLocalStack/);
+});
+
+test("route, inventory, purchase, and additive role regression flow", { skip: canRun ? false : skipReason }, async () => {
   const service = supabaseClient(serviceRoleKey);
   const id = randomUUID().slice(0, 8);
   const routeDate = new Date().toISOString().slice(0, 10);
@@ -209,7 +354,7 @@ test("route, inventory, purchase, and additive role regression flow", { skip: ca
     routeIds: [],
   };
 
-  try {
+  {
     const owner = await createQaUser({ service, id, role: "owner", roles: ["owner"], fullName: `Route QA Owner ${id}` });
     const operatorWarehouse = await createQaUser({ service, id, role: "warehouse", roles: ["operator", "warehouse"], fullName: `Route QA Operator Warehouse ${id}` });
     created.authUserIds.push(owner.authUserId, operatorWarehouse.authUserId);
@@ -254,12 +399,13 @@ test("route, inventory, purchase, and additive role regression flow", { skip: ca
     });
     created.productIds.push(product.id, extraProduct.id);
 
-    const { data: purchaseRows, error: purchaseError } = await operatorWarehouse.client.rpc("snacky_create_purchase_with_lines", {
+    const { data: purchaseRows, error: purchaseError } = await operatorWarehouse.client.rpc("snacky_create_purchase_with_lines_v2", {
+      p_client_submission_id: randomUUID(),
       p_supplier_id: supplier.id,
       p_order_date: routeDate,
       p_receipt_number: `ROUTE-QA-RCPT-${id}`,
       p_payment_method: "cash",
-      p_payment_status: "paid",
+      p_payment_status: "unpaid",
       p_receipt_url: null,
       p_receipt_file_name: null,
       p_receipt_content_type: null,
@@ -270,7 +416,8 @@ test("route, inventory, purchase, and additive role regression flow", { skip: ca
       p_total_adjustment_lyd: null,
       p_total_source: "calculated",
       p_total_amount: 70,
-      p_created_by: operatorWarehouse.teamMemberId,
+      p_payment_account_id: null,
+      p_receiving_storage_location_id: storage.id,
       p_submit_action: "received",
       p_lines: [
         { product_id: product.id, line_position: 0, boxes_qty: 5, units_per_box: 10, loose_units_qty: 0, total_units: 50, unit_cost: 1, unit_cost_lyd: 1, line_total: 50, line_total_lyd: 50 },
@@ -405,45 +552,21 @@ test("route, inventory, purchase, and additive role regression flow", { skip: ca
     assert.ifError(stopsError);
     assert.equal(routeStops.length, 2);
 
-    const { error: pickupMovementError } = await operatorWarehouse.client.from("inventory_movements").insert([
-      {
-        product_id: product.id,
-        quantity: 4,
-        from_entity_type: "storage",
-        from_entity_id: storageLocationId,
-        to_entity_type: "operator_bag",
-        to_entity_id: operatorWarehouse.teamMemberId,
-        reason: "storage_to_operator_bag",
-        related_route_id: multiMachineRouteId,
-        created_by: operatorWarehouse.teamMemberId,
-        notes: "QA pickup confirmation",
-      },
-      {
-        product_id: extraProduct.id,
-        quantity: 1,
-        from_entity_type: "storage",
-        from_entity_id: extraStorageLocationId,
-        to_entity_type: "operator_bag",
-        to_entity_id: operatorWarehouse.teamMemberId,
-        reason: "storage_to_operator_bag",
-        related_route_id: multiMachineRouteId,
-        created_by: operatorWarehouse.teamMemberId,
-        notes: "QA extra product pickup",
-      },
-    ]);
-    assert.ifError(pickupMovementError);
+    await recordAdminPickup({
+      owner,
+      routeId: multiMachineRouteId,
+      operatorId: operatorWarehouse.teamMemberId,
+      productRows: [
+        { productId: product.id, productName: product.name, quantity: 4, plannedQuantity: 4, storageLocationId },
+        { productId: extraProduct.id, productName: extraProduct.name, quantity: 1, plannedQuantity: 0, storageLocationId: extraStorageLocationId },
+      ],
+    });
 
-    const { error: stockUpsertError } = await operatorWarehouse.client.from("route_stock_lines").upsert([
-      { route_id: multiMachineRouteId, product_id: product.id, planned_qty: 4, picked_qty: 4, updated_at: new Date().toISOString() },
-      { route_id: multiMachineRouteId, product_id: extraProduct.id, planned_qty: 0, picked_qty: 1, updated_at: new Date().toISOString() },
-    ], { onConflict: "route_id,product_id" });
-    assert.ifError(stockUpsertError);
-
-    const { error: pickListError } = await operatorWarehouse.client.from("route_pick_list_items").insert([
-      { route_id: multiMachineRouteId, product_id: product.id, planned_qty: 4, picked_qty: 4, action_type: "planned_pick", needs_review: false, created_by: operatorWarehouse.teamMemberId },
-      { route_id: multiMachineRouteId, product_id: extraProduct.id, planned_qty: 0, picked_qty: 1, action_type: "extra_product", reason: "Customer demand", needs_review: true, created_by: operatorWarehouse.teamMemberId },
-    ]);
-    assert.ifError(pickListError);
+    const { error: pickedStopsError } = await operatorWarehouse.client
+      .from("route_stops")
+      .update({ status: "picked" })
+      .in("id", routeStops.map((stop) => stop.id));
+    assert.ifError(pickedStopsError);
 
     const pickListResponse = await fetchApp(`/api/operator/routes/${multiMachineRouteId}/pick-list`, operatorWarehouse.cookie);
     const pickListText = await pickListResponse.text();
@@ -461,43 +584,18 @@ test("route, inventory, purchase, and additive role regression flow", { skip: ca
     await assertPageOk(`/operator/routes/${multiMachineRouteId}/pick-list`, operatorWarehouse.cookie, "operator pick-list page after pickup");
 
     const [firstStop, secondStop] = routeStops;
-    const { error: firstFillError } = await operatorWarehouse.client.from("inventory_movements").insert([
-      {
-        product_id: product.id,
-        quantity: 2,
-        from_entity_type: "operator_bag",
-        from_entity_id: operatorWarehouse.teamMemberId,
-        to_entity_type: "machine",
-        to_entity_id: firstStop.machine_id,
-        reason: "operator_bag_to_machine",
-        related_route_id: multiMachineRouteId,
-        related_route_stop_id: firstStop.id,
-        related_machine_id: firstStop.machine_id,
-        created_by: operatorWarehouse.teamMemberId,
-        notes: "QA first stop fill",
-      },
-      {
-        product_id: extraProduct.id,
-        quantity: 1,
-        from_entity_type: "operator_bag",
-        from_entity_id: operatorWarehouse.teamMemberId,
-        to_entity_type: "machine",
-        to_entity_id: firstStop.machine_id,
-        reason: "operator_bag_to_machine",
-        related_route_id: multiMachineRouteId,
-        related_route_stop_id: firstStop.id,
-        related_machine_id: firstStop.machine_id,
-        created_by: operatorWarehouse.teamMemberId,
-        notes: "QA extra product fill",
-      },
-    ]);
-    assert.ifError(firstFillError);
-
-    const { error: firstStopError } = await operatorWarehouse.client
-      .from("route_stops")
-      .update({ status: "completed", completed_at: new Date().toISOString() })
-      .eq("id", firstStop.id);
-    assert.ifError(firstStopError);
+    await commitStopInventory({
+      operator: operatorWarehouse,
+      service,
+      routeId: multiMachineRouteId,
+      stop: firstStop,
+      fillLines: [
+        { product_id: product.id, actual_qty: 2, assigned_quantity: 2, action_type: "assigned_fill", unavailable: false },
+      ],
+      machineStorageLines: [
+        { product_id: extraProduct.id, actual_qty: 1, reason: "other", notes: "QA extra product fill" },
+      ],
+    });
 
     const { error: firstCashError } = await operatorWarehouse.client.from("cash_collections").insert({
       route_id: multiMachineRouteId,
@@ -516,27 +614,15 @@ test("route, inventory, purchase, and additive role regression flow", { skip: ca
     const secondStopText = await secondStopResponse.text();
     assert.equal(secondStopResponse.ok, true, secondStopText);
 
-    const { error: secondFillError } = await operatorWarehouse.client.from("inventory_movements").insert({
-      product_id: product.id,
-      quantity: 2,
-      from_entity_type: "operator_bag",
-      from_entity_id: operatorWarehouse.teamMemberId,
-      to_entity_type: "machine",
-      to_entity_id: secondStop.machine_id,
-      reason: "operator_bag_to_machine",
-      related_route_id: multiMachineRouteId,
-      related_route_stop_id: secondStop.id,
-      related_machine_id: secondStop.machine_id,
-      created_by: operatorWarehouse.teamMemberId,
-      notes: "QA second stop fill",
+    await commitStopInventory({
+      operator: operatorWarehouse,
+      service,
+      routeId: multiMachineRouteId,
+      stop: secondStop,
+      fillLines: [
+        { product_id: product.id, actual_qty: 2, assigned_quantity: 2, action_type: "assigned_fill", unavailable: false },
+      ],
     });
-    assert.ifError(secondFillError);
-
-    const { error: secondStopError } = await operatorWarehouse.client
-      .from("route_stops")
-      .update({ status: "completed", completed_at: new Date().toISOString() })
-      .eq("id", secondStop.id);
-    assert.ifError(secondStopError);
 
     const { error: secondCashError } = await operatorWarehouse.client.from("cash_collections").insert({
       route_id: multiMachineRouteId,
@@ -556,14 +642,7 @@ test("route, inventory, purchase, and additive role regression flow", { skip: ca
     const leftoversBody = JSON.parse(leftoversText);
     assert.deepEqual(leftoversBody.items, []);
 
-    const { error: completeRouteError } = await operatorWarehouse.client
-      .from("routes")
-      .update({ status: "completed", completed_at: new Date().toISOString() })
-      .eq("id", multiMachineRouteId)
-      .eq("operator_id", operatorWarehouse.teamMemberId);
-    assert.ifError(completeRouteError);
-
-    await assertPageOk(`/operator/routes/${multiMachineRouteId}`, operatorWarehouse.cookie, "operator completed route detail");
+    await assertPageOk(`/operator/routes/${multiMachineRouteId}`, operatorWarehouse.cookie, "operator route detail after completed stops");
     await assertPageOk("/inventory", operatorWarehouse.cookie, "warehouse inventory");
     await assertPageOk("/inventory/movements", operatorWarehouse.cookie, "warehouse movements");
     await assertPageOk("/products/new", operatorWarehouse.cookie, "warehouse add product page");
@@ -575,7 +654,5 @@ test("route, inventory, purchase, and additive role regression flow", { skip: ca
       .in("route_id", [oneMachineRouteId, multiMachineRouteId]);
     assert.ifError(reservationError);
     assert.ok(routeReservations.length >= 2);
-  } finally {
-    await cleanup(service, created);
   }
 });
