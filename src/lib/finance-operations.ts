@@ -408,7 +408,7 @@ export function buildMachineCashReconciliation({
   for (const collection of cashCollections.filter((row) => String(row.review_status ?? "") !== "voided")) {
     const machine = machines.find((candidate) => candidate.id === collection.machine_id) ?? null;
     const key = machine ? machine.id : `cash:${collection.machine_id ?? "unknown"}`;
-    const row = rows.get(key) ?? baseRow(key, machine, machine?.name ?? "Unknown cash machine");
+    const row = rows.get(key) ?? baseRow(key, machine, machine?.name ?? "Mixed-machine cash batch");
     row.countedCash = roundMoney(row.countedCash + numeric(collection.actual_cash_collected));
     if (collection.vms_expected_cash === null || collection.vms_expected_cash === undefined) row.missingExpectedCount += 1;
     else row.expectedCash = roundMoney(row.expectedCash + numeric(collection.vms_expected_cash));

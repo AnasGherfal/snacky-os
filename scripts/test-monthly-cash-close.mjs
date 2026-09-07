@@ -18,6 +18,8 @@ const cashForm = read("src/components/CashCollectionForm.tsx");
 const cashActions = read("src/lib/cash-actions.ts");
 const cashList = read("src/app/cash-collections/page.tsx");
 const cashDetail = read("src/app/cash-collections/[id]/page.tsx");
+const custodyForms = read("src/components/CashCustodyForms.tsx");
+const cashEdit = read("src/app/cash-collections/[id]/edit/page.tsx");
 const financeOperations = read("src/app/finance/operations/page.tsx");
 
 test("VMS payment split uses cash sales as monthly expected cash", () => {
@@ -72,15 +74,19 @@ test("cash pickup forms no longer request expected cash", () => {
   assert.match(cashForm, /Expected cash is reconciled for the full machine month/i);
 });
 
-test("new, confirmed, and edited pickups clear per-pickup expected cash", () => {
-  const matches = cashActions.match(/const expectedCash = null;/g) ?? [];
-  assert.equal(matches.length, 3);
+test("removal and count cannot invent expected cash; reconciliation owns it", () => {
+  assert.match(cashActions, /record_standalone_cash_removal/);
+  assert.match(cashActions, /confirm_cash_count/);
+  assert.match(cashActions, /reconcile_cash_collection/);
   assert.doesNotMatch(cashActions, /formData\.get\("expected_cash_lyd"\)/);
+  assert.match(custodyForms, /manual_expected_cash_lyd/);
+  assert.match(cashEdit, /Cash custody records are immutable/);
 });
 
-test("cash list presents pickups without per-pickup expected or variance columns", () => {
-  assert.match(cashList, /Monthly close/);
-  assert.match(cashList, /Counted amount/);
+test("cash list leads with combined custody totals instead of machine allocations", () => {
+  assert.match(cashList, /Net missing for filters/);
+  assert.match(cashList, /overages offset shortages/);
+  assert.match(cashList, /Counted, not yet banked/);
   assert.doesNotMatch(cashList, /headers=\{\["Machine"[^\]]*"Expected cash"/);
   assert.doesNotMatch(cashList, /headers=\{\["Machine"[^\]]*"Variance"/);
 });

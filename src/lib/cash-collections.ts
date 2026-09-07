@@ -4,6 +4,7 @@ export const CRITICAL_CASH_VARIANCE_LYD = 50;
 export type CashCollectionStatus =
   | "pending_collection"
   | "collected_pending_count"
+  | "counted_pending_reconciliation"
   | "counted_confirmed"
   | "variance_review"
   | "voided";
@@ -17,6 +18,7 @@ export function getCashCollectionStatus(status: string | null | undefined, varia
   if (status === "voided") return "voided";
   if (status === "pending_collection") return "pending_collection";
   if (status === "collected_pending_count") return "collected_pending_count";
+  if (status === "counted_pending_reconciliation") return "counted_pending_reconciliation";
   if (status === "counted_confirmed") return "counted_confirmed";
   if (status === "variance_review") return "variance_review";
   if (status === "resolved" || status === "ok") return "counted_confirmed";

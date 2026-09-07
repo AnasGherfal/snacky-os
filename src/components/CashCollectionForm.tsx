@@ -10,7 +10,6 @@ type Option = {
 type CashCollectionInitial = {
   id?: string;
   machineId?: string | null;
-  routeId?: string | null;
   operatorId?: string | null;
   collectedAt?: string | null;
   expectedCash?: number | null;
@@ -31,7 +30,6 @@ function amountValue(value: number | null | undefined) {
 export function CashCollectionForm({
   action,
   machines,
-  routes,
   operators,
   initial,
   submitLabel,
@@ -39,7 +37,6 @@ export function CashCollectionForm({
 }: {
   action: (formData: FormData) => void | Promise<void>;
   machines: Option[];
-  routes: Option[];
   operators: Option[];
   initial?: CashCollectionInitial;
   submitLabel: string;
@@ -75,17 +72,6 @@ export function CashCollectionForm({
               {operators.map((operator) => (
                 <option key={operator.id} value={operator.id}>
                   {operator.label}
-                </option>
-              ))}
-            </select>
-          </FormField>
-
-          <FormField label="Route">
-            <select name="route_id" defaultValue={initial?.routeId ?? ""} className="field-input">
-              <option value="">No route linked</option>
-              {routes.map((route) => (
-                <option key={route.id} value={route.id}>
-                  {route.label}
                 </option>
               ))}
             </select>

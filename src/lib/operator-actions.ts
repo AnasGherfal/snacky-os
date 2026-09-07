@@ -2369,7 +2369,7 @@ function completeStopPublicError(error: unknown) {
 /**
  * Completes a machine stop with refill data
  * Creates inventory movements: operator_bag -> machine
- * Creates cash collection record
+ * Cash removal is deliberately excluded and must use the custody workflow.
  */
 export async function completeStop({
   stopId,
@@ -2462,10 +2462,9 @@ export async function completeStop({
       throw new Error("This route is not in progress.");
     }
 
-    // Route assignment has been verified above. Cash reconciliation tables are
-    // intentionally hidden from the raw operator Data API, so the protected
-    // server action performs only the scoped VMS lookup and cash write.
-    const cashWorkflowClient = getSupabaseAdminClient() ?? supabase;
+    if (cashCollected || cashBagId?.trim()) {
+      throw new Error("Cash removal is not part of route completion. Save the route without cash, then use Remove Cash to create a sealed custody record.");
+    }
 
     const { data: stop, error: stopError } = await supabase.from("route_stops").select("id, route_id, machine_id, status").eq("id", stopId).maybeSingle();
     if (stopError) throwActionError(stopError, "Could not load this stop.");
@@ -3059,66 +3058,7 @@ export async function completeStop({
       if (refillStatusError) throwActionError(refillStatusError, "Could not update refill order status.");
     }
 
-    // Get expected cash from latest VMS sales
-    const { data: sales } = await cashWorkflowClient
-      .from("vms_sales_snapshots")
-      .select("cash_sales_amount")
-      .eq("machine_id", machineId)
-      .eq("import_row_status", "imported")
-      .order("period_end", { ascending: false })
-      .limit(1);
-
-    const expectedCash = sales?.[0]?.cash_sales_amount === null || sales?.[0]?.cash_sales_amount === undefined
-      ? null
-      : Number(sales?.[0]?.cash_sales_amount ?? 0);
-
-    const { data: existingCashCollection, error: existingCashError } = await cashWorkflowClient
-      .from("cash_collections")
-      .select("id, actual_cash_collected, review_status")
-      .eq("route_id", routeId)
-      .eq("machine_id", machineId)
-      .maybeSingle();
-    if (existingCashError) throwActionError(existingCashError, "Could not verify the cash collection record.");
-
-    let cashCollection: {
-      id: string;
-      route_id: string | null;
-      machine_id: string | null;
-      operator_id: string | null;
-      vms_expected_cash: number | null;
-      actual_cash_collected: number | null;
-      variance: number | null;
-      review_status: string | null;
-      cash_bag_id: string | null;
-      collected_at: string | null;
-    } | null = null;
-
-    if (cashCollected) {
-      const cashPayload = {
-        route_id: routeId,
-        machine_id: machineId,
-        operator_id: route.operator_id,
-        vms_expected_cash: expectedCash,
-        review_status: "collected_pending_count",
-        cash_bag_id: cashBagId?.trim() || null,
-        notes,
-      };
-      const { data, error: cashError } = existingCashCollection?.id
-        ? await cashWorkflowClient
-            .from("cash_collections")
-            .update(cashPayload)
-            .eq("id", existingCashCollection.id)
-            .select("id, route_id, machine_id, operator_id, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, collected_at")
-            .single()
-        : await cashWorkflowClient
-            .from("cash_collections")
-            .insert({ ...cashPayload, actual_cash_collected: null })
-            .select("id, route_id, machine_id, operator_id, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, collected_at")
-            .single();
-
-      if (cashError) throwActionError(cashError, "Could not create the cash collection record.");
-      cashCollection = data;
-    }
+    const expectedCash = null;
 
     let linkedIssueId: string | null = null;
     if (issue?.issueType && issue.description) {
@@ -3181,8 +3121,9 @@ export async function completeStop({
         machine_name: machineLabel,
         operator_id: route.operator_id,
         operator_name: operatorMember?.full_name ?? null,
-        cash_collected: cashCollected,
-        cash_bag_id: cashBagId?.trim() || null,
+        cash_collected: false,
+        cash_bag_id: null,
+        cash_handling: "separate_custody_workflow",
         notes: notes?.trim() || null,
         fill_status: fillStatus,
         filled_items: normalizedFilledItems,
@@ -3306,19 +3247,6 @@ export async function completeStop({
         afterData: refillHistory,
         metadata: { route_id: routeId, route_stop_id: stopId, machine_id: machineId, operator_id: route.operator_id },
         summary: `Saved ${fillStatus} machine refill proof`,
-      });
-    }
-
-    if (cashCollection) {
-      await logActivity({
-        profile,
-        action: "collect_cash",
-        entityType: "cash_collection",
-        entityId: cashCollection.id,
-        entityLabel: `Cash ${cashCollection.id.slice(0, 8)}`,
-        afterData: cashCollection,
-        metadata: { route_id: routeId, machine_id: machineId, operator_id: route.operator_id },
-        summary: cashCollected ? "Operator marked cash collected; pending count" : "Operator marked cash not collected",
       });
     }
 

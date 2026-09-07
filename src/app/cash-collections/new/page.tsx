@@ -1,20 +1,22 @@
 import { redirect } from "next/navigation";
-import { CashCollectionForm } from "@/components/CashCollectionForm";
+import { CashRemovalForm } from "@/components/CashRemovalForm";
 import { ErrorState, FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
-import { createManualCashCollection } from "@/lib/cash-actions";
+import { createCashRemoval } from "@/lib/cash-actions";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
-import { canViewFinancials } from "@/lib/authz";
+import { canRecordCashRemoval, canViewFinancials } from "@/lib/authz";
 
 export const dynamic = "force-dynamic";
 
-export default async function NewCashCollectionPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+export default async function NewCashCollectionPage({ searchParams }: { searchParams: Promise<{ error?: string; machine_id?: string }> }) {
   const profile = await getCurrentProfile();
-  if (!profile || !canViewFinancials({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) {
+  if (!profile || !canRecordCashRemoval({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) {
     redirect("/unauthorized");
   }
+  const profileContext = { id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status };
+  const backHref = canViewFinancials(profileContext) ? "/cash-collections" : "/operator/routes";
 
-  const { error = "" } = await searchParams;
+  const { error = "", machine_id: selectedMachineId } = await searchParams;
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) {
     return (
@@ -23,17 +25,16 @@ export default async function NewCashCollectionPage({ searchParams }: { searchPa
       </>
     );
   }
-  const [{ data: machines, error: machinesError }, { data: routes, error: routesError }, { data: operators, error: operatorsError }] = await Promise.all([
-    supabase.from("machines").select("id, name, machine_code, location:locations(id, name), status").order("name"),
-    supabase.from("routes").select("id, route_date, status").order("route_date", { ascending: false }).limit(200),
-    supabase.from("team_members").select("id, full_name, role, active").eq("active", true).order("full_name"),
-  ]);
-  const loadError = machinesError ?? routesError ?? operatorsError;
+  const { data: machines, error: loadError } = await supabase
+    .from("machines")
+    .select("id, name, machine_code, location:locations(id, name), status")
+    .neq("status", "inactive")
+    .order("name");
   if (loadError) {
     console.error("[cash] Failed to load new cash collection form", loadError);
     return (
       <>
-        <ErrorState title="Could not load cash form" body="Snacky OS could not load machines, routes, or operators for cash entry." action={<SecondaryButton href="/cash-collections">Back</SecondaryButton>} />
+        <ErrorState title="Could not load cash-removal form" body="Snacky OS could not load the available machines." action={<SecondaryButton href="/cash-collections/new">Retry</SecondaryButton>} />
       </>
     );
   }
@@ -42,23 +43,21 @@ export default async function NewCashCollectionPage({ searchParams }: { searchPa
     <>
       <FormPageLayout>
         <PageHeader
-          title="New Cash Collection"
-          subtitle="Manual counted cash entry that posts actual money-in to finance."
+          title="Record Cash Removal"
+          subtitle="Use this whenever cash leaves one or more machines. It is independent from route completion."
           breadcrumbs={[
-            { label: "Finance", href: "/finance" },
-            { label: "Cash Collections", href: "/cash-collections" },
-            { label: "New collection" },
+            { label: canViewFinancials(profileContext) ? "Cash Collections" : "Operations", href: backHref },
+            { label: "Remove cash" },
           ]}
-          action={<SecondaryButton href="/cash-collections">Back</SecondaryButton>}
+          action={<SecondaryButton href={backHref}>Back</SecondaryButton>}
         />
         {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{error}</div> : null}
-        <CashCollectionForm
-          action={createManualCashCollection}
+        <CashRemovalForm
+          action={createCashRemoval}
           machines={(machines ?? []).map((machine: any) => ({ id: machine.id, label: formatMachineDisplayName(machine, { includeArea: true }) }))}
-          routes={(routes ?? []).map((route: any) => ({ id: route.id, label: `${route.route_date} - ${route.status}` }))}
-          operators={(operators ?? []).map((operator: any) => ({ id: operator.id, label: `${operator.full_name} - ${operator.role}` }))}
-          submitLabel="Save and post finance"
-          countedRequired
+          selectedMachineId={selectedMachineId}
+          clientSubmissionId={crypto.randomUUID()}
+          cancelHref={backHref}
         />
       </FormPageLayout>
     </>

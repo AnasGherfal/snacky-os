@@ -109,7 +109,19 @@ const financeItem: NavItem = {
   labelKey: "finance",
   href: "/finance",
   icon: Banknote,
-  activePrefixes: ["/finance", "/cash-collections", "/payroll"],
+  activePrefixes: ["/finance", "/payroll"],
+};
+const cashRemovalItem: NavItem = {
+  label: { en: "Remove Cash", ar: "سحب النقد" },
+  href: "/cash-collections/new",
+  icon: HandCoins,
+  activePrefixes: ["/cash-collections"],
+};
+const cashCustodyItem: NavItem = {
+  label: { en: "Cash Custody", ar: "عهدة النقد" },
+  href: "/cash-collections",
+  icon: HandCoins,
+  activePrefixes: ["/cash-collections", "/cash-deposits"],
 };
 const reportsItem: NavItem = {
   labelKey: "reports",
@@ -125,19 +137,19 @@ const adminItem: NavItem = {
 };
 
 const ownerAdminNav: NavSection[] = [
-  { items: [dashboardItem, operationsItem, inventoryItem, restockPriorityItem, productsItem, machinesItem, financeItem, reportsItem, adminItem] },
+  { items: [dashboardItem, operationsItem, cashCustodyItem, inventoryItem, restockPriorityItem, productsItem, machinesItem, financeItem, reportsItem, adminItem] },
 ];
 
 const supervisorNav: NavSection[] = [
-  { items: [dashboardItem, operationsItem, inventoryItem, restockPriorityItem, productsItem, machinesItem] },
+  { items: [dashboardItem, operationsItem, cashCustodyItem, inventoryItem, restockPriorityItem, productsItem, machinesItem] },
 ];
 
 const operatorNav: NavSection[] = [
-  { items: [operatorOperationsItem, operatorAvailableRoutesItem, operatorIssuesItem, accountItem] },
+  { items: [operatorOperationsItem, operatorAvailableRoutesItem, cashRemovalItem, operatorIssuesItem, accountItem] },
 ];
 
 const financeNav: NavSection[] = [
-  { items: [financeItem] },
+  { items: [financeItem, cashCustodyItem] },
 ];
 
 const investorNav: NavSection[] = [
@@ -173,6 +185,7 @@ function sectionsForRoles(role: AppRole, roles?: AppRole[] | null) {
   if (hasPermission(context, "products.view") || hasPermission(context, "inventory.view") || hasPermission(context, "storage.view")) sections.push({ items: [restockPriorityItem] });
   if (hasPermission(context, "products.view")) sections.push({ items: [productsItem] });
   if (hasRole(context, "warehouse") || hasPermission(context, "storage.movement.view")) sections.push({ items: [warehouseOperationsItem] });
+  if (hasPermission(context, "cash.receive") && !hasPermission(context, "finance.view")) sections.push({ items: [cashCustodyItem] });
   if (hasRole(context, "purchasing")) sections.push({ items: [inventoryItem, restockPriorityItem, productsItem] });
   if (hasRole(context, "finance") || hasPermission(context, "finance.view")) sections.push(...financeNav);
   if (hasPermission(context, "investor.view")) sections.push(...investorNav);
