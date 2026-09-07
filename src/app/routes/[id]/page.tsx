@@ -13,11 +13,17 @@ import { moneyLabel } from "@/lib/payroll";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { privateStorageObjectUrl, REFILL_PHOTO_BUCKET } from "@/lib/storage-buckets";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
-import { ROUTE_CANCELED_STATUS, isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isPickupConfirmedStatus, isRouteItemsEditableStatus, isRouteStopDoneStatus, isTerminalRouteStatus, nextOperatorRouteHref, routeDisplayStatus } from "@/lib/route-workflow";
+import { ROUTE_CANCELED_STATUS, isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isPickupConfirmedStatus, isRouteInventoryFinalizableStatus, isRouteItemsEditableStatus, isRouteStopDoneStatus, isTerminalRouteStatus, nextOperatorRouteHref, routeDisplayStatus } from "@/lib/route-workflow";
 import { RouteCreatedToast } from "@/app/routes/[id]/RouteCreatedToast";
-import { assignRoute, cancelRoute, deleteDraftRoute } from "@/lib/route-actions";
-import { repairRouteCompletion } from "@/lib/operator-actions";
+import { assignRoute, deleteDraftRoute } from "@/lib/route-actions";
 import { getServerI18n } from "@/lib/i18n/server";
+import {
+  ROUTE_INVENTORY_OPEN_STATUSES,
+  isMissingRouteInventoryReviewSchema,
+  routeInventoryDiscrepancyStatusLabel,
+  routeInventoryDiscrepancyTypeLabel,
+  type RouteInventoryDiscrepancyRow,
+} from "@/lib/route-inventory-discrepancies";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -101,19 +107,6 @@ function routeEntityLabel(locale: "ar" | "en", entity: string) {
   if (value === "cash_collection") return tr(locale, "Cash collection", "تحصيل كاش");
   if (value === "route_stop") return tr(locale, "Route stop", "موقع الجولة");
   if (value === "route") return tr(locale, "Route", "الجولة");
-  return value.replaceAll("_", " ");
-}
-
-function routeMovementReasonLabel(locale: "ar" | "en", reason: string | null | undefined) {
-  const value = String(reason ?? "").toLowerCase();
-  if (value === "storage_to_operator_bag") return tr(locale, "Storage to operator bag", "من المخزن إلى حقيبة المشغل");
-  if (value === "operator_bag_to_storage") return tr(locale, "Operator bag to storage", "من حقيبة المشغل إلى المخزن");
-  if (value === "operator_bag_to_machine") return tr(locale, "Operator bag to machine", "من حقيبة المشغل إلى الجهاز");
-  if (value === "machine_to_waste") return tr(locale, "Machine to waste", "من الجهاز إلى الهالك");
-  if (value === "manual_adjustment") return tr(locale, "Manual adjustment", "تسوية يدوية");
-  if (value === "inventory_correction") return tr(locale, "Inventory correction", "تصحيح مخزون");
-  if (value === "damaged") return tr(locale, "Damaged", "تالف");
-  if (value === "expired") return tr(locale, "Expired", "منتهي الصلاحية");
   return value.replaceAll("_", " ");
 }
 
@@ -203,6 +196,57 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   }
 
   const routeRow: any = route;
+  const canReviewRouteInventory = isAdminRole(profile);
+  const routeDiscrepancyResult = canReviewRouteInventory
+    ? await supabase
+        .from("route_inventory_discrepancies")
+        .select("id, route_id, route_stop_id, machine_id, operator_id, product_id, discrepancy_type, recorded_quantity, actual_quantity, difference_quantity, absolute_quantity, status, source_type, source_id, details, detected_at, resolution_type, resolution_notes, resolved_at, correcting_movement_id, updated_at, product:products(name, sku)", { count: "exact" })
+        .eq("route_id", id)
+        .in("status", [...ROUTE_INVENTORY_OPEN_STATUSES])
+        .order("detected_at", { ascending: false })
+        .limit(100)
+    : { data: [], error: null, count: 0 };
+  const routeDiscrepancySchemaMissing = Boolean(
+    routeDiscrepancyResult.error && isMissingRouteInventoryReviewSchema(routeDiscrepancyResult.error),
+  );
+  const routeDiscrepancyLoadError = routeDiscrepancyResult.error && !routeDiscrepancySchemaMissing
+    ? routeDiscrepancyResult.error
+    : null;
+  if (routeDiscrepancyLoadError) {
+    console.error("[routes:detail] Failed to load route inventory discrepancies", { id, error: routeDiscrepancyLoadError });
+  }
+  const routeDiscrepancies = (routeDiscrepancyResult.data ?? []) as Array<RouteInventoryDiscrepancyRow & { product?: { name?: string | null; sku?: string | null } | Array<{ name?: string | null; sku?: string | null }> | null }>;
+  const openRouteDiscrepancies = routeDiscrepancies;
+  const openRouteDiscrepancyCount = routeDiscrepancyResult.count ?? openRouteDiscrepancies.length;
+  let openRouteDiscrepancyUnits: number | null = canReviewRouteInventory && !routeDiscrepancyResult.error ? 0 : null;
+  if (openRouteDiscrepancyUnits !== null && openRouteDiscrepancyCount > 0) {
+    const pageSize = 1_000;
+    let offset = 0;
+    let totalUnits = 0;
+    while (true) {
+      const discrepancyUnitsPage = await supabase
+        .from("route_inventory_discrepancies")
+        .select("id, absolute_quantity")
+        .eq("route_id", id)
+        .in("status", [...ROUTE_INVENTORY_OPEN_STATUSES])
+        .order("id", { ascending: true })
+        .range(offset, offset + pageSize - 1);
+
+      if (discrepancyUnitsPage.error) {
+        console.error("[routes:detail] Failed to load complete route discrepancy unit total", { id, error: discrepancyUnitsPage.error });
+        openRouteDiscrepancyUnits = null;
+        break;
+      }
+
+      const rows = discrepancyUnitsPage.data ?? [];
+      totalUnits += rows.reduce((sum, row) => sum + Math.max(0, Number(row.absolute_quantity ?? 0)), 0);
+      if (rows.length < pageSize) {
+        openRouteDiscrepancyUnits = totalUnits;
+        break;
+      }
+      offset += pageSize;
+    }
+  }
   const supportClient = getSupabaseAdminClient() ?? supabase;
   const [{ data: operator }, { data: performers }, { data: stops, error: stopsError }, { data: stopItems, error: stopItemsError }, { data: routeStock, error: routeStockError }, { data: fillLines, error: fillLinesError }, { data: pickListItems, error: pickListItemsError }] = await Promise.all([
     routeRow.operator_id
@@ -291,7 +335,17 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     ...(fillLines ?? []).flatMap((line: any) => [line.assigned_product_id, line.product_id, line.substitute_product_id]),
     ...routePickListItems.flatMap((line: any) => [line.product_id, line.substituted_for_product_id]),
   ].filter(Boolean)));
-  const [{ data: machines }, { data: products }, { data: movements }, { data: cashCollections }, { data: issues }, { data: routePayBreakdown, error: routePayError }] = await Promise.all([
+  const [
+    { data: machines },
+    { data: products },
+    { data: movements },
+    { data: cashCollections },
+    { data: issues },
+    { data: routePayBreakdown, error: routePayError },
+    terminalReconciliationResult,
+    canonicalRouteBagSnapshotResult,
+    pendingStopInventoryCommitResult,
+  ] = await Promise.all([
     machineIds.length ? supabase.from("machines").select("id, name, machine_code, location:locations(id, name)").in("id", machineIds) : Promise.resolve({ data: [] }),
     productIds.length ? supabase.from("products").select("id, name").in("id", productIds) : Promise.resolve({ data: [] }),
     supabase
@@ -312,8 +366,30 @@ export default async function RouteDetailPage({ params, searchParams }: { params
           .order("created_at", { ascending: false })
       : Promise.resolve({ data: [] }),
     supabase.from("route_pay_breakdowns").select("id, total_pay_lyd, payroll_period_id, recalculated_at").eq("route_id", id).maybeSingle(),
+    supportClient
+      .from("route_inventory_reconciliations")
+      .select("id, action, status, returned_units, finalized_at")
+      .eq("route_id", id)
+      .maybeSingle(),
+    supabase.rpc("snacky_route_bag_snapshot", { p_route_id: id }),
+    supportClient
+      .from("route_stop_inventory_commits")
+      .select("id, route_stop_id", { count: "exact" })
+      .eq("route_id", id)
+      .is("workflow_completed_at", null)
+      .order("created_at", { ascending: true })
+      .limit(20),
   ]);
   if (routePayError) console.error("[routes:detail] Failed to load route pay breakdown", { id, error: routePayError });
+  if (terminalReconciliationResult.error && !isMissingRouteInventoryReviewSchema(terminalReconciliationResult.error)) {
+    console.error("[routes:detail] Failed to load terminal inventory reconciliation", { id, error: terminalReconciliationResult.error });
+  }
+  if (canonicalRouteBagSnapshotResult.error && !isMissingRouteInventoryReviewSchema(canonicalRouteBagSnapshotResult.error)) {
+    console.error("[routes:detail] Failed to load canonical route bag snapshot", { id, error: canonicalRouteBagSnapshotResult.error });
+  }
+  if (pendingStopInventoryCommitResult.error && !isMissingRouteInventoryReviewSchema(pendingStopInventoryCommitResult.error)) {
+    console.error("[routes:detail] Failed to check pending stop inventory commits", { id, error: pendingStopInventoryCommitResult.error });
+  }
   const machineById = new Map((machines ?? []).map((machine: any) => [machine.id, machine]));
   const [manualSalesResult, adjustmentsResult] = await Promise.all([
     supportClient
@@ -391,7 +467,23 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   const routeProductsPrepared = Boolean((routeStock ?? []).some((item: any) => Number(item.planned_qty ?? 0) > 0) || routeStopItems.some((item: any) => Number(item.planned_quantity ?? 0) > 0));
   const productsPendingAtStorage = routeStops.length > 0 && !routeProductsPrepared && isAvailableRouteStatus(routeRow.status);
   const hasPickMovements = Boolean(movements?.some((movement: any) => movement.reason === "storage_to_operator_bag"));
-  const hasReturnMovements = Boolean(movements?.some((movement: any) => movement.reason === "operator_bag_to_storage"));
+  const terminalInventoryReconciliation = terminalReconciliationResult.error ? null : terminalReconciliationResult.data;
+  const canonicalRouteBagSnapshot = !canonicalRouteBagSnapshotResult.error
+    && canonicalRouteBagSnapshotResult.data
+    && typeof canonicalRouteBagSnapshotResult.data === "object"
+    && !Array.isArray(canonicalRouteBagSnapshotResult.data)
+    ? canonicalRouteBagSnapshotResult.data as { balances?: Array<{ signed_quantity?: number | string | null }> }
+    : null;
+  const canonicalRouteBagBalances = Array.isArray(canonicalRouteBagSnapshot?.balances) ? canonicalRouteBagSnapshot.balances : [];
+  const hasAuthoritativeZeroRouteBag = canonicalRouteBagBalances.length > 0
+    && canonicalRouteBagBalances.every((balance) => Number(balance.signed_quantity ?? 0) === 0);
+  const leftoversReconciled = Boolean(terminalInventoryReconciliation) || hasAuthoritativeZeroRouteBag;
+  const hasPendingStopInventoryCommit = Boolean(pendingStopInventoryCommitResult.error)
+    || Number(pendingStopInventoryCommitResult.count ?? 0) > 0;
+  const pendingStopInventoryCommits = pendingStopInventoryCommitResult.error
+    ? []
+    : (pendingStopInventoryCommitResult.data ?? []) as Array<{ id: string; route_stop_id: string }>;
+  const firstPendingStopInventoryCommit = pendingStopInventoryCommits[0] ?? null;
   const canRecordMissedPickup = isOwnerAdminRole(profile)
     && Boolean(profile.team_member_id)
     && Boolean(routeRow.operator_id)
@@ -561,13 +653,25 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     .slice(0, 100);
   const completedStopCount = routeStops.filter((stop: any) => isRouteStopDoneStatus(stop.status)).length;
+  const routeAllowsInventoryCompletion = isRouteInventoryFinalizableStatus(routeRow.status);
+  const canCountAndFinishRoute = canManageRouteAssignment
+    && Boolean(routeRow.operator_id)
+    && routeAllowsInventoryCompletion
+    && routeStops.length > 0
+    && completedStopCount === routeStops.length
+    && !hasPendingStopInventoryCommit;
+  const leftoverReturnDetail = terminalInventoryReconciliation
+    ? tr(locale, "Terminal inventory count finalized", "تم اعتماد العدّ النهائي للمخزون")
+    : hasAuthoritativeZeroRouteBag
+      ? tr(locale, "Canonical operator bag balance is zero", "الرصيد المعتمد لحقيبة المشغل يساوي صفرًا")
+      : tr(locale, "Awaiting verified leftover reconciliation", "بانتظار التسوية المؤكدة للمتبقي");
   const timeline = [
     { label: tr(locale, "Draft", "مسودة"), done: true, detail: tr(locale, `Created ${new Date(routeRow.created_at).toLocaleString("en-US")}`, `تم الإنشاء ${new Date(routeRow.created_at).toLocaleString("ar-LY")}`) },
     { label: tr(locale, "Available", "متاحة"), done: isAvailableRouteStatus(routeRow.status) || isActiveRouteStatus(routeRow.status) || isCompletedRouteStatus(routeRow.status), detail: operator?.full_name ?? tr(locale, "Unassigned / available", "غير مسندة / متاحة") },
     { label: tr(locale, "Picked", "تم التحميل"), done: hasPickMovements || isPickupConfirmedStatus(routeRow.status), detail: hasPickMovements ? tr(locale, "Storage moved to operator bag", "تم نقل المخزون إلى حقيبة المشغل") : tr(locale, "Awaiting pick confirmation", "بانتظار تأكيد التحميل") },
     { label: tr(locale, "Stops completed", "المواقع المكتملة"), done: routeStops.length > 0 && completedStopCount === routeStops.length, detail: tr(locale, `${completedStopCount}/${routeStops.length} completed or skipped`, `${completedStopCount}/${routeStops.length} مكتملة أو متخطاة`) },
     { label: tr(locale, "Cash recorded", "تم تسجيل الكاش"), done: Boolean(cashCollections?.length), detail: tr(locale, `${cashCollections?.length ?? 0} cash records`, `${cashCollections?.length ?? 0} سجل كاش`) },
-    { label: tr(locale, "Leftovers returned", "تمت إعادة المتبقي"), done: hasReturnMovements || isCompletedRouteStatus(routeRow.status), detail: hasReturnMovements ? tr(locale, "Operator bag returned to storage", "تمت إعادة حقيبة المشغل إلى المخزن") : tr(locale, "Awaiting leftover return", "بانتظار إعادة المتبقي") },
+    { label: tr(locale, "Leftovers returned", "تمت إعادة المتبقي"), done: leftoversReconciled, detail: leftoverReturnDetail },
     { label: tr(locale, "Completed", "مكتملة"), done: isCompletedRouteStatus(routeRow.status), detail: routeRow.completed_at ? new Date(routeRow.completed_at).toLocaleString(locale === "ar" ? "ar-LY" : "en-US") : tr(locale, "Not completed", "غير مكتملة") },
     {
       label: tr(locale, "Payroll verified", "تم التحقق من الأجور"),
@@ -590,6 +694,11 @@ export default async function RouteDetailPage({ params, searchParams }: { params
           action={
             <div className="flex flex-wrap gap-2">
               <SecondaryButton href="/routes">{tr(locale, "Back to routes", "العودة إلى الجولات")}</SecondaryButton>
+              {canReviewRouteInventory ? (
+                <SecondaryButton href={`/routes/inventory-review?route=${id}`}>
+                  {tr(locale, "Inventory review", "مراجعة المخزون")}{openRouteDiscrepancyCount ? ` (${openRouteDiscrepancyCount})` : ""}
+                </SecondaryButton>
+              ) : null}
               {canEditRouteItems ? (
                 <Link href={`/routes/${id}/edit`} className="btn-secondary">
                   {productsPendingAtStorage ? tr(locale, "Prepare products at storage", "تجهيز المنتجات في المخزن") : tr(locale, "Edit route items", "تعديل عناصر الجولة")}
@@ -617,35 +726,79 @@ export default async function RouteDetailPage({ params, searchParams }: { params
                   hiddenFields={[{ name: "id", value: id }]}
                 />
               ) : null}
-              {!isTerminalRouteStatus(routeRow.status) ? (
-                <ConfirmDialog
-                  action={cancelRoute}
-                  triggerLabel={tr(locale, "Cancel route", "إلغاء الجولة")}
-                  title={tr(locale, "Cancel route?", "إلغاء الجولة؟")}
-                  description={tr(locale, "Cancelled routes stay in history with their planned work, movements, and operator activity.", "تبقى الجولات الملغاة في السجل مع العمل المخطط والحركات ونشاط المشغل.")}
-                  confirmLabel={tr(locale, "Cancel route", "إلغاء الجولة")}
-                  buttonClassName="btn-danger"
-                  confirmButtonClassName="btn-danger"
-                  hiddenFields={[{ name: "id", value: id }]}
-                />
-              ) : null}
               {canManageRouteAssignment && !isTerminalRouteStatus(routeRow.status) ? (
-                <ConfirmDialog
-                  action={repairRouteCompletion}
-                  triggerLabel={tr(locale, "Repair & complete", "إصلاح وإكمال")}
-                  title={tr(locale, "Repair and complete route?", "إصلاح وإكمال الجولة؟")}
-                  description={tr(locale, "Snacky OS will reuse existing return movements, repair saved returned quantities, and complete the route without duplicating inventory.", "سيعيد Snacky OS استخدام حركات الإرجاع الموجودة، ويصلح الكميات المرتجعة المحفوظة، ويكمل الجولة من دون تكرار المخزون.")}
-                  confirmLabel={tr(locale, "Repair & complete", "إصلاح وإكمال")}
-                  buttonClassName="btn-secondary"
-                  confirmButtonClassName="btn-primary"
-                  hiddenFields={[{ name: "route_id", value: id }]}
-                />
+                <Link href={`/operator/routes/${id}/leftovers?mode=cancel`} className="btn-danger">
+                  {tr(locale, "Count & cancel route", "عدّ وإلغاء الجولة")}
+                </Link>
+              ) : null}
+              {canCountAndFinishRoute ? (
+                <Link href={`/operator/routes/${id}/leftovers`} className="btn-secondary">
+                  {tr(locale, "Count & finish route", "عدّ وإنهاء الجولة")}
+                </Link>
               ) : null}
             </div>
           }
         />
         {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{error}</div> : null}
         {success ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900">{success}</div> : null}
+        {pendingStopInventoryCommitResult.error && !isMissingRouteInventoryReviewSchema(pendingStopInventoryCommitResult.error) ? (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-950">
+            <div className="font-semibold">{tr(locale, "Stop inventory recovery could not be checked", "تعذر التحقق من استعادة مخزون الموقع")}</div>
+            <p className="mt-1">{tr(locale, "Count & finish is locked until this safety check loads. Refresh the page; no inventory was changed by this check.", "تم إيقاف العدّ والإنهاء حتى يكتمل فحص الأمان. حدّث الصفحة؛ لم يغيّر هذا الفحص أي مخزون.")}</p>
+          </div>
+        ) : null}
+        {firstPendingStopInventoryCommit ? (
+          <div className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="font-semibold">{tr(locale, "A stop inventory commit still needs workflow recovery", "ما زال اعتماد مخزون أحد المواقع يحتاج إلى استعادة سير العمل")}</div>
+              <p className="mt-1">{tr(locale, `${pendingStopInventoryCommitResult.count ?? pendingStopInventoryCommits.length} pending stop commit(s) block route closure so inventory cannot be finalized twice.`, `${pendingStopInventoryCommitResult.count ?? pendingStopInventoryCommits.length} اعتماد موقع معلق يمنع إغلاق الجولة حتى لا تتم تسوية المخزون مرتين.`)}</p>
+            </div>
+            <Link href={`/operator/routes/${id}/stops/${firstPendingStopInventoryCommit.route_stop_id}`} className="btn-secondary shrink-0">
+              {tr(locale, "Recover this stop", "استعادة هذا الموقع")}
+            </Link>
+          </div>
+        ) : null}
+        {canReviewRouteInventory && routeDiscrepancyLoadError ? (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-950">
+            <div className="font-semibold">{tr(locale, "Inventory review could not load", "تعذر تحميل مراجعة المخزون")}</div>
+            <p className="mt-1">{tr(locale, "The route is available, but discrepancy access failed. Refresh before making a review decision.", "الجولة متاحة، لكن تحميل صلاحيات الفروقات فشل. حدّث الصفحة قبل اتخاذ قرار المراجعة.")}</p>
+          </div>
+        ) : null}
+        {canReviewRouteInventory && routeDiscrepancySchemaMissing ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+            {tr(locale, "The route inventory review database migration is not installed yet. Existing route data is unchanged.", "ترحيل قاعدة بيانات مراجعة مخزون الجولات غير مثبت بعد. بيانات الجولة الحالية لم تتغير.")}
+          </div>
+        ) : null}
+        {canReviewRouteInventory && openRouteDiscrepancyCount ? (
+          <section className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-rose-950">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className="font-semibold">{tr(locale, `${openRouteDiscrepancyCount} inventory difference${openRouteDiscrepancyCount === 1 ? "" : "s"} need review`, `${openRouteDiscrepancyCount} فرق في المخزون يحتاج إلى مراجعة`)}</h2>
+                <p className="mt-1 text-sm">
+                  {openRouteDiscrepancyUnits === null
+                    ? tr(locale, "The complete unit total could not be loaded. Open the review before making a decision.", "تعذر تحميل إجمالي الوحدات الكامل. افتح المراجعة قبل اتخاذ قرار.")
+                    : tr(locale, `${openRouteDiscrepancyUnits} unit${openRouteDiscrepancyUnits === 1 ? "" : "s"} are represented. Review status actions do not move inventory.`, `تشمل الفروقات ${openRouteDiscrepancyUnits} وحدة. إجراءات حالة المراجعة لا تنقل المخزون.`)}
+                </p>
+              </div>
+              <Link href={`/routes/inventory-review?route=${id}`} className="btn-secondary shrink-0">{tr(locale, "Open review", "فتح المراجعة")}</Link>
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {openRouteDiscrepancies.slice(0, 4).map((row) => {
+                const productRelation = firstRelation(row.product);
+                return (
+                  <div key={row.id} className="rounded-xl border border-rose-200 bg-white p-3 text-sm">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="font-medium text-slate-950">{productRelation?.name ?? tr(locale, "Product", "منتج")}</div>
+                      <StatusBadge status={row.status} label={routeInventoryDiscrepancyStatusLabel(row.status, locale)} />
+                    </div>
+                    <div className="mt-1 text-slate-600">{routeInventoryDiscrepancyTypeLabel(row.discrepancy_type, locale)}</div>
+                    <div className="mt-1 font-semibold text-rose-800">{tr(locale, "Difference", "الفرق")}: {Number(row.difference_quantity ?? 0) > 0 ? "+" : ""}{Math.trunc(Number(row.difference_quantity ?? 0))}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
         {productsPendingAtStorage ? (
           <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950">
             <div className="font-semibold">{tr(locale, "Machine stops planned — products pending at storage", "تم تخطيط مواقع الأجهزة — المنتجات بانتظار التجهيز في المخزن")}</div>

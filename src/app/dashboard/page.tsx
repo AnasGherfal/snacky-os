@@ -5,6 +5,8 @@ import { StatCard } from "@/components/StatCard";
 import { VmsDataSourceCard } from "@/components/VmsDataSourceCard";
 import { EmptyState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
+import { isAdminRole } from "@/lib/authz";
+import { isMissingRouteInventoryReviewSchema } from "@/lib/route-inventory-discrepancies";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import {
   loadFinanceHealthDiagnostics,
@@ -97,7 +99,8 @@ type DashboardSection =
   | "missingCost"
   | "vmsBatches"
   | "restockPriority"
-  | "financeHealth";
+  | "financeHealth"
+  | "routeInventoryReview";
 
 type DashboardErrors = Partial<Record<DashboardSection, string>>;
 
@@ -120,6 +123,8 @@ type DashboardData = {
   restockItems: RestockPriorityItem[];
   restockWarnings: string[];
   financeDiagnostics: FinanceHealthDiagnostics;
+  canReviewRouteInventory: boolean;
+  routeInventoryDiscrepancyCount: number;
   errors: DashboardErrors;
 };
 
@@ -138,21 +143,22 @@ type DashboardI18n = {
 
 const HEALTHY_IMPORT_STATUSES = ["imported", "imported_with_warnings", "partially_imported"];
 const ROUTE_PENDING_STATUSES = new Set<string>(ROUTE_RESERVATION_STATUSES);
-const dashboardSectionLabels: Record<DashboardSection, string> = {
-  revenue: "Revenue",
-  cashWaiting: "Cash waiting",
-  cashVariance: "Cash variance",
-  purchaseDrafts: "Purchase drafts",
-  purchaseUnpaid: "Unpaid purchases",
-  routes: "Routes",
-  recentIssues: "Recent issues",
-  criticalIssues: "Critical issues",
-  refill: "Refill recommendations",
-  refillForecast: "Machine refill forecast",
-  missingCost: "Missing product cost",
-  vmsBatches: "VMS imports",
-  restockPriority: "Restock priority",
-  financeHealth: "Finance health",
+const dashboardSectionLabels: Record<DashboardSection, { en: string; ar: string }> = {
+  revenue: { en: "Revenue", ar: "الإيرادات" },
+  cashWaiting: { en: "Cash waiting", ar: "النقد بانتظار العد" },
+  cashVariance: { en: "Cash variance", ar: "فروقات النقد" },
+  purchaseDrafts: { en: "Purchase drafts", ar: "مسودات المشتريات" },
+  purchaseUnpaid: { en: "Unpaid purchases", ar: "المشتريات غير المسددة" },
+  routes: { en: "Routes", ar: "الجولات" },
+  recentIssues: { en: "Recent issues", ar: "الأعطال الأخيرة" },
+  criticalIssues: { en: "Critical issues", ar: "الأعطال الحرجة" },
+  refill: { en: "Refill recommendations", ar: "توصيات التعبئة" },
+  refillForecast: { en: "Machine refill forecast", ar: "توقعات تعبئة الأجهزة" },
+  missingCost: { en: "Missing product cost", ar: "تكلفة المنتج المفقودة" },
+  vmsBatches: { en: "VMS imports", ar: "استيرادات VMS" },
+  restockPriority: { en: "Restock priority", ar: "أولوية إعادة التخزين" },
+  financeHealth: { en: "Finance health", ar: "صحة المالية" },
+  routeInventoryReview: { en: "Route inventory review", ar: "مراجعة مخزون الجولات" },
 };
 
 function relationRecord<T extends Record<string, unknown>>(value: T | T[] | null | undefined) {
@@ -377,6 +383,39 @@ async function safeDashboardCount({
   }
 }
 
+async function safeRouteInventoryReviewCount({
+  promise,
+  errors,
+}: {
+  promise: PromiseLike<{ error?: unknown; count?: number | null }>;
+  errors: DashboardErrors;
+}) {
+  try {
+    const result = await promise;
+    if (result.error) {
+      if (isMissingRouteInventoryReviewSchema(result.error)) return 0;
+      const message = errorMessage(result.error);
+      console.error("[dashboard] Supabase count failed", {
+        section: "routeInventoryReview",
+        query: "route_inventory_discrepancies open review",
+        error: result.error,
+      });
+      errors.routeInventoryReview = message;
+      return 0;
+    }
+    return Number(result.count ?? 0);
+  } catch (error) {
+    const message = errorMessage(error);
+    console.error("[dashboard] Supabase count threw", {
+      section: "routeInventoryReview",
+      query: "route_inventory_discrepancies open review",
+      error,
+    });
+    errors.routeInventoryReview = message;
+    return 0;
+  }
+}
+
 async function safeRestockPriorityForDashboard(
   supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>,
   errors: DashboardErrors,
@@ -491,7 +530,8 @@ function refillForecastClock() {
 }
 
 async function getDashboardData() {
-  await requireCurrentProfileForPath("/dashboard");
+  const profile = await requireCurrentProfileForPath("/dashboard");
+  const canReviewRouteInventory = isAdminRole(profile);
   const supabase = getSupabaseAdminClient() ?? await getAuthenticatedSupabaseServerClient();
   if (!supabase) return { data: null };
 
@@ -520,6 +560,7 @@ async function getDashboardData() {
     vmsBatchRows,
     restockPriority,
     financeDiagnostics,
+    routeInventoryDiscrepancyCount,
   ] = await Promise.all([
     safeDashboardQuery<RevenueDailyRow[]>({
       key: "revenue",
@@ -672,6 +713,15 @@ async function getDashboardData() {
     }),
     safeRestockPriorityForDashboard(supabase, errors),
     safeFinanceHealthForDashboard(supabase, errors),
+    canReviewRouteInventory
+      ? safeRouteInventoryReviewCount({
+          promise: supabase
+            .from("route_inventory_discrepancies")
+            .select("id", { count: "exact", head: true })
+            .in("status", ["open", "investigating"]),
+          errors,
+        })
+      : Promise.resolve(0),
   ]);
 
   const latestXyBatchIds = new Set(
@@ -718,6 +768,8 @@ async function getDashboardData() {
       restockItems: restockPriority.items,
       restockWarnings: Object.values(restockPriority.errors ?? {}).filter(Boolean),
       financeDiagnostics,
+      canReviewRouteInventory,
+      routeInventoryDiscrepancyCount,
       errors,
     } satisfies DashboardData,
   };
@@ -787,6 +839,18 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
   const partialSections = Object.entries(errors).filter(([, message]) => Boolean(message));
 
   const actionItems: ActionItem[] = [];
+  if (data.canReviewRouteInventory && data.routeInventoryDiscrepancyCount > 0) {
+    actionItems.push({
+      key: "route-inventory-review",
+      title: localize("Review route inventory differences", "مراجعة فروق مخزون الجولات"),
+      detail: localize(
+        `${data.routeInventoryDiscrepancyCount} route inventory case${data.routeInventoryDiscrepancyCount === 1 ? "" : "s"} need manager review.`,
+        `${data.routeInventoryDiscrepancyCount} حالة فرق في مخزون الجولات تحتاج إلى مراجعة إدارية.`,
+      ),
+      href: "/routes/inventory-review",
+      cta: localize("Open inventory review", "فتح مراجعة المخزون"),
+    });
+  }
   if (!activeDetailedCount) {
     actionItems.push({
       key: "missing-detailed-sales",
@@ -963,7 +1027,10 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
         <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
           {t("Dashboard stayed online in partial mode. Some sections could not load:")}
           {" "}
-          {partialSections.map(([key]) => dashboardSectionLabels[key as DashboardSection]).join(" / ")}.
+          {partialSections.map(([key]) => {
+            const label = dashboardSectionLabels[key as DashboardSection];
+            return localize(label.en, label.ar);
+          }).join(" / ")}.
         </div>
       ) : null}
 

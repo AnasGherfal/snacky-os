@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { QuantityStepper } from "@/components/QuantityStepper";
 import { StatusBadge } from "@/components/ui";
 import { useLanguage } from "@/components/I18nProvider";
+import { claimDurableClientOperation, completeDurableClientOperation } from "@/lib/durable-client-operation";
 import {
   manualRouteSalePaymentMethodLabel,
   manualRouteSalePriceSourceLabel,
@@ -59,10 +60,6 @@ type ParsedPayload = {
   inventoryReversed?: boolean;
   [key: string]: unknown;
 };
-
-function newClientId() {
-  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
 
 function cleanText(value: unknown) {
   return String(value ?? "").trim();
@@ -132,7 +129,7 @@ export function ManualRouteSalesSection({
   const [success, setSuccess] = useState("");
   const [warning, setWarning] = useState("");
   const [priceSourceLabel, setPriceSourceLabel] = useState<string | null>(null);
-  const submissionIdRef = useRef(newClientId());
+  const operationStorageKey = `snacky:route-manual-sale:${routeId}:${stopId}`;
   const routeLocked = isRouteLocked(routeStatus);
 
   useEffect(() => {
@@ -168,7 +165,6 @@ export function ManualRouteSalesSection({
     setPaymentMethod("cash");
     setNotes("");
     setPriceSourceLabel(null);
-    submissionIdRef.current = newClientId();
   }
 
   function handleSelectProduct(nextProductId: string) {
@@ -207,6 +203,16 @@ export function ManualRouteSalesSection({
     setSuccess("");
     setWarning("");
     try {
+      const immutableRequest = {
+        productId: productId || null,
+        productName: productId ? null : fallbackName,
+        quantity,
+        unitSalePriceLyd: productId ? null : unitSalePriceLyd,
+        paymentMethod,
+        notes: notes.trim() || null,
+        machineId,
+      };
+      const clientSubmissionId = claimDurableClientOperation(operationStorageKey, immutableRequest);
       const response = await fetch(`/api/operator/routes/${routeId}/stops/${stopId}/manual-sales`, {
         method: "POST",
         cache: "no-store",
@@ -214,16 +220,7 @@ export function ManualRouteSalesSection({
           Accept: "application/json",
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          productId: productId || null,
-          productName: productId ? selectedProduct?.name ?? null : fallbackName,
-          quantity,
-          unitSalePriceLyd,
-          paymentMethod,
-          notes,
-          machineId,
-          clientSubmissionId: submissionIdRef.current,
-        }),
+        body: JSON.stringify({ ...immutableRequest, clientSubmissionId }),
       });
       const parsed = await parseResponse(response);
       if (!response.ok || parsed.payload?.success === false || !parsed.payload?.sale) {
@@ -236,6 +233,7 @@ export function ManualRouteSalesSection({
         inventoryMovementCreated: Boolean(parsed.payload.inventoryMovementCreated),
         warning: responseWarning || null,
       });
+      completeDurableClientOperation(operationStorageKey, clientSubmissionId);
       resetForm();
       setExpanded(true);
       setShowForm(false);

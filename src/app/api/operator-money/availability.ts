@@ -19,7 +19,12 @@ export async function getOperatorPurchaseAvailability(productId: string): Promis
   if (!admin) throw new Error("Server inventory access is not configured.");
 
   const [locationsResult, inventoryResult, reservedResult] = await Promise.all([
-    admin.from("storage_locations").select("id, name, active").eq("active", true).order("name"),
+    admin
+      .from("storage_locations")
+      .select("id, name, active, location_type")
+      .eq("active", true)
+      .in("location_type", ["main_storage", "vehicle", "temporary", "other"])
+      .order("name"),
     admin
       .from("current_inventory_by_location")
       .select("location_id, quantity_on_hand")
@@ -30,13 +35,14 @@ export async function getOperatorPurchaseAvailability(productId: string): Promis
 
   if (locationsResult.error) throw locationsResult.error;
   if (inventoryResult.error) throw inventoryResult.error;
+  if (reservedResult.error) throw reservedResult.error;
 
   const quantityByLocation = new Map<string, number>();
   for (const row of inventoryResult.data ?? []) {
     quantityByLocation.set(String(row.location_id), numberValue(row.quantity_on_hand));
   }
 
-  let remainingReserved = reservedResult.error ? 0 : Math.max(0, numberValue(reservedResult.data));
+  let remainingReserved = Math.max(0, numberValue(reservedResult.data));
   const locations = (locationsResult.data ?? [])
     .map((location) => ({
       storage_location_id: String(location.id),

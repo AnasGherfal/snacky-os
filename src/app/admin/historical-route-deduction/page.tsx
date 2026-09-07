@@ -268,7 +268,7 @@ export default async function HistoricalRouteDeductionPage({ searchParams }: { s
               <StatCard label="Ready rows" value={selectedBatch.ready_row_count} tone="ok" />
               <StatCard label="Needs review" value={selectedBatch.needs_review_count} tone={selectedBatch.needs_review_count ? "warn" : "default"} />
               <StatCard label="Ready quantity" value={selectedBatch.total_quantity} />
-              <StatCard label="Negative warnings" value={warningCount} tone={warningCount ? "warn" : "default"} note={warningCount ? "Admin may still apply." : undefined} />
+              <StatCard label="Negative warnings" value={warningCount} tone={warningCount ? "warn" : "default"} note={warningCount ? "Resolve before applying." : undefined} />
             </div>
           </section>
 

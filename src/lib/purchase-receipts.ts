@@ -54,7 +54,11 @@ export async function resolvePurchaseReceiptUrl(supabase: SupabaseClient, fd: Fo
 
     const extension = file.name.split(".").pop()?.toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
     const receiptNumber = String(fd.get("receipt_number") || "receipt").trim().toLowerCase().replace(/[^a-z0-9-]/g, "-") || "receipt";
-    const path = `${receiptNumber}-${Date.now()}.${extension}`;
+    const clientSubmissionId = String(fd.get("client_submission_id") ?? "").trim();
+    const stableSuffix = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clientSubmissionId)
+      ? clientSubmissionId
+      : String(Date.now());
+    const path = `${receiptNumber}-${stableSuffix}.${extension}`;
     const { error } = await storageClient.storage.from(RECEIPT_IMAGE_BUCKET).upload(path, file, {
       cacheControl: "31536000",
       upsert: true,

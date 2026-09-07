@@ -1,5 +1,6 @@
 "use server";
 
+import { createHash } from "node:crypto";
 import { headers } from "next/headers";
 import { UserProfile } from "@/lib/auth";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
@@ -14,6 +15,7 @@ type ActivityInput = {
   afterData?: unknown;
   metadata?: Record<string, unknown> | null;
   summary?: string | null;
+  idempotencyKey?: string | null;
 };
 
 const sensitiveKeyPattern =
@@ -41,6 +43,19 @@ function sanitize(value: unknown): unknown {
   return value;
 }
 
+function stableActivityLogId(idempotencyKey: string) {
+  const hex = createHash("sha256")
+    .update(`snacky-system-activity-log:${idempotencyKey}`)
+    .digest("hex");
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20, 32),
+  ].join("-");
+}
+
 export async function logActivity(input: ActivityInput) {
   const supabase = getSupabaseAdminClient();
   if (!supabase) return;
@@ -49,7 +64,10 @@ export async function logActivity(input: ActivityInput) {
   const forwardedFor = requestHeaders.get("x-forwarded-for");
   const ipAddress = forwardedFor?.split(",")[0]?.trim() || requestHeaders.get("x-real-ip");
 
-  const { error } = await supabase.from("system_activity_logs").insert({
+  const idempotencyKey = String(input.idempotencyKey ?? "").trim();
+  const activityId = idempotencyKey ? stableActivityLogId(idempotencyKey) : null;
+  const payload = {
+    ...(activityId ? { id: activityId } : {}),
     actor_user_id: input.profile?.id ?? null,
     actor_team_member_id: input.profile?.team_member_id ?? null,
     actor_name: input.profile?.full_name ?? null,
@@ -64,7 +82,10 @@ export async function logActivity(input: ActivityInput) {
     ip_address: ipAddress ?? null,
     user_agent: requestHeaders.get("user-agent"),
     summary: input.summary ? scrubText(input.summary) : null,
-  });
+  };
+  const { error } = activityId
+    ? await supabase.from("system_activity_logs").upsert(payload, { onConflict: "id", ignoreDuplicates: true })
+    : await supabase.from("system_activity_logs").insert(payload);
 
   if (error) {
     console.error("[activity-log] Failed to write activity log", error);

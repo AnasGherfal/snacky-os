@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
 import { canApprovePayroll, canManagePayroll } from "@/lib/authz";
+import { getRequiredFinanceWriteClient } from "@/lib/finance-write-client";
 import {
   buildPayrollPeriodSummary,
   getPayrollServerClient,
@@ -851,6 +852,7 @@ export async function markPayrollPeriodPaid(formData: FormData) {
   if (!payrollPeriodId) fail("/payroll/periods", "Payroll period is required.");
 
   const { profile, supabase } = await requirePayrollAccess(path);
+  const financeWriteSupabase = getRequiredFinanceWriteClient();
   const periodResult = await supabase.from("payroll_periods").select("*").eq("id", payrollPeriodId).maybeSingle();
   const period = periodResult.data;
   if (!period) fail(path, "Payroll period not found.");
@@ -874,7 +876,7 @@ export async function markPayrollPeriodPaid(formData: FormData) {
     createdBy: profile.team_member_id,
     paidAt,
   });
-  const financeResult = await supabase
+  const financeResult = await financeWriteSupabase
     .from("financial_transactions")
     .upsert(financePayload, { onConflict: "source_type,source_id" })
     .select("*")

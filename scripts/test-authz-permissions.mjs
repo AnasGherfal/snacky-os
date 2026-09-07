@@ -39,8 +39,8 @@ test("warehouse only can view products and storage without finance or product de
   assert.equal(hasPermission(warehouse, "products.create"), true);
   assert.equal(hasPermission(warehouse, "products.edit"), true);
   assert.equal(hasPermission(warehouse, "inventory.view"), true);
-  assert.equal(hasPermission(warehouse, "storage.adjust"), true);
-  assert.equal(hasPermission(warehouse, "storage.movement.create"), true);
+  assert.equal(hasPermission(warehouse, "storage.adjust"), false);
+  assert.equal(hasPermission(warehouse, "storage.movement.create"), false);
   assert.equal(hasPermission(warehouse, "finance.view"), false);
   assert.equal(hasPermission(warehouse, "products.delete"), false);
   assert.equal(hasPermission(warehouse, "cash.receive"), true);
@@ -48,7 +48,7 @@ test("warehouse only can view products and storage without finance or product de
   assert.equal(canAccessPath(warehouse, "/products"), true);
   assert.equal(canAccessPath(warehouse, "/restock-priority"), true);
   assert.equal(canAccessPath(warehouse, "/inventory"), true);
-  assert.equal(canAccessPath(warehouse, "/inventory/movements/new"), true);
+  assert.equal(canAccessPath(warehouse, "/inventory/movements/new"), false);
   assert.equal(canAccessPath(warehouse, "/finance"), false);
   assert.equal(canAccessPath(warehouse, "/cash-collections"), true);
   assert.equal(canAccessPath(warehouse, "/cash-collections/example-id"), true);
@@ -62,7 +62,7 @@ test("operator and warehouse roles combine", () => {
   assert.equal(hasPermission(operatorWarehouse, "products.create"), true);
   assert.equal(hasPermission(operatorWarehouse, "products.edit"), true);
   assert.equal(hasPermission(operatorWarehouse, "inventory.view"), true);
-  assert.equal(hasPermission(operatorWarehouse, "storage.adjust"), true);
+  assert.equal(hasPermission(operatorWarehouse, "storage.adjust"), false);
   assert.equal(hasPermission(operatorWarehouse, "refills.create"), true);
   assert.equal(hasPermission(operatorWarehouse, "finance.view"), false);
   assert.equal(canAccessPath(operatorWarehouse, "/products"), true);

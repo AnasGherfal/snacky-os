@@ -5,7 +5,9 @@ export type RouteInventoryMovementRow = {
   quantity?: number | string | null;
   reason?: string | null;
   from_entity_type?: string | null;
+  from_entity_id?: string | null;
   to_entity_type?: string | null;
+  to_entity_id?: string | null;
 };
 
 export type RouteInventorySummaryRow = {
@@ -14,6 +16,10 @@ export type RouteInventorySummaryRow = {
   filledQty: number;
   returnedQty: number;
   damagedQty: number;
+  soldQty: number;
+  compensatedQty: number;
+  machineStorageQty: number;
+  machineReturnQty: number;
   adjustmentInQty: number;
   adjustmentOutQty: number;
   remainingQty: number;
@@ -32,63 +38,39 @@ function createRow(productId: string): RouteInventorySummaryRow {
     filledQty: 0,
     returnedQty: 0,
     damagedQty: 0,
+    soldQty: 0,
+    compensatedQty: 0,
+    machineStorageQty: 0,
+    machineReturnQty: 0,
     adjustmentInQty: 0,
     adjustmentOutQty: 0,
     remainingQty: 0,
   };
 }
 
-function reasonBucket(movement: RouteInventoryMovementRow) {
+function descriptiveBucket(movement: RouteInventoryMovementRow) {
   const reason = String(movement.reason ?? "").trim();
   const fromType = normalizeInventoryEntityType(movement.from_entity_type);
   const toType = normalizeInventoryEntityType(movement.to_entity_type);
 
-  if (reason === "manual_correction") {
-    if (fromType === "machine" && toType === "operator_bag") return "fill_correction" as const;
-    if (fromType === "storage" && toType === "operator_bag") return "return_correction" as const;
-    if (fromType === "operator_bag" && toType === "machine") return "filled" as const;
-    if (fromType === "operator_bag" && toType === "storage") return "returned" as const;
+  if (fromType === "machine" && (toType === "storage" || reason === "returned_from_machine")) return "machine_return" as const;
+  if (fromType === "storage" && toType === "operator_bag") {
+    return reason === "manual_correction" ? "return_correction" as const : "loaded" as const;
   }
-
-  switch (reason) {
-    case "storage_to_route":
-    case "storage_to_operator_bag":
-      return "loaded" as const;
-    case "route_to_machine":
-    case "operator_bag_to_machine":
-      return "filled" as const;
-    case "route_to_storage_return":
-    case "operator_bag_to_storage":
-    case "machine_to_storage_return":
-    case "machine_to_storage":
-    case "returned_from_machine":
-      return "returned" as const;
-    case "route_to_damaged":
-    case "machine_to_damaged":
-    case "damaged":
-    case "expired":
-      return "damaged" as const;
-    case "manual_adjustment_in":
-    case "manual_adjustment_out":
-    case "stock_count_correction":
-    case "manual_correction":
-    case "stock_count_adjustment":
-      return "adjustment" as const;
-    default:
-      return "other" as const;
+  if (fromType === "operator_bag" && toType === "storage") return "returned" as const;
+  if (fromType === "operator_bag" && toType === "machine") return "filled" as const;
+  if (fromType === "machine" && toType === "operator_bag") {
+    return reason === "returned_from_machine" ? "machine_return" as const : "fill_correction" as const;
   }
-}
-
-function adjustmentDelta(movement: RouteInventoryMovementRow) {
-  const qty = quantity(movement.quantity);
-  if (qty <= 0) return 0;
-
-  const fromType = normalizeInventoryEntityType(movement.from_entity_type);
-  const toType = normalizeInventoryEntityType(movement.to_entity_type);
-
-  if (fromType === "adjustment" && toType !== "adjustment") return qty;
-  if (toType === "adjustment" && fromType !== "adjustment") return -qty;
-  return 0;
+  if (fromType === "operator_bag" && toType === "machine_storage") return "machine_storage" as const;
+  if (fromType === "machine_storage" && toType === "operator_bag") return "machine_storage_correction" as const;
+  if (fromType === "operator_bag" && toType === "waste") return "damaged" as const;
+  if (fromType === "waste" && toType === "operator_bag") return "damage_correction" as const;
+  if (fromType === "operator_bag" && reason === "manual_sale") return "sold" as const;
+  if (toType === "operator_bag" && reason === "manual_sale") return "sale_correction" as const;
+  if (fromType === "operator_bag" && reason === "customer_compensation") return "compensated" as const;
+  if (toType === "operator_bag" && reason === "customer_compensation") return "compensation_correction" as const;
+  return "adjustment" as const;
 }
 
 export function summarizeRouteInventoryMovements(movements: RouteInventoryMovementRow[]) {
@@ -102,7 +84,7 @@ export function summarizeRouteInventoryMovements(movements: RouteInventoryMoveme
     if (qty <= 0) continue;
 
     const row = rows.get(productId) ?? createRow(productId);
-    switch (reasonBucket(movement)) {
+    switch (descriptiveBucket(movement)) {
       case "loaded":
         row.loadedQty += qty;
         break;
@@ -121,15 +103,43 @@ export function summarizeRouteInventoryMovements(movements: RouteInventoryMoveme
       case "damaged":
         row.damagedQty += qty;
         break;
+      case "damage_correction":
+        row.damagedQty -= qty;
+        break;
+      case "sold":
+        row.soldQty += qty;
+        break;
+      case "sale_correction":
+        row.soldQty -= qty;
+        break;
+      case "compensated":
+        row.compensatedQty += qty;
+        break;
+      case "compensation_correction":
+        row.compensatedQty -= qty;
+        break;
+      case "machine_storage":
+        row.machineStorageQty += qty;
+        break;
+      case "machine_storage_correction":
+        row.machineStorageQty -= qty;
+        break;
+      case "machine_return":
+        row.machineReturnQty += qty;
+        break;
       case "adjustment": {
-        const delta = adjustmentDelta(movement);
-        if (delta > 0) row.adjustmentInQty += delta;
-        else if (delta < 0) row.adjustmentOutQty += Math.abs(delta);
+        const fromType = normalizeInventoryEntityType(movement.from_entity_type);
+        const toType = normalizeInventoryEntityType(movement.to_entity_type);
+        if (toType === "operator_bag" && fromType !== "operator_bag") row.adjustmentInQty += qty;
+        if (fromType === "operator_bag" && toType !== "operator_bag") row.adjustmentOutQty += qty;
         break;
       }
-      default:
-        break;
     }
+
+    const fromType = normalizeInventoryEntityType(movement.from_entity_type);
+    const toType = normalizeInventoryEntityType(movement.to_entity_type);
+    if (toType === "operator_bag" && fromType !== "operator_bag") row.remainingQty += qty;
+    if (fromType === "operator_bag" && toType !== "operator_bag") row.remainingQty -= qty;
     rows.set(productId, row);
   }
 
@@ -137,7 +147,11 @@ export function summarizeRouteInventoryMovements(movements: RouteInventoryMoveme
     .map((row) => {
       row.filledQty = Math.max(0, row.filledQty);
       row.returnedQty = Math.max(0, row.returnedQty);
-      row.remainingQty = row.loadedQty + row.adjustmentInQty - row.adjustmentOutQty - row.filledQty - row.returnedQty - row.damagedQty;
+      row.damagedQty = Math.max(0, row.damagedQty);
+      row.soldQty = Math.max(0, row.soldQty);
+      row.compensatedQty = Math.max(0, row.compensatedQty);
+      row.machineStorageQty = Math.max(0, row.machineStorageQty);
+      row.machineReturnQty = Math.max(0, row.machineReturnQty);
       return row;
     })
     .sort((left, right) => left.productId.localeCompare(right.productId));

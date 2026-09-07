@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
 import { canManagePayroll } from "@/lib/authz";
+import { getRequiredFinanceWriteClient } from "@/lib/finance-write-client";
 import {
   buildPayrollRunPreview,
   getPayrollV2ServerClient,
@@ -533,6 +534,7 @@ export async function markPayrollRunPaid(formData: FormData) {
   if (!runId) fail("/payroll/periods", "Payroll run is required.");
 
   const { profile, supabase } = await requirePayrollAccess(path);
+  const financeWriteSupabase = getRequiredFinanceWriteClient();
   const runResult = await supabase.from("payroll_runs").select("*").eq("id", runId).maybeSingle();
   const existingRun = (runResult.data ?? null) as PayrollRunRow | null;
   if (!existingRun) fail(path, "Payroll run not found.");
@@ -585,7 +587,7 @@ export async function markPayrollRunPaid(formData: FormData) {
     paidAt,
   });
 
-  const financeBeforeResult = await supabase
+  const financeBeforeResult = await financeWriteSupabase
     .from("financial_transactions")
     .select("*")
     .eq("source_type", "payroll")
@@ -594,8 +596,8 @@ export async function markPayrollRunPaid(formData: FormData) {
     .limit(1);
   const existingFinance = (financeBeforeResult.data ?? [])[0] as Record<string, unknown> | undefined;
   const financeResult = existingFinance?.id
-    ? await supabase.from("financial_transactions").update(financePayload).eq("id", existingFinance.id).select("*").single()
-    : await supabase.from("financial_transactions").insert(financePayload).select("*").single();
+    ? await financeWriteSupabase.from("financial_transactions").update(financePayload).eq("id", existingFinance.id).select("*").single()
+    : await financeWriteSupabase.from("financial_transactions").insert(financePayload).select("*").single();
   const financeRow = financeResult.data;
   if (financeResult.error || !financeRow) fail(path, "Could not create the payroll finance transaction.");
 

@@ -4,13 +4,10 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
-import { canAddProducts, canManagePurchases, canRecordPurchasePayments } from "@/lib/authz";
+import { canManagePurchases, canRecordPurchasePayments } from "@/lib/authz";
 import { financeAccountId } from "@/lib/finance-balance";
-import { createPurchaseFinancialTransaction } from "@/lib/finance-actions";
 import { resolvePurchaseUnitCost, type ProductCostMemory } from "@/lib/purchase-cost-memory";
-import { resolveProductSku } from "@/lib/product-sku";
 import { resolvePurchaseReceiptUrl } from "@/lib/purchase-receipts";
-import { inventoryMovementIdempotencyKey } from "@/lib/inventory-movement";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 type PurchaseLineInput = {
@@ -51,8 +48,9 @@ type PurchaseReceiveResult = {
 
 class PurchaseFormError extends Error {}
 
-const PURCHASE_CREATE_RPC = "snacky_create_purchase_with_lines";
+const PURCHASE_CREATE_RPC = "snacky_create_purchase_with_lines_v2";
 const PURCHASE_SAVE_ADMIN_MESSAGE = "Could not save purchase. Please contact admin.";
+const PURCHASE_SUBMISSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function roundMoney(value: number) {
   return Math.round(value * 100) / 100;
@@ -165,27 +163,6 @@ function totalUnitsForLine(line: PurchaseLineInput) {
   return Math.max(0, Math.floor(line.boxesQty)) * Math.max(1, Math.floor(line.unitsPerBox)) + Math.max(0, Math.floor(line.looseUnitsQty));
 }
 
-function applyInlineLineCost(line: PurchaseLineInput, productName?: string | null) {
-  const decision = resolvePurchaseUnitCost({
-    product: null,
-    productName: productName ?? line.newProduct?.name ?? line.receiptLineName,
-    unitCost: line.unitCost,
-    unitCostBlank: line.unitCostBlank,
-    unitCostZeroConfirmed: line.unitCostZeroConfirmed,
-    pricingMode: line.pricingMode,
-    lineTotal: line.lineTotal,
-    totalUnits: totalUnitsForLine(line),
-  });
-  if ("message" in decision) return { line, decision };
-  const nextLine = {
-    ...line,
-    unitCost: decision.unitCost,
-    unitCostBlank: false,
-    lineTotal: line.pricingMode === "total" && line.lineTotal > 0 ? line.lineTotal : totalUnitsForLine(line) * decision.unitCost,
-  };
-  return { line: nextLine, decision };
-}
-
 async function applySavedProductCostMemory(supabase: SupabaseServer, lines: PurchaseLineInput[]) {
   const productIds = Array.from(new Set(lines.map((line) => line.productId).filter(Boolean)));
   const productsById = new Map<string, ProductCostMemory>();
@@ -235,111 +212,13 @@ function buildTotals(fd: FormData, calculatedTotal: number) {
   };
 }
 
-function sanitizeSku(value: string) {
-  return value
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 48);
-}
-
-function receiptSkuFallback(index: number) {
-  return `RCPT-${Date.now().toString(36).toUpperCase()}-${index + 1}`;
-}
-
-async function uniqueSku(supabase: SupabaseServer, preferredSku: string, fallbackName: string, index: number) {
-  const base = sanitizeSku(preferredSku) || sanitizeSku(fallbackName).slice(0, 32) || receiptSkuFallback(index);
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    const candidate = attempt === 0 ? base : `${base}-${attempt + 1}`;
-    const { data, error } = await supabase.from("products").select("id").eq("sku", candidate).maybeSingle();
-    if (error) throw error;
-    if (!data) return candidate;
+function resolvePurchaseLines(lines: PurchaseLineInput[]) {
+  if (lines.some((line) => line.matchAction === "create")) {
+    formError(
+      "Create every new product from Products first, then return and select it on the receipt line. No product or purchase was changed.",
+    );
   }
-  return `${base}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
-}
-
-async function resolvePurchaseLines({
-  supabase,
-  profile,
-  lines,
-  supplierId,
-  submitAction,
-}: {
-  supabase: SupabaseServer;
-  profile: Awaited<ReturnType<typeof getCurrentProfile>>;
-  lines: PurchaseLineInput[];
-  supplierId: string | null;
-  submitAction: string;
-}) {
-  const resolvedLines: PurchaseLineInput[] = [];
-  const isReceiving = submitAction === "received";
-
-  for (const [index, line] of lines.entries()) {
-    if (line.matchAction !== "create") {
-      resolvedLines.push(line);
-      continue;
-    }
-
-    const productName = line.newProduct?.name || line.receiptLineName || "";
-    if (!productName.trim()) formError("Product name is required for receipt-created products.");
-    if (!canAddProducts(profile)) formError("You do not have permission to create products from receipt lines.");
-    const { line: lineWithCost, decision } = applyInlineLineCost(line, productName);
-    if ("message" in decision) formError(decision.message);
-
-    let sku = "";
-    try {
-      sku = await resolveProductSku({ supabase, manualSku: line.newProduct?.sku });
-    } catch (error) {
-      console.error("[purchases] Failed to generate product SKU for receipt line", error);
-      formError(error instanceof Error ? error.message : "Could not create product from receipt line.");
-    }
-
-    const unitCost = roundUnitCost(lineWithCost.unitCost);
-    const costForProduct = isReceiving && unitCost > 0 ? unitCost : 0;
-    const { data: product, error } = await supabase
-      .from("products")
-      .insert({
-        sku,
-        barcode: line.newProduct?.barcode ?? null,
-        name: productName.trim(),
-        category: line.newProduct?.category || "snack",
-        brand: line.newProduct?.brand ?? null,
-        supplier_id: supplierId,
-        cost_price: roundMoney(costForProduct),
-        selling_price: 0,
-        current_cost_price_lyd: costForProduct,
-        last_purchase_cost_lyd: costForProduct > 0 ? costForProduct : null,
-        cost_price_source: costForProduct > 0 ? "latest_purchase" : "manual",
-        import_source: "receipt_scan",
-        price_updated_at: costForProduct > 0 ? new Date().toISOString() : null,
-        case_quantity: line.newProduct?.caseQuantity ?? Math.max(1, line.unitsPerBox),
-        active: true,
-      })
-      .select("id, sku, name, category, brand, active")
-      .single();
-
-    if (error || !product) {
-      console.error("[purchases] Failed to create receipt product", error);
-      formError("Could not create product from receipt line.");
-    }
-
-    if (profile) {
-      await logActivity({
-        profile,
-        action: "create",
-        entityType: "product",
-        entityId: product.id,
-        entityLabel: product.name,
-        afterData: product,
-        summary: `Created product ${product.name} from receipt review`,
-      });
-    }
-
-    resolvedLines.push({ ...lineWithCost, productId: product.id });
-  }
-
-  return resolvedLines.filter((line) => line.productId);
+  return lines.filter((line) => line.productId);
 }
 
 async function saveApprovedReceiptAliases(supabase: SupabaseServer, profile: Awaited<ReturnType<typeof getCurrentProfile>>, lines: PurchaseLineInput[]) {
@@ -458,119 +337,6 @@ function logPurchaseSaveFailure({
   });
 }
 
-async function logPurchaseFinanceRepairNeeded({ profile, purchaseId, amount, error }: { profile: Awaited<ReturnType<typeof getCurrentProfile>>; purchaseId: string; amount: number; error: unknown }) {
-  const details = supabaseErrorDetails(error);
-  console.error("[purchases] Purchase saved but finance sync needs repair", {
-    purchase_id: purchaseId,
-    amount,
-    user_id: profile?.id ?? null,
-    user_roles: profile?.roles ?? [],
-    supabase_error: details,
-    original_error: error,
-  });
-  try {
-    await logActivity({
-      profile,
-      action: "finance_sync_needs_repair",
-      entityType: "purchase",
-      entityId: purchaseId,
-      entityLabel: purchaseId.slice(0, 8),
-      afterData: { purchase_id: purchaseId, amount, finance_sync_error: details },
-      summary: "Purchase saved, finance sync needs repair",
-    });
-  } catch (logError) {
-    console.warn("[purchases] Could not create finance sync repair activity log", logError);
-  }
-}
-
-async function syncPurchaseFinanceSafely({ supabase, profile, purchase, amount, warningText }: { supabase: SupabaseServer; profile: Awaited<ReturnType<typeof getCurrentProfile>>; purchase: any; amount: number; warningText: string }) {
-  try {
-    await createPurchaseFinancialTransaction(supabase, profile, purchase, amount);
-    return { ok: true as const, warning: "" };
-  } catch (financeError) {
-    await logPurchaseFinanceRepairNeeded({ profile, purchaseId: String(purchase?.id ?? ""), amount, error: financeError });
-    return { ok: false as const, warning: warningText };
-  }
-}
-
-async function createPurchaseWithLinesFallback({ supabase, profile, supplierId, purchaseDate, paymentStatus, paymentAccountId, fd, receiptUrl, receiptFileName, receiptContentType, receiptStoragePath, totals, lineRows, submitAction }: { supabase: SupabaseServer; profile: Awaited<ReturnType<typeof getCurrentProfile>>; supplierId: string | null; purchaseDate: string; paymentStatus: string; paymentAccountId: string; fd: FormData; receiptUrl: string | null; receiptFileName: string | null; receiptContentType: string | null; receiptStoragePath: string | null; totals: ReturnType<typeof buildTotals>; lineRows: ReturnType<typeof buildLineRows>; submitAction: string }) {
-  const basePurchaseRow = {
-    supplier_id: supplierId,
-    status: "draft",
-    order_date: purchaseDate,
-    receipt_number: String(fd.get("receipt_number") || "").trim() || null,
-    payment_method: String(fd.get("payment_method") || "cash"),
-    payment_status: paymentStatus,
-    payment_account_id: paymentAccountId,
-    receipt_url: receiptUrl,
-    receipt_file_name: receiptFileName,
-    receipt_content_type: receiptContentType,
-    receipt_storage_path: receiptStoragePath,
-    notes: String(fd.get("notes") || "").trim() || null,
-    ...totals,
-    created_by: profile?.team_member_id ?? null,
-  };
-
-  let insertError: unknown = null;
-  let purchase: any = null;
-  for (const row of [basePurchaseRow, { ...basePurchaseRow, receipt_file_name: undefined, receipt_content_type: undefined, receipt_storage_path: undefined }]) {
-    const cleaned = Object.fromEntries(Object.entries(row).filter(([, value]) => value !== undefined));
-    const result = await supabase.from("purchase_orders").insert(cleaned).select("*").single();
-    if (!result.error && result.data) {
-      purchase = result.data;
-      insertError = null;
-      break;
-    }
-    insertError = result.error;
-    const details = supabaseErrorDetails(result.error);
-    const text = `${details.code ?? ""} ${details.message ?? ""} ${details.details ?? ""}`.toLowerCase();
-    if (!text.includes("receipt_file") && !text.includes("schema cache") && details.code !== "PGRST204" && details.code !== "42703") break;
-  }
-  if (!purchase) throw insertError ?? new Error("Fallback purchase insert returned no row.");
-
-  const { error: linesError } = await supabase.from("purchase_order_lines").insert(lineRows.map((line) => ({ ...line, purchase_order_id: purchase.id })));
-  if (linesError) {
-    await supabase.from("purchase_orders").delete().eq("id", purchase.id);
-    throw linesError;
-  }
-
-  let movementCount = 0;
-  if (submitAction === "received") {
-    const storageId = await getDefaultStorageId(supabase);
-    if (!storageId) throw new Error("No active storage location found.");
-    const { data: savedLines, error: savedLinesError } = await supabase.from("purchase_order_lines").select("id, product_id, total_units, unit_cost, line_total, unit_cost_lyd, line_total_lyd").eq("purchase_order_id", purchase.id);
-    if (savedLinesError) throw savedLinesError;
-    const movements = ((savedLines ?? []) as any[]).filter((line) => Number(line.total_units ?? 0) > 0).map((line) => ({
-      product_id: line.product_id,
-      quantity: Number(line.total_units),
-      from_entity_type: "supplier",
-      from_entity_id: supplierId,
-      to_entity_type: "storage",
-      to_entity_id: storageId,
-      reason: "purchase_received",
-      related_purchase_id: purchase.id,
-      related_purchase_line_id: line.id,
-      unit_cost_lyd: Number(line.unit_cost_lyd ?? line.unit_cost ?? 0),
-      line_total_lyd: Number(line.line_total_lyd ?? line.line_total ?? 0),
-      source_type: "purchase_receipt",
-      source_id: purchase.id,
-      idempotency_key: inventoryMovementIdempotencyKey("purchase-received-fallback", purchase.id, line.id, line.total_units, storageId),
-      created_by: profile?.team_member_id ?? null,
-      notes: "Purchase received",
-    }));
-    if (movements.length) {
-      const { error: movementError } = await supabase.from("inventory_movements").upsert(movements, { onConflict: "idempotency_key", ignoreDuplicates: true });
-      if (movementError) throw movementError;
-      movementCount = movements.length;
-    }
-    const { data: receivedPurchase, error: receivedError } = await supabase.from("purchase_orders").update({ status: "received", received_at: new Date().toISOString(), received_date: new Date().toISOString().slice(0, 10), received_by: profile?.team_member_id ?? null, updated_at: new Date().toISOString() }).eq("id", purchase.id).select("*").single();
-    if (receivedError) throw receivedError;
-    purchase = receivedPurchase;
-  }
-
-  return { ...purchase, movement_count: movementCount };
-}
-
 function clean(value: FormDataEntryValue | null) {
   return String(value ?? "").trim();
 }
@@ -617,61 +383,8 @@ type LinkedFinanceRow = {
   [key: string]: unknown;
 };
 
-async function getDefaultStorageId(supabase: NonNullable<ReturnType<typeof getSupabaseServerClient>>) {
-  const { data: mainStorage, error: mainStorageError } = await supabase
-    .from("storage_locations")
-    .select("id")
-    .eq("active", true)
-    .eq("location_type", "main_storage")
-    .order("name")
-    .limit(1)
-    .maybeSingle();
-  if (mainStorageError) throw mainStorageError;
-  if (mainStorage?.id) return mainStorage.id;
-
-  const { data: storage, error } = await supabase
-    .from("storage_locations")
-    .select("id")
-    .eq("active", true)
-    .in("location_type", ["vehicle", "temporary", "other"])
-    .order("name")
-    .limit(1)
-    .maybeSingle();
-  if (error) throw error;
-  return storage?.id ?? null;
-}
-
 function financeWarningParam(financeWarning: boolean) {
   return financeWarning ? "manual-review" : "";
-}
-
-async function syncPurchaseFinanceBestEffort({
-  supabase,
-  profile,
-  purchase,
-  purchaseTotal,
-  context,
-}: {
-  supabase: SupabaseServer;
-  profile: Awaited<ReturnType<typeof getCurrentProfile>>;
-  purchase: Record<string, unknown>;
-  purchaseTotal: number;
-  context: string;
-}) {
-  try {
-    await createPurchaseFinancialTransaction(supabase, profile, purchase, purchaseTotal);
-    return false;
-  } catch (error) {
-    console.error("[purchases] Purchase finance sync failed", {
-      context,
-      purchase_id: purchase.id ?? null,
-      supplier_id: purchase.supplier_id ?? null,
-      payment_status: purchase.payment_status ?? null,
-      purchase_total: purchaseTotal,
-      error,
-    });
-    return true;
-  }
 }
 
 export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult> {
@@ -683,6 +396,10 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
   try {
     const { profile, supabase } = await requirePurchaseAccess();
     profileForLog = profile;
+    const clientSubmissionId = clean(fd.get("client_submission_id"));
+    if (!PURCHASE_SUBMISSION_ID_PATTERN.test(clientSubmissionId)) {
+      formError("Could not prepare a safe purchase submission. Reload this page and try again.");
+    }
     let lines = parseLines(fd.get("lines_json"));
     linesForLog = lines;
     if (!lines.length) formError("Add at least one purchased item.");
@@ -691,9 +408,22 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
     supplierIdForLog = supplierId;
     purchaseDateForLog = String(fd.get("purchase_date") || new Date().toISOString().slice(0, 10));
     const submitAction = String(fd.get("submit_action") || "draft");
+    const receivingStorageLocationId = clean(fd.get("receiving_storage_location_id"));
+    if (submitAction === "received" && !supplierId) {
+      formError("Choose a supplier before receiving stock.");
+    }
+    if (submitAction === "received" && !receivingStorageLocationId) {
+      formError("Choose the storage location that will receive this purchase.");
+    }
+    if (receivingStorageLocationId && !PURCHASE_SUBMISSION_ID_PATTERN.test(receivingStorageLocationId)) {
+      formError("The selected receiving storage location is invalid. Reload this page and choose it again.");
+    }
     const paymentAccountId = parsePaymentAccountId(fd.get("payment_account_id"));
-    const paymentStatus = parsePaymentStatus(fd.get("payment_status"));
-    lines = await resolvePurchaseLines({ supabase, profile, lines, supplierId, submitAction: submitAction === "received" ? "received" : "draft" });
+    const paymentStatus = parsePaymentStatus(fd.get("payment_status") ?? "unpaid");
+    if (paymentStatus !== "unpaid") {
+      formError("Save the purchase as unpaid, then record the actual supplier payment from its purchase page.");
+    }
+    lines = resolvePurchaseLines(lines);
     lines = await applySavedProductCostMemory(supabase, lines);
     linesForLog = lines;
     if (!lines.length) formError("Add at least one purchased item.");
@@ -712,6 +442,7 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
     const totals = buildTotals(fd, lineRows.reduce((sum, line) => sum + Number(line.line_total), 0));
 
     const rpcPayload = {
+      p_client_submission_id: clientSubmissionId,
       p_supplier_id: supplierId,
       p_order_date: purchaseDateForLog,
       p_receipt_number: String(fd.get("receipt_number") || "").trim() || null,
@@ -727,14 +458,15 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
       p_total_adjustment_lyd: totals.total_adjustment_lyd,
       p_total_source: totals.total_source,
       p_total_amount: totals.total_amount,
-      p_created_by: profile.team_member_id,
+      p_payment_account_id: paymentAccountId,
+      p_receiving_storage_location_id: receivingStorageLocationId || null,
       p_submit_action: submitAction === "received" ? "received" : "draft",
       p_lines: lineRows,
     };
 
     const { data: purchaseRows, error: purchaseError } = await supabase.rpc(PURCHASE_CREATE_RPC, rpcPayload);
 
-    let purchase = Array.isArray(purchaseRows) ? purchaseRows[0] : purchaseRows;
+    const purchase = Array.isArray(purchaseRows) ? purchaseRows[0] : purchaseRows;
     if (purchaseError || !purchase) {
       logPurchaseSaveFailure({
         step: "purchase_rpc_transaction",
@@ -747,34 +479,7 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
         rpcName: PURCHASE_CREATE_RPC,
         payloadKeys: Object.keys(rpcPayload),
       });
-      try {
-        purchase = await createPurchaseWithLinesFallback({ supabase, profile, supplierId, purchaseDate: purchaseDateForLog, paymentStatus, paymentAccountId, fd, receiptUrl, receiptFileName, receiptContentType, receiptStoragePath, totals, lineRows, submitAction: submitAction === "received" ? "received" : "draft" });
-        console.warn("[purchases] Purchase RPC failed; fallback app-side purchase save succeeded", { rpc_name: PURCHASE_CREATE_RPC, purchase_id: purchase.id, line_count: lineRows.length, original_error: supabaseErrorDetails(purchaseError) });
-      } catch (fallbackError) {
-        logPurchaseSaveFailure({
-          step: "purchase_app_fallback_transaction",
-          error: fallbackError,
-          profile,
-          purchaseDate: purchaseDateForLog,
-          supplierId,
-          lines,
-          receiptStatus: receiptStatusForLog,
-          rpcName: PURCHASE_CREATE_RPC,
-          payloadKeys: Object.keys(rpcPayload),
-        });
-        formError(PURCHASE_SAVE_ADMIN_MESSAGE);
-      }
-    }
-
-    const { error: paymentAccountError } = await supabase
-      .from("purchase_orders")
-      .update({
-        payment_account_id: paymentAccountId,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", purchase.id);
-    if (paymentAccountError) {
-      console.warn("[purchases] Could not persist purchase payment account", paymentAccountError);
+      formError(PURCHASE_SAVE_ADMIN_MESSAGE);
     }
 
     await saveApprovedReceiptAliases(supabase, profile, lines);
@@ -786,39 +491,24 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
       entityType: "purchase",
       entityId: purchase.id,
       entityLabel: String(fd.get("receipt_number") || purchase.id.slice(0, 8)),
-      afterData: { ...purchase, receipt_url: receiptUrl, receipt_file_name: receiptFileName, line_count: lineRows.length, total_amount: totals.total_amount },
+      afterData: {
+        ...purchase,
+        receipt_url: receiptUrl,
+        receipt_file_name: receiptFileName,
+        line_count: lineRows.length,
+        total_amount: Number(purchase.total_amount ?? totals.total_amount),
+      },
       summary: `Created purchase with ${lineRows.length} line items`,
     });
 
-    const financeResult = await syncPurchaseFinanceSafely({
-      supabase,
-      profile,
-      purchase: {
-        ...purchase,
-        supplier_id: supplierId,
-        order_date: purchaseDateForLog,
-        received_date: new Date().toISOString().slice(0, 10),
-        receipt_url: receiptUrl,
-        payment_method: String(fd.get("payment_method") || "cash"),
-        payment_status: paymentStatus,
-        payment_account_id: paymentAccountId,
-      },
-      amount: Number(purchase.total_amount ?? totals.total_amount ?? 0),
-      warningText: " Finance transaction was not created; review finance manually.",
-    });
-    const financeWarning = financeResult.warning;
-    const financeNeedsRepair = !financeResult.ok;
-
     revalidatePath("/purchases");
     revalidatePath("/inventory");
-    revalidatePath("/finance");
     const receiptUpload = uploadError === "invalid_file" ? "invalid-file" : uploadUnavailable ? "storage-unavailable" : "";
     const params = new URLSearchParams({ purchaseSaved: submitAction === "received" ? "received" : "draft" });
     if (receiptUpload) params.set("receiptUpload", receiptUpload);
-    if (financeNeedsRepair) params.set("financeSync", "needs-repair");
     return {
       ok: true,
-      message: submitAction === "received" ? `Purchase received and inventory updated.${financeWarning}` : `Purchase saved as draft.${financeWarning}`,
+      message: submitAction === "received" ? "Purchase received and inventory updated." : "Purchase saved as draft.",
       redirectTo: `/purchases/${purchase.id}?${params.toString()}`,
     };
   } catch (error) {
@@ -842,6 +532,14 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
     const { profile, supabase } = await requirePurchaseAccess();
     const id = String(fd.get("id") || "");
     if (!id) formError("Purchase id is missing.");
+    const clientSubmissionId = clean(fd.get("client_submission_id"));
+    if (!PURCHASE_SUBMISSION_ID_PATTERN.test(clientSubmissionId)) {
+      formError("Could not prepare a safe draft update. Reload this page and try again.");
+    }
+    const expectedUpdatedAt = clean(fd.get("expected_updated_at"));
+    if (!expectedUpdatedAt || !Number.isFinite(Date.parse(expectedUpdatedAt))) {
+      formError("The draft revision is missing. Reload this page before saving.");
+    }
 
     const { data: current, error: currentError } = await supabase
       .from("purchase_orders")
@@ -856,9 +554,17 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
 
     const supplierId = String(fd.get("supplier_id") || "") || null;
     const submitAction = String(fd.get("submit_action") || "draft");
-    const paymentAccountId = parsePaymentAccountId(fd.get("payment_account_id"), "LYD");
-    const paymentStatus = parsePaymentStatus(fd.get("payment_status"));
-    lines = await resolvePurchaseLines({ supabase, profile, lines, supplierId, submitAction: submitAction === "received" ? "received" : "draft" });
+    const receivingStorageLocationId = clean(fd.get("receiving_storage_location_id"));
+    if (submitAction === "received" && !supplierId) {
+      formError("Choose a supplier before receiving stock.");
+    }
+    if (submitAction === "received" && !receivingStorageLocationId) {
+      formError("Choose the storage location that will receive this purchase.");
+    }
+    if (receivingStorageLocationId && !PURCHASE_SUBMISSION_ID_PATTERN.test(receivingStorageLocationId)) {
+      formError("The selected receiving storage location is invalid. Reload this page and choose it again.");
+    }
+    lines = resolvePurchaseLines(lines);
     lines = await applySavedProductCostMemory(supabase, lines);
     if (!lines.length) formError("Add at least one purchased item.");
 
@@ -875,7 +581,6 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
       : hasNewStoredReceipt || hasNewManualReceiptUrl
         ? receiptUrl
         : existingReceiptUrl || current.receipt_url || null;
-    const receiptUrlChanged = Boolean(nextReceiptUrl !== (current.receipt_url ?? null));
     const nextReceiptFileName = removeReceipt ? null : hasNewStoredReceipt ? receiptFileName : hasNewManualReceiptUrl ? null : existingReceiptFileName;
     const nextReceiptContentType = removeReceipt ? null : hasNewStoredReceipt ? receiptContentType : hasNewManualReceiptUrl ? null : existingReceiptContentType;
     const nextReceiptStoragePath = removeReceipt ? null : hasNewStoredReceipt ? receiptStoragePath : hasNewManualReceiptUrl ? null : existingReceiptStoragePath;
@@ -886,86 +591,70 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
     const nextPaymentMethod = String(fd.get("payment_method") || "cash");
     const nextNotes = String(fd.get("notes") || "").trim() || null;
 
-    const { error: updateError } = await supabase
-      .from("purchase_orders")
-      .update({
-        supplier_id: supplierId,
-        order_date: nextOrderDate,
-        receipt_number: nextReceiptNumber,
-        payment_method: nextPaymentMethod,
-        payment_status: paymentStatus,
-        payment_account_id: paymentAccountId,
-        receipt_url: nextReceiptUrl,
-        receipt_file_name: nextReceiptFileName,
-        receipt_content_type: nextReceiptContentType,
-        receipt_storage_path: nextReceiptStoragePath,
-        notes: nextNotes,
-        ...totals,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", id)
-      .eq("status", "draft");
-    if (updateError) {
-      console.error("[purchases] Failed to update purchase", updateError);
-      formError("Could not update purchase.");
+    const { data: updateData, error: updateError } = await supabase.rpc("snacky_update_draft_purchase_v1", {
+      p_purchase_id: id,
+      p_client_submission_id: clientSubmissionId,
+      p_expected_updated_at: expectedUpdatedAt,
+      p_supplier_id: supplierId,
+      p_order_date: nextOrderDate,
+      p_receiving_storage_location_id: receivingStorageLocationId || null,
+      p_receipt_number: nextReceiptNumber,
+      p_payment_method: nextPaymentMethod,
+      p_receipt_url: nextReceiptUrl,
+      p_receipt_file_name: nextReceiptFileName,
+      p_receipt_content_type: nextReceiptContentType,
+      p_receipt_storage_path: nextReceiptStoragePath,
+      p_notes: nextNotes,
+      p_manual_total_lyd: totals.manual_total_lyd,
+      p_lines: lineRows,
+    });
+    if (updateError || !updateData) {
+      console.error("[purchases] Atomic draft update failed; no purchase line was changed", updateError);
+      const code = String(updateError?.code ?? "");
+      if (code === "PGRST202" || code === "42883") {
+        formError("The atomic draft update is not active yet. No purchase item was changed.");
+      }
+      formError(updateError?.message || "Could not update purchase. No purchase item was changed.");
     }
 
-    const { error: deleteError } = await supabase.from("purchase_order_lines").delete().eq("purchase_order_id", id);
-    if (deleteError) {
-      console.error("[purchases] Failed to replace purchase lines", deleteError);
-      formError("Could not update purchase items.");
-    }
-
-    const { error: linesError } = await supabase.from("purchase_order_lines").insert(lineRows.map((line) => ({ ...line, purchase_order_id: id })));
-    if (linesError) {
-      console.error("[purchases] Failed to save purchase lines", linesError);
-      formError("Could not save purchase items.");
-    }
+    const updateResult = updateData && typeof updateData === "object" && !Array.isArray(updateData)
+      ? (updateData as Record<string, unknown>)
+      : {};
+    const updatedPurchase = updateResult.purchase && typeof updateResult.purchase === "object" && !Array.isArray(updateResult.purchase)
+      ? (updateResult.purchase as Record<string, unknown>)
+      : { id, status: "draft" };
 
     await saveApprovedReceiptAliases(supabase, profile, lines);
     await linkReceiptScanResult(supabase, String(fd.get("receipt_scan_result_id") || ""), id);
 
     await logActivity({
       profile,
+      idempotencyKey: `purchase-draft-update:v1:${clientSubmissionId}`,
       action: current.receipt_url !== nextReceiptUrl ? "update_receipt" : "update",
       entityType: "purchase",
       entityId: id,
       entityLabel: String(fd.get("receipt_number") || id.slice(0, 8)),
       beforeData: current,
-      afterData: { receipt_url: nextReceiptUrl, receipt_file_name: nextReceiptFileName, line_count: lineRows.length, ...totals },
+      afterData: { ...updatedPurchase, line_count: Number(updateResult.line_count ?? lineRows.length) },
       summary: current.receipt_url !== nextReceiptUrl ? "Updated purchase receipt attachment" : "Updated draft purchase",
     });
 
     let financeWarning = "";
-    let financeNeedsRepair = false;
     let financeManualReview = false;
-    if (submitAction !== "received") {
-      const financeResult = await syncPurchaseFinanceSafely({
-        supabase,
-        profile,
-        purchase: {
-          ...current,
-          id,
-          supplier_id: supplierId,
-          order_date: nextOrderDate,
-          receipt_number: nextReceiptNumber,
-          payment_method: nextPaymentMethod,
-          payment_status: paymentStatus,
-          payment_account_id: paymentAccountId,
-          receipt_url: nextReceiptUrl,
-          notes: nextNotes,
-        },
-        amount: Number(totals.total_amount ?? current.total_amount ?? 0),
-        warningText: " Finance transaction was not updated; review finance manually.",
-      });
-      financeWarning = financeResult.warning;
-      financeNeedsRepair = !financeResult.ok;
-    }
 
     if (submitAction === "received") {
-      const receiveResult = await receivePurchaseById(id);
-      financeManualReview = receiveResult.financeWarning;
-      if (receiveResult.financeWarning) financeWarning = " Finance transaction was not created; review finance manually.";
+      try {
+        const receiveResult = await receivePurchaseById(
+          id,
+          receivingStorageLocationId,
+          `${clientSubmissionId}:receive`,
+        );
+        financeManualReview = receiveResult.financeWarning;
+        if (receiveResult.financeWarning) financeWarning = " Finance records need review.";
+      } catch (receiveError) {
+        const receiveMessage = receiveError instanceof Error ? receiveError.message : "Could not receive stock.";
+        formError(`Draft changes were saved, but inventory was not received: ${receiveMessage}`);
+      }
     }
 
     revalidatePath("/purchases");
@@ -976,7 +665,6 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
     const params = new URLSearchParams({ purchaseSaved: submitAction === "received" ? "received" : "draft" });
     if (receiptUpload) params.set("receiptUpload", receiptUpload);
     if (financeManualReview) params.set("financeWarning", financeWarningParam(financeManualReview));
-    if (financeNeedsRepair) params.set("financeSync", "needs-repair");
     return {
       ok: true,
       message: submitAction === "received" ? `Purchase received and inventory updated.${financeWarning}` : `Purchase saved as draft.${financeWarning}`,
@@ -987,131 +675,81 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
   }
 }
 
-async function receivePurchaseById(id: string): Promise<PurchaseReceiveResult> {
+async function receivePurchaseById(
+  id: string,
+  receivingStorageLocationId: string,
+  clientSubmissionId: string,
+): Promise<PurchaseReceiveResult> {
   const { profile, supabase } = await requirePurchaseAccess();
-  const { data: purchase, error: purchaseError } = await supabase.from("purchase_orders").select("*").eq("id", id).single();
-  if (purchaseError || !purchase) throw new Error("Purchase not found.");
-  const purchaseTotal = Number(purchase.manual_total_lyd ?? purchase.total_amount ?? purchase.calculated_total_lyd ?? 0);
-  const receivedDate = new Date().toISOString().slice(0, 10);
-  if (purchase.status === "received") {
-    const financeWarning = await syncPurchaseFinanceBestEffort({
-      supabase,
-      profile,
-      purchase: { ...purchase, received_date: receivedDate },
-      purchaseTotal,
-      context: "receive_purchase.already_received",
-    });
-    return { financeWarning };
+  if (!PURCHASE_SUBMISSION_ID_PATTERN.test(receivingStorageLocationId)) {
+    throw new Error("Choose a valid storage location before receiving stock.");
   }
-  if (purchase.status === "cancelled" || purchase.status === "voided") throw new Error("Cancelled or voided purchases cannot be received.");
-
-  const { count: existingMovementCount, error: existingError } = await supabase
-    .from("inventory_movements")
-    .select("id", { count: "exact", head: true })
-    .eq("related_purchase_id", id)
-    .eq("reason", "purchase_received");
-  if (existingError) throw existingError;
-  const hasExistingReceiptMovements = Number(existingMovementCount ?? 0) > 0;
-
-  const { data: lines, error: linesError } = await supabase
-    .from("purchase_order_lines")
-    .select("id, line_position, product_id, total_units, unit_cost, line_total, unit_cost_lyd, line_total_lyd, created_at")
-    .eq("purchase_order_id", id);
-  if (!linesError && lines) {
-    lines.sort((a: any, b: any) => Number(a.line_position ?? 0) - Number(b.line_position ?? 0) || String(a.id).localeCompare(String(b.id)));
+  if (!clientSubmissionId || clientSubmissionId.length > 200) {
+    throw new Error("The purchase receipt submission id is invalid. Reload and try again.");
   }
-  if (linesError) throw linesError;
-  const validLines = (lines ?? []).filter((line: any) => Number(line.total_units ?? 0) > 0);
-  if (!validLines.length) throw new Error("Purchase has no receivable items.");
-
-  let movementCount = Number(existingMovementCount ?? 0);
-  if (!hasExistingReceiptMovements) {
-    const storageId = await getDefaultStorageId(supabase);
-    if (!storageId) throw new Error("No active storage location found.");
-
-    const movements = validLines.map((line: any) => ({
-      product_id: line.product_id,
-      quantity: Number(line.total_units),
-      from_entity_type: "supplier",
-      from_entity_id: purchase.supplier_id,
-      to_entity_type: "storage",
-      to_entity_id: storageId,
-      reason: "purchase_received",
-      related_purchase_id: id,
-      related_purchase_line_id: line.id,
-      unit_cost_lyd: Number(line.unit_cost_lyd ?? line.unit_cost ?? 0),
-      line_total_lyd: Number(line.line_total_lyd ?? line.line_total ?? 0),
-      source_type: "purchase_receipt",
-      source_id: id,
-      idempotency_key: inventoryMovementIdempotencyKey("purchase-received", id, line.id, line.total_units, storageId),
-      created_by: profile.team_member_id,
-      notes: "Purchase received",
-    }));
-
-    const { error: movementError } = await supabase.from("inventory_movements").upsert(movements, { onConflict: "idempotency_key", ignoreDuplicates: true });
-    if (movementError) {
-      if (movementError.code !== "23505") throw movementError;
-    }
-    movementCount = movements.length;
-  }
-
-  await supabase.from("purchase_order_lines").update({ received_qty: 0 }).eq("purchase_order_id", id);
-  for (const line of validLines as any[]) {
-    await supabase.from("purchase_order_lines").update({ received_qty: Number(line.total_units) }).eq("id", line.id);
-    const latestCost = Number(line.unit_cost_lyd ?? line.unit_cost ?? 0);
-    if (latestCost > 0) {
-      const { error: productCostError } = await supabase
-        .from("products")
-        .update({
-          cost_price: roundMoney(latestCost),
-          current_cost_price_lyd: roundUnitCost(latestCost),
-          last_purchase_cost_lyd: roundUnitCost(latestCost),
-          last_purchase_date: purchase.order_date ?? receivedDate,
-          last_supplier_id: purchase.supplier_id ?? null,
-          last_purchase_line_id: line.id,
-          cost_price_source: "latest_purchase",
-          price_updated_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", line.product_id);
-      if (productCostError) throw productCostError;
-    }
-  }
-
-  const { error: updateError } = await supabase
-    .from("purchase_orders")
-    .update({ status: "received", received_at: new Date().toISOString(), received_date: receivedDate, received_by: profile.team_member_id, updated_at: new Date().toISOString() })
-    .eq("id", id)
-    .neq("status", "received");
-  if (updateError) throw updateError;
-
-  const financeWarning = await syncPurchaseFinanceBestEffort({
-    supabase,
-    profile,
-    purchase: { ...purchase, received_date: receivedDate },
-    purchaseTotal,
-    context: "receive_purchase",
+  const { data, error } = await supabase.rpc("snacky_receive_purchase_v1", {
+    p_purchase_id: id,
+    p_client_submission_id: clientSubmissionId,
+    p_receiving_storage_location_id: receivingStorageLocationId,
   });
+  if (error) {
+    const code = String(error.code ?? "");
+    if (code === "PGRST202" || code === "42883") {
+      throw new Error("The atomic purchase receipt database update is not active yet. No inventory was changed.");
+    }
+    throw new Error(error.message || "Could not receive purchase. No inventory was changed.");
+  }
+
+  const result = data && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>) : {};
+  const purchase = result.purchase && typeof result.purchase === "object" && !Array.isArray(result.purchase)
+    ? (result.purchase as Record<string, unknown>)
+    : { id, status: result.status ?? "received" };
+  const inventory = result.inventory && typeof result.inventory === "object" && !Array.isArray(result.inventory)
+    ? (result.inventory as Record<string, unknown>)
+    : {};
+  const movementCount = Math.max(0, Number(inventory.receipt_movement_count ?? 0) || 0);
+  const invalidReceipt = purchase.id !== id || purchase.status !== "received" || movementCount <= 0;
+
+  if (invalidReceipt) {
+    console.error("[purchases] Atomic purchase receipt returned an incomplete result; inventory may already be committed and needs review", {
+      purchase_id: id,
+      result,
+    });
+  }
 
   await logActivity({
     profile,
-    action: "receive_purchase",
+    idempotencyKey: `purchase-receive:v1:${clientSubmissionId}`,
+    action: invalidReceipt ? "purchase_inventory_result_needs_review" : "receive_purchase",
     entityType: "purchase",
     entityId: id,
     entityLabel: id.slice(0, 8),
-    afterData: { movement_count: movementCount, status: "received", payment_status: purchase.payment_status },
-    summary: `Received purchase into storage (${movementCount} inventory movements)`,
+    afterData: {
+      movement_count: movementCount,
+      status: "received",
+      payment_status: purchase.payment_status,
+      already_applied: Boolean(result.already_applied),
+      legacy_verified: Boolean(result.legacy_verified),
+      result_review_required: invalidReceipt,
+    },
+    summary: invalidReceipt
+      ? "Purchase inventory was received atomically; the returned result needs review"
+      : `Received purchase into storage (${movementCount} inventory movements)`,
   });
 
-  return { financeWarning };
+  // Supplier payments own the finance ledger. Receiving stock must never invent
+  // an aggregate cash-out before an actual purchase payment is recorded.
+  return { financeWarning: false };
 }
 
 export async function receivePurchase(fd: FormData) {
   const id = String(fd.get("id") || "");
   if (!id) redirect("/purchases");
   try {
-    const result = await receivePurchaseById(id);
-    const params = new URLSearchParams();
+    const receivingStorageLocationId = clean(fd.get("receiving_storage_location_id"));
+    const clientSubmissionId = clean(fd.get("client_submission_id"));
+    const result = await receivePurchaseById(id, receivingStorageLocationId, clientSubmissionId);
+    const params = new URLSearchParams({ purchaseReceived: clientSubmissionId });
     if (result.financeWarning) params.set("financeWarning", financeWarningParam(result.financeWarning));
     const suffix = params.toString();
     revalidatePath("/purchases");
@@ -1141,10 +779,13 @@ export async function recordPurchasePayment(fd: FormData) {
   const accountId = requestedAccountId || "snacky_lyd";
   const reference = clean(fd.get("reference")) || null;
   const note = clean(fd.get("note")) || null;
-  const clientSubmissionId = clean(fd.get("client_submission_id")) || crypto.randomUUID();
+  const clientSubmissionId = clean(fd.get("client_submission_id"));
 
   if (!Number.isFinite(amount) || amount <= 0) fail(path, "Payment amount must be greater than zero.");
   if (!paidAt) fail(path, "Payment date is invalid.");
+  if (!PURCHASE_SUBMISSION_ID_PATTERN.test(clientSubmissionId)) {
+    fail(path, "Could not prepare a safe supplier payment. Reload this page and try again.");
+  }
 
   const { data: payment, error } = await supabase.rpc("record_purchase_payment", {
     p_purchase_order_id: id,
@@ -1169,6 +810,7 @@ export async function recordPurchasePayment(fd: FormData) {
 
   await logActivity({
     profile,
+    idempotencyKey: `purchase-payment-record:v2:${clientSubmissionId}`,
     action: "record_purchase_payment",
     entityType: "purchase",
     entityId: id,
@@ -1182,8 +824,77 @@ export async function recordPurchasePayment(fd: FormData) {
   revalidatePath(path);
   revalidatePath("/finance");
   revalidatePath("/finance/transactions");
-  const query = new URLSearchParams({ paymentRecorded: "1" });
+  const query = new URLSearchParams({ paymentRecorded: clientSubmissionId });
   if (moduleName === "finance") query.set("module", "finance");
+  redirect(`${path}?${query.toString()}`);
+}
+
+export async function voidPurchasePayment(fd: FormData) {
+  const { profile, supabase } = await requirePurchasePaymentAccess();
+  const purchaseId = clean(fd.get("purchase_order_id") ?? fd.get("id"));
+  if (!purchaseId) redirect("/purchases");
+  const path = `/purchases/${purchaseId}`;
+  const paymentId = clean(fd.get("purchase_payment_id"));
+  if (!PURCHASE_SUBMISSION_ID_PATTERN.test(paymentId)) {
+    fail(path, "The supplier payment is invalid. Reload this purchase and try again.");
+  }
+  const reason = requireConfirmedReason(fd, path);
+  const clientSubmissionId = clean(fd.get("client_submission_id"));
+  if (!PURCHASE_SUBMISSION_ID_PATTERN.test(clientSubmissionId)) {
+    fail(path, "Could not prepare a safe payment correction. Reload this page and try again.");
+  }
+
+  const { data, error } = await supabase.rpc("snacky_void_purchase_payment_v1", {
+    p_purchase_payment_id: paymentId,
+    p_reason: reason,
+    p_client_submission_id: clientSubmissionId,
+  });
+  if (error || !data) {
+    console.error("[purchases] Atomic supplier payment void failed; payment and finance remain unchanged", error);
+    const code = String(error?.code ?? "");
+    if (code === "PGRST202" || code === "42883") {
+      fail(path, "The atomic supplier payment correction is not active yet. Nothing was changed.");
+    }
+    fail(path, error?.message || "Could not void the supplier payment. Nothing was changed.");
+  }
+
+  const result = data && typeof data === "object" && !Array.isArray(data)
+    ? (data as Record<string, unknown>)
+    : {};
+  const resultPurchaseId = String(result.purchase_order_id ?? "");
+  const resultPaymentId = String(result.payment_id ?? "");
+  if (resultPurchaseId !== purchaseId || resultPaymentId !== paymentId) {
+    console.error("[purchases] Atomic supplier payment void returned a mismatched result", {
+      expected_purchase_id: purchaseId,
+      expected_payment_id: paymentId,
+      result,
+    });
+    fail(path, "The payment correction completed with an unexpected result. Reload before taking another action.");
+  }
+
+  await logActivity({
+    profile,
+    idempotencyKey: `purchase-payment-void:v1:${clientSubmissionId}`,
+    action: "void_purchase_payment",
+    entityType: "purchase",
+    entityId: purchaseId,
+    entityLabel: purchaseId.slice(0, 8),
+    afterData: result,
+    metadata: {
+      purchase_payment_id: paymentId,
+      reason,
+      client_submission_id: clientSubmissionId,
+      already_applied: Boolean(result.already_applied),
+    },
+    summary: "Voided supplier payment and its finance entry atomically",
+  });
+
+  revalidatePath("/purchases");
+  revalidatePath(path);
+  revalidatePath("/finance");
+  revalidatePath("/finance/transactions");
+  const query = new URLSearchParams({ paymentVoided: clientSubmissionId });
+  if (clean(fd.get("module")) === "finance") query.set("module", "finance");
   redirect(`${path}?${query.toString()}`);
 }
 
@@ -1193,147 +904,45 @@ export async function cancelPurchase(fd: FormData) {
   if (!id) redirect("/purchases");
   const path = `/purchases/${id}`;
   const reason = requireConfirmedReason(fd, path);
-  const { data: purchase } = await supabase.from("purchase_orders").select("*").eq("id", id).single();
-  if (purchase?.status === "received") redirect(`/purchases/${id}?error=Received%20purchases%20cannot%20be%20cancelled.`);
-  if (purchase?.status === "voided") redirect(`/purchases/${id}?error=Voided%20purchases%20cannot%20be%20cancelled.`);
-  const { data: after } = await supabase.from("purchase_orders").update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", id).neq("status", "received").select("*").single();
-  const { data: financeBefore, error: financeLoadError } = await supabase
-    .from("financial_transactions")
-    .select("*")
-    .eq("transaction_kind", "product_purchase")
-    .eq("transaction_status", "active")
-    .or(purchaseFinanceLinkFilter(id));
-  if (financeLoadError) {
-    console.error("[purchases] Failed to load linked finance transaction for cancel", financeLoadError);
-    fail(path, "Purchase was cancelled, but the linked financial transaction could not be checked.");
+  const clientSubmissionId = clean(fd.get("client_submission_id"));
+  if (!PURCHASE_SUBMISSION_ID_PATTERN.test(clientSubmissionId)) {
+    fail(path, "Could not prepare a safe cancellation. Reload this page and try again.");
   }
 
-  const linkedFinanceRows = (financeBefore ?? []) as LinkedFinanceRow[];
-  if (linkedFinanceRows.length) {
-    const now = new Date().toISOString();
-    const financeIds = linkedFinanceRows.map((row) => row.id);
-    const { data: financeAfter, error: financeError } = await supabase
-      .from("financial_transactions")
-      .update({
-        transaction_status: "voided",
-        is_void: true,
-        voided_at: now,
-        voided_by: profile.team_member_id,
-        void_reason: reason,
-        status_reason: reason,
-        updated_at: now,
-      })
-      .in("id", financeIds)
-      .select("*");
-    if (financeError) {
-      console.error("[purchases] Failed to void cancelled purchase financial transaction", financeError);
-      fail(path, "Purchase was cancelled, but the linked financial transaction could not be voided.");
+  const { data, error } = await supabase.rpc("snacky_cancel_draft_purchase_v1", {
+    p_purchase_id: id,
+    p_reason: reason,
+    p_client_submission_id: clientSubmissionId,
+  });
+  if (error || !data) {
+    console.error("[purchases] Atomic draft cancellation failed; purchase remains unchanged", error);
+    const code = String(error?.code ?? "");
+    if (code === "PGRST202" || code === "42883") {
+      fail(path, "The atomic purchase cancellation is not active yet. Nothing was changed.");
     }
-
-    for (const financeRow of financeAfter ?? []) {
-      await logActivity({
-        profile,
-        action: "void",
-        entityType: "financial_transaction",
-        entityId: financeRow.id,
-        entityLabel: "Purchase financial transaction",
-        beforeData: linkedFinanceRows.find((row) => row.id === financeRow.id),
-        afterData: financeRow,
-        metadata: { reason, linked_purchase_id: id },
-        summary: "Voided financial transaction linked to a cancelled purchase",
-      });
-    }
+    fail(path, error?.message || "Could not cancel purchase. Nothing was changed.");
   }
+
+  const result = data && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>) : {};
+  const after = result.purchase && typeof result.purchase === "object" && !Array.isArray(result.purchase)
+    ? (result.purchase as Record<string, unknown>)
+    : { id, status: "cancelled", void_reason: reason };
   await logActivity({
     profile,
+    idempotencyKey: `purchase-draft-cancel:v1:${clientSubmissionId}`,
     action: "cancel",
     entityType: "purchase",
     entityId: id,
     entityLabel: id.slice(0, 8),
-    beforeData: purchase,
-    afterData: after ?? { status: "cancelled" },
-    metadata: { reason },
+    afterData: after,
+    metadata: { reason, client_submission_id: clientSubmissionId },
     summary: "Cancelled purchase",
   });
   revalidatePath("/purchases");
   revalidatePath(`/purchases/${id}`);
   revalidatePath("/finance");
   revalidatePath("/finance/transactions");
-  redirect(`/purchases/${id}`);
-}
-
-export async function deleteDraftPurchase(fd: FormData) {
-  const { profile, supabase } = await requirePurchaseAccess();
-  const id = String(fd.get("id") || "");
-  if (!id) redirect("/purchases");
-  const path = `/purchases/${id}`;
-  const reason = requireConfirmedReason(fd, path);
-
-  const { data: purchase, error: purchaseError } = await supabase.from("purchase_orders").select("*").eq("id", id).maybeSingle();
-  if (purchaseError || !purchase) fail("/purchases", "Purchase not found.");
-  if (purchase.status !== "draft") fail(path, "Only draft purchases can be hard-deleted.");
-
-  const [{ count: movementCount, error: movementError }, { data: financeRows, error: financeError }] = await Promise.all([
-    supabase.from("inventory_movements").select("id", { count: "exact", head: true }).eq("related_purchase_id", id),
-    supabase.from("financial_transactions").select("*").eq("transaction_kind", "product_purchase").or(purchaseFinanceLinkFilter(id)),
-  ]);
-  if (movementError || financeError) {
-    console.error("[purchases] Failed to verify draft delete safety", movementError ?? financeError);
-    fail(path, "Could not verify purchase history.");
-  }
-  if (Number(movementCount ?? 0) > 0) {
-    fail(path, "This purchase already has inventory history. Void or cancel it instead.");
-  }
-
-  if ((financeRows ?? []).length) {
-    const financeIds = (financeRows ?? []).map((row: any) => row.id);
-    const { error: financeDeleteError } = await supabase.from("financial_transactions").delete().in("id", financeIds);
-    if (financeDeleteError) {
-      console.error("[purchases] Failed to remove draft purchase finance transactions", financeDeleteError);
-      fail(path, "Could not remove linked finance transactions for this draft purchase.");
-    }
-
-    for (const financeRow of financeRows ?? []) {
-      await logActivity({
-        profile,
-        action: "delete",
-        entityType: "financial_transaction",
-        entityId: financeRow.id,
-        entityLabel: "Draft purchase financial transaction",
-        beforeData: financeRow,
-        metadata: { reason, linked_purchase_id: id },
-        summary: "Deleted financial transaction linked to a hard-deleted draft purchase",
-      });
-    }
-  }
-
-  const { data: lines } = await supabase.from("purchase_order_lines").select("*").eq("purchase_order_id", id);
-  const { error: lineDeleteError } = await supabase.from("purchase_order_lines").delete().eq("purchase_order_id", id);
-  if (lineDeleteError) {
-    console.error("[purchases] Failed to delete draft purchase lines", lineDeleteError);
-    fail(path, "Could not delete purchase lines.");
-  }
-
-  const { error } = await supabase.from("purchase_orders").delete().eq("id", id).eq("status", "draft");
-  if (error) {
-    console.error("[purchases] Failed to delete draft purchase", error);
-    fail(path, "Could not delete draft purchase.");
-  }
-
-  await logActivity({
-    profile,
-    action: "delete",
-    entityType: "purchase",
-    entityId: id,
-    entityLabel: purchase.receipt_number ?? id.slice(0, 8),
-    beforeData: { purchase, lines },
-    metadata: { reason, deleted_finance_transaction_count: (financeRows ?? []).length },
-    summary: "Hard-deleted draft purchase",
-  });
-
-  revalidatePath("/purchases");
-  revalidatePath("/inventory");
-  redirect("/purchases");
+  redirect(`/purchases/${id}?purchaseCancelled=${encodeURIComponent(clientSubmissionId)}`);
 }
 
 export async function voidReceivedPurchase(fd: FormData) {
@@ -1342,144 +951,84 @@ export async function voidReceivedPurchase(fd: FormData) {
   if (!id) redirect("/purchases");
   const path = `/purchases/${id}`;
   const reason = requireConfirmedReason(fd, path);
-
-  const { data: purchase, error: purchaseError } = await supabase.from("purchase_orders").select("*").eq("id", id).maybeSingle();
-  if (purchaseError || !purchase) fail("/purchases", "Purchase not found.");
-  if (purchase.status !== "received") fail(path, "Only received purchases can be voided.");
-
-  const { data: receiptMovements, error: movementsError } = await supabase
-    .from("inventory_movements")
-    .select("*")
-    .eq("related_purchase_id", id)
-    .eq("reason", "purchase_received")
-    .order("created_at");
-  if (movementsError) {
-    console.error("[purchases] Failed to load receipt movements for void", movementsError);
-    fail(path, "Could not load purchase receipt movements.");
+  const clientSubmissionId = clean(fd.get("client_submission_id"));
+  if (!PURCHASE_SUBMISSION_ID_PATTERN.test(clientSubmissionId)) {
+    fail(path, "Could not prepare a safe void. Reload this page and try again.");
   }
 
-  const movementIds = (receiptMovements ?? []).map((movement: any) => movement.id);
-  let existingReversalCount = 0;
-  if (movementIds.length) {
-    const { count, error } = await supabase.from("inventory_movements").select("id", { count: "exact", head: true }).in("reversed_movement_id", movementIds);
-    if (error) {
-      console.error("[purchases] Failed to verify purchase reversal status", error);
-      fail(path, "Could not verify purchase reversal status.");
+  const { data, error } = await supabase.rpc("snacky_void_received_purchase_v1", {
+    p_purchase_id: id,
+    p_reason: reason,
+    p_client_submission_id: clientSubmissionId,
+  });
+  if (error) {
+    const code = String(error.code ?? "");
+    if (code === "PGRST202" || code === "42883") {
+      fail(path, "The atomic purchase void database update is not active yet. No inventory was changed.");
     }
-    existingReversalCount = count ?? 0;
-  }
-  if (existingReversalCount > 0) fail(path, "This purchase already has reversal movements.");
-
-  const now = new Date().toISOString();
-  const reversalRows = (receiptMovements ?? []).map((movement: any) => ({
-    product_id: movement.product_id,
-    quantity: Number(movement.quantity ?? 0),
-    from_entity_type: movement.to_entity_type,
-    from_entity_id: movement.to_entity_id,
-    to_entity_type: movement.from_entity_type,
-    to_entity_id: movement.from_entity_id,
-    reason: "manual_correction",
-    related_purchase_id: id,
-    related_purchase_line_id: movement.related_purchase_line_id ?? null,
-    related_route_id: movement.related_route_id ?? null,
-    related_route_stop_id: movement.related_route_stop_id ?? null,
-    related_machine_id: movement.related_machine_id ?? null,
-    unit_cost_lyd: movement.unit_cost_lyd ?? null,
-    line_total_lyd: movement.line_total_lyd === null || movement.line_total_lyd === undefined ? null : -Math.abs(Number(movement.line_total_lyd)),
-    reversed_movement_id: movement.id,
-    correction_reason: reason,
-    source_type: "purchase_void",
-    source_id: id,
-    idempotency_key: inventoryMovementIdempotencyKey("purchase-void", id, movement.id, reason, movement.quantity ?? 0),
-    created_by: profile.team_member_id,
-    notes: `Voided purchase ${purchase.receipt_number ?? id.slice(0, 8)}: ${reason}`,
-  }));
-
-  if (reversalRows.length) {
-    const { error } = await supabase.from("inventory_movements").upsert(reversalRows, { onConflict: "idempotency_key", ignoreDuplicates: true });
-    if (error) {
-      console.error("[purchases] Failed to create purchase reversal movements", error);
-      fail(path, "Could not create reversal inventory movements.");
-    }
+    fail(path, error.message || "Could not void purchase. No inventory was changed.");
   }
 
-  await supabase.from("purchase_order_lines").update({ received_qty: 0 }).eq("purchase_order_id", id);
+  const result = data && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>) : {};
+  const purchase = result.purchase && typeof result.purchase === "object" && !Array.isArray(result.purchase)
+    ? (result.purchase as Record<string, unknown>)
+    : { id, status: result.status ?? "voided", void_reason: reason };
+  const inventory = result.inventory && typeof result.inventory === "object" && !Array.isArray(result.inventory)
+    ? (result.inventory as Record<string, unknown>)
+    : {};
+  const reversalCount = Math.max(0, Number(inventory.reversal_movement_count ?? 0) || 0);
+  const purchaseTotal = Number(purchase.manual_total_lyd ?? purchase.total_amount ?? purchase.calculated_total_lyd ?? 0);
+  let financeWarning = purchase.id !== id || purchase.status !== "voided" || reversalCount <= 0;
+  let financeBefore: LinkedFinanceRow[] = [];
 
-  const { data: voidedPurchase, error: voidError } = await supabase
-    .from("purchase_orders")
-    .update({
-      status: "voided",
-      payment_status: "voided",
-      voided_at: now,
-      voided_by: profile.team_member_id,
-      void_reason: reason,
-      updated_at: now,
-    })
-    .eq("id", id)
-    .eq("status", "received")
-    .select("*")
-    .single();
-  if (voidError) {
-    console.error("[purchases] Failed to void purchase", voidError);
-    fail(path, "Could not void purchase.");
+  if (financeWarning) {
+    console.error("[purchases] Atomic purchase void returned an incomplete result; inventory may already be committed and needs review", {
+      purchase_id: id,
+      result,
+    });
   }
 
-  const { data: financeBefore } = await supabase
-    .from("financial_transactions")
-    .select("*")
-    .eq("transaction_kind", "product_purchase")
-    .eq("transaction_status", "active")
-    .or(purchaseFinanceLinkFilter(id));
-
-  if (financeBefore?.length) {
-    const financeIds = financeBefore.map((row: any) => row.id);
-    const { data: financeAfter, error: financeError } = await supabase
+  try {
+    const { data: linkedFinance, error: financeReadError } = await supabase
       .from("financial_transactions")
-      .update({
-        transaction_status: "voided",
-        is_void: true,
-        voided_at: now,
-        voided_by: profile.team_member_id,
-        void_reason: reason,
-        status_reason: reason,
-        updated_at: now,
-      })
-      .in("id", financeIds)
-      .select("*");
-    if (financeError) {
-      console.error("[purchases] Failed to void purchase financial transaction", financeError);
-      fail(path, "Purchase was reversed, but the financial transaction could not be voided.");
-    }
+      .select("*")
+      .eq("transaction_kind", "product_purchase")
+      .eq("transaction_status", "active")
+      .or(purchaseFinanceLinkFilter(id));
+    if (financeReadError) throw financeReadError;
+    financeBefore = (linkedFinance ?? []) as LinkedFinanceRow[];
 
-    for (const financeRow of financeAfter ?? []) {
-      await logActivity({
-        profile,
-        action: "void",
-        entityType: "financial_transaction",
-        entityId: financeRow.id,
-        entityLabel: "Purchase financial transaction",
-        beforeData: financeBefore.find((row: any) => row.id === financeRow.id),
-        afterData: financeRow,
-        metadata: { reason, related_purchase_id: id },
-        summary: "Voided financial transaction linked to a voided purchase",
-      });
+    if (financeBefore.length) {
+      throw new Error(`${financeBefore.length} active linked finance transaction(s) remained after the atomic purchase void.`);
     }
+  } catch (financeError) {
+    financeWarning = true;
+    console.error("[purchases] Purchase inventory void succeeded, but linked finance state needs repair", {
+      purchase_id: id,
+      amount_lyd: purchaseTotal,
+      error: financeError,
+    });
   }
 
   await logActivity({
     profile,
-    action: "void",
+    idempotencyKey: `purchase-inventory-void:v1:${clientSubmissionId}`,
+    action: financeWarning ? "finance_sync_needs_repair" : "void",
     entityType: "purchase",
     entityId: id,
-    entityLabel: purchase.receipt_number ?? id.slice(0, 8),
-    beforeData: purchase,
-    afterData: voidedPurchase,
+    entityLabel: String(purchase.receipt_number ?? id.slice(0, 8)),
+    afterData: purchase,
     metadata: {
       reason,
-      reversal_movement_count: reversalRows.length,
-      financial_transaction_count: financeBefore?.length ?? 0,
+      reversal_movement_count: reversalCount,
+      financial_transaction_count: financeBefore.length,
+      already_applied: Boolean(result.already_applied),
+      legacy_verified: Boolean(result.legacy_verified),
+      finance_repair_required: financeWarning,
     },
-    summary: `Voided received purchase and created ${reversalRows.length} reversal movements`,
+    summary: financeWarning
+      ? "Purchase inventory was voided atomically; finance/result follow-up needs review"
+      : `Voided received purchase and verified ${reversalCount} reversal movements`,
   });
 
   revalidatePath("/purchases");
@@ -1487,5 +1036,9 @@ export async function voidReceivedPurchase(fd: FormData) {
   revalidatePath("/inventory");
   revalidatePath("/finance");
   revalidatePath("/finance/transactions");
-  redirect(`/purchases/${id}`);
+  const params = new URLSearchParams();
+  params.set("purchaseVoided", clientSubmissionId);
+  if (financeWarning) params.set("financeWarning", financeWarningParam(financeWarning));
+  const suffix = params.toString();
+  redirect(`/purchases/${id}${suffix ? `?${suffix}` : ""}`);
 }

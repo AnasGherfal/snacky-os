@@ -16,11 +16,14 @@ test("authorized inventory pages use protected server reads for expensive aggreg
   assert.match(restockLoader, /inventoryReadClient\.from\("refill_recommendations"\)/);
   assert.match(newMovementPage, /const inventoryReadClient = getSupabaseAdminClient\(\) \?\? supabase/);
   assert.match(newMovementPage, /inventoryReadClient\.from\("current_inventory_by_location"\)/);
+  assert.match(newMovementPage, /select\("product_id, location_id, quantity_on_hand"\)/);
   assert.match(newMovementPage, /const stockError = productsResult\.error \?\? storageResult\.error/);
   assert.match(newMovementPage, /No product has been shown as zero/);
-  assert.match(stockMovementForm, /fromLocation\.startsWith\("storage:"\).*selectedProduct.*!adminOverride/s);
-  assert.match(stockMovementForm, /No verified storage stock is available for this product/);
-  assert.match(stockMovementForm, /setSimpleQuantity\(adjustmentType === "set_exact" \? Math\.max\(0, Math\.floor\(product\.storageQty\)\) : 1\)/);
+  assert.match(stockMovementForm, /storageQtyByLocationId/);
+  assert.match(stockMovementForm, /name="storage_location_id"/);
+  assert.match(stockMovementForm, /Use the source workflow for custody movements/);
+  assert.doesNotMatch(stockMovementForm, /fromLocation|adminOverride|Transfer \/ Advanced Movement/);
+  assert.doesNotMatch(stockMovementForm, /(?:product|selectedProduct)\??\.storageQty\b/);
   assert.doesNotMatch(stockMovementForm, /max \|\| next/);
 });
 

@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileRecordCard, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
-import { canAccessPath } from "@/lib/authz";
+import { canAccessPath, isAdminRole } from "@/lib/authz";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { isActiveRouteStatus, isCompletedRouteStatus, isTerminalRouteStatus, routeDisplayStatus } from "@/lib/route-workflow";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
@@ -95,6 +95,7 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
   if (!profile || !canAccessPath({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/routes")) {
     redirect("/unauthorized");
   }
+  const canReviewInventory = isAdminRole(profile);
 
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) {
@@ -227,7 +228,12 @@ export default async function RoutesPage({ searchParams }: { searchParams: Promi
       <PageHeader
         title={locale === "ar" ? "الجولات" : "Routes"}
         subtitle={locale === "ar" ? "خطط جولات التعبئة، وعيّن المشغلين، وتابع مواقع الأجهزة." : "Plan refill routes, assign operators, and track machine stops."}
-        action={<PrimaryButton href="/routes/new">{locale === "ar" ? "إنشاء جولة" : "Create route"}</PrimaryButton>}
+        action={(
+          <div className="flex flex-wrap gap-2">
+            {canReviewInventory ? <SecondaryButton href="/routes/inventory-review">{locale === "ar" ? "مراجعة فروق المخزون" : "Review inventory differences"}</SecondaryButton> : null}
+            <PrimaryButton href="/routes/new">{locale === "ar" ? "إنشاء جولة" : "Create route"}</PrimaryButton>
+          </div>
+        )}
       />
       {operatorsError || stopsError || stopMachinesError ? (
         <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">

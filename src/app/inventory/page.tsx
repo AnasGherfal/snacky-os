@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileRecordCard, PageHeader, PrimaryButton, SearchInput, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
-import { canAccessPath, canViewFinancials } from "@/lib/authz";
+import { canAccessPath, canViewFinancials, isOwnerAdminRole } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { formatProductQuantity } from "@/lib/product-quantity";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
@@ -401,7 +401,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
             <SecondaryButton href="/restock-priority">Restock Priority</SecondaryButton>
             <SecondaryButton href="/inventory/machine-storage">Machine Storage</SecondaryButton>
             <SecondaryButton href="/inventory/movements">Movement Log</SecondaryButton>
-            <PrimaryButton href="/inventory/movements/new">New Stock Movement</PrimaryButton>
+            {isOwnerAdminRole(profile) ? <PrimaryButton href="/inventory/movements/new">Storage count adjustment</PrimaryButton> : null}
           </div>
         }
       />

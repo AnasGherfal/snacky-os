@@ -810,6 +810,23 @@ export default async function FinanceTransactionsPage({
     normalizeFinanceTransactionRow,
   );
   const count = result.count;
+  const paymentOwnershipResult = baseRows.length
+    ? await supabase
+        .from("purchase_payments")
+        .select("finance_transaction_id")
+        .in("finance_transaction_id", baseRows.map((row) => row.id))
+    : { data: [], error: null };
+  if (paymentOwnershipResult.error) {
+    console.error("[finance] Could not verify supplier-payment ownership for transaction actions", {
+      financial_transaction_ids: baseRows.map((row) => row.id),
+      error: paymentOwnershipResult.error,
+    });
+  }
+  const supplierPaymentFinanceIds = new Set(
+    (paymentOwnershipResult.data ?? [])
+      .map((payment: any) => String(payment.finance_transaction_id ?? ""))
+      .filter(Boolean),
+  );
 
   const maps = {
     purchases: new Map<string, any>(),
@@ -1360,7 +1377,7 @@ export default async function FinanceTransactionsPage({
                           Open source
                         </Link>
                       ) : null}
-                      {canEdit ? (
+                      {canEdit && !paymentOwnershipResult.error && row.source_type !== "purchase_payment" && !supplierPaymentFinanceIds.has(row.id) ? (
                         <Link
                           href={`/finance/transactions/${row.id}/edit`}
                           className="btn-secondary"
