@@ -121,7 +121,7 @@ const cashCustodyItem: NavItem = {
   label: { en: "Cash Custody", ar: "عهدة النقد" },
   href: "/cash-collections",
   icon: HandCoins,
-  activePrefixes: ["/cash-collections", "/cash-deposits"],
+  activePrefixes: ["/cash-collections"],
 };
 const reportsItem: NavItem = {
   labelKey: "reports",

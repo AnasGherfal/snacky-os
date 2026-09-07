@@ -76,11 +76,11 @@ export function combinedCashPosition(rows: Array<{
 
 export function cashCustodyStatusLabel(status: string | null | undefined) {
   const labels: Record<string, string> = {
-    removed: "Removed — handoff due",
-    in_storage: "In storage — count due",
-    counted: "Counted — reconciliation due",
-    reconciled: "Reconciled — bank deposit due",
-    banked: "Banked",
+    removed: "Waiting to be counted — handoff due",
+    in_storage: "Waiting to be counted",
+    counted: "Counted — VMS check pending",
+    reconciled: "Counted & reconciled",
+    banked: "Counted & reconciled",
     voided: "Voided",
   };
   return labels[String(status ?? "")] ?? "Unknown";
@@ -117,15 +117,13 @@ export function getCashCustodyAlerts(row: CashCustodyAlertInput, now = new Date(
       ? { date: row.storage_received_at, hours: 24, label: "Cash count overdue" }
       : status === "counted"
         ? { date: row.counted_at, hours: 24, label: "Reconciliation overdue" }
-        : status === "reconciled"
-          ? { date: row.reconciled_at, hours: 48, label: "Bank deposit overdue" }
-          : null;
+        : null;
 
   if (threshold) {
     const age = hoursSince(threshold.date, now);
     if (age !== null && age >= threshold.hours) {
       alerts.push({
-        severity: status === "removed" || status === "reconciled" ? "critical" : "warning",
+        severity: status === "removed" ? "critical" : "warning",
         label: threshold.label,
         detail: `This stage has been open for ${ageLabel(age)}; target is ${threshold.hours} hours.`,
       });

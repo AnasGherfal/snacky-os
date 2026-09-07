@@ -41,7 +41,6 @@ export const appPermissions = [
   "cash.count",
   "cash.reconcile",
   "cash.variance_approve",
-  "cash.bank",
   "investor.view",
   "reports.view",
   "team.manage",
@@ -158,7 +157,6 @@ const rolePermissions = {
     "cash.receive",
     "cash.count",
     "cash.reconcile",
-    "cash.bank",
     "purchase_items.view",
     "purchases.view",
   ],
@@ -266,10 +264,6 @@ export function canReconcileCash(user: AuthUserContext | null | undefined) {
 
 export function canApproveCashVariance(user: AuthUserContext | null | undefined) {
   return hasPermission(user, "cash.variance_approve");
-}
-
-export function canBankCash(user: AuthUserContext | null | undefined) {
-  return hasPermission(user, "cash.bank");
 }
 
 export function canManagePayroll(input: RoleInput) {
@@ -410,8 +404,7 @@ export function canAccessPath(user: AuthUserContext | null | undefined, pathname
   if (/^\/cash-collections\/[^/]+\/?$/.test(pathname)) {
     return hasPermission(user, "finance.view") || hasPermission(user, "cash.record") || hasPermission(user, "cash.receive");
   }
-  if (pathname === "/cash-deposits/new" || pathname.startsWith("/cash-deposits/new/")) return canBankCash(user);
-  if (matchesPrefix(pathname, ["/cash-deposits"])) return canBankCash(user) || hasPermission(user, "finance.view");
+  if (matchesPrefix(pathname, ["/cash-deposits"])) return false;
   if (matchesPrefix(pathname, ["/cash-collections"])) return hasPermission(user, "finance.view") || hasPermission(user, "cash.receive");
   if (matchesPrefix(pathname, ["/finance"])) return hasPermission(user, "finance.view");
   if (matchesPrefix(pathname, ["/payroll"])) return canManagePayroll(user);
