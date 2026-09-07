@@ -22,6 +22,10 @@ const lifecycleMigration = fs.readFileSync(
   path.join(root, "supabase/migrations/20260906153100_atomic_purchase_draft_lifecycle.sql"),
   "utf8",
 );
+const receivePrerequisitesRepair = fs.readFileSync(
+  path.join(root, "supabase/migrations/20260907113000_purchase_receive_prerequisites_repair.sql"),
+  "utf8",
+);
 
 function functionDeclaration(name) {
   return sourceFile.statements.find(
@@ -190,6 +194,23 @@ test("purchase receiving requires a reviewed physical storage destination", () =
   assert.match(functionBody, /canonical_lines as \([\s\S]*round\(priced_lines\.unit_cost \* priced_lines\.total_units, 2\) as line_total/i);
   assert.doesNotMatch(functionBody, /then normalized_lines\.raw_line_total[\s\S]*end, 2\) as line_total/i,
     "the persisted total must be recomputed from the final four-decimal unit cost");
+});
+
+test("received purchases retain their inventory payload and schema-safe audit trigger", () => {
+  assert.match(
+    receivePrerequisitesRepair,
+    /alter table public\.inventory_movements[\s\S]*add column if not exists idempotency_payload jsonb/i,
+  );
+  assert.match(
+    receivePrerequisitesRepair,
+    /create or replace function public\.log_inventory_movement_activity\(\)[\s\S]*set search_path = ''/i,
+  );
+  assert.match(receivePrerequisitesRepair, /from public\.team_members team_row/i);
+  assert.match(receivePrerequisitesRepair, /left join public\.profiles profile_row/i);
+  assert.match(receivePrerequisitesRepair, /insert into public\.system_activity_logs/i);
+  assert.doesNotMatch(receivePrerequisitesRepair, /\bfrom team_members\b/i);
+  assert.doesNotMatch(receivePrerequisitesRepair, /\bjoin profiles\b/i);
+  assert.doesNotMatch(receivePrerequisitesRepair, /\binsert into system_activity_logs\b/i);
 });
 
 test("draft update and cancellation are atomic RPC-only commands with no hard delete", () => {
