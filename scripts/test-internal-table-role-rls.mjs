@@ -36,12 +36,14 @@ test("finance and cash tables are RLS protected by finance-capable roles", () =>
   assert.doesNotMatch(migration, /array\[[^\]]*'operator'[^\]]*\][\s\S]{0,160}finance_access/);
 });
 
-test("authorized route completion writes cash through the protected server client", () => {
+test("route completion uses the protected client but never writes cash", () => {
   assert.match(completeStopAction, /const completionWorkflowClient = getSupabaseAdminClient\(\)/);
   assert.match(completeStopAction, /if \(!completionWorkflowClient\) \{[\s\S]*?protected stop-completion workflow is not configured/);
   assert.doesNotMatch(completeStopAction, /getSupabaseAdminClient\(\) \?\? supabase/);
-  assert.match(completeStopAction, /completionWorkflowClient\s*\n\s*\.from\("vms_sales_snapshots"\)/);
-  assert.match(completeStopAction, /completionWorkflowClient\s*\n\s*\.from\("cash_collections"\)/);
+  assert.match(completeStopAction, /completionWorkflowClient\s*\n\s*\.from\("route_stop_inventory_commits"\)/);
+  assert.match(completeStopAction, /Cash removal is not part of route completion/);
+  assert.doesNotMatch(completeStopAction, /\.from\("vms_sales_snapshots"\)/);
+  assert.doesNotMatch(completeStopAction, /\.from\("cash_collections"\)/);
 });
 
 test("team members preserve self read and restrict mutations to owner/admin", () => {
