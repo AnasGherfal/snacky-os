@@ -3,261 +3,171 @@ import { redirect } from "next/navigation";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileRecordCard, PageHeader, PrimaryButton, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
-import { createMissingCashFinanceLinks } from "@/lib/cash-actions";
-import { canAccessPath, canViewFinancials } from "@/lib/authz";
-import { getCashCollectionStatus } from "@/lib/cash-collections";
+import { canAccessPath, canBankCash, canRecordCashRemoval, canViewFinancials } from "@/lib/authz";
+import { cashCustodyStatusLabel, combinedCashPosition, getCashCustodyAlerts, missingCashAmount } from "@/lib/cash-custody";
 import { lyd } from "@/lib/format";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
-import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
+import { cleanSearchParams, getPagination, type SearchParamsRecord } from "@/lib/pagination";
 
-const statusOptions = ["pending_collection", "collected_pending_count", "counted_confirmed", "variance_review", "voided"];
+const custodyStatuses = ["removed", "in_storage", "counted", "reconciled", "banked", "voided"];
 
-function formatDate(value: string | null) {
-  if (!value) return "-";
-  return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+function formatDate(value: string | null | undefined) {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: "Africa/Tripoli" }).format(new Date(value));
 }
 
 function money(value: number | string | null | undefined) {
-  return value === null || value === undefined ? "-" : lyd(Number(value));
+  return value === null || value === undefined ? "—" : lyd(Number(value));
 }
 
 function singleParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
 
-export default async function CashCollectionsPage({
-  searchParams,
-}: {
-  searchParams: Promise<{
-    error?: string;
-    success?: string;
-    status?: string;
-    machine_id?: string;
-    operator_id?: string;
-    date_from?: string;
-    date_to?: string;
-    variance_review?: string;
-  } & SearchParamsRecord>;
-}) {
+function machineSummary(row: any) {
+  const links = (row.machine_links ?? []) as Array<{ machine?: any }>;
+  if (links.length === 1) return formatMachineDisplayName(links[0].machine ?? null, { includeArea: true });
+  if (links.length > 1) return `${links.length} machines — one sealed batch`;
+  return "Cash batch";
+}
+
+export default async function CashCollectionsPage({ searchParams }: { searchParams: Promise<SearchParamsRecord & { error?: string; success?: string; status?: string; machine_id?: string; operator_id?: string; date_from?: string; date_to?: string }> }) {
   const params = cleanSearchParams(await searchParams);
+  const statusParam = singleParam(params.status);
+  const machineParam = singleParam(params.machine_id);
+  const operatorParam = singleParam(params.operator_id);
+  const dateFromParam = singleParam(params.date_from);
+  const dateToParam = singleParam(params.date_to);
+  const errorMessage = singleParam(params.error);
+  const successMessage = singleParam(params.success);
   const { page, pageSize, from, to } = getPagination(params);
   const profile = await getCurrentProfile();
-  if (!profile || !canAccessPath({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/cash-collections")) {
-    redirect("/unauthorized");
-  }
-  const canReviewMoney = canViewFinancials({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status });
-
+  const context = profile ? { id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status } : null;
+  if (!profile || !canAccessPath(context, "/cash-collections")) redirect("/unauthorized");
   const supabase = await getAuthenticatedSupabaseServerClient();
-  if (!supabase) {
+  if (!supabase) return <ErrorState title="Cash custody unavailable" body="Supabase is not configured." />;
+  const canSeeMoney = canViewFinancials(context);
+
+  if (!canSeeMoney) {
+    let query = supabase
+      .from("cash_removal_receipts")
+      .select("cash_collection_id, operator_id, cash_bag_id, collected_at, custody_status, storage_received_at, storage_location, operator:team_members!cash_removal_receipts_operator_id_fkey(id, full_name), machine_links:cash_removal_receipt_machines(removal_type, compartments, machine:machines(id, name, machine_code, location:locations(id, name)))", { count: "exact" })
+      .order("collected_at", { ascending: false });
+    if (statusParam && custodyStatuses.includes(statusParam)) query = query.eq("custody_status", statusParam);
+    if (dateFromParam) query = query.gte("collected_at", `${dateFromParam}T00:00:00+02:00`);
+    if (dateToParam) query = query.lte("collected_at", `${dateToParam}T23:59:59+02:00`);
+    const { data, count, error } = await query.range(from, to);
+    if (error) {
+      console.error("[cash] Failed to load amount-free handoff queue", error);
+      return <ErrorState title="Could not load storage handoffs" body="The amount-free custody receipt query failed." action={<SecondaryButton href="/cash-collections">Retry</SecondaryButton>} />;
+    }
+    const rows = data ?? [];
+    const overdue = rows.filter((row: any) => getCashCustodyAlerts(row).length > 0).length;
+
     return (
-      <>
-        <ErrorState title="Cash collections unavailable" body="Supabase is not configured, so Snacky OS cannot load cash collections." />
-      </>
+      <div className="space-y-6">
+        <PageHeader title="Cash Storage Handoffs" subtitle="Verify sealed bags and storage locations. Financial amounts are deliberately hidden from this operational queue." />
+        {errorMessage ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{errorMessage}</div> : null}
+        {successMessage ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">{successMessage}</div> : null}
+        <div className="grid gap-4 sm:grid-cols-3">
+          <SectionCard><div className="text-sm text-slate-500">Visible handoffs</div><div className="mt-2 text-2xl font-semibold">{count ?? rows.length}</div></SectionCard>
+          <SectionCard><div className="text-sm text-slate-500">Awaiting storage</div><div className="mt-2 text-2xl font-semibold">{rows.filter((row: any) => row.custody_status === "removed").length}</div></SectionCard>
+          <SectionCard><div className="text-sm text-slate-500">Overdue on this page</div><div className={`mt-2 text-2xl font-semibold ${overdue ? "text-rose-700" : ""}`}>{overdue}</div></SectionCard>
+        </div>
+        <section className="surface-card"><form className="grid gap-3 sm:grid-cols-4"><input type="hidden" name="pageSize" value={pageSize} /><select name="status" defaultValue={statusParam ?? ""} className="field-input"><option value="">All custody stages</option>{custodyStatuses.map((status) => <option key={status} value={status}>{cashCustodyStatusLabel(status)}</option>)}</select><input name="date_from" type="date" defaultValue={dateFromParam ?? ""} className="field-input" /><input name="date_to" type="date" defaultValue={dateToParam ?? ""} className="field-input" /><div className="flex gap-2"><button className="btn-primary">Filter</button><Link href="/cash-collections" className="btn-secondary">Reset</Link></div></form></section>
+        {!rows.length ? <EmptyState title="No cash handoffs found" body="Sealed removals will appear here without financial amounts." /> : <>
+          <MobileCardList>{rows.map((row: any) => { const alerts = getCashCustodyAlerts(row); return <MobileRecordCard key={row.cash_collection_id} className={alerts.length ? "border-amber-200 bg-amber-50/40" : ""}><div className="flex items-start justify-between gap-3"><div><h2 className="font-semibold text-slate-900">Bag {row.cash_bag_id}</h2><p className="mt-1 text-xs text-slate-500">{machineSummary(row)}</p></div><StatusBadge status={row.custody_status} /></div><div className="mt-4 grid grid-cols-2 gap-3"><MobileField label="Removed">{formatDate(row.collected_at)}</MobileField><MobileField label="Collector">{row.operator?.full_name ?? "—"}</MobileField><MobileField label="Stored">{formatDate(row.storage_received_at)}</MobileField><MobileField label="Location">{row.storage_location ?? "—"}</MobileField></div>{alerts.length ? <p className="mt-3 text-sm font-semibold text-rose-700">{alerts[0].label}</p> : null}<Link href={`/cash-collections/${row.cash_collection_id}`} className="btn-secondary mt-4 w-full">Open handoff</Link></MobileRecordCard>; })}</MobileCardList>
+          <DataTable className="hidden md:block" headers={["Bag / machines", "Collector", "Removed", "Storage", "Stage", "Alert", "Action"]}>{rows.map((row: any) => { const alerts = getCashCustodyAlerts(row); return <tr key={row.cash_collection_id}><td><div className="font-semibold">{row.cash_bag_id}</div><div className="text-xs text-slate-500">{machineSummary(row)}</div></td><td>{row.operator?.full_name ?? "—"}</td><td>{formatDate(row.collected_at)}</td><td><div>{formatDate(row.storage_received_at)}</div><div className="text-xs text-slate-500">{row.storage_location ?? "—"}</div></td><td><StatusBadge status={row.custody_status} /></td><td>{alerts.length ? <span className="font-semibold text-rose-700">{alerts[0].label}</span> : "—"}</td><td><Link href={`/cash-collections/${row.cash_collection_id}`} className="btn-secondary px-3 py-2">Open</Link></td></tr>; })}</DataTable>
+          <PaginationControls basePath="/cash-collections" searchParams={params} page={page} pageSize={pageSize} totalCount={count ?? 0} itemLabel="cash handoffs" />
+        </>}
+      </div>
     );
   }
 
-  const [{ data: machines, error: machinesError }, { data: operators, error: operatorsError }] = await Promise.all([
+  const [{ data: machines }, { data: operators }] = await Promise.all([
     supabase.from("machines").select("id, name, machine_code, location:locations(id, name)").order("name"),
     supabase.from("team_members").select("id, full_name").order("full_name"),
   ]);
-  const filterLoadError = machinesError ?? operatorsError;
-  if (filterLoadError) {
-    console.error("[cash] Failed to load cash collection filters", filterLoadError);
-    return (
-      <>
-        <ErrorState title="Could not load cash filters" body="Snacky OS could not load machine or operator options for cash collections." action={<SecondaryButton href="/cash-collections">Retry</SecondaryButton>} />
-      </>
-    );
+  let linkedIds: string[] = [];
+  if (machineParam) {
+    const linkedIdSet = new Set<string>();
+    const chunkSize = 1_000;
+    for (let offset = 0; ; offset += chunkSize) {
+      const { data, error } = await supabase
+        .from("cash_collection_machines")
+        .select("cash_collection_id")
+        .eq("machine_id", machineParam)
+        .order("cash_collection_id")
+        .range(offset, offset + chunkSize - 1);
+      if (error) {
+        console.error("[cash] Failed to load machine-linked custody batches", error);
+        return <ErrorState title="Could not filter cash custody" body="The machine custody-link query failed." action={<SecondaryButton href="/cash-collections">Reset filter</SecondaryButton>} />;
+      }
+      const chunk = data ?? [];
+      for (const row of chunk) linkedIdSet.add(String(row.cash_collection_id));
+      if (chunk.length < chunkSize) break;
+    }
+    linkedIds = Array.from(linkedIdSet);
   }
-
-  let query = supabase
-    .from("cash_collections")
-    .select(
-      "id, route_id, machine_id, operator_id, collected_at, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, counted_at, notes, machine:machines(id, name, machine_code, location:locations(id, name)), operator:team_members!cash_collections_operator_id_fkey(id, full_name), route:routes(id, route_date)",
-      { count: "exact" },
-    )
-    .order("collected_at", { ascending: false });
-
-  const statusFilter = singleParam(params.variance_review) === "1" ? "variance_review" : singleParam(params.status);
-  if (statusFilter && statusOptions.includes(statusFilter)) query = query.eq("review_status", statusFilter);
-  if (params.machine_id) query = query.eq("machine_id", params.machine_id);
-  if (params.operator_id) query = query.eq("operator_id", params.operator_id);
-  if (params.date_from) query = query.gte("collected_at", `${params.date_from}T00:00:00`);
-  if (params.date_to) query = query.lte("collected_at", `${params.date_to}T23:59:59`);
-
-  const { data: collections, count, error: collectionsError } = await query.range(from, to);
-  if (collectionsError) {
-    console.error("[cash] Failed to load cash collections", collectionsError);
-    return (
-      <>
-        <ErrorState title="Could not load cash collections" body="The cash collection page reads real Supabase rows, but the query failed." action={<SecondaryButton href="/cash-collections">Retry</SecondaryButton>} />
-      </>
-    );
+  const applyFilters = (query: any) => {
+    if (statusParam && custodyStatuses.includes(statusParam)) query = query.eq("custody_status", statusParam);
+    if (machineParam) query = linkedIds.length ? query.in("id", linkedIds) : query.eq("machine_id", machineParam);
+    if (operatorParam) query = query.eq("operator_id", operatorParam);
+    if (dateFromParam) query = query.gte("collected_at", `${dateFromParam}T00:00:00+02:00`);
+    if (dateToParam) query = query.lte("collected_at", `${dateToParam}T23:59:59+02:00`);
+    return query;
+  };
+  const detailSelect = "id, operator_id, collected_at, actual_cash_collected, vms_expected_cash, variance, review_status, custody_status, reconciliation_status, cash_bag_id, storage_received_at, counted_at, reconciled_at, storage_seal_condition, count_seal_condition, expected_source, banked_amount_lyd, operator:team_members!cash_collections_operator_id_fkey(id, full_name), machine_links:cash_collection_machines(removal_type, machine:machines(id, name, machine_code, location:locations(id, name)))";
+  const loadSummaryRows = async () => {
+    const allRows: any[] = [];
+    const chunkSize = 1_000;
+    for (let offset = 0; ; offset += chunkSize) {
+      const result = await applyFilters(
+        supabase
+          .from("cash_collections")
+          .select("id, actual_cash_collected, vms_expected_cash, custody_status, reconciliation_status, collected_at, storage_received_at, counted_at, reconciled_at, storage_seal_condition, count_seal_condition")
+          .order("id"),
+      ).range(offset, offset + chunkSize - 1);
+      if (result.error) return { data: allRows, error: result.error };
+      const chunk = result.data ?? [];
+      allRows.push(...chunk);
+      if (chunk.length < chunkSize) return { data: allRows, error: null };
+    }
+  };
+  const [pageResult, summaryResult] = await Promise.all([
+    applyFilters(supabase.from("cash_collections").select(detailSelect, { count: "exact" }).order("collected_at", { ascending: false })).range(from, to),
+    loadSummaryRows(),
+  ]);
+  if (pageResult.error || summaryResult.error) {
+    console.error("[cash] Failed to load custody control center", pageResult.error ?? summaryResult.error);
+    return <ErrorState title="Could not load cash custody" body="The custody query failed. Apply the cash-chain migration together with this application version." action={<SecondaryButton href="/cash-collections">Retry</SecondaryButton>} />;
   }
-
-  const rows = collections ?? [];
-  const cashIds = rows.map((row: any) => row.id);
-  const { data: financeRows, error: financeError } = cashIds.length
-    ? await supabase
-        .from("financial_transactions")
-        .select("id, linked_cash_collection_id, source_type, source_id, transaction_status")
-        .or(`linked_cash_collection_id.in.(${cashIds.join(",")}),and(source_type.eq.cash_collection,source_id.in.(${cashIds.join(",")}))`)
-    : { data: [], error: null };
-  if (financeError) console.error("[cash] Failed to load linked finance rows", financeError);
-  const financeByCashId = new Map<string, any>();
-  for (const row of (financeRows ?? []) as any[]) {
-    const cashId = row.linked_cash_collection_id ?? (row.source_type === "cash_collection" ? row.source_id : null);
-    if (cashId) financeByCashId.set(cashId, row);
-  }
-  const activeRows = rows.filter((row: any) => getCashCollectionStatus(row.review_status, row.variance) !== "voided");
-  const rowsMissingFinance = activeRows.filter((row: any) => row.actual_cash_collected !== null && row.actual_cash_collected !== undefined && !financeByCashId.has(row.id));
-  const totalCounted = activeRows.reduce((sum: number, row: any) => sum + Number(row.actual_cash_collected ?? 0), 0);
-  const pendingCount = rows.filter((row: any) => row.review_status === "collected_pending_count").length;
+  const rows = pageResult.data ?? [];
+  const summaryRows = summaryResult.data ?? [];
+  const totalCountedUnbanked = summaryRows.filter((row: any) => ["counted", "reconciled"].includes(row.custody_status)).reduce((sum: number, row: any) => sum + Number(row.actual_cash_collected ?? 0), 0);
+  const combinedPosition = combinedCashPosition(summaryRows.filter((row: any) => row.custody_status !== "voided"));
+  const totalMissing = combinedPosition.missingCash;
+  const overdueCount = summaryRows.filter((row: any) => getCashCustodyAlerts(row).length > 0).length;
+  const ownerReviewCount = summaryRows.filter((row: any) => row.reconciliation_status === "variance_review").length;
+  const actions = <div className="flex flex-wrap gap-2">{canRecordCashRemoval(context) ? <PrimaryButton href="/cash-collections/new">Record removal</PrimaryButton> : null}{canBankCash(context) ? <SecondaryButton href="/cash-deposits">Bank deposits</SecondaryButton> : null}</div>;
 
   return (
-    <>
-      <PageHeader
-        title="Cash Collections"
-        subtitle="Record every physical cash pickup and counted amount. Expected cash and shortage/overage are reconciled for the full machine month in Finance Operations."
-        action={canReviewMoney ? <PrimaryButton href="/cash-collections/new">New cash collection</PrimaryButton> : undefined}
-      />
-      {params.error ? <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{params.error}</div> : null}
-      {params.success ? <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">{params.success}</div> : null}
-      {financeError ? (
-        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-          <div className="font-semibold">Could not read linked finance transactions.</div>
-          <p className="mt-1">Cash collections are still shown below. Rows that should have finance links are marked as Finance link missing until the DB policy/schema is repaired.</p>
-          {canReviewMoney ? (
-            <form action={createMissingCashFinanceLinks} className="mt-3">
-              <button className="btn-secondary px-3 py-2">Create missing finance links</button>
-            </form>
-          ) : null}
-        </div>
-      ) : rowsMissingFinance.length ? (
-        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-          <div className="font-semibold">{rowsMissingFinance.length} cash collection finance link{rowsMissingFinance.length === 1 ? "" : "s"} missing on this page.</div>
-          <p className="mt-1">Snacky OS can create the missing purchase/cash finance links without blocking the cash collection list.</p>
-          {canReviewMoney ? (
-            <form action={createMissingCashFinanceLinks} className="mt-3">
-              <button className="btn-secondary px-3 py-2">Create missing finance links</button>
-            </form>
-          ) : null}
-        </div>
-      ) : null}
-
-      <section className="surface-card mb-6">
-        <form className="grid gap-3 md:grid-cols-3 xl:grid-cols-7">
-          <input type="hidden" name="pageSize" value={pageSize} />
-          <select name="status" defaultValue={params.status ?? ""} className="field-input">
-            <option value="">All statuses</option>
-            {statusOptions.map((status) => <option key={status} value={status}>{status.replaceAll("_", " ")}</option>)}
-          </select>
-          <select name="machine_id" defaultValue={params.machine_id ?? ""} className="field-input">
-            <option value="">All machines</option>
-            {machines?.map((machine: any) => <option key={machine.id} value={machine.id}>{formatMachineDisplayName(machine, { includeArea: true })}</option>)}
-          </select>
-          <select name="operator_id" defaultValue={params.operator_id ?? ""} className="field-input">
-            <option value="">All operators</option>
-            {operators?.map((operator: any) => <option key={operator.id} value={operator.id}>{operator.full_name}</option>)}
-          </select>
-          <input name="date_from" type="date" defaultValue={params.date_from ?? ""} className="field-input" />
-          <input name="date_to" type="date" defaultValue={params.date_to ?? ""} className="field-input" />
-          <label className="flex min-h-11 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700">
-            <input type="checkbox" name="variance_review" value="1" defaultChecked={params.variance_review === "1"} />
-            Variance review
-          </label>
-          <div className="grid gap-2 sm:flex">
-            <button className="btn-primary w-full sm:w-auto">Filter</button>
-            <Link href="/cash-collections" className="btn-secondary w-full sm:w-auto">Reset</Link>
-          </div>
-        </form>
-      </section>
-
-      {!rows.length ? (
-        <EmptyState title="No cash collections found" body="Manual collections and route cash pickups will appear here when real cash records exist." />
-      ) : (
-        <div className="space-y-6">
-          <div className="grid gap-4 sm:grid-cols-4">
-            <SectionCard><div className="text-sm text-slate-500">Counted amount</div><div className="mt-2 text-2xl font-semibold text-slate-900">{lyd(totalCounted)}</div></SectionCard>
-            <SectionCard><div className="text-sm text-slate-500">Collections on this page</div><div className="mt-2 text-2xl font-semibold text-slate-900">{activeRows.length}</div></SectionCard>
-            <SectionCard><div className="text-sm text-slate-500">Pending count</div><div className="mt-2 text-2xl font-semibold text-slate-900">{pendingCount}</div></SectionCard>
-            <SectionCard><div className="text-sm text-slate-500">Monthly close</div><div className="mt-3"><Link href="/finance/operations" className="link-secondary">Open reconciliation</Link></div></SectionCard>
-          </div>
-
-          <MobileCardList>
-            {rows.map((collection: any) => {
-              const variance = collection.variance === null || collection.variance === undefined ? null : Number(collection.variance);
-              const status = getCashCollectionStatus(collection.review_status, variance);
-              const finance = financeByCashId.get(collection.id);
-
-              return (
-                <MobileRecordCard key={collection.id} className={status === "variance_review" ? "border-amber-200 bg-amber-50/50" : undefined}>
-                  <div className="mb-3 flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <h2 className="break-words text-base font-semibold text-slate-900">{formatMachineDisplayName(collection.machine ?? null, { includeArea: true })}</h2>
-                      <p className="mt-1 text-xs text-slate-500">{collection.machine?.machine_code ?? "-"} - {formatDate(collection.collected_at)}</p>
-                    </div>
-                    <StatusBadge status={status.replaceAll("_", " ")} />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <MobileField label="Counted">{money(collection.actual_cash_collected)}</MobileField>
-                    <MobileField label="Counted at">{formatDate(collection.counted_at)}</MobileField>
-                    <MobileField label="Monthly close"><Link href="/finance/operations" className="link-secondary">Reconcile by month</Link></MobileField>
-                    <MobileField label="Collected by">{collection.operator?.full_name ?? "Unassigned"}</MobileField>
-                    <MobileField label="Route">{collection.route?.id ? <Link href={`/routes/${collection.route.id}`} className="link-secondary">{collection.route.route_date}</Link> : "-"}</MobileField>
-                    <MobileField label="Finance">
-                      {finance?.id ? <Link href={`/finance/transactions/${finance.id}`} className="link-secondary">{finance.transaction_status ?? "posted"}</Link> : collection.actual_cash_collected !== null && collection.actual_cash_collected !== undefined ? <span className="font-medium text-amber-700">Finance link missing</span> : <span className="text-slate-500">Pending count</span>}
-                    </MobileField>
-                  </div>
-                  <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                    <Link className="btn-secondary w-full" href={`/cash-collections/${collection.id}`}>Open</Link>
-                    {canReviewMoney && status !== "voided" ? <Link className="btn-secondary w-full" href={`/cash-collections/${collection.id}/edit`}>Edit</Link> : null}
-                  </div>
-                </MobileRecordCard>
-              );
-            })}
-          </MobileCardList>
-
-          <DataTable className="hidden md:block" headers={["Machine", "Route", "Collected by", "Cash removed", "Counted amount", "Counted at", "Status", "Finance", "Actions"]}>
-            {rows.map((collection: any) => {
-              const variance = collection.variance === null || collection.variance === undefined ? null : Number(collection.variance);
-              const status = getCashCollectionStatus(collection.review_status, variance);
-              const finance = financeByCashId.get(collection.id);
-
-              return (
-                <tr key={collection.id} className={status === "variance_review" ? "bg-amber-50/60" : undefined}>
-                  <td>
-                    <div className="font-medium text-slate-900">{formatMachineDisplayName(collection.machine ?? null, { includeArea: true })}</div>
-                    <div className="text-xs text-slate-500">{collection.machine?.machine_code ?? "-"}</div>
-                  </td>
-                  <td>{collection.route?.id ? <Link href={`/routes/${collection.route.id}`} className="link-secondary">{collection.route.route_date}</Link> : "-"}</td>
-                  <td>{collection.operator?.full_name ?? "Unassigned"}</td>
-                  <td>{formatDate(collection.collected_at)}</td>
-                  <td>{money(collection.actual_cash_collected)}</td>
-                  <td>{formatDate(collection.counted_at)}</td>
-                  <td><StatusBadge status={status.replaceAll("_", " ")} /></td>
-                  <td>
-                    {finance?.id ? (
-                      <Link href={`/finance/transactions/${finance.id}`} className="link-secondary">{finance.transaction_status ?? "posted"}</Link>
-                    ) : (
-                      <span className={collection.actual_cash_collected !== null && collection.actual_cash_collected !== undefined ? "text-sm font-medium text-amber-700" : "text-sm text-slate-500"}>
-                        {collection.actual_cash_collected !== null && collection.actual_cash_collected !== undefined ? "Finance link missing" : "Pending count"}
-                      </span>
-                    )}
-                  </td>
-                  <td>
-                    <div className="flex flex-wrap gap-2">
-                      <Link className="btn-secondary px-3 py-2" href={`/cash-collections/${collection.id}`}>Open</Link>
-                      {canReviewMoney && status !== "voided" ? <Link className="btn-secondary px-3 py-2" href={`/cash-collections/${collection.id}/edit`}>Edit</Link> : null}
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </DataTable>
-          <PaginationControls basePath="/cash-collections" searchParams={params} page={page} pageSize={pageSize} totalCount={count ?? 0} itemLabel="cash collections" />
-        </div>
-      )}
-    </>
+    <div className="space-y-6">
+      <PageHeader title="Cash Custody Control" subtitle="Every bag moves through removal, independent storage handoff, denomination count, combined-total reconciliation, and bank receipt. Cash is never tied to route completion." action={actions} />
+      {errorMessage ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{errorMessage}</div> : null}
+      {successMessage ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">{successMessage}</div> : null}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <SectionCard><div className="text-sm text-slate-500">Counted, not yet banked</div><div className="mt-2 text-2xl font-semibold">{lyd(totalCountedUnbanked)}</div></SectionCard>
+        <SectionCard><div className="text-sm text-slate-500">Net missing for filters</div><div className={`mt-2 text-2xl font-semibold ${totalMissing > 0 ? "text-rose-700" : ""}`}>{lyd(totalMissing)}</div><div className="mt-1 text-xs text-slate-500">Combined expected minus counted across {combinedPosition.batchCount} verified batch{combinedPosition.batchCount === 1 ? "" : "es"}; overages offset shortages</div></SectionCard>
+        <SectionCard><div className="text-sm text-slate-500">Overdue / exceptions</div><div className={`mt-2 text-2xl font-semibold ${overdueCount ? "text-amber-700" : ""}`}>{overdueCount}</div></SectionCard>
+        <SectionCard><div className="text-sm text-slate-500">Owner decisions required</div><div className={`mt-2 text-2xl font-semibold ${ownerReviewCount ? "text-rose-700" : ""}`}>{ownerReviewCount}</div></SectionCard>
+      </div>
+      <section className="surface-card"><form className="grid gap-3 md:grid-cols-3 xl:grid-cols-7"><input type="hidden" name="pageSize" value={pageSize} /><select name="status" defaultValue={statusParam ?? ""} className="field-input"><option value="">All custody stages</option>{custodyStatuses.map((status) => <option key={status} value={status}>{cashCustodyStatusLabel(status)}</option>)}</select><select name="machine_id" defaultValue={machineParam ?? ""} className="field-input"><option value="">All machines</option>{(machines ?? []).map((machine: any) => <option key={machine.id} value={machine.id}>{formatMachineDisplayName(machine, { includeArea: true })}</option>)}</select><select name="operator_id" defaultValue={operatorParam ?? ""} className="field-input"><option value="">All collectors</option>{(operators ?? []).map((operator: any) => <option key={operator.id} value={operator.id}>{operator.full_name}</option>)}</select><input name="date_from" type="date" defaultValue={dateFromParam ?? ""} className="field-input" /><input name="date_to" type="date" defaultValue={dateToParam ?? ""} className="field-input" /><button className="btn-primary">Filter</button><Link href="/cash-collections" className="btn-secondary">Reset</Link></form></section>
+      {!rows.length ? <EmptyState title="No cash batches found" body="Record a sealed removal or change the filters." action={canRecordCashRemoval(context) ? <PrimaryButton href="/cash-collections/new">Record removal</PrimaryButton> : undefined} /> : <>
+        <MobileCardList>{rows.map((row: any) => { const alerts = getCashCustodyAlerts(row); const shortage = missingCashAmount(row.actual_cash_collected, row.vms_expected_cash); return <MobileRecordCard key={row.id} className={alerts.some((alert) => alert.severity === "critical") ? "border-rose-200 bg-rose-50/30" : alerts.length ? "border-amber-200 bg-amber-50/30" : ""}><div className="flex items-start justify-between gap-3"><div><h2 className="font-semibold">Bag {row.cash_bag_id ?? row.id.slice(0, 8)}</h2><p className="mt-1 text-xs text-slate-500">{machineSummary(row)}</p></div><StatusBadge status={row.custody_status} /></div><div className="mt-4 grid grid-cols-2 gap-3"><MobileField label="Counted">{money(row.actual_cash_collected)}</MobileField><MobileField label="Missing">{money(shortage)}</MobileField><MobileField label="Removed">{formatDate(row.collected_at)}</MobileField><MobileField label="Collector">{row.operator?.full_name ?? "—"}</MobileField></div>{alerts.length ? <p className="mt-3 text-sm font-semibold text-rose-700">{alerts[0].label}</p> : null}<Link href={`/cash-collections/${row.id}`} className="btn-secondary mt-4 w-full">Open custody chain</Link></MobileRecordCard>; })}</MobileCardList>
+        <DataTable className="hidden md:block" headers={["Bag / machines", "Collector", "Removed", "Counted", "Missing", "Stage", "Control alert", "Action"]}>{rows.map((row: any) => { const alerts = getCashCustodyAlerts(row); const shortage = missingCashAmount(row.actual_cash_collected, row.vms_expected_cash); return <tr key={row.id} className={alerts.some((alert) => alert.severity === "critical") ? "bg-rose-50/50" : alerts.length ? "bg-amber-50/50" : ""}><td><div className="font-semibold">{row.cash_bag_id ?? row.id.slice(0, 8)}</div><div className="text-xs text-slate-500">{machineSummary(row)}</div></td><td>{row.operator?.full_name ?? "—"}</td><td>{formatDate(row.collected_at)}</td><td>{money(row.actual_cash_collected)}</td><td><span className={shortage && shortage > 0 ? "font-semibold text-rose-700" : ""}>{money(shortage)}</span></td><td><StatusBadge status={row.custody_status} /></td><td>{alerts.length ? <span className="font-semibold text-rose-700">{alerts[0].label}</span> : "—"}</td><td><Link href={`/cash-collections/${row.id}`} className="btn-secondary px-3 py-2">Open</Link></td></tr>; })}</DataTable>
+        <PaginationControls basePath="/cash-collections" searchParams={params} page={page} pageSize={pageSize} totalCount={pageResult.count ?? 0} itemLabel="cash batches" />
+      </>}
+    </div>
   );
 }

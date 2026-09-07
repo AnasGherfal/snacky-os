@@ -36,6 +36,12 @@ export const appPermissions = [
   "locations.pipeline.manage",
   "finance.view",
   "finance.edit",
+  "cash.record",
+  "cash.receive",
+  "cash.count",
+  "cash.reconcile",
+  "cash.variance_approve",
+  "cash.bank",
   "investor.view",
   "reports.view",
   "team.manage",
@@ -101,6 +107,8 @@ const rolePermissions = {
     "locations.pipeline.manage",
     "finance.view",
     "finance.edit",
+    "cash.record",
+    "cash.receive",
     "vms.import",
     "vms.mapping.manage",
     "vms_import.view",
@@ -116,6 +124,7 @@ const rolePermissions = {
     "refills.create",
     "issues.create",
     "products.view_limited",
+    "cash.record",
   ],
   warehouse: [
     "products.view",
@@ -125,6 +134,7 @@ const rolePermissions = {
     "storage.view",
     "storage.location.manage",
     "storage.movement.view",
+    "cash.receive",
     "purchase_items.view",
     "purchases.view",
     "purchases.create",
@@ -144,6 +154,11 @@ const rolePermissions = {
   finance: [
     "finance.view",
     "finance.edit",
+    "cash.record",
+    "cash.receive",
+    "cash.count",
+    "cash.reconcile",
+    "cash.bank",
     "purchase_items.view",
     "purchases.view",
   ],
@@ -231,6 +246,30 @@ export function canViewFinancials(user: AuthUserContext | null | undefined) {
 
 export function canEditFinancialTransactions(user: AuthUserContext | null | undefined) {
   return hasPermission(user, "finance.edit");
+}
+
+export function canRecordCashRemoval(user: AuthUserContext | null | undefined) {
+  return hasPermission(user, "cash.record") || hasPermission(user, "finance.edit");
+}
+
+export function canReceiveCashStorage(user: AuthUserContext | null | undefined) {
+  return hasPermission(user, "cash.receive");
+}
+
+export function canCountCash(user: AuthUserContext | null | undefined) {
+  return hasPermission(user, "cash.count");
+}
+
+export function canReconcileCash(user: AuthUserContext | null | undefined) {
+  return hasPermission(user, "cash.reconcile");
+}
+
+export function canApproveCashVariance(user: AuthUserContext | null | undefined) {
+  return hasPermission(user, "cash.variance_approve");
+}
+
+export function canBankCash(user: AuthUserContext | null | undefined) {
+  return hasPermission(user, "cash.bank");
 }
 
 export function canManagePayroll(input: RoleInput) {
@@ -362,10 +401,19 @@ export function canAccessPath(user: AuthUserContext | null | undefined, pathname
   if (pathname === "/finance/transactions/new" || pathname.startsWith("/finance/transactions/new/") || /^\/finance\/transactions\/[^/]+\/edit(?:\/|$)/.test(pathname)) {
     return hasPermission(user, "finance.edit");
   }
-  if (pathname === "/cash-collections/new" || pathname.startsWith("/cash-collections/new/") || /^\/cash-collections\/[^/]+\/edit(?:\/|$)/.test(pathname)) {
-    return hasPermission(user, "finance.edit");
+  if (pathname === "/cash-collections/new" || pathname.startsWith("/cash-collections/new/")) {
+    return canRecordCashRemoval(user);
   }
-  if (matchesPrefix(pathname, ["/finance", "/cash-collections"])) return hasPermission(user, "finance.view");
+  if (/^\/cash-collections\/[^/]+\/edit(?:\/|$)/.test(pathname)) {
+    return hasPermission(user, "finance.view") || hasPermission(user, "cash.record") || hasPermission(user, "cash.receive");
+  }
+  if (/^\/cash-collections\/[^/]+\/?$/.test(pathname)) {
+    return hasPermission(user, "finance.view") || hasPermission(user, "cash.record") || hasPermission(user, "cash.receive");
+  }
+  if (pathname === "/cash-deposits/new" || pathname.startsWith("/cash-deposits/new/")) return canBankCash(user);
+  if (matchesPrefix(pathname, ["/cash-deposits"])) return canBankCash(user) || hasPermission(user, "finance.view");
+  if (matchesPrefix(pathname, ["/cash-collections"])) return hasPermission(user, "finance.view") || hasPermission(user, "cash.receive");
+  if (matchesPrefix(pathname, ["/finance"])) return hasPermission(user, "finance.view");
   if (matchesPrefix(pathname, ["/payroll"])) return canManagePayroll(user);
 
   const selfTeamProfile = pathname.match(/^\/team\/([^/]+)(?:\/money)?\/?$/);

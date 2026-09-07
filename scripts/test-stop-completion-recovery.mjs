@@ -49,12 +49,11 @@ test("stop completion verifies protected side effects and commits inventory as t
   assert.match(uploadProof, /objectName = `\$\{safeFileSegment\(stopId, "stop"\)\}-\$\{photoDigest\}/);
 });
 
-test("cash, issues, and refill proof use stable retry identities", () => {
+test("cash is rejected while issues and refill proof use stable retry identities", () => {
   const completeStop = functionSource(read("src/lib/operator-actions.ts"), "completeStop");
 
-  assert.match(completeStop, /stableUuid\(`route-stop-cash-collection:\$\{stopId\}`\)/);
-  assert.match(completeStop, /from\("cash_collections"\)[\s\S]*?\.upsert\(cashPayload, \{ onConflict: "id" \}\)/);
-  assert.match(completeStop, /existingCashCollection\.counted_at/);
+  assert.match(completeStop, /if \(cashCollected \|\| cashBagId\?\.trim\(\)\)[\s\S]*?Cash removal is not part of route completion/);
+  assert.doesNotMatch(completeStop, /from\("cash_collections"\)/);
   assert.match(completeStop, /stableUuid\(`route-stop-issue:\$\{stopId\}`\)/);
   assert.match(completeStop, /from\("issues"\)[\s\S]*?\.upsert\([\s\S]*?\{ onConflict: "id" \}\)/);
   assert.match(completeStop, /stableUuid\(`route-stop-refill-history:\$\{stopId\}`\)/);
@@ -66,12 +65,11 @@ test("cash, issues, and refill proof use stable retry identities", () => {
 test("workflow status is the last required commit and is handled atomically", () => {
   const completeStop = functionSource(read("src/lib/operator-actions.ts"), "completeStop");
   const inventoryCommit = completeStop.indexOf('"snacky_commit_route_stop_inventory_v1"');
-  const cashSave = completeStop.indexOf('.from("cash_collections")', inventoryCommit);
   const proofSave = completeStop.lastIndexOf('.from("machine_refill_history")');
   const workflowCommit = completeStop.indexOf('"snacky_finalize_route_stop_workflow_v1"');
 
-  assert.ok(inventoryCommit >= 0 && cashSave > inventoryCommit);
-  assert.ok(proofSave > cashSave && workflowCommit > proofSave);
+  assert.ok(inventoryCommit >= 0 && proofSave > inventoryCommit && workflowCommit > proofSave);
+  assert.doesNotMatch(completeStop, /\.from\("cash_collections"\)/);
   assert.doesNotMatch(completeStop, /\.from\("route_stops"\)\s*\.update\(/);
 
   const inventoryMigration = read("supabase/migrations/20260905091000_route_stop_inventory_commit.sql");
@@ -109,7 +107,6 @@ test("workflow status is the last required commit and is handled atomically", ()
   assert.doesNotMatch(inventoryBody, /auth\.uid\(\)|snacky_current_profile_has_any_role|snacky_operator_can_access_route|snacky_current_team_member_id/);
 
   assert.match(completeStop, /const workflowPayloadHash = createHash\("sha256"\)/);
-  assert.match(completeStop, /cash_collected: Boolean\(cashCollected\)/);
   assert.match(completeStop, /issue: normalizedIssue/);
   assert.match(completeStop, /const workflowSubmissionId = `route-stop-workflow:v1:\$\{workflowPayloadHash\}`/);
   assert.match(completeStop, /p_submission_id: workflowSubmissionId/);
@@ -170,7 +167,7 @@ test("completion activity logs are idempotent across retries", () => {
 
   assert.match(completeStop, /idempotencyKey: `route-stop:\$\{stopId\}:complete`/);
   assert.match(completeStop, /idempotencyKey: `route-stop:\$\{stopId\}:refill-proof`/);
-  assert.match(completeStop, /idempotencyKey: `route-stop:\$\{stopId\}:cash:\$\{cashCollection\.id\}`/);
+  assert.doesNotMatch(completeStop, /idempotencyKey: `route-stop:\$\{stopId\}:cash:/);
   assert.match(activityLog, /idempotencyKey\?: string \| null/);
   assert.match(activityLog, /stableActivityLogId/);
   assert.match(activityLog, /\.upsert\(payload, \{ onConflict: "id", ignoreDuplicates: true \}\)/);

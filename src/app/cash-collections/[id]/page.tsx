@@ -2,167 +2,313 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import type { ReactNode } from "react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { LocalDraftForm } from "@/components/LocalDraft";
-import { FormField, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
+import {
+  CashCountForm,
+  CashReconciliationForms,
+  CashStorageReceiptForm,
+  CashVarianceResolutionForm,
+  type CountWitnessOption,
+} from "@/components/CashCustodyForms";
+import { PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
-import { canAccessPath, canViewFinancials } from "@/lib/authz";
-import { getCashCollectionStatus } from "@/lib/cash-collections";
-import { confirmCashCollectionCount, voidCashCollection } from "@/lib/cash-actions";
+import {
+  canAccessPath,
+  canApproveCashVariance,
+  canBankCash,
+  canCountCash,
+  canReceiveCashStorage,
+  canReconcileCash,
+  canViewFinancials,
+} from "@/lib/authz";
+import {
+  calculateCashExpectation,
+  confirmCashCollectionCount,
+  receiveCashIntoStorage,
+  reconcileCashCollection,
+  resolveCashVariance,
+  voidCashCollection,
+} from "@/lib/cash-actions";
+import { cashCustodyStatusLabel, getCashCustodyAlerts, missingCashAmount } from "@/lib/cash-custody";
 import { lyd } from "@/lib/format";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
+import { CASH_EVIDENCE_BUCKET, privateStorageObjectUrl } from "@/lib/storage-buckets";
 
-function formatDate(value: string | null) {
-  if (!value) return "-";
-  return new Intl.DateTimeFormat("en-US", { dateStyle: "full", timeStyle: "short" }).format(new Date(value));
+function formatDate(value: string | null | undefined) {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Africa/Tripoli",
+  }).format(new Date(value));
 }
 
 function money(value: number | string | null | undefined) {
-  return value === null || value === undefined ? "-" : lyd(Number(value));
+  return value === null || value === undefined ? "—" : lyd(Number(value));
 }
 
 function DetailItem({ label, children }: { label: string; children: ReactNode }) {
+  return <div><dt className="text-sm text-slate-500">{label}</dt><dd className="mt-1 break-words font-medium text-slate-900">{children}</dd></div>;
+}
+
+function stageIndex(status: string) {
+  return ["removed", "in_storage", "counted", "reconciled", "banked"].indexOf(status);
+}
+
+function CustodyStages({ status }: { status: string }) {
+  const stages = [
+    ["removed", "Removed"],
+    ["in_storage", "Stored"],
+    ["counted", "Counted"],
+    ["reconciled", "Reconciled"],
+    ["banked", "Banked"],
+  ];
+  const current = stageIndex(status);
   return (
-    <div>
-      <dt className="text-sm text-slate-500">{label}</dt>
-      <dd className="mt-1 font-medium text-slate-900">{children}</dd>
-    </div>
+    <ol className="grid gap-2 sm:grid-cols-5" aria-label="Cash custody stages">
+      {stages.map(([key, label], index) => {
+        const complete = status !== "voided" && index <= current;
+        return (
+          <li key={key} className={`rounded-lg border p-3 text-center text-sm font-semibold ${complete ? "border-emerald-200 bg-emerald-50 text-emerald-900" : status === "voided" ? "border-rose-200 bg-rose-50 text-rose-800" : "border-slate-200 bg-slate-50 text-slate-500"}`}>
+            <div className="text-xs font-bold">{complete ? "✓" : index + 1}</div>
+            <div className="mt-1">{label}</div>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
+
+function machineSummary(machineLinks: any[]) {
+  if (machineLinks.length === 1) return formatMachineDisplayName(machineLinks[0]?.machine ?? null, { includeArea: true });
+  if (machineLinks.length > 1) return `${machineLinks.length} machines in one sealed batch`;
+  return "Cash custody batch";
+}
+
+const eventLabels: Record<string, string> = {
+  removed: "Cash removed and bag sealed",
+  stored: "Bag received into storage",
+  counted: "Bag counted by denomination",
+  expectation_calculated: "VMS expectation calculated",
+  reconciled: "Combined total reconciled",
+  variance_flagged: "Owner review required",
+  variance_resolved: "Variance resolved by owner/admin",
+  banked: "Cash included in bank deposit",
+  bank_deposit_voided: "Bank deposit voided",
+  voided: "Cash batch voided",
+};
 
 export default async function CashCollectionDetailPage({
   params,
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; success?: string }>;
 }) {
   const { id } = await params;
-  const { error = "" } = await searchParams;
+  const messages = await searchParams;
   const profile = await getCurrentProfile();
-  if (!profile || !canAccessPath({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status }, "/cash-collections")) {
-    redirect("/unauthorized");
-  }
-  const canReviewMoney = canViewFinancials({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status });
+  const context = profile ? {
+    id: profile.id,
+    role: profile.role,
+    roles: profile.roles,
+    canAddProducts: profile.can_add_products,
+    teamMemberId: profile.team_member_id,
+    activeStatus: profile.active_status,
+  } : null;
+  if (!profile || !canAccessPath(context, `/cash-collections/${id}`)) redirect("/unauthorized");
 
+  const canSeeMoney = canViewFinancials(context);
+  const canReceive = canReceiveCashStorage(context);
+  const canCount = canCountCash(context);
+  const canReconcile = canReconcileCash(context);
+  const canResolve = canApproveCashVariance(context);
+  const canBank = canBankCash(context);
+  const backHref = canSeeMoney || canReceive ? "/cash-collections" : "/operator/routes";
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) notFound();
 
-  const [{ data: collection }, { data: finance }] = await Promise.all([
-    supabase
-      .from("cash_collections")
-      .select(
-        "id, route_id, machine_id, operator_id, collected_at, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, counted_at, counted_by, voided_at, void_reason, notes, machine:machines(id, name, machine_code, location:locations(id, name)), operator:team_members!cash_collections_operator_id_fkey(id, full_name), counted_by_member:team_members!cash_collections_counted_by_fkey(id, full_name), route:routes(id, route_date, status)",
-      )
-      .eq("id", id)
-      .single(),
-    supabase
-      .from("financial_transactions")
-      .select("id, transaction_status, signed_amount, transaction_date, related_cash_collection_id, linked_cash_collection_id, source_type, source_id")
-      .or(`related_cash_collection_id.eq.${id},linked_cash_collection_id.eq.${id},and(source_type.eq.cash_collection,source_id.eq.${id})`)
-      .order("transaction_date", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-  ]);
+  if (!canSeeMoney) {
+    const { data: receipt, error: receiptError } = await supabase
+      .from("cash_removal_receipts")
+      .select("cash_collection_id, operator_id, cash_bag_id, collected_at, custody_status, storage_received_at, storage_received_by, storage_location, removal_evidence_path, removal_evidence_file_name, removal_notes, operator:team_members!cash_removal_receipts_operator_id_fkey(id, full_name), receiver:team_members!cash_removal_receipts_storage_received_by_fkey(id, full_name), machine_links:cash_removal_receipt_machines(removal_type, compartments, machine:machines(id, name, machine_code, location:locations(id, name)))")
+      .eq("cash_collection_id", id)
+      .maybeSingle();
+    if (receiptError) console.error("[cash] Failed to load amount-free custody receipt", receiptError);
+    if (!receipt) notFound();
+    const row: any = receipt;
+    const machines = (row.machine_links ?? []) as any[];
+    const summary = machineSummary(machines);
+    const mayAcknowledge = canReceive && row.operator_id !== profile.team_member_id;
+    const removalEvidenceUrl = privateStorageObjectUrl(CASH_EVIDENCE_BUCKET, row.removal_evidence_path);
 
-  if (!collection) notFound();
-
-  const collectionRow: any = collection;
-  const variance = collectionRow.variance === null || collectionRow.variance === undefined ? null : Number(collectionRow.variance);
-  const status = getCashCollectionStatus(collectionRow.review_status, variance);
-  const needsCount = status === "pending_collection" || status === "collected_pending_count";
-
-  return (
-    <>
+    return (
       <div className="space-y-6">
         <PageHeader
-          title="Cash Collection"
-          subtitle={`${formatMachineDisplayName(collectionRow.machine ?? null, { includeArea: true })} collected on ${formatDate(collectionRow.collected_at)}`}
-          breadcrumbs={[
-            { label: "Finance", href: "/finance" },
-            { label: "Cash Collections", href: "/cash-collections" },
-            { label: formatMachineDisplayName(collectionRow.machine ?? null, { includeArea: true }) },
-          ]}
-          action={
-            <div className="flex flex-wrap gap-2">
-              <SecondaryButton href="/cash-collections">Back to cash</SecondaryButton>
-              <SecondaryButton href="/finance/operations">Monthly reconciliation</SecondaryButton>
-              {canReviewMoney && status !== "voided" ? <SecondaryButton href={`/cash-collections/${id}/edit`}>Edit</SecondaryButton> : null}
-              {canReviewMoney && status !== "voided" ? (
-                <ConfirmDialog
-                  action={voidCashCollection}
-                  triggerLabel="Void collection"
-                  title="Void cash collection?"
-                  description="The cash collection stays in history and its linked finance transaction will be voided so it no longer affects balance."
-                  confirmLabel="Void collection"
-                  buttonClassName="btn-danger"
-                  confirmButtonClassName="btn-danger"
-                  hiddenFields={[{ name: "id", value: id }]}
-                />
-              ) : null}
-            </div>
-          }
+          title={`Cash Bag ${row.cash_bag_id}`}
+          subtitle={`${summary} — no cash amount is visible in this operational receipt.`}
+          breadcrumbs={[{ label: canReceive ? "Cash Custody" : "Operations", href: backHref }, { label: row.cash_bag_id }]}
+          action={<SecondaryButton href={backHref}>Back</SecondaryButton>}
         />
-        {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{error}</div> : null}
-
-        <div className="grid gap-4 lg:grid-cols-4">
-          <SectionCard><div className="text-sm text-slate-500">Counted amount</div><div className="mt-2 text-2xl font-semibold text-slate-900">{money(collectionRow.actual_cash_collected)}</div></SectionCard>
-          <SectionCard><div className="text-sm text-slate-500">Cash removed</div><div className="mt-2 text-base font-semibold text-slate-900">{formatDate(collectionRow.collected_at)}</div></SectionCard>
-          <SectionCard><div className="text-sm text-slate-500">Counted at</div><div className="mt-2 text-base font-semibold text-slate-900">{formatDate(collectionRow.counted_at)}</div></SectionCard>
-          <SectionCard><div className="text-sm text-slate-500">Status</div><div className="mt-3"><StatusBadge status={status.replaceAll("_", " ")} /></div></SectionCard>
-        </div>
-
-        <div className={`rounded-lg border p-4 text-sm ${status === "voided" ? "border-rose-200 bg-rose-50 text-rose-800" : needsCount ? "border-amber-200 bg-amber-50 text-amber-900" : "border-sky-200 bg-sky-50 text-sky-950"}`}>
-          {status === "voided"
-            ? `This collection was voided. ${collectionRow.void_reason ?? ""}`
-            : needsCount
-              ? "Operator collection has been recorded. Finance still needs to count and confirm the envelope before balance changes."
-              : "This pickup has been counted and posted to finance. Expected cash and shortage/overage are calculated for the complete machine month in Finance Operations, not for this individual pickup."}
-        </div>
-
+        {messages.error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{messages.error}</div> : null}
+        {messages.success ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">{messages.success}</div> : null}
+        <SectionCard><CustodyStages status={row.custody_status} /></SectionCard>
         <div className="grid gap-6 lg:grid-cols-[1fr_420px]">
           <SectionCard>
-            <h2 className="mb-4 text-lg font-semibold">Collection details</h2>
-            <dl className="grid gap-4 sm:grid-cols-2">
-              <DetailItem label="Machine">{formatMachineDisplayName(collectionRow.machine ?? null, { includeArea: true })}<div className="text-sm text-slate-500">{collectionRow.machine?.machine_code ?? "-"}</div></DetailItem>
-              <DetailItem label="Collected by">{collectionRow.operator?.full_name ?? "Unassigned"}</DetailItem>
-              <DetailItem label="Route">{collectionRow.route?.id ? <Link href={`/routes/${collectionRow.route.id}`} className="link-secondary">{collectionRow.route.route_date}</Link> : "-"}</DetailItem>
-              <DetailItem label="Route status">{collectionRow.route?.status ? <StatusBadge status={collectionRow.route.status} /> : "-"}</DetailItem>
-              <DetailItem label="Cash bag">{collectionRow.cash_bag_id ?? "-"}</DetailItem>
-              <DetailItem label="Counted by">{collectionRow.counted_by_member?.full_name ?? "-"}</DetailItem>
-              <DetailItem label="Counted at">{formatDate(collectionRow.counted_at)}</DetailItem>
-              <DetailItem label="Finance transaction status">
-                {finance?.id ? <Link href={`/finance/transactions/${finance.id}`} className="link-secondary">View finance transaction ({finance.transaction_status ?? "active"})</Link> : "Not posted yet"}
-              </DetailItem>
+            <div className="flex items-center justify-between gap-3"><h2 className="text-lg font-semibold">Amount-free custody receipt</h2><StatusBadge status={row.custody_status} label={cashCustodyStatusLabel(row.custody_status)} /></div>
+            <dl className="mt-5 grid gap-4 sm:grid-cols-2">
+              <DetailItem label="Bag / seal ID">{row.cash_bag_id}</DetailItem>
+              <DetailItem label="Removed at">{formatDate(row.collected_at)}</DetailItem>
+              <DetailItem label="Collected by">{row.operator?.full_name ?? "—"}</DetailItem>
+              <DetailItem label="Storage received at">{formatDate(row.storage_received_at)}</DetailItem>
+              <DetailItem label="Received by">{row.receiver?.full_name ?? "—"}</DetailItem>
+              <DetailItem label="Storage location">{row.storage_location ?? "—"}</DetailItem>
+              <DetailItem label="Removal evidence">{removalEvidenceUrl ? <Link className="link-secondary" href={removalEvidenceUrl} target="_blank">Open sealed-bag photo</Link> : "—"}</DetailItem>
+              <DetailItem label="Route">Not connected to a route</DetailItem>
             </dl>
             <div className="mt-6">
-              <div className="text-sm text-slate-500">Notes</div>
-              <p className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">{collectionRow.notes || "No notes recorded."}</p>
+              <div className="text-sm text-slate-500">Machines and compartments</div>
+              <div className="mt-2 space-y-2">
+                {machines.map((entry, index) => <div key={entry.machine?.id ?? index} className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm"><div className="font-semibold text-slate-900">{formatMachineDisplayName(entry.machine ?? null, { includeArea: true })}</div><div className="mt-1 text-slate-600">{entry.removal_type === "partial" ? "Partial removal" : "Fully emptied"} · {(entry.compartments ?? []).join(", ")}</div></div>)}
+              </div>
             </div>
           </SectionCard>
-
           <SectionCard>
-            <h2 className="text-lg font-semibold">Count and confirm</h2>
-            <p className="mt-1 text-sm text-slate-500">Enter only the physical amount counted from this envelope. Finance posts money-in after confirmation.</p>
-            {canReviewMoney && status !== "voided" ? (
-              <LocalDraftForm action={confirmCashCollectionCount} formType="cash-collection-count" draftKeyParts={[collectionRow.id]} className="mt-5 space-y-4">
-                <input type="hidden" name="id" value={collectionRow.id} />
-                <FormField label="Counted amount LYD" required hint="This pickup will be added to the machine's other pickups for the monthly close.">
-                  <input name="counted_amount_lyd" type="number" min="0" step="0.01" required defaultValue={collectionRow.actual_cash_collected ?? ""} className="field-input" />
-                </FormField>
-                <FormField label="Cash bag / envelope ID">
-                  <input name="cash_bag_id" defaultValue={collectionRow.cash_bag_id ?? ""} className="field-input" />
-                </FormField>
-                <FormField label="Count notes">
-                  <textarea name="notes" rows={4} defaultValue={collectionRow.notes ?? ""} className="field-input" />
-                </FormField>
-                <button type="submit" className="btn-primary w-full">Confirm count and post finance</button>
-              </LocalDraftForm>
+            <h2 className="text-lg font-semibold">Storage handoff</h2>
+            {row.custody_status === "removed" && mayAcknowledge ? (
+              <CashStorageReceiptForm action={receiveCashIntoStorage} id={id} clientSubmissionId={crypto.randomUUID()} />
+            ) : row.custody_status === "removed" && canReceive ? (
+              <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">The collector cannot acknowledge their own handoff. Ask a different warehouse, supervisor, finance, owner, or admin user to receive this sealed bag.</p>
             ) : (
-              <p className="mt-4 text-sm text-slate-500">No count action is available for this collection.</p>
+              <p className="mt-4 text-sm text-slate-600">{row.custody_status === "voided" ? "This receipt is voided." : "Handoff is complete. Finance continues the count, reconciliation, and banking stages without exposing amounts here."}</p>
             )}
           </SectionCard>
         </div>
       </div>
-    </>
+    );
+  }
+
+  const [{ data: collection, error: collectionError }, { data: events }, { data: allocations }, { data: finance }, { data: activeWitnesses }] = await Promise.all([
+    supabase
+      .from("cash_collections")
+      .select("id, route_id, machine_id, operator_id, collected_at, vms_expected_cash, actual_cash_collected, variance, review_status, custody_status, reconciliation_status, cash_bag_id, storage_received_at, storage_received_by, storage_location, storage_seal_condition, storage_notes, counted_at, counted_by, count_seal_condition, count_witnessed_by, count_denominations, count_other_amount_lyd, expected_source, expected_calculated_at, reconciled_at, reconciled_by, reconciliation_note, variance_resolution, banked_amount_lyd, voided_at, void_reason, notes, operator:team_members!cash_collections_operator_id_fkey(id, full_name), storage_receiver:team_members!cash_collections_storage_received_by_fkey(id, full_name), counter:team_members!cash_collections_counted_by_fkey(id, full_name), count_witness:team_members!cash_collections_count_witnessed_by_fkey(id, full_name), reconciler:team_members!cash_collections_reconciled_by_fkey(id, full_name), machine_links:cash_collection_machines(machine_id, removal_type, compartments, interval_start_at, interval_end_at, expectation_status, expectation_source, vms_sales_count, machine:machines(id, name, machine_code, location:locations(id, name)))")
+      .eq("id", id)
+      .maybeSingle(),
+    supabase
+      .from("cash_collection_events")
+      .select("id, event_type, event_at, amount_lyd, seal_condition, evidence_storage_path, evidence_file_name, notes, metadata, actor:team_members!cash_collection_events_actor_team_member_id_fkey(id, full_name)")
+      .eq("cash_collection_id", id)
+      .order("event_at", { ascending: true }),
+    supabase
+      .from("cash_bank_deposit_allocations")
+      .select("id, amount_lyd, deposit:cash_bank_deposits(id, deposited_at, deposit_reference, destination_account, status)")
+      .eq("cash_collection_id", id),
+    supabase
+      .from("financial_transactions")
+      .select("id, transaction_status")
+      .or(`related_cash_collection_id.eq.${id},linked_cash_collection_id.eq.${id},and(source_type.eq.cash_collection,source_id.eq.${id})`)
+      .order("transaction_date", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from("team_members")
+      .select("id, full_name")
+      .eq("active", true)
+      .eq("active_status", "active")
+      .neq("id", profile.team_member_id ?? "00000000-0000-0000-0000-000000000000")
+      .order("full_name"),
+  ]);
+  if (collectionError) console.error("[cash] Failed to load custody batch", collectionError);
+  if (!collection) notFound();
+
+  const row: any = collection;
+  const machines = (row.machine_links ?? []) as any[];
+  const summary = machineSummary(machines);
+  const variance = row.variance === null || row.variance === undefined ? null : Number(row.variance);
+  const shortage = missingCashAmount(row.actual_cash_collected, row.vms_expected_cash);
+  const alerts = getCashCustodyAlerts(row);
+  const mayReceive = canReceive && row.operator_id !== profile.team_member_id;
+  const status = String(row.custody_status ?? "removed");
+  const countWitnesses: CountWitnessOption[] = (activeWitnesses ?? []).map((witness) => ({ id: witness.id, label: witness.full_name }));
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title={`Cash Bag ${row.cash_bag_id ?? id.slice(0, 8)}`}
+        subtitle={`${summary} removed ${formatDate(row.collected_at)}. Reconciliation is always on the combined batch total.`}
+        breadcrumbs={[{ label: "Cash Custody", href: "/cash-collections" }, { label: row.cash_bag_id ?? id.slice(0, 8) }]}
+        action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections">Back</SecondaryButton>{canBank ? <SecondaryButton href="/cash-deposits">Bank deposits</SecondaryButton> : null}{canResolve && status !== "voided" && status !== "banked" ? <ConfirmDialog action={voidCashCollection} triggerLabel="Void batch" title="Void this immutable cash batch?" description="Use this only for a duplicate or invalid record. History and evidence remain. Banked batches must have their deposit voided first." confirmLabel="Void batch" buttonClassName="btn-danger" confirmButtonClassName="btn-danger" hiddenFields={[{ name: "id", value: id }]} /> : null}</div>}
+      />
+      {messages.error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{messages.error}</div> : null}
+      {messages.success ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">{messages.success}</div> : null}
+      {alerts.map((alert, index) => <div key={`${alert.label}-${index}`} className={`rounded-lg border p-4 text-sm ${alert.severity === "critical" ? "border-rose-200 bg-rose-50 text-rose-900" : "border-amber-200 bg-amber-50 text-amber-900"}`}><div className="font-semibold">{alert.label}</div><p className="mt-1">{alert.detail}</p></div>)}
+
+      <SectionCard><CustodyStages status={status} /></SectionCard>
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <SectionCard><div className="text-sm text-slate-500">Combined VMS cash expected</div><div className="mt-2 text-2xl font-semibold text-slate-900">{money(row.vms_expected_cash)}</div><div className="mt-1 text-xs text-slate-500">{row.expected_source?.replaceAll("_", " ") ?? "Not calculated"}</div></SectionCard>
+        <SectionCard><div className="text-sm text-slate-500">Combined physical count</div><div className="mt-2 text-2xl font-semibold text-slate-900">{money(row.actual_cash_collected)}</div><div className="mt-1 text-xs text-slate-500">One total, never a made-up machine split</div></SectionCard>
+        <SectionCard><div className="text-sm text-slate-500">Missing cash</div><div className={`mt-2 text-2xl font-semibold ${shortage && shortage > 0 ? "text-rose-700" : "text-slate-900"}`}>{money(shortage)}</div><div className="mt-1 text-xs text-slate-500">{variance !== null && variance > 0 ? `Overage ${money(variance)}` : "Expected minus counted"}</div></SectionCard>
+        <SectionCard><div className="text-sm text-slate-500">Custody status</div><div className="mt-3"><StatusBadge status={status} label={cashCustodyStatusLabel(status)} /></div><div className="mt-2 text-xs text-slate-500">Reconciliation: {String(row.reconciliation_status ?? "pending").replaceAll("_", " ")}</div></SectionCard>
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-[1fr_430px]">
+        <div className="space-y-6">
+          <SectionCard>
+            <h2 className="text-lg font-semibold">Custody and combined-total details</h2>
+            <dl className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <DetailItem label="Bag / seal ID">{row.cash_bag_id ?? "Legacy record"}</DetailItem>
+              <DetailItem label="Removed at">{formatDate(row.collected_at)}</DetailItem>
+              <DetailItem label="Collected by">{row.operator?.full_name ?? "—"}</DetailItem>
+              <DetailItem label="Storage received">{formatDate(row.storage_received_at)}</DetailItem>
+              <DetailItem label="Received by">{row.storage_receiver?.full_name ?? "—"}</DetailItem>
+              <DetailItem label="Storage location">{row.storage_location ?? "—"}</DetailItem>
+              <DetailItem label="Storage seal">{row.storage_seal_condition ?? "—"}</DetailItem>
+              <DetailItem label="Counted at">{formatDate(row.counted_at)}</DetailItem>
+              <DetailItem label="Counted by">{row.counter?.full_name ?? "—"}</DetailItem>
+              <DetailItem label="Count witnessed by">{row.count_witness?.full_name ?? "—"}</DetailItem>
+              <DetailItem label="Count seal">{row.count_seal_condition ?? "—"}</DetailItem>
+              <DetailItem label="Reconciled at">{formatDate(row.reconciled_at)}</DetailItem>
+              <DetailItem label="Reconciled by">{row.reconciler?.full_name ?? "—"}</DetailItem>
+              <DetailItem label="Banked amount">{money(row.banked_amount_lyd)}</DetailItem>
+              <DetailItem label="Finance ledger">{finance?.id ? <Link href={`/finance/transactions/${finance.id}`} className="link-secondary">Open {finance.transaction_status ?? "active"} entry</Link> : "Not posted"}</DetailItem>
+              <DetailItem label="Route">{row.route_id ? "Legacy reference only" : "Not connected to a route"}</DetailItem>
+            </dl>
+            {(row.notes || row.storage_notes || row.reconciliation_note || row.void_reason) ? <div className="mt-6 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700"><div className="font-semibold text-slate-900">Notes and resolution</div>{row.notes ? <p className="mt-2">Removal: {row.notes}</p> : null}{row.storage_notes ? <p className="mt-2">Storage: {row.storage_notes}</p> : null}{row.reconciliation_note ? <p className="mt-2">Reconciliation: {row.reconciliation_note}</p> : null}{row.variance_resolution ? <p className="mt-2">Resolution category: {row.variance_resolution.replaceAll("_", " ")}</p> : null}{row.void_reason ? <p className="mt-2 text-rose-800">Void reason: {row.void_reason}</p> : null}</div> : null}
+          </SectionCard>
+
+          <SectionCard>
+            <h2 className="text-lg font-semibold">Machines included—diagnostics only</h2>
+            <p className="mt-1 text-sm text-slate-500">Machine intervals establish the VMS source. Snacky OS compares only their combined expected total with the one physical bag count.</p>
+            <div className="mt-4 space-y-3">
+              {machines.map((entry, index) => <div key={entry.machine_id ?? index} className="rounded-lg border border-slate-200 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="font-semibold text-slate-900">{formatMachineDisplayName(entry.machine ?? null, { includeArea: true })}</div><div className="mt-1 text-xs text-slate-500">{entry.removal_type === "partial" ? "Partial removal" : "Fully emptied"} · {(entry.compartments ?? []).join(", ")}</div></div><StatusBadge status={entry.expectation_status} /></div><div className="mt-3 text-xs text-slate-600">VMS interval: {formatDate(entry.interval_start_at)} → {formatDate(entry.interval_end_at)} · {entry.vms_sales_count ?? "—"} deduplicated sales</div></div>)}
+            </div>
+          </SectionCard>
+
+          <SectionCard>
+            <h2 className="text-lg font-semibold">Immutable custody history</h2>
+            <div className="mt-4 space-y-3">
+              {(events ?? []).map((event: any) => {
+                const evidenceUrl = privateStorageObjectUrl(CASH_EVIDENCE_BUCKET, event.evidence_storage_path);
+                return <div key={event.id} className="border-s border-slate-300 ps-4"><div className="flex flex-wrap items-center justify-between gap-2"><div className="font-semibold text-slate-900">{eventLabels[event.event_type] ?? event.event_type.replaceAll("_", " ")}</div><div className="text-xs text-slate-500">{formatDate(event.event_at)}</div></div><div className="mt-1 text-sm text-slate-600">By {event.actor?.full_name ?? "system"}{event.seal_condition ? ` · Seal ${event.seal_condition}` : ""}{event.amount_lyd !== null && event.amount_lyd !== undefined ? ` · ${money(event.amount_lyd)}` : ""}</div>{event.notes ? <p className="mt-1 text-sm text-slate-600">{event.notes}</p> : null}{evidenceUrl ? <Link href={evidenceUrl} target="_blank" className="mt-1 inline-block text-sm link-secondary">Open evidence: {event.evidence_file_name ?? "file"}</Link> : null}</div>;
+              })}
+              {!events?.length ? <p className="text-sm text-slate-500">No custody events recorded.</p> : null}
+            </div>
+          </SectionCard>
+
+          {(allocations ?? []).length ? <SectionCard><h2 className="text-lg font-semibold">Bank deposit links</h2><div className="mt-4 space-y-2">{(allocations ?? []).map((allocation: any) => { const deposit = Array.isArray(allocation.deposit) ? allocation.deposit[0] : allocation.deposit; return <div key={allocation.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 p-3 text-sm"><div><Link href={`/cash-deposits/${deposit?.id}`} className="font-semibold link-secondary">{deposit?.deposit_reference ?? "Deposit"}</Link><div className="text-xs text-slate-500">{formatDate(deposit?.deposited_at)} · {deposit?.destination_account}</div></div><div className="font-semibold">{money(allocation.amount_lyd)} · {deposit?.status}</div></div>; })}</div></SectionCard> : null}
+        </div>
+
+        <div className="space-y-6">
+          {status === "removed" && mayReceive ? <SectionCard><h2 className="text-lg font-semibold">1. Receive into storage</h2><p className="mt-1 text-sm text-slate-500">A different person verifies the seal, photographs the handoff, and records the exact safe location.</p><CashStorageReceiptForm action={receiveCashIntoStorage} id={id} clientSubmissionId={crypto.randomUUID()} /></SectionCard> : null}
+          {status === "removed" && canReceive && !mayReceive ? <SectionCard><h2 className="text-lg font-semibold">Independent handoff required</h2><p className="mt-3 text-sm text-amber-800">The collector cannot acknowledge their own storage handoff. A different authorized user must receive this bag.</p></SectionCard> : null}
+          {status === "in_storage" && canCount ? <SectionCard><h2 className="text-lg font-semibold">2. Count the stored bag</h2><p className="mt-1 text-sm text-slate-500">Count by denomination. Do not allocate mixed cash to machines. A second named person must witness the full count.</p>{countWitnesses.length ? <CashCountForm action={confirmCashCollectionCount} id={id} clientSubmissionId={crypto.randomUUID()} witnesses={countWitnesses} /> : <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Counting is blocked until another active team member is available to witness it.</p>}</SectionCard> : null}
+          {status === "counted" && row.reconciliation_status !== "variance_review" && canReconcile ? <SectionCard><h2 className="text-lg font-semibold">3. Reconcile the combined total</h2><p className="mt-1 text-sm text-slate-500">Automatic mode uses exact transactions between full machine emptying events. If raw VMS data is unavailable, use one independently verified batch total and document its source.</p><CashReconciliationForms calculateAction={calculateCashExpectation} reconcileAction={reconcileCashCollection} id={id} calculateSubmissionId={crypto.randomUUID()} reconcileSubmissionId={crypto.randomUUID()} /></SectionCard> : null}
+          {status === "counted" && row.reconciliation_status === "variance_review" && canResolve ? <SectionCard><h2 className="text-lg font-semibold text-rose-800">4. Owner variance decision</h2><p className="mt-1 text-sm text-slate-600">Missing cash is {money(shortage)}. Verify the total and evidence before accepting a cause. “Unknown” is not a resolution.</p><CashVarianceResolutionForm action={resolveCashVariance} id={id} clientSubmissionId={crypto.randomUUID()} /></SectionCard> : null}
+          {status === "reconciled" && canBank ? <SectionCard><h2 className="text-lg font-semibold">5. Bank the reconciled cash</h2><p className="mt-2 text-sm text-slate-600">This batch stays open until it is included in an exact bank deposit with a receipt. Several batches can be combined.</p><Link href="/cash-deposits/new" className="btn-primary mt-4 w-full">Create bank deposit</Link></SectionCard> : null}
+          {status === "banked" ? <SectionCard><h2 className="text-lg font-semibold text-emerald-800">Custody closed</h2><p className="mt-2 text-sm text-slate-600">The removal, storage handoff, count, reconciliation, and bank receipt are linked in one audit chain.</p></SectionCard> : null}
+          {status === "voided" ? <SectionCard><h2 className="text-lg font-semibold text-rose-800">Voided record</h2><p className="mt-2 text-sm text-slate-600">This record remains visible for audit and cannot be edited or reused.</p></SectionCard> : null}
+        </div>
+      </div>
+    </div>
   );
 }

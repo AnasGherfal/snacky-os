@@ -2208,7 +2208,7 @@ function completeStopPublicError(error: unknown) {
 /**
  * Completes a machine stop with refill data
  * Creates inventory movements: operator_bag -> machine
- * Creates cash collection record
+ * Cash removal is deliberately excluded and must use the custody workflow.
  */
 export async function completeStop({
   stopId,
@@ -2306,6 +2306,10 @@ export async function completeStop({
     const completionWorkflowClient = getSupabaseAdminClient();
     if (!completionWorkflowClient) {
       throw new Error("The protected stop-completion workflow is not configured.");
+    }
+
+    if (cashCollected || cashBagId?.trim()) {
+      throw new Error("Cash removal is not part of route completion. Save the route without cash, then use Remove Cash to create a sealed custody record.");
     }
 
     const { data: stop, error: stopError } = await supabase
@@ -2460,7 +2464,7 @@ export async function completeStop({
     }));
     // The receipt submission key is derived from the complete business
     // payload, not only the inventory quantities. That makes an exact retry
-    // recoverable after a browser remount while a changed cash/issue/notes
+    // recoverable after a browser remount while changed issue/notes
     // payload cannot steal an unfinished inventory receipt.
     const workflowPayloadHash = createHash("sha256")
       .update(JSON.stringify({
@@ -2470,8 +2474,6 @@ export async function completeStop({
         machine_id: machineId,
         fill_lines: [...rpcFillLines].sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
         machine_storage_lines: [...rpcMachineStorageLines].sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
-        cash_collected: Boolean(cashCollected),
-        cash_bag_id: cashCollected ? cashBagId?.trim() || null : null,
         notes: notes?.trim() || null,
         issue: normalizedIssue,
         machine_photo_reference: savedPhotoPath || savedPhotoUrl,
@@ -2496,20 +2498,6 @@ export async function completeStop({
         && terminalReceipt?.workflow_completed_at
         && terminalReceipt.latest_submission_id === workflowSubmissionId
       ) {
-        const { data: completedCashRows, error: completedCashError } = await completionWorkflowClient
-          .from("cash_collections")
-          .select("vms_expected_cash")
-          .eq("route_id", routeId)
-          .eq("machine_id", machineId)
-          .order("collected_at", { ascending: false })
-          .limit(1);
-        if (completedCashError) {
-          throwActionError(completedCashError, "Could not verify the completed stop cash record.");
-        }
-        const completedExpectedCash = completedCashRows?.[0]?.vms_expected_cash === null
-          || completedCashRows?.[0]?.vms_expected_cash === undefined
-          ? null
-          : Number(completedCashRows[0].vms_expected_cash);
         await logActivity({
           profile,
           action: "complete_stop",
@@ -2528,7 +2516,7 @@ export async function completeStop({
           idempotencyKey: `route-stop:${stopId}:complete`,
         });
         revalidateRouteWorkflow(routeId);
-        return actionSuccess({ expectedCash: completedExpectedCash, routeId, stopId });
+        return actionSuccess({ expectedCash: null, routeId, stopId });
       }
       throw new Error("This completed or cancelled route is read-only. The submitted stop payload was not applied.");
     }
@@ -2597,86 +2585,7 @@ export async function completeStop({
       logCarriedAfter.set(productId, Number(product.operator_bag_after ?? 0));
     });
 
-    // Get expected cash from latest VMS sales
-    const { data: sales, error: salesError } = await completionWorkflowClient
-      .from("vms_sales_snapshots")
-      .select("cash_sales_amount")
-      .eq("machine_id", machineId)
-      .eq("import_row_status", "imported")
-      .order("period_end", { ascending: false })
-      .limit(1);
-    if (salesError) throwActionError(salesError, "Could not load expected cash for this stop.");
-
-    const expectedCash = sales?.[0]?.cash_sales_amount === null || sales?.[0]?.cash_sales_amount === undefined
-      ? null
-      : Number(sales?.[0]?.cash_sales_amount ?? 0);
-
-    const { data: existingCashCollection, error: existingCashError } = await completionWorkflowClient
-      .from("cash_collections")
-      .select("id, route_id, machine_id, operator_id, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, collected_at, counted_at")
-      .eq("route_id", routeId)
-      .eq("machine_id", machineId)
-      .order("collected_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (existingCashError) throwActionError(existingCashError, "Could not verify the cash collection record.");
-
-    let cashCollection: {
-      id: string;
-      route_id: string | null;
-      machine_id: string | null;
-      operator_id: string | null;
-      vms_expected_cash: number | null;
-      actual_cash_collected: number | null;
-      variance: number | null;
-      review_status: string | null;
-      cash_bag_id: string | null;
-      collected_at: string | null;
-      counted_at: string | null;
-    } | null = null;
-
-    if (cashCollected) {
-      if (existingCashCollection?.review_status === "voided") {
-        throw new Error("The cash collection for this stop was voided. Ask finance to review it before retrying the stop.");
-      }
-
-      // Legacy uncounted rows can contain a default numeric zero, so only the
-      // workflow status/count timestamp proves that finance has counted it.
-      const cashAlreadyCounted = Boolean(
-        existingCashCollection
-        && (
-          existingCashCollection.counted_at
-          || ["counted_confirmed", "variance_review", "resolved"].includes(String(existingCashCollection.review_status ?? ""))
-        )
-      );
-      const cashPayload = {
-        id: existingCashCollection?.id ?? stableUuid(`route-stop-cash-collection:${stopId}`),
-        route_id: routeId,
-        machine_id: machineId,
-        operator_id: route.operator_id,
-        vms_expected_cash: existingCashCollection?.vms_expected_cash ?? expectedCash,
-        actual_cash_collected: cashAlreadyCounted ? existingCashCollection?.actual_cash_collected ?? null : null,
-        review_status: "collected_pending_count",
-        cash_bag_id: cashBagId?.trim() || null,
-        collected_at: existingCashCollection?.collected_at ?? completedAt,
-        notes,
-      };
-
-      // A counted row is finance-owned history. A completion retry must never
-      // reset it to pending or replace the counted amount.
-      if (cashAlreadyCounted) {
-        cashCollection = existingCashCollection;
-      } else {
-        const { data, error: cashError } = await completionWorkflowClient
-          .from("cash_collections")
-          .upsert(cashPayload, { onConflict: "id" })
-          .select("id, route_id, machine_id, operator_id, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, collected_at, counted_at")
-          .single();
-
-        if (cashError) throwActionError(cashError, "Could not save the cash collection record.");
-        cashCollection = data;
-      }
-    }
+    const expectedCash = null;
 
     let linkedIssueId: string | null = existingProof?.linked_issue_id
       ? String(existingProof.linked_issue_id)
@@ -2741,8 +2650,9 @@ export async function completeStop({
         machine_name: machineLabel,
         operator_id: route.operator_id,
         operator_name: operatorMember?.full_name ?? null,
-        cash_collected: cashCollected,
-        cash_bag_id: cashBagId?.trim() || null,
+        cash_collected: false,
+        cash_bag_id: null,
+        cash_handling: "separate_custody_workflow",
         notes: notes?.trim() || null,
         fill_status: fillStatus,
         filled_items: normalizedFilledItems,
@@ -2845,22 +2755,6 @@ export async function completeStop({
         metadata: { route_id: routeId, route_stop_id: stopId, machine_id: machineId, operator_id: route.operator_id },
         summary: `Saved ${fillStatus} machine refill proof`,
         idempotencyKey: `route-stop:${stopId}:refill-proof`,
-      });
-    }
-
-    if (cashCollection) {
-      await logActivity({
-        profile,
-        action: "collect_cash",
-        entityType: "cash_collection",
-        entityId: cashCollection.id,
-        entityLabel: `Cash ${cashCollection.id.slice(0, 8)}`,
-        afterData: cashCollection,
-        metadata: { route_id: routeId, machine_id: machineId, operator_id: route.operator_id },
-        summary: cashCollection.actual_cash_collected === null
-          ? "Operator marked cash collected; pending count"
-          : "Preserved the existing counted cash collection during stop retry",
-        idempotencyKey: `route-stop:${stopId}:cash:${cashCollection.id}`,
       });
     }
 

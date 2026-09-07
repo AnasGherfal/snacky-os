@@ -47,6 +47,7 @@
     "diagnose:finance": "node scripts/diagnose-finance-sync.mjs",
     "repair:finance": "node scripts/diagnose-finance-sync.mjs --repair --confirm-repair",
     "test:finance-ledger": "node --experimental-strip-types --test scripts/test-finance-ledger-visibility.mjs",
+    "test:cash-removal": "node --experimental-strip-types --test scripts/test-standalone-cash-removal.mjs scripts/test-cash-custody-chain.mjs",
     "check:codex-env": "node scripts/diagnose-finance-sync.mjs --check-env",
     "test:route-product-grouping": "node --experimental-strip-types --test scripts/test-route-product-grouping.mjs",
     "test:route-inventory-summary": "node --experimental-strip-types --test scripts/test-route-inventory-summary.mjs",

@@ -12,6 +12,14 @@ export const dynamic = "force-dynamic";
 function sum(rows: any[], field: string) { return rows.reduce((total, row) => total + Number(row?.[field] ?? 0), 0); }
 function time(value: unknown) { return value ? new Date(String(value)).toLocaleString("en-US") : "-"; }
 
+async function loadMachineCashHistory(client: any, machineId: string) {
+  const linksResult = await client.from("cash_collection_machines").select("cash_collection_id").eq("machine_id", machineId).limit(500);
+  const linkedIds = Array.from(new Set((linksResult.data ?? []).map((row: any) => row.cash_collection_id).filter(Boolean)));
+  let query = client.from("cash_collections").select("id, route_id, vms_expected_cash, actual_cash_collected, variance, collected_at");
+  query = linkedIds.length ? query.or(`machine_id.eq.${machineId},id.in.(${linkedIds.join(",")})`) : query.eq("machine_id", machineId);
+  return query.order("collected_at", { ascending: false }).limit(250);
+}
+
 export default async function MachineHistoryPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const profile = await getCurrentProfile();
@@ -47,7 +55,7 @@ export default async function MachineHistoryPage({ params }: { params: Promise<{
     client.from("route_stop_fill_lines").select("id, route_id, product_id, substitute_product_id, missing_product_name, actual_qty, action_type, created_at, product:products!route_stop_fill_lines_product_id_fkey(name)").eq("machine_id", id).order("created_at", { ascending: false }).limit(500),
     client.from("route_manual_sales").select("id, route_id, product_name, quantity, total_amount_lyd, payment_method, sale_time, status").eq("machine_id", id).order("sale_time", { ascending: false }).limit(500),
     client.from("inventory_adjustments").select("id, route_id, adjustment_type, product_name, quantity, reason, notes, status, created_at").eq("machine_id", id).neq("status", "cancelled").order("created_at", { ascending: false }).limit(500),
-    client.from("cash_collections").select("id, route_id, vms_expected_cash, actual_cash_collected, variance, collected_at").eq("machine_id", id).order("collected_at", { ascending: false }).limit(250),
+    loadMachineCashHistory(client, id),
     client.from("inventory_movements").select("id, related_route_id, quantity, reason, movement_type, from_entity_type, to_entity_type, created_at, product:products(name)").eq("related_machine_id", id).order("created_at", { ascending: false }).limit(500),
   ]);
   const routes = routesResult.data ?? [];
@@ -73,7 +81,7 @@ export default async function MachineHistoryPage({ params }: { params: Promise<{
   fills.forEach((row: any) => { const name = row.product?.name ?? row.missing_product_name ?? "Unknown product"; filledByProduct.set(name, (filledByProduct.get(name) ?? 0) + Number(row.actual_qty ?? 0)); });
 
   return <div className="space-y-6">
-    <PageHeader title={formatMachineDisplayName(machine, { includeArea: true })} subtitle={`${machine.machine_code} · ${formatSiteLabel(machine.location, { includeArea: true, fallback: "No site" })}`} breadcrumbs={[{ label: "Machines", href: "/machines" }, { label: machine.machine_code }]} action={<div className="flex gap-2"><SecondaryButton href={`/machines/${id}/edit`}>Edit machine</SecondaryButton><SecondaryButton href="/machines">Back</SecondaryButton></div>} />
+    <PageHeader title={formatMachineDisplayName(machine, { includeArea: true })} subtitle={`${machine.machine_code} · ${formatSiteLabel(machine.location, { includeArea: true, fallback: "No site" })}`} breadcrumbs={[{ label: "Machines", href: "/machines" }, { label: machine.machine_code }]} action={<div className="flex flex-wrap gap-2"><SecondaryButton href={`/cash-collections/new?machine_id=${id}`}>Remove cash</SecondaryButton><SecondaryButton href={`/machines/${id}/edit`}>Edit machine</SecondaryButton><SecondaryButton href="/machines">Back</SecondaryButton></div>} />
     {(stopsError || routesResult.error) ? <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Some machine history could not load.</div> : null}
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
       <SectionCard><div className="p-4"><div className="text-sm text-slate-500">Routes</div><div className="mt-1 text-2xl font-semibold">{routes.length}</div></div></SectionCard>

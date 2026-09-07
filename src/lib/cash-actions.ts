@@ -2,19 +2,24 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { logActivity } from "@/lib/activity-log";
+import type { UserProfile } from "@/lib/auth";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
-import { canViewFinancials } from "@/lib/authz";
-import { calculateCashVariance, statusForConfirmedCash } from "@/lib/cash-collections";
-import { clearCashCollectionFinancialTransaction, createCashCollectionFinancialTransaction } from "@/lib/finance-actions";
-import { getRequiredFinanceWriteClient } from "@/lib/finance-write-client";
+import {
+  canApproveCashVariance,
+  canBankCash,
+  canCountCash,
+  canReceiveCashStorage,
+  canRecordCashRemoval,
+  canReconcileCash,
+  canViewFinancials,
+  type AuthUserContext,
+} from "@/lib/authz";
+import { logActivity } from "@/lib/activity-log";
+import { CASH_DENOMINATIONS, denominationFieldName } from "@/lib/cash-custody";
+import { removeCashEvidence, uploadCashEvidence, type CashEvidenceUpload } from "@/lib/cash-evidence";
 
 function clean(value: FormDataEntryValue | null) {
   return String(value ?? "").trim();
-}
-
-function optionalUuid(value: FormDataEntryValue | null) {
-  return clean(value) || null;
 }
 
 function optionalText(value: FormDataEntryValue | null) {
@@ -28,16 +33,19 @@ function optionalAmount(value: FormDataEntryValue | null) {
   return Number.isFinite(parsed) ? Math.round(parsed * 100) / 100 : null;
 }
 
-function requiredAmount(value: FormDataEntryValue | null, path: string, label: string) {
+function requiredPositiveAmount(value: FormDataEntryValue | null, path: string, label: string) {
   const amount = optionalAmount(value);
-  if (amount === null || amount < 0) fail(path, `${label} is required.`);
+  if (amount === null || amount <= 0) fail(path, `${label} must be greater than zero.`);
   return amount;
 }
 
-function normalizeCollectedAt(value: FormDataEntryValue | null) {
+function normalizeLibyaDateTime(value: FormDataEntryValue | null) {
   const raw = clean(value);
   if (!raw) return new Date().toISOString();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return `${raw}T12:00:00.000Z`;
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(raw)) {
+    const parsed = new Date(`${raw}:00+02:00`);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+  }
   const parsed = new Date(raw);
   return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
 }
@@ -46,334 +54,426 @@ function fail(path: string, message: string): never {
   redirect(`${path}?error=${encodeURIComponent(message)}`);
 }
 
-function requireConfirmedReason(formData: FormData, path: string) {
-  if (clean(formData.get("confirm_action")) !== "yes") fail(path, "Confirmation is required.");
-  const reason = clean(formData.get("reason"));
-  if (!reason) fail(path, "Reason is required.");
-  return reason;
+function profileContext(profile: UserProfile): AuthUserContext {
+  return {
+    id: profile.id,
+    role: profile.role,
+    roles: profile.roles,
+    canAddProducts: profile.can_add_products,
+    teamMemberId: profile.team_member_id,
+    activeStatus: profile.active_status,
+  };
 }
 
-async function requireCashReviewAccess(path: string) {
+async function requireCapability(path: string, allowed: (user: AuthUserContext) => boolean) {
   const profile = await getCurrentProfile();
-  if (!profile || !canViewFinancials({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) {
-    redirect("/unauthorized");
-  }
+  if (!profile || !allowed(profileContext(profile))) redirect("/unauthorized");
+  if (!profile.team_member_id) fail(path, "Your account must be linked to a team member before handling cash.");
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) fail(path, "Supabase is not configured.");
   return { profile, supabase };
 }
 
-function revalidateCashPaths(id?: string) {
-  revalidatePath("/cash-collections");
-  revalidatePath("/finance");
-  revalidatePath("/finance/transactions");
-  if (id) {
-    revalidatePath(`/cash-collections/${id}`);
-    revalidatePath(`/cash-collections/${id}/edit`);
+function requireConfirmation(formData: FormData, path: string) {
+  if (clean(formData.get("confirm_action")) !== "yes") fail(path, "Confirmation is required.");
+  const reason = clean(formData.get("reason"));
+  if (!reason) fail(path, "A detailed reason is required.");
+  return reason;
+}
+
+function rpcMessage(error: { message?: string | null } | null | undefined, fallback: string) {
+  const message = String(error?.message ?? "").replace(/^.*?error:\s*/i, "").trim();
+  return message && message.length <= 300 ? message : fallback;
+}
+
+async function requiredEvidence(
+  value: FormDataEntryValue | null,
+  path: string,
+  options: { scopeId: string; stage: "removed" | "stored" | "counted" | "banked" },
+): Promise<CashEvidenceUpload> {
+  try {
+    const upload = await uploadCashEvidence(value, { ...options, required: true });
+    if (!upload) fail(path, "Required cash evidence is missing.");
+    return upload;
+  } catch (error) {
+    console.error("[cash] Failed to upload custody evidence", error);
+    fail(path, error instanceof Error ? error.message : "Could not securely upload the required evidence.");
   }
 }
 
-export async function createManualCashCollection(formData: FormData) {
-  const { profile, supabase } = await requireCashReviewAccess("/cash-collections/new");
-  const machineId = optionalUuid(formData.get("machine_id"));
-  if (!machineId) fail("/cash-collections/new", "Machine is required.");
+function revalidateCashPaths(id?: string) {
+  revalidatePath("/cash-collections");
+  revalidatePath("/cash-deposits");
+  revalidatePath("/finance");
+  revalidatePath("/finance/operations");
+  revalidatePath("/finance/transactions");
+  if (id) revalidatePath(`/cash-collections/${id}`);
+}
 
-  const countedAmount = requiredAmount(formData.get("counted_amount_lyd"), "/cash-collections/new", "Counted amount");
-  const expectedCash = null;
-  const variance = calculateCashVariance(countedAmount, expectedCash);
-  const reviewStatus = statusForConfirmedCash(variance);
-  const payload = {
-    machine_id: machineId,
-    route_id: optionalUuid(formData.get("route_id")),
-    operator_id: optionalUuid(formData.get("operator_id")),
-    collected_at: normalizeCollectedAt(formData.get("collected_at")),
-    vms_expected_cash: expectedCash,
-    actual_cash_collected: countedAmount,
-    review_status: reviewStatus,
-    cash_bag_id: optionalText(formData.get("cash_bag_id")),
-    counted_at: new Date().toISOString(),
-    counted_by: profile.team_member_id,
-    notes: optionalText(formData.get("notes")),
-  };
+async function rollbackEvidence(upload: CashEvidenceUpload | null | undefined) {
+  await removeCashEvidence(upload ?? null);
+}
 
-  const { data: cash, error } = await supabase
-    .from("cash_collections")
-    .insert(payload)
-    .select("id, route_id, machine_id, operator_id, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, counted_at, counted_by, notes, collected_at")
-    .single();
-  if (error || !cash) {
-    console.error("[cash] Failed to create manual cash collection", error);
-    fail("/cash-collections/new", "Could not create cash collection.");
+export async function createCashRemoval(formData: FormData) {
+  const path = "/cash-collections/new";
+  const { profile, supabase } = await requireCapability(path, canRecordCashRemoval);
+  const machineIds = Array.from(new Set(formData.getAll("machine_ids").map(clean).filter(Boolean)));
+  const compartments = Array.from(new Set(formData.getAll("compartments").map(clean).filter(Boolean)));
+  const removalType = clean(formData.get("removal_type"));
+  const bagId = clean(formData.get("cash_bag_id")).toUpperCase();
+  const notes = optionalText(formData.get("notes"));
+  const submissionId = clean(formData.get("client_submission_id")) || crypto.randomUUID();
+
+  if (!machineIds.length) fail(path, "Select at least one machine.");
+  if (!compartments.length) fail(path, "Select every cash compartment that was emptied.");
+  if (removalType !== "full" && removalType !== "partial") fail(path, "Choose full or partial cash removal.");
+  if (!bagId) fail(path, "A unique tamper-evident bag or seal ID is required.");
+  if (removalType === "partial" && !notes) fail(path, "Explain what cash remained inside the machine.");
+
+  const evidence = await requiredEvidence(formData.get("evidence_file"), path, { scopeId: submissionId, stage: "removed" });
+  const { data: collectionId, error } = await supabase.rpc("record_standalone_cash_removal", {
+    p_machine_ids: machineIds,
+    p_removed_at: normalizeLibyaDateTime(formData.get("removed_at")),
+    p_removal_type: removalType,
+    p_cash_bag_id: bagId,
+    p_compartments: compartments,
+    p_removal_evidence_path: evidence.path,
+    p_removal_evidence_file_name: evidence.fileName,
+    p_notes: notes,
+    p_client_submission_id: submissionId,
+  });
+  if (error || !collectionId) {
+    await rollbackEvidence(evidence);
+    console.error("[cash] Failed to record standalone cash removal", error);
+    fail(path, rpcMessage(error, "Could not record cash removal. No cash amount was posted."));
   }
 
-  try {
-    await createCashCollectionFinancialTransaction(supabase, profile, cash);
-  } catch (error) {
-    console.error("[cash] Failed to post manual cash collection to finance", error);
-    revalidateCashPaths(cash.id);
-    redirect(`/cash-collections/${cash.id}?error=${encodeURIComponent("Cash collection was saved, but the finance transaction could not be posted. Review this collection before closing cash.")}`);
-  }
   await logActivity({
     profile,
-    action: "create_cash_collection",
+    action: "record_cash_removal",
     entityType: "cash_collection",
-    entityId: cash.id,
-    entityLabel: `Cash ${cash.id.slice(0, 8)}`,
-    afterData: cash,
-    metadata: { source: "manual", variance },
-    summary: "Created and confirmed manual cash collection",
+    entityId: String(collectionId),
+    entityLabel: `Cash bag ${bagId}`,
+    afterData: { custody_status: "removed", cash_bag_id: bagId, collected_at: normalizeLibyaDateTime(formData.get("removed_at")) },
+    metadata: { machine_ids: machineIds, removal_type: removalType, compartments, route_id: null, evidence_path: evidence.path },
+    summary: `Sealed route-independent cash removal from ${machineIds.length} machine${machineIds.length === 1 ? "" : "s"}`,
   });
 
-  revalidateCashPaths(cash.id);
-  redirect(`/cash-collections/${cash.id}`);
+  revalidateCashPaths(String(collectionId));
+  redirect(`/cash-collections/${collectionId}?success=${encodeURIComponent("Removal saved. A different person must now receive the sealed bag into storage.")}`);
+}
+
+export async function receiveCashIntoStorage(formData: FormData) {
+  const id = clean(formData.get("id"));
+  if (!id) redirect("/cash-collections");
+  const path = `/cash-collections/${id}`;
+  const { profile, supabase } = await requireCapability(path, canReceiveCashStorage);
+  const submissionId = clean(formData.get("client_submission_id")) || crypto.randomUUID();
+  const location = clean(formData.get("storage_location"));
+  const sealCondition = clean(formData.get("seal_condition"));
+  const notes = optionalText(formData.get("notes"));
+  if (!location) fail(path, "Storage or safe location is required.");
+  if (!["intact", "broken", "mismatch"].includes(sealCondition)) fail(path, "Record the seal condition.");
+  if (sealCondition !== "intact" && !notes) fail(path, "Explain the broken or mismatched seal.");
+
+  const evidence = await requiredEvidence(formData.get("evidence_file"), path, { scopeId: id, stage: "stored" });
+  const { error } = await supabase.rpc("receive_cash_into_storage", {
+    p_collection_id: id,
+    p_received_at: normalizeLibyaDateTime(formData.get("received_at")),
+    p_storage_location: location,
+    p_seal_condition: sealCondition,
+    p_evidence_path: evidence.path,
+    p_evidence_file_name: evidence.fileName,
+    p_notes: notes,
+    p_client_submission_id: submissionId,
+  });
+  if (error) {
+    await rollbackEvidence(evidence);
+    console.error("[cash] Failed to receive cash into storage", error);
+    fail(path, rpcMessage(error, "Could not save the storage handoff."));
+  }
+
+  await logActivity({
+    profile,
+    action: "receive_cash_into_storage",
+    entityType: "cash_collection",
+    entityId: id,
+    afterData: { custody_status: "in_storage", storage_location: location, seal_condition: sealCondition },
+    metadata: { evidence_path: evidence.path },
+    summary: "Acknowledged sealed cash bag into storage",
+  });
+  revalidateCashPaths(id);
+  redirect(`${path}?success=${encodeURIComponent("Storage handoff saved. The bag is ready for an independent count.")}`);
+}
+
+function denominationCounts(formData: FormData, path: string) {
+  const counts: Record<string, number> = {};
+  for (const denomination of CASH_DENOMINATIONS) {
+    const raw = clean(formData.get(denominationFieldName(denomination)));
+    const quantity = raw ? Number(raw) : 0;
+    if (!Number.isInteger(quantity) || quantity < 0) fail(path, `Quantity for ${denomination} LYD must be a whole number.`);
+    counts[String(denomination)] = quantity;
+  }
+  return counts;
 }
 
 export async function confirmCashCollectionCount(formData: FormData) {
   const id = clean(formData.get("id"));
   if (!id) redirect("/cash-collections");
   const path = `/cash-collections/${id}`;
-  const { profile, supabase } = await requireCashReviewAccess(path);
-  const countedAmount = requiredAmount(formData.get("counted_amount_lyd"), path, "Counted amount");
+  const { profile, supabase } = await requireCapability(path, canCountCash);
+  const submissionId = clean(formData.get("client_submission_id")) || crypto.randomUUID();
+  const sealCondition = clean(formData.get("seal_condition"));
+  const countWitnessId = clean(formData.get("count_witness_id"));
+  const notes = optionalText(formData.get("notes"));
+  const denominations = denominationCounts(formData, path);
+  const otherRaw = clean(formData.get("other_amount_lyd"));
+  const parsedOtherAmount = optionalAmount(formData.get("other_amount_lyd"));
+  if (otherRaw && parsedOtherAmount === null) fail(path, "Other counted cash must be a valid amount.");
+  const otherAmount = parsedOtherAmount ?? 0;
+  if (otherAmount < 0) fail(path, "Other counted cash cannot be negative.");
+  if (otherAmount > 0 && !notes) fail(path, "Explain the amount entered outside the standard denominations.");
+  if (!["intact", "broken", "mismatch"].includes(sealCondition)) fail(path, "Record the seal condition before opening the bag.");
+  if (sealCondition !== "intact" && !notes) fail(path, "Explain the broken or mismatched seal.");
+  if (!countWitnessId) fail(path, "Select the second person who witnessed the cash count.");
+  if (countWitnessId === profile.team_member_id) fail(path, "The person counting cash cannot also be the count witness.");
 
-  const { data: before, error: beforeError } = await supabase.from("cash_collections").select("*").eq("id", id).maybeSingle();
-  if (beforeError || !before) fail("/cash-collections", "Cash collection not found.");
-  if (before.review_status === "voided") fail(path, "Voided cash collections cannot be counted.");
-
-  const expectedCash = null;
-  const variance = calculateCashVariance(countedAmount, expectedCash);
-  const reviewStatus = statusForConfirmedCash(variance);
-
-  const payload = {
-    vms_expected_cash: expectedCash,
-    actual_cash_collected: countedAmount,
-    review_status: reviewStatus,
-    cash_bag_id: optionalText(formData.get("cash_bag_id")) ?? before.cash_bag_id ?? null,
-    counted_at: new Date().toISOString(),
-    counted_by: profile.team_member_id,
-    notes: optionalText(formData.get("notes")),
-  };
-
-  const { data: cash, error } = await supabase
-    .from("cash_collections")
-    .update(payload)
-    .eq("id", id)
-    .select("id, route_id, machine_id, operator_id, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, counted_at, counted_by, notes, collected_at")
-    .single();
-  if (error || !cash) {
+  const evidence = await requiredEvidence(formData.get("evidence_file"), path, { scopeId: id, stage: "counted" });
+  const { error } = await supabase.rpc("confirm_cash_count", {
+    p_collection_id: id,
+    p_counted_at: normalizeLibyaDateTime(formData.get("counted_at")),
+    p_seal_condition: sealCondition,
+    p_count_witness_id: countWitnessId,
+    p_denominations: denominations,
+    p_other_amount_lyd: otherAmount,
+    p_evidence_path: evidence.path,
+    p_evidence_file_name: evidence.fileName,
+    p_notes: notes,
+    p_client_submission_id: submissionId,
+  });
+  if (error) {
+    await rollbackEvidence(evidence);
     console.error("[cash] Failed to confirm cash count", error);
-    fail(path, "Could not confirm cash count.");
+    fail(path, rpcMessage(error, "Could not save the cash count."));
   }
 
-  try {
-    await createCashCollectionFinancialTransaction(supabase, profile, cash);
-  } catch (error) {
-    console.error("[cash] Failed to post confirmed cash count to finance", error);
-    revalidateCashPaths(id);
-    redirect(`${path}?error=${encodeURIComponent("Cash count was saved, but the finance transaction could not be posted. Review this collection before closing cash.")}`);
-  }
   await logActivity({
     profile,
     action: "confirm_cash_count",
     entityType: "cash_collection",
     entityId: id,
-    entityLabel: `Cash ${id.slice(0, 8)}`,
-    beforeData: before,
-    afterData: cash,
-    metadata: { variance, related_finance: true },
-    summary: reviewStatus === "variance_review" ? "Confirmed cash count with variance review" : "Confirmed cash count and posted finance transaction",
+    afterData: { custody_status: "counted", seal_condition: sealCondition, count_witness_id: countWitnessId, denominations, other_amount_lyd: otherAmount },
+    metadata: { evidence_path: evidence.path, count_witness_id: countWitnessId, related_finance: true },
+    summary: "Counted stored cash by denomination with a second witness; reconciliation is pending",
   });
-
   revalidateCashPaths(id);
-  redirect(path);
+  redirect(`${path}?success=${encodeURIComponent("Count saved and posted to the cash ledger. Reconcile the combined batch total against VMS next.")}`);
 }
 
-export async function updateCashCollection(formData: FormData) {
+export async function calculateCashExpectation(formData: FormData) {
   const id = clean(formData.get("id"));
   if (!id) redirect("/cash-collections");
-  const path = `/cash-collections/${id}/edit`;
-  const { profile, supabase } = await requireCashReviewAccess(path);
-
-  const { data: before, error: beforeError } = await supabase.from("cash_collections").select("*").eq("id", id).maybeSingle();
-  if (beforeError || !before) fail("/cash-collections", "Cash collection not found.");
-  if (before.review_status === "voided") fail(`/cash-collections/${id}`, "Voided cash collections cannot be edited.");
-
-  const machineId = optionalUuid(formData.get("machine_id"));
-  if (!machineId) fail(path, "Machine is required.");
-  const countedAmount = optionalAmount(formData.get("counted_amount_lyd"));
-  const expectedCash = null;
-  const hasCount = countedAmount !== null;
-  const variance = hasCount ? calculateCashVariance(countedAmount, expectedCash) : null;
-  const reviewStatus = hasCount ? statusForConfirmedCash(variance) : "collected_pending_count";
-
-  const payload = {
-    machine_id: machineId,
-    route_id: optionalUuid(formData.get("route_id")),
-    operator_id: optionalUuid(formData.get("operator_id")),
-    collected_at: normalizeCollectedAt(formData.get("collected_at")),
-    vms_expected_cash: expectedCash,
-    actual_cash_collected: countedAmount,
-    review_status: reviewStatus,
-    cash_bag_id: optionalText(formData.get("cash_bag_id")),
-    counted_at: hasCount ? before.counted_at ?? new Date().toISOString() : null,
-    counted_by: hasCount ? before.counted_by ?? profile.team_member_id : null,
-    notes: optionalText(formData.get("notes")),
-  };
-
-  const { data: cash, error } = await supabase
-    .from("cash_collections")
-    .update(payload)
-    .eq("id", id)
-    .select("id, route_id, machine_id, operator_id, vms_expected_cash, actual_cash_collected, variance, review_status, cash_bag_id, counted_at, counted_by, notes, collected_at")
-    .single();
-  if (error || !cash) {
-    console.error("[cash] Failed to update cash collection", error);
-    fail(path, "Could not update cash collection.");
+  const path = `/cash-collections/${id}`;
+  const { profile, supabase } = await requireCapability(path, canReconcileCash);
+  const { data, error } = await supabase.rpc("calculate_cash_collection_expectation", {
+    p_collection_id: id,
+    p_client_submission_id: clean(formData.get("client_submission_id")) || crypto.randomUUID(),
+  });
+  if (error) {
+    console.error("[cash] Failed to calculate VMS expectation", error);
+    fail(path, rpcMessage(error, "Could not calculate the VMS cash expectation."));
   }
-
-  try {
-    if (hasCount) {
-      await createCashCollectionFinancialTransaction(supabase, profile, cash);
-    } else {
-      await clearCashCollectionFinancialTransaction(supabase, profile, id, "Cash collection was moved back to pending count.");
-    }
-  } catch (error) {
-    console.error("[cash] Failed to sync cash collection finance transaction", error);
-    revalidateCashPaths(id);
-    redirect(`/cash-collections/${id}?error=${encodeURIComponent("Cash collection was saved, but its finance transaction could not be synced. Review this collection before closing cash.")}`);
-  }
-
   await logActivity({
     profile,
-    action: "update_cash_collection",
+    action: "calculate_cash_expectation",
     entityType: "cash_collection",
     entityId: id,
-    entityLabel: `Cash ${id.slice(0, 8)}`,
-    beforeData: before,
-    afterData: cash,
-    metadata: { variance, related_finance: hasCount },
-    summary: hasCount ? "Updated counted cash collection and linked finance transaction" : "Updated pending cash collection",
+    afterData: data,
+    summary: "Calculated collection-interval VMS expectation for the combined cash batch",
   });
-
   revalidateCashPaths(id);
-  redirect(`/cash-collections/${id}`);
+  const ready = Boolean((data as { ready?: boolean } | null)?.ready);
+  redirect(`${path}?success=${encodeURIComponent(ready ? "Exact VMS expectation calculated. Review and reconcile the total." : "Automatic calculation is incomplete. Review the machine diagnostics and enter one verified combined VMS total.")}`);
+}
+
+export async function reconcileCashCollection(formData: FormData) {
+  const id = clean(formData.get("id"));
+  if (!id) redirect("/cash-collections");
+  const path = `/cash-collections/${id}`;
+  const { profile, supabase } = await requireCapability(path, canReconcileCash);
+  const manualRaw = clean(formData.get("manual_expected_cash_lyd"));
+  const manualExpected = optionalAmount(formData.get("manual_expected_cash_lyd"));
+  const overrideReason = optionalText(formData.get("override_reason"));
+  if (manualRaw && (manualExpected === null || manualExpected < 0)) fail(path, "Verified VMS total must be zero or greater.");
+  if (manualExpected !== null && !overrideReason) fail(path, "State the VMS report, dates, and reason for the verified total.");
+
+  const { error } = await supabase.rpc("reconcile_cash_collection", {
+    p_collection_id: id,
+    p_manual_expected_cash_lyd: manualExpected,
+    p_override_reason: overrideReason,
+    p_notes: optionalText(formData.get("notes")),
+    p_client_submission_id: clean(formData.get("client_submission_id")) || crypto.randomUUID(),
+  });
+  if (error) {
+    console.error("[cash] Failed to reconcile cash collection", error);
+    fail(path, rpcMessage(error, "Could not reconcile the cash batch."));
+  }
+  await logActivity({
+    profile,
+    action: "reconcile_cash_collection",
+    entityType: "cash_collection",
+    entityId: id,
+    metadata: { expectation_source: manualExpected === null ? "automatic_vms" : "manual_verified_total" },
+    summary: manualExpected === null ? "Reconciled combined batch against exact VMS intervals" : "Submitted verified combined VMS total for owner review",
+  });
+  revalidateCashPaths(id);
+  redirect(`${path}?success=${encodeURIComponent("Reconciliation saved. Any shortage, manual VMS total, or seal exception now requires owner review.")}`);
+}
+
+export async function resolveCashVariance(formData: FormData) {
+  const id = clean(formData.get("id"));
+  if (!id) redirect("/cash-collections");
+  const path = `/cash-collections/${id}`;
+  const { profile, supabase } = await requireCapability(path, canApproveCashVariance);
+  const resolution = clean(formData.get("resolution"));
+  const reason = clean(formData.get("reason"));
+  if (!resolution || !reason) fail(path, "Resolution category and detailed evidence-based reason are required.");
+  const { error } = await supabase.rpc("resolve_cash_variance", {
+    p_collection_id: id,
+    p_resolution: resolution,
+    p_reason: reason,
+    p_client_submission_id: clean(formData.get("client_submission_id")) || crypto.randomUUID(),
+  });
+  if (error) {
+    console.error("[cash] Failed to resolve variance", error);
+    fail(path, rpcMessage(error, "Could not resolve the cash variance."));
+  }
+  await logActivity({
+    profile,
+    action: "resolve_cash_variance",
+    entityType: "cash_collection",
+    entityId: id,
+    metadata: { resolution },
+    summary: "Owner/admin resolved a cash variance or custody exception",
+  });
+  revalidateCashPaths(id);
+  redirect(`${path}?success=${encodeURIComponent("Owner resolution saved. This batch is now eligible for banking.")}`);
+}
+
+export async function recordCashBankDeposit(formData: FormData) {
+  const path = "/cash-deposits/new";
+  const { profile, supabase } = await requireCapability(path, canBankCash);
+  const collectionIds = Array.from(new Set(formData.getAll("collection_ids").map(clean).filter(Boolean)));
+  const amount = requiredPositiveAmount(formData.get("amount_lyd"), path, "Deposit amount");
+  const reference = clean(formData.get("deposit_reference"));
+  const submissionId = clean(formData.get("client_submission_id")) || crypto.randomUUID();
+  if (!collectionIds.length) fail(path, "Select at least one reconciled cash batch.");
+  if (!reference) fail(path, "Bank deposit reference is required.");
+
+  const evidence = await requiredEvidence(formData.get("evidence_file"), path, { scopeId: submissionId, stage: "banked" });
+  const { data: depositId, error } = await supabase.rpc("record_cash_bank_deposit", {
+    p_collection_ids: collectionIds,
+    p_deposited_at: normalizeLibyaDateTime(formData.get("deposited_at")),
+    p_amount_lyd: amount,
+    p_deposit_reference: reference,
+    p_destination_account: optionalText(formData.get("destination_account")),
+    p_receipt_storage_path: evidence.path,
+    p_receipt_file_name: evidence.fileName,
+    p_notes: optionalText(formData.get("notes")),
+    p_client_submission_id: submissionId,
+  });
+  if (error || !depositId) {
+    await rollbackEvidence(evidence);
+    console.error("[cash] Failed to record bank deposit", error);
+    fail(path, rpcMessage(error, "Could not record the bank deposit."));
+  }
+  await logActivity({
+    profile,
+    action: "record_cash_bank_deposit",
+    entityType: "cash_bank_deposit",
+    entityId: String(depositId),
+    entityLabel: reference,
+    afterData: { amount_lyd: amount, deposit_reference: reference, collection_ids: collectionIds },
+    metadata: { evidence_path: evidence.path },
+    summary: `Banked ${collectionIds.length} reconciled cash batch${collectionIds.length === 1 ? "" : "es"}`,
+  });
+  revalidateCashPaths();
+  revalidatePath(`/cash-deposits/${depositId}`);
+  redirect(`/cash-deposits/${depositId}?success=${encodeURIComponent("Bank deposit and receipt saved; all selected batches are closed.")}`);
+}
+
+export async function voidCashBankDeposit(formData: FormData) {
+  const id = clean(formData.get("id"));
+  if (!id) redirect("/cash-deposits");
+  const path = `/cash-deposits/${id}`;
+  const reason = requireConfirmation(formData, path);
+  const { profile, supabase } = await requireCapability(path, canApproveCashVariance);
+  const { error } = await supabase.rpc("void_cash_bank_deposit", { p_deposit_id: id, p_reason: reason });
+  if (error) {
+    console.error("[cash] Failed to void bank deposit", error);
+    fail(path, rpcMessage(error, "Could not void the bank deposit."));
+  }
+  await logActivity({
+    profile,
+    action: "void_cash_bank_deposit",
+    entityType: "cash_bank_deposit",
+    entityId: id,
+    metadata: { reason },
+    summary: "Owner/admin voided bank deposit and reopened its cash batches",
+  });
+  revalidateCashPaths();
+  revalidatePath(path);
+  redirect(`${path}?success=${encodeURIComponent("Deposit voided. Its cash batches are reconciled but unbanked again.")}`);
 }
 
 export async function voidCashCollection(formData: FormData) {
   const id = clean(formData.get("id"));
   if (!id) redirect("/cash-collections");
   const path = `/cash-collections/${id}`;
-  const reason = requireConfirmedReason(formData, path);
-  const { profile, supabase } = await requireCashReviewAccess(path);
-  const financeWriteSupabase = getRequiredFinanceWriteClient();
-
-  const { data: before, error: beforeError } = await supabase.from("cash_collections").select("*").eq("id", id).maybeSingle();
-  if (beforeError || !before) fail("/cash-collections", "Cash collection not found.");
-  if (before.review_status === "voided") fail(path, "This cash collection is already voided.");
-
-  const now = new Date().toISOString();
-  const { data: cash, error } = await supabase
-    .from("cash_collections")
-    .update({
-      review_status: "voided",
-      voided_at: now,
-      voided_by: profile.team_member_id,
-      void_reason: reason,
-    })
-    .eq("id", id)
-    .select("*")
-    .single();
-  if (error || !cash) {
+  const reason = requireConfirmation(formData, path);
+  const { profile, supabase } = await requireCapability(path, canApproveCashVariance);
+  const { error } = await supabase.rpc("void_cash_collection", {
+    p_collection_id: id,
+    p_reason: reason,
+    p_client_submission_id: crypto.randomUUID(),
+  });
+  if (error) {
     console.error("[cash] Failed to void cash collection", error);
-    fail(path, "Could not void cash collection.");
+    fail(path, rpcMessage(error, "Could not void the cash batch."));
   }
-
-  const { data: financeBefore } = await supabase
-    .from("financial_transactions")
-    .select("*")
-    .eq("transaction_kind", "cash_collection")
-    .or(`linked_cash_collection_id.eq.${id},and(source_type.eq.cash_collection,source_id.eq.${id})`)
-    .eq("transaction_status", "active");
-
-  if (financeBefore?.length) {
-    const financeIds = financeBefore.map((row: any) => row.id);
-    const { data: financeAfter, error: financeError } = await financeWriteSupabase
-      .from("financial_transactions")
-      .update({
-        transaction_status: "voided",
-        voided_at: now,
-        voided_by: profile.team_member_id,
-        status_reason: reason,
-        updated_at: now,
-      })
-      .in("id", financeIds)
-      .select("*");
-    if (financeError) {
-      console.error("[cash] Failed to void linked finance transaction", financeError);
-      fail(path, "Cash was voided, but linked finance transaction could not be voided.");
-    }
-
-    for (const financeRow of financeAfter ?? []) {
-      await logActivity({
-        profile,
-        action: "void",
-        entityType: "financial_transaction",
-        entityId: financeRow.id,
-        entityLabel: "Cash collection financial transaction",
-        beforeData: financeBefore.find((row: any) => row.id === financeRow.id),
-        afterData: financeRow,
-        metadata: { reason, linked_cash_collection_id: id },
-        summary: "Voided financial transaction linked to a voided cash collection",
-      });
-    }
-  }
-
   await logActivity({
     profile,
-    action: "void",
+    action: "void_cash_collection",
     entityType: "cash_collection",
     entityId: id,
-    entityLabel: `Cash ${id.slice(0, 8)}`,
-    beforeData: before,
-    afterData: cash,
-    metadata: { reason, financial_transaction_count: financeBefore?.length ?? 0 },
-    summary: "Voided cash collection and linked finance transaction",
+    metadata: { reason },
+    summary: "Owner/admin voided immutable cash custody batch",
   });
-
   revalidateCashPaths(id);
-  redirect(path);
-}
-
-export async function reviewCashCollection(formData: FormData) {
-  return confirmCashCollectionCount(formData);
+  redirect(`${path}?success=${encodeURIComponent("Cash batch voided. The record remains in audit history.")}`);
 }
 
 export async function createMissingCashFinanceLinks() {
   const path = "/cash-collections";
-  const { profile, supabase } = await requireCashReviewAccess(path);
-  let successMessage = "Missing finance links created.";
-
-  try {
-    const result = await supabase.rpc("backfill_missing_finance_transactions");
-    if (result.error) throw result.error;
-    const row = Array.isArray(result.data) ? result.data[0] : result.data;
-    const cashCreated = Number(row?.cash_collection_transactions_created ?? row?.cash_collection_finance_transactions_synced ?? 0);
-    const purchaseCreated = Number(row?.purchase_transactions_created ?? row?.purchase_finance_transactions_synced ?? 0);
-    successMessage = `Created ${cashCreated} cash finance link(s) and ${purchaseCreated} purchase finance link(s).`;
-
-    await logActivity({
-      profile,
-      action: "create_missing_cash_finance_links",
-      entityType: "finance",
-      entityLabel: "Cash collection finance links",
-      afterData: row ?? result.data,
-      summary: "Created missing finance links from the cash collections page",
-    });
-
-    revalidateCashPaths();
-  } catch (error) {
-    console.error("[cash] Failed to create missing finance links", error);
-    fail(path, "Could not create missing finance links. Confirm the latest finance migration has been applied and your role can manage finance.");
+  const { profile, supabase } = await requireCapability(path, canViewFinancials);
+  const result = await supabase.rpc("backfill_missing_finance_transactions");
+  if (result.error) {
+    console.error("[cash] Failed to create missing finance links", result.error);
+    fail(path, "Could not create missing finance links.");
   }
+  const row = Array.isArray(result.data) ? result.data[0] : result.data;
+  const cashCreated = Number(row?.cash_collection_transactions_created ?? row?.cash_collection_finance_transactions_synced ?? 0);
+  await logActivity({
+    profile,
+    action: "create_missing_cash_finance_links",
+    entityType: "finance",
+    afterData: row ?? result.data,
+    summary: "Created missing cash finance links",
+  });
+  revalidateCashPaths();
+  redirect(`${path}?success=${encodeURIComponent(`Created ${cashCreated} missing cash finance link${cashCreated === 1 ? "" : "s"}.`)}`);
+}
 
-  redirect(`${path}?success=${encodeURIComponent(successMessage)}`);
+export async function reviewCashCollection(formData: FormData) {
+  return confirmCashCollectionCount(formData);
 }

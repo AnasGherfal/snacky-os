@@ -115,7 +115,6 @@ test("only enumerated server workflows use the service finance writer", () => {
   assert.doesNotMatch(writeClient, /\?\?/);
 
   const expectedFiles = new Set([
-    "src/lib/cash-actions.ts",
     "src/lib/finance-actions.ts",
     "src/lib/payroll-actions.ts",
     "src/lib/payroll-v2-actions.ts",

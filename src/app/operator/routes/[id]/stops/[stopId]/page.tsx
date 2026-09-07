@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from "@/components/LocalDraft";
 import { CompressorSafetyProofCard } from "@/components/operator/CompressorSafetyProofCard";
@@ -219,8 +220,6 @@ type StopDraft = {
   unavailableProducts: Record<string, boolean>;
   extraProducts: ExtraProductLine[];
   missingReports: MissingProductReport[];
-  cashCollected: boolean;
-  cashBagId: string;
   notes: string;
   issueType: string;
   issuePriority: "critical" | "high" | "normal" | "low";
@@ -553,8 +552,6 @@ export default function MachineStopPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState<StopLoadError | null>(null);
-  const [cashCollected, setCashCollected] = useState(false);
-  const [cashBagId, setCashBagId] = useState("");
   const [notes, setNotes] = useState("");
   const [issueType, setIssueType] = useState("");
   const [issuePriority, setIssuePriority] = useState<"critical" | "high" | "normal" | "low">("normal");
@@ -590,8 +587,6 @@ export default function MachineStopPage() {
     unavailableProducts,
     extraProducts,
     missingReports,
-    cashCollected,
-    cashBagId,
     notes,
     issueType,
     issuePriority,
@@ -601,8 +596,6 @@ export default function MachineStopPage() {
     finalPhotoName,
     hasFinalPhotoMetadata: Boolean(finalPhotoName),
   }), [
-    cashBagId,
-    cashCollected,
     cleaningDone,
     extraProducts,
     filledQtys,
@@ -630,8 +623,6 @@ export default function MachineStopPage() {
       setUnavailableProducts(draft.unavailableProducts ?? {});
       setExtraProducts((draft.extraProducts ?? []).map((line) => ({ ...line, id: line.id || newClientId(), reason: line.reason || "extra_stock_left_at_machine" })));
       setMissingReports((draft.missingReports ?? []).map((line) => ({ ...line, id: line.id || newClientId() })));
-      setCashCollected(Boolean(draft.cashCollected));
-      setCashBagId(draft.cashBagId ?? "");
       setNotes(draft.notes ?? "");
       setIssueType(draft.issueType ?? "");
       setIssuePriority(draft.issuePriority ?? "normal");
@@ -774,8 +765,6 @@ export default function MachineStopPage() {
           unavailableProducts: initialUnavailable,
           extraProducts: initialExtraProducts,
           missingReports: [],
-          cashCollected: false,
-          cashBagId: "",
           notes: "",
           issueType: "",
           issuePriority: "normal",
@@ -898,8 +887,8 @@ export default function MachineStopPage() {
         missingProducts: missingReports
           .filter((item) => item.productName.trim())
           .map((item) => ({ productName: item.productName.trim(), reason: item.reason, notes: item.notes || undefined })),
-        cashCollected,
-        cashBagId,
+        cashCollected: false,
+        cashBagId: "",
         notes,
         completionPhotoUrl: uploadedProof?.photoUrl,
         completionPhotoPath: uploadedProof?.photoPath,
@@ -1077,14 +1066,13 @@ export default function MachineStopPage() {
             <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <Metric label={t("Unavailable lines")} value={stopExecutionSummary.unavailableCount} tone={stopExecutionSummary.unavailableCount > 0 ? "warn" : "neutral"} />
               <Metric label={t("Missing product reports")} value={stopExecutionSummary.missingReportCount} tone={stopExecutionSummary.missingReportCount > 0 ? "warn" : "neutral"} />
-              <Metric label={t("Cash status")} value={cashCollected ? t("Collected") : t("No cash")} />
               <Metric label={t("Refill result")} value={fillStatusPreview === "full" ? t("Full refill") : t("Partial refill")} tone={fillStatusPreview === "full" ? "neutral" : "warn"} />
             </div>
           </div>
 
           {stopData.refillItems.length === 0 ? (
             <div className="p-4 md:p-6">
-              <EmptyState title={t("No refill items assigned to this stop")} body={t("You can still add extra products, collect cash, report issues, and complete the stop.")} />
+              <EmptyState title={t("No refill items assigned to this stop")} body={t("You can still add extra products, report issues, and complete the stop. Cash removal is recorded separately.")} />
             </div>
           ) : (
             <div className="divide-y divide-slate-200">
@@ -1330,10 +1318,7 @@ export default function MachineStopPage() {
         />
 
         <CashAndIssueSections
-          cashCollected={cashCollected}
-          setCashCollected={setCashCollected}
-          cashBagId={cashBagId}
-          setCashBagId={setCashBagId}
+          machineId={stopData.machineId}
           notes={notes}
           setNotes={setNotes}
           issueType={issueType}
@@ -1575,10 +1560,7 @@ function ReasonSelect({ value, onChange, options = reasonOptions }: { value: str
   );
 }
 function CashAndIssueSections({
-  cashCollected,
-  setCashCollected,
-  cashBagId,
-  setCashBagId,
+  machineId,
   notes,
   setNotes,
   issueType,
@@ -1588,10 +1570,7 @@ function CashAndIssueSections({
   issueDescription,
   setIssueDescription,
 }: {
-  cashCollected: boolean;
-  setCashCollected: (value: boolean) => void;
-  cashBagId: string;
-  setCashBagId: (value: string) => void;
+  machineId: string;
   notes: string;
   setNotes: (value: string) => void;
   issueType: string;
@@ -1606,34 +1585,11 @@ function CashAndIssueSections({
   return (
     <>
       <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
-        <h2 className="mb-4 text-lg font-semibold">{tr("Cash Collection", "تحصيل النقد")}</h2>
-        <div className="space-y-4">
-          <div>
-            <span className="mb-2 block text-sm font-medium text-slate-800">{t("Cash collected from machine")}</span>
-            <div className="grid grid-cols-2 gap-2">
-              <button type="button" onClick={() => setCashCollected(true)} className={cashCollected ? "btn-primary" : "btn-secondary"}>
-                {tr("Yes", "نعم")}
-              </button>
-              <button type="button" onClick={() => setCashCollected(false)} className={!cashCollected ? "btn-primary" : "btn-secondary"}>
-                {tr("No", "لا")}
-              </button>
-            </div>
-            <p className="mt-2 text-xs text-slate-500">{t("Operators only mark collection. Finance counts the envelope later")}</p>
-          </div>
-          <div className={cashCollected ? "rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900" : "rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700"}>
-            {cashCollected
-              ? tr("Cash is marked as collected. If you have an envelope or bag ID, enter it below so Finance can reconcile it faster.", "تم تحديد النقد كمحصّل. إذا كان لديك رقم ظرف أو كيس، أدخله أدناه لتسريع المطابقة المالية.")
-              : tr("No cash collected at this stop. Leave the envelope field blank unless you are carrying a cash bag anyway", "لم يتم جمع نقد في هذا الموقع. اترك حقل الظرف فارغاً إلا إذا كنت تحمل كيس نقد.")}
-          </div>
-          <label className="block">
-            <span className="mb-1 block text-sm font-medium text-slate-800">{t("Cash bag / envelope ID")}</span>
-            <input value={cashBagId} onChange={(event) => setCashBagId(event.target.value)} className="field-input" placeholder={t("Envelope ID optional")} />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-sm font-medium text-slate-800">{tr("Stop notes", "ملاحظات الموقع")}</span>
-            <textarea value={notes} onChange={(event) => setNotes(event.target.value)} className="field-input" rows={3} placeholder={tr("Any notes about this stop?", "أي ملاحظات عن هذا الموقع؟")} />
-          </label>
-        </div>
+        <h2 className="text-lg font-semibold">{tr("Cash is recorded separately", "يتم تسجيل سحب النقد بشكل مستقل")}</h2>
+        <p className="mt-1 text-sm text-slate-600">{tr("Cash removal is not part of route completion. Use the dedicated cash-removal screen whenever money physically leaves the machine.", "سحب النقد ليس جزءاً من إكمال المسار. استخدم شاشة سحب النقد المخصصة عند إخراج المال فعلياً من الماكينة.")}</p>
+        <Link href={`/cash-collections/new?machine_id=${encodeURIComponent(machineId)}`} className="btn-secondary mt-4 inline-flex">
+          {tr("Open cash-removal screen", "فتح شاشة سحب النقد")}
+        </Link>
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
@@ -1655,6 +1611,10 @@ function CashAndIssueSections({
           <label className="block md:col-span-2">
             <span className="mb-1 block text-sm font-medium text-slate-800">{t("Description")}</span>
             <textarea value={issueDescription} onChange={(event) => setIssueDescription(event.target.value)} className="field-input" rows={3} placeholder={tr("Describe the problem only if there is an issue to report.", "صف المشكلة فقط إذا كان هناك عطل للإبلاغ عنه.")} />
+          </label>
+          <label className="block md:col-span-2">
+            <span className="mb-1 block text-sm font-medium text-slate-800">{tr("Stop notes", "ملاحظات الموقع")}</span>
+            <textarea value={notes} onChange={(event) => setNotes(event.target.value)} className="field-input" rows={3} placeholder={tr("Any notes about this stop?", "أي ملاحظات عن هذا الموقع؟")} />
           </label>
         </div>
       </section>
