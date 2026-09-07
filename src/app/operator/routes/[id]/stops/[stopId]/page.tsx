@@ -10,9 +10,10 @@ import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { QuantityStepper } from "@/components/QuantityStepper";
 import { EmptyState, ErrorState, LoadingState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { useLanguage } from "@/components/I18nProvider";
+import { claimDurableClientOperation, completeDurableClientOperation } from "@/lib/durable-client-operation";
 import { markStopInProgress, uploadInventoryAdjustmentPhoto, uploadRefillProofPhoto } from "@/lib/operator-actions";
 import type { NormalizedRouteManualSale } from "@/lib/manual-route-sales";
-import { ROUTE_STOP_COMPLETED_STATUS, ROUTE_STOP_IN_PROGRESS_STATUS, ROUTE_STOP_PICKED_STATUS } from "@/lib/route-workflow";
+import { isRouteStopDoneStatus, ROUTE_STOP_COMPLETED_STATUS, ROUTE_STOP_IN_PROGRESS_STATUS, ROUTE_STOP_PICKED_STATUS } from "@/lib/route-workflow";
 
 const STOP_REQUEST_TIMEOUT_MS = 45_000;
 const SESSION_REQUEST_TIMEOUT_MS = 15_000;
@@ -946,11 +947,9 @@ export default function MachineStopPage() {
 
       localDraft.clearDraft();
       clientSubmissionIdRef.current = newClientId();
-      const stopSuccessMessage = stopData.stopStatus === ROUTE_STOP_COMPLETED_STATUS
-        ? tr("Stop changes saved successfully.", "تم حفظ تغييرات الموقع بنجاح.")
-        : tr("Stop completed successfully.", "تم إنهاء الموقع بنجاح.");
+      const stopSuccessMessage = tr("Stop completed successfully.", "تم إنهاء الموقع بنجاح.");
       console.info("[operator:route-nav] Redirecting after stop save", {
-        action: stopData.stopStatus === ROUTE_STOP_COMPLETED_STATUS ? "save_stop_machine" : "complete_stop",
+        action: "complete_stop",
         routeId,
         stopId,
         machineId: stopData.machineId,
@@ -990,9 +989,51 @@ export default function MachineStopPage() {
     );
   }
 
-  const isEditingCompletedStop = stopData.stopStatus === ROUTE_STOP_COMPLETED_STATUS;
-  const compressorReadyForSubmit = !compressorSafetyInstalled || compressorProofReady || isEditingCompletedStop;
-  const canSubmitStop = !submitting && (cleaningDone || isEditingCompletedStop) && compressorReadyForSubmit;
+  if (isRouteStopDoneStatus(stopData.stopStatus)) {
+    const stopWasCompleted = stopData.stopStatus === ROUTE_STOP_COMPLETED_STATUS;
+    return (
+      <div className="max-w-5xl space-y-6">
+        <PageHeader
+          title={stopData.machineName}
+          subtitle={`${stopData.machineCode} - ${stopData.location}`}
+          action={<SecondaryButton href={routeHref}>{t("Back")}</SecondaryButton>}
+        />
+        <section className="rounded-lg border border-emerald-200 bg-emerald-50 p-5 text-emerald-950">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-lg font-semibold">
+              {stopWasCompleted
+                ? tr("Completed stop — read only", "موقع مكتمل — للعرض فقط")
+                : tr("Closed stop — read only", "موقع مغلق — للعرض فقط")}
+            </h2>
+            <StatusBadge status={stopData.stopStatus} label={t(stopData.stopStatus, stopData.stopStatus)} />
+          </div>
+          <p className="mt-2 text-sm leading-6">
+            {stopWasCompleted
+              ? tr(
+                  "This stop's inventory, cash, and proof are already committed. To protect the ledger, completed stops cannot be edited from the operator form; any correction must be recorded as a separate audited manager action.",
+                  "تم اعتماد مخزون هذا الموقع والنقد والإثبات. لحماية السجل، لا يمكن تعديل المواقع المكتملة من نموذج المشغل؛ ويجب تسجيل أي تصحيح كإجراء إداري منفصل وخاضع للتدقيق.",
+                )
+              : tr(
+                  "This stop was skipped or cancelled and cannot be reopened from the operator form. A manager must use an audited correction workflow if its outcome is wrong.",
+                  "تم تخطي هذا الموقع أو إلغاؤه ولا يمكن إعادة فتحه من نموذج المشغل. يجب على المدير استخدام إجراء تصحيح خاضع للتدقيق إذا كانت النتيجة غير صحيحة.",
+                )}
+          </p>
+        </section>
+        {stopWasCompleted ? (
+          <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <Metric label={t("Assigned units")} value={stopExecutionSummary.assignedUnits} />
+            <Metric label={t("Filled now")} value={stopExecutionSummary.filledUnits} />
+            <Metric label={tr("Machine storage units", "وحدات مخزن الجهاز")} value={stopExecutionSummary.extraUnits} />
+            <Metric label={t("Proof photo")} value={stopExecutionSummary.proofReady ? t("Ready") : t("Needed")} tone={stopExecutionSummary.proofReady ? "neutral" : "warn"} />
+          </section>
+        ) : null}
+        <SecondaryButton href={routeHref}>{tr("View route outcome", "عرض نتيجة الجولة")}</SecondaryButton>
+      </div>
+    );
+  }
+
+  const compressorReadyForSubmit = !compressorSafetyInstalled || compressorProofReady;
+  const canSubmitStop = !submitting && cleaningDone && compressorReadyForSubmit;
 
   return (
     <>
@@ -1307,7 +1348,7 @@ export default function MachineStopPage() {
           routeId={routeId}
           stopId={stopId}
           machineId={stopData.machineId}
-          completed={isEditingCompletedStop}
+          completed={false}
           onStateChange={({ installed, ready }) => {
             setCompressorSafetyInstalled(installed);
             setCompressorProofReady(ready);
@@ -1382,7 +1423,7 @@ export default function MachineStopPage() {
 
         <div className="sticky bottom-3 z-10 -mx-3 flex flex-col gap-2 border-t border-slate-200 bg-slate-100/95 px-3 py-3 backdrop-blur sm:mx-0 sm:flex-row sm:border-0 sm:bg-transparent sm:p-0">
           <button onClick={handleCompleteStop} disabled={!canSubmitStop} className="btn-primary w-full flex-1 disabled:cursor-not-allowed disabled:opacity-50">
-            {submitting ? `${t("Saving")}...` : isEditingCompletedStop ? t("Save Stop Changes") : t("Complete Stop")}
+            {submitting ? `${t("Saving")}...` : t("Complete Stop")}
           </button>
           <SecondaryButton href={routeHref} type="button">{tr("Cancel", "إلغاء")}</SecondaryButton>
         </div>
@@ -1789,7 +1830,7 @@ function InventoryAdjustmentForm({
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [photoInputKey, setPhotoInputKey] = useState(() => newClientId());
-  const submissionIdRef = useRef(newClientId());
+  const operationStorageKey = `snacky:route-adjustment:${routeId}:${stopId}:${adjustmentType}`;
   const productChoices = sourceMode === "machine" ? machineProducts : allProducts;
   const selectedProduct = allProducts.find((product) => product.id === productId) ?? machineProducts.find((product) => product.id === productId) ?? null;
   const selectedReason = reasonOptions.includes(reason) ? reason : defaultReason;
@@ -1813,6 +1854,23 @@ function InventoryAdjustmentForm({
     setError("");
     setSuccess("");
     try {
+      const immutableRequest = {
+        adjustmentType,
+        productId,
+        machineId,
+        quantity,
+        reason: selectedReason,
+        notes: notes.trim() || null,
+        photo: photoFile
+          ? {
+              name: photoFile.name,
+              size: photoFile.size,
+              type: photoFile.type,
+              lastModified: photoFile.lastModified,
+            }
+          : null,
+      };
+      const clientSubmissionId = claimDurableClientOperation(operationStorageKey, immutableRequest);
       let photoUrl: string | null = null;
       let photoSaved = false;
       if (photoFile) {
@@ -1821,13 +1879,13 @@ function InventoryAdjustmentForm({
         photoFormData.append("stopId", stopId);
         photoFormData.append("machineId", machineId);
         photoFormData.append("adjustmentType", adjustmentType);
+        photoFormData.append("clientSubmissionId", clientSubmissionId);
         photoFormData.append("photo", photoFile);
         const uploaded = await uploadInventoryAdjustmentPhoto(photoFormData);
         photoUrl = uploaded.photoUrl ?? null;
         photoSaved = !uploaded.uploadUnavailable && Boolean(photoUrl);
       }
 
-      const clientSubmissionId = submissionIdRef.current;
       const response = await fetchWithTimeout(`/api/operator/routes/${routeId}/stops/${stopId}/adjustments`, {
         method: "POST",
         cache: "no-store",
@@ -1879,7 +1937,7 @@ function InventoryAdjustmentForm({
       };
 
       onSaved(savedAdjustment);
-      submissionIdRef.current = newClientId();
+      completeDurableClientOperation(operationStorageKey, clientSubmissionId);
       setProductId("");
       setQuantity(1);
       setReason(defaultReason);
@@ -1990,7 +2048,3 @@ function InventoryAdjustmentForm({
     </article>
   );
 }
-
-
-
-

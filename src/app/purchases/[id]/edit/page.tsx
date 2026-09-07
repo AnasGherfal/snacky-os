@@ -31,12 +31,13 @@ export default async function EditPurchasePage({
     { data: lines, error: linesError },
     { data: suppliers, error: suppliersError },
     { data: products, error: productsError },
+    { data: receivingStorageLocations, error: receivingStorageLocationsError },
     { data: storageRows, error: storageError },
     { data: vmsRows, error: vmsError },
   ] = await Promise.all([
     supabase
       .from("purchase_orders")
-      .select("id, supplier_id, status, order_date, receipt_number, payment_method, payment_account_id, payment_status, receipt_url, receipt_file_name, receipt_content_type, receipt_storage_path, notes, manual_total_lyd")
+      .select("*")
       .eq("id", id)
       .single(),
     supabase
@@ -51,6 +52,12 @@ export default async function EditPurchasePage({
       .select("id, sku, barcode, name, category, brand, case_quantity, cost_price, current_cost_price_lyd, last_purchase_cost_lyd, last_purchase_date, last_supplier_id, image_url, last_supplier:suppliers!products_last_supplier_id_fkey(name)")
       .eq("active", true)
       .order("name"),
+    supabase
+      .from("storage_locations")
+      .select("id, name, location_type")
+      .eq("active", true)
+      .in("location_type", ["main_storage", "vehicle", "temporary", "other"])
+      .order("name"),
     supabase.from("current_inventory_by_location").select("product_id, quantity_on_hand").eq("location_type", "storage"),
     supabase.from("vms_product_mappings").select("product_id, vms_product_name").not("product_id", "is", null),
   ]);
@@ -60,7 +67,7 @@ export default async function EditPurchasePage({
   const listLoadError = suppliersError ?? productsError;
   if (suppliersError) console.error("[purchases:edit] Failed to load suppliers", { table_or_view: "suppliers", current_user_id: profile.id, user_roles: profile.roles, supabase_error: suppliersError });
   if (productsError) console.error("[purchases:edit] Failed to load products", { table_or_view: "products", current_user_id: profile.id, user_roles: profile.roles, supabase_error: productsError });
-  const enrichmentError = storageError ?? vmsError;
+  if (receivingStorageLocationsError) console.error("[purchases:edit] Failed to load receiving storage locations", { table_or_view: "storage_locations", purchase_id: id, current_user_id: profile.id, user_roles: profile.roles, supabase_error: receivingStorageLocationsError });
   if (storageError) console.warn("[purchases:edit] Purchase storage enrichment could not load", { table_or_view: "current_inventory_by_location", current_user_id: profile.id, user_roles: profile.roles, supabase_error: storageError });
   if (vmsError) console.warn("[purchases:edit] Purchase VMS enrichment could not load", { table_or_view: "vms_product_mappings", current_user_id: profile.id, user_roles: profile.roles, supabase_error: vmsError });
 
@@ -107,7 +114,7 @@ export default async function EditPurchasePage({
     last_supplier_id: product.last_supplier_id ?? null,
     lastSupplierName: product.last_supplier?.name ?? null,
     last_supplier_name: product.last_supplier?.name ?? null,
-    currentStorageQty: storageQtyByProduct.get(product.id) ?? 0,
+    currentStorageQty: storageError ? null : storageQtyByProduct.get(product.id) ?? 0,
     vmsNames: vmsNamesByProduct.get(product.id) ?? [],
   }));
 
@@ -145,19 +152,36 @@ export default async function EditPurchasePage({
             Product or supplier lists could not fully load. The draft stayed on screen; retry the page before saving if a product is missing.
           </div>
         ) : null}
+        {receivingStorageLocationsError ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            Receiving locations could not load. You can save this draft, but receiving stock is locked until they load. / تعذر تحميل مخازن الاستلام؛ يمكنك حفظ المسودة فقط.
+          </div>
+        ) : null}
+        {storageError ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            Current storage quantities are unavailable. Product search shows Storage: Unavailable instead of zero; reload before using the balance for a buying decision.
+          </div>
+        ) : null}
         <PurchaseForm
           action={updatePurchase}
           suppliers={suppliers ?? []}
           products={productOptions}
+          storageLocations={(receivingStorageLocations ?? []).map((location) => ({
+            id: location.id,
+            name: location.name,
+            locationType: location.location_type,
+          }))}
           canAddProducts={canAddProducts(profile)}
           initialPurchase={{
             id,
+            updatedAt: (purchase as any).updated_at,
             supplierId: (purchase as any).supplier_id,
             purchaseDate: (purchase as any).order_date,
             receiptNumber: (purchase as any).receipt_number,
             paymentMethod: (purchase as any).payment_method,
             paymentAccountId: (purchase as any).payment_account_id,
             paymentStatus: (purchase as any).payment_status,
+            receivingStorageLocationId: (purchase as any).receiving_storage_location_id,
             receiptUrl: initialReceiptUrl,
             receiptFileName: (purchase as any).receipt_file_name,
             receiptContentType: (purchase as any).receipt_content_type,

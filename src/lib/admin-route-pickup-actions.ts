@@ -76,26 +76,6 @@ function publicPickupError(error: unknown) {
   return "Could not record the missed pickup. Refresh the route and try again.";
 }
 
-async function correctionAlreadyRecorded({
-  supabase,
-  routeId,
-  pickupBatchId,
-  idempotencyKeys,
-}: {
-  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>;
-  routeId: string;
-  pickupBatchId: string;
-  idempotencyKeys: string[];
-}) {
-  const [{ data: pickupBatch, error: pickupBatchError }, { data: movementRows, error: movementError }] = await Promise.all([
-    supabase.from("route_pickup_batches").select("id").eq("id", pickupBatchId).eq("route_id", routeId).maybeSingle(),
-    supabase.from("inventory_movements").select("idempotency_key").eq("related_route_id", routeId).in("idempotency_key", idempotencyKeys),
-  ]);
-  if (pickupBatchError || movementError || !pickupBatch) return false;
-  const savedKeys = new Set((movementRows ?? []).map((row: { idempotency_key?: string | null }) => String(row.idempotency_key ?? "")));
-  return idempotencyKeys.every((key) => savedKeys.has(key));
-}
-
 export async function recordAdminMissedRoutePickup(
   input: RecordAdminMissedPickupInput,
 ): Promise<RecordAdminMissedPickupResult> {
@@ -178,26 +158,14 @@ export async function recordAdminMissedRoutePickup(
       reason: input.reason,
       recordedAt: new Date().toISOString(),
     });
-    const idempotencyKeys = payload.rpcArgs.p_inventory_movements.map((movement) => movement.idempotency_key);
     const resultPayload = {
       pickupBatchId: payload.pickupBatchId,
       recordedItems: payload.items.length,
       recordedUnits: payload.items.reduce((sum, item) => sum + item.quantity, 0),
     };
 
-    if (await correctionAlreadyRecorded({ supabase, routeId, pickupBatchId: payload.pickupBatchId, idempotencyKeys })) {
-      revalidateRoutePickupPaths(routeId);
-      return actionSuccess({ ...resultPayload, alreadyRecorded: true });
-    }
-
-    const { error: rpcError } = await supabase.rpc("snacky_confirm_route_pickup_batch_v2", payload.rpcArgs);
-    if (rpcError) {
-      if (await correctionAlreadyRecorded({ supabase, routeId, pickupBatchId: payload.pickupBatchId, idempotencyKeys })) {
-        revalidateRoutePickupPaths(routeId);
-        return actionSuccess({ ...resultPayload, alreadyRecorded: true });
-      }
-      throw rpcError;
-    }
+    const { error: rpcError } = await supabase.rpc("snacky_confirm_route_pickup_batch_v3", payload.rpcArgs);
+    if (rpcError) throw rpcError;
 
     await logActivity({
       profile,

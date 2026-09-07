@@ -26,7 +26,25 @@ loadEnvFile(".env.local");
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const canRun = Boolean(supabaseUrl && anonKey && serviceRoleKey);
+
+function isLoopbackUrl(value) {
+  try {
+    const hostname = new URL(value).hostname;
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+  } catch {
+    return false;
+  }
+}
+
+// Purchase receipt and inventory rows are immutable audit history. These
+// fixtures therefore run only on the disposable local database and are reset
+// with `supabase db reset` rather than privileged ledger deletion.
+const hasFixtureEnv = Boolean(supabaseUrl && anonKey && serviceRoleKey);
+const usesDisposableLocalStack = isLoopbackUrl(supabaseUrl);
+const canRun = hasFixtureEnv && usesDisposableLocalStack;
+const skipReason = hasFixtureEnv && !usesDisposableLocalStack
+  ? "Purchase workflow fixtures are restricted to disposable local Supabase."
+  : "Supabase local env is not configured.";
 
 function client(key) {
   return createClient(supabaseUrl, key, {
@@ -77,7 +95,15 @@ async function createQaUser({ service, email, password, role, roles }) {
   return { authUserId: authUser.user.id, teamMemberId: teamMember.id, client: userClient };
 }
 
-test("warehouse purchase flow creates ledger inventory and viewer is denied", { skip: canRun ? false : "Supabase local env is not configured." }, async () => {
+test("purchase workflow fixtures stay local and use the receipt-safe writer", () => {
+  const source = readFileSync(new URL(import.meta.url), "utf8");
+  assert.doesNotMatch(source, /rpc\(["']snacky_create_purchase_with_lines["']/);
+  assert.doesNotMatch(source, /\.from\(["']inventory_movements["']\)\s*\.delete\(/);
+  assert.match(source, /snacky_create_purchase_with_lines_v2/);
+  assert.match(source, /usesDisposableLocalStack/);
+});
+
+test("warehouse purchase flow creates ledger inventory and viewer is denied", { skip: canRun ? false : skipReason }, async () => {
   const service = client(serviceRoleKey);
   const id = randomUUID().slice(0, 8);
   const password = `Qa-${id}-pass-12345`;
@@ -90,7 +116,7 @@ test("warehouse purchase flow creates ledger inventory and viewer is denied", { 
     purchaseIds: [],
   };
 
-  try {
+  {
     const warehouse = await createQaUser({
       service,
       email: `qa-warehouse-${id}@snacky.test`,
@@ -197,23 +223,25 @@ test("warehouse purchase flow creates ledger inventory and viewer is denied", { 
 
     const totalUnits = 15;
     const secondTotalUnits = 8;
-    const { data: purchaseRows, error: purchaseError } = await warehouse.client.rpc("snacky_create_purchase_with_lines", {
+    const { data: purchaseRows, error: purchaseError } = await warehouse.client.rpc("snacky_create_purchase_with_lines_v2", {
+      p_client_submission_id: randomUUID(),
       p_supplier_id: supplier.id,
       p_order_date: new Date().toISOString().slice(0, 10),
       p_receipt_number: `QA-RCPT-${id}`,
       p_payment_method: "cash",
-      p_payment_status: "paid",
+      p_payment_status: "unpaid",
       p_receipt_url: null,
       p_receipt_file_name: null,
       p_receipt_content_type: null,
       p_receipt_storage_path: null,
       p_notes: "QA purchase regression test",
-      p_calculated_total_lyd: 18,
+      p_calculated_total_lyd: 30,
       p_manual_total_lyd: null,
       p_total_adjustment_lyd: null,
       p_total_source: "calculated",
-      p_total_amount: 18,
-      p_created_by: warehouse.teamMemberId,
+      p_total_amount: 30,
+      p_payment_account_id: null,
+      p_receiving_storage_location_id: storage.id,
       p_submit_action: "received",
       p_lines: [
         {
@@ -283,12 +311,13 @@ test("warehouse purchase flow creates ledger inventory and viewer is denied", { 
     assert.equal(secondStorageQty, secondTotalUnits);
 
     const additiveTotalUnits = 4;
-    const { data: additivePurchaseRows, error: additivePurchaseError } = await operatorWarehouse.client.rpc("snacky_create_purchase_with_lines", {
+    const { data: additivePurchaseRows, error: additivePurchaseError } = await operatorWarehouse.client.rpc("snacky_create_purchase_with_lines_v2", {
+      p_client_submission_id: randomUUID(),
       p_supplier_id: supplier.id,
       p_order_date: new Date().toISOString().slice(0, 10),
       p_receipt_number: `QA-ADD-RCPT-${id}`,
       p_payment_method: "cash",
-      p_payment_status: "paid",
+      p_payment_status: "unpaid",
       p_receipt_url: null,
       p_receipt_file_name: null,
       p_receipt_content_type: null,
@@ -299,7 +328,8 @@ test("warehouse purchase flow creates ledger inventory and viewer is denied", { 
       p_total_adjustment_lyd: null,
       p_total_source: "calculated",
       p_total_amount: 8,
-      p_created_by: operatorWarehouse.teamMemberId,
+      p_payment_account_id: null,
+      p_receiving_storage_location_id: storage.id,
       p_submit_action: "received",
       p_lines: [
         {
@@ -333,12 +363,13 @@ test("warehouse purchase flow creates ledger inventory and viewer is denied", { 
     assert.equal(additiveMovements[0].to_entity_type, "storage");
     assert.equal(additiveMovements[0].reason, "purchase_received");
 
-    const { error: viewerPurchaseError } = await viewer.client.rpc("snacky_create_purchase_with_lines", {
+    const { error: viewerPurchaseError } = await viewer.client.rpc("snacky_create_purchase_with_lines_v2", {
+      p_client_submission_id: randomUUID(),
       p_supplier_id: supplier.id,
       p_order_date: new Date().toISOString().slice(0, 10),
       p_receipt_number: `QA-DENIED-${id}`,
       p_payment_method: "cash",
-      p_payment_status: "paid",
+      p_payment_status: "unpaid",
       p_receipt_url: null,
       p_receipt_file_name: null,
       p_receipt_content_type: null,
@@ -349,25 +380,12 @@ test("warehouse purchase flow creates ledger inventory and viewer is denied", { 
       p_total_adjustment_lyd: null,
       p_total_source: "calculated",
       p_total_amount: 1,
-      p_created_by: viewer.teamMemberId,
+      p_payment_account_id: null,
+      p_receiving_storage_location_id: storage.id,
       p_submit_action: "received",
       p_lines: [{ product_id: product.id, line_position: 0, boxes_qty: 1, units_per_box: 1, loose_units_qty: 0, total_units: 1, unit_cost: 1, unit_cost_lyd: 1, line_total: 1, line_total_lyd: 1 }],
     });
     assert.ok(viewerPurchaseError, "viewer purchase RPC should be denied");
-  } finally {
-    for (const purchaseId of created.purchaseIds) {
-      await service.from("inventory_movements").delete().eq("related_purchase_id", purchaseId);
-      await service.from("purchase_order_lines").delete().eq("purchase_order_id", purchaseId);
-      await service.from("purchase_orders").delete().eq("id", purchaseId);
-    }
-    if (created.productIds.length) await service.from("products").delete().in("id", created.productIds);
-    if (created.supplierIds.length) await service.from("suppliers").delete().in("id", created.supplierIds);
-    if (created.storageIds.length) await service.from("storage_locations").delete().in("id", created.storageIds);
-    if (created.authUserIds.length) await service.from("profiles").delete().in("id", created.authUserIds);
-    if (created.teamMemberIds.length) await service.from("team_members").delete().in("id", created.teamMemberIds);
-    for (const authUserId of created.authUserIds) {
-      await service.auth.admin.deleteUser(authUserId);
-    }
   }
 });
 

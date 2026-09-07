@@ -3,6 +3,11 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import {
+  getOrCreateOperatorMoneyOperationId,
+  operatorMoneyOperationStorageKey,
+  rotateOperatorMoneyOperationId,
+} from "../src/lib/operator-money-operation-id.ts";
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),"..");
 const read=p=>fs.readFileSync(path.join(root,p),"utf8");
 const migration=read("supabase/migrations/202607290003_operator_money_debts_ledger.sql");
@@ -24,4 +29,43 @@ test("managers can add personal items while operators remain self-only",()=>{ass
 test("standalone money page follows the live app language",()=>{assert.match(moneyPage,/OperatorMoneyLedgerClient/);assert.match(moneyPage,/locale=\{locale\}/);assert.match(moneyPage,/selfServiceOnly/);assert.match(ui,/snacky_os_language/);assert.match(ui,/browserLocale/);assert.match(ui,/MutationObserver/);assert.match(ui,/dir=\{ar\s*\?\s*"rtl"\s*:\s*"ltr"\}/);assert.match(ui,/أموالي/);});
 test("product selection searches and auto chooses verified storage",()=>{assert.match(ui,/ابحث عن المنتج أو العلامة/);assert.match(ui,/filter\(\(row: Row\) => Number\(row\.available_qty\) > 0\)/);assert.match(ui,/Number\(right\.available_qty\) - Number\(left\.available_qty\)/);assert.match(ui,/type="hidden"[\s\S]{0,120}name="storageLocationId"/);assert.doesNotMatch(ui,/name="storageLocationId"\s+required/);assert.match(ui,/المنتج غير متوفر في مخزون موثوق/);});
 test("idempotency protects submissions",()=>{for(const table of ["operator_personal_purchases","operator_debt_payments","operator_advances","operator_expenses","operator_advance_returns"])assert.match(migration,new RegExp(`${table}[\\s\\S]*client_submission_id text not null unique`));});
+test("money commands keep one durable receipt through a lost response and remount",()=>{
+  const rows=new Map();
+  const storage={getItem:key=>rows.get(key)??null,setItem:(key,value)=>rows.set(key,value)};
+  const firstId="11111111-1111-4111-8111-111111111111";
+  const secondId="22222222-2222-4222-8222-222222222222";
+  const input={storage,action:"purchase",personId:"person-a",periodId:"period-a",createId:()=>firstId};
+  const first=getOrCreateOperatorMoneyOperationId(input);
+  const afterLostResponse=getOrCreateOperatorMoneyOperationId({...input,createId:()=>secondId});
+  assert.deepEqual(afterLostResponse,first);
+  assert.equal(rows.get(operatorMoneyOperationStorageKey(input)),firstId);
+});
+test("money command receipts rotate only after confirmed success",()=>{
+  const rows=new Map();
+  const storage={getItem:key=>rows.get(key)??null,setItem:(key,value)=>rows.set(key,value)};
+  const firstId="11111111-1111-4111-8111-111111111111";
+  const secondId="22222222-2222-4222-8222-222222222222";
+  const pending=getOrCreateOperatorMoneyOperationId({storage,action:"expense",personId:"person-a",periodId:"period-a",createId:()=>firstId});
+  assert.equal(rows.get(pending.storageKey),firstId);
+  const completed=rotateOperatorMoneyOperationId({storage,storageKey:pending.storageKey,completedOperationId:firstId,createId:()=>secondId});
+  assert.deepEqual(completed,{operationId:secondId,rotated:true});
+  const staleConfirmation=rotateOperatorMoneyOperationId({storage,storageKey:pending.storageKey,completedOperationId:firstId,createId:()=>firstId});
+  assert.deepEqual(staleConfirmation,{operationId:secondId,rotated:false});
+});
+test("operator-money API rejects missing receipts and never fabricates server UUIDs",()=>{
+  assert.match(api,/if \(!id \|\| id\.length > 200\)/);
+  assert.match(api,/valid client submission id is required/i);
+  assert.doesNotMatch(api,/function submissionId[\s\S]{0,300}(?:randomUUID|Date\.now|Math\.random)/);
+  assert.doesNotMatch(ui,/body\.clientSubmissionId \|\| action \+ ":" \+ crypto\.randomUUID/);
+  assert.match(ui,/getOrCreateOperatorMoneyOperationId/);
+  assert.match(ui,/rotateOperatorMoneyOperationId/);
+});
+test("availability failures remain unknown and stale product responses are ignored",()=>{
+  assert.match(ui,/const requestId = \+\+availabilityRequestId\.current/);
+  assert.match(ui,/if \(requestId !== availabilityRequestId\.current\) return/);
+  assert.match(ui,/if \(!response\.ok\)[\s\S]{0,240}throw new Error/);
+  assert.match(ui,/Storage quantity is temporarily unavailable/);
+  assert.match(ui,/Nothing can be recorded until verified stock loads/);
+  assert.match(ui,/disabled=\{saving \|\| checking \|\| !source \|\| !allowed\}/);
+});
 test("manual sale totals remain isolated",()=>{assert.match(activity,/from\("route_manual_sales"\)/);assert.doesNotMatch(api,/route_manual_sales|manual sale|cash collection/i);});

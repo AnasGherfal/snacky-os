@@ -10,6 +10,9 @@ const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 const migration = read(
   "supabase/migrations/20260831172000_purchase_payment_ledger.sql",
 );
+const purchaseInventoryMigration = read(
+  "supabase/migrations/20260906153000_atomic_purchase_receive_void.sql",
+);
 const authz = read("src/lib/authz.ts");
 const actions = read("src/lib/purchase-actions.ts");
 const listPage = read("src/app/purchases/page.tsx");
@@ -77,17 +80,22 @@ test("legacy paid purchases are backfilled and checked without duplicating cash-
   );
 });
 
-test("voiding a purchase voids its payment and linked finance history", () => {
-  assert.match(migration, /void_purchase_payment_rows/i);
+test("inventory void refuses paid purchases and never silently changes money history", () => {
+  const voidFunction =
+    purchaseInventoryMigration.match(
+      /create or replace function public\.snacky_void_received_purchase_v1[\s\S]*?(?=revoke all on function public\.snacky_void_received_purchase_v1)/i,
+    )?.[0] ?? "";
+
   assert.match(
-    migration,
-    /update public\.purchase_payments[\s\S]*voided_at=coalesce/i,
+    voidFunction,
+    /payment_status in \('paid', 'partially_paid'\) or exists \([\s\S]*from public\.purchase_payments/i,
   );
   assert.match(
-    migration,
-    /update public\.financial_transactions[\s\S]*transaction_status='voided'/i,
+    voidFunction,
+    /Record an explicit supplier return\/refund instead/i,
   );
-  assert.match(migration, /trg_void_purchase_payment_rows/i);
+  assert.doesNotMatch(voidFunction, /update public\.purchase_payments/i);
+  assert.doesNotMatch(voidFunction, /update public\.financial_transactions/i);
 });
 
 test("only owner, admin, or finance can use the payment server action", () => {

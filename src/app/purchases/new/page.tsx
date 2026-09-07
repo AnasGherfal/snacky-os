@@ -26,6 +26,7 @@ export default async function NewPurchasePage({ searchParams }: { searchParams: 
   const [
     { data: suppliers, error: suppliersError },
     { data: products, error: productsError },
+    { data: receivingStorageLocations, error: receivingStorageLocationsError },
     { data: storageRows, error: storageError },
     { data: vmsRows, error: vmsError },
   ] = await Promise.all([
@@ -34,6 +35,12 @@ export default async function NewPurchasePage({ searchParams }: { searchParams: 
       .from("products")
       .select("id, sku, barcode, name, category, brand, case_quantity, cost_price, current_cost_price_lyd, last_purchase_cost_lyd, last_purchase_date, last_supplier_id, image_url, last_supplier:suppliers!products_last_supplier_id_fkey(name)")
       .eq("active", true)
+      .order("name"),
+    supabase
+      .from("storage_locations")
+      .select("id, name, location_type")
+      .eq("active", true)
+      .in("location_type", ["main_storage", "vehicle", "temporary", "other"])
       .order("name"),
     supabase.from("current_inventory_by_location").select("product_id, quantity_on_hand").eq("location_type", "storage"),
     supabase.from("vms_product_mappings").select("product_id, vms_product_name").not("product_id", "is", null),
@@ -59,7 +66,15 @@ export default async function NewPurchasePage({ searchParams }: { searchParams: 
       query_parameters: { active: true, order: "name" },
     });
   }
-  const enrichmentError = storageError ?? vmsError;
+  if (receivingStorageLocationsError) {
+    console.error("[purchases:new] Could not load receiving storage locations", {
+      table_or_view: "storage_locations",
+      supabase_error: receivingStorageLocationsError,
+      current_user_id: profile.id,
+      user_roles: profile.roles,
+      query_parameters: { active: true, location_type: ["main_storage", "vehicle", "temporary", "other"] },
+    });
+  }
   if (storageError) {
     console.warn("[purchases:new] Purchase storage enrichment could not load", {
       table_or_view: "current_inventory_by_location",
@@ -121,7 +136,7 @@ export default async function NewPurchasePage({ searchParams }: { searchParams: 
     last_supplier_id: product.last_supplier_id ?? null,
     lastSupplierName: product.last_supplier?.name ?? null,
     last_supplier_name: product.last_supplier?.name ?? null,
-    currentStorageQty: storageQtyByProduct.get(product.id) ?? 0,
+    currentStorageQty: storageError ? null : storageQtyByProduct.get(product.id) ?? 0,
     vmsNames: vmsNamesByProduct.get(product.id) ?? [],
   }));
 
@@ -144,10 +159,25 @@ export default async function NewPurchasePage({ searchParams }: { searchParams: 
             Product or supplier lists could not fully load. You can keep the draft on screen, retry the page, or continue once the lists appear.
           </div>
         ) : null}
+        {receivingStorageLocationsError ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            Receiving locations could not load. You can save a draft, but receiving stock is locked until this page loads them. / تعذر تحميل مخازن الاستلام؛ يمكنك حفظ مسودة فقط.
+          </div>
+        ) : null}
+        {storageError ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            Current storage quantities are unavailable. Product search shows Storage: Unavailable instead of zero; reload before using the balance for a buying decision.
+          </div>
+        ) : null}
         <NewPurchaseWithReceiptScan
           action={createPurchase}
           suppliers={suppliers ?? []}
           products={productOptions}
+          storageLocations={(receivingStorageLocations ?? []).map((location) => ({
+            id: location.id,
+            name: location.name,
+            locationType: location.location_type,
+          }))}
           canAddProducts={canAddProducts(profile)}
           prefillSource={source || null}
         />

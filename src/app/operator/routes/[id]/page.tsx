@@ -10,7 +10,7 @@ import { buildOperatorRouteAccessContext, loadAccessibleOperatorIds } from "@/li
 import { type OperatorRoutePreviewRow, type OperatorRoutePreviewStopRow } from "@/lib/operator-route-types";
 import { sortPickupProductRows } from "@/lib/route-pickup-checklist";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
-import { isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isPickupConfirmedStatus, isRouteStopActiveStatus, isRouteStopDoneStatus, isRouteStopPendingStatus, nextOperatorRouteHref, routeDisplayStatus, ROUTE_STOP_COMPLETED_STATUS } from "@/lib/route-workflow";
+import { isActiveRouteStatus, isAvailableRouteStatus, isPickupConfirmedStatus, isRouteStopActiveStatus, isRouteStopDoneStatus, isRouteStopPendingStatus, nextOperatorRouteHref, routeDisplayStatus } from "@/lib/route-workflow";
 import { skipStop } from "@/lib/operator-actions";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 
@@ -59,6 +59,11 @@ type OperatorRouteAdjustmentRow = {
   created_at?: string | null;
   machine_id?: string | null;
   route_stop_id?: string | null;
+};
+
+type RouteBagSnapshotBalanceRow = {
+  product_id?: string | null;
+  signed_quantity?: number | string | null;
 };
 
 const OPERATOR_ROUTE_BASE_SELECT = "id, route_date, status, operator_id, started_at, completed_at, created_at, notes";
@@ -256,7 +261,7 @@ export default async function OperatorRouteDetailPage({
     });
   }
 
-  const [{ data: operator, error: operatorError }, { data: stops, error: stopsError }, { data: routeStock, error: routeStockError }, { data: routeAdjustments, error: adjustmentsError }, { data: routeManualSales, error: manualSalesError }] = await Promise.all([
+  const [{ data: operator, error: operatorError }, { data: stops, error: stopsError }, { data: routeStock, error: routeStockError }, { data: routeAdjustments, error: adjustmentsError }, { data: routeManualSales, error: manualSalesError }, { data: routeBagSnapshot, error: routeBagSnapshotError }] = await Promise.all([
     routeRow.operator_id
       ? routeReadClient.from("team_members").select("id, full_name").eq("id", routeRow.operator_id).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
@@ -280,6 +285,7 @@ export default async function OperatorRouteDetailPage({
       .select("id, product_name, quantity, total_amount_lyd, payment_method, sale_time, status, machine_id")
       .eq("route_id", routeId)
       .order("sale_time", { ascending: false }),
+    supabase.rpc("snacky_route_bag_snapshot", { p_route_id: routeId }),
   ]);
   if (operatorError) logRouteLoaderIssue({ step: 'load_route_operator', query: 'team_members', error: operatorError, context: loaderContext, optional: true });
   if (stopsError) logRouteLoaderIssue({ step: 'load_route_stops', query: 'route_stops', error: stopsError, context: loaderContext });
@@ -302,6 +308,7 @@ export default async function OperatorRouteDetailPage({
   }
   if (adjustmentsError) logRouteLoaderIssue({ step: 'load_inventory_adjustments', query: 'inventory_adjustments', error: adjustmentsError, context: loaderContext, optional: true });
   if (manualSalesError && !errorText(manualSalesError).toLowerCase().includes("route_manual_sales")) logRouteLoaderIssue({ step: 'load_manual_route_sales', query: 'route_manual_sales', error: manualSalesError, context: loaderContext, optional: true });
+  if (routeBagSnapshotError) logRouteLoaderIssue({ step: 'load_route_bag_snapshot', query: 'rpc.snacky_route_bag_snapshot', error: routeBagSnapshotError, context: loaderContext, optional: true });
   if (!canAccess) {
     console.error("[operator:route] Route access denied by app permission check", {
       route_id: routeId,
@@ -361,6 +368,19 @@ export default async function OperatorRouteDetailPage({
   const pickItems = routeStockRows;
   const routeProductsPrepared = pickItems.some((item) => Number(item.planned_qty ?? 0) > 0);
   const hasPickup = pickItems.some((item) => Number(item.picked_qty ?? 0) > 0);
+  const routeBagSnapshotValue = Array.isArray(routeBagSnapshot) ? routeBagSnapshot[0] : routeBagSnapshot;
+  const routeBagBalances = routeBagSnapshotValue && typeof routeBagSnapshotValue === "object"
+    && Array.isArray((routeBagSnapshotValue as { balances?: unknown }).balances)
+    ? (routeBagSnapshotValue as { balances: RouteBagSnapshotBalanceRow[] }).balances
+    : null;
+  const canonicalRouteBagAvailable = !routeBagSnapshotError && routeBagBalances !== null;
+  const routeBagRemainingByProduct = new Map<string, number>();
+  for (const balance of routeBagBalances ?? []) {
+    const productId = String(balance.product_id ?? "").trim();
+    const signedQuantity = Number(balance.signed_quantity ?? 0);
+    if (!productId || !Number.isFinite(signedQuantity)) continue;
+    routeBagRemainingByProduct.set(productId, (routeBagRemainingByProduct.get(productId) ?? 0) + signedQuantity);
+  }
   const sortedPickItems = sortPickupProductRows(
     pickItems.map((item) => ({
       ...item,
@@ -558,6 +578,11 @@ export default async function OperatorRouteDetailPage({
         {/* Pick List Section */}
         <section className="rounded-lg border border-slate-200 bg-white p-4 md:p-6">
           <h2 className="text-lg font-semibold mb-4">{t("Pick list")}</h2>
+          {!canonicalRouteBagAvailable ? (
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              {t("The verified operator-bag balance could not be loaded. Refresh before relying on remaining stock quantities.")}
+            </div>
+          ) : null}
           {isAvailableRouteStatus(routeRow.status) ? (
             <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
               <strong>{t("Ready to start") + "?"}</strong> {t("Click")} {routeRow.operator_id ? t("Start Route") : t("Claim & Start")} {t("above to view your pick list and begin picking stock from storage.")}
@@ -567,12 +592,22 @@ export default async function OperatorRouteDetailPage({
             <EmptyState title={t("No pick list yet")} body={t("This route has no products assigned to pick from storage.")} />
           ) : (
             <div className="mb-4 space-y-2">
-              {sortedPickItems.map((item) => (
-                <div key={item.id} className="flex flex-col gap-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-                  <span className="min-w-0 break-words font-medium text-slate-900">{item.product?.name ?? t("Unknown product")}</span>
-                  <span className="shrink-0 text-slate-600">{Number(item.picked_qty ?? item.planned_qty ?? 0)} / {Number(item.planned_qty ?? 0)} {t("picked")} · {Number(item.returned_qty ?? 0)} {t("returned")} · {Math.max(0, Number(item.picked_qty ?? item.planned_qty ?? 0) - Number(item.returned_qty ?? 0))} {t("remaining")}</span>
-                </div>
-              ))}
+              {sortedPickItems.map((item) => {
+                const productId = String(item.product_id ?? "");
+                const verifiedRemaining = canonicalRouteBagAvailable
+                  ? routeBagRemainingByProduct.get(productId) ?? 0
+                  : null;
+                return (
+                  <div key={item.id} className="flex flex-col gap-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+                    <span className="min-w-0 break-words font-medium text-slate-900">{item.product?.name ?? t("Unknown product")}</span>
+                    <span className="shrink-0 text-slate-600">
+                      {Number(item.picked_qty ?? item.planned_qty ?? 0)} / {Number(item.planned_qty ?? 0)} {t("picked")} · {Number(item.returned_qty ?? 0)} {t("returned")} · {verifiedRemaining === null
+                        ? t("verified remaining unavailable")
+                        : `${verifiedRemaining} ${t("remaining in operator bag")}`}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           )}
           <Link
@@ -623,18 +658,18 @@ export default async function OperatorRouteDetailPage({
                     </div>
                   </div>
 
-                  {isActiveRouteStatus(routeRow.status) || isCompletedRouteStatus(routeRow.status) ? (
+                  {isActiveRouteStatus(routeRow.status) ? (
                     <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                       {isRouteStopPendingStatus(stop.status) ? (
                         <Link href={`/operator/routes/${routeId}/pick-list`} className="btn-primary w-full text-base sm:w-auto">
                           {t("Pick this stop")}
                         </Link>
-                      ) : isRouteStopActiveStatus(stop.status) || stop.status === ROUTE_STOP_COMPLETED_STATUS ? (
+                      ) : isRouteStopActiveStatus(stop.status) ? (
                         <Link
                           href={`/operator/routes/${routeId}/stops/${stop.id}`}
                           className="btn-primary w-full text-base sm:w-auto"
                         >
-                          {stop.status === ROUTE_STOP_COMPLETED_STATUS ? t("Edit stop") : t("Continue filling")}
+                          {t("Continue filling")}
                         </Link>
                       ) : null}
                       {!isRouteStopDoneStatus(stop.status) ? (
@@ -651,6 +686,16 @@ export default async function OperatorRouteDetailPage({
                           reasonPlaceholder={t("Machine inaccessible, closed location, or another reason.")}
                         />
                       ) : null}
+                    </div>
+                  ) : null}
+                  {isRouteStopDoneStatus(stop.status) ? (
+                    <div className="mt-1">
+                      <Link
+                        href={`/operator/routes/${routeId}/stops/${stop.id}`}
+                        className="btn-secondary w-full text-base sm:w-auto"
+                      >
+                        {t("View stop outcome")}
+                      </Link>
                     </div>
                   ) : null}
                 </div>
