@@ -86,7 +86,8 @@ test("removal and count cannot invent expected cash; reconciliation owns it", ()
 test("cash list leads with combined custody totals instead of machine allocations", () => {
   assert.match(cashList, /Net missing for filters/);
   assert.match(cashList, /overages offset shortages/);
-  assert.match(cashList, /Counted, not yet banked/);
+  assert.match(cashList, /Available Snacky cash/);
+  assert.match(cashList, /Counted cash already added to Snacky LYD/);
   assert.doesNotMatch(cashList, /headers=\{\["Machine"[^\]]*"Expected cash"/);
   assert.doesNotMatch(cashList, /headers=\{\["Machine"[^\]]*"Variance"/);
 });

@@ -14,7 +14,6 @@ import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/a
 import {
   canAccessPath,
   canApproveCashVariance,
-  canBankCash,
   canCountCash,
   canReceiveCashStorage,
   canReconcileCash,
@@ -50,23 +49,14 @@ function DetailItem({ label, children }: { label: string; children: ReactNode })
   return <div><dt className="text-sm text-slate-500">{label}</dt><dd className="mt-1 break-words font-medium text-slate-900">{children}</dd></div>;
 }
 
-function stageIndex(status: string) {
-  return ["removed", "in_storage", "counted", "reconciled", "banked"].indexOf(status);
-}
-
 function CustodyStages({ status }: { status: string }) {
   const stages = [
-    ["removed", "Removed"],
-    ["in_storage", "Stored"],
-    ["counted", "Counted"],
-    ["reconciled", "Reconciled"],
-    ["banked", "Banked"],
+    { key: "waiting", label: "Waiting to be counted", complete: ["counted", "reconciled", "banked"].includes(status) },
+    { key: "reconciled", label: status === "counted" ? "VMS check pending" : "Counted & reconciled", complete: ["reconciled", "banked"].includes(status) },
   ];
-  const current = stageIndex(status);
   return (
-    <ol className="grid gap-2 sm:grid-cols-5" aria-label="Cash custody stages">
-      {stages.map(([key, label], index) => {
-        const complete = status !== "voided" && index <= current;
+    <ol className="grid gap-2 sm:grid-cols-2" aria-label="Cash custody stages">
+      {stages.map(({ key, label, complete }, index) => {
         return (
           <li key={key} className={`rounded-lg border p-3 text-center text-sm font-semibold ${complete ? "border-emerald-200 bg-emerald-50 text-emerald-900" : status === "voided" ? "border-rose-200 bg-rose-50 text-rose-800" : "border-slate-200 bg-slate-50 text-slate-500"}`}>
             <div className="text-xs font-bold">{complete ? "✓" : index + 1}</div>
@@ -92,8 +82,8 @@ const eventLabels: Record<string, string> = {
   reconciled: "Combined total reconciled",
   variance_flagged: "Owner review required",
   variance_resolved: "Variance resolved by owner/admin",
-  banked: "Cash included in bank deposit",
-  bank_deposit_voided: "Bank deposit voided",
+  banked: "Legacy bank deposit recorded",
+  bank_deposit_voided: "Legacy bank deposit voided",
   voided: "Cash batch voided",
 };
 
@@ -122,7 +112,6 @@ export default async function CashCollectionDetailPage({
   const canCount = canCountCash(context);
   const canReconcile = canReconcileCash(context);
   const canResolve = canApproveCashVariance(context);
-  const canBank = canBankCash(context);
   const backHref = canSeeMoney || canReceive ? "/cash-collections" : "/operator/routes";
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) notFound();
@@ -179,7 +168,7 @@ export default async function CashCollectionDetailPage({
             ) : row.custody_status === "removed" && canReceive ? (
               <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">The collector cannot acknowledge their own handoff. Ask a different warehouse, supervisor, finance, owner, or admin user to receive this sealed bag.</p>
             ) : (
-              <p className="mt-4 text-sm text-slate-600">{row.custody_status === "voided" ? "This receipt is voided." : "Handoff is complete. Finance continues the count, reconciliation, and banking stages without exposing amounts here."}</p>
+              <p className="mt-4 text-sm text-slate-600">{row.custody_status === "voided" ? "This receipt is voided." : "Handoff is complete. Finance continues the count and VMS check without exposing amounts here."}</p>
             )}
           </SectionCard>
         </div>
@@ -187,10 +176,10 @@ export default async function CashCollectionDetailPage({
     );
   }
 
-  const [{ data: collection, error: collectionError }, { data: events }, { data: allocations }, { data: finance }, { data: activeWitnesses }] = await Promise.all([
+  const [{ data: collection, error: collectionError }, { data: events }, { data: finance }, { data: activeWitnesses }] = await Promise.all([
     supabase
       .from("cash_collections")
-      .select("id, route_id, machine_id, operator_id, collected_at, vms_expected_cash, actual_cash_collected, variance, review_status, custody_status, reconciliation_status, cash_bag_id, storage_received_at, storage_received_by, storage_location, storage_seal_condition, storage_notes, counted_at, counted_by, count_seal_condition, count_witnessed_by, count_denominations, count_other_amount_lyd, expected_source, expected_calculated_at, reconciled_at, reconciled_by, reconciliation_note, variance_resolution, banked_amount_lyd, voided_at, void_reason, notes, operator:team_members!cash_collections_operator_id_fkey(id, full_name), storage_receiver:team_members!cash_collections_storage_received_by_fkey(id, full_name), counter:team_members!cash_collections_counted_by_fkey(id, full_name), count_witness:team_members!cash_collections_count_witnessed_by_fkey(id, full_name), reconciler:team_members!cash_collections_reconciled_by_fkey(id, full_name), machine_links:cash_collection_machines(machine_id, removal_type, compartments, interval_start_at, interval_end_at, expectation_status, expectation_source, vms_sales_count, machine:machines(id, name, machine_code, location:locations(id, name)))")
+      .select("id, route_id, machine_id, operator_id, collected_at, vms_expected_cash, actual_cash_collected, variance, review_status, custody_status, reconciliation_status, cash_bag_id, storage_received_at, storage_received_by, storage_location, storage_seal_condition, storage_notes, counted_at, counted_by, count_seal_condition, count_witnessed_by, count_denominations, count_other_amount_lyd, expected_source, expected_calculated_at, reconciled_at, reconciled_by, reconciliation_note, variance_resolution, voided_at, void_reason, notes, operator:team_members!cash_collections_operator_id_fkey(id, full_name), storage_receiver:team_members!cash_collections_storage_received_by_fkey(id, full_name), counter:team_members!cash_collections_counted_by_fkey(id, full_name), count_witness:team_members!cash_collections_count_witnessed_by_fkey(id, full_name), reconciler:team_members!cash_collections_reconciled_by_fkey(id, full_name), machine_links:cash_collection_machines(machine_id, removal_type, compartments, interval_start_at, interval_end_at, expectation_status, expectation_source, vms_sales_count, machine:machines(id, name, machine_code, location:locations(id, name)))")
       .eq("id", id)
       .maybeSingle(),
     supabase
@@ -198,10 +187,6 @@ export default async function CashCollectionDetailPage({
       .select("id, event_type, event_at, amount_lyd, seal_condition, evidence_storage_path, evidence_file_name, notes, metadata, actor:team_members!cash_collection_events_actor_team_member_id_fkey(id, full_name)")
       .eq("cash_collection_id", id)
       .order("event_at", { ascending: true }),
-    supabase
-      .from("cash_bank_deposit_allocations")
-      .select("id, amount_lyd, deposit:cash_bank_deposits(id, deposited_at, deposit_reference, destination_account, status)")
-      .eq("cash_collection_id", id),
     supabase
       .from("financial_transactions")
       .select("id, transaction_status")
@@ -236,7 +221,7 @@ export default async function CashCollectionDetailPage({
         title={`Cash Bag ${row.cash_bag_id ?? id.slice(0, 8)}`}
         subtitle={`${summary} removed ${formatDate(row.collected_at)}. Reconciliation is always on the combined batch total.`}
         breadcrumbs={[{ label: "Cash Custody", href: "/cash-collections" }, { label: row.cash_bag_id ?? id.slice(0, 8) }]}
-        action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections">Back</SecondaryButton>{canBank ? <SecondaryButton href="/cash-deposits">Bank deposits</SecondaryButton> : null}{canResolve && status !== "voided" && status !== "banked" ? <ConfirmDialog action={voidCashCollection} triggerLabel="Void batch" title="Void this immutable cash batch?" description="Use this only for a duplicate or invalid record. History and evidence remain. Banked batches must have their deposit voided first." confirmLabel="Void batch" buttonClassName="btn-danger" confirmButtonClassName="btn-danger" hiddenFields={[{ name: "id", value: id }]} /> : null}</div>}
+        action={<div className="flex flex-wrap gap-2"><SecondaryButton href="/cash-collections">Back</SecondaryButton>{canResolve && status !== "voided" ? <ConfirmDialog action={voidCashCollection} triggerLabel="Void batch" title="Void this immutable cash batch?" description="Use this only for a duplicate or invalid record. History and evidence remain." confirmLabel="Void batch" buttonClassName="btn-danger" confirmButtonClassName="btn-danger" hiddenFields={[{ name: "id", value: id }]} /> : null}</div>}
       />
       {messages.error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{messages.error}</div> : null}
       {messages.success ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">{messages.success}</div> : null}
@@ -269,7 +254,6 @@ export default async function CashCollectionDetailPage({
               <DetailItem label="Count seal">{row.count_seal_condition ?? "—"}</DetailItem>
               <DetailItem label="Reconciled at">{formatDate(row.reconciled_at)}</DetailItem>
               <DetailItem label="Reconciled by">{row.reconciler?.full_name ?? "—"}</DetailItem>
-              <DetailItem label="Banked amount">{money(row.banked_amount_lyd)}</DetailItem>
               <DetailItem label="Finance ledger">{finance?.id ? <Link href={`/finance/transactions/${finance.id}`} className="link-secondary">Open {finance.transaction_status ?? "active"} entry</Link> : "Not posted"}</DetailItem>
               <DetailItem label="Route">{row.route_id ? "Legacy reference only" : "Not connected to a route"}</DetailItem>
             </dl>
@@ -295,17 +279,15 @@ export default async function CashCollectionDetailPage({
             </div>
           </SectionCard>
 
-          {(allocations ?? []).length ? <SectionCard><h2 className="text-lg font-semibold">Bank deposit links</h2><div className="mt-4 space-y-2">{(allocations ?? []).map((allocation: any) => { const deposit = Array.isArray(allocation.deposit) ? allocation.deposit[0] : allocation.deposit; return <div key={allocation.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 p-3 text-sm"><div><Link href={`/cash-deposits/${deposit?.id}`} className="font-semibold link-secondary">{deposit?.deposit_reference ?? "Deposit"}</Link><div className="text-xs text-slate-500">{formatDate(deposit?.deposited_at)} · {deposit?.destination_account}</div></div><div className="font-semibold">{money(allocation.amount_lyd)} · {deposit?.status}</div></div>; })}</div></SectionCard> : null}
         </div>
 
         <div className="space-y-6">
-          {status === "removed" && mayReceive ? <SectionCard><h2 className="text-lg font-semibold">1. Receive into storage</h2><p className="mt-1 text-sm text-slate-500">A different person verifies the seal, photographs the handoff, and records the exact safe location.</p><CashStorageReceiptForm action={receiveCashIntoStorage} id={id} clientSubmissionId={crypto.randomUUID()} /></SectionCard> : null}
+          {status === "removed" && mayReceive ? <SectionCard><h2 className="text-lg font-semibold">Receive into storage</h2><p className="mt-1 text-sm text-slate-500">A different person verifies the seal, photographs the handoff, and records the exact safe location.</p><CashStorageReceiptForm action={receiveCashIntoStorage} id={id} clientSubmissionId={crypto.randomUUID()} /></SectionCard> : null}
           {status === "removed" && canReceive && !mayReceive ? <SectionCard><h2 className="text-lg font-semibold">Independent handoff required</h2><p className="mt-3 text-sm text-amber-800">The collector cannot acknowledge their own storage handoff. A different authorized user must receive this bag.</p></SectionCard> : null}
-          {status === "in_storage" && canCount ? <SectionCard><h2 className="text-lg font-semibold">2. Count the stored bag</h2><p className="mt-1 text-sm text-slate-500">Count by denomination. Do not allocate mixed cash to machines. A second named person must witness the full count.</p>{countWitnesses.length ? <CashCountForm action={confirmCashCollectionCount} id={id} clientSubmissionId={crypto.randomUUID()} witnesses={countWitnesses} /> : <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Counting is blocked until another active team member is available to witness it.</p>}</SectionCard> : null}
-          {status === "counted" && row.reconciliation_status !== "variance_review" && canReconcile ? <SectionCard><h2 className="text-lg font-semibold">3. Reconcile the combined total</h2><p className="mt-1 text-sm text-slate-500">Automatic mode uses exact transactions between full machine emptying events. If raw VMS data is unavailable, use one independently verified batch total and document its source.</p><CashReconciliationForms calculateAction={calculateCashExpectation} reconcileAction={reconcileCashCollection} id={id} calculateSubmissionId={crypto.randomUUID()} reconcileSubmissionId={crypto.randomUUID()} /></SectionCard> : null}
-          {status === "counted" && row.reconciliation_status === "variance_review" && canResolve ? <SectionCard><h2 className="text-lg font-semibold text-rose-800">4. Owner variance decision</h2><p className="mt-1 text-sm text-slate-600">Missing cash is {money(shortage)}. Verify the total and evidence before accepting a cause. “Unknown” is not a resolution.</p><CashVarianceResolutionForm action={resolveCashVariance} id={id} clientSubmissionId={crypto.randomUUID()} /></SectionCard> : null}
-          {status === "reconciled" && canBank ? <SectionCard><h2 className="text-lg font-semibold">5. Bank the reconciled cash</h2><p className="mt-2 text-sm text-slate-600">This batch stays open until it is included in an exact bank deposit with a receipt. Several batches can be combined.</p><Link href="/cash-deposits/new" className="btn-primary mt-4 w-full">Create bank deposit</Link></SectionCard> : null}
-          {status === "banked" ? <SectionCard><h2 className="text-lg font-semibold text-emerald-800">Custody closed</h2><p className="mt-2 text-sm text-slate-600">The removal, storage handoff, count, reconciliation, and bank receipt are linked in one audit chain.</p></SectionCard> : null}
+          {status === "in_storage" && canCount ? <SectionCard><h2 className="text-lg font-semibold">Count the stored bag</h2><p className="mt-1 text-sm text-slate-500">Count by denomination. Do not allocate mixed cash to machines. A second named person must witness the full count.</p>{countWitnesses.length ? <CashCountForm action={confirmCashCollectionCount} id={id} clientSubmissionId={crypto.randomUUID()} witnesses={countWitnesses} /> : <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Counting is blocked until another active team member is available to witness it.</p>}</SectionCard> : null}
+          {status === "counted" && row.reconciliation_status !== "variance_review" && canReconcile ? <SectionCard><h2 className="text-lg font-semibold">Check the combined total against VMS</h2><p className="mt-1 text-sm text-slate-500">The counted amount is already available in Snacky LYD. This check detects missing cash using exact transactions between full machine emptying events. If raw VMS data is unavailable, use one independently verified batch total and document its source.</p><CashReconciliationForms calculateAction={calculateCashExpectation} reconcileAction={reconcileCashCollection} id={id} calculateSubmissionId={crypto.randomUUID()} reconcileSubmissionId={crypto.randomUUID()} /></SectionCard> : null}
+          {status === "counted" && row.reconciliation_status === "variance_review" && canResolve ? <SectionCard><h2 className="text-lg font-semibold text-rose-800">Owner variance decision</h2><p className="mt-1 text-sm text-slate-600">Missing cash is {money(shortage)}. Verify the total and evidence before accepting a cause. “Unknown” is not a resolution.</p><CashVarianceResolutionForm action={resolveCashVariance} id={id} clientSubmissionId={crypto.randomUUID()} /></SectionCard> : null}
+          {["reconciled", "banked"].includes(status) ? <SectionCard><h2 className="text-lg font-semibold text-emerald-800">Counted & reconciled</h2><p className="mt-2 text-sm text-slate-600">This cash is already included in the Snacky LYD balance and is available to spend. No extra cash step is required.</p></SectionCard> : null}
           {status === "voided" ? <SectionCard><h2 className="text-lg font-semibold text-rose-800">Voided record</h2><p className="mt-2 text-sm text-slate-600">This record remains visible for audit and cannot be edited or reused.</p></SectionCard> : null}
         </div>
       </div>

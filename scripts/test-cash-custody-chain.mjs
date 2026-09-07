@@ -8,6 +8,7 @@ import { calculateDenominationTotal, combinedCashPosition, getCashCustodyAlerts,
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 const migration = read("supabase/migrations/20260906235157_cash_custody_chain.sql");
+const simplificationMigration = read("supabase/migrations/20260907144816_simplify_cash_reconciliation.sql");
 const actions = read("src/lib/cash-actions.ts");
 const removalForm = read("src/components/CashRemovalForm.tsx");
 const custodyForms = read("src/components/CashCustodyForms.tsx");
@@ -95,14 +96,16 @@ test("reconciliation uses exact intervals or one documented manual batch total",
   });
 });
 
-test("banking closes multiple reconciled batches only on an exact receipt total", () => {
-  assert.match(migration, /record_cash_bank_deposit_impl/);
-  assert.match(migration, /p_collection_ids uuid\[\]/);
-  assert.match(migration, /Deposit amount must equal the selected batches total/);
-  assert.match(migration, /Bank deposit receipt is required/);
-  assert.match(migration, /set banked_amount_lyd = actual_cash_collected,[\s\S]*?custody_status = 'banked'/);
-  assert.match(custodyForms, /Selected batch total/);
-  assert.match(custodyForms, /readOnly/);
+test("counted cash is available without a bank-transfer stage", () => {
+  assert.match(actions, /Count saved and added to Snacky LYD/);
+  assert.doesNotMatch(actions, /recordCashBankDeposit|voidCashBankDeposit|cash-deposits/);
+  assert.doesNotMatch(custodyForms, /CashBankDepositForm|release for banking/);
+  assert.doesNotMatch(detailPage, /Bank deposits|Create bank deposit|Banked amount/);
+  assert.equal(fs.existsSync(path.join(root, "src/app/cash-deposits/page.tsx")), false);
+  assert.equal(fs.existsSync(path.join(root, "src/app/cash-deposits/new/page.tsx")), false);
+  assert.match(simplificationMigration, /where custody_status = 'banked'/);
+  assert.match(simplificationMigration, /revoke all on function public\.record_cash_bank_deposit[\s\S]*?authenticated, service_role/);
+  assert.match(simplificationMigration, /revoke all on function public\.void_cash_bank_deposit[\s\S]*?authenticated, service_role/);
 });
 
 test("cash records are immutable and route completion cannot create them", () => {
@@ -114,11 +117,11 @@ test("cash records are immutable and route completion cannot create them", () =>
   assert.match(migration, /Submission ID was already used for a different custody event/);
 });
 
-test("overdue controls escalate every open custody stage", () => {
+test("overdue controls stop after reconciliation", () => {
   const now = new Date("2026-09-07T12:00:00.000Z");
   assert.equal(getCashCustodyAlerts({ custody_status: "removed", collected_at: "2026-09-07T08:00:00.000Z" }, now)[0]?.label, "Storage handoff overdue");
   assert.equal(getCashCustodyAlerts({ custody_status: "in_storage", storage_received_at: "2026-09-05T12:00:00.000Z" }, now)[0]?.label, "Cash count overdue");
   assert.equal(getCashCustodyAlerts({ custody_status: "counted", counted_at: "2026-09-05T12:00:00.000Z" }, now)[0]?.label, "Reconciliation overdue");
-  assert.equal(getCashCustodyAlerts({ custody_status: "reconciled", reconciled_at: "2026-09-04T12:00:00.000Z" }, now)[0]?.label, "Bank deposit overdue");
+  assert.equal(getCashCustodyAlerts({ custody_status: "reconciled", reconciled_at: "2026-09-04T12:00:00.000Z" }, now).length, 0);
   assert.equal(getCashCustodyAlerts({ custody_status: "banked", reconciled_at: "2026-01-01T00:00:00.000Z" }, now).length, 0);
 });

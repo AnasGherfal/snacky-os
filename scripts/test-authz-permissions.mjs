@@ -79,13 +79,12 @@ test("finance only can see finance but cannot edit products", () => {
   assert.equal(hasPermission(finance, "finance.edit"), true);
   assert.equal(hasPermission(finance, "cash.count"), true);
   assert.equal(hasPermission(finance, "cash.reconcile"), true);
-  assert.equal(hasPermission(finance, "cash.bank"), true);
   assert.equal(hasPermission(finance, "cash.variance_approve"), false);
   assert.equal(hasPermission(finance, "products.edit"), false);
   assert.equal(canAccessPath(finance, "/finance"), true);
   assert.equal(canAccessPath(finance, "/products/abc/edit"), false);
   assert.equal(canAccessPath(finance, "/restock-priority"), false);
-  assert.equal(canAccessPath(finance, "/cash-deposits/new"), true);
+  assert.equal(canAccessPath(finance, "/cash-deposits/new"), false);
 });
 
 test("admin has full permission set", () => {

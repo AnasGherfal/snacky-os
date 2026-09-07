@@ -6,7 +6,6 @@ import type { UserProfile } from "@/lib/auth";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import {
   canApproveCashVariance,
-  canBankCash,
   canCountCash,
   canReceiveCashStorage,
   canRecordCashRemoval,
@@ -31,12 +30,6 @@ function optionalAmount(value: FormDataEntryValue | null) {
   if (!raw) return null;
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? Math.round(parsed * 100) / 100 : null;
-}
-
-function requiredPositiveAmount(value: FormDataEntryValue | null, path: string, label: string) {
-  const amount = optionalAmount(value);
-  if (amount === null || amount <= 0) fail(path, `${label} must be greater than zero.`);
-  return amount;
 }
 
 function normalizeLibyaDateTime(value: FormDataEntryValue | null) {
@@ -89,7 +82,7 @@ function rpcMessage(error: { message?: string | null } | null | undefined, fallb
 async function requiredEvidence(
   value: FormDataEntryValue | null,
   path: string,
-  options: { scopeId: string; stage: "removed" | "stored" | "counted" | "banked" },
+  options: { scopeId: string; stage: "removed" | "stored" | "counted" },
 ): Promise<CashEvidenceUpload> {
   try {
     const upload = await uploadCashEvidence(value, { ...options, required: true });
@@ -103,7 +96,6 @@ async function requiredEvidence(
 
 function revalidateCashPaths(id?: string) {
   revalidatePath("/cash-collections");
-  revalidatePath("/cash-deposits");
   revalidatePath("/finance");
   revalidatePath("/finance/operations");
   revalidatePath("/finance/transactions");
@@ -264,10 +256,10 @@ export async function confirmCashCollectionCount(formData: FormData) {
     entityId: id,
     afterData: { custody_status: "counted", seal_condition: sealCondition, count_witness_id: countWitnessId, denominations, other_amount_lyd: otherAmount },
     metadata: { evidence_path: evidence.path, count_witness_id: countWitnessId, related_finance: true },
-    summary: "Counted stored cash by denomination with a second witness; reconciliation is pending",
+    summary: "Counted stored cash by denomination with a second witness; amount is available in Snacky LYD and reconciliation is pending",
   });
   revalidateCashPaths(id);
-  redirect(`${path}?success=${encodeURIComponent("Count saved and posted to the cash ledger. Reconcile the combined batch total against VMS next.")}`);
+  redirect(`${path}?success=${encodeURIComponent("Count saved and added to Snacky LYD. Compare the combined batch total against VMS next.")}`);
 }
 
 export async function calculateCashExpectation(formData: FormData) {
@@ -327,7 +319,7 @@ export async function reconcileCashCollection(formData: FormData) {
     summary: manualExpected === null ? "Reconciled combined batch against exact VMS intervals" : "Submitted verified combined VMS total for owner review",
   });
   revalidateCashPaths(id);
-  redirect(`${path}?success=${encodeURIComponent("Reconciliation saved. Any shortage, manual VMS total, or seal exception now requires owner review.")}`);
+  redirect(`${path}?success=${encodeURIComponent("Reconciliation saved. Counted cash is already available in Snacky LYD; any shortage or exception still requires owner review.")}`);
 }
 
 export async function resolveCashVariance(formData: FormData) {
@@ -357,73 +349,7 @@ export async function resolveCashVariance(formData: FormData) {
     summary: "Owner/admin resolved a cash variance or custody exception",
   });
   revalidateCashPaths(id);
-  redirect(`${path}?success=${encodeURIComponent("Owner resolution saved. This batch is now eligible for banking.")}`);
-}
-
-export async function recordCashBankDeposit(formData: FormData) {
-  const path = "/cash-deposits/new";
-  const { profile, supabase } = await requireCapability(path, canBankCash);
-  const collectionIds = Array.from(new Set(formData.getAll("collection_ids").map(clean).filter(Boolean)));
-  const amount = requiredPositiveAmount(formData.get("amount_lyd"), path, "Deposit amount");
-  const reference = clean(formData.get("deposit_reference"));
-  const submissionId = clean(formData.get("client_submission_id")) || crypto.randomUUID();
-  if (!collectionIds.length) fail(path, "Select at least one reconciled cash batch.");
-  if (!reference) fail(path, "Bank deposit reference is required.");
-
-  const evidence = await requiredEvidence(formData.get("evidence_file"), path, { scopeId: submissionId, stage: "banked" });
-  const { data: depositId, error } = await supabase.rpc("record_cash_bank_deposit", {
-    p_collection_ids: collectionIds,
-    p_deposited_at: normalizeLibyaDateTime(formData.get("deposited_at")),
-    p_amount_lyd: amount,
-    p_deposit_reference: reference,
-    p_destination_account: optionalText(formData.get("destination_account")),
-    p_receipt_storage_path: evidence.path,
-    p_receipt_file_name: evidence.fileName,
-    p_notes: optionalText(formData.get("notes")),
-    p_client_submission_id: submissionId,
-  });
-  if (error || !depositId) {
-    await rollbackEvidence(evidence);
-    console.error("[cash] Failed to record bank deposit", error);
-    fail(path, rpcMessage(error, "Could not record the bank deposit."));
-  }
-  await logActivity({
-    profile,
-    action: "record_cash_bank_deposit",
-    entityType: "cash_bank_deposit",
-    entityId: String(depositId),
-    entityLabel: reference,
-    afterData: { amount_lyd: amount, deposit_reference: reference, collection_ids: collectionIds },
-    metadata: { evidence_path: evidence.path },
-    summary: `Banked ${collectionIds.length} reconciled cash batch${collectionIds.length === 1 ? "" : "es"}`,
-  });
-  revalidateCashPaths();
-  revalidatePath(`/cash-deposits/${depositId}`);
-  redirect(`/cash-deposits/${depositId}?success=${encodeURIComponent("Bank deposit and receipt saved; all selected batches are closed.")}`);
-}
-
-export async function voidCashBankDeposit(formData: FormData) {
-  const id = clean(formData.get("id"));
-  if (!id) redirect("/cash-deposits");
-  const path = `/cash-deposits/${id}`;
-  const reason = requireConfirmation(formData, path);
-  const { profile, supabase } = await requireCapability(path, canApproveCashVariance);
-  const { error } = await supabase.rpc("void_cash_bank_deposit", { p_deposit_id: id, p_reason: reason });
-  if (error) {
-    console.error("[cash] Failed to void bank deposit", error);
-    fail(path, rpcMessage(error, "Could not void the bank deposit."));
-  }
-  await logActivity({
-    profile,
-    action: "void_cash_bank_deposit",
-    entityType: "cash_bank_deposit",
-    entityId: id,
-    metadata: { reason },
-    summary: "Owner/admin voided bank deposit and reopened its cash batches",
-  });
-  revalidateCashPaths();
-  revalidatePath(path);
-  redirect(`${path}?success=${encodeURIComponent("Deposit voided. Its cash batches are reconciled but unbanked again.")}`);
+  redirect(`${path}?success=${encodeURIComponent("Owner resolution saved. This batch is reconciled and available in Snacky LYD.")}`);
 }
 
 export async function voidCashCollection(formData: FormData) {

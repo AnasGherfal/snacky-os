@@ -41,7 +41,7 @@ export type CashEvidenceUpload = {
 
 export async function uploadCashEvidence(
   fileValue: FormDataEntryValue | null,
-  options: { scopeId: string; stage: "removed" | "stored" | "counted" | "banked"; required?: boolean },
+  options: { scopeId: string; stage: "removed" | "stored" | "counted"; required?: boolean },
 ): Promise<CashEvidenceUpload | null> {
   const required = options.required ?? false;
   if (!(fileValue instanceof File) || fileValue.size === 0) {
