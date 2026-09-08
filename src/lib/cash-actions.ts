@@ -11,6 +11,7 @@ import {
   canRecordCashRemoval,
   canReconcileCash,
   canViewFinancials,
+  hasAnyRole,
   type AuthUserContext,
 } from "@/lib/authz";
 import { logActivity } from "@/lib/activity-log";
@@ -152,7 +153,10 @@ export async function createCashRemoval(formData: FormData) {
   });
 
   revalidateCashPaths(String(collectionId));
-  redirect(`/cash-collections/${collectionId}?success=${encodeURIComponent("Removal saved. A different person must now receive the sealed bag into storage.")}`);
+  const selfReceiptAllowed = hasAnyRole(profileContext(profile), ["owner", "admin"]);
+  redirect(`/cash-collections/${collectionId}?success=${encodeURIComponent(selfReceiptAllowed
+    ? "Removal saved. As owner/admin, you may receive this bag into storage yourself; the self-receipt will be logged."
+    : "Removal saved. A different authorized person must now receive the sealed bag into storage.")}`);
 }
 
 export async function receiveCashIntoStorage(formData: FormData) {
@@ -195,7 +199,7 @@ export async function receiveCashIntoStorage(formData: FormData) {
     summary: "Acknowledged sealed cash bag into storage",
   });
   revalidateCashPaths(id);
-  redirect(`${path}?success=${encodeURIComponent("Storage handoff saved. The bag is ready for an independent count.")}`);
+  redirect(`${path}?success=${encodeURIComponent("Storage receipt saved. The bag is ready for a witnessed count.")}`);
 }
 
 function denominationCounts(formData: FormData, path: string) {

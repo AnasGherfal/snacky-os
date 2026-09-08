@@ -18,6 +18,7 @@ import {
   canReceiveCashStorage,
   canReconcileCash,
   canViewFinancials,
+  hasAnyRole,
 } from "@/lib/authz";
 import {
   calculateCashExpectation,
@@ -112,6 +113,7 @@ export default async function CashCollectionDetailPage({
   const canCount = canCountCash(context);
   const canReconcile = canReconcileCash(context);
   const canResolve = canApproveCashVariance(context);
+  const isOwnerOrAdmin = hasAnyRole(context, ["owner", "admin"]);
   const backHref = canSeeMoney || canReceive ? "/cash-collections" : "/operator/routes";
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) notFound();
@@ -127,7 +129,8 @@ export default async function CashCollectionDetailPage({
     const row: any = receipt;
     const machines = (row.machine_links ?? []) as any[];
     const summary = machineSummary(machines);
-    const mayAcknowledge = canReceive && row.operator_id !== profile.team_member_id;
+    const isOwnCollection = row.operator_id === profile.team_member_id;
+    const mayAcknowledge = canReceive && (!isOwnCollection || isOwnerOrAdmin);
     const removalEvidenceUrl = privateStorageObjectUrl(CASH_EVIDENCE_BUCKET, row.removal_evidence_path);
 
     return (
@@ -164,7 +167,7 @@ export default async function CashCollectionDetailPage({
           <SectionCard>
             <h2 className="text-lg font-semibold">Storage handoff</h2>
             {row.custody_status === "removed" && mayAcknowledge ? (
-              <CashStorageReceiptForm action={receiveCashIntoStorage} id={id} clientSubmissionId={crypto.randomUUID()} />
+              <><p className="mt-1 text-sm text-slate-500">{isOwnCollection ? "Owner/admin self-receipt is allowed and recorded in the audit history." : "A different authorized person verifies and receives the sealed bag."}</p><CashStorageReceiptForm action={receiveCashIntoStorage} id={id} clientSubmissionId={crypto.randomUUID()} /></>
             ) : row.custody_status === "removed" && canReceive ? (
               <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">The collector cannot acknowledge their own handoff. Ask a different warehouse, supervisor, finance, owner, or admin user to receive this sealed bag.</p>
             ) : (
@@ -211,7 +214,8 @@ export default async function CashCollectionDetailPage({
   const variance = row.variance === null || row.variance === undefined ? null : Number(row.variance);
   const shortage = missingCashAmount(row.actual_cash_collected, row.vms_expected_cash);
   const alerts = getCashCustodyAlerts(row);
-  const mayReceive = canReceive && row.operator_id !== profile.team_member_id;
+  const isOwnCollection = row.operator_id === profile.team_member_id;
+  const mayReceive = canReceive && (!isOwnCollection || isOwnerOrAdmin);
   const status = String(row.custody_status ?? "removed");
   const countWitnesses: CountWitnessOption[] = (activeWitnesses ?? []).map((witness) => ({ id: witness.id, label: witness.full_name }));
 
@@ -282,7 +286,7 @@ export default async function CashCollectionDetailPage({
         </div>
 
         <div className="space-y-6">
-          {status === "removed" && mayReceive ? <SectionCard><h2 className="text-lg font-semibold">Receive into storage</h2><p className="mt-1 text-sm text-slate-500">A different person verifies the seal, photographs the handoff, and records the exact safe location.</p><CashStorageReceiptForm action={receiveCashIntoStorage} id={id} clientSubmissionId={crypto.randomUUID()} /></SectionCard> : null}
+          {status === "removed" && mayReceive ? <SectionCard><h2 className="text-lg font-semibold">Receive into storage</h2><p className="mt-1 text-sm text-slate-500">{isOwnCollection ? "You collected this bag. As owner/admin, you can receive it into storage yourself; Snacky OS records that it was a self-receipt." : "A different person verifies the seal, photographs the handoff, and records the exact safe location."}</p><CashStorageReceiptForm action={receiveCashIntoStorage} id={id} clientSubmissionId={crypto.randomUUID()} /></SectionCard> : null}
           {status === "removed" && canReceive && !mayReceive ? <SectionCard><h2 className="text-lg font-semibold">Independent handoff required</h2><p className="mt-3 text-sm text-amber-800">The collector cannot acknowledge their own storage handoff. A different authorized user must receive this bag.</p></SectionCard> : null}
           {status === "in_storage" && canCount ? <SectionCard><h2 className="text-lg font-semibold">Count the stored bag</h2><p className="mt-1 text-sm text-slate-500">Count by denomination. Do not allocate mixed cash to machines. A second named person must witness the full count.</p>{countWitnesses.length ? <CashCountForm action={confirmCashCollectionCount} id={id} clientSubmissionId={crypto.randomUUID()} witnesses={countWitnesses} /> : <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Counting is blocked until another active team member is available to witness it.</p>}</SectionCard> : null}
           {status === "counted" && row.reconciliation_status !== "variance_review" && canReconcile ? <SectionCard><h2 className="text-lg font-semibold">Check the combined total against VMS</h2><p className="mt-1 text-sm text-slate-500">The counted amount is already available in Snacky LYD. This check detects missing cash using exact transactions between full machine emptying events. If raw VMS data is unavailable, use one independently verified batch total and document its source.</p><CashReconciliationForms calculateAction={calculateCashExpectation} reconcileAction={reconcileCashCollection} id={id} calculateSubmissionId={crypto.randomUUID()} reconcileSubmissionId={crypto.randomUUID()} /></SectionCard> : null}

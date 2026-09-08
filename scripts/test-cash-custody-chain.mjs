@@ -9,6 +9,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 const migration = read("supabase/migrations/20260906235157_cash_custody_chain.sql");
 const simplificationMigration = read("supabase/migrations/20260907144816_simplify_cash_reconciliation.sql");
+const ownerSelfHandoffMigration = read("supabase/migrations/20260908120000_owner_admin_self_cash_handoff.sql");
 const actions = read("src/lib/cash-actions.ts");
 const removalForm = read("src/components/CashRemovalForm.tsx");
 const custodyForms = read("src/components/CashCustodyForms.tsx");
@@ -35,14 +36,17 @@ test("removal is sealed, evidenced, route-independent, and has no amount", () =>
   assert.doesNotMatch(removalForm, /counted_amount_lyd|name="route_id"/);
 });
 
-test("storage handoff enforces a second person, location, seal, and evidence", () => {
+test("storage handoff allows an audited owner/admin self-receipt but keeps operators independent", () => {
   assert.match(migration, /receive_cash_into_storage_impl/);
-  assert.match(migration, /collector cannot acknowledge their own storage handoff/i);
-  assert.match(migration, /if v_cash\.operator_id = v_receiver_id then/);
+  assert.match(ownerSelfHandoffMigration, /v_is_self_receipt and not v_is_owner_admin/);
+  assert.match(ownerSelfHandoffMigration, /array\['owner', 'admin'\]/);
+  assert.match(ownerSelfHandoffMigration, /self_received_by_owner_admin/);
+  assert.match(ownerSelfHandoffMigration, /all other collectors require an independent receiver/i);
   assert.match(migration, /A storage handoff photo is required/);
-  assert.match(migration, /custody_status = 'in_storage'/);
+  assert.match(ownerSelfHandoffMigration, /custody_status = 'in_storage'/);
   assert.match(actions, /receiveCashIntoStorage/);
-  assert.match(custodyForms, /Acknowledge into storage/);
+  assert.match(custodyForms, /Receive bag into storage/);
+  assert.match(detailPage, /!isOwnCollection \|\| isOwnerOrAdmin/);
 });
 
 test("operational receipt tables contain no financial amounts", () => {
@@ -63,6 +67,7 @@ test("cash count is denomination-based and remains one combined bag total", () =
   assert.match(migration, /count_denominations = v_denominations/);
   assert.match(migration, /A second person must witness every cash count/);
   assert.match(migration, /person counting cash cannot also be the count witness/i);
+  assert.doesNotMatch(migration, /v_cash\.operator_id = v_counter_id/);
   assert.match(migration, /count_witnessed_by = p_count_witness_id/);
   assert.match(migration, /review_status = 'counted_pending_reconciliation'/);
   assert.match(actions, /p_count_witness_id: countWitnessId/);
