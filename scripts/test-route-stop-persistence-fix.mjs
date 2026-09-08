@@ -23,6 +23,24 @@ test("saved machine photo state reaches the stop completion form", () => {
   assert.match(page, /proofReady: Boolean\(finalPhotoFile \|\| persistedMachinePhotoReady \|\| stopData\.hasCompletionPhoto\)/);
 });
 
+test("selecting the final machine photo persists it before stop submission", () => {
+  const page = read("src/app/operator/routes/[id]/stops/[stopId]/page.tsx");
+  assert.match(page, /saveFinalMachinePhotoImmediately/);
+  assert.match(page, /if \(file\) void saveFinalMachinePhotoImmediately\(file\)/);
+  assert.match(page, /completion-photo[\s\S]*method: "POST"/);
+  assert.match(page, /setPersistedMachinePhotoReady\(true\)/);
+  assert.match(page, /Photo saved\. You can close the app and return later\./);
+  assert.match(page, /!finalPhotoSaving && cleaningDone/);
+});
+
+test("role-array helper resolves with the empty route-writer search path", () => {
+  const migration = read("supabase/migrations/20260908090000_auth_role_array_search_path_repair.sql");
+  assert.match(migration, /set search_path = ''/);
+  assert.match(migration, /'\{\}'::public\.team_role\[\]/);
+  assert.doesNotMatch(migration, /::team_role\[\]/);
+  assert.match(migration, /notify pgrst, 'reload schema'/);
+});
+
 test("operator routes hide infrastructure setup warning without hiding admin diagnostics elsewhere", () => {
   const panel = read("src/components/operator/OperatorInstructionsPanel.tsx");
   const routes = read("src/app/operator/routes/page.tsx");
