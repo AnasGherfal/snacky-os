@@ -41,13 +41,13 @@ export function CashStorageReceiptForm({ action, id, clientSubmissionId }: { act
           <option value="mismatch">ID does not match</option>
         </select>
       </FormField>
-      <FormField label="Handoff photo" required hint="Show the readable seal ID and the bag at the storage location.">
+      <FormField label="Storage receipt photo" required hint="Show the readable seal ID and the bag at the storage location.">
         <input name="evidence_file" type="file" accept="image/png,image/jpeg,image/webp" capture="environment" required className="field-input" />
       </FormField>
       <FormField label="Handoff notes" hint="Required if the seal is broken or mismatched.">
         <textarea name="notes" rows={3} className="field-input" />
       </FormField>
-      <button className="btn-primary w-full">Acknowledge into storage</button>
+      <button className="btn-primary w-full">Receive bag into storage</button>
     </LocalDraftForm>
   );
 }
