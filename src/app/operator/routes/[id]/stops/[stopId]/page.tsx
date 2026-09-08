@@ -566,6 +566,7 @@ export default function MachineStopPage() {
   const [cleaningDone, setCleaningDone] = useState(false);
   const [finalPhotoName, setFinalPhotoName] = useState("");
   const [finalPhotoFile, setFinalPhotoFile] = useState<File | null>(null);
+  const [finalPhotoSaving, setFinalPhotoSaving] = useState(false);
   const [compressorSafetyInstalled, setCompressorSafetyInstalled] = useState(false);
   const [compressorProofReady, setCompressorProofReady] = useState(false);
   const [persistedMachinePhotoReady, setPersistedMachinePhotoReady] = useState(false);
@@ -825,6 +826,45 @@ export default function MachineStopPage() {
     setMissingReports((prev) => prev.map((line) => line.id === id ? { ...line, ...patch } : line));
   };
 
+  const saveFinalMachinePhotoImmediately = async (file: File) => {
+    if (!stopData) return;
+    setFinalPhotoFile(file);
+    setFinalPhotoName(file.name);
+    setFinalPhotoSaving(true);
+    setError("");
+    try {
+      const preparedPhoto = await prepareProofPhoto(file);
+      const photoFormData = new FormData();
+      photoFormData.append("routeId", routeId);
+      photoFormData.append("stopId", stopId);
+      photoFormData.append("machineId", stopData.machineId);
+      photoFormData.append("photo", preparedPhoto);
+      const uploaded = await uploadRefillProofPhoto(photoFormData);
+      if (uploaded.uploadUnavailable || (!uploaded.photoUrl && !uploaded.photoPath)) {
+        throw new Error(tr("The photo could not be uploaded. It is still selected; retry before leaving this page.", "تعذر رفع الصورة. ما زالت محددة؛ أعد المحاولة قبل مغادرة الصفحة."));
+      }
+
+      const response = await fetch(`/api/operator/routes/${routeId}/stops/${stopId}/completion-photo`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ photoUrl: uploaded.photoUrl ?? null, photoPath: uploaded.photoPath ?? null }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || payload?.success === false) {
+        throw new Error(responseMessage(payload) || tr("Could not save machine photo.", "تعذر حفظ صورة الماكينة."));
+      }
+
+      setPersistedMachinePhotoReady(true);
+      setStopData((current) => current ? { ...current, hasCompletionPhoto: true } : current);
+      setFinalPhotoFile(null);
+      window.dispatchEvent(new CustomEvent("snacky:machine-photo-persisted", { detail: { saved: true } }));
+    } catch (photoError) {
+      setError(photoError instanceof Error ? photoError.message : tr("Could not save machine photo.", "تعذر حفظ صورة الماكينة."));
+    } finally {
+      setFinalPhotoSaving(false);
+    }
+  };
+
   const handleCompleteStop = async () => {
     if (!stopData) return;
     const hasPersistedMachineProof = persistedMachinePhotoReady || Boolean(stopData.hasCompletionPhoto);
@@ -1022,7 +1062,7 @@ export default function MachineStopPage() {
   }
 
   const compressorReadyForSubmit = !compressorSafetyInstalled || compressorProofReady;
-  const canSubmitStop = !submitting && cleaningDone && compressorReadyForSubmit;
+  const canSubmitStop = !submitting && !finalPhotoSaving && cleaningDone && compressorReadyForSubmit;
 
   return (
     <>
@@ -1358,19 +1398,21 @@ export default function MachineStopPage() {
                 capture="environment"
                 onChange={(event) => {
                   const file = event.target.files?.[0] ?? null;
-                  setFinalPhotoFile(file);
-                  setFinalPhotoName(file?.name ?? "");
+                  if (file) void saveFinalMachinePhotoImmediately(file);
                 }}
+                disabled={finalPhotoSaving}
                 className="field-input"
               />
-              {finalPhotoFile ? <p className="mt-2 text-sm text-slate-600">{tr("Selected", "المحدد")}: {finalPhotoFile.name}</p> : null}
+              {finalPhotoSaving ? <p className="mt-2 text-sm font-semibold text-amber-700">{tr("Saving photo now... Keep this page open until it says saved.", "جارٍ حفظ الصورة الآن... أبقِ الصفحة مفتوحة حتى يظهر أنها محفوظة.")}</p> : null}
+              {!finalPhotoSaving && finalPhotoFile ? <p className="mt-2 text-sm text-rose-700">{tr("Upload did not finish. Select the photo again to retry, or Complete Stop to retry the upload.", "لم يكتمل الرفع. اختر الصورة مرة أخرى للمحاولة، أو أنهِ الموقع لإعادة محاولة الرفع.")}</p> : null}
+              {!finalPhotoSaving && !finalPhotoFile && persistedMachinePhotoReady ? <p className="mt-2 text-sm font-semibold text-emerald-700">{tr("Photo saved. You can close the app and return later.", "تم حفظ الصورة. يمكنك إغلاق التطبيق والعودة لاحقاً.")}</p> : null}
               {!finalPhotoFile && (persistedMachinePhotoReady || stopData.hasCompletionPhoto) ? <p className="mt-2 text-sm text-slate-600">{tr("A completion photo is already saved for this stop. Add a new photo only if you want to replace it.", "تم حفظ صورة إنهاء لهذا الموقع بالفعل. أضف صورة جديدة فقط عند الرغبة في استبدالها.")}</p> : null}
               {!finalPhotoFile && !persistedMachinePhotoReady && !stopData.hasCompletionPhoto ? <p className="mt-2 text-sm text-amber-700">{tr("Final photo is required before completion.", "الصورة النهائية مطلوبة قبل الإنهاء.")}</p> : null}
             </div>
             <div className={stopExecutionSummary.proofReady ? "rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900" : "rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"}>
               <div className="text-xs font-semibold uppercase tracking-wide">{stopExecutionSummary.proofReady ? tr("Photo ready", "الصورة جاهزة") : tr("Photo still needed", "ما زالت الصورة مطلوبة")}</div>
               <div className="mt-2 font-semibold">
-                {finalPhotoFile ? tr("New proof photo will upload with this save.", "سيتم رفع صورة إثبات جديدة مع هذا الحفظ.") : persistedMachinePhotoReady || stopData.hasCompletionPhoto ? tr("Existing proof photo is already attached.", "صورة الإثبات الحالية مرفقة بالفعل.") : tr("Take a completion photo before finishing this stop.", "التقط صورة إنهاء قبل إتمام هذا الموقع.")}
+                {finalPhotoSaving ? tr("Saving the photo to Snacky OS now.", "جارٍ حفظ الصورة في Snacky OS الآن.") : finalPhotoFile ? tr("Photo upload needs a retry.", "يحتاج رفع الصورة إلى إعادة المحاولة.") : persistedMachinePhotoReady || stopData.hasCompletionPhoto ? tr("Existing proof photo is already attached.", "صورة الإثبات الحالية مرفقة بالفعل.") : tr("Take a completion photo before finishing this stop.", "التقط صورة إنهاء قبل إتمام هذا الموقع.")}
               </div>
               <div className="mt-2 text-xs">
                 {tr("Completion photos stay visible later from the route details page.", "ستظل صور الإنهاء ظاهرة لاحقاً في صفحة تفاصيل الجولة.")}
