@@ -14,6 +14,7 @@ import {
   buildServerCanonicalAcknowledgedPickupLineIds,
   normalizePickupLineIds,
 } from "@/lib/pickup-acknowledgement";
+import { buildRefillLinePickRows } from "@/lib/route-pickup-refill-allocation";
 import {
   ROUTE_IN_PROGRESS_STATUS,
   ROUTE_PICKUP_CONFIRMED_STATUS,
@@ -1262,16 +1263,14 @@ export async function confirmPickList(
       .select("id, machine_id, refill_order_lines(id, product_id, final_qty_to_take, suggested_qty)")
       .eq("route_id", routeId);
     if (routeOrdersError) throwActionError(routeOrdersError, "Could not load refill order lines.");
-    const linesByMachineProduct = new Map<string, any[]>();
-    const linesByProduct = new Map<string, any[]>();
-    routeOrders?.forEach((order: any) => {
-      order.refill_order_lines?.forEach((line: any) => {
-        const productKey = String(line.product_id);
-        const machineKey = `${String(order.machine_id ?? "")}:${productKey}`;
-        linesByProduct.set(productKey, [...(linesByProduct.get(productKey) ?? []), line]);
-        linesByMachineProduct.set(machineKey, [...(linesByMachineProduct.get(machineKey) ?? []), line]);
-      });
-    });
+    const refillLines = (routeOrders ?? []).flatMap((order: any) =>
+      (order.refill_order_lines ?? []).map((line: any) => ({
+        id: String(line.id ?? ""),
+        machineId: cleanId(order.machine_id),
+        productId: String(line.product_id ?? ""),
+        plannedQty: unitQuantity(line.final_qty_to_take ?? line.suggested_qty),
+      })),
+    );
 
     const stopItemPickRows = pickedStopItemRows
       .filter((entry) => Number(entry.quantity) >= 0 && entry.id)
@@ -1280,30 +1279,19 @@ export async function confirmPickList(
         picked_quantity: Math.max(0, Number(item.quantity ?? 0)),
       }));
 
-    const refillLinePickRows: { id: string; picked_qty: number }[] = [];
-    for (const item of pickedStopItemRows.filter((entry) => Number(entry.quantity) >= 0)) {
-      let remaining = Number(item.quantity);
-      const lines = item.machineId ? (linesByMachineProduct.get(`${item.machineId}:${String(item.productId)}`) ?? []) : [];
-
-      for (const line of lines) {
-        const plannedQty = Number(line.final_qty_to_take ?? line.suggested_qty ?? 0);
-        const pickedQty = Math.max(0, Math.min(remaining, plannedQty));
-        remaining -= pickedQty;
-        refillLinePickRows.push({ id: line.id, picked_qty: pickedQty });
-      }
-    }
-
-    for (const item of legacyPickedRows.filter((entry) => Number(entry.quantity) >= 0)) {
-      let remaining = Number(item.quantity);
-      const lines = linesByProduct.get(String(item.productId)) ?? [];
-
-      for (const line of lines) {
-        const plannedQty = Number(line.final_qty_to_take ?? line.suggested_qty ?? 0);
-        const pickedQty = Math.max(0, Math.min(remaining, plannedQty));
-        remaining -= pickedQty;
-        refillLinePickRows.push({ id: line.id, picked_qty: pickedQty });
-      }
-    }
+    const refillLinePickRows = buildRefillLinePickRows({
+      stopItems: pickedStopItemRows.map((item) => ({
+        machineId: item.machineId,
+        productId: item.productId,
+        quantity: item.quantity,
+        actionType: item.actionType,
+      })),
+      legacyItems: legacyPickedRows.map((item) => ({
+        productId: item.productId,
+        quantity: item.quantity,
+      })),
+      refillLines,
+    });
 
     const stockLineRows = Array.from(new Set([...Array.from(plannedByProduct.keys()), ...Array.from(pickedByProduct.keys())])).map((productId) => ({
       route_id: routeId,
