@@ -5,7 +5,7 @@ import { StatCard } from "@/components/StatCard";
 import { VmsDataSourceCard } from "@/components/VmsDataSourceCard";
 import { EmptyState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
-import { isAdminRole } from "@/lib/authz";
+import { isAdminRole, isOwnerAdminRole } from "@/lib/authz";
 import { isMissingRouteInventoryReviewSchema } from "@/lib/route-inventory-discrepancies";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import {
@@ -100,7 +100,8 @@ type DashboardSection =
   | "vmsBatches"
   | "restockPriority"
   | "financeHealth"
-  | "routeInventoryReview";
+  | "routeInventoryReview"
+  | "machineQuantityUpdates";
 
 type DashboardErrors = Partial<Record<DashboardSection, string>>;
 
@@ -125,6 +126,8 @@ type DashboardData = {
   financeDiagnostics: FinanceHealthDiagnostics;
   canReviewRouteInventory: boolean;
   routeInventoryDiscrepancyCount: number;
+  canManageMachineQuantityUpdates: boolean;
+  pendingMachineQuantityUpdateCount: number;
   errors: DashboardErrors;
 };
 
@@ -159,6 +162,7 @@ const dashboardSectionLabels: Record<DashboardSection, { en: string; ar: string 
   restockPriority: { en: "Restock priority", ar: "أولوية إعادة التخزين" },
   financeHealth: { en: "Finance health", ar: "صحة المالية" },
   routeInventoryReview: { en: "Route inventory review", ar: "مراجعة مخزون الجولات" },
+  machineQuantityUpdates: { en: "Machine quantity updates", ar: "تحديثات كميات الأجهزة" },
 };
 
 function relationRecord<T extends Record<string, unknown>>(value: T | T[] | null | undefined) {
@@ -532,6 +536,7 @@ function refillForecastClock() {
 async function getDashboardData() {
   const profile = await requireCurrentProfileForPath("/dashboard");
   const canReviewRouteInventory = isAdminRole(profile);
+  const canManageMachineQuantityUpdates = isOwnerAdminRole(profile);
   const supabase = getSupabaseAdminClient() ?? await getAuthenticatedSupabaseServerClient();
   if (!supabase) return { data: null };
 
@@ -561,6 +566,7 @@ async function getDashboardData() {
     restockPriority,
     financeDiagnostics,
     routeInventoryDiscrepancyCount,
+    pendingMachineQuantityUpdateCount,
   ] = await Promise.all([
     safeDashboardQuery<RevenueDailyRow[]>({
       key: "revenue",
@@ -722,6 +728,17 @@ async function getDashboardData() {
           errors,
         })
       : Promise.resolve(0),
+    canManageMachineQuantityUpdates
+      ? safeDashboardCount({
+          key: "machineQuantityUpdates",
+          label: "route_stop_quantity_confirmations offline pending",
+          promise: supabase
+            .from("route_stop_quantity_confirmations")
+            .select("id", { count: "exact", head: true })
+            .eq("verification_status", "offline_pending"),
+          errors,
+        })
+      : Promise.resolve(0),
   ]);
 
   const latestXyBatchIds = new Set(
@@ -770,6 +787,8 @@ async function getDashboardData() {
       financeDiagnostics,
       canReviewRouteInventory,
       routeInventoryDiscrepancyCount,
+      canManageMachineQuantityUpdates,
+      pendingMachineQuantityUpdateCount,
       errors,
     } satisfies DashboardData,
   };
@@ -839,6 +858,18 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
   const partialSections = Object.entries(errors).filter(([, message]) => Boolean(message));
 
   const actionItems: ActionItem[] = [];
+  if (data.canManageMachineQuantityUpdates && data.pendingMachineQuantityUpdateCount > 0) {
+    actionItems.push({
+      key: "machine-quantity-updates",
+      title: localize("Update machines that had no electricity", "تحديث الأجهزة التي كانت بدون كهرباء"),
+      detail: localize(
+        `${data.pendingMachineQuantityUpdateCount} machine quantity update${data.pendingMachineQuantityUpdateCount === 1 ? "" : "s"} are waiting for you.`,
+        `${data.pendingMachineQuantityUpdateCount} من تحديثات كميات الأجهزة بانتظارك.`,
+      ),
+      href: "/routes/quantity-updates",
+      cta: localize("Open quantity updates", "فتح تحديثات الكميات"),
+    });
+  }
   if (data.canReviewRouteInventory && data.routeInventoryDiscrepancyCount > 0) {
     actionItems.push({
       key: "route-inventory-review",

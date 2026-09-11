@@ -15,7 +15,6 @@ import {
   type AuthUserContext,
 } from "@/lib/authz";
 import { logActivity } from "@/lib/activity-log";
-import { CASH_DENOMINATIONS, denominationFieldName } from "@/lib/cash-custody";
 import { removeCashEvidence, uploadCashEvidence, type CashEvidenceUpload } from "@/lib/cash-evidence";
 
 function clean(value: FormDataEntryValue | null) {
@@ -199,18 +198,13 @@ export async function receiveCashIntoStorage(formData: FormData) {
     summary: "Acknowledged sealed cash bag into storage",
   });
   revalidateCashPaths(id);
-  redirect(`${path}?success=${encodeURIComponent("Storage receipt saved. The bag is ready for a witnessed count.")}`);
+  redirect(`${path}?success=${encodeURIComponent("Storage receipt saved. The bag is ready to count.")}`);
 }
 
-function denominationCounts(formData: FormData, path: string) {
-  const counts: Record<string, number> = {};
-  for (const denomination of CASH_DENOMINATIONS) {
-    const raw = clean(formData.get(denominationFieldName(denomination)));
-    const quantity = raw ? Number(raw) : 0;
-    if (!Number.isInteger(quantity) || quantity < 0) fail(path, `Quantity for ${denomination} LYD must be a whole number.`);
-    counts[String(denomination)] = quantity;
-  }
-  return counts;
+function cashPeriodDate(value: FormDataEntryValue | null, path: string, label: string) {
+  const raw = clean(value);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) fail(path, `${label} is required.`);
+  return raw;
 }
 
 export async function confirmCashCollectionCount(formData: FormData) {
@@ -219,36 +213,21 @@ export async function confirmCashCollectionCount(formData: FormData) {
   const path = `/cash-collections/${id}`;
   const { profile, supabase } = await requireCapability(path, canCountCash);
   const submissionId = clean(formData.get("client_submission_id")) || crypto.randomUUID();
-  const sealCondition = clean(formData.get("seal_condition"));
-  const countWitnessId = clean(formData.get("count_witness_id"));
-  const notes = optionalText(formData.get("notes"));
-  const denominations = denominationCounts(formData, path);
-  const otherRaw = clean(formData.get("other_amount_lyd"));
-  const parsedOtherAmount = optionalAmount(formData.get("other_amount_lyd"));
-  if (otherRaw && parsedOtherAmount === null) fail(path, "Other counted cash must be a valid amount.");
-  const otherAmount = parsedOtherAmount ?? 0;
-  if (otherAmount < 0) fail(path, "Other counted cash cannot be negative.");
-  if (otherAmount > 0 && !notes) fail(path, "Explain the amount entered outside the standard denominations.");
-  if (!["intact", "broken", "mismatch"].includes(sealCondition)) fail(path, "Record the seal condition before opening the bag.");
-  if (sealCondition !== "intact" && !notes) fail(path, "Explain the broken or mismatched seal.");
-  if (!countWitnessId) fail(path, "Select the second person who witnessed the cash count.");
-  if (countWitnessId === profile.team_member_id) fail(path, "The person counting cash cannot also be the count witness.");
+  const totalRaw = clean(formData.get("total_amount_lyd"));
+  const totalAmount = optionalAmount(formData.get("total_amount_lyd"));
+  if (!totalRaw || totalAmount === null || totalAmount < 0) fail(path, "Enter a valid total cash amount.");
+  const periodStart = cashPeriodDate(formData.get("period_start"), path, "Cash period start");
+  const periodEnd = cashPeriodDate(formData.get("period_end"), path, "Cash period end");
+  if (periodStart > periodEnd) fail(path, "Cash period start cannot be after its end.");
 
-  const evidence = await requiredEvidence(formData.get("evidence_file"), path, { scopeId: id, stage: "counted" });
-  const { error } = await supabase.rpc("confirm_cash_count", {
+  const { error } = await supabase.rpc("confirm_cash_count_simple", {
     p_collection_id: id,
-    p_counted_at: normalizeLibyaDateTime(formData.get("counted_at")),
-    p_seal_condition: sealCondition,
-    p_count_witness_id: countWitnessId,
-    p_denominations: denominations,
-    p_other_amount_lyd: otherAmount,
-    p_evidence_path: evidence.path,
-    p_evidence_file_name: evidence.fileName,
-    p_notes: notes,
+    p_total_amount_lyd: totalAmount,
+    p_period_start: periodStart,
+    p_period_end: periodEnd,
     p_client_submission_id: submissionId,
   });
   if (error) {
-    await rollbackEvidence(evidence);
     console.error("[cash] Failed to confirm cash count", error);
     fail(path, rpcMessage(error, "Could not save the cash count."));
   }
@@ -258,12 +237,12 @@ export async function confirmCashCollectionCount(formData: FormData) {
     action: "confirm_cash_count",
     entityType: "cash_collection",
     entityId: id,
-    afterData: { custody_status: "counted", seal_condition: sealCondition, count_witness_id: countWitnessId, denominations, other_amount_lyd: otherAmount },
-    metadata: { evidence_path: evidence.path, count_witness_id: countWitnessId, related_finance: true },
-    summary: "Counted stored cash by denomination with a second witness; amount is available in Snacky LYD and reconciliation is pending",
+    afterData: { custody_status: "counted", total_amount_lyd: totalAmount, period_start: periodStart, period_end: periodEnd },
+    metadata: { related_finance: true },
+    summary: "Saved one combined stored-cash total; VMS reconciliation remains available for later",
   });
   revalidateCashPaths(id);
-  redirect(`${path}?success=${encodeURIComponent("Count saved and added to Snacky LYD. Compare the combined batch total against VMS next.")}`);
+  redirect(`${path}?success=${encodeURIComponent("Cash total saved and added to Snacky LYD. You can compare it with VMS later.")}`);
 }
 
 export async function calculateCashExpectation(formData: FormData) {

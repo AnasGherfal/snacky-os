@@ -5,6 +5,13 @@ import { revalidatePath } from "next/cache";
 import { logActivity } from "@/lib/activity-log";
 import { actionFailure, actionSuccess, type ActionResult } from "@/lib/action-result";
 import { inventoryMovementIdempotencyKey } from "@/lib/inventory-movement";
+import {
+  buildMachineQuantityRows,
+  buildMachineQuantitySourcesFromPlan,
+  machineQuantityConfirmationKey,
+  machineQuantityEvidenceReady,
+  type MachineQuantityPlanRow,
+} from "@/lib/machine-quantity-confirmation";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessOperatorRoute, canExecuteRoutes } from "@/lib/authz";
@@ -37,6 +44,13 @@ const PICKUP_CONFIRMATION_FALLBACK_ERROR = "Could not confirm pickup. Please try
 
 function isMissingTable(error: any, tableName: string) {
   return error?.code === "PGRST205" && String(error?.message ?? "").includes(tableName);
+}
+
+function isMissingMachineQuantityEvidenceSchema(error: unknown) {
+  const row = error && typeof error === "object" ? error as { code?: unknown; message?: unknown } : null;
+  const code = String(row?.code ?? "");
+  const message = String(row?.message ?? "");
+  return ["42703", "PGRST204"].includes(code) && message.includes("verification_status");
 }
 
 function getErrorMessage(error: unknown, fallback = "Something went wrong.") {
@@ -2345,6 +2359,36 @@ export async function completeStop({
     }
     if (!compressorProofError && (!compressorProof?.compressor_confirmed || (!compressorProof.proof_photo_url && !compressorProof.proof_photo_path))) {
       throw new Error("Save the compressor ON photo before completing this stop.");
+    }
+
+    const { data: quantityConfirmation, error: quantityConfirmationError } = await completionWorkflowClient
+      .from("route_stop_quantity_confirmations")
+      .select("confirmation_key, verification_status")
+      .eq("route_stop_id", stopId)
+      .maybeSingle();
+    if (quantityConfirmationError
+      && !isMissingTable(quantityConfirmationError, "route_stop_quantity_confirmations")
+      && !isMissingMachineQuantityEvidenceSchema(quantityConfirmationError)) {
+      throwActionError(quantityConfirmationError, "Could not verify the machine quantity confirmation.");
+    }
+    if (!quantityConfirmationError) {
+      const { data: quantityPlanRows, error: quantityPlanError } = await completionWorkflowClient
+        .from("route_stop_items")
+        .select("product_id, machine_slot_id, slot_code, planned_quantity, slot_allocations, product:products(name)")
+        .eq("route_stop_id", stopId);
+      if (quantityPlanError) throwActionError(quantityPlanError, "Could not verify the machine row quantities.");
+      const quantitySources = buildMachineQuantitySourcesFromPlan(
+        (quantityPlanRows ?? []) as MachineQuantityPlanRow[],
+        normalizedFilledItems,
+      );
+      const expectedQuantityRows = buildMachineQuantityRows(quantitySources);
+      const expectedQuantityKey = machineQuantityConfirmationKey(expectedQuantityRows);
+      if (expectedQuantityRows.length > 0 && (
+        quantityConfirmation?.confirmation_key !== expectedQuantityKey
+        || !machineQuantityEvidenceReady(quantityConfirmation?.verification_status)
+      )) {
+        throw new Error("Upload the current XY inventory screenshot, or save that the machine has no electricity.");
+      }
     }
 
     const [{ data: machine, error: machineError }, { data: operatorMember, error: operatorError }] = await Promise.all([

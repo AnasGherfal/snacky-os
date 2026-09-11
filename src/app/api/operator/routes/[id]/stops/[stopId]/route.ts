@@ -44,6 +44,7 @@ type StopPlanItemRow = {
   machine_slot_id?: string | null;
   product_id?: string | null;
   planned_quantity?: unknown;
+  slot_allocations?: unknown;
   source?: string | null;
   created_at?: string | null;
   product?: ProductRelationRow | ProductRelationRow[] | null;
@@ -55,6 +56,7 @@ type RefillOrderLineRow = {
   product_id?: string | null;
   final_qty_to_take?: unknown;
   suggested_qty?: unknown;
+  slot_allocations?: unknown;
   source?: string | null;
   created_at?: string | null;
   product?: ProductRelationRow | ProductRelationRow[] | null;
@@ -87,6 +89,13 @@ type PlannedProductLine = {
   productId: string;
   productName: string;
   currentQty: number;
+  slotAllocations: Array<{
+    machine_slot_id?: string | null;
+    slot_code?: string | null;
+    current_qty?: unknown;
+    final_take_qty?: unknown;
+    recommended_take_qty?: unknown;
+  }>;
   assignedQty: number;
   parQty: number;
   filledQty: number | null;
@@ -102,6 +111,7 @@ type RefillLineItem = {
   productId: string;
   productName: string;
   currentQty: number;
+  slotAllocations: PlannedProductLine["slotAllocations"];
   assignedQty: number;
   parQty: number;
   filledQty: number | null;
@@ -372,6 +382,7 @@ export async function GET(
         machine_slot_id,
         product_id,
         planned_quantity,
+        slot_allocations,
         source,
         created_at,
         product:products(id, name)`
@@ -393,6 +404,7 @@ export async function GET(
             product_id,
             final_qty_to_take,
             suggested_qty,
+            slot_allocations,
             source,
             product:products(id, name)
           )`
@@ -407,6 +419,7 @@ export async function GET(
           machine_slot_id: line.machine_slot_id,
           product_id: line.product_id,
           planned_quantity: Number(line.final_qty_to_take ?? line.suggested_qty ?? 0),
+          slot_allocations: line.slot_allocations ?? [],
           source: line.source ?? (line.machine_slot_id ? "refill_recommendation" : "manual_admin_assignment"),
           created_at: line.created_at ?? null,
           product: line.product,
@@ -439,6 +452,7 @@ export async function GET(
         productId,
         productName: product?.name || "Unknown",
         currentQty: 0,
+        slotAllocations: [],
         assignedQty: 0,
         parQty: 0,
         filledQty: 0,
@@ -448,6 +462,16 @@ export async function GET(
       current.slotCodes.add(slotCode);
       current.assignedQty += assignedQty;
       current.parQty += assignedQty;
+      if (Array.isArray(line.slot_allocations) && line.slot_allocations.length > 0) {
+        current.slotAllocations.push(...line.slot_allocations.filter((allocation) => allocation && typeof allocation === "object"));
+      } else {
+        current.slotAllocations.push({
+          machine_slot_id: line.machine_slot_id ?? null,
+          slot_code: slotCode,
+          current_qty: 0,
+          final_take_qty: assignedQty,
+        });
+      }
       if (line.source === "manual_admin_assignment") current.source = "manual_admin_assignment";
       else if (!current.source) current.source = line.source ?? null;
       if (line.created_at) {
@@ -499,6 +523,7 @@ export async function GET(
       productId: line.productId,
       productName: line.productName,
       currentQty: line.currentQty,
+      slotAllocations: line.slotAllocations,
       assignedQty: line.assignedQty,
       parQty: line.parQty,
       filledQty: existingFill ? existingFill.quantity : null,

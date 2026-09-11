@@ -10,6 +10,7 @@ const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 const migration = read("supabase/migrations/20260906235157_cash_custody_chain.sql");
 const simplificationMigration = read("supabase/migrations/20260907144816_simplify_cash_reconciliation.sql");
 const ownerSelfHandoffMigration = read("supabase/migrations/20260908120000_owner_admin_self_cash_handoff.sql");
+const simpleCountMigration = read("supabase/migrations/20260910001500_simplify_cash_count_to_total_and_period.sql");
 const actions = read("src/lib/cash-actions.ts");
 const removalForm = read("src/components/CashRemovalForm.tsx");
 const custodyForms = read("src/components/CashCustodyForms.tsx");
@@ -61,18 +62,20 @@ test("operational receipt tables contain no financial amounts", () => {
   assert.match(detailPage, /if \(!canSeeMoney\)[\s\S]*?from\("cash_removal_receipts"\)/);
 });
 
-test("cash count is denomination-based and remains one combined bag total", () => {
+test("cash count requires only one combined total and its date period", () => {
   assert.equal(calculateDenominationTotal({ "0.5": 2, "5": 3, "20": 4 }, 1.25), 97.25);
-  assert.match(migration, /key not in \('0\.25', '0\.5', '1', '5', '10', '20', '50'\)/);
-  assert.match(migration, /count_denominations = v_denominations/);
-  assert.match(migration, /A second person must witness every cash count/);
-  assert.match(migration, /person counting cash cannot also be the count witness/i);
-  assert.doesNotMatch(migration, /v_cash\.operator_id = v_counter_id/);
-  assert.match(migration, /count_witnessed_by = p_count_witness_id/);
-  assert.match(migration, /review_status = 'counted_pending_reconciliation'/);
-  assert.match(actions, /p_count_witness_id: countWitnessId/);
-  assert.match(custodyForms, /name="count_witness_id" required/);
-  assert.match(custodyForms, /One total for the whole sealed bag/);
+  assert.match(simpleCountMigration, /add column if not exists cash_period_start date/);
+  assert.match(simpleCountMigration, /add column if not exists cash_period_end date/);
+  assert.match(simpleCountMigration, /actual_cash_collected = v_total/);
+  assert.match(simpleCountMigration, /count_witnessed_by = null/);
+  assert.match(simpleCountMigration, /'vms_reconciliation_deferred', true/);
+  assert.match(actions, /confirm_cash_count_simple/);
+  assert.match(actions, /p_total_amount_lyd: totalAmount/);
+  assert.match(custodyForms, /name="total_amount_lyd"/);
+  assert.match(custodyForms, /name="period_start"/);
+  assert.match(custodyForms, /name="period_end"/);
+  assert.doesNotMatch(custodyForms, /name="count_witness_id"|denominationFieldName|Count every denomination/);
+  assert.doesNotMatch(custodyForms, /formType="cash-total-count"[\s\S]*name="evidence_file"/);
   assert.doesNotMatch(custodyForms, /machine_expected|machine_counted/);
 });
 
@@ -102,7 +105,7 @@ test("reconciliation uses exact intervals or one documented manual batch total",
 });
 
 test("counted cash is available without a bank-transfer stage", () => {
-  assert.match(actions, /Count saved and added to Snacky LYD/);
+  assert.match(actions, /Cash total saved and added to Snacky LYD/);
   assert.doesNotMatch(actions, /recordCashBankDeposit|voidCashBankDeposit|cash-deposits/);
   assert.doesNotMatch(custodyForms, /CashBankDepositForm|release for banking/);
   assert.doesNotMatch(detailPage, /Bank deposits|Create bank deposit|Banked amount/);
@@ -126,7 +129,7 @@ test("overdue controls stop after reconciliation", () => {
   const now = new Date("2026-09-07T12:00:00.000Z");
   assert.equal(getCashCustodyAlerts({ custody_status: "removed", collected_at: "2026-09-07T08:00:00.000Z" }, now)[0]?.label, "Storage handoff overdue");
   assert.equal(getCashCustodyAlerts({ custody_status: "in_storage", storage_received_at: "2026-09-05T12:00:00.000Z" }, now)[0]?.label, "Cash count overdue");
-  assert.equal(getCashCustodyAlerts({ custody_status: "counted", counted_at: "2026-09-05T12:00:00.000Z" }, now)[0]?.label, "Reconciliation overdue");
+  assert.equal(getCashCustodyAlerts({ custody_status: "counted", counted_at: "2026-09-05T12:00:00.000Z" }, now).length, 0);
   assert.equal(getCashCustodyAlerts({ custody_status: "reconciled", reconciled_at: "2026-09-04T12:00:00.000Z" }, now).length, 0);
   assert.equal(getCashCustodyAlerts({ custody_status: "banked", reconciled_at: "2026-01-01T00:00:00.000Z" }, now).length, 0);
 });
