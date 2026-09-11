@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from "@/components/LocalDraft";
 import { CompressorSafetyProofCard } from "@/components/operator/CompressorSafetyProofCard";
+import { MachineQuantityConfirmationCard } from "@/components/operator/MachineQuantityConfirmationCard";
 import { ManualRouteSalesSection, type ManualRouteSaleProductOption } from "@/components/operator/ManualRouteSalesSection";
 import { RouteStopQuickActions } from "@/components/operator/RouteStopQuickActions";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
@@ -111,6 +112,13 @@ interface StopRefillItem {
   productId: string;
   productName: string;
   currentQty: number;
+  slotAllocations?: Array<{
+    machine_slot_id?: string | null;
+    slot_code?: string | null;
+    current_qty?: unknown;
+    final_take_qty?: unknown;
+    recommended_take_qty?: unknown;
+  }>;
   assignedQty?: number;
   parQty: number;
   availableQty?: number;
@@ -569,6 +577,8 @@ export default function MachineStopPage() {
   const [finalPhotoSaving, setFinalPhotoSaving] = useState(false);
   const [compressorSafetyInstalled, setCompressorSafetyInstalled] = useState(false);
   const [compressorProofReady, setCompressorProofReady] = useState(false);
+  const [quantityConfirmationInstalled, setQuantityConfirmationInstalled] = useState(false);
+  const [quantityConfirmationReady, setQuantityConfirmationReady] = useState(false);
   const [persistedMachinePhotoReady, setPersistedMachinePhotoReady] = useState(false);
 
   useEffect(() => {
@@ -655,6 +665,16 @@ export default function MachineStopPage() {
     });
     return hasShortage || missingReports.some((item) => item.productName.trim()) ? "partial" : "full";
   }, [filledQtys, missingReports, stopData, unavailableProducts]);
+  const machineQuantityItems = useMemo(() => (stopData?.refillItems ?? []).map((item) => ({
+    productId: item.productId,
+    productName: item.productName,
+    slotCode: item.slotCode,
+    machineSlotId: item.machineSlotId,
+    currentQty: item.currentQty,
+    assignedQty: Number(item.assignedQty ?? item.parQty ?? 0),
+    filledQty: Number(filledQtys[item.productId] ?? 0),
+    slotAllocations: item.slotAllocations ?? [],
+  })), [filledQtys, stopData]);
   const stopExecutionSummary = useMemo(() => {
     if (!stopData) {
     return {
@@ -882,6 +902,11 @@ export default function MachineStopPage() {
       document.getElementById("compressor-safety")?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
+    if (quantityConfirmationInstalled && !quantityConfirmationReady && stopData.stopStatus !== ROUTE_STOP_COMPLETED_STATUS) {
+      setError(tr("Upload the current XY inventory screenshot, or save that the machine has no electricity.", "ارفع صورة شاشة مخزون XY الحالية، أو احفظ أن الجهاز بدون كهرباء."));
+      document.getElementById("machine-quantity-confirmation")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
 
     localDraft.saveNow();
     setSubmitting(true);
@@ -1062,7 +1087,8 @@ export default function MachineStopPage() {
   }
 
   const compressorReadyForSubmit = !compressorSafetyInstalled || compressorProofReady;
-  const canSubmitStop = !submitting && !finalPhotoSaving && cleaningDone && compressorReadyForSubmit;
+  const quantityReadyForSubmit = !quantityConfirmationInstalled || quantityConfirmationReady;
+  const canSubmitStop = !submitting && !finalPhotoSaving && cleaningDone && compressorReadyForSubmit && quantityReadyForSubmit;
 
   return (
     <>
@@ -1177,6 +1203,18 @@ export default function MachineStopPage() {
             </div>
           )}
         </section>
+
+        <MachineQuantityConfirmationCard
+          routeId={routeId}
+          stopId={stopId}
+          machineId={stopData.machineId}
+          items={machineQuantityItems}
+          completed={false}
+          onStateChange={({ installed, ready }) => {
+            setQuantityConfirmationInstalled(installed);
+            setQuantityConfirmationReady(ready);
+          }}
+        />
 
                 <ManualRouteSalesSection
           routeId={routeId}

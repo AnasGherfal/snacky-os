@@ -115,9 +115,7 @@ export function getCashCustodyAlerts(row: CashCustodyAlertInput, now = new Date(
     ? { date: row.collected_at, hours: 2, label: "Storage handoff overdue" }
     : status === "in_storage"
       ? { date: row.storage_received_at, hours: 24, label: "Cash count overdue" }
-      : status === "counted"
-        ? { date: row.counted_at, hours: 24, label: "Reconciliation overdue" }
-        : null;
+      : null;
 
   if (threshold) {
     const age = hoursSince(threshold.date, now);

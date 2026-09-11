@@ -7,7 +7,6 @@ import {
   CashReconciliationForms,
   CashStorageReceiptForm,
   CashVarianceResolutionForm,
-  type CountWitnessOption,
 } from "@/components/CashCustodyForms";
 import { PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
@@ -42,6 +41,18 @@ function formatDate(value: string | null | undefined) {
   }).format(new Date(value));
 }
 
+function formatDateInput(value: string | null | undefined) {
+  if (!value) return "";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: "Africa/Tripoli",
+  }).formatToParts(new Date(value));
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((entry) => entry.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
 function money(value: number | string | null | undefined) {
   return value === null || value === undefined ? "—" : lyd(Number(value));
 }
@@ -53,7 +64,7 @@ function DetailItem({ label, children }: { label: string; children: ReactNode })
 function CustodyStages({ status }: { status: string }) {
   const stages = [
     { key: "waiting", label: "Waiting to be counted", complete: ["counted", "reconciled", "banked"].includes(status) },
-    { key: "reconciled", label: status === "counted" ? "VMS check pending" : "Counted & reconciled", complete: ["reconciled", "banked"].includes(status) },
+    { key: "reconciled", label: status === "counted" ? "VMS check — do later" : "Counted & reconciled", complete: ["reconciled", "banked"].includes(status) },
   ];
   return (
     <ol className="grid gap-2 sm:grid-cols-2" aria-label="Cash custody stages">
@@ -78,7 +89,7 @@ function machineSummary(machineLinks: any[]) {
 const eventLabels: Record<string, string> = {
   removed: "Cash removed and bag sealed",
   stored: "Bag received into storage",
-  counted: "Bag counted by denomination",
+  counted: "Cash total counted",
   expectation_calculated: "VMS expectation calculated",
   reconciled: "Combined total reconciled",
   variance_flagged: "Owner review required",
@@ -179,10 +190,10 @@ export default async function CashCollectionDetailPage({
     );
   }
 
-  const [{ data: collection, error: collectionError }, { data: events }, { data: finance }, { data: activeWitnesses }] = await Promise.all([
+  const [{ data: collection, error: collectionError }, { data: events }, { data: finance }] = await Promise.all([
     supabase
       .from("cash_collections")
-      .select("id, route_id, machine_id, operator_id, collected_at, vms_expected_cash, actual_cash_collected, variance, review_status, custody_status, reconciliation_status, cash_bag_id, storage_received_at, storage_received_by, storage_location, storage_seal_condition, storage_notes, counted_at, counted_by, count_seal_condition, count_witnessed_by, count_denominations, count_other_amount_lyd, expected_source, expected_calculated_at, reconciled_at, reconciled_by, reconciliation_note, variance_resolution, voided_at, void_reason, notes, operator:team_members!cash_collections_operator_id_fkey(id, full_name), storage_receiver:team_members!cash_collections_storage_received_by_fkey(id, full_name), counter:team_members!cash_collections_counted_by_fkey(id, full_name), count_witness:team_members!cash_collections_count_witnessed_by_fkey(id, full_name), reconciler:team_members!cash_collections_reconciled_by_fkey(id, full_name), machine_links:cash_collection_machines(machine_id, removal_type, compartments, interval_start_at, interval_end_at, expectation_status, expectation_source, vms_sales_count, machine:machines(id, name, machine_code, location:locations(id, name)))")
+      .select("id, route_id, machine_id, operator_id, collected_at, cash_period_start, cash_period_end, vms_expected_cash, actual_cash_collected, variance, review_status, custody_status, reconciliation_status, cash_bag_id, storage_received_at, storage_received_by, storage_location, storage_seal_condition, storage_notes, counted_at, counted_by, expected_source, expected_calculated_at, reconciled_at, reconciled_by, reconciliation_note, variance_resolution, voided_at, void_reason, notes, operator:team_members!cash_collections_operator_id_fkey(id, full_name), storage_receiver:team_members!cash_collections_storage_received_by_fkey(id, full_name), counter:team_members!cash_collections_counted_by_fkey(id, full_name), reconciler:team_members!cash_collections_reconciled_by_fkey(id, full_name), machine_links:cash_collection_machines(machine_id, removal_type, compartments, interval_start_at, interval_end_at, expectation_status, expectation_source, vms_sales_count, machine:machines(id, name, machine_code, location:locations(id, name)))")
       .eq("id", id)
       .maybeSingle(),
     supabase
@@ -197,13 +208,6 @@ export default async function CashCollectionDetailPage({
       .order("transaction_date", { ascending: false })
       .limit(1)
       .maybeSingle(),
-    supabase
-      .from("team_members")
-      .select("id, full_name")
-      .eq("active", true)
-      .eq("active_status", "active")
-      .neq("id", profile.team_member_id ?? "00000000-0000-0000-0000-000000000000")
-      .order("full_name"),
   ]);
   if (collectionError) console.error("[cash] Failed to load custody batch", collectionError);
   if (!collection) notFound();
@@ -217,7 +221,6 @@ export default async function CashCollectionDetailPage({
   const isOwnCollection = row.operator_id === profile.team_member_id;
   const mayReceive = canReceive && (!isOwnCollection || isOwnerOrAdmin);
   const status = String(row.custody_status ?? "removed");
-  const countWitnesses: CountWitnessOption[] = (activeWitnesses ?? []).map((witness) => ({ id: witness.id, label: witness.full_name }));
 
   return (
     <div className="space-y-6">
@@ -254,8 +257,7 @@ export default async function CashCollectionDetailPage({
               <DetailItem label="Storage seal">{row.storage_seal_condition ?? "—"}</DetailItem>
               <DetailItem label="Counted at">{formatDate(row.counted_at)}</DetailItem>
               <DetailItem label="Counted by">{row.counter?.full_name ?? "—"}</DetailItem>
-              <DetailItem label="Count witnessed by">{row.count_witness?.full_name ?? "—"}</DetailItem>
-              <DetailItem label="Count seal">{row.count_seal_condition ?? "—"}</DetailItem>
+              <DetailItem label="Cash period">{row.cash_period_start && row.cash_period_end ? `${row.cash_period_start} → ${row.cash_period_end}` : "Legacy count"}</DetailItem>
               <DetailItem label="Reconciled at">{formatDate(row.reconciled_at)}</DetailItem>
               <DetailItem label="Reconciled by">{row.reconciler?.full_name ?? "—"}</DetailItem>
               <DetailItem label="Finance ledger">{finance?.id ? <Link href={`/finance/transactions/${finance.id}`} className="link-secondary">Open {finance.transaction_status ?? "active"} entry</Link> : "Not posted"}</DetailItem>
@@ -288,8 +290,8 @@ export default async function CashCollectionDetailPage({
         <div className="space-y-6">
           {status === "removed" && mayReceive ? <SectionCard><h2 className="text-lg font-semibold">Receive into storage</h2><p className="mt-1 text-sm text-slate-500">{isOwnCollection ? "You collected this bag. As owner/admin, you can receive it into storage yourself; Snacky OS records that it was a self-receipt." : "A different person verifies the seal, photographs the handoff, and records the exact safe location."}</p><CashStorageReceiptForm action={receiveCashIntoStorage} id={id} clientSubmissionId={crypto.randomUUID()} /></SectionCard> : null}
           {status === "removed" && canReceive && !mayReceive ? <SectionCard><h2 className="text-lg font-semibold">Independent handoff required</h2><p className="mt-3 text-sm text-amber-800">The collector cannot acknowledge their own storage handoff. A different authorized user must receive this bag.</p></SectionCard> : null}
-          {status === "in_storage" && canCount ? <SectionCard><h2 className="text-lg font-semibold">Count the stored bag</h2><p className="mt-1 text-sm text-slate-500">Count by denomination. Do not allocate mixed cash to machines. A second named person must witness the full count.</p>{countWitnesses.length ? <CashCountForm action={confirmCashCollectionCount} id={id} clientSubmissionId={crypto.randomUUID()} witnesses={countWitnesses} /> : <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Counting is blocked until another active team member is available to witness it.</p>}</SectionCard> : null}
-          {status === "counted" && row.reconciliation_status !== "variance_review" && canReconcile ? <SectionCard><h2 className="text-lg font-semibold">Check the combined total against VMS</h2><p className="mt-1 text-sm text-slate-500">The counted amount is already available in Snacky LYD. This check detects missing cash using exact transactions between full machine emptying events. If raw VMS data is unavailable, use one independently verified batch total and document its source.</p><CashReconciliationForms calculateAction={calculateCashExpectation} reconcileAction={reconcileCashCollection} id={id} calculateSubmissionId={crypto.randomUUID()} reconcileSubmissionId={crypto.randomUUID()} /></SectionCard> : null}
+          {status === "in_storage" && canCount ? <SectionCard><h2 className="text-lg font-semibold">Count the stored bag</h2><p className="mt-1 text-sm text-slate-500">Enter only the period and one total for the whole bag. Snacky OS records who counted it automatically.</p><CashCountForm action={confirmCashCollectionCount} id={id} clientSubmissionId={crypto.randomUUID()} defaultPeriodEnd={formatDateInput(row.collected_at)} /></SectionCard> : null}
+          {status === "counted" && row.reconciliation_status !== "variance_review" && canReconcile ? <SectionCard><h2 className="text-lg font-semibold">Optional follow-up: compare with VMS</h2><p className="mt-1 text-sm text-slate-500">The cash count is already saved and available in Snacky LYD. This comparison is not required now—you can return and complete it later.</p><CashReconciliationForms calculateAction={calculateCashExpectation} reconcileAction={reconcileCashCollection} id={id} calculateSubmissionId={crypto.randomUUID()} reconcileSubmissionId={crypto.randomUUID()} /></SectionCard> : null}
           {status === "counted" && row.reconciliation_status === "variance_review" && canResolve ? <SectionCard><h2 className="text-lg font-semibold text-rose-800">Owner variance decision</h2><p className="mt-1 text-sm text-slate-600">Missing cash is {money(shortage)}. Verify the total and evidence before accepting a cause. “Unknown” is not a resolution.</p><CashVarianceResolutionForm action={resolveCashVariance} id={id} clientSubmissionId={crypto.randomUUID()} /></SectionCard> : null}
           {["reconciled", "banked"].includes(status) ? <SectionCard><h2 className="text-lg font-semibold text-emerald-800">Counted & reconciled</h2><p className="mt-2 text-sm text-slate-600">This cash is already included in the Snacky LYD balance and is available to spend. No extra cash step is required.</p></SectionCard> : null}
           {status === "voided" ? <SectionCard><h2 className="text-lg font-semibold text-rose-800">Voided record</h2><p className="mt-2 text-sm text-slate-600">This record remains visible for audit and cannot be edited or reused.</p></SectionCard> : null}
