@@ -62,13 +62,13 @@ test("a matching confirmed result rotates exactly once for a deliberate next pay
   assert.deepEqual(sameSuccessUrlReloaded, { id: SECOND_ID, rotatedAfterSuccess: false });
 });
 
-test("purchase detail forms persist receive, payment, cancel, and void command identities", () => {
+test("purchase detail forms persist receive, full payment, payment, cancel, and void command identities", () => {
   assert.match(component, /window\.localStorage\.getItem\(storageKey\)/);
   assert.match(component, /window\.localStorage\.setItem\(storageKey, resolved\.id\)/);
   assert.match(component, /<fieldset disabled=!\{ready\}|<fieldset disabled=\{!ready\}/);
   assert.match(component, /name="client_submission_id" value=\{submissionId\}/);
 
-  for (const operation of ["receive", "payment", "cancel", "void"]) {
+  for (const operation of ["receive", "payment-full", "payment", "cancel", "void"]) {
     assert.match(detailPage, new RegExp(`operation=["']${operation}["']`));
   }
   assert.match(detailPage, /confirmedSubmissionId=\{purchaseReceived\}/);

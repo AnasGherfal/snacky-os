@@ -11,7 +11,7 @@ import {
 
 type PurchaseOperationIdentity = {
   purchaseId: string;
-  operation: "receive" | "payment" | "cancel" | "void" | `payment-void:${string}`;
+  operation: "receive" | "payment" | "payment-full" | "cancel" | "void" | `payment-void:${string}`;
   initialSubmissionId: string;
   confirmedSubmissionId?: string;
 };

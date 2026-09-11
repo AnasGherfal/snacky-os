@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { purchaseLineTotalReconciles } from "../src/lib/purchase-accounting.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
@@ -118,6 +119,24 @@ test("purchase pages show ledger-derived status and fail closed when unavailable
   assert.match(detailPage, /purchase_payments/i);
   assert.match(detailPage, /recordPurchasePayment/i);
   assert.match(detailPage, /remaining_amount_lyd/i);
+  assert.match(detailPage, /Mark paid in full/i);
+  assert.match(detailPage, /operation="payment-full"/i);
+  assert.match(detailPage, /creates the matching Finance money-out/i);
   assert.match(detailPage, /unavailable/i);
   assert.doesNotMatch(detailPage, /markPurchasePaid/);
+});
+
+test("payment controls tolerate only four-decimal unit-cost precision drift", () => {
+  assert.equal(
+    purchaseLineTotalReconciles({ units: 600, unitCost: 0.4167, lineTotal: 250 }),
+    true,
+  );
+  assert.equal(
+    purchaseLineTotalReconciles({ units: 10, unitCost: 2, lineTotal: 15 }),
+    false,
+  );
+  assert.equal(
+    purchaseLineTotalReconciles({ units: 0, unitCost: 2, lineTotal: 15 }),
+    false,
+  );
 });

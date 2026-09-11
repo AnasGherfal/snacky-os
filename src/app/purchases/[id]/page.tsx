@@ -7,6 +7,7 @@ import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } fr
 import { canManagePurchases, canRecordPurchasePayments, isAdminRole } from "@/lib/authz";
 import { accountLabel } from "@/lib/finance-balance";
 import { lyd } from "@/lib/format";
+import { purchaseLineTotalReconciles } from "@/lib/purchase-accounting";
 import { dateOnly } from "@/lib/purchase-finance-date";
 import { privateStorageObjectUrl, RECEIPT_IMAGE_BUCKET } from "@/lib/storage-buckets";
 
@@ -189,15 +190,11 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
   const totalAdjustment = Number(purchaseRow.total_adjustment_lyd ?? displayTotal - calculatedTotal);
   const roundMoney = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
   const accountingLineTotal = roundMoney(lineRows.reduce((sum, line) => sum + Number(line.line_total_lyd ?? line.line_total ?? 0), 0));
-  const linesReconcile = lineItemsAvailable && lineRows.length > 0 && lineRows.every((line) => {
-    const units = Number(line.total_units ?? 0);
-    const unitCost = Number(line.unit_cost_lyd ?? line.unit_cost);
-    const lineTotal = Number(line.line_total_lyd ?? line.line_total);
-    return Number.isFinite(units) && units > 0
-      && Number.isFinite(unitCost) && unitCost >= 0
-      && Number.isFinite(lineTotal) && lineTotal >= 0
-      && roundMoney(lineTotal) === roundMoney(unitCost * units);
-  });
+  const linesReconcile = lineItemsAvailable && lineRows.length > 0 && lineRows.every((line) => purchaseLineTotalReconciles({
+    units: Number(line.total_units ?? 0),
+    unitCost: Number(line.unit_cost_lyd ?? line.unit_cost),
+    lineTotal: Number(line.line_total_lyd ?? line.line_total),
+  }));
   const manualTotal = purchaseRow.manual_total_lyd === null ? null : Number(purchaseRow.manual_total_lyd);
   const recordedCalculatedTotal = Number(purchaseRow.calculated_total_lyd);
   const recordedTotal = Number(purchaseRow.total_amount);
@@ -246,6 +243,11 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
   const paymentAccountDefault = ["snacky_lyd", "owner_lyd"].includes(existingPaymentAccount)
     ? existingPaymentAccount
     : "snacky_lyd";
+  const storedPaymentMethod = String(purchaseRow.payment_method ?? "cash");
+  const fullPaymentMethod = ["cash", "bank_transfer", "card", "other"].includes(storedPaymentMethod)
+    ? storedPaymentMethod
+    : "cash";
+  const fullPaymentAmount = Number(remainingAmount ?? 0).toFixed(2);
 
   const receiptUploadMessage =
     receiptUpload === "storage-unavailable"
@@ -306,7 +308,39 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
             <div><div className="text-xs font-medium uppercase text-slate-500">Supplier</div><div className="font-medium">{purchaseRow.supplier?.name ?? "-"}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Payment method</div><div className="font-medium">{String(purchaseRow.payment_method ?? "-").replaceAll("_", " ")}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Paying account</div><div className="font-medium">{accountLabel(purchaseRow.payment_account_id ?? "snacky_lyd")}</div></div>
-            <div><div className="text-xs font-medium uppercase text-slate-500">Payment status</div><StatusBadge status={derivedPaymentStatus} /></div>
+            <div>
+              <div className="text-xs font-medium uppercase text-slate-500">Payment status</div>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <StatusBadge status={derivedPaymentStatus} />
+                <PersistentPurchaseConfirmDialog
+                  purchaseId={id}
+                  operation="payment-full"
+                  initialSubmissionId={crypto.randomUUID()}
+                  confirmedSubmissionId={paymentRecorded}
+                  visible={canAddPayment}
+                  action={recordPurchasePayment}
+                  triggerLabel="Mark paid in full"
+                  title="Record full supplier payment?"
+                  description={`This records ${lyd(Number(remainingAmount ?? 0))} today from ${accountLabel(paymentAccountDefault)} as ${fullPaymentMethod.replaceAll("_", " ")}, and creates the matching Finance money-out. Use the payment form for a different amount, date, method, or account.`}
+                  confirmLabel="Record full payment"
+                  pendingConfirmLabel="Recording payment..."
+                  buttonClassName="btn-secondary px-3 py-1 text-xs"
+                  confirmButtonClassName="btn-primary"
+                  requireReason={false}
+                  reasonName="note"
+                  reasonLabel="Optional note"
+                  reasonPlaceholder="Supplier payment note (optional)"
+                  hiddenFields={[
+                    { name: "purchase_order_id", value: id },
+                    ...(module === "finance" ? [{ name: "module", value: "finance" }] : []),
+                    { name: "amount", value: fullPaymentAmount },
+                    { name: "paid_at", value: tripoliDateInputValue() },
+                    { name: "payment_method", value: fullPaymentMethod },
+                    { name: "account_id", value: paymentAccountDefault },
+                  ]}
+                />
+              </div>
+            </div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Paid</div><div className="font-medium">{paidAmount === null ? "-" : lyd(paidAmount)}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Remaining</div><div className="font-medium">{remainingAmount === null ? "-" : lyd(remainingAmount)}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Last paid</div><div className="font-medium">{paymentSummaryAvailable && paymentSummaryRow.last_paid_at ? new Date(paymentSummaryRow.last_paid_at).toLocaleString("en-US") : paymentDate ?? "-"}</div></div>
@@ -371,6 +405,7 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
                 ) : null}
                 <button className="btn-primary mt-3 w-full" disabled={Boolean(receivingStorageLocationsError) || receivingStorageRows.length === 0 || !lineItemsAvailable || !movementHistoryAvailable || !purchaseAccountingReady}>Receive into storage</button>
             </PurchaseOperationForm>
+            <div id="record-supplier-payment">
             <PurchaseOperationForm
               action={recordPurchasePayment}
               purchaseId={id}
@@ -420,6 +455,7 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
                 </label>
                 <button className="btn-primary mt-4 w-full" type="submit">Record payment</button>
             </PurchaseOperationForm>
+            </div>
             <PersistentPurchaseConfirmDialog
                 purchaseId={id}
                 operation="cancel"

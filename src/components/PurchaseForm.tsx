@@ -1271,7 +1271,7 @@ export function PurchaseForm({
           <FormField label="Payment status" hint="Payment status is derived only from actual supplier payments recorded after the purchase is received.">
             <input type="hidden" name="payment_status" value="unpaid" />
             <div className="flex min-h-11 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-800">
-              Unpaid — record the actual supplier payment from the purchase page / غير مدفوع — سجّل الدفعة الفعلية من صفحة المشتريات
+              Starts unpaid. After saving and receiving, use “Mark paid in full” on the purchase page, or record a partial payment. / يبدأ كغير مدفوع، ثم سجّل الدفع من صفحة المشتريات
             </div>
           </FormField>
           <FormField
