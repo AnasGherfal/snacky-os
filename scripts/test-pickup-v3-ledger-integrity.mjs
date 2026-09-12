@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const migrationPath = "supabase/migrations/20260905095000_operator_route_custody_lease.sql";
+const softReservationMigrationPath = "supabase/migrations/20260912200846_soft_route_reservations_at_pickup.sql";
 
 function compact(source) {
   return source.replace(/\s+/g, " ").trim();
@@ -20,7 +21,18 @@ function functionBody(source, name) {
 }
 
 const migration = fs.readFileSync(path.join(root, migrationPath), "utf8");
+const softReservationMigration = fs.readFileSync(path.join(root, softReservationMigrationPath), "utf8");
 const body = functionBody(migration, "snacky_confirm_route_pickup_batch_v3");
+
+test("route reservations stay soft at pickup while physical stock stays protected", () => {
+  assert.match(body, /Not enough physical storage stock\. Needed %, physically on hand %\./i);
+  assert.match(body, /Not enough available storage stock after route reservations\./i);
+  assert.match(softReservationMigration, /pg_catalog\.pg_get_functiondef[\s\S]*snacky_confirm_route_pickup_batch_v3/i);
+  assert.match(softReservationMigration, /\$hard_reservation_guard\$[\s\S]*Not enough available storage stock after route reservations\.[\s\S]*\$hard_reservation_guard\$/i);
+  assert.match(softReservationMigration, /Reservations remain visible to planning and system-health screens/i);
+  assert.match(softReservationMigration, /Physical stock protection was removed unexpectedly/i);
+  assert.match(softReservationMigration, /Route reservations still hard-block pickup/i);
+});
 
 test("V3 derives immutable movement provenance instead of trusting client fields", () => {
   assert.match(body, /v_actor_team_member_id := public\.snacky_current_team_member_id\(\)/i);
