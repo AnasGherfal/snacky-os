@@ -5,6 +5,7 @@ import { canAccessOperatorRoute, isOwnerAdminRole } from "@/lib/authz";
 import {
   buildMachineQuantityRows,
   buildMachineQuantitySourcesFromPlan,
+  enrichMachineQuantityPlanRows,
   machineQuantityEvidenceReady,
   machineQuantityConfirmationKey,
   type MachineQuantityEvidenceFile,
@@ -68,21 +69,30 @@ async function loadContext(routeId: string, stopId: string) {
   return { profile, client, admin, route, stop };
 }
 
-async function loadPlanRows(client: NonNullable<ReturnType<typeof getSupabaseAdminClient>>, stopId: string) {
+async function loadPlanRows(client: NonNullable<ReturnType<typeof getSupabaseAdminClient>>, stopId: string, machineId: string) {
   const result = await client
     .from("route_stop_items")
     .select("product_id, machine_slot_id, slot_code, planned_quantity, slot_allocations, product:products(name)")
     .eq("route_stop_id", stopId);
+  let planRows: MachineQuantityPlanRow[];
   if (result.error && isMissingSlotAllocations(result.error)) {
     const fallback = await client
       .from("route_stop_items")
       .select("product_id, machine_slot_id, slot_code, planned_quantity, product:products(name)")
       .eq("route_stop_id", stopId);
     if (fallback.error) throw fallback.error;
-    return (fallback.data ?? []) as MachineQuantityPlanRow[];
+    planRows = (fallback.data ?? []) as MachineQuantityPlanRow[];
+  } else {
+    if (result.error) throw result.error;
+    planRows = (result.data ?? []) as MachineQuantityPlanRow[];
   }
-  if (result.error) throw result.error;
-  return (result.data ?? []) as MachineQuantityPlanRow[];
+
+  const { data: machineSlots, error: machineSlotsError } = await client
+    .from("machine_slots")
+    .select("id, product_id, slot_code")
+    .eq("machine_id", machineId);
+  if (machineSlotsError) throw machineSlotsError;
+  return enrichMachineQuantityPlanRows(planRows, machineSlots ?? []);
 }
 
 const CONFIRMATION_SELECT = "id, confirmation_key, quantity_rows, verification_status, evidence_files, offline_reason, submitted_at, confirmed_at, resolved_at";
@@ -207,7 +217,7 @@ export async function POST(
     }
     const offlineNote = clean(payload.offlineNote).slice(0, 500);
     const offlineReason = mode === "machine_offline" ? offlineNote || "Machine has no electricity." : null;
-    const planRows = await loadPlanRows(context.admin, stopId);
+    const planRows = await loadPlanRows(context.admin, stopId, context.stop.machine_id);
     const sources = buildMachineQuantitySourcesFromPlan(planRows, payload.filledItems as MachineQuantityFilledItem[]);
     const rows = buildMachineQuantityRows(sources);
     const confirmationKey = machineQuantityConfirmationKey(rows);

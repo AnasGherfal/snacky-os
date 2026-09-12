@@ -6,7 +6,9 @@ import { fileURLToPath } from "node:url";
 
 import {
   buildMachineQuantityRows,
+  enrichMachineQuantityPlanRows,
   machineQuantityConfirmationKey,
+  machineQuantityEvidenceMatches,
   machineQuantityEvidenceReady,
 } from "../src/lib/machine-quantity-confirmation.ts";
 
@@ -42,6 +44,52 @@ test("changing a filled quantity changes the confirmation key", () => {
   assert.notEqual(first, changed);
 });
 
+test("legacy plan rows use the same deterministic machine lane everywhere", () => {
+  const planRows = [{
+    product_id: "product-a",
+    machine_slot_id: null,
+    slot_code: null,
+    planned_quantity: 4,
+    slot_allocations: [],
+    product: { name: "Water" },
+  }];
+  const enriched = enrichMachineQuantityPlanRows(planRows, [
+    { id: "slot-12", product_id: "product-a", slot_code: "012" },
+    { id: "slot-03", product_id: "product-a", slot_code: "003" },
+  ]);
+
+  assert.equal(enriched[0].machine_slot_id, "slot-03");
+  assert.equal(enriched[0].slot_code, "003");
+  const sources = [{
+    productId: "product-a",
+    productName: "Water",
+    filledQty: 4,
+    slotAllocations: [{
+      machine_slot_id: enriched[0].machine_slot_id,
+      slot_code: enriched[0].slot_code,
+      current_qty: 0,
+      final_take_qty: enriched[0].planned_quantity,
+    }],
+  }];
+  assert.match(machineQuantityConfirmationKey(buildMachineQuantityRows(sources)), /\"slot_code\":\"003\"/);
+
+  const noCatalogLane = buildMachineQuantityRows([{
+    productId: "product-b",
+    productName: "Manual product",
+    slotCode: "VMS item",
+    filledQty: 2,
+    slotAllocations: [{ machine_slot_id: null, slot_code: null, current_qty: 0, final_take_qty: 2 }],
+  }]);
+  assert.equal(noCatalogLane[0].slotCode, "VMS");
+
+  const legacyGenericRow = [{ ...buildMachineQuantityRows(sources)[0], machineSlotId: null, slotCode: "VMS" }];
+  assert.equal(machineQuantityEvidenceMatches(legacyGenericRow, buildMachineQuantityRows(sources)), true);
+  assert.equal(machineQuantityEvidenceMatches(
+    [{ ...legacyGenericRow[0], addedQty: 3, finalQty: 3 }],
+    buildMachineQuantityRows(sources),
+  ), false);
+});
+
 test("zero-filled products do not require a machine quantity update", () => {
   assert.deepEqual(buildMachineQuantityRows([{
     productId: "product-a",
@@ -73,6 +121,10 @@ test("operator checkpoint saves XY screenshots and never blocks a power-off mach
   assert.match(card, /Machine has no electricity/);
   assert.match(card, /uploadRefillProofPhoto/);
   assert.match(card, /multiple/);
+  assert.match(card, /Add more XY screenshots/);
+  assert.match(card, /add them one at a time/);
+  assert.match(card, /reusableEvidenceCount/);
+  assert.match(card, /machineQuantityEvidenceMatches/);
   assert.match(card, /quantity-confirmation/);
   assert.doesNotMatch(card, /type="checkbox"/);
   assert.doesNotMatch(card, /quantityChoices|tap the same number/);
@@ -83,6 +135,9 @@ test("operator checkpoint saves XY screenshots and never blocks a power-off mach
   assert.match(api, /machine_offline/);
   assert.match(api, /owner_resolved/);
   assert.match(api, /confirmation_key/);
+  assert.match(api, /enrichMachineQuantityPlanRows/);
+  assert.match(actions, /enrichMachineQuantityPlanRows/);
+  assert.match(actions, /legacyQuantityKey/);
   assert.match(actions, /route_stop_quantity_confirmations/);
   assert.match(actions, /expectedQuantityKey/);
   assert.match(actions, /machineQuantityEvidenceReady/);
