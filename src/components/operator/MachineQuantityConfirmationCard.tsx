@@ -5,8 +5,10 @@ import { useLanguage } from "@/components/I18nProvider";
 import {
   buildMachineQuantityRows,
   machineQuantityConfirmationKey,
+  machineQuantityEvidenceMatches,
   machineQuantityEvidenceReady,
   type MachineQuantityEvidenceFile,
+  type MachineQuantityRow,
   type MachineQuantitySourceItem,
   type MachineQuantityVerificationStatus,
 } from "@/lib/machine-quantity-confirmation";
@@ -40,14 +42,19 @@ export function MachineQuantityConfirmationCard({
   const [loaded, setLoaded] = useState(false);
   const [savedKey, setSavedKey] = useState<string | null>(null);
   const [status, setStatus] = useState<MachineQuantityVerificationStatus | null>(null);
+  const [savedRows, setSavedRows] = useState<MachineQuantityRow[]>([]);
   const [evidenceFiles, setEvidenceFiles] = useState<MachineQuantityEvidenceFile[]>([]);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [showOffline, setShowOffline] = useState(false);
   const [offlineNote, setOfflineNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const ready = rows.length === 0 || Boolean(installed && savedKey === currentKey && machineQuantityEvidenceReady(status));
+  const savedEvidenceMatches = savedKey === currentKey || machineQuantityEvidenceMatches(savedRows, rows);
+  const ready = rows.length === 0 || Boolean(installed && savedEvidenceMatches && machineQuantityEvidenceReady(status));
   const ownerPending = ready && status === "offline_pending";
+  const canUploadScreenshots = loaded && installed && !completed && status !== "offline_pending";
+  const reusableEvidenceCount = savedEvidenceMatches && status === "xy_screenshot_saved" ? evidenceFiles.length : 0;
+  const screenshotLimitReached = reusableEvidenceCount >= MAX_SCREENSHOTS;
 
   useEffect(() => {
     onStateChangeRef.current = onStateChange;
@@ -67,6 +74,7 @@ export function MachineQuantityConfirmationCard({
         setInstalled(nextInstalled);
         setSavedKey(String(confirmation?.confirmation_key ?? "") || null);
         setStatus((String(confirmation?.verification_status ?? "") || null) as MachineQuantityVerificationStatus | null);
+        setSavedRows(Array.isArray(confirmation?.quantity_rows) ? confirmation.quantity_rows : []);
         setEvidenceFiles(Array.isArray(confirmation?.evidence_files) ? confirmation.evidence_files : []);
         setOfflineNote(String(confirmation?.offline_reason ?? ""));
         setSavedAt(confirmation?.submitted_at ?? confirmation?.confirmed_at ?? null);
@@ -105,12 +113,14 @@ export function MachineQuantityConfirmationCard({
     }
     const confirmation = payload?.confirmation;
     const nextKey = String(confirmation?.confirmation_key ?? "");
-    if (!nextKey || nextKey !== currentKey) {
+    const nextRows = Array.isArray(confirmation?.quantity_rows) ? confirmation.quantity_rows as MachineQuantityRow[] : [];
+    if (!nextKey || (nextKey !== currentKey && !machineQuantityEvidenceMatches(nextRows, rows))) {
       throw new Error(tr("The refill quantities changed. Upload screenshots for the new quantities.", "تغيرت كميات التعبئة. ارفع صوراً للكميات الجديدة."));
     }
     setInstalled(true);
     setSavedKey(nextKey);
     setStatus(String(confirmation?.verification_status ?? "") as MachineQuantityVerificationStatus);
+    setSavedRows(nextRows);
     setEvidenceFiles(Array.isArray(confirmation?.evidence_files) ? confirmation.evidence_files : []);
     setSavedAt(confirmation?.submitted_at ?? confirmation?.confirmed_at ?? new Date().toISOString());
     setShowOffline(false);
@@ -119,7 +129,7 @@ export function MachineQuantityConfirmationCard({
 
   async function uploadScreenshots(selected: File[]) {
     if (!selected.length) return;
-    const reusableEvidence = savedKey === currentKey && status === "xy_screenshot_saved" ? evidenceFiles : [];
+    const reusableEvidence = savedEvidenceMatches && status === "xy_screenshot_saved" ? evidenceFiles : [];
     if (reusableEvidence.length + selected.length > MAX_SCREENSHOTS) {
       setError(tr(`Upload no more than ${MAX_SCREENSHOTS} screenshots.`, `ارفع بحد أقصى ${MAX_SCREENSHOTS} صور شاشة.`));
       return;
@@ -233,30 +243,44 @@ export function MachineQuantityConfirmationCard({
             : tr(`XY screenshot evidence saved (${evidenceFiles.length}).`, `تم حفظ إثبات صور شاشة XY (${evidenceFiles.length}).`)}
           {savedAt ? ` · ${new Date(savedAt).toLocaleString(locale === "ar" ? "ar-LY" : "en-US")}` : ""}
         </div>
-      ) : (
-        <div className="mt-4 space-y-4">
-          {savedKey && savedKey !== currentKey ? (
-            <div className="rounded-lg border border-amber-300 bg-white p-3 text-sm font-medium text-amber-900">
-              {tr("The filled quantities changed. Upload new XY screenshots for the updated numbers.", "تغيرت كميات التعبئة. ارفع صور شاشة XY جديدة للأرقام المحدثة.")}
-            </div>
-          ) : null}
-          <label className="block rounded-xl border border-slate-200 bg-white p-4">
-            <span className="block text-sm font-semibold text-slate-950">{tr("Upload current XY inventory screenshot(s)", "ارفع صورة أو صور مخزون XY الحالية")}</span>
-            <span className="mt-1 block text-xs leading-5 text-slate-600">{tr("Choose the top and bottom screenshots together when the page does not fit in one image. They save immediately.", "اختر صورتي أعلى وأسفل الصفحة معاً إذا لم تظهر الصفحة كاملة في صورة واحدة. سيتم حفظها فوراً.")}</span>
-            <input
-              type="file"
-              accept="image/png,image/jpeg,image/webp"
-              multiple
-              disabled={saving || completed || !installed}
-              className="field-input mt-3 bg-white"
-              onChange={(event) => {
-                const selected = Array.from(event.target.files ?? []);
-                event.target.value = "";
-                void uploadScreenshots(selected);
-              }}
-            />
-          </label>
+      ) : null}
 
+      {!ready && savedKey && !savedEvidenceMatches ? (
+        <div className="mt-4 rounded-lg border border-amber-300 bg-white p-3 text-sm font-medium text-amber-900">
+          {tr("The filled quantities changed. Upload new XY screenshots for the updated numbers.", "تغيرت كميات التعبئة. ارفع صور شاشة XY جديدة للأرقام المحدثة.")}
+        </div>
+      ) : null}
+
+      {canUploadScreenshots ? (
+        <label className="mt-4 block rounded-xl border border-slate-200 bg-white p-4">
+          <span className="block text-sm font-semibold text-slate-950">
+            {ready ? tr("Add more XY screenshots", "أضف صور شاشة XY أخرى") : tr("Upload current XY inventory screenshot(s)", "ارفع صورة أو صور مخزون XY الحالية")}
+          </span>
+          <span className="mt-1 block text-xs leading-5 text-slate-600">
+            {tr(`Select several photos together, or add them one at a time. Up to ${MAX_SCREENSHOTS} photos are saved.`, `اختر عدة صور معاً أو أضفها واحدة تلو الأخرى. يمكن حفظ حتى ${MAX_SCREENSHOTS} صور.`)}
+          </span>
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            multiple
+            disabled={saving || screenshotLimitReached}
+            className="field-input mt-3 bg-white"
+            onChange={(event) => {
+              const selected = Array.from(event.target.files ?? []);
+              event.target.value = "";
+              void uploadScreenshots(selected);
+            }}
+          />
+          {reusableEvidenceCount > 0 ? (
+            <span className="mt-2 block text-xs font-medium text-slate-600">
+              {tr(`${reusableEvidenceCount} of ${MAX_SCREENSHOTS} photos saved.`, `تم حفظ ${reusableEvidenceCount} من ${MAX_SCREENSHOTS} صور.`)}
+            </span>
+          ) : null}
+        </label>
+      ) : null}
+
+      {!ready ? (
+        <div className="mt-4 space-y-4">
           <div className="text-center text-xs font-semibold uppercase tracking-wide text-slate-500">{tr("or", "أو")}</div>
 
           {!showOffline ? (
@@ -278,10 +302,10 @@ export function MachineQuantityConfirmationCard({
               </div>
             </div>
           )}
-          {saving ? <p className="text-center text-sm font-semibold text-slate-700">{tr("Saving evidence...", "جارٍ حفظ الإثبات...")}</p> : null}
-          {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-800">{error}</div> : null}
         </div>
-      )}
+      ) : null}
+      {saving ? <p className="mt-3 text-center text-sm font-semibold text-slate-700">{tr("Saving evidence...", "جارٍ حفظ الإثبات...")}</p> : null}
+      {error ? <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-800">{error}</div> : null}
     </section>
   );
 }

@@ -8,6 +8,7 @@ import { inventoryMovementIdempotencyKey } from "@/lib/inventory-movement";
 import {
   buildMachineQuantityRows,
   buildMachineQuantitySourcesFromPlan,
+  enrichMachineQuantityPlanRows,
   machineQuantityConfirmationKey,
   machineQuantityEvidenceReady,
   type MachineQuantityPlanRow,
@@ -2372,19 +2373,40 @@ export async function completeStop({
       throwActionError(quantityConfirmationError, "Could not verify the machine quantity confirmation.");
     }
     if (!quantityConfirmationError) {
-      const { data: quantityPlanRows, error: quantityPlanError } = await completionWorkflowClient
-        .from("route_stop_items")
-        .select("product_id, machine_slot_id, slot_code, planned_quantity, slot_allocations, product:products(name)")
-        .eq("route_stop_id", stopId);
-      if (quantityPlanError) throwActionError(quantityPlanError, "Could not verify the machine row quantities.");
+      const [
+        { data: quantityPlanRows, error: quantityPlanError },
+        { data: quantityMachineSlots, error: quantityMachineSlotsError },
+      ] = await Promise.all([
+        completionWorkflowClient
+          .from("route_stop_items")
+          .select("product_id, machine_slot_id, slot_code, planned_quantity, slot_allocations, product:products(name)")
+          .eq("route_stop_id", stopId),
+        completionWorkflowClient
+          .from("machine_slots")
+          .select("id, product_id, slot_code")
+          .eq("machine_id", machineId),
+      ]);
+      if (quantityPlanError || quantityMachineSlotsError) {
+        throwActionError(quantityPlanError ?? quantityMachineSlotsError, "Could not verify the machine row quantities.");
+      }
+      const rawQuantityPlanRows = (quantityPlanRows ?? []) as MachineQuantityPlanRow[];
+      const canonicalQuantityPlanRows = enrichMachineQuantityPlanRows(
+        rawQuantityPlanRows,
+        quantityMachineSlots ?? [],
+      );
+      const legacyQuantitySources = buildMachineQuantitySourcesFromPlan(
+        rawQuantityPlanRows,
+        normalizedFilledItems,
+      );
+      const legacyQuantityKey = machineQuantityConfirmationKey(buildMachineQuantityRows(legacyQuantitySources));
       const quantitySources = buildMachineQuantitySourcesFromPlan(
-        (quantityPlanRows ?? []) as MachineQuantityPlanRow[],
+        canonicalQuantityPlanRows,
         normalizedFilledItems,
       );
       const expectedQuantityRows = buildMachineQuantityRows(quantitySources);
       const expectedQuantityKey = machineQuantityConfirmationKey(expectedQuantityRows);
       if (expectedQuantityRows.length > 0 && (
-        quantityConfirmation?.confirmation_key !== expectedQuantityKey
+        ![expectedQuantityKey, legacyQuantityKey].includes(String(quantityConfirmation?.confirmation_key ?? ""))
         || !machineQuantityEvidenceReady(quantityConfirmation?.verification_status)
       )) {
         throw new Error("Upload the current XY inventory screenshot, or save that the machine has no electricity.");

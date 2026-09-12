@@ -36,6 +36,12 @@ export type MachineQuantityPlanRow = {
   product?: { name?: unknown } | { name?: unknown }[] | null;
 };
 
+export type MachineQuantityCatalogSlot = {
+  id?: unknown;
+  product_id?: unknown;
+  slot_code?: unknown;
+};
+
 export type MachineQuantityFilledItem = {
   productId?: unknown;
   quantity?: unknown;
@@ -70,6 +76,44 @@ function unitQuantity(value: unknown) {
 
 function clean(value: unknown) {
   return String(value ?? "").trim();
+}
+
+/**
+ * Older/manual route rows can be missing their machine slot identity even when
+ * the product is already assigned to a lane in the machine catalogue. Resolve
+ * that fallback once, deterministically, so the phone, evidence API, and stop
+ * completion all calculate the exact same confirmation key.
+ */
+export function enrichMachineQuantityPlanRows<T extends MachineQuantityPlanRow>(
+  planRows: T[],
+  catalogSlots: MachineQuantityCatalogSlot[],
+): T[] {
+  const sortedSlots = [...catalogSlots].sort((left, right) => (
+    clean(left.slot_code).localeCompare(clean(right.slot_code), undefined, { numeric: true })
+    || clean(left.id).localeCompare(clean(right.id))
+  ));
+  const slotById = new Map(sortedSlots.map((slot) => [clean(slot.id), slot]));
+  const firstSlotByProduct = new Map<string, MachineQuantityCatalogSlot>();
+  sortedSlots.forEach((slot) => {
+    const productId = clean(slot.product_id);
+    if (productId && !firstSlotByProduct.has(productId)) firstSlotByProduct.set(productId, slot);
+  });
+
+  return planRows.map((plan) => {
+    if (Array.isArray(plan.slot_allocations) && plan.slot_allocations.length > 0) return plan;
+
+    const machineSlotId = clean(plan.machine_slot_id);
+    const slotCode = clean(plan.slot_code);
+    const catalogSlot = machineSlotId
+      ? slotById.get(machineSlotId)
+      : firstSlotByProduct.get(clean(plan.product_id));
+
+    return {
+      ...plan,
+      machine_slot_id: machineSlotId || clean(catalogSlot?.id) || null,
+      slot_code: slotCode || clean(catalogSlot?.slot_code) || null,
+    };
+  });
 }
 
 function allocationsFor(item: MachineQuantitySourceItem): MachineQuantityAllocation[] {
@@ -110,7 +154,7 @@ export function buildMachineQuantityRows(items: MachineQuantitySourceItem[]): Ma
         productId: clean(item.productId),
         productName: clean(item.productName) || "Unknown product",
         machineSlotId: clean(allocation.machine_slot_id) || null,
-        slotCode: clean(allocation.slot_code) || clean(item.slotCode) || "VMS",
+        slotCode: clean(allocation.slot_code) || "VMS",
         previousQty,
         addedQty,
         finalQty: previousQty + addedQty,
@@ -176,4 +220,57 @@ export function machineQuantityConfirmationKey(rows: MachineQuantityRow[]) {
     added_qty: row.addedQty,
     final_qty: row.finalQty,
   })));
+}
+
+function evidenceRow(value: unknown): MachineQuantityRow | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  const productId = clean(row.productId ?? row.product_id);
+  const previousQty = unitQuantity(row.previousQty ?? row.previous_qty);
+  const addedQty = unitQuantity(row.addedQty ?? row.added_qty);
+  const finalQty = unitQuantity(row.finalQty ?? row.final_qty);
+  if (!productId || finalQty !== previousQty + addedQty || addedQty <= 0) return null;
+  return {
+    productId,
+    productName: clean(row.productName ?? row.product_name) || "Unknown product",
+    machineSlotId: clean(row.machineSlotId ?? row.machine_slot_id) || null,
+    slotCode: clean(row.slotCode ?? row.slot_code) || "VMS",
+    previousQty,
+    addedQty,
+    finalQty,
+  };
+}
+
+function hasGenericLane(row: MachineQuantityRow) {
+  return !row.machineSlotId && ["", "VMS", "VMS item"].includes(row.slotCode);
+}
+
+/**
+ * Accepts saved evidence made before a legacy/manual route row was enriched
+ * with its catalogue lane. Quantities must still match exactly; only a missing
+ * historic lane identity may fall forward to the now-known lane.
+ */
+export function machineQuantityEvidenceMatches(savedRows: unknown, currentRows: MachineQuantityRow[]) {
+  if (!Array.isArray(savedRows) || savedRows.length !== currentRows.length) return false;
+  const normalizedSaved = savedRows.map(evidenceRow);
+  if (normalizedSaved.some((row) => !row)) return false;
+
+  const remaining = [...currentRows];
+  for (const saved of normalizedSaved as MachineQuantityRow[]) {
+    const quantityMatches = (current: MachineQuantityRow) => (
+      current.productId === saved.productId
+      && current.previousQty === saved.previousQty
+      && current.addedQty === saved.addedQty
+      && current.finalQty === saved.finalQty
+    );
+    let matchIndex = remaining.findIndex((current) => (
+      quantityMatches(current)
+      && current.machineSlotId === saved.machineSlotId
+      && current.slotCode === saved.slotCode
+    ));
+    if (matchIndex < 0 && hasGenericLane(saved)) matchIndex = remaining.findIndex(quantityMatches);
+    if (matchIndex < 0) return false;
+    remaining.splice(matchIndex, 1);
+  }
+  return remaining.length === 0;
 }

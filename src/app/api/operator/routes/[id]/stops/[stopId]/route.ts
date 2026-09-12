@@ -7,6 +7,7 @@ import { completeStop } from "@/lib/operator-actions";
 import { ROUTE_STOP_PENDING_STATUS } from "@/lib/route-workflow";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { normalizeRouteManualSale, type RouteManualSaleRow } from "@/lib/manual-route-sales";
+import { enrichMachineQuantityPlanRows } from "@/lib/machine-quantity-confirmation";
 
 function buildDebugDetails({
   profile,
@@ -435,14 +436,14 @@ export async function GET(
     if (slotsError) logOptionalStopDataIssue({ step: "load_machine_slots", query: "machine_slots", routeId, stopId, profile, route, stop, error: slotsError });
     const slotRows = slotsError ? [] : (slots ?? []);
 
-    const slotMap = new Map(slotRows.map((slot) => [String(slot.product_id ?? ""), slot.slot_code ?? ""]));
+    const quantityPlanItems = enrichMachineQuantityPlanRows((stopPlanItems ?? []) as StopPlanItemRow[], slotRows);
 
     const plannedByProduct = new Map<string, PlannedProductLine>();
-    (stopPlanItems ?? []).forEach((line) => {
+    quantityPlanItems.forEach((line) => {
       const productId = String(line.product_id ?? "");
       if (!productId) return;
       const product = firstRelation(line.product);
-      const slotCode = line.slot_code || slotMap.get(productId) || "VMS item";
+      const slotCode = line.slot_code || "VMS item";
       const assignedQty = Number(line.planned_quantity ?? 0);
       const current = plannedByProduct.get(productId) ?? {
         refillOrderLineId: null,
@@ -467,7 +468,7 @@ export async function GET(
       } else {
         current.slotAllocations.push({
           machine_slot_id: line.machine_slot_id ?? null,
-          slot_code: slotCode,
+          slot_code: line.slot_code ?? null,
           current_qty: 0,
           final_take_qty: assignedQty,
         });
