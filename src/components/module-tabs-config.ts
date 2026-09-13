@@ -44,6 +44,7 @@ const machinesTabs: ModuleTab[] = [
 
 const adminTabs: ModuleTab[] = [
   { label: "Overview", href: "/admin", exact: true },
+  { label: "Stop Override", href: "/admin/stop-override" },
   { label: "Team", href: "/team" },
   { label: "Settings", href: "/settings" },
   { label: "Activity Log", href: "/activity" },
