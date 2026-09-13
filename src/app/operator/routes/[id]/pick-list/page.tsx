@@ -9,7 +9,6 @@ import { confirmPickupDirect } from "@/lib/direct-pickup-actions";
 import { startRoute } from "@/lib/operator-actions";
 import { formatProductQuantity } from "@/lib/product-quantity";
 
-const UNASSIGNED_EXTRA_TARGET = "__unassigned__";
 const LEGACY_PICKUP_CHECKLIST_STORAGE_PREFIX = "snacky:route-pickup-checklist";
 const PICKUP_PROGRESS_STORAGE_PREFIX = "snacky:route-pick-progress";
 
@@ -88,28 +87,6 @@ function normalizedCaseQuantity(value: unknown) {
   return Math.max(1, Math.floor(parsed));
 }
 
-function formatQuantity(
-  quantity: number,
-  packaging: { caseQuantity: number; productName: string; category?: string | null },
-) {
-  return formatProductQuantity(quantity, {
-    caseQuantity: packaging.caseQuantity,
-    productName: packaging.productName,
-    category: packaging.category ?? null,
-  }, { compact: true });
-}
-
-function newExtraRow(): ExtraPickItem {
-  return {
-    id: crypto.randomUUID(),
-    targetStopId: UNASSIGNED_EXTRA_TARGET,
-    productId: "",
-    quantity: 1,
-    reason: "Customer demand",
-    notes: "",
-  };
-}
-
 export default function PickListPage() {
   const router = useRouter();
   const params = useParams<{ id?: string | string[] }>();
@@ -139,7 +116,7 @@ export default function PickListPage() {
       isArabic
         ? {
             title: "استلام منتجات المسار",
-            subtitle: "راجع الكميات ثم أكّد الاستلام مباشرة. استخدم علامة الصح فقط لتتذكر ما تم أخذه.",
+            subtitle: "راجع الكميات، علّم ما تم أخذه، ثم أكّد الاستلام مرة واحدة.",
             back: "العودة للمسار",
             retry: "إعادة المحاولة",
             loading: "جارٍ تحميل قائمة الاستلام…",
@@ -149,13 +126,13 @@ export default function PickListPage() {
             planned: "المطلوب",
             available: "المتوفر بالمخزن",
             pickup: "الاستلام",
-            reason: "سبب اختلاف الكمية",
+            reason: "السبب",
             notes: "ملاحظات",
             extras: "منتجات إضافية",
             addExtra: "إضافة منتج",
             product: "المنتج",
-            destination: "المحطة",
-            unassigned: "غير مخصص لمحطة",
+            destination: "المحطة / الماكينة",
+            chooseDestination: "اختر المحطة التي سيذهب إليها المنتج",
             quantity: "الكمية",
             remove: "حذف",
             summary: "ملخص الاستلام",
@@ -166,16 +143,18 @@ export default function PickListPage() {
             progress: "تم أخذ",
             chooseStop: "اختر محطة واحدة على الأقل.",
             chooseProduct: "اختر منتجًا لكل سطر إضافي أو احذف السطر.",
+            chooseExtraDestination: "كل منتج إضافي يجب ربطه بمحطة / ماكينة حتى يُضاف فعليًا للجولة.",
             locked: "هذا المسار مقفل ولا يمكن تعديل الاستلام.",
             alreadyConfirmed: "تم تأكيد استلام هذا المسار مسبقًا.",
             noItems: "لا توجد منتجات مطلوبة للاستلام.",
             stockWarning: "الكمية المختارة أعلى من المخزون الظاهر. سيقوم النظام بالتحقق من المخزون الفعلي مرة أخرى عند التأكيد.",
-            directNote: "علامات الصح للتتبع فقط ولا تمنع التأكيد. التأكيد نفسه يفحص المخزون الفعلي ويسجل حركة المنتجات.",
+            directNote: "علامات الصح للتتبع فقط ولا تمنع التأكيد. المنتجات الإضافية تُحفظ فعليًا على المحطة وتظهر للإدارة في ملخص الجولة بعد التأكيد.",
+            extraNote: "المنتج الإضافي ليس مجرد ملاحظة: عند التأكيد يُضاف للمحطة المختارة ويُخصم من المخزن ويظهر في ملخص الإدارة.",
             startFailed: "تعذر بدء المسار.",
           }
         : {
             title: "Route pickup",
-            subtitle: "Review quantities and confirm pickup directly. Use the checks only to remember what you already picked.",
+            subtitle: "Review quantities, mark what you physically picked, then confirm once.",
             back: "Back to route",
             retry: "Retry",
             loading: "Loading pickup list…",
@@ -185,13 +164,13 @@ export default function PickListPage() {
             planned: "Planned",
             available: "Storage available",
             pickup: "Pickup",
-            reason: "Reason for quantity change",
+            reason: "Reason",
             notes: "Notes",
             extras: "Extra products",
             addExtra: "Add product",
             product: "Product",
-            destination: "Stop",
-            unassigned: "Not assigned to a stop",
+            destination: "Stop / machine",
+            chooseDestination: "Choose the stop that will receive this product",
             quantity: "Quantity",
             remove: "Remove",
             summary: "Pickup summary",
@@ -202,11 +181,13 @@ export default function PickListPage() {
             progress: "Picked",
             chooseStop: "Select at least one stop.",
             chooseProduct: "Choose a product for every extra row or remove the empty row.",
+            chooseExtraDestination: "Every extra product must be assigned to a stop / machine so it becomes part of the route.",
             locked: "This route is locked and pickup cannot be edited.",
             alreadyConfirmed: "Pickup for this route has already been confirmed.",
             noItems: "There are no products to pick up.",
             stockWarning: "Selected quantity is above visible stock. The system will validate physical stock again on confirmation.",
-            directNote: "Checks are only a progress aid and never block confirmation. Confirm validates physical stock and records the inventory movement.",
+            directNote: "Checks are only a progress aid and never block confirmation. Extra products are saved to the selected stop and appear in the admin route summary after confirmation.",
+            extraNote: "An extra product is a real route item: confirmation assigns it to the selected stop, deducts stock, and exposes it in the admin summary.",
             startFailed: "Could not start route.",
           },
     [isArabic],
@@ -217,10 +198,7 @@ export default function PickListPage() {
     () => stopGroups.filter((group) => selectedStopSet.has(group.routeStopId)),
     [stopGroups, selectedStopSet],
   );
-  const productById = useMemo(
-    () => new Map(productOptions.map((product) => [product.id, product])),
-    [productOptions],
-  );
+  const productById = useMemo(() => new Map(productOptions.map((product) => [product.id, product])), [productOptions]);
   const selectedPickupItemIds = useMemo(
     () => selectedGroups.flatMap((group) => group.items.map((item) => item.routeStopItemId)),
     [selectedGroups],
@@ -308,16 +286,16 @@ export default function PickListPage() {
           sku: optionalText(product.sku),
           name: textOrFallback(product.name, isArabic ? "منتج غير معروف" : "Unknown product"),
           category: optionalText(product.category),
-          imageUrl: optionalText(product.imageUrl),
-          caseQuantity: normalizedCaseQuantity(product.caseQuantity),
-          availableStorageQty: unitQuantity(product.availableStorageQty),
+          imageUrl: optionalText(product.imageUrl ?? product.image_url),
+          caseQuantity: normalizedCaseQuantity(product.caseQuantity ?? product.case_quantity),
+          availableStorageQty: unitQuantity(product.availableStorageQty ?? product.available_storage_qty),
         }))
         .filter((product) => Boolean(product.id));
 
       const loadedExtras: ExtraPickItem[] = asRows(payload.extraItems)
         .map((item) => ({
           id: crypto.randomUUID(),
-          targetStopId: optionalText(item.routeStopId ?? item.route_stop_id) ?? UNASSIGNED_EXTRA_TARGET,
+          targetStopId: optionalText(item.routeStopId ?? item.route_stop_id) ?? "",
           productId: optionalText(item.productId ?? item.product_id) ?? "",
           quantity: unitQuantity(item.quantity),
           reason: textOrFallback(item.reason, "Customer demand"),
@@ -346,16 +324,23 @@ export default function PickListPage() {
     if (!routeId || typeof window === "undefined") return;
     try {
       window.localStorage.removeItem(`${LEGACY_PICKUP_CHECKLIST_STORAGE_PREFIX}:${routeId}`);
-      const savedProgress = window.localStorage.getItem(`${PICKUP_PROGRESS_STORAGE_PREFIX}:${routeId}`);
-      if (!savedProgress) return;
-      const parsed: unknown = JSON.parse(savedProgress);
-      if (Array.isArray(parsed)) {
-        setCheckedPickupItemIds(Array.from(new Set(parsed.map((value) => String(value ?? "").trim()).filter(Boolean))));
-      }
+      const saved = window.localStorage.getItem(`${PICKUP_PROGRESS_STORAGE_PREFIX}:${routeId}`);
+      if (!saved) return;
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) setCheckedPickupItemIds(parsed.map((value) => String(value)).filter(Boolean));
     } catch {
-      // Pickup progress is only a visual helper and must never block the route.
+      setCheckedPickupItemIds([]);
     }
   }, [routeId]);
+
+  useEffect(() => {
+    if (!routeId || typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(`${PICKUP_PROGRESS_STORAGE_PREFIX}:${routeId}`, JSON.stringify(checkedPickupItemIds));
+    } catch {
+      // Visual pickup progress must never block the route workflow.
+    }
+  }, [checkedPickupItemIds, routeId]);
 
   function updateItem(routeStopItemId: string, patch: Partial<PickStopItem>) {
     setStopGroups((current) =>
@@ -376,20 +361,25 @@ export default function PickListPage() {
     );
   }
 
-  function togglePickupProgress(routeStopItemId: string, checked: boolean) {
-    setCheckedPickupItemIds((current) => {
-      const next = checked
-        ? Array.from(new Set([...current, routeStopItemId]))
-        : current.filter((id) => id !== routeStopItemId);
-      if (routeId && typeof window !== "undefined") {
-        try {
-          window.localStorage.setItem(`${PICKUP_PROGRESS_STORAGE_PREFIX}:${routeId}`, JSON.stringify(next));
-        } catch {
-          // Progress persistence is optional and never part of confirmation.
-        }
-      }
-      return next;
-    });
+  function togglePickedProgress(itemId: string) {
+    setCheckedPickupItemIds((current) =>
+      current.includes(itemId) ? current.filter((id) => id !== itemId) : [...current, itemId],
+    );
+  }
+
+  function addExtraRow() {
+    const defaultStopId = selectedStopIds[0] ?? stopGroups[0]?.routeStopId ?? "";
+    setExtras((current) => [
+      ...current,
+      {
+        id: crypto.randomUUID(),
+        targetStopId: defaultStopId,
+        productId: "",
+        quantity: 1,
+        reason: "Customer demand",
+        notes: "Added by operator during route pickup",
+      },
+    ]);
   }
 
   async function handleConfirm() {
@@ -402,6 +392,10 @@ export default function PickListPage() {
     }
     if (extras.some((item) => item.quantity > 0 && !item.productId)) {
       setError(copy.chooseProduct);
+      return;
+    }
+    if (extras.some((item) => item.productId && item.quantity > 0 && !item.targetStopId)) {
+      setError(copy.chooseExtraDestination);
       return;
     }
 
@@ -419,17 +413,17 @@ export default function PickListPage() {
     );
 
     const extraPayload = extras
-      .filter((item) => item.productId && item.quantity > 0)
+      .filter((item) => item.productId && item.quantity > 0 && item.targetStopId)
       .map((item) => {
-        const routeStopId = item.targetStopId === UNASSIGNED_EXTRA_TARGET ? null : item.targetStopId;
-        const stop = routeStopId ? stopGroups.find((group) => group.routeStopId === routeStopId) : null;
+        const stop = stopGroups.find((group) => group.routeStopId === item.targetStopId);
+        if (!stop?.machineId) throw new Error(copy.chooseExtraDestination);
         return {
-          routeStopId,
-          machineId: stop?.machineId ?? null,
+          routeStopId: stop.routeStopId,
+          machineId: stop.machineId,
           productId: item.productId,
           quantity: item.quantity,
           reason: item.reason || "Customer demand",
-          notes: item.notes || undefined,
+          notes: item.notes || "Added by operator during route pickup",
         };
       });
 
@@ -440,14 +434,16 @@ export default function PickListPage() {
         clientSubmissionId: submissionIdRef.current,
       });
       if (!result.success) throw new Error(result.error || "Could not confirm pickup.");
-      if (routeId && typeof window !== "undefined") {
+
+      submissionIdRef.current = crypto.randomUUID();
+      if (typeof window !== "undefined") {
         try {
           window.localStorage.removeItem(`${PICKUP_PROGRESS_STORAGE_PREFIX}:${routeId}`);
         } catch {
-          // Confirmation succeeded; stale visual progress is harmless if storage is unavailable.
+          // Non-critical visual state.
         }
       }
-      submissionIdRef.current = crypto.randomUUID();
+      setCheckedPickupItemIds([]);
       router.push(`/operator/routes/${routeId}`);
       router.refresh();
     } catch (cause) {
@@ -510,91 +506,96 @@ export default function PickListPage() {
         ) : <p className="mt-3 text-sm text-slate-600">{copy.noItems}</p>}
       </section>
 
-      {selectedGroups.map((group) => (
-        <section key={group.routeStopId} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
-            <div className="flex items-center justify-between gap-3">
+      {selectedGroups.map((group) => {
+        const stopItemIds = group.items.map((item) => item.routeStopItemId);
+        const stopPickedCount = stopItemIds.filter((id) => checkedPickupItemIds.includes(id)).length;
+        return (
+          <section key={group.routeStopId} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
               <div>
                 <h2 className="font-bold text-slate-950">{group.locationName}</h2>
                 <p className="text-sm text-slate-600">{`${group.machineName}${group.machineCode !== group.machineName && group.machineCode !== "-" ? ` · ${group.machineCode}` : ""}`}</p>
               </div>
-              <div className="shrink-0 rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600">
-                {copy.progress} {group.items.filter((item) => checkedPickupItemIds.includes(item.routeStopItemId)).length}/{group.items.length}
-              </div>
+              <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm">{copy.progress} {stopPickedCount}/{group.items.length}</span>
             </div>
-          </div>
-          <div className="divide-y divide-slate-100">
-            {group.items.map((item) => {
-              const product = productById.get(item.productId);
-              const packaging = { caseQuantity: item.caseQuantity, productName: item.productName, category: item.productCategory };
-              const adjusted = item.confirmedQty !== item.requestedQty;
-              const stockWarning = item.confirmedQty > item.availableStorageQty;
-              const progressChecked = checkedPickupItemIds.includes(item.routeStopItemId);
-              return (
-                <div key={item.routeStopItemId} className={`p-4 transition-colors ${progressChecked ? "bg-emerald-50/70" : "bg-white"}`}>
-                  <div className="flex items-start gap-3">
-                    <label className="mt-1 flex shrink-0 cursor-pointer flex-col items-center gap-1">
-                      <input
-                        type="checkbox"
-                        className="h-6 w-6 rounded border-slate-300"
-                        checked={progressChecked}
+            <div className="divide-y divide-slate-100">
+              {group.items.map((item) => {
+                const product = productById.get(item.productId);
+                const packaging = { caseQuantity: item.caseQuantity, productName: item.productName, category: item.productCategory };
+                const adjusted = item.confirmedQty !== item.requestedQty;
+                const stockWarning = item.confirmedQty > item.availableStorageQty;
+                const isPicked = checkedPickupItemIds.includes(item.routeStopItemId);
+                return (
+                  <div key={item.routeStopItemId} className={`p-4 transition ${isPicked ? "bg-emerald-50/70" : ""}`}>
+                    <div className="flex items-start gap-3">
+                      <button
+                        type="button"
+                        aria-pressed={isPicked}
+                        onClick={() => togglePickedProgress(item.routeStopItemId)}
                         disabled={locked || confirmed || submitting}
-                        onChange={(event) => togglePickupProgress(item.routeStopItemId, event.target.checked)}
-                        aria-label={`${copy.picked}: ${item.productName}`}
-                      />
-                      <span className={`text-[10px] font-semibold ${progressChecked ? "text-emerald-700" : "text-slate-400"}`}>{copy.picked}</span>
-                    </label>
-                    <ProductThumbnail imageUrl={product?.imageUrl} name={item.productName} size="md" />
-                    <div className="min-w-0 flex-1">
-                      <div className={`font-semibold ${progressChecked ? "text-emerald-900" : "text-slate-950"}`}>{item.productName}</div>
-                      <div className="mt-1 space-y-1 text-xs text-slate-600">
-                        <div>{copy.planned}: <b>{formatProductQuantity(item.requestedQty, packaging, { compact: true })}</b></div>
-                        <div>{copy.available}: <b>{formatProductQuantity(item.availableStorageQty, packaging, { compact: true })}</b></div>
-                        {item.sku ? <div>SKU: {item.sku}</div> : null}
+                        className={`mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border text-lg font-black ${isPicked ? "border-emerald-600 bg-emerald-600 text-white" : "border-slate-300 bg-white text-transparent"}`}
+                      >
+                        ✓
+                      </button>
+                      <ProductThumbnail imageUrl={product?.imageUrl} name={item.productName} size="md" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="font-semibold text-slate-950">{item.productName}</div>
+                          {isPicked ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800">{copy.picked}</span> : null}
+                        </div>
+                        <div className="mt-1 space-y-1 text-xs text-slate-600">
+                          <div>{copy.planned}: <b>{formatProductQuantity(item.requestedQty, packaging, { compact: true })}</b></div>
+                          <div>{copy.available}: <b>{formatProductQuantity(item.availableStorageQty, packaging, { compact: true })}</b></div>
+                          {item.sku ? <div>SKU: {item.sku}</div> : null}
+                        </div>
+                      </div>
+                      <div className="w-40 max-w-[42%]">
+                        <div className="mb-1 text-xs font-semibold text-slate-700">{copy.pickup}</div>
+                        <QuantityStepper value={item.confirmedQty} min={0} disabled={locked || confirmed || submitting} onChange={(value) => updateItem(item.routeStopItemId, { confirmedQty: value })} inputLabel={item.productName} />
+                        <div className="mt-1 text-[11px] leading-4 text-slate-500">{formatProductQuantity(item.confirmedQty, packaging, { compact: true })}</div>
                       </div>
                     </div>
-                    <div className="w-40 max-w-[45%]">
-                      <div className="mb-1 text-xs font-semibold text-slate-700">{copy.pickup}</div>
-                      <QuantityStepper value={item.confirmedQty} min={0} disabled={locked || confirmed || submitting} onChange={(value) => updateItem(item.routeStopItemId, { confirmedQty: value })} inputLabel={item.productName} />
-                      <div className="mt-1 text-[11px] leading-4 text-slate-500">{formatProductQuantity(item.confirmedQty, packaging, { compact: true })}</div>
-                    </div>
+                    {stockWarning ? <p className="mt-2 text-xs font-medium text-amber-700">{copy.stockWarning}</p> : null}
+                    {adjusted ? (
+                      <div className="mt-3 grid gap-3 rounded-xl bg-slate-50 p-3 sm:grid-cols-2">
+                        <label>
+                          <span className="mb-1 block text-xs font-semibold text-slate-700">{copy.reason}</span>
+                          <select className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" value={item.reason} disabled={locked || confirmed || submitting} onChange={(event) => updateItem(item.routeStopItemId, { reason: event.target.value })}>
+                            <option>Product not available in storage</option>
+                            <option>Product not in operator bag</option>
+                            <option>Product expired/damaged</option>
+                            <option>Customer demand</option>
+                            <option>Other</option>
+                          </select>
+                        </label>
+                        <label>
+                          <span className="mb-1 block text-xs font-semibold text-slate-700">{copy.notes}</span>
+                          <input className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" value={item.notes} disabled={locked || confirmed || submitting} onChange={(event) => updateItem(item.routeStopItemId, { notes: event.target.value })} />
+                        </label>
+                      </div>
+                    ) : null}
                   </div>
-                  {stockWarning ? <p className="mt-2 text-xs font-medium text-amber-700">{copy.stockWarning}</p> : null}
-                  {adjusted ? (
-                    <div className="mt-3 grid gap-3 rounded-xl bg-slate-50 p-3 sm:grid-cols-2">
-                      <label>
-                        <span className="mb-1 block text-xs font-semibold text-slate-700">{copy.reason}</span>
-                        <select className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" value={item.reason} disabled={locked || confirmed || submitting} onChange={(event) => updateItem(item.routeStopItemId, { reason: event.target.value })}>
-                          <option>Product not available in storage</option>
-                          <option>Product not in operator bag</option>
-                          <option>Product expired/damaged</option>
-                          <option>Customer demand</option>
-                          <option>Other</option>
-                        </select>
-                      </label>
-                      <label>
-                        <span className="mb-1 block text-xs font-semibold text-slate-700">{copy.notes}</span>
-                        <input className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" value={item.notes} disabled={locked || confirmed || submitting} onChange={(event) => updateItem(item.routeStopItemId, { notes: event.target.value })} />
-                      </label>
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      ))}
+                );
+              })}
+            </div>
+          </section>
+        );
+      })}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-lg font-bold text-slate-950">{copy.extras}</h2>
-          <button type="button" className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-40" disabled={locked || confirmed || submitting} onClick={() => setExtras((current) => [...current, newExtraRow()])}>+ {copy.addExtra}</button>
+          <div>
+            <h2 className="text-lg font-bold text-slate-950">{copy.extras}</h2>
+            <p className="mt-1 text-xs text-slate-600">{copy.extraNote}</p>
+          </div>
+          <button type="button" className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-40" disabled={locked || confirmed || submitting || !stopGroups.length} onClick={addExtraRow}>+ {copy.addExtra}</button>
         </div>
+
         <div className="mt-3 space-y-3">
           {extras.map((item) => {
             const selected = productById.get(item.productId);
             return (
-              <div key={item.id} className="rounded-xl border border-slate-200 p-3">
+              <div key={item.id} className="rounded-xl border border-slate-200 bg-slate-50/50 p-3">
                 <div className="grid gap-3 sm:grid-cols-3">
                   <label>
                     <span className="mb-1 block text-xs font-semibold text-slate-700">{copy.product}</span>
@@ -604,19 +605,22 @@ export default function PickListPage() {
                     </select>
                     {selected ? <span className="mt-1 block text-xs text-slate-500">{copy.available}: {formatProductQuantity(selected.availableStorageQty, { caseQuantity: selected.caseQuantity, productName: selected.name, category: selected.category }, { compact: true })}</span> : null}
                   </label>
+
                   <label>
                     <span className="mb-1 block text-xs font-semibold text-slate-700">{copy.destination}</span>
                     <select className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" value={item.targetStopId} disabled={locked || confirmed || submitting} onChange={(event) => updateExtra(item.id, { targetStopId: event.target.value })}>
-                      <option value={UNASSIGNED_EXTRA_TARGET}>{copy.unassigned}</option>
+                      <option value="">{copy.chooseDestination}</option>
                       {selectedGroups.map((group) => <option key={group.routeStopId} value={group.routeStopId}>{group.locationName} · {group.machineName}</option>)}
                     </select>
                   </label>
+
                   <label>
                     <span className="mb-1 block text-xs font-semibold text-slate-700">{copy.quantity}</span>
                     <QuantityStepper value={item.quantity} min={0} disabled={locked || confirmed || submitting} onChange={(value) => updateExtra(item.id, { quantity: value })} inputLabel={copy.quantity} />
                     {selected ? <span className="mt-1 block text-xs text-slate-500">{formatProductQuantity(item.quantity, { caseQuantity: selected.caseQuantity, productName: selected.name, category: selected.category }, { compact: true })}</span> : null}
                   </label>
                 </div>
+
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   <label>
                     <span className="mb-1 block text-xs font-semibold text-slate-700">{copy.reason}</span>
@@ -632,6 +636,7 @@ export default function PickListPage() {
                     <input className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" value={item.notes} disabled={locked || confirmed || submitting} onChange={(event) => updateExtra(item.id, { notes: event.target.value })} />
                   </label>
                 </div>
+
                 <button type="button" className="mt-3 text-sm font-semibold text-red-700 disabled:opacity-40" disabled={locked || confirmed || submitting} onClick={() => setExtras((current) => current.filter((row) => row.id !== item.id))}>{copy.remove}</button>
               </div>
             );
@@ -642,15 +647,27 @@ export default function PickListPage() {
       <section className="rounded-2xl bg-slate-950 p-4 text-white shadow-sm">
         <h2 className="font-bold">{copy.summary}</h2>
         <p className="mt-1 text-sm text-slate-300">{selectedStopIds.length} {copy.stops} · {totalUnits} {copy.units}</p>
-        <p className="mt-1 text-sm font-semibold text-white">{copy.progress} {pickedProgressCount}/{selectedPickupItemIds.length}</p>
+        <p className="mt-1 text-sm text-slate-300">{copy.progress} {pickedProgressCount}/{selectedPickupItemIds.length}</p>
+        {extras.filter((item) => item.productId && item.quantity > 0).length ? (
+          <div className="mt-3 rounded-xl bg-white/10 p-3">
+            <div className="text-xs font-bold uppercase tracking-wide text-slate-300">{copy.extras}</div>
+            <div className="mt-2 space-y-1 text-sm">
+              {extras.filter((item) => item.productId && item.quantity > 0).map((item) => {
+                const product = productById.get(item.productId);
+                const stop = stopGroups.find((group) => group.routeStopId === item.targetStopId);
+                return <div key={item.id}>+ {product?.name ?? item.productId} × {item.quantity} → {stop ? `${stop.locationName} · ${stop.machineName}` : copy.chooseDestination}</div>;
+              })}
+            </div>
+          </div>
+        ) : null}
         <p className="mt-2 text-xs text-slate-300">{copy.directNote}</p>
       </section>
 
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 p-3 backdrop-blur">
         <div className="mx-auto flex max-w-5xl items-center gap-3">
           <div className="hidden min-w-0 flex-1 sm:block">
-            <div className="text-sm font-semibold text-slate-900">{selectedStopIds.length} {copy.stops} · {totalUnits} {copy.units} · {copy.progress} {pickedProgressCount}/{selectedPickupItemIds.length}</div>
-            <div className="text-xs text-slate-500">{copy.directNote}</div>
+            <div className="text-sm font-semibold text-slate-900">{selectedStopIds.length} {copy.stops} · {totalUnits} {copy.units}</div>
+            <div className="text-xs text-slate-500">{copy.progress} {pickedProgressCount}/{selectedPickupItemIds.length}</div>
           </div>
           <button type="button" className="min-h-12 w-full rounded-xl bg-emerald-600 px-6 py-3 text-base font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300 sm:w-auto" disabled={submitting || locked || confirmed || !selectedStopIds.length || !stopGroups.length} onClick={() => void handleConfirm()}>{submitting ? copy.confirming : copy.confirm}</button>
         </div>

@@ -250,7 +250,6 @@ test("inventory and route pickup use case_quantity packaging displays", () => {
   assert.match(pickupPage, /formatProductQuantity\(item\.requestedQty/);
   assert.match(pickupPage, /formatProductQuantity\(item\.confirmedQty/);
   assert.match(pickupPage, /formatProductQuantity\(item\.quantity/);
-  assert.match(pickupPage, /formatProductQuantity\(quantity/);
   assert.match(pickupPage, /formatProductQuantity\(selected\.availableStorageQty/);
 });
 
