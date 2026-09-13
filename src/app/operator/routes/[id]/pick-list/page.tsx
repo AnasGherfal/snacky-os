@@ -272,7 +272,7 @@ export default function PickListPage() {
                 productName: textOrFallback(item.product_name, isArabic ? "منتج غير معروف" : "Unknown product"),
                 productCategory: optionalText(item.category),
                 sku: optionalText(item.sku),
-                caseQuantity: normalizedCaseQuantity(item.case_quantity),
+                caseQuantity: Math.max(1, Number(item.case_quantity ?? 1)),
                 requestedQty,
                 availableStorageQty,
                 confirmedQty: hasSavedPickQty ? unitQuantity(item.picked_qty) : Math.min(requestedQty, availableStorageQty),
