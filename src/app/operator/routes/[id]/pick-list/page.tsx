@@ -87,21 +87,6 @@ function normalizedCaseQuantity(value: unknown) {
   return Math.max(1, Math.floor(parsed));
 }
 
-function formatQuantity(
-  quantity: number,
-  packaging: { caseQuantity: number; productName: string; category?: string | null },
-) {
-  return formatProductQuantity(
-    quantity,
-    {
-      caseQuantity: packaging.caseQuantity,
-      productName: packaging.productName,
-      category: packaging.category ?? null,
-    },
-    { compact: true },
-  );
-}
-
 export default function PickListPage() {
   const router = useRouter();
   const params = useParams<{ id?: string | string[] }>();
@@ -559,15 +544,15 @@ export default function PickListPage() {
                           {isPicked ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800">{copy.picked}</span> : null}
                         </div>
                         <div className="mt-1 space-y-1 text-xs text-slate-600">
-                          <div>{copy.planned}: <b>{formatQuantity(item.requestedQty, packaging)}</b></div>
-                          <div>{copy.available}: <b>{formatQuantity(item.availableStorageQty, packaging)}</b></div>
+                          <div>{copy.planned}: <b>{formatProductQuantity(item.requestedQty, packaging, { compact: true })}</b></div>
+                          <div>{copy.available}: <b>{formatProductQuantity(item.availableStorageQty, packaging, { compact: true })}</b></div>
                           {item.sku ? <div>SKU: {item.sku}</div> : null}
                         </div>
                       </div>
                       <div className="w-40 max-w-[42%]">
                         <div className="mb-1 text-xs font-semibold text-slate-700">{copy.pickup}</div>
                         <QuantityStepper value={item.confirmedQty} min={0} disabled={locked || confirmed || submitting} onChange={(value) => updateItem(item.routeStopItemId, { confirmedQty: value })} inputLabel={item.productName} />
-                        <div className="mt-1 text-[11px] leading-4 text-slate-500">{formatQuantity(item.confirmedQty, packaging)}</div>
+                        <div className="mt-1 text-[11px] leading-4 text-slate-500">{formatProductQuantity(item.confirmedQty, packaging, { compact: true })}</div>
                       </div>
                     </div>
                     {stockWarning ? <p className="mt-2 text-xs font-medium text-amber-700">{copy.stockWarning}</p> : null}
@@ -618,7 +603,7 @@ export default function PickListPage() {
                       <option value="">—</option>
                       {productOptions.map((product) => <option key={product.id} value={product.id}>{product.name}{product.sku ? ` · ${product.sku}` : ""}</option>)}
                     </select>
-                    {selected ? <span className="mt-1 block text-xs text-slate-500">{copy.available}: {formatQuantity(selected.availableStorageQty, { caseQuantity: selected.caseQuantity, productName: selected.name, category: selected.category })}</span> : null}
+                    {selected ? <span className="mt-1 block text-xs text-slate-500">{copy.available}: {formatProductQuantity(selected.availableStorageQty, { caseQuantity: selected.caseQuantity, productName: selected.name, category: selected.category }, { compact: true })}</span> : null}
                   </label>
 
                   <label>
@@ -632,7 +617,7 @@ export default function PickListPage() {
                   <label>
                     <span className="mb-1 block text-xs font-semibold text-slate-700">{copy.quantity}</span>
                     <QuantityStepper value={item.quantity} min={0} disabled={locked || confirmed || submitting} onChange={(value) => updateExtra(item.id, { quantity: value })} inputLabel={copy.quantity} />
-                    {selected ? <span className="mt-1 block text-xs text-slate-500">{formatQuantity(item.quantity, { caseQuantity: selected.caseQuantity, productName: selected.name, category: selected.category })}</span> : null}
+                    {selected ? <span className="mt-1 block text-xs text-slate-500">{formatProductQuantity(item.quantity, { caseQuantity: selected.caseQuantity, productName: selected.name, category: selected.category }, { compact: true })}</span> : null}
                   </label>
                 </div>
 
