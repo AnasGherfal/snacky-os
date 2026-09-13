@@ -11,6 +11,7 @@ import { formatProductQuantity } from "@/lib/product-quantity";
 
 const UNASSIGNED_EXTRA_TARGET = "__unassigned__";
 const LEGACY_PICKUP_CHECKLIST_STORAGE_PREFIX = "snacky:route-pickup-checklist";
+const PICKUP_PROGRESS_STORAGE_PREFIX = "snacky:route-pick-progress";
 
 type PickStopItem = {
   routeStopItemId: string;
@@ -125,6 +126,7 @@ export default function PickListPage() {
   const [selectedStopIds, setSelectedStopIds] = useState<string[]>([]);
   const [productOptions, setProductOptions] = useState<ProductOption[]>([]);
   const [extras, setExtras] = useState<ExtraPickItem[]>([]);
+  const [checkedPickupItemIds, setCheckedPickupItemIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [locked, setLocked] = useState(false);
@@ -137,7 +139,7 @@ export default function PickListPage() {
       isArabic
         ? {
             title: "استلام منتجات المسار",
-            subtitle: "راجع الكميات ثم أكّد الاستلام مباشرة. تم إلغاء خطوة تجهيز المنتجات بالكامل.",
+            subtitle: "راجع الكميات ثم أكّد الاستلام مباشرة. استخدم علامة الصح فقط لتتذكر ما تم أخذه.",
             back: "العودة للمسار",
             retry: "إعادة المحاولة",
             loading: "جارٍ تحميل قائمة الاستلام…",
@@ -160,18 +162,20 @@ export default function PickListPage() {
             units: "وحدة",
             confirm: "تأكيد الاستلام",
             confirming: "جارٍ التأكيد…",
+            picked: "تم أخذه",
+            progress: "تم أخذ",
             chooseStop: "اختر محطة واحدة على الأقل.",
             chooseProduct: "اختر منتجًا لكل سطر إضافي أو احذف السطر.",
             locked: "هذا المسار مقفل ولا يمكن تعديل الاستلام.",
             alreadyConfirmed: "تم تأكيد استلام هذا المسار مسبقًا.",
             noItems: "لا توجد منتجات مطلوبة للاستلام.",
             stockWarning: "الكمية المختارة أعلى من المخزون الظاهر. سيقوم النظام بالتحقق من المخزون الفعلي مرة أخرى عند التأكيد.",
-            directNote: "لا يوجد زر تجهيز ولا قائمة علامات صح. التأكيد يفحص المخزون الفعلي ثم يسجل حركة المنتجات.",
+            directNote: "علامات الصح للتتبع فقط ولا تمنع التأكيد. التأكيد نفسه يفحص المخزون الفعلي ويسجل حركة المنتجات.",
             startFailed: "تعذر بدء المسار.",
           }
         : {
             title: "Route pickup",
-            subtitle: "Review quantities and confirm pickup directly. The Prepare items step has been removed completely.",
+            subtitle: "Review quantities and confirm pickup directly. Use the checks only to remember what you already picked.",
             back: "Back to route",
             retry: "Retry",
             loading: "Loading pickup list…",
@@ -194,13 +198,15 @@ export default function PickListPage() {
             units: "units",
             confirm: "Confirm pickup",
             confirming: "Confirming…",
+            picked: "Picked",
+            progress: "Picked",
             chooseStop: "Select at least one stop.",
             chooseProduct: "Choose a product for every extra row or remove the empty row.",
             locked: "This route is locked and pickup cannot be edited.",
             alreadyConfirmed: "Pickup for this route has already been confirmed.",
             noItems: "There are no products to pick up.",
             stockWarning: "Selected quantity is above visible stock. The system will validate physical stock again on confirmation.",
-            directNote: "There is no Prepare button or loading checklist. Confirm validates physical stock and records the inventory movement.",
+            directNote: "Checks are only a progress aid and never block confirmation. Confirm validates physical stock and records the inventory movement.",
             startFailed: "Could not start route.",
           },
     [isArabic],
@@ -214,6 +220,14 @@ export default function PickListPage() {
   const productById = useMemo(
     () => new Map(productOptions.map((product) => [product.id, product])),
     [productOptions],
+  );
+  const selectedPickupItemIds = useMemo(
+    () => selectedGroups.flatMap((group) => group.items.map((item) => item.routeStopItemId)),
+    [selectedGroups],
+  );
+  const pickedProgressCount = useMemo(
+    () => selectedPickupItemIds.filter((id) => checkedPickupItemIds.includes(id)).length,
+    [selectedPickupItemIds, checkedPickupItemIds],
   );
   const totalUnits = useMemo(
     () =>
@@ -332,8 +346,14 @@ export default function PickListPage() {
     if (!routeId || typeof window === "undefined") return;
     try {
       window.localStorage.removeItem(`${LEGACY_PICKUP_CHECKLIST_STORAGE_PREFIX}:${routeId}`);
+      const savedProgress = window.localStorage.getItem(`${PICKUP_PROGRESS_STORAGE_PREFIX}:${routeId}`);
+      if (!savedProgress) return;
+      const parsed: unknown = JSON.parse(savedProgress);
+      if (Array.isArray(parsed)) {
+        setCheckedPickupItemIds(Array.from(new Set(parsed.map((value) => String(value ?? "").trim()).filter(Boolean))));
+      }
     } catch {
-      // The removed checklist was only a browser helper and must never block pickup.
+      // Pickup progress is only a visual helper and must never block the route.
     }
   }, [routeId]);
 
@@ -354,6 +374,22 @@ export default function PickListPage() {
     setSelectedStopIds((current) =>
       checked ? Array.from(new Set([...current, stopId])) : current.filter((id) => id !== stopId),
     );
+  }
+
+  function togglePickupProgress(routeStopItemId: string, checked: boolean) {
+    setCheckedPickupItemIds((current) => {
+      const next = checked
+        ? Array.from(new Set([...current, routeStopItemId]))
+        : current.filter((id) => id !== routeStopItemId);
+      if (routeId && typeof window !== "undefined") {
+        try {
+          window.localStorage.setItem(`${PICKUP_PROGRESS_STORAGE_PREFIX}:${routeId}`, JSON.stringify(next));
+        } catch {
+          // Progress persistence is optional and never part of confirmation.
+        }
+      }
+      return next;
+    });
   }
 
   async function handleConfirm() {
@@ -404,6 +440,13 @@ export default function PickListPage() {
         clientSubmissionId: submissionIdRef.current,
       });
       if (!result.success) throw new Error(result.error || "Could not confirm pickup.");
+      if (routeId && typeof window !== "undefined") {
+        try {
+          window.localStorage.removeItem(`${PICKUP_PROGRESS_STORAGE_PREFIX}:${routeId}`);
+        } catch {
+          // Confirmation succeeded; stale visual progress is harmless if storage is unavailable.
+        }
+      }
       submissionIdRef.current = crypto.randomUUID();
       router.push(`/operator/routes/${routeId}`);
       router.refresh();
@@ -470,8 +513,15 @@ export default function PickListPage() {
       {selectedGroups.map((group) => (
         <section key={group.routeStopId} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
-            <h2 className="font-bold text-slate-950">{group.locationName}</h2>
-            <p className="text-sm text-slate-600">{`${group.machineName}${group.machineCode !== group.machineName && group.machineCode !== "-" ? ` · ${group.machineCode}` : ""}`}</p>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="font-bold text-slate-950">{group.locationName}</h2>
+                <p className="text-sm text-slate-600">{`${group.machineName}${group.machineCode !== group.machineName && group.machineCode !== "-" ? ` · ${group.machineCode}` : ""}`}</p>
+              </div>
+              <div className="shrink-0 rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                {copy.progress} {group.items.filter((item) => checkedPickupItemIds.includes(item.routeStopItemId)).length}/{group.items.length}
+              </div>
+            </div>
           </div>
           <div className="divide-y divide-slate-100">
             {group.items.map((item) => {
@@ -479,12 +529,24 @@ export default function PickListPage() {
               const packaging = { caseQuantity: item.caseQuantity, productName: item.productName, category: item.productCategory };
               const adjusted = item.confirmedQty !== item.requestedQty;
               const stockWarning = item.confirmedQty > item.availableStorageQty;
+              const progressChecked = checkedPickupItemIds.includes(item.routeStopItemId);
               return (
-                <div key={item.routeStopItemId} className="p-4">
+                <div key={item.routeStopItemId} className={`p-4 transition-colors ${progressChecked ? "bg-emerald-50/70" : "bg-white"}`}>
                   <div className="flex items-start gap-3">
+                    <label className="mt-1 flex shrink-0 cursor-pointer flex-col items-center gap-1">
+                      <input
+                        type="checkbox"
+                        className="h-6 w-6 rounded border-slate-300"
+                        checked={progressChecked}
+                        disabled={locked || confirmed || submitting}
+                        onChange={(event) => togglePickupProgress(item.routeStopItemId, event.target.checked)}
+                        aria-label={`${copy.picked}: ${item.productName}`}
+                      />
+                      <span className={`text-[10px] font-semibold ${progressChecked ? "text-emerald-700" : "text-slate-400"}`}>{copy.picked}</span>
+                    </label>
                     <ProductThumbnail imageUrl={product?.imageUrl} name={item.productName} size="md" />
                     <div className="min-w-0 flex-1">
-                      <div className="font-semibold text-slate-950">{item.productName}</div>
+                      <div className={`font-semibold ${progressChecked ? "text-emerald-900" : "text-slate-950"}`}>{item.productName}</div>
                       <div className="mt-1 space-y-1 text-xs text-slate-600">
                         <div>{copy.planned}: <b>{formatProductQuantity(item.requestedQty, packaging, { compact: true })}</b></div>
                         <div>{copy.available}: <b>{formatProductQuantity(item.availableStorageQty, packaging, { compact: true })}</b></div>
@@ -580,13 +642,14 @@ export default function PickListPage() {
       <section className="rounded-2xl bg-slate-950 p-4 text-white shadow-sm">
         <h2 className="font-bold">{copy.summary}</h2>
         <p className="mt-1 text-sm text-slate-300">{selectedStopIds.length} {copy.stops} · {totalUnits} {copy.units}</p>
+        <p className="mt-1 text-sm font-semibold text-white">{copy.progress} {pickedProgressCount}/{selectedPickupItemIds.length}</p>
         <p className="mt-2 text-xs text-slate-300">{copy.directNote}</p>
       </section>
 
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 p-3 backdrop-blur">
         <div className="mx-auto flex max-w-5xl items-center gap-3">
           <div className="hidden min-w-0 flex-1 sm:block">
-            <div className="text-sm font-semibold text-slate-900">{selectedStopIds.length} {copy.stops} · {totalUnits} {copy.units}</div>
+            <div className="text-sm font-semibold text-slate-900">{selectedStopIds.length} {copy.stops} · {totalUnits} {copy.units} · {copy.progress} {pickedProgressCount}/{selectedPickupItemIds.length}</div>
             <div className="text-xs text-slate-500">{copy.directNote}</div>
           </div>
           <button type="button" className="min-h-12 w-full rounded-xl bg-emerald-600 px-6 py-3 text-base font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300 sm:w-auto" disabled={submitting || locked || confirmed || !selectedStopIds.length || !stopGroups.length} onClick={() => void handleConfirm()}>{submitting ? copy.confirming : copy.confirm}</button>
