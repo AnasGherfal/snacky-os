@@ -285,7 +285,7 @@ export default function PickListPage() {
             items,
           };
         })
-        .filter((group): group is PickStopGroup => Boolean(group) && group.items.length > 0)
+        .filter((group): group is PickStopGroup => group !== null && group.items.length > 0)
         .sort((a, b) => a.stopOrder - b.stopOrder);
 
       const products: ProductOption[] = asRows(payload.productOptions)
@@ -459,7 +459,7 @@ export default function PickListPage() {
                 <input type="checkbox" className="mt-1 h-5 w-5" checked={selectedStopSet.has(group.routeStopId)} disabled={locked || confirmed} onChange={(event) => toggleStop(group.routeStopId, event.target.checked)} />
                 <span className="min-w-0">
                   <span className="block font-semibold text-slate-900">{group.locationName}</span>
-                  <span className="block text-sm text-slate-600">{group.machineName}{group.machineCode !== "-" ? ` · ${group.machineCode}` : ""}</span>
+                  <span className="block text-sm text-slate-600">{`${group.machineName}${group.machineCode !== group.machineName && group.machineCode !== "-" ? ` · ${group.machineCode}` : ""}`}</span>
                 </span>
               </label>
             ))}
@@ -471,7 +471,7 @@ export default function PickListPage() {
         <section key={group.routeStopId} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
             <h2 className="font-bold text-slate-950">{group.locationName}</h2>
-            <p className="text-sm text-slate-600">{group.machineName}{group.machineCode !== "-" ? ` · ${group.machineCode}` : ""}</p>
+            <p className="text-sm text-slate-600">{`${group.machineName}${group.machineCode !== group.machineName && group.machineCode !== "-" ? ` · ${group.machineCode}` : ""}`}</p>
           </div>
           <div className="divide-y divide-slate-100">
             {group.items.map((item) => {
