@@ -230,7 +230,7 @@ export async function POST(request: Request) {
       filledItems,
       extraItems: [],
       missingProducts: [],
-      cashCollected: 0,
+      cashCollected: false,
       notes: clean(payload.notes) || "Admin/owner override: stop completed without proof photos because the operator app/workflow was unavailable.",
       completionPhotoUrl: undefined,
       completionPhotoPath: `admin-override/${profile.id}/${stopId}`,
