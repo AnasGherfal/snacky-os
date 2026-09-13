@@ -113,6 +113,9 @@ test("purchase pages show ledger-derived status and fail closed when unavailable
   assert.match(listPage, /purchase_payment_summary/i);
   assert.match(listPage, /paid_amount_lyd/i);
   assert.match(listPage, /remaining_amount_lyd/i);
+  assert.match(listPage, /canRecordPurchasePayments/i);
+  assert.match(listPage, /Mark paid/i);
+  assert.match(listPage, /#record-supplier-payment/i);
   assert.match(listPage, /unavailable/i);
 
   assert.match(detailPage, /purchase_payment_summary/i);
@@ -120,6 +123,9 @@ test("purchase pages show ledger-derived status and fail closed when unavailable
   assert.match(detailPage, /recordPurchasePayment/i);
   assert.match(detailPage, /remaining_amount_lyd/i);
   assert.match(detailPage, /Mark paid in full/i);
+  assert.match(detailPage, /Change payment status/i);
+  assert.match(detailPage, /Payment action unavailable/i);
+  assert.match(detailPage, /Different amount or account/i);
   assert.match(detailPage, /operation="payment-full"/i);
   assert.match(detailPage, /creates the matching Finance money-out/i);
   assert.match(detailPage, /unavailable/i);

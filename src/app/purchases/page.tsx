@@ -2,7 +2,7 @@ import Link from "next/link";
 import { PaginationControls } from "@/components/PaginationControls";
 import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileRecordCard, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
-import { canManagePurchases } from "@/lib/authz";
+import { canManagePurchases, canRecordPurchasePayments } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { privateStorageObjectUrl, RECEIPT_IMAGE_BUCKET } from "@/lib/storage-buckets";
@@ -27,6 +27,7 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
   const moduleQuery = sourceModule === "finance" ? "?module=finance" : "";
   const profile = await requireCurrentProfileForPath("/purchases");
   const canCreatePurchase = canManagePurchases(profile);
+  const canRecordPayment = canRecordPurchasePayments(profile);
   const supabase = await getAuthenticatedSupabaseServerClient();
 
   if (!supabase) {
@@ -92,6 +93,13 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
               const receiptUrl = String(purchase.receipt_url ?? "").trim() || privateStorageObjectUrl(RECEIPT_IMAGE_BUCKET, purchase.receipt_storage_path);
               const payment = paymentByPurchase.get(String(purchase.id));
               const paymentStatus = paymentDataAvailable && payment ? payment.payment_status : "unknown";
+              const canPayPurchase = canRecordPayment
+                && purchase.status === "received"
+                && paymentDataAvailable
+                && Boolean(payment)
+                && ["unpaid", "partially_paid"].includes(paymentStatus)
+                && Number(payment?.remaining_amount_lyd ?? 0) > 0;
+              const paymentHref = `/purchases/${purchase.id}${moduleQuery}#record-supplier-payment`;
 
               return (
                 <MobileRecordCard key={purchase.id}>
@@ -117,6 +125,7 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
                   </div>
                   <div className="mt-4 grid gap-2 sm:grid-cols-2">
                     <Link href={`/purchases/${purchase.id}${moduleQuery}`} className="btn-secondary w-full">View</Link>
+                    {canPayPurchase ? <Link href={paymentHref} className="btn-primary w-full">Mark paid</Link> : null}
                     {receiptUrl ? <a href={receiptUrl} target="_blank" rel="noreferrer" className="btn-secondary w-full">View Receipt</a> : null}
                     {canCreatePurchase && purchase.status === "draft" ? <Link href={`/purchases/${purchase.id}/edit${moduleQuery}`} className="btn-secondary w-full">Edit</Link> : null}
                   </div>
@@ -133,6 +142,13 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
               const difference = receiptTotal === null ? null : receiptTotal - calculatedTotal;
               const payment = paymentByPurchase.get(String(purchase.id));
               const paymentStatus = paymentDataAvailable && payment ? payment.payment_status : "unknown";
+              const canPayPurchase = canRecordPayment
+                && purchase.status === "received"
+                && paymentDataAvailable
+                && Boolean(payment)
+                && ["unpaid", "partially_paid"].includes(paymentStatus)
+                && Number(payment?.remaining_amount_lyd ?? 0) > 0;
+              const paymentHref = `/purchases/${purchase.id}${moduleQuery}#record-supplier-payment`;
 
               return (
                 <tr key={purchase.id}>
@@ -150,6 +166,7 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
                   <td>
                     <div className="flex flex-wrap gap-2">
                       <Link href={`/purchases/${purchase.id}${moduleQuery}`} className="btn-secondary">View</Link>
+                      {canPayPurchase ? <Link href={paymentHref} className="btn-primary">Mark paid</Link> : null}
                       {canCreatePurchase && purchase.status === "draft" ? <Link href={`/purchases/${purchase.id}/edit${moduleQuery}`} className="btn-secondary">Edit</Link> : null}
                     </div>
                   </td>

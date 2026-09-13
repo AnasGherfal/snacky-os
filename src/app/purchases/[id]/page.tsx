@@ -239,6 +239,19 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
     purchaseRow.status === "received" &&
     derivedPaymentStatus !== "voided" &&
     Number(remainingAmount ?? 0) > 0;
+  const paymentNeedsRecording =
+    paymentSummaryAvailable &&
+    ["unpaid", "partially_paid"].includes(derivedPaymentStatus) &&
+    Number(remainingAmount ?? 0) > 0;
+  const paymentUnavailableReason = !canRecordPayment
+    ? "Only an owner, admin, or finance user can record supplier payments."
+    : purchaseRow.status !== "received"
+      ? "Receive this purchase into storage before recording its supplier payment."
+      : !paymentSummaryAvailable
+        ? "Payment totals could not be loaded. Reload this purchase before paying it."
+        : !purchaseAccountingReady
+          ? "The purchase totals need accounting review before payment can be recorded."
+          : "Payment cannot be recorded until the purchase is ready.";
   const existingPaymentAccount = String(purchaseRow.payment_account_id ?? "");
   const paymentAccountDefault = ["snacky_lyd", "owner_lyd"].includes(existingPaymentAccount)
     ? existingPaymentAccount
@@ -308,39 +321,7 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
             <div><div className="text-xs font-medium uppercase text-slate-500">Supplier</div><div className="font-medium">{purchaseRow.supplier?.name ?? "-"}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Payment method</div><div className="font-medium">{String(purchaseRow.payment_method ?? "-").replaceAll("_", " ")}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Paying account</div><div className="font-medium">{accountLabel(purchaseRow.payment_account_id ?? "snacky_lyd")}</div></div>
-            <div>
-              <div className="text-xs font-medium uppercase text-slate-500">Payment status</div>
-              <div className="mt-1 flex flex-wrap items-center gap-2">
-                <StatusBadge status={derivedPaymentStatus} />
-                <PersistentPurchaseConfirmDialog
-                  purchaseId={id}
-                  operation="payment-full"
-                  initialSubmissionId={crypto.randomUUID()}
-                  confirmedSubmissionId={paymentRecorded}
-                  visible={canAddPayment}
-                  action={recordPurchasePayment}
-                  triggerLabel="Mark paid in full"
-                  title="Record full supplier payment?"
-                  description={`This records ${lyd(Number(remainingAmount ?? 0))} today from ${accountLabel(paymentAccountDefault)} as ${fullPaymentMethod.replaceAll("_", " ")}, and creates the matching Finance money-out. Use the payment form for a different amount, date, method, or account.`}
-                  confirmLabel="Record full payment"
-                  pendingConfirmLabel="Recording payment..."
-                  buttonClassName="btn-secondary px-3 py-1 text-xs"
-                  confirmButtonClassName="btn-primary"
-                  requireReason={false}
-                  reasonName="note"
-                  reasonLabel="Optional note"
-                  reasonPlaceholder="Supplier payment note (optional)"
-                  hiddenFields={[
-                    { name: "purchase_order_id", value: id },
-                    ...(module === "finance" ? [{ name: "module", value: "finance" }] : []),
-                    { name: "amount", value: fullPaymentAmount },
-                    { name: "paid_at", value: tripoliDateInputValue() },
-                    { name: "payment_method", value: fullPaymentMethod },
-                    { name: "account_id", value: paymentAccountDefault },
-                  ]}
-                />
-              </div>
-            </div>
+            <div><div className="text-xs font-medium uppercase text-slate-500">Payment status</div><div className="mt-1"><StatusBadge status={derivedPaymentStatus} /></div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Paid</div><div className="font-medium">{paidAmount === null ? "-" : lyd(paidAmount)}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Remaining</div><div className="font-medium">{remainingAmount === null ? "-" : lyd(remainingAmount)}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Last paid</div><div className="font-medium">{paymentSummaryAvailable && paymentSummaryRow.last_paid_at ? new Date(paymentSummaryRow.last_paid_at).toLocaleString("en-US") : paymentDate ?? "-"}</div></div>
@@ -353,6 +334,50 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
             <div><div className="text-xs font-medium uppercase text-slate-500">Inventory movement</div><div>{!movementHistoryAvailable ? "Unavailable — history could not be verified" : hasReceiptMovements ? "Created" : "Not created"}</div></div>
             <div><div className="text-xs font-medium uppercase text-slate-500">Finance transaction status</div><div>{!financeRowsAvailable ? "Unavailable — reload before making a correction" : hasActiveFinance ? <Link href={`/finance/transactions/${activeFinanceTransaction.id}`} className="link-secondary">View finance transaction</Link> : "Not posted yet"}</div></div>
           </div>
+          {paymentNeedsRecording ? (
+            <div className="mt-5 rounded-xl border-2 border-amber-300 bg-amber-50 p-4">
+              <div className="text-base font-semibold text-slate-950">Change payment status</div>
+              <p className="mt-1 text-sm leading-6 text-slate-700">
+                Record the supplier payment below. Snacky OS will change the status to Paid and create the matching Finance money-out automatically.
+              </p>
+              {canAddPayment ? (
+                <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                  <PersistentPurchaseConfirmDialog
+                    purchaseId={id}
+                    operation="payment-full"
+                    initialSubmissionId={crypto.randomUUID()}
+                    confirmedSubmissionId={paymentRecorded}
+                    visible
+                    action={recordPurchasePayment}
+                    triggerLabel="Mark paid in full"
+                    title="Record full supplier payment?"
+                    description={`This records ${lyd(Number(remainingAmount ?? 0))} today from ${accountLabel(paymentAccountDefault)} as ${fullPaymentMethod.replaceAll("_", " ")}, and creates the matching Finance money-out. Use the payment form for a different amount, date, method, or account.`}
+                    confirmLabel="Record full payment"
+                    pendingConfirmLabel="Recording payment..."
+                    buttonClassName="btn-primary flex-1"
+                    confirmButtonClassName="btn-primary"
+                    requireReason={false}
+                    reasonName="note"
+                    reasonLabel="Optional note"
+                    reasonPlaceholder="Supplier payment note (optional)"
+                    hiddenFields={[
+                      { name: "purchase_order_id", value: id },
+                      ...(module === "finance" ? [{ name: "module", value: "finance" }] : []),
+                      { name: "amount", value: fullPaymentAmount },
+                      { name: "paid_at", value: tripoliDateInputValue() },
+                      { name: "payment_method", value: fullPaymentMethod },
+                      { name: "account_id", value: paymentAccountDefault },
+                    ]}
+                  />
+                  <a href="#record-supplier-payment" className="btn-secondary flex-1">Different amount or account</a>
+                </div>
+              ) : (
+                <div className="mt-3 rounded-lg border border-amber-300 bg-white p-3 text-sm font-medium text-amber-950">
+                  Payment action unavailable: {paymentUnavailableReason}
+                </div>
+              )}
+            </div>
+          ) : null}
           {purchaseRow.notes ? <p className="mt-4 rounded-lg bg-slate-50 p-3 text-sm text-slate-600">{purchaseRow.notes}</p> : null}
           {purchaseRow.void_reason ? <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">Void reason: {purchaseRow.void_reason}</p> : null}
         </section>
