@@ -2,13 +2,13 @@
 
 import Image from "next/image";
 import Link, { useLinkStatus } from "next/link";
-import { useEffect, useRef, useState } from "react";
-import { Banknote, BarChart3, Boxes, ClipboardList, HandCoins, LayoutDashboard, MessagesSquare, ShieldCheck, UserCircle, Warehouse, X, type LucideIcon } from "lucide-react";
+import { useEffect, useRef, useState, type ComponentType } from "react";
+import { Banknote, BarChart3, Boxes, ClipboardList, HandCoins, LayoutDashboard, MessagesSquare, ShieldCheck, UserCircle, Warehouse, X } from "lucide-react";
 import { useLanguage } from "@/components/I18nProvider";
 import { useAppNavigation } from "@/components/NavigationProvider";
 import type { NavigationModuleId } from "@/components/module-tabs-config";
 
-const icons: Record<NavigationModuleId, LucideIcon> = {
+const icons: Record<NavigationModuleId, ComponentType<{ className?: string; "aria-hidden"?: boolean }>> = {
   dashboard: LayoutDashboard, operations: ClipboardList, crm: MessagesSquare,
   machines: Boxes, inventory: Warehouse, cash: HandCoins, finance: Banknote,
   reports: BarChart3, admin: ShieldCheck, investor: HandCoins, account: UserCircle,
@@ -49,7 +49,7 @@ function SidebarContent({ compact = false, onNavigate }: { compact?: boolean; on
                       }}
                       title={compact ? label : undefined} aria-current={active ? "page" : undefined} data-navigation-module={module.id}
                       className={`${active ? "nav-link-active" : "nav-link"} flex min-h-11 items-center gap-3 ${compact ? "justify-center !px-2" : ""}`}>
-                      <Icon className="h-5 w-5 shrink-0" aria-hidden="true" />
+                      <Icon className="h-5 w-5 shrink-0" aria-hidden={true} />
                       <span className={compact ? "sr-only" : "min-w-0 flex-1 text-sm font-medium"}>{label}</span>
                       {!compact ? <NavPendingIndicator /> : null}
                     </Link>

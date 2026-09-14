@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { navigationForUser } from "../src/components/module-tabs-config.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
@@ -166,30 +167,18 @@ test("growth keeps figures visible but holds expansion when coverage is incomple
 test("investor role is restricted to the investor portal", () => {
   const authz = read("src/lib/authz.ts");
   assert.match(authz, /investor: \["investor\.view"\]/);
-  assert.match(
-    authz,
-    /hasPermission\(input, "investor\.view"\).*"\/investor"/s,
-  );
-  assert.match(
-    authz,
-    /matchesPrefix\(pathname, \["\/investor"\]\).*investor\.view/,
-  );
-  assert.match(
-    authz,
-    /matchesPrefix\(pathname, \["\/vms-import"\]\).*canViewVmsImports/,
-  );
-  assert.match(
-    authz,
-    /matchesPrefix\(pathname, \["\/vms-mappings"\]\).*canManageVmsMappings/,
-  );
-  assert.doesNotMatch(
-    authz,
-    /matchesPrefix\(pathname, \["\/vms-import", "\/vms-mappings"\]\)\) return true/,
-  );
-  const sidebar = read("src/components/Sidebar.tsx");
-  assert.match(sidebar, /Investor Portal/);
-  assert.match(sidebar, /بوابة المستثمر/);
-  assert.match(sidebar, /investorNav/);
+  assert.match(authz, /hasPermission\(input, "investor\.view"\).*"\/investor"/s);
+  assert.match(authz, /matchesPrefix\(pathname, \["\/investor"\]\).*investor\.view/);
+  assert.match(authz, /matchesPrefix\(pathname, \["\/vms-import"\]\).*canViewVmsImports/);
+  assert.match(authz, /matchesPrefix\(pathname, \["\/vms-mappings"\]\).*canManageVmsMappings/);
+  assert.doesNotMatch(authz, /matchesPrefix\(pathname, \["\/vms-import", "\/vms-mappings"\]\)\) return true/);
+  // Test the actual shared menu, rather than requiring an obsolete sidebar array.
+  const investorNav = navigationForUser({ id: "investor-test", role: "investor", roles: ["investor"], activeStatus: "active" });
+  assert.deepEqual(investorNav.map((module) => module.id), ["investor", "account"]);
+  assert.equal(investorNav[0].name, "Investor Portal");
+  assert.equal(investorNav[0].nameAr, "بوابة المستثمر");
+  assert.equal(investorNav[0].href, "/investor");
+  assert.match(read("src/components/Sidebar.tsx"), /useAppNavigation/);
 });
 
 test("finalized statements are protected and only complete months can finalize", () => {
@@ -216,39 +205,21 @@ test("growth, investor, and machine dashboards contain real charts", () => {
   const owner = read("src/app/finance/investors/page.tsx");
   const portal = read("src/app/investor/page.tsx");
   const machines = read("src/app/machines-dashboard/page.tsx");
-  for (const source of [growth, owner, portal])
-    assert.match(source, /TrendChart/);
+  for (const source of [growth, owner, portal]) assert.match(source, /TrendChart/);
   assert.match(growth, /HorizontalBarChart/);
   assert.match(machines, /HorizontalBarChart/);
 });
 
 test("migration is additive and protects each investor's data", () => {
-  const migration = read(
-    "supabase/migrations/202607180003_growth_decisions_investor_portal.sql",
-  );
-  assert.match(
-    migration,
-    /alter type public\.team_role add value if not exists 'investor'/,
-  );
-  assert.match(
-    migration,
-    /create table if not exists public\.investor_agreements/,
-  );
-  assert.match(
-    migration,
-    /create table if not exists public\.investor_monthly_statements/,
-  );
-  assert.match(
-    migration,
-    /create table if not exists public\.investor_payments/,
-  );
+  const migration = read("supabase/migrations/202607180003_growth_decisions_investor_portal.sql");
+  assert.match(migration, /alter type public\.team_role add value if not exists 'investor'/);
+  assert.match(migration, /create table if not exists public\.investor_agreements/);
+  assert.match(migration, /create table if not exists public\.investor_monthly_statements/);
+  assert.match(migration, /create table if not exists public\.investor_payments/);
   assert.match(migration, /investor_user_id = auth\.uid\(\)/);
   assert.match(migration, /calculation_status = 'finalized'/);
   assert.match(migration, /snacky_can_view_investor_agreement/);
-  assert.doesNotMatch(
-    migration,
-    /\btruncate\b|\bdelete\s+from\b|drop\s+table|drop\s+column|drop[\s\S]{0,120}\bcascade\b/i,
-  );
+  assert.doesNotMatch(migration, /\btruncate\b|\bdelete\s+from\b|drop\s+table|drop\s+column|drop[\s\S]{0,120}\bcascade\b/i);
 });
 
 test("owner pages are connected through Finance and team login creation", () => {
