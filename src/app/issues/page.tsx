@@ -13,7 +13,7 @@ export default async function IssuesPage({ searchParams }: { searchParams: Promi
   if (!supabase) {
     return (
       <>
-        <ErrorState title="Issues unavailable" body="Supabase is not configured, so Snacky OS cannot load issue records." />
+        <ErrorState title="Customer issues unavailable" body="Supabase is not configured, so Snacky OS cannot load customer and machine issue records." />
       </>
     );
   }
@@ -29,16 +29,20 @@ export default async function IssuesPage({ searchParams }: { searchParams: Promi
     console.error("[issues] Failed to load issues", error);
     return (
       <>
-        <ErrorState title="Could not load issues" body="Snacky OS could not load machine issue records from Supabase." action={<SecondaryButton href="/issues">Retry</SecondaryButton>} />
+        <ErrorState title="Could not load customer issues" body="Snacky OS could not load issue records from Supabase." action={<SecondaryButton href="/issues">Retry</SecondaryButton>} />
       </>
     );
   }
 
   return (
     <>
-      <PageHeader title="Issues" subtitle="Track machine incidents, priorities, and SLA execution." />
+      <PageHeader
+        title="Customer Issues"
+        subtitle="Track customer reports and machine incidents separately from business-development leads and visits."
+        breadcrumbs={[{ label: "Snacky CRM", href: "/locations-pipeline" }, { label: "Customer Issues" }]}
+      />
       {!issues?.length ? (
-        <EmptyState title={type ? "No matching issues" : "No issues yet"} body="Operator-reported machine problems will appear here." />
+        <EmptyState title={type ? "No matching issues" : "No customer issues yet"} body="Customer and operator-reported machine problems will appear here." />
       ) : (
         <>
           <DataTable headers={["Machine", "Type", "Priority", "Status", "Description"]}>
