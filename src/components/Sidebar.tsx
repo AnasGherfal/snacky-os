@@ -173,6 +173,13 @@ const supervisorNav: NavSection[] = [
   { title: sectionTitles.business, items: [financeItem] },
 ];
 
+// A pure investor account intentionally stays isolated from operational modules.
+// Keep this named contract because investor access has its own regression coverage.
+const investorNav: NavSection[] = [
+  { title: sectionTitles.business, items: [investorPortalItem] },
+  { title: sectionTitles.account, items: [accountItem] },
+];
+
 const operatorNavItems: NavItem[] = [
   operatorOperationsItem,
   operatorAvailableRoutesItem,
@@ -198,6 +205,9 @@ function sectionsForRoles(role: AppRole, roles?: AppRole[] | null): NavSection[]
   const context = { id: "sidebar", role, roles };
   if (isOwnerAdminRole(context)) return ownerAdminNav;
   if (isSupervisorRole(context)) return supervisorNav;
+
+  const effectiveRoles = roles?.length ? roles : [role];
+  if (effectiveRoles.length === 1 && effectiveRoles[0] === "investor") return investorNav;
 
   const primary: NavItem[] = [];
   const work: NavItem[] = [];
