@@ -8,6 +8,17 @@ export type AppModuleKey =
   | "reports"
   | "admin";
 
+export const appModuleLabels: Record<AppModuleKey, { en: string; ar: string }> = {
+  operations: { en: "Operations", ar: "العمليات" },
+  cash: { en: "Cash", ar: "النقدية" },
+  stock: { en: "Stock & Purchasing", ar: "المخزون والمشتريات" },
+  machines: { en: "Machines", ar: "الماكينات" },
+  crm: { en: "CRM", ar: "العملاء والجهات" },
+  finance: { en: "Finance", ar: "المالية" },
+  reports: { en: "Reports", ar: "التقارير" },
+  admin: { en: "Admin", ar: "الإدارة" },
+};
+
 type AppModuleRule = {
   key: AppModuleKey;
   prefixes: string[];
@@ -17,7 +28,7 @@ function matchesPrefix(pathname: string, prefix: string) {
   return pathname === prefix || pathname.startsWith(`${prefix}/`);
 }
 
-// Keep route ownership in one place so the sidebar and module tabs cannot drift.
+// Keep route ownership in one place so the sidebar, top tabs, and topbar cannot drift.
 // More-specific rules must come before broad prefixes such as /admin.
 const appModuleRules: AppModuleRule[] = [
   { key: "finance", prefixes: ["/admin/finance-health"] },
