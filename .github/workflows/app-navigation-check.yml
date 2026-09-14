@@ -31,7 +31,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Test navigation ownership, roles, route coverage and breadcrumbs
-        run: node --experimental-strip-types --test scripts/test-app-navigation.mjs scripts/test-app-navigation-context.mjs scripts/test-app-navigation-breadcrumbs.mjs
+        run: node --experimental-strip-types --test scripts/test-app-navigation.mjs scripts/test-app-navigation-context.mjs scripts/test-app-navigation-breadcrumbs.mjs scripts/test-app-navigation-visual-contract.mjs
       - name: Typecheck Snacky OS
         run: npm run typecheck
       - name: Build Snacky OS

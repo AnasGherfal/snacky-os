@@ -8,7 +8,9 @@ import { navigationBreadcrumbItems, type NavigationBreadcrumbItem } from "@/lib/
 export function NavigationBreadcrumbs({ items }: { items: NavigationBreadcrumbItem[] }) {
   const navigation = useOptionalAppNavigation();
   const { locale } = useLanguage();
-  const trail = navigation ? navigationBreadcrumbItems(items, navigation.user, navigation.pathname, locale) : items;
+  if (!items.length) return null;
+  const currentHref = navigation ? `${navigation.pathname}${navigation.search ? `?${navigation.search}` : ""}` : "";
+  const trail = navigation ? navigationBreadcrumbItems(items, navigation.user, currentHref, locale) : items;
   if (!trail.length) return null;
   return (
     <nav aria-label={locale === "ar" ? "مسار الصفحة" : "Breadcrumb"} className="mb-3 flex flex-wrap items-center gap-1 text-sm text-slate-500" data-navigation-breadcrumbs>

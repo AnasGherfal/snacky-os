@@ -25,6 +25,7 @@ a { color: inherit; text-decoration: none; }
 
 button:focus-visible,
 a:focus-visible,
+summary:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
@@ -97,4 +98,25 @@ a.bg-slate-900,
 button.bg-slate-800,
 a.bg-slate-800 {
   color: #fff;
+}
+
+/* Keep selection explicit despite the unlayered global anchor reset above.
+   No cross-fade: two different pages must not look selected during a transition. */
+[data-navigation-tabs] a {
+  color: #475569;
+  background: transparent;
+  transition: none;
+}
+[data-navigation-tabs] a:hover {
+  color: #0f172a;
+  background: #f1f5f9;
+}
+[data-navigation-tabs] a[aria-current="page"] {
+  color: #fff;
+  background: var(--snacky-accent);
+}
+[data-navigation-tabs="secondary"] a[aria-current="page"] {
+  color: var(--snacky-accent);
+  background: #fff;
+  box-shadow: inset 0 0 0 1px var(--snacky-accent);
 }
