@@ -11,7 +11,6 @@ alter table public.location_pipeline_leads
   add column if not exists imported_source text,
   add column if not exists imported_category text;
 
--- The original pipeline constraint predates visit / negotiation stages.
 alter table public.location_pipeline_leads
   drop constraint if exists location_pipeline_leads_status_check;
 
@@ -76,8 +75,6 @@ create table if not exists public.location_pipeline_activities (
 create index if not exists idx_location_pipeline_activities_lead
   on public.location_pipeline_activities(lead_id, occurred_at desc, created_at desc);
 
--- CRM users can work on prospects and support handoffs without receiving
--- supervisor/finance/inventory privileges.
 create or replace function public.snacky_current_profile_can_manage_location_pipeline()
 returns boolean
 language sql
@@ -127,12 +124,10 @@ with seed(
     ('عين زارة مول', 'mall', 'عين زارة', 'أستاذة غيداء', 'مسؤولة التسويق', '914334972', 'rejected', date '2026-01-07', 'مرفوض', 'low', 'الجهات التي تم التواصل معها'),
     ('قاليري مول', 'mall', 'بن عاشور', null, null, null, 'visit_scheduled', date '2026-01-17', 'تم التواصل وتحديد موعد للزيارة', 'normal', 'الجهات التي تم التواصل معها'),
     ('فيرست مول', 'mall', null, 'أستاذة رانيا', 'المسؤولة عن المستثمرين', '910649977', 'contacted', date '2026-01-21', 'بإنتظار رد', 'normal', 'الجهات التي تم التواصل معها'),
-
     ('المتحف الوطني', 'other', 'وسط طرابلس', null, null, null, 'want_to_contact', null, 'جهة مستهدفة من الأرشيف', 'normal', 'الجهات المستهدفة'),
     ('شركة المدار', 'office', 'الرياضية', null, null, null, 'want_to_contact', null, 'جهة مستهدفة من الأرشيف', 'high', 'الجهات المستهدفة'),
     ('شركة ليبيانا', 'office', null, null, null, null, 'want_to_contact', null, 'جهة مستهدفة من الأرشيف', 'high', 'الجهات المستهدفة'),
     ('معهد النفط', 'university', 'السياحية', null, null, null, 'want_to_contact', null, 'جهة مستهدفة من الأرشيف', 'high', 'الجهات المستهدفة'),
-
     ('مستشفى رويال الطبي', 'hospital', 'الزاوية', 'حسين الشاوش', null, '218954300044', 'interested', date '2025-07-12', null, 'normal', 'الجهات المهتمة'),
     ('مصلحة المرافق التعليمية', 'office', 'سيدي المصري مقابل التضامن', null, null, '927329334', 'interested', null, null, 'normal', 'الجهات المهتمة'),
     ('شركة التداول', 'office', 'في الطريق بين سيمافرو ميزران وسيمافرو المستشفى المرجعي', null, null, '925999091', 'interested', date '2025-11-05', 'مقابل مدرسة 23 علي بعرة يوليو', 'normal', 'الجهات المهتمة'),
@@ -218,5 +213,5 @@ where not exists (
 and not exists (
   select 1
   from public.locations location
-  where lower(trim(coalesce(location.site_name, ''))) = lower(trim(seed.place_name))
+  where lower(trim(coalesce(location.name, ''))) = lower(trim(seed.place_name))
 );
