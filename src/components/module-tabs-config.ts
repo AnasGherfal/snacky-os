@@ -8,68 +8,68 @@ export type ModuleTabGroup = {
 };
 
 const operationsTabs: ModuleTab[] = [
-  { label: "Routes", labelAr: "المسارات", href: "/routes" },
-  { label: "New Route", labelAr: "مسار جديد", href: "/routes/new" },
-  { label: "Refills", labelAr: "التعبئة", href: "/refills" },
+  { label: "Routes", href: "/routes", labelAr: "المسارات" },
+  { label: "New Route", href: "/routes/new", labelAr: "مسار جديد" },
+  { label: "Refills", href: "/refills", labelAr: "التعبئة" },
 ];
 
 const cashTabs: ModuleTab[] = [
-  { label: "Cash Collections", labelAr: "تحصيل النقدية", href: "/cash-collections" },
-  { label: "Remove Cash", labelAr: "سحب النقد", href: "/cash-collections/new" },
+  { label: "Cash Collections", href: "/cash-collections", labelAr: "تحصيل النقدية" },
+  { label: "Remove Cash", href: "/cash-collections/new", labelAr: "سحب النقد" },
 ];
 
 const stockTabs: ModuleTab[] = [
-  { label: "Storage", labelAr: "المخزون", href: "/inventory", exact: true },
-  { label: "Stock Check", labelAr: "جرد المخزون", href: "/inventory/stock-check" },
-  { label: "Restock Priority", labelAr: "أولوية التزويد", href: "/restock-priority" },
-  { label: "Purchases", labelAr: "المشتريات", href: "/purchases" },
-  { label: "Products", labelAr: "المنتجات", href: "/products" },
-  { label: "Suppliers", labelAr: "الموردون", href: "/suppliers" },
-  { label: "Storage Locations", labelAr: "مواقع التخزين", href: "/storage-locations" },
-  { label: "Movements", labelAr: "حركة المخزون", href: "/inventory/movements" },
-  { label: "Product Planning", labelAr: "تخطيط المنتجات", href: "/product-planning" },
+  { label: "Storage", href: "/inventory", labelAr: "المخزون", exact: true },
+  { label: "Stock Check", href: "/inventory/stock-check", labelAr: "جرد المخزون" },
+  { label: "Restock Priority", href: "/restock-priority", labelAr: "أولوية التزويد" },
+  { label: "Purchases", href: "/purchases", labelAr: "المشتريات" },
+  { label: "Products", href: "/products", labelAr: "المنتجات" },
+  { label: "Suppliers", href: "/suppliers", labelAr: "الموردون" },
+  { label: "Storage Locations", href: "/storage-locations", labelAr: "مواقع التخزين" },
+  { label: "Movements", href: "/inventory/movements", labelAr: "حركة المخزون" },
+  { label: "Product Planning", href: "/product-planning", labelAr: "تخطيط المنتجات" },
 ];
 
 const machinesTabs: ModuleTab[] = [
-  { label: "Machines", labelAr: "الماكينات", href: "/machines", exact: true },
-  { label: "Locations", labelAr: "المواقع", href: "/locations" },
-  { label: "Planograms", labelAr: "توزيع المنتجات", href: "/machine-slots" },
-  { label: "Status", labelAr: "الحالة", href: "/machines/status" },
-  { label: "Maintenance", labelAr: "الصيانة", href: "/machines/maintenance" },
+  { label: "Machines", href: "/machines", labelAr: "الماكينات", exact: true },
+  { label: "Locations", href: "/locations", labelAr: "المواقع" },
+  { label: "Planograms", href: "/machine-slots", labelAr: "توزيع المنتجات" },
+  { label: "Status", href: "/machines/status", labelAr: "الحالة" },
+  { label: "Maintenance", href: "/machines/maintenance", labelAr: "الصيانة" },
 ];
 
 const crmTabs: ModuleTab[] = [
-  { label: "Leads & Visits", labelAr: "الجهات والزيارات", href: "/locations-pipeline" },
-  { label: "Customer Issues", labelAr: "مشاكل العملاء", href: "/issues" },
+  { label: "Leads & Visits", href: "/locations-pipeline", labelAr: "الجهات والزيارات" },
+  { label: "Customer Issues", href: "/issues", labelAr: "مشاكل العملاء" },
 ];
 
 const financeTabs: ModuleTab[] = [
-  { label: "Overview", labelAr: "نظرة عامة", href: "/finance", exact: true },
-  { label: "Operations", labelAr: "العمليات", href: "/finance/operations" },
-  { label: "Growth Decisions", labelAr: "قرارات النمو", href: "/finance/growth-decisions" },
-  { label: "Investors", labelAr: "المستثمرون", href: "/finance/investors" },
-  { label: "Payroll", labelAr: "المرتبات", href: "/payroll" },
-  { label: "Transactions", labelAr: "المعاملات", href: "/finance/transactions" },
-  { label: "Import Review", labelAr: "مراجعة الاستيراد", href: "/finance/import/review", match: ["/finance/import"] },
-  { label: "Cleanup", labelAr: "التنظيف", href: "/finance/cleanup" },
-  { label: "Expenses", labelAr: "المصروفات", href: "/finance/expenses" },
-  { label: "Rent", labelAr: "الإيجارات", href: "/finance/rent" },
-  { label: "Machine Investments", labelAr: "استثمارات الماكينات", href: "/finance/machine-investments" },
-  { label: "Reports", labelAr: "التقارير", href: "/finance/reports" },
-  { label: "Health", labelAr: "سلامة النظام", href: "/admin/finance-health" },
+  { label: "Overview", href: "/finance", labelAr: "نظرة عامة", exact: true },
+  { label: "Operations", href: "/finance/operations", labelAr: "العمليات" },
+  { label: "Growth Decisions", href: "/finance/growth-decisions", labelAr: "قرارات النمو" },
+  { label: "Investors", href: "/finance/investors", labelAr: "المستثمرون" },
+  { label: "Payroll", href: "/payroll", labelAr: "المرتبات" },
+  { label: "Transactions", href: "/finance/transactions", labelAr: "المعاملات" },
+  { label: "Import Review", href: "/finance/import/review", labelAr: "مراجعة الاستيراد", match: ["/finance/import"] },
+  { label: "Cleanup", href: "/finance/cleanup", labelAr: "التنظيف" },
+  { label: "Expenses", href: "/finance/expenses", labelAr: "المصروفات" },
+  { label: "Rent", href: "/finance/rent", labelAr: "الإيجارات" },
+  { label: "Machine Investments", href: "/finance/machine-investments", labelAr: "استثمارات الماكينات" },
+  { label: "Reports", href: "/finance/reports", labelAr: "التقارير" },
+  { label: "Health", href: "/admin/finance-health", labelAr: "سلامة النظام" },
 ];
 
 const adminTabs: ModuleTab[] = [
-  { label: "Overview", labelAr: "نظرة عامة", href: "/admin", exact: true },
-  { label: "Stop Override", labelAr: "تجاوز نقطة التوقف", href: "/admin/stop-override" },
-  { label: "Team", labelAr: "الفريق", href: "/team" },
-  { label: "Settings", labelAr: "الإعدادات", href: "/settings" },
-  { label: "Activity Log", labelAr: "سجل النشاط", href: "/activity" },
-  { label: "VMS Import", labelAr: "استيراد VMS", href: "/vms-import" },
-  { label: "Monthly Profit Activation", labelAr: "تفعيل الربح الشهري", href: "/vms-import/monthly-profit-repair" },
-  { label: "VMS Data Sources", labelAr: "مصادر بيانات VMS", href: "/vms-import/sources" },
-  { label: "XY VMS API", labelAr: "واجهة XY VMS", href: "/admin/vms-api" },
-  { label: "Product Mapping", labelAr: "مطابقة المنتجات", href: "/vms-mappings" },
+  { label: "Overview", href: "/admin", labelAr: "نظرة عامة", exact: true },
+  { label: "Stop Override", href: "/admin/stop-override", labelAr: "تجاوز نقطة التوقف" },
+  { label: "Team", href: "/team", labelAr: "الفريق" },
+  { label: "Settings", href: "/settings", labelAr: "الإعدادات" },
+  { label: "Activity Log", href: "/activity", labelAr: "سجل النشاط" },
+  { label: "VMS Import", href: "/vms-import", labelAr: "استيراد VMS" },
+  { label: "Monthly Profit Activation", href: "/vms-import/monthly-profit-repair", labelAr: "تفعيل الربح الشهري" },
+  { label: "VMS Data Sources", href: "/vms-import/sources", labelAr: "مصادر بيانات VMS" },
+  { label: "XY VMS API", href: "/admin/vms-api", labelAr: "واجهة XY VMS" },
+  { label: "Product Mapping", href: "/vms-mappings", labelAr: "مطابقة المنتجات" },
 ];
 
 const reportsTabs: ModuleTab[] = [
