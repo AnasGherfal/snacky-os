@@ -6,6 +6,7 @@ export const roleDescriptions: Record<AppRole, string> = {
   owner: "Full system access, company settings, users, operations, financials, and review.",
   admin: "Manages daily operations, master data, routes, users, inventory, and review screens.",
   supervisor: "Oversees routes, operators, refills, inventory visibility, issues, and cash review.",
+  crm: "Customer support and field business development. Manages location leads, visits, follow-ups, machine lookup, and support issues without finance or inventory access.",
   operator: "Uses the mobile workflow for assigned routes only. No costs, profit, or admin pages.",
   warehouse: "Works with products and storage inventory without access to financial or admin controls.",
   purchasing: "Creates supplier purchases, uploads receipts, reviews purchase history, and matches receipt lines.",

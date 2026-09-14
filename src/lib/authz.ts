@@ -1,4 +1,4 @@
-export const appRoles = ["owner", "admin", "supervisor", "operator", "warehouse", "purchasing", "finance", "investor", "viewer"] as const;
+export const appRoles = ["owner", "admin", "supervisor", "crm", "operator", "warehouse", "purchasing", "finance", "investor", "viewer"] as const;
 
 export type AppRole = (typeof appRoles)[number];
 
@@ -75,7 +75,7 @@ const routePerformerRoles = new Set<AppRole>(["owner", "admin", "supervisor", "o
 
 type RoleInput = AppRole | AppRole[] | AuthUserContext | null | undefined;
 
-const rolePriority: AppRole[] = ["owner", "admin", "supervisor", "finance", "warehouse", "purchasing", "operator", "investor", "viewer"];
+const rolePriority: AppRole[] = ["owner", "admin", "supervisor", "crm", "finance", "warehouse", "purchasing", "operator", "investor", "viewer"];
 
 const rolePermissions = {
   owner: appPermissions,
@@ -115,6 +115,12 @@ const rolePermissions = {
     "vms_import.validate",
     "vms_import.confirm",
     "vms_import.manage_mappings",
+  ],
+  crm: [
+    "locations.pipeline.manage",
+    "issues.view",
+    "issues.create",
+    "machines.view",
   ],
   operator: [
     "assigned_routes.view",
@@ -334,6 +340,7 @@ export function canAccessOperatorRoute(user: AuthUserContext | null | undefined,
 
 export function getDefaultPathForRole(input: RoleInput) {
   if (isOwnerAdminRole(input) || isSupervisorRole(input)) return "/dashboard";
+  if (hasRole(input, "crm")) return "/locations-pipeline";
   if (hasPermission(input, "investor.view")) return "/investor";
   if (hasPermission(input, "finance.view")) return "/finance";
   if (hasPermission(input, "inventory.view") || hasPermission(input, "storage.view")) return "/inventory";
@@ -381,7 +388,8 @@ export function canAccessPath(user: AuthUserContext | null | undefined, pathname
   }
   if (matchesPrefix(pathname, ["/purchases"])) return hasPermission(user, "purchases.view") || hasPermission(user, "purchase_items.view");
 
-  if (pathname === "/suppliers/new" || pathname.startsWith("/suppliers/new/") || /^\/suppliers\/[^/]+(?:\/|$)/.test(pathname)) return hasPermission(user, "suppliers.manage");
+  if (pathname === "/suppliers/new" || pathname.startsWith("/suppliers/new/")) return hasPermission(user, "suppliers.manage");
+  if (/^\/suppliers\/[^/]+(?:\/|$)/.test(pathname)) return hasPermission(user, "suppliers.manage") || hasPermission(user, "suppliers.view");
   if (matchesPrefix(pathname, ["/suppliers"])) return hasPermission(user, "suppliers.view");
 
   if (pathname === "/routes/new" || pathname.startsWith("/routes/new/")) return hasPermission(user, "routes.create");
@@ -390,11 +398,10 @@ export function canAccessPath(user: AuthUserContext | null | undefined, pathname
 
   if (matchesPrefix(pathname, ["/locations-pipeline"])) return canManageLocationPipeline(user);
   if (matchesPrefix(pathname, ["/machines", "/machine-slots", "/locations"])) return hasPermission(user, "machines.view");
-  if (matchesPrefix(pathname, ["/issues"])) return hasPermission(user, "issues.view");
+  if (matchesPrefix(pathname, ["/issues"])) return hasPermission(user, "issues.view") || hasPermission(user, "issues.create");
 
-  if (pathname === "/finance/transactions/new" || pathname.startsWith("/finance/transactions/new/") || /^\/finance\/transactions\/[^/]+\/edit(?:\/|$)/.test(pathname)) {
-    return hasPermission(user, "finance.edit");
-  }
+  if (pathname === "/finance/transactions/new" || pathname.startsWith("/finance/transactions/new/")) return hasPermission(user, "finance.edit");
+  if (/^\/finance\/transactions\/[^/]+\/edit(?:\/|$)/.test(pathname)) return hasPermission(user, "finance.edit");
   if (pathname === "/cash-collections/new" || pathname.startsWith("/cash-collections/new/")) {
     return canRecordCashRemoval(user);
   }
