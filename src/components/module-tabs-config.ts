@@ -29,129 +29,127 @@ export type NavigationModule = {
 export type NavigationLocation = { module: NavigationModule; section: NavigationSection; tab: ModuleTab };
 export type ModuleTabGroup = { name: string; nameAr: string; tabs: ModuleTab[] };
 
-const tab = (label: string, labelAr: string, href: string, options: Partial<ModuleTab> = {}): ModuleTab => ({ label, labelAr, href, ...options });
 const section = (id: string, label: string, labelAr: string, tabs: ModuleTab[], options: Partial<NavigationSection> = {}): NavigationSection => ({ id, label, labelAr, tabs, ...options });
 
-/** Each destination has ONE home, regardless of its incoming link, role, or query string.
- * Keep this registry free of React/browser dependencies: the sidebar, header, desktop
- * tabs, mobile selector, and regression tests all consume these same definitions. */
+/** One home per destination. All shell surfaces consume this same pure registry.
+ * A query filter or the incoming page never changes the destination's workspace. */
 export const navigationModules: NavigationModule[] = [
   { id: "dashboard", name: "Dashboard", nameAr: "الرئيسية", sections: [
-    section("overview", "Overview", "نظرة عامة", [tab("Dashboard", "الرئيسية", "/dashboard")]),
+    section("overview", "Overview", "نظرة عامة", [{ label: "Dashboard", href: "/dashboard", labelAr: "الرئيسية" }]),
   ] },
   { id: "operations", name: "Operations", nameAr: "التشغيل", sections: [
     section("routes", "Routes & Refills", "الجولات والتعبئة", [
-      tab("Routes", "الجولات", "/routes"),
-      tab("Refill Recommendations", "توصيات التعبئة", "/refills"),
+      { label: "Routes", href: "/routes", labelAr: "الجولات" },
+      { label: "Refill Recommendations", href: "/refills", labelAr: "توصيات التعبئة" },
     ], { permission: "operations.manage" }),
     section("field", "Field Work", "العمل الميداني", [
-      tab("My Routes", "جولاتي", "/operator/routes", { match: ["/operator"] }),
-      tab("Available Routes", "الجولات المتاحة", "/operator/routes?view=available", { exact: true, query: { view: "available" } }),
-      tab("My Issues", "بلاغاتي", "/operator/issues"),
+      { label: "My Routes", href: "/operator/routes", labelAr: "جولاتي", match: ["/operator"] },
+      { label: "Available Routes", href: "/operator/routes?view=available", labelAr: "الجولات المتاحة", exact: true, query: { view: "available" } },
+      { label: "My Issues", href: "/operator/issues", labelAr: "بلاغاتي" },
     ], { routePerformerOnly: true }),
     section("recovery", "Recovery Tools", "معالجة التعثرات", [
-      tab("Stop Override", "إنهاء محطة إدارياً", "/admin/stop-override"),
-      tab("Historical Route Deduction", "تسجيل تعبئة سابقة", "/admin/historical-route-deduction"),
+      { label: "Stop Override", href: "/admin/stop-override", labelAr: "إنهاء محطة إدارياً" },
+      { label: "Historical Route Deduction", href: "/admin/historical-route-deduction", labelAr: "تسجيل تعبئة سابقة" },
     ]),
   ] },
   { id: "crm", name: "CRM & Support", nameAr: "العلاقات وخدمة العملاء", sections: [
-    section("leads", "Leads & Visits", "الجهات والزيارات", [tab("Leads & Visits", "الجهات والزيارات", "/locations-pipeline")]),
-    section("support", "Customer Issues", "بلاغات العملاء", [tab("Customer Issues", "بلاغات العملاء", "/issues", { permission: "issues.view" })]),
+    section("leads", "Leads & Visits", "الجهات والزيارات", [{ label: "Leads & Visits", href: "/locations-pipeline", labelAr: "الجهات والزيارات" }]),
+    section("support", "Customer Issues", "بلاغات العملاء", [{ label: "Customer Issues", href: "/issues", labelAr: "بلاغات العملاء", permission: "issues.view" }]),
   ] },
   { id: "machines", name: "Machines & Locations", nameAr: "الأجهزة والمواقع", sections: [
-    section("machines", "Machines", "الأجهزة", [tab("Machines", "الأجهزة", "/machines")]),
-    section("locations", "Locations", "المواقع", [tab("Locations", "المواقع", "/locations")]),
+    section("machines", "Machines", "الأجهزة", [{ label: "Machines", href: "/machines", labelAr: "الأجهزة" }]),
+    section("locations", "Locations", "المواقع", [{ label: "Locations", href: "/locations", labelAr: "المواقع" }]),
     section("health", "Setup & Maintenance", "الإعداد والصيانة", [
-      tab("Planograms", "توزيع المنتجات", "/machine-slots"),
-      tab("Status", "حالة الأجهزة", "/machines/status"),
-      tab("Maintenance", "الصيانة", "/machines/maintenance"),
+      { label: "Planograms", href: "/machine-slots", labelAr: "توزيع المنتجات" },
+      { label: "Status", href: "/machines/status", labelAr: "حالة الأجهزة" },
+      { label: "Maintenance", href: "/machines/maintenance", labelAr: "الصيانة" },
     ]),
   ] },
   { id: "inventory", name: "Inventory & Purchasing", nameAr: "المخزون والمشتريات", sections: [
     section("stock", "Stock", "المخزون", [
-      tab("Storage", "مخزون المستودع", "/inventory"),
-      tab("Stock Check", "الجرد", "/inventory/stock-check"),
-      tab("Movements", "حركات المخزون", "/inventory/movements"),
-      tab("Storage Locations", "أماكن التخزين", "/storage-locations"),
-      tab("Pick Lists", "قوائم الاستلام", "/warehouse/pick-lists", { match: ["/warehouse"] }),
+      { label: "Storage", href: "/inventory", labelAr: "مخزون المستودع" },
+      { label: "Stock Check", href: "/inventory/stock-check", labelAr: "الجرد" },
+      { label: "Movements", href: "/inventory/movements", labelAr: "حركات المخزون" },
+      { label: "Storage Locations", href: "/storage-locations", labelAr: "أماكن التخزين" },
+      { label: "Pick Lists", href: "/warehouse/pick-lists", labelAr: "قوائم الاستلام", match: ["/warehouse"] },
     ]),
-    section("products", "Products", "المنتجات", [tab("Products", "المنتجات", "/products")]),
+    section("products", "Products", "المنتجات", [{ label: "Products", href: "/products", labelAr: "المنتجات" }]),
     section("purchasing", "Purchasing", "المشتريات", [
-      tab("Purchases", "المشتريات", "/purchases"),
-      tab("Suppliers", "الموردون", "/suppliers"),
+      { label: "Purchases", href: "/purchases", labelAr: "المشتريات" },
+      { label: "Suppliers", href: "/suppliers", labelAr: "الموردون" },
     ]),
     section("planning", "Planning", "التخطيط", [
-      tab("Product Planning", "تخطيط المنتجات", "/product-planning"),
-      tab("Restock Priority", "أولوية إعادة التخزين", "/restock-priority"),
+      { label: "Product Planning", href: "/product-planning", labelAr: "تخطيط المنتجات" },
+      { label: "Restock Priority", href: "/restock-priority", labelAr: "أولوية إعادة التخزين" },
     ]),
   ] },
   { id: "cash", name: "Cash Custody", nameAr: "عهدة النقد", sections: [
-    section("collections", "Collections", "التحصيل والعهدة", [tab("Cash Collections", "التحصيل والعهدة", "/cash-collections")]),
-    section("removal", "Record Removal", "تسجيل سحب نقدية", [tab("Remove Cash", "تسجيل سحب نقدية", "/cash-collections/new")]),
+    section("collections", "Collections", "التحصيل والعهدة", [{ label: "Cash Collections", href: "/cash-collections", labelAr: "التحصيل والعهدة" }]),
+    section("removal", "Record Removal", "تسجيل سحب نقدية", [{ label: "Remove Cash", href: "/cash-collections/new", labelAr: "تسجيل سحب نقدية" }]),
   ] },
   { id: "finance", name: "Finance", nameAr: "المالية", sections: [
-    section("overview", "Overview", "نظرة عامة", [tab("Overview", "نظرة عامة", "/finance")]),
+    section("overview", "Overview", "نظرة عامة", [{ label: "Overview", href: "/finance", labelAr: "نظرة عامة" }]),
     section("ledger", "Transactions", "المعاملات", [
-      tab("Transactions", "المعاملات", "/finance/transactions"),
-      tab("Expenses", "المصروفات", "/finance/expenses"),
+      { label: "Transactions", href: "/finance/transactions", labelAr: "المعاملات" },
+      { label: "Expenses", href: "/finance/expenses", labelAr: "المصروفات" },
     ]),
     section("planning", "Planning", "التخطيط المالي", [
-      tab("Operations", "الأداء المالي", "/finance/operations"),
-      tab("Growth Decisions", "قرارات النمو", "/finance/growth-decisions"),
-      tab("Rent", "الإيجارات", "/finance/rent"),
-      tab("Machine Investments", "استثمارات الأجهزة", "/finance/machine-investments"),
+      { label: "Operations", href: "/finance/operations", labelAr: "الأداء المالي" },
+      { label: "Growth Decisions", href: "/finance/growth-decisions", labelAr: "قرارات النمو" },
+      { label: "Rent", href: "/finance/rent", labelAr: "الإيجارات" },
+      { label: "Machine Investments", href: "/finance/machine-investments", labelAr: "استثمارات الأجهزة" },
     ]),
     section("people", "People", "المستثمرون والرواتب", [
-      tab("Investors", "المستثمرون", "/finance/investors"),
-      tab("Payroll", "الرواتب", "/payroll"),
+      { label: "Investors", href: "/finance/investors", labelAr: "المستثمرون" },
+      { label: "Payroll", href: "/payroll", labelAr: "الرواتب" },
     ]),
     section("review", "Review & Import", "المراجعة والاستيراد", [
-      tab("Import Review", "مراجعة الاستيراد", "/finance/import/review", { match: ["/finance/import"] }),
-      tab("Cleanup", "تنظيم السجلات", "/finance/cleanup"),
-      tab("Health", "سلامة السجلات المالية", "/admin/finance-health"),
+      { label: "Import Review", href: "/finance/import/review", labelAr: "مراجعة الاستيراد", match: ["/finance/import"] },
+      { label: "Cleanup", href: "/finance/cleanup", labelAr: "تنظيم السجلات" },
+      { label: "Health", href: "/admin/finance-health", labelAr: "سلامة السجلات المالية" },
     ]),
-    section("reports", "Reports", "التقارير المالية", [tab("Reports", "التقارير المالية", "/finance/reports")]),
+    section("reports", "Reports", "التقارير المالية", [{ label: "Reports", href: "/finance/reports", labelAr: "التقارير المالية" }]),
   ] },
   { id: "reports", name: "Reports", nameAr: "التقارير", sections: [
-    section("overview", "Overview", "نظرة عامة", [tab("Overview", "نظرة عامة", "/reports")]),
-    section("sales", "Sales", "المبيعات", [tab("Sales", "المبيعات", "/sales")]),
+    section("overview", "Overview", "نظرة عامة", [{ label: "Overview", href: "/reports", labelAr: "نظرة عامة" }]),
+    section("sales", "Sales", "المبيعات", [{ label: "Sales", href: "/sales", labelAr: "المبيعات" }]),
     section("operations", "Operations", "التشغيل", [
-      tab("Monthly Operations", "التقرير التشغيلي الشهري", "/reports/route-performance"),
-      tab("Product Activity", "نشاط المنتجات", "/reports/route-product-activity"),
+      { label: "Monthly Operations", href: "/reports/route-performance", labelAr: "التقرير التشغيلي الشهري" },
+      { label: "Product Activity", href: "/reports/route-product-activity", labelAr: "نشاط المنتجات" },
     ]),
     section("analytics", "Products & Machines", "المنتجات والأجهزة", [
-      tab("Products", "المنتجات", "/products-dashboard"),
-      tab("Machines", "الأجهزة", "/machines-dashboard"),
-      tab("Inventory", "المخزون", "/inventory-dashboard"),
+      { label: "Products", href: "/products-dashboard", labelAr: "المنتجات" },
+      { label: "Machines", href: "/machines-dashboard", labelAr: "الأجهزة" },
+      { label: "Inventory", href: "/inventory-dashboard", labelAr: "المخزون" },
     ]),
-    section("cash", "Cash Reconciliation", "مطابقة النقدية", [tab("Cash Reconciliation", "مطابقة النقدية", "/reports/cash-reconciliation")]),
+    section("cash", "Cash Reconciliation", "مطابقة النقدية", [{ label: "Cash Reconciliation", href: "/reports/cash-reconciliation", labelAr: "مطابقة النقدية" }]),
   ] },
   { id: "admin", name: "Administration", nameAr: "الإدارة", sections: [
-    section("overview", "Overview", "نظرة عامة", [tab("Overview", "نظرة عامة", "/admin")]),
-    section("team", "Team", "الفريق", [tab("Team", "الفريق", "/team")]),
-    section("settings", "Settings", "الإعدادات", [tab("Settings", "الإعدادات", "/settings")]),
-    section("activity", "Activity Log", "سجل النشاط", [tab("Activity Log", "سجل النشاط", "/activity")]),
+    section("overview", "Overview", "نظرة عامة", [{ label: "Overview", href: "/admin", labelAr: "نظرة عامة" }]),
+    section("team", "Team", "الفريق", [{ label: "Team", href: "/team", labelAr: "الفريق" }]),
+    section("settings", "Settings", "الإعدادات", [{ label: "Settings", href: "/settings", labelAr: "الإعدادات" }]),
+    section("activity", "Activity Log", "سجل النشاط", [{ label: "Activity Log", href: "/activity", labelAr: "سجل النشاط" }]),
     section("integrations", "Data & Integrations", "البيانات والربط", [
-      tab("VMS Import", "استيراد بيانات الأجهزة", "/vms-import"),
-      tab("VMS Data Sources", "مصادر بيانات الأجهزة", "/vms-import/sources"),
-      tab("Monthly Profit Activation", "تفعيل الربح الشهري", "/vms-import/monthly-profit-repair"),
-      tab("XY VMS API", "ربط نظام XY", "/admin/vms-api"),
-      tab("Product Mapping", "مطابقة المنتجات", "/vms-mappings"),
+      { label: "VMS Import", href: "/vms-import", labelAr: "استيراد بيانات الأجهزة" },
+      { label: "VMS Data Sources", href: "/vms-import/sources", labelAr: "مصادر بيانات الأجهزة" },
+      { label: "Monthly Profit Activation", href: "/vms-import/monthly-profit-repair", labelAr: "تفعيل الربح الشهري" },
+      { label: "XY VMS API", href: "/admin/vms-api", labelAr: "ربط نظام XY" },
+      { label: "Product Mapping", href: "/vms-mappings", labelAr: "مطابقة المنتجات" },
     ]),
     section("tools", "System Tools", "أدوات النظام", [
-      tab("System Health", "سلامة النظام", "/admin/system-health"),
-      tab("Diagnostics", "التشخيص", "/admin/diagnostics"),
-      tab("Tools", "أدوات الصيانة", "/admin/tools"),
-      tab("KPI Definitions", "تعريف المؤشرات", "/admin/kpi-definitions"),
-      tab("Refill Diagnostics", "تشخيص توصيات التعبئة", "/admin/route-recommendation-debug"),
+      { label: "System Health", href: "/admin/system-health", labelAr: "سلامة النظام" },
+      { label: "Diagnostics", href: "/admin/diagnostics", labelAr: "التشخيص" },
+      { label: "Tools", href: "/admin/tools", labelAr: "أدوات الصيانة" },
+      { label: "KPI Definitions", href: "/admin/kpi-definitions", labelAr: "تعريف المؤشرات" },
+      { label: "Refill Diagnostics", href: "/admin/route-recommendation-debug", labelAr: "تشخيص توصيات التعبئة" },
     ]),
   ] },
   { id: "investor", name: "Investor Portal", nameAr: "بوابة المستثمر", sections: [
-    section("overview", "Overview", "نظرة عامة", [tab("Investor Portal", "بوابة المستثمر", "/investor")]),
+    section("overview", "Overview", "نظرة عامة", [{ label: "Investor Portal", href: "/investor", labelAr: "بوابة المستثمر" }]),
   ] },
   { id: "account", name: "My Account", nameAr: "حسابي", utility: true, sections: [
-    section("account", "Account", "الحساب", [tab("Account", "الحساب", "/account")]),
-    section("install", "Install App", "تثبيت التطبيق", [tab("Install App", "تثبيت التطبيق", "/install")]),
+    section("account", "Account", "الحساب", [{ label: "Account", href: "/account", labelAr: "الحساب" }]),
+    section("install", "Install App", "تثبيت التطبيق", [{ label: "Install App", href: "/install", labelAr: "تثبيت التطبيق" }]),
   ] },
 ];
 
@@ -160,8 +158,7 @@ export function pathnameFromHref(href: string) {
   return path.length > 1 ? path.replace(/\/+$/, "") : path;
 }
 
-/** More-specific paths beat generic parents; query tabs beat the same path only.
- * A filter, pagination parameter, or legacy ?module=finance never changes ownership. */
+/** Most-specific path wins; only a matching query can activate a query-specific tab. */
 export function tabMatchScore(pathname: string, item: ModuleTab, currentSearch = "") {
   const path = pathnameFromHref(pathname);
   const search = new URLSearchParams(currentSearch || pathname.split("?")[1]?.split("#")[0] || "");
@@ -190,9 +187,12 @@ export function navigationForUser(user: AuthUserContext | null | undefined): Nav
     let sections = module.sections;
     if (module.id === "account" && user.teamMemberId && !hasPermission(user, "team.manage")) {
       sections = [sections[0], section("profile", "My Profile", "ملفي", [
-        tab("My Profile", "ملفي", `/team/${encodeURIComponent(user.teamMemberId)}`, { exact: true }),
-        tab("My Money", "حسابي المالي", `/team/${encodeURIComponent(user.teamMemberId)}/money`),
+        { label: "My Profile", href: `/team/${encodeURIComponent(user.teamMemberId)}`, labelAr: "ملفي", exact: true },
+        { label: "My Money", href: `/team/${encodeURIComponent(user.teamMemberId)}/money`, labelAr: "حسابي المالي" },
       ]), ...sections.slice(1)];
+    }
+    if (module.id === "inventory" && !canAccessPath(user, "/products") && canAccessPath(user, "/products/new")) {
+      sections = sections.map((group) => group.id === "products" ? { ...group, tabs: [{ label: "Add Product", href: "/products/new", labelAr: "إضافة منتج" }] } : group);
     }
     return {
       ...module,
@@ -204,7 +204,6 @@ export function navigationForUser(user: AuthUserContext | null | undefined): Nav
 
   return modules.map((module) => {
     const tabs = module.sections.flatMap((group) => group.tabs);
-    // Finance/purchasing users must not land on a forbidden stock screen.
     const purchasingLanding = module.id === "inventory" && !hasPermission(user, "storage.view") && tabs.find((item) => item.href === "/purchases");
     return { ...module, href: purchasingLanding ? purchasingLanding.href : tabs[0].href };
   });
@@ -220,9 +219,33 @@ export function resolveNavigation(pathname: string, currentSearch = "", modules:
   return best;
 }
 
-/** Compatibility export for callers that need a flat list, not a second registry. */
+/** A user may open an individual receipt without permission to list all receipts.
+ * Preserve that record's workspace, but never expose its forbidden parent index. */
+export function navigationContextForUser(user: AuthUserContext, pathname: string, currentSearch = "") {
+  const modules = navigationForUser(user);
+  const path = pathnameFromHref(pathname);
+  if (!canAccessPath(user, path)) return { modules, location: null };
+  const visible = resolveNavigation(pathname, currentSearch, modules);
+  const canonical = resolveNavigation(pathname, currentSearch);
+  if (visible && (!canonical || visible.module.id === "account" || visible.tab.href === canonical.tab.href || tabMatchScore(pathname, visible.tab, currentSearch) >= tabMatchScore(pathname, canonical.tab, currentSearch))) {
+    return { modules, location: visible };
+  }
+  if (!canonical) return { modules, location: visible };
+  const existingModule = modules.find((module) => module.id === canonical.module.id);
+  const recordTab: ModuleTab = { label: "Current record", href: path, labelAr: "السجل الحالي", exact: true };
+  const existingSection = existingModule?.sections.find((group) => group.id === canonical.section.id);
+  const recordSection: NavigationSection = { ...canonical.section, tabs: [...(existingSection?.tabs ?? []), recordTab] };
+  const recordModule: NavigationModule = existingModule
+    ? { ...existingModule, sections: existingSection ? existingModule.sections.map((group) => group.id === recordSection.id ? recordSection : group) : [...existingModule.sections, recordSection] }
+    : { ...canonical.module, href: path, sections: [recordSection] };
+  return {
+    modules: existingModule ? modules.map((module) => module.id === recordModule.id ? recordModule : module) : [...modules, recordModule],
+    location: { module: recordModule, section: recordSection, tab: recordTab },
+  };
+}
+
+/** Legacy callers receive the same registry, not a competing navigation system. */
 export function getModuleTabGroupForPath(pathname: string, _legacyModuleParam?: string | null): ModuleTabGroup | null {
   const location = resolveNavigation(pathname);
-  if (!location) return null;
-  return { name: location.module.name, nameAr: location.module.nameAr, tabs: location.module.sections.flatMap((group) => group.tabs) };
+  return location ? { name: location.module.name, nameAr: location.module.nameAr, tabs: location.module.sections.flatMap((group) => group.tabs) } : null;
 }
