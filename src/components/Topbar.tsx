@@ -7,6 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { useLanguage } from "@/components/I18nProvider";
 import { NotificationCenter } from "@/components/NotificationCenter";
+import { appModuleLabels, getAppModuleKey } from "@/components/app-navigation";
 import type { Dictionary, SupportedLocale } from "@/lib/i18n";
 import { AppRole, canExecuteRoutes } from "@/lib/authz";
 
@@ -62,13 +63,18 @@ export function Topbar({ profile, onMenuClick }: { profile: TopbarProfile; onMen
   const [loggingOut, setLoggingOut] = useState(false);
   const { locale, dictionary, setLocale } = useLanguage();
   const titleKey = titleKeys[pathname];
+  const moduleKey = getAppModuleKey(pathname);
+  const moduleTitle = moduleKey ? appModuleLabels[moduleKey][locale] : null;
   const directTitle = pathname === "/investor" || pathname.startsWith("/investor/")
     ? locale === "ar" ? "بوابة المستثمر" : "Investor Portal"
     : pathname === "/finance/growth-decisions"
       ? locale === "ar" ? "قرارات النمو" : "Growth Decisions"
       : pathname === "/finance/investors"
         ? locale === "ar" ? "المستثمرون" : "Investors"
-        : null;
+        : pathname === "/issues"
+          ? locale === "ar" ? "مشاكل العملاء" : "Customer Issues"
+          : null;
+  const topbarTitle = directTitle ?? (titleKey ? dictionary.nav[titleKey] : moduleTitle ?? dictionary.app.name);
   const nextLocale: SupportedLocale = locale === "ar" ? "en" : "ar";
   const nextLocaleLabel = nextLocale === "ar" ? dictionary.language.arabic : dictionary.language.english;
   const canSeeNotifications = canExecuteRoutes(profile);
@@ -99,7 +105,7 @@ export function Topbar({ profile, onMenuClick }: { profile: TopbarProfile; onMen
             <Image src="/brand/snacky-logo.png" alt="" fill sizes="36px" className="object-contain" />
           </div>
           <div className="min-w-0">
-            <div className="truncate text-sm font-medium text-slate-900">{directTitle ?? (titleKey ? dictionary.nav[titleKey] : dictionary.app.name)}</div>
+            <div className="truncate text-sm font-medium text-slate-900">{topbarTitle}</div>
             <div className="truncate text-xs text-slate-500">{dictionary.app.subtitle}</div>
           </div>
         </div>
