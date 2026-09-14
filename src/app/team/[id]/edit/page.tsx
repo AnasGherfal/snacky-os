@@ -18,7 +18,7 @@ export default async function EditTeamMemberPage({
   const { id } = await params;
   const { error } = await searchParams;
   const profile = await getCurrentProfile();
-  if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
+  if (!profile || !isOwnerAdminRole(profile)) redirect("/unauthorized");
 
   const supabase = getSupabaseAdminClient();
 
