@@ -5,6 +5,7 @@ on:
     paths:
       - 'src/components/**'
       - 'src/lib/authz.ts'
+      - 'src/lib/navigation-breadcrumbs.ts'
       - 'src/app/**'
       - 'scripts/test-app-navigation*'
       - '.github/workflows/app-navigation-check.yml'
@@ -29,9 +30,25 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Test navigation ownership, roles and route coverage
-        run: node --experimental-strip-types --test scripts/test-app-navigation.mjs
+      - name: Test navigation ownership, roles, route coverage and breadcrumbs
+        run: node --experimental-strip-types --test scripts/test-app-navigation.mjs scripts/test-app-navigation-context.mjs scripts/test-app-navigation-breadcrumbs.mjs
       - name: Typecheck Snacky OS
         run: npm run typecheck
       - name: Build Snacky OS
         run: npm run build
+      - name: Install isolated browser test tools
+        run: |
+          npm install --prefix "$RUNNER_TEMP/navigation-tools" --no-save --package-lock=false @playwright/test@1.55.0 esbuild@0.25.9
+          "$RUNNER_TEMP/navigation-tools/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Browser-check the actual navigation components
+        env:
+          NAVIGATION_TEST_TOOLS: ${{ runner.temp }}/navigation-tools
+        run: node --experimental-strip-types scripts/test-app-navigation-browser.mjs
+      - name: Upload navigation screenshots and results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: navigation-review
+          path: artifacts/navigation/
+          if-no-files-found: ignore
+          retention-days: 14

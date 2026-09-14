@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ReactNode } from "react";
 import { SortableDataTable } from "@/components/SortableDataTable";
+import { NavigationBreadcrumbs } from "@/components/NavigationBreadcrumbs";
 
 export type BreadcrumbItem = {
   label: string;
@@ -43,28 +44,7 @@ function statusTone(status: string | null | undefined) {
 }
 
 export function Breadcrumbs({ items }: { items: BreadcrumbItem[] }) {
-  if (!items.length) return null;
-  return (
-    <nav aria-label="Breadcrumb" className="mb-3 flex flex-wrap items-center gap-1 text-sm text-slate-500">
-      {items.map((item, index) => {
-        const isLast = index === items.length - 1;
-        return (
-          <span key={`${item.label}-${index}`} className="inline-flex items-center gap-1">
-            {index > 0 ? <span className="text-slate-300">/</span> : null}
-            {item.href && !isLast ? (
-              <Link href={item.href} className="font-medium text-slate-600 hover:text-slate-900">
-                {item.label}
-              </Link>
-            ) : (
-              <span aria-current={isLast ? "page" : undefined} className={isLast ? "font-medium text-slate-900" : undefined}>
-                {item.label}
-              </span>
-            )}
-          </span>
-        );
-      })}
-    </nav>
-  );
+  return <NavigationBreadcrumbs items={items} />;
 }
 
 export function PageHeader({ title, subtitle, action, breadcrumbs }: { title: string; subtitle?: ReactNode; action?: ReactNode; breadcrumbs?: BreadcrumbItem[] }) {
