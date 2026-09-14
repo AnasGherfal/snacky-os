@@ -42,6 +42,11 @@ const machinesTabs: ModuleTab[] = [
   { label: "Maintenance", href: "/machines/maintenance" },
 ];
 
+const crmTabs: ModuleTab[] = [
+  { label: "Leads & Visits", href: "/locations-pipeline", match: ["/locations-pipeline"] },
+  { label: "Customer Issues", href: "/issues" },
+];
+
 const adminTabs: ModuleTab[] = [
   { label: "Overview", href: "/admin", exact: true },
   { label: "Stop Override", href: "/admin/stop-override" },
@@ -70,6 +75,7 @@ const groups = {
   finance: { name: "Finance", tabs: financeTabs },
   inventory: { name: "Inventory", tabs: inventoryTabs },
   machines: { name: "Machines", tabs: machinesTabs },
+  crm: { name: "CRM", tabs: crmTabs },
   admin: { name: "Admin", tabs: adminTabs },
   reports: { name: "Reports", tabs: reportsTabs },
 } satisfies Record<string, ModuleTabGroup>;
@@ -80,9 +86,10 @@ export function pathnameFromHref(href: string) { return href.split("?")[0]?.spli
 
 export function getModuleTabGroupForPath(pathname: string, moduleParam?: string | null): ModuleTabGroup | null {
   if (isPurchasesPath(pathname)) return moduleParam === "finance" ? groups.finance : groups.inventory;
+  if (matchesPrefix(pathname, "/locations-pipeline")) return groups.crm;
   if (matchesPrefix(pathname, "/finance") || matchesPrefix(pathname, "/cash-collections") || matchesPrefix(pathname, "/payroll")) return groups.finance;
   if (matchesPrefix(pathname, "/inventory") || matchesPrefix(pathname, "/product-planning") || matchesPrefix(pathname, "/restock-priority") || matchesPrefix(pathname, "/storage-locations") || matchesPrefix(pathname, "/suppliers") || matchesPrefix(pathname, "/products")) return groups.inventory;
-  if (matchesPrefix(pathname, "/machines") || matchesPrefix(pathname, "/locations") || matchesPrefix(pathname, "/locations-pipeline") || matchesPrefix(pathname, "/machine-slots") || matchesPrefix(pathname, "/issues")) return groups.machines;
+  if (matchesPrefix(pathname, "/machines") || matchesPrefix(pathname, "/locations") || matchesPrefix(pathname, "/machine-slots") || matchesPrefix(pathname, "/issues")) return groups.machines;
   if (matchesPrefix(pathname, "/admin") || matchesPrefix(pathname, "/team") || matchesPrefix(pathname, "/settings") || matchesPrefix(pathname, "/activity") || matchesPrefix(pathname, "/vms-import") || matchesPrefix(pathname, "/vms-mappings")) return groups.admin;
   if (matchesPrefix(pathname, "/reports") || matchesPrefix(pathname, "/sales") || matchesPrefix(pathname, "/products-dashboard") || matchesPrefix(pathname, "/machines-dashboard") || matchesPrefix(pathname, "/inventory-dashboard")) return groups.reports;
   return null;
