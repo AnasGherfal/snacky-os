@@ -1,4 +1,5 @@
 "use client";
+
 import Image from "next/image";
 import Link, { useLinkStatus } from "next/link";
 import type { ComponentType } from "react";
@@ -11,8 +12,6 @@ import {
   ClipboardList,
   HandCoins,
   LayoutDashboard,
-  Package,
-  PackagePlus,
   ShieldCheck,
   UserCircle,
   Warehouse,
@@ -20,30 +19,54 @@ import {
 } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useLanguage } from "@/components/I18nProvider";
-import { AppRole, hasAnyRole, hasPermission, hasRole, isOperatorRole, isOwnerAdminRole, isSupervisorRole } from "@/lib/authz";
+import { getAppModuleKey, type AppModuleKey } from "@/components/app-navigation";
+import {
+  AppRole,
+  hasAnyRole,
+  hasPermission,
+  hasRole,
+  isOperatorRole,
+  isOwnerAdminRole,
+  isSupervisorRole,
+} from "@/lib/authz";
 import type { Dictionary } from "@/lib/i18n";
 
 type NavLabelKey = keyof Dictionary["nav"];
+type LocalizedText = { en: string; ar: string };
 type NavItem = {
   labelKey?: NavLabelKey;
-  label?: { en: string; ar: string };
+  label?: LocalizedText;
   href: string;
   icon: ComponentType<{ className?: string }>;
+  moduleKey?: AppModuleKey;
   exact?: boolean;
   activePrefixes?: string[];
   activeSearch?: { key: string; value: string | null };
 };
 type NavSection = {
   titleKey?: NavLabelKey;
+  title?: LocalizedText;
   items: NavItem[];
 };
 
-const dashboardItem: NavItem = { labelKey: "dashboard", href: "/dashboard", icon: LayoutDashboard, exact: true };
+const sectionTitles = {
+  work: { en: "Work", ar: "العمل" },
+  business: { en: "Business", ar: "الأعمال" },
+  system: { en: "System", ar: "النظام" },
+  account: { en: "Account", ar: "الحساب" },
+} satisfies Record<string, LocalizedText>;
+
+const dashboardItem: NavItem = {
+  labelKey: "dashboard",
+  href: "/dashboard",
+  icon: LayoutDashboard,
+  exact: true,
+};
 const operationsItem: NavItem = {
   labelKey: "operations",
   href: "/routes",
   icon: ClipboardList,
-  activePrefixes: ["/routes", "/refills"],
+  moduleKey: "operations",
 };
 const operatorOperationsItem: NavItem = {
   labelKey: "myRoutes",
@@ -63,6 +86,7 @@ const operatorIssuesItem: NavItem = {
   labelKey: "issues",
   href: "/operator/issues",
   icon: AlertCircle,
+  activePrefixes: ["/operator/issues"],
 };
 const accountItem: NavItem = {
   labelKey: "account",
@@ -76,121 +100,152 @@ const investorPortalItem: NavItem = {
   activePrefixes: ["/investor"],
 };
 const warehouseOperationsItem: NavItem = {
-  labelKey: "operations",
+  label: { en: "Warehouse Pick Lists", ar: "قوائم تجهيز المخزن" },
   href: "/warehouse/pick-lists",
   icon: ClipboardList,
   activePrefixes: ["/warehouse"],
 };
-const inventoryItem: NavItem = {
-  labelKey: "inventory",
+const stockItem: NavItem = {
+  label: { en: "Stock & Purchasing", ar: "المخزون والمشتريات" },
   href: "/inventory",
   icon: Warehouse,
-  activePrefixes: ["/inventory", "/purchases", "/storage-locations", "/suppliers"],
+  moduleKey: "stock",
 };
-const restockPriorityItem: NavItem = {
-  labelKey: "restockPriority",
-  href: "/restock-priority",
-  icon: PackagePlus,
-  activePrefixes: ["/restock-priority"],
-};
-const productsItem: NavItem = {
-  labelKey: "products",
-  href: "/products",
-  icon: Package,
-  activePrefixes: ["/products"],
+const purchasingStockItem: NavItem = {
+  label: { en: "Stock & Purchasing", ar: "المخزون والمشتريات" },
+  href: "/purchases",
+  icon: Warehouse,
+  moduleKey: "stock",
 };
 const machinesItem: NavItem = {
   labelKey: "machinesGroup",
   href: "/machines",
   icon: Boxes,
-  activePrefixes: ["/machines", "/locations", "/locations-pipeline", "/machine-slots", "/issues"],
+  moduleKey: "machines",
+};
+const crmItem: NavItem = {
+  label: { en: "CRM", ar: "العملاء والجهات" },
+  href: "/locations-pipeline",
+  icon: UserCircle,
+  moduleKey: "crm",
 };
 const financeItem: NavItem = {
   labelKey: "finance",
   href: "/finance",
   icon: Banknote,
-  activePrefixes: ["/finance", "/payroll"],
+  moduleKey: "finance",
 };
 const cashRemovalItem: NavItem = {
   label: { en: "Remove Cash", ar: "سحب النقد" },
   href: "/cash-collections/new",
   icon: HandCoins,
-  activePrefixes: ["/cash-collections"],
+  moduleKey: "cash",
 };
 const cashCustodyItem: NavItem = {
-  label: { en: "Cash Custody", ar: "عهدة النقد" },
+  label: { en: "Cash", ar: "النقدية" },
   href: "/cash-collections",
   icon: HandCoins,
-  activePrefixes: ["/cash-collections"],
+  moduleKey: "cash",
 };
 const reportsItem: NavItem = {
   labelKey: "reports",
   href: "/reports",
   icon: BarChart3,
-  activePrefixes: ["/reports", "/sales", "/products-dashboard", "/machines-dashboard", "/inventory-dashboard"],
+  moduleKey: "reports",
 };
 const adminItem: NavItem = {
   labelKey: "admin",
   href: "/admin",
   icon: ShieldCheck,
-  activePrefixes: ["/admin", "/team", "/settings", "/vms-import", "/vms-mappings", "/activity"],
+  moduleKey: "admin",
 };
 
 const ownerAdminNav: NavSection[] = [
-  { items: [dashboardItem, operationsItem, cashCustodyItem, inventoryItem, restockPriorityItem, productsItem, machinesItem, financeItem, reportsItem, adminItem] },
+  { items: [dashboardItem] },
+  { title: sectionTitles.work, items: [operationsItem, cashCustodyItem, stockItem, machinesItem, crmItem] },
+  { title: sectionTitles.business, items: [financeItem, reportsItem] },
+  { title: sectionTitles.system, items: [adminItem] },
 ];
 
 const supervisorNav: NavSection[] = [
-  { items: [dashboardItem, operationsItem, cashCustodyItem, inventoryItem, restockPriorityItem, productsItem, machinesItem] },
+  { items: [dashboardItem] },
+  { title: sectionTitles.work, items: [operationsItem, cashCustodyItem, stockItem, machinesItem, crmItem] },
+  { title: sectionTitles.business, items: [financeItem] },
 ];
 
-const operatorNav: NavSection[] = [
-  { items: [operatorOperationsItem, operatorAvailableRoutesItem, cashRemovalItem, operatorIssuesItem, accountItem] },
+const operatorNavItems: NavItem[] = [
+  operatorOperationsItem,
+  operatorAvailableRoutesItem,
+  cashRemovalItem,
+  operatorIssuesItem,
 ];
-
-const financeNav: NavSection[] = [
-  { items: [financeItem, cashCustodyItem] },
-];
-
-const investorNav: NavSection[] = [
-  { items: [investorPortalItem, accountItem] },
-];
-
-const viewerNav: NavSection[] = [{ items: [dashboardItem] }];
 
 function itemIdentity(item: NavItem) {
-  return `${item.labelKey ?? item.label?.en ?? "item"}:${item.href}`;
+  return `${item.moduleKey ?? "direct"}:${item.labelKey ?? item.label?.en ?? "item"}:${item.href}`;
 }
 
-function mergeSections(sections: NavSection[]): NavSection[] {
+function uniqueItems(items: NavItem[]) {
   const seen = new Set<string>();
-  const items: NavItem[] = [];
-  sections.flatMap((section) => section.items).forEach((item) => {
+  return items.filter((item) => {
     const key = itemIdentity(item);
-    if (seen.has(key)) return;
+    if (seen.has(key)) return false;
     seen.add(key);
-    items.push(item);
+    return true;
   });
-  return [{ items }];
 }
 
-function sectionsForRoles(role: AppRole, roles?: AppRole[] | null) {
+function sectionsForRoles(role: AppRole, roles?: AppRole[] | null): NavSection[] {
   const context = { id: "sidebar", role, roles };
   if (isOwnerAdminRole(context)) return ownerAdminNav;
+  if (isSupervisorRole(context)) return supervisorNav;
+
+  const primary: NavItem[] = [];
+  const work: NavItem[] = [];
+  const business: NavItem[] = [];
+
+  if (hasPermission(context, "dashboard.view")) primary.push(dashboardItem);
+  if (isOperatorRole(context) || hasPermission(context, "assigned_routes.view")) {
+    work.push(...operatorNavItems);
+  }
+  if (hasPermission(context, "locations.pipeline.manage") || hasPermission(context, "issues.view")) {
+    work.push(crmItem);
+  }
+  if (hasPermission(context, "machines.view")) work.push(machinesItem);
+
+  if (hasPermission(context, "inventory.view") || hasPermission(context, "storage.view")) {
+    work.push(stockItem);
+  } else if (
+    hasPermission(context, "purchases.view") ||
+    hasPermission(context, "purchase_items.view") ||
+    hasPermission(context, "products.view") ||
+    hasPermission(context, "suppliers.view")
+  ) {
+    work.push(purchasingStockItem);
+  }
+
+  if (hasRole(context, "warehouse") || hasPermission(context, "storage.movement.view")) {
+    work.push(warehouseOperationsItem);
+  }
+  if (hasPermission(context, "cash.receive") && !hasPermission(context, "finance.view")) {
+    work.push(cashCustodyItem);
+  }
+  if (hasPermission(context, "finance.view")) {
+    business.push(financeItem);
+    work.push(cashCustodyItem);
+  }
+  if (hasPermission(context, "reports.view")) business.push(reportsItem);
+  if (hasPermission(context, "investor.view")) business.push(investorPortalItem);
+
+  if (!primary.length && !work.length && !business.length && hasAnyRole(context, ["viewer"])) {
+    primary.push(dashboardItem);
+  }
 
   const sections: NavSection[] = [];
-  if (isSupervisorRole(context)) sections.push(...supervisorNav);
-  if (isOperatorRole(context) || hasPermission(context, "assigned_routes.view")) sections.push(...operatorNav);
-  if (hasPermission(context, "inventory.view") || hasPermission(context, "storage.view")) sections.push({ items: [inventoryItem] });
-  if (hasPermission(context, "products.view") || hasPermission(context, "inventory.view") || hasPermission(context, "storage.view")) sections.push({ items: [restockPriorityItem] });
-  if (hasPermission(context, "products.view")) sections.push({ items: [productsItem] });
-  if (hasRole(context, "warehouse") || hasPermission(context, "storage.movement.view")) sections.push({ items: [warehouseOperationsItem] });
-  if (hasPermission(context, "cash.receive") && !hasPermission(context, "finance.view")) sections.push({ items: [cashCustodyItem] });
-  if (hasRole(context, "purchasing")) sections.push({ items: [inventoryItem, restockPriorityItem, productsItem] });
-  if (hasRole(context, "finance") || hasPermission(context, "finance.view")) sections.push(...financeNav);
-  if (hasPermission(context, "investor.view")) sections.push(...investorNav);
-  if (!sections.length && hasAnyRole(context, ["viewer"])) sections.push(...viewerNav);
-  return sections.length ? mergeSections(sections) : viewerNav;
+  if (primary.length) sections.push({ items: uniqueItems(primary) });
+  if (work.length) sections.push({ title: sectionTitles.work, items: uniqueItems(work) });
+  if (business.length) sections.push({ title: sectionTitles.business, items: uniqueItems(business) });
+  sections.push({ title: sectionTitles.account, items: [accountItem] });
+  return sections;
 }
 
 function pathWithoutQuery(href: string) {
@@ -240,7 +295,7 @@ function SidebarContent({ role, roles, onNavigate }: { role: AppRole; roles?: Ap
   const useOptimisticHref = Boolean(optimisticHref && optimisticOriginHref === currentHref);
   const activePathname = useOptimisticHref && optimisticHref ? pathWithoutQuery(optimisticHref) : pathname;
   const activeSearchParams = new URLSearchParams(useOptimisticHref && optimisticHref ? searchFromHref(optimisticHref) : currentSearch);
-  const moduleParam = activeSearchParams.get("module") ?? (roles?.includes("finance") && matchesPath(activePathname, "/purchases") ? "finance" : null);
+  const activeModule = getAppModuleKey(activePathname);
 
   useEffect(() => {
     sections.forEach((section) => {
@@ -260,48 +315,57 @@ function SidebarContent({ role, roles, onNavigate }: { role: AppRole; roles?: Ap
         </div>
       </div>
 
-      <nav className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain pr-1" aria-label={dictionary.shell.navigation}>
-        {sections.map((section, sectionIndex) => (
-          <div key={`${section.titleKey ?? "primary"}-${sectionIndex}`}>
-            {section.titleKey ? (
-              <div className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                {dictionary.nav[section.titleKey]}
-              </div>
-            ) : null}
-            <div className="space-y-1">
-              {section.items.map((item) => {
-                const Icon = item.icon;
-                const active =
-                  matchesPath(activePathname, "/purchases") && moduleParam === "finance"
-                    ? item.labelKey === "finance"
-                    : matchesPath(activePathname, "/purchases")
-                      ? item.labelKey === "inventory"
-                      : isActiveItem(activePathname, item, activeSearchParams);
-                const label = item.label ? item.label[locale] : item.labelKey ? dictionary.nav[item.labelKey] : item.href;
+      <nav className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain pe-1" aria-label={dictionary.shell.navigation}>
+        {sections.map((section, sectionIndex) => {
+          const sectionTitle = section.title
+            ? section.title[locale]
+            : section.titleKey
+              ? dictionary.nav[section.titleKey]
+              : null;
 
-                return (
-                  <Link
-                    key={itemIdentity(item)}
-                    href={item.href}
-                    prefetch={true}
-                    onClick={(event) => {
-                      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
-                      setOptimisticOriginHref(currentHref);
-                      setOptimisticHref(item.href);
-                      onNavigate?.();
-                    }}
-                    className={active ? "nav-link-active flex items-center gap-2" : "nav-link flex items-center gap-2"}
-                    aria-current={active ? "page" : undefined}
-                  >
-                    <Icon className="h-4 w-4 shrink-0" />
-                    <span className="min-w-0 truncate">{label}</span>
-                    <NavPendingIndicator />
-                  </Link>
-                );
-              })}
+          return (
+            <div key={`${sectionTitle ?? "primary"}-${sectionIndex}`}>
+              {sectionTitle ? (
+                <div className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  {sectionTitle}
+                </div>
+              ) : null}
+              <div className="space-y-1">
+                {section.items.map((item) => {
+                  const Icon = item.icon;
+                  const active = item.moduleKey
+                    ? activeModule === item.moduleKey
+                    : isActiveItem(activePathname, item, activeSearchParams);
+                  const label = item.label
+                    ? item.label[locale]
+                    : item.labelKey
+                      ? dictionary.nav[item.labelKey]
+                      : item.href;
+
+                  return (
+                    <Link
+                      key={itemIdentity(item)}
+                      href={item.href}
+                      prefetch={true}
+                      onClick={(event) => {
+                        if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+                        setOptimisticOriginHref(currentHref);
+                        setOptimisticHref(item.href);
+                        onNavigate?.();
+                      }}
+                      className={active ? "nav-link-active flex items-center gap-2" : "nav-link flex items-center gap-2"}
+                      aria-current={active ? "page" : undefined}
+                    >
+                      <Icon className="h-4 w-4 shrink-0" />
+                      <span className="min-w-0 truncate">{label}</span>
+                      <NavPendingIndicator />
+                    </Link>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </nav>
     </>
   );
