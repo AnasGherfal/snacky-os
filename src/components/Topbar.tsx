@@ -71,9 +71,11 @@ export function Topbar({ profile, onMenuClick }: { profile: TopbarProfile; onMen
       ? locale === "ar" ? "قرارات النمو" : "Growth Decisions"
       : pathname === "/finance/investors"
         ? locale === "ar" ? "المستثمرون" : "Investors"
-        : pathname === "/issues"
-          ? locale === "ar" ? "مشاكل العملاء" : "Customer Issues"
-          : null;
+        : pathname === "/locations-pipeline"
+          ? locale === "ar" ? "الجهات والزيارات" : "Leads & Visits"
+          : pathname === "/issues"
+            ? locale === "ar" ? "مشاكل العملاء" : "Customer Issues"
+            : null;
   const topbarTitle = directTitle ?? (titleKey ? dictionary.nav[titleKey] : moduleTitle ?? dictionary.app.name);
   const nextLocale: SupportedLocale = locale === "ar" ? "en" : "ar";
   const nextLocaleLabel = nextLocale === "ar" ? dictionary.language.arabic : dictionary.language.english;
