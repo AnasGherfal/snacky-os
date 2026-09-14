@@ -253,3 +253,107 @@ export async function deactivateTeamMember(formData: FormData) {
   revalidatePath(`/team/${id}/edit`);
   redirect(`/team/${id}`);
 }
+
+export async function deleteTeamMember(formData: FormData) {
+  const profile = await getCurrentProfile();
+  if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
+
+  const id = clean(formData.get("id"));
+  if (!id) redirect("/team");
+  const returnPath = `/team/${id}/edit`;
+  if (id === profile?.team_member_id) {
+    redirect(`${returnPath}?error=${encodeURIComponent("You cannot permanently delete your own account.")}`);
+  }
+
+  const reason = requireConfirmedReason(formData, returnPath);
+  if (clean(formData.get("delete_confirmation")) !== "DELETE") {
+    redirect(`${returnPath}?error=${encodeURIComponent("Type DELETE to confirm permanent removal.")}`);
+  }
+
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) redirect(`${returnPath}?error=Supabase%20is%20not%20configured.`);
+
+  const { data: before, error: loadError } = await supabase
+    .from("team_members")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (loadError || !before) {
+    console.error("[team:delete] Failed to load team member", { id, error: loadError });
+    redirect(`${returnPath}?error=${encodeURIComponent("Team member could not be loaded for deletion.")}`);
+  }
+  if (before.auth_user_id && before.auth_user_id === profile?.id) {
+    redirect(`${returnPath}?error=${encodeURIComponent("You cannot permanently delete your own account.")}`);
+  }
+
+  const { data: blockerData, error: blockerError } = await supabase.rpc(
+    "snacky_team_member_delete_blockers",
+    { p_team_member_id: id },
+  );
+  if (blockerError) {
+    console.error("[team:delete] Failed to check delete blockers", { id, error: blockerError });
+    redirect(`${returnPath}?error=${encodeURIComponent("Could not safely check this member's history. Permanent delete was stopped.")}`);
+  }
+
+  const blockers = Array.isArray(blockerData)
+    ? blockerData as Array<{ table?: string; column?: string; count?: number | string }>
+    : [];
+  if (blockers.length) {
+    const tables = Array.from(
+      new Set(
+        blockers
+          .map((blocker) => String(blocker.table ?? "").trim())
+          .filter(Boolean),
+      ),
+    );
+    const visibleTables = tables.slice(0, 4).map((table) => table.replaceAll("_", " "));
+    const suffix = tables.length > visibleTables.length ? ` and ${tables.length - visibleTables.length} more` : "";
+    const detail = visibleTables.length ? ` History exists in ${visibleTables.join(", ")}${suffix}.` : "";
+    redirect(`${returnPath}?error=${encodeURIComponent(`This member has Snacky history and cannot be permanently deleted.${detail} Deactivate the member instead so the history stays intact.`)}`);
+  }
+
+  if (before.auth_user_id) {
+    const { error: authDeleteError } = await supabase.auth.admin.deleteUser(before.auth_user_id);
+    if (authDeleteError) {
+      console.error("[team:delete] Failed to delete auth user", { id, authUserId: before.auth_user_id, error: authDeleteError });
+      redirect(`${returnPath}?error=${encodeURIComponent("Could not remove this member's login account, so permanent delete was stopped.")}`);
+    }
+  }
+
+  const profileFilters = [
+    `team_member_id.eq.${id}`,
+    before.auth_user_id ? `id.eq.${before.auth_user_id}` : "",
+    before.email ? `email.eq.${before.email}` : "",
+  ].filter(Boolean);
+  if (profileFilters.length) {
+    const { error: profileDeleteError } = await supabase
+      .from("profiles")
+      .delete()
+      .or(profileFilters.join(","));
+    if (profileDeleteError) {
+      console.error("[team:delete] Failed to delete linked profiles", { id, error: profileDeleteError });
+      redirect(`${returnPath}?error=${encodeURIComponent("Login access was removed, but the linked profile could not be cleaned up. Try again before deleting the team member.")}`);
+    }
+  }
+
+  const { error: deleteError } = await supabase.from("team_members").delete().eq("id", id);
+  if (deleteError) {
+    console.error("[team:delete] Failed to delete team member", { id, error: deleteError });
+    redirect(`${returnPath}?error=${encodeURIComponent("Could not permanently delete this team member. No operational history was removed.")}`);
+  }
+
+  await logActivity({
+    profile,
+    action: "delete",
+    entityType: "team_member",
+    entityId: id,
+    entityLabel: before.full_name,
+    beforeData: before,
+    metadata: { reason, permanent: true },
+    summary: `Permanently deleted unused team member ${before.full_name}`,
+  });
+
+  revalidatePath("/team");
+  redirect("/team");
+}
