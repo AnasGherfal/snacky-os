@@ -1,7 +1,7 @@
 "use client";
 
 import Link, { useLinkStatus } from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useLanguage } from "@/components/I18nProvider";
 
@@ -23,14 +23,20 @@ function normalizePath(path: string) {
   return clean || "/";
 }
 
-function pathMatches(currentPath: string, tab: ModuleTab) {
+function pathMatchScore(currentPath: string, tab: ModuleTab) {
   const current = normalizePath(currentPath);
   const candidates = [tab.href, ...(tab.match ?? [])].map(normalizePath);
+  let score = -1;
 
-  return candidates.some((candidate) => {
-    if (tab.exact) return current === candidate;
-    return current === candidate || current.startsWith(`${candidate}/`);
-  });
+  for (const candidate of candidates) {
+    const exactMatch = current === candidate;
+    const prefixMatch = current.startsWith(`${candidate}/`);
+    const matches = tab.exact ? exactMatch : exactMatch || prefixMatch;
+    if (!matches) continue;
+    score = Math.max(score, candidate.length + (exactMatch ? 10000 : 0));
+  }
+
+  return score;
 }
 
 function TabPendingIndicator() {
@@ -49,11 +55,13 @@ export function ModuleTabs({
   currentPath,
   currentSearch = "",
   moduleName,
+  moduleNameAr,
 }: {
   tabs: ModuleTab[];
   currentPath: string;
   currentSearch?: string;
   moduleName: string;
+  moduleNameAr?: string;
 }) {
   const router = useRouter();
   const { locale } = useLanguage();
@@ -61,6 +69,19 @@ export function ModuleTabs({
   const optimisticHref = optimisticNavigation?.path === currentPath && optimisticNavigation.search === currentSearch
     ? optimisticNavigation.href
     : null;
+  const activePath = optimisticHref ?? currentPath;
+  const activeIndex = useMemo(() => {
+    let bestIndex = -1;
+    let bestScore = -1;
+    tabs.forEach((tab, index) => {
+      const score = pathMatchScore(activePath, tab);
+      if (score > bestScore) {
+        bestScore = score;
+        bestIndex = index;
+      }
+    });
+    return bestIndex;
+  }, [activePath, tabs]);
 
   useEffect(() => {
     tabs.forEach((tab) => router.prefetch(tab.href));
@@ -68,15 +89,25 @@ export function ModuleTabs({
 
   if (!tabs.length) return null;
 
+  const displayModuleName = locale === "ar" && moduleNameAr ? moduleNameAr : moduleName;
+
   return (
-    <nav aria-label={`${moduleName} navigation`} className="border-b border-slate-200">
+    <nav
+      aria-label={`${moduleName} navigation`}
+      className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
+    >
+      <div className="border-b border-slate-100 px-3 py-2 sm:px-4">
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+          {displayModuleName}
+        </div>
+      </div>
       <div
         role="tablist"
         aria-label={`${moduleName} tabs`}
-        className="-mb-px flex gap-1 overflow-x-auto whitespace-nowrap pb-px [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex gap-1 overflow-x-auto whitespace-nowrap px-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:px-3"
       >
-        {tabs.map((tab) => {
-          const active = pathMatches(optimisticHref ?? currentPath, tab);
+        {tabs.map((tab, index) => {
+          const active = index === activeIndex;
 
           return (
             <Link
