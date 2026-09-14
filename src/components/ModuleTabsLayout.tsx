@@ -15,15 +15,10 @@ type ModuleTabsProfile = {
   team_member_id: string | null;
 };
 
-function isPurchasesPath(pathname: string) {
-  return pathname === "/purchases" || pathname.startsWith("/purchases/");
-}
-
 export function ModuleTabsLayout({ children, profile }: { children: ReactNode; profile: ModuleTabsProfile }) {
   const pathname = usePathname() ?? "/";
   const searchParams = useSearchParams();
-  const moduleParam = searchParams.get("module") ?? (profile.roles?.includes("finance") && isPurchasesPath(pathname) ? "finance" : null);
-  const tabGroup = getModuleTabGroupForPath(pathname, moduleParam);
+  const tabGroup = getModuleTabGroupForPath(pathname);
   const visibleTabs = useMemo(
     () => {
       const userContext = {
@@ -44,7 +39,13 @@ export function ModuleTabsLayout({ children, profile }: { children: ReactNode; p
     <>
       {tabGroup && visibleTabs.length > 1 ? (
         <div className="mb-6">
-          <ModuleTabs tabs={visibleTabs} currentPath={pathname} currentSearch={searchParams.toString()} moduleName={tabGroup.name} />
+          <ModuleTabs
+            tabs={visibleTabs}
+            currentPath={pathname}
+            currentSearch={searchParams.toString()}
+            moduleName={tabGroup.name}
+            moduleNameAr={tabGroup.nameAr}
+          />
         </div>
       ) : null}
       {children}
