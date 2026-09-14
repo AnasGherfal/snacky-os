@@ -1,102 +1,54 @@
 "use client";
 
 import Link, { useLinkStatus } from "next/link";
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useRef } from "react";
 import { useLanguage } from "@/components/I18nProvider";
+import { activeTabForPath, type ModuleTab } from "@/components/module-tabs-config";
 
-export type ModuleTab = {
-  label: string;
-  labelAr?: string;
-  href: string;
-  exact?: boolean;
-  match?: string[];
-};
-
-function pathnameFromHref(href: string) {
-  return href.split("?")[0]?.split("#")[0] || href;
-}
-
-function normalizePath(path: string) {
-  const clean = pathnameFromHref(path);
-  if (clean.length > 1 && clean.endsWith("/")) return clean.slice(0, -1);
-  return clean || "/";
-}
-
-function pathMatches(currentPath: string, tab: ModuleTab) {
-  const current = normalizePath(currentPath);
-  const candidates = [tab.href, ...(tab.match ?? [])].map(normalizePath);
-
-  return candidates.some((candidate) => {
-    if (tab.exact) return current === candidate;
-    return current === candidate || current.startsWith(`${candidate}/`);
-  });
-}
+export type { ModuleTab } from "@/components/module-tabs-config";
 
 function TabPendingIndicator() {
   const { pending } = useLinkStatus();
-
-  return (
-    <span
-      aria-hidden="true"
-      className={`h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--snacky-primary)] transition-opacity ${pending ? "animate-pulse opacity-100" : "opacity-0"}`}
-    />
-  );
+  return <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full bg-current ${pending ? "animate-pulse opacity-80" : "opacity-0"}`} />;
 }
 
-export function ModuleTabs({
-  tabs,
-  currentPath,
-  currentSearch = "",
-  moduleName,
-}: {
+export function ModuleTabs({ tabs, currentPath, currentSearch = "", moduleName, activeHref, secondary = false }: {
   tabs: ModuleTab[];
   currentPath: string;
   currentSearch?: string;
   moduleName: string;
+  activeHref?: string | null;
+  secondary?: boolean;
 }) {
-  const router = useRouter();
   const { locale } = useLanguage();
-  const [optimisticNavigation, setOptimisticNavigation] = useState<{ href: string; path: string; search: string } | null>(null);
-  const optimisticHref = optimisticNavigation?.path === currentPath && optimisticNavigation.search === currentSearch
-    ? optimisticNavigation.href
-    : null;
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const selectedHref = activeHref !== undefined ? activeHref : activeTabForPath(tabs, currentPath, currentSearch)?.href;
 
   useEffect(() => {
-    tabs.forEach((tab) => router.prefetch(tab.href));
-  }, [router, tabs]);
+    const scroller = scrollRef.current;
+    const active = scroller?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!scroller || !active || scroller.scrollWidth <= scroller.clientWidth) return;
+    const outer = scroller.getBoundingClientRect();
+    const inner = active.getBoundingClientRect();
+    // Only move this horizontal strip, never scroll a form or the main page.
+    if (inner.left < outer.left) scroller.scrollLeft += inner.left - outer.left - 8;
+    else if (inner.right > outer.right) scroller.scrollLeft += inner.right - outer.right + 8;
+  }, [selectedHref, locale]);
 
   if (!tabs.length) return null;
-
   return (
-    <nav aria-label={`${moduleName} navigation`} className="border-b border-slate-200">
-      <div
-        role="tablist"
-        aria-label={`${moduleName} tabs`}
-        className="-mb-px flex gap-1 overflow-x-auto whitespace-nowrap pb-px [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-      >
-        {tabs.map((tab) => {
-          const active = pathMatches(optimisticHref ?? currentPath, tab);
-
+    <nav aria-label={moduleName} dir={locale === "ar" ? "rtl" : "ltr"} data-navigation-tabs={secondary ? "secondary" : "primary"}>
+      <div ref={scrollRef} className="flex min-w-0 gap-1 overflow-x-auto overscroll-x-contain p-1 [scrollbar-width:thin]">
+        {tabs.map((item) => {
+          const active = selectedHref === item.href;
           return (
-            <Link
-              key={`${tab.label}-${tab.href}`}
-              href={tab.href}
-              prefetch={true}
-              onClick={(event) => {
-                if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
-                setOptimisticNavigation({ href: tab.href, path: currentPath, search: currentSearch });
-              }}
-              role="tab"
-              aria-selected={active}
-              aria-current={active ? "page" : undefined}
-              className={
+            <Link key={item.href} href={item.href} prefetch={false} aria-current={active ? "page" : undefined}
+              className={`inline-flex min-h-11 shrink-0 items-center justify-center gap-1 rounded-lg px-3 py-2 text-sm transition-colors ${
                 active
-                  ? "inline-flex min-h-11 shrink-0 items-center gap-2 border-b-2 border-[var(--snacky-primary)] px-3 py-2 text-sm font-semibold text-slate-950"
-                  : "inline-flex min-h-11 shrink-0 items-center gap-2 border-b-2 border-transparent px-3 py-2 text-sm font-medium text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
-              }
-            >
-              <span>{locale === "ar" && tab.labelAr ? tab.labelAr : tab.label}</span>
+                  ? secondary ? "bg-white font-semibold text-slate-950 shadow-sm ring-1 ring-slate-200" : "brand-selected font-semibold"
+                  : "font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950"
+              }`}>
+              <span>{locale === "ar" ? item.labelAr || item.label : item.label}</span>
               <TabPendingIndicator />
             </Link>
           );
