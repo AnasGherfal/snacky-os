@@ -26,6 +26,7 @@ type DirectPickupExtra = {
 type DirectPickupOptions = {
   stopIds?: string[];
   clientSubmissionId?: string | null;
+  acknowledgedPickupLineIds?: string[];
 };
 
 /**
@@ -48,16 +49,32 @@ export async function confirmPickupDirect(
   const clientSubmissionId = String(options.clientSubmissionId ?? "").trim() || crypto.randomUUID();
   const stopIds = Array.from(new Set((options.stopIds ?? []).map((value) => String(value ?? "").trim()).filter(Boolean))).sort();
 
-  // The old checklist flag had become a separate UX gate. In the one-step
-  // flow every submitted pickup row is acknowledged by the confirmation itself.
-  const canonicalItems = pickedItems.map((item) => ({ ...item, isChecked: true }));
   const acknowledgedPickupLineIds = Array.from(
     new Set(
-      canonicalItems
+      (options.acknowledgedPickupLineIds ?? [])
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean),
+    ),
+  ).sort();
+  const acknowledgedSet = new Set(acknowledgedPickupLineIds);
+  const requiredPickupLineIds = Array.from(
+    new Set(
+      pickedItems
         .map((item) => String(item.routeStopItemId ?? "").trim())
         .filter(Boolean),
     ),
   ).sort();
+  const missingPickupLineIds = requiredPickupLineIds.filter((id) => !acknowledgedSet.has(id));
+  if (missingPickupLineIds.length > 0) {
+    return actionFailure("Check every pickup item before confirming pickup.");
+  }
+
+  // Preserve the operator's actual checklist state all the way into the
+  // database contract. Confirmation must never manufacture acknowledgements.
+  const canonicalItems = pickedItems.map((item) => {
+    const routeStopItemId = String(item.routeStopItemId ?? "").trim();
+    return { ...item, isChecked: Boolean(routeStopItemId && acknowledgedSet.has(routeStopItemId)) };
+  });
 
   const prepared = await confirmPickList(routeId, canonicalItems, extras, {
     stopIds,
