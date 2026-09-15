@@ -14,6 +14,10 @@ export type InvestorHistoricalMonth = {
   source_label: string;
   source_cells: Record<string, string>;
   source_note: string | null;
+  confirmed_payable_usd?: number | string | null;
+  confirmed_paid_usd?: number | string | null;
+  payment_confirmed_at?: string | null;
+  payment_confirmation_note?: string | null;
 };
 
 export const investorHistoryColumns = [
@@ -21,6 +25,7 @@ export const investorHistoryColumns = [
   'other_opex_lyd', 'previous_month_lyd', 'net_profit_lyd', 'exchange_rate_lyd_per_usd',
   'net_profit_usd', 'investor_share_percent', 'investor_share_usd',
   'source_label', 'source_cells', 'source_note',
+  'confirmed_payable_usd', 'confirmed_paid_usd', 'payment_confirmed_at', 'payment_confirmation_note',
 ].join(',');
 
 /** Prefer the exact source text, including signed figures and intentional blanks. */
