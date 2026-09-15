@@ -1,0 +1,31 @@
+name: Operator pickup checklist checks
+
+on:
+  pull_request:
+    paths:
+      - 'src/app/operator/routes/[id]/pick-list/page.tsx'
+      - 'src/app/operator/routes/[id]/page.tsx'
+      - 'src/lib/direct-pickup-actions.ts'
+      - 'scripts/test-operator-pickup-checklist.mjs'
+      - '.github/workflows/operator-pickup-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Pickup checklist regression
+        run: node --experimental-strip-types --test scripts/test-operator-pickup-checklist.mjs
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Production build
+        run: npm run build
