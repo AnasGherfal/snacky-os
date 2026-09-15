@@ -5,396 +5,142 @@ import { redirect } from "next/navigation";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
 import { applyVisibleFinanceLedgerFilter, FINANCE_TRANSACTIONS_TABLE, loadFinanceLedgerRows } from "@/lib/finance-ledger";
-import { calculateInvestorMonth, manualRouteSalesAsProfitRows, monthBounds } from "@/lib/investor-profit";
+import { calculateInvestorMonth, manualRouteSalesAsProfitRows, monthBounds, type InvestorProfitBasis } from "@/lib/investor-profit";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
+import { recordInvestorCommand } from "@/lib/investor-money-actions";
 
-function text(formData: FormData, name: string) {
-  return String(formData.get(name) ?? "").trim();
+function text(fd: FormData,name: string) { return String(fd.get(name) ?? "").trim(); }
+function numberValue(fd: FormData,name: string,fallback=0) { const n=Number(fd.get(name) ?? fallback); return Number.isFinite(n)?n:fallback; }
+function optionalNumber(fd: FormData,name: string) { const raw=text(fd,name); return raw?Number(raw):null; }
+function investorsUrl(agreementId?: string | null,message?: {type:'success'|'error'|'warning';text:string}) {
+ const params=new URLSearchParams(); if(agreementId) params.set('agreement',agreementId); if(message) params.set(message.type,message.text);
+ return `/finance/investors${params.size?'?'+params.toString():''}`;
 }
-
-function numberValue(formData: FormData, name: string, fallback = 0) {
-  const parsed = Number(formData.get(name) ?? fallback);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function optionalNumber(formData: FormData, name: string) {
-  const value = text(formData, name);
-  if (!value) return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-type InvestorVmsSummaryRow = {
-  revenue_amount?: number | string | null;
-  cogs_amount?: number | string | null;
-  gross_profit_amount?: number | string | null;
-  missing_cost_sales_count?: number | string | null;
-};
-
-function summaryRevenue(row: InvestorVmsSummaryRow | null | undefined) {
-  const value = Number(row?.revenue_amount ?? 0);
-  return Number.isFinite(value) ? value : 0;
-}
-
-async function loadInvestorVmsProfit(client: any, dateFrom: string, dateTo: string) {
-  const monthly = await client.rpc("sales_dashboard_monthly_summary", {
-    p_date_from: dateFrom,
-    p_date_to: dateTo,
-  });
-  const monthlyRow = (monthly.data ?? [])[0] as InvestorVmsSummaryRow | undefined;
-  if (!monthly.error && summaryRevenue(monthlyRow) > 0) {
-    return { data: monthlyRow ? [{
-      net_sales_amount: monthlyRow.revenue_amount,
-      cogs_amount: monthlyRow.cogs_amount,
-      gross_profit_amount: monthlyRow.gross_profit_amount,
-      cost_missing: Number(monthlyRow.missing_cost_sales_count ?? 0) > 0,
-      source: "vms",
-    }] : [], error: null, source: "monthly_product_profit" };
-  }
-
-  const detailed = await client.rpc("sales_dashboard_summary", {
-    p_date_from: dateFrom,
-    p_date_to: dateTo,
-  });
-  const detailedRow = (detailed.data ?? [])[0] as InvestorVmsSummaryRow | undefined;
-  if (!detailed.error && summaryRevenue(detailedRow) > 0) {
-    return { data: detailedRow ? [{
-      net_sales_amount: detailedRow.revenue_amount,
-      cogs_amount: detailedRow.cogs_amount,
-      gross_profit_amount: detailedRow.gross_profit_amount,
-      cost_missing: Number(detailedRow.missing_cost_sales_count ?? 0) > 0,
-      source: "vms",
-    }] : [], error: null, source: "detailed_sales" };
-  }
-  if (!monthly.error) {
-    return { data: monthlyRow ? [{
-      net_sales_amount: monthlyRow.revenue_amount,
-      cogs_amount: monthlyRow.cogs_amount,
-      gross_profit_amount: monthlyRow.gross_profit_amount,
-      cost_missing: Number(monthlyRow.missing_cost_sales_count ?? 0) > 0,
-      source: "vms",
-    }] : [], error: null, source: "monthly_product_profit" };
-  }
-  if (!detailed.error) {
-    return { data: detailedRow ? [{
-      net_sales_amount: detailedRow.revenue_amount,
-      cogs_amount: detailedRow.cogs_amount,
-      gross_profit_amount: detailedRow.gross_profit_amount,
-      cost_missing: Number(detailedRow.missing_cost_sales_count ?? 0) > 0,
-      source: "vms",
-    }] : [], error: null, source: "detailed_sales" };
-  }
-  return { data: [], error: new Error(`Monthly VMS RPC: ${monthly.error?.message ?? "unknown error"}; detailed VMS RPC: ${detailed.error?.message ?? "unknown error"}`), source: null };
-}
-
-function investorsUrl(agreementId?: string | null, message?: { type: "success" | "error" | "warning"; text: string }) {
-  const params = new URLSearchParams();
-  if (agreementId) params.set("agreement", agreementId);
-  if (message) params.set(message.type, message.text);
-  const query = params.toString();
-  return `/finance/investors${query ? `?${query}` : ""}`;
-}
-
 async function requireOwnerAdmin() {
-  const profile = await getCurrentProfile();
-  if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
-  const supabase = await getAuthenticatedSupabaseServerClient();
-  if (!supabase) redirect(investorsUrl(null, { type: "error", text: "Supabase is not configured." }));
-  return { profile: profile!, supabase: supabase! };
+ const profile=await getCurrentProfile(); if(!profile || profile.active_status!=='active' || !isOwnerAdminRole(profile)) redirect('/unauthorized');
+ const supabase=await getAuthenticatedSupabaseServerClient(); if(!supabase) redirect(investorsUrl(null,{type:'error',text:'Database session unavailable.'}));
+ return {profile,supabase};
 }
 
-export async function saveGrowthDecisionSettings(formData: FormData) {
-  const { profile, supabase } = await requireOwnerAdmin();
-  const payload = {
-    singleton: true,
-    machine_cost_lyd: Math.max(0, numberValue(formData, "machine_cost_lyd", 22000)),
-    minimum_cash_reserve_lyd: Math.max(0, numberValue(formData, "minimum_cash_reserve_lyd", 15000)),
-    restock_reserve_lyd: Math.max(0, numberValue(formData, "restock_reserve_lyd", 10000)),
-    minimum_monthly_operating_profit_lyd: numberValue(formData, "minimum_monthly_operating_profit_lyd", 6000),
-    target_payback_months: Math.max(1, numberValue(formData, "target_payback_months", 18)),
-    minimum_history_months: Math.min(24, Math.max(1, Math.round(numberValue(formData, "minimum_history_months", 3)))),
-    updated_by: profile.id,
-    updated_at: new Date().toISOString(),
-  };
-  const { error } = await supabase.from("growth_decision_settings").upsert(payload, { onConflict: "singleton" });
-  if (error) redirect(`/finance/growth-decisions?error=${encodeURIComponent(error.message)}`);
-  revalidatePath("/finance/growth-decisions");
-  redirect("/finance/growth-decisions?success=Decision%20rules%20saved.");
+async function loadInvestorVmsProfit(client: any,dateFrom:string,dateTo:string) {
+ const monthly=await client.rpc('sales_dashboard_monthly_summary',{p_date_from:dateFrom,p_date_to:dateTo});
+ const monthlyRow=(monthly.data ?? [])[0];
+ const toRows=(row:any)=>row?[{net_sales_amount:row.revenue_amount,cogs_amount:row.cogs_amount,gross_profit_amount:row.gross_profit_amount,cost_missing:Number(row.missing_cost_sales_count ?? 0)>0,source:'vms'}]:[];
+ if(!monthly.error && Number(monthlyRow?.revenue_amount)>0) return {data:toRows(monthlyRow),error:null,source:'monthly_product_profit'};
+ const detailed=await client.rpc('sales_dashboard_summary',{p_date_from:dateFrom,p_date_to:dateTo});
+ const detailedRow=(detailed.data ?? [])[0];
+ if(!detailed.error && Number(detailedRow?.revenue_amount)>0) return {data:toRows(detailedRow),error:null,source:'detailed_sales'};
+ if(!monthly.error) return {data:toRows(monthlyRow),error:null,source:'monthly_product_profit'};
+ if(!detailed.error) return {data:toRows(detailedRow),error:null,source:'detailed_sales'};
+ return {data:[],error:new Error('Monthly and detailed VMS totals could not load.'),source:null};
 }
 
-export async function createInvestorAgreement(formData: FormData) {
-  const { profile, supabase } = await requireOwnerAdmin();
-  const investorUserId = text(formData, "investor_user_id");
-  const investorName = text(formData, "investor_name");
-  const startDate = text(formData, "start_date");
-  if (!investorUserId || !investorName || !startDate) {
-    redirect(investorsUrl(null, { type: "error", text: "Investor login, name, and start date are required." }));
-  }
-
-  const { data: investorProfile, error: investorProfileError } = await supabase
-    .from("profiles")
-    .select("id, role, roles, active_status")
-    .eq("id", investorUserId)
-    .maybeSingle();
-  const profileRoles = Array.isArray(investorProfile?.roles) ? investorProfile.roles.map(String) : [];
-  if (investorProfileError || !investorProfile || (String(investorProfile.role) !== "investor" && !profileRoles.includes("investor"))) {
-    redirect(investorsUrl(null, { type: "error", text: "Create an active Team login with the Investor role first." }));
-  }
-
-  const endDate = text(formData, "end_date") || null;
-  const { data, error } = await supabase
-    .from("investor_agreements")
-    .insert({
-      investor_user_id: investorUserId,
-      investor_name: investorName,
-      investment_amount_lyd: Math.max(0, numberValue(formData, "investment_amount_lyd", 0)),
-      profit_share_percent: Math.min(100, Math.max(0, numberValue(formData, "profit_share_percent", 30))),
-      profit_basis: "operating_profit",
-      start_date: startDate,
-      end_date: endDate,
-      payout_cap_lyd: optionalNumber(formData, "payout_cap_lyd"),
-      status: text(formData, "status") || "active",
-      notes: text(formData, "notes") || null,
-      created_by: profile.id,
-    })
-    .select("id")
-    .single();
-  if (error || !data?.id) redirect(investorsUrl(null, { type: "error", text: error?.message ?? "Could not create investor agreement." }));
-  revalidatePath("/finance/investors");
-  revalidatePath("/investor");
-  redirect(investorsUrl(data.id, { type: "success", text: "Investor agreement created." }));
+async function pagedRows(build:(from:number,to:number)=>any): Promise<{data:any[];error:any}> {
+ const rows:any[]=[];
+ for(let from=0;from<100000;from+=500) {
+  const result=await build(from,from+499); if(result.error) return {data:[],error:result.error};
+  rows.push(...(result.data ?? [])); if((result.data ?? []).length<500) return {data:rows,error:null};
+ }
+ return {data:[],error:new Error('Too many source records to verify safely.')};
 }
 
-export async function generateInvestorStatement(formData: FormData) {
-  const { profile, supabase } = await requireOwnerAdmin();
-  const agreementId = text(formData, "agreement_id");
-  const month = text(formData, "month");
-  const bounds = monthBounds(month);
-  if (!agreementId || !bounds) redirect(investorsUrl(agreementId, { type: "error", text: "Choose a valid agreement and month." }));
-
-  const { data: agreement, error: agreementError } = await supabase
-    .from("investor_agreements")
-    .select("id, profit_share_percent, payout_cap_lyd, start_date, end_date, status")
-    .eq("id", agreementId)
-    .maybeSingle();
-  if (agreementError || !agreement) redirect(investorsUrl(agreementId, { type: "error", text: "Investor agreement was not found." }));
-  if (bounds.start < agreement.start_date || (agreement.end_date && bounds.start > agreement.end_date)) {
-    redirect(investorsUrl(agreementId, { type: "error", text: "The selected month is outside the agreement period." }));
-  }
-
-  const { data: existing } = await supabase
-    .from("investor_monthly_statements")
-    .select("id, calculation_status")
-    .eq("agreement_id", agreementId)
-    .eq("month_start", bounds.start)
-    .maybeSingle();
-  if (existing?.calculation_status === "finalized") {
-    redirect(investorsUrl(agreementId, { type: "error", text: "This month is finalized and cannot be recalculated." }));
-  }
-
-  const operationalReadClient = getSupabaseAdminClient() ?? supabase;
-  const [salesResult, manualSalesResult, ledgerResult, priorStatementsResult] = await Promise.all([
-    loadInvestorVmsProfit(supabase, bounds.start, bounds.end),
-    operationalReadClient
-      .from("route_manual_sales")
-      .select("id, machine_id, total_amount_lyd, inventory_movement_id, sale_time, status")
-      .eq("status", "confirmed")
-      .gte("sale_time", `${bounds.start}T00:00:00.000Z`)
-      .lte("sale_time", `${bounds.end}T23:59:59.999Z`),
-    loadFinanceLedgerRows({
-      label: `investor-statement.${bounds.start}`,
-      buildQuery: (columns, level) => {
-        let query = supabase
-          .from(FINANCE_TRANSACTIONS_TABLE)
-          .select(columns.join(","))
-          .gte("transaction_date", bounds.start)
-          .lte("transaction_date", bounds.end);
-        query = applyVisibleFinanceLedgerFilter(query, level);
-        return query;
-      },
-    }),
-    supabase
-      .from("investor_monthly_statements")
-      .select("investor_share_due_lyd")
-      .eq("agreement_id", agreementId)
-      .neq("month_start", bounds.start)
-      .eq("calculation_status", "finalized"),
-  ]);
-
-  if (salesResult.error) redirect(investorsUrl(agreementId, { type: "error", text: `VMS sales could not load: ${salesResult.error instanceof Error ? salesResult.error.message : "Unknown VMS RPC error"}` }));
-  if (manualSalesResult.error) redirect(investorsUrl(agreementId, { type: "error", text: `Manual route sales could not load: ${manualSalesResult.error.message}` }));
-  if (ledgerResult.error) redirect(investorsUrl(agreementId, { type: "error", text: "Finance expenses could not load for this month." }));
-
-  const manualSales = manualSalesResult.data ?? [];
-  const movementIds = Array.from(new Set(manualSales.map((sale) => String(sale.inventory_movement_id ?? "").trim()).filter(Boolean)));
-  const movementResult = movementIds.length
-    ? await operationalReadClient.from("inventory_movements").select("id, line_total_lyd, unit_cost_lyd").in("id", movementIds)
-    : { data: [], error: null };
-  if (movementResult.error) redirect(investorsUrl(agreementId, { type: "error", text: `Manual-sale product costs could not load: ${movementResult.error.message}` }));
-
-  const manualProfitRows = manualRouteSalesAsProfitRows(manualSales, movementResult.data ?? []);
-  const calculation = calculateInvestorMonth({
-    salesRows: [
-      ...(salesResult.data ?? []).map((row) => ({ ...row, source: "vms" })),
-      ...manualProfitRows,
-    ],
-    ledgerRows: ledgerResult.data,
-    sharePercent: Number(agreement.profit_share_percent ?? 30),
-  });
-  const paidOrDueBefore = (priorStatementsResult.data ?? []).reduce((sum, row) => sum + Number(row.investor_share_due_lyd ?? 0), 0);
-  const cap = agreement.payout_cap_lyd === null || agreement.payout_cap_lyd === undefined ? null : Number(agreement.payout_cap_lyd);
-  const remainingCap = cap === null ? null : Math.max(0, cap - paidOrDueBefore);
-  const investorDue = remainingCap === null ? calculation.investorShareDueLyd : Math.min(calculation.investorShareDueLyd, remainingCap);
-  const sourceNote = [
-    `period ${bounds.start} to ${bounds.end}`,
-    `VMS source: ${salesResult.source ?? "unavailable"}`,
-    `VMS rows: ${salesResult.data?.length ?? 0}`,
-    `VMS revenue: ${calculation.vmsRevenueLyd}`,
-    `manual sale rows: ${manualSales.length}`,
-    `manual sales revenue: ${calculation.manualSalesRevenueLyd}`,
-    `manual sales COGS: ${calculation.manualSalesCogsLyd}`,
-    `missing cost rows: ${calculation.missingCostRows}`,
-    `complete=${calculation.complete}`,
-    ledgerResult.warning ?? "finance ledger full contract",
-  ].join("; ");
-
-  const { error: saveError } = await supabase.from("investor_monthly_statements").upsert({
-    id: existing?.id,
-    agreement_id: agreementId,
-    month_start: bounds.start,
-    revenue_lyd: calculation.revenueLyd,
-    cogs_lyd: calculation.cogsLyd,
-    gross_profit_lyd: calculation.grossProfitLyd,
-    operating_expenses_lyd: calculation.operatingExpensesLyd,
-    operating_profit_lyd: calculation.operatingProfitLyd,
-    share_percent: calculation.sharePercent,
-    investor_share_due_lyd: investorDue,
-    calculation_status: "draft",
-    data_source_note: sourceNote,
-    generated_by: profile.id,
-    generated_at: new Date().toISOString(),
-    finalized_at: null,
-    updated_at: new Date().toISOString(),
-  }, { onConflict: "agreement_id,month_start" });
-  if (saveError) redirect(investorsUrl(agreementId, { type: "error", text: saveError.message }));
-
-  revalidatePath("/finance/investors");
-  revalidatePath("/investor");
-  redirect(investorsUrl(agreementId, {
-    type: calculation.complete ? "success" : "warning",
-    text: calculation.complete ? "Monthly statement calculated as a draft, including confirmed manual route sales." : "Draft calculated, but missing VMS or manual-sale product costs must be fixed before finalizing.",
-  }));
+export async function saveGrowthDecisionSettings(fd:FormData) {
+ const {profile,supabase}=await requireOwnerAdmin();
+ const {error}=await supabase.from('growth_decision_settings').upsert({
+  singleton:true,machine_cost_lyd:Math.max(0,numberValue(fd,'machine_cost_lyd',22000)),minimum_cash_reserve_lyd:Math.max(0,numberValue(fd,'minimum_cash_reserve_lyd',15000)),
+  restock_reserve_lyd:Math.max(0,numberValue(fd,'restock_reserve_lyd',10000)),minimum_monthly_operating_profit_lyd:numberValue(fd,'minimum_monthly_operating_profit_lyd',6000),
+  target_payback_months:Math.max(1,numberValue(fd,'target_payback_months',18)),minimum_history_months:Math.min(24,Math.max(1,Math.round(numberValue(fd,'minimum_history_months',3)))),updated_by:profile.id,updated_at:new Date().toISOString(),
+ },{onConflict:'singleton'});
+ if(error) redirect(`/finance/growth-decisions?error=${encodeURIComponent(error.message)}`);
+ revalidatePath('/finance/growth-decisions'); redirect('/finance/growth-decisions?success=Decision%20rules%20saved.');
 }
 
-export async function finalizeInvestorStatement(formData: FormData) {
-  const { supabase } = await requireOwnerAdmin();
-  const agreementId = text(formData, "agreement_id");
-  const statementId = text(formData, "statement_id");
-  const { data: statement, error } = await supabase
-    .from("investor_monthly_statements")
-    .select("id, month_start, calculation_status, data_source_note")
-    .eq("id", statementId)
-    .eq("agreement_id", agreementId)
-    .maybeSingle();
-  if (error || !statement) redirect(investorsUrl(agreementId, { type: "error", text: "Statement was not found." }));
-  if (statement.calculation_status === "finalized") redirect(investorsUrl(agreementId, { type: "success", text: "Statement is already finalized." }));
-  if (!String(statement.data_source_note ?? "").includes("complete=true")) {
-    redirect(investorsUrl(agreementId, { type: "error", text: "Fix missing product costs and regenerate the statement before finalizing." }));
-  }
-  const bounds = monthBounds(String(statement.month_start).slice(0, 7));
-  const today = new Date().toISOString().slice(0, 10);
-  if (!bounds || bounds.end >= today) redirect(investorsUrl(agreementId, { type: "error", text: "Only a completed month can be finalized." }));
-
-  const { error: updateError } = await supabase
-    .from("investor_monthly_statements")
-    .update({ calculation_status: "finalized", finalized_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-    .eq("id", statementId)
-    .eq("calculation_status", "draft");
-  if (updateError) redirect(investorsUrl(agreementId, { type: "error", text: updateError.message }));
-  revalidatePath("/finance/investors");
-  revalidatePath("/investor");
-  redirect(investorsUrl(agreementId, { type: "success", text: "Monthly statement finalized and visible to the investor." }));
+export async function createInvestorAgreement(fd:FormData) {
+ const {profile,supabase}=await requireOwnerAdmin();
+ const login=text(fd,'investor_user_id'),name=text(fd,'investor_name');
+ const firstMonth=text(fd,'first_month');
+ const startDate=firstMonth?monthBounds(firstMonth)?.start:text(fd,'start_date');
+ const endDate=text(fd,'end_date')||null;
+ const share=Number(text(fd,'profit_share_percent')),capital=Number(text(fd,'investment_amount_lyd')||0),cap=optionalNumber(fd,'payout_cap_lyd');
+ const basis=text(fd,'profit_basis');
+ if(!login || !name || !startDate || !/^\d{4}-\d{2}-01$/.test(startDate) || !monthBounds(startDate.slice(0,7)) || (endDate && (Number.isNaN(Date.parse(endDate)) || new Date(endDate).toISOString().slice(0,10)!==endDate || endDate<startDate)) || !Number.isFinite(share) || share<=0 || share>100 || !Number.isFinite(capital) || capital<0 || (cap!==null && (!Number.isFinite(cap)||cap<0)) || !['operating_profit','operating_profit_after_capex'].includes(basis)) {
+  redirect(investorsUrl(null,{type:'error',text:'Choose the investor, first profit-sharing month, valid amounts and agreed profit basis.'}));
+ }
+ const {data:investor,error:profileError}=await supabase.from('profiles').select('id,role,roles,active_status').eq('id',login).maybeSingle();
+ if(profileError || !investor || investor.active_status!=='active' || (investor.role!=='investor' && !(investor.roles ?? []).includes('investor'))) redirect(investorsUrl(null,{type:'error',text:'Select an active login with the Investor role.'}));
+ const {data,error}=await supabase.from('investor_agreements').insert({investor_user_id:login,investor_name:name,investment_amount_lyd:capital,profit_share_percent:share,profit_basis:basis,profit_basis_confirmed:true,start_date:startDate,end_date:endDate,payout_cap_lyd:cap,status:'active',notes:text(fd,'notes')||null,created_by:profile.id}).select('id').single();
+ if(error || !data) redirect(investorsUrl(null,{type:'error',text:error?.code==='23505'?'This investor already has an active agreement. Open it instead.':error?.message ?? 'Could not create agreement.'}));
+ revalidatePath('/finance/investors');revalidatePath('/investor');
+ redirect(investorsUrl(data.id,{type:'success',text:'Agreement created. Record or link the actual capital receipt separately; no money was posted by creating this agreement.'}));
 }
 
-export async function recordInvestorPayment(formData: FormData) {
-  const { profile, supabase } = await requireOwnerAdmin();
-  const agreementId = text(formData, "agreement_id");
-  const statementId = text(formData, "statement_id");
-  const amount = Math.max(0, numberValue(formData, "amount_lyd", 0));
-  const paymentDate = text(formData, "payment_date") || new Date().toISOString().slice(0, 10);
-  if (!agreementId || !statementId || amount <= 0) redirect(investorsUrl(agreementId, { type: "error", text: "Statement and positive payment amount are required." }));
+export async function generateInvestorStatement(fd:FormData) {
+ const {profile,supabase}=await requireOwnerAdmin();
+ const agreementId=text(fd,'agreement_id'),bounds=monthBounds(text(fd,'month'));
+ const fail=(message:string):never=>redirect(investorsUrl(agreementId,{type:'error',text:message}));
+ if(!agreementId || !bounds) fail('Choose a valid agreement and month.');
+ const {data:agreement,error:agreementError}=await supabase.from('investor_agreements').select('*').eq('id',agreementId).maybeSingle();
+ if(agreementError || !agreement) fail('Investor agreement could not be verified.');
+ if(agreement.status!=='active' || !agreement.profit_basis_confirmed) fail('Confirm the profit basis on the active agreement first.');
+ if(bounds.start<agreement.start_date || (agreement.end_date && bounds.end>agreement.end_date)) fail('Select a full month within the agreement. No partial-month entitlement is inferred.');
+ const {data:existing,error:existingError}=await supabase.from('investor_monthly_statements').select('id,calculation_status').eq('agreement_id',agreementId).eq('month_start',bounds.start).maybeSingle();
+ if(existingError) fail('Could not check the existing statement.');
+ if(existing?.calculation_status === "finalized") fail('This month is finalized and cannot be recalculated.');
+ const operationalReadClient=getSupabaseAdminClient() ?? supabase;
+ const nextDay=new Date(Date.parse(`${bounds.end}T12:00:00Z`)+86400000).toISOString().slice(0,10);
+ const [salesResult,manualSalesResult,priorStatementsResult]=await Promise.all([
+  loadInvestorVmsProfit(supabase,bounds.start,bounds.end),
+  pagedRows((from,to)=>operationalReadClient.from('route_manual_sales').select('id,machine_id,total_amount_lyd,inventory_movement_id,sale_time,status').eq('status','confirmed').gte('sale_time',`${bounds.start}T00:00:00+02:00`).lt('sale_time',`${nextDay}T00:00:00+02:00`).order('id').range(from,to)),
+  supabase.from('investor_monthly_statements').select('investor_share_due_lyd').eq('agreement_id',agreementId).neq('month_start',bounds.start).eq('calculation_status','finalized'),
+ ]);
+ if(salesResult.error) fail('VMS sales could not load. No zero revenue was assumed.');
+ if(manualSalesResult.error) fail('Manual route sales could not load.');
+ if(priorStatementsResult.error) fail('Prior investor entitlements could not load.');
+ const ledgerRows:any[]=[];
+ for(let from=0;from<100000;from+=500) {
+  const ledger=await loadFinanceLedgerRows({label:`investor-statement.${bounds.start}.${from}`,buildQuery:(columns,level)=>applyVisibleFinanceLedgerFilter(supabase.from(FINANCE_TRANSACTIONS_TABLE).select(columns.join(',')).gte('transaction_date',bounds.start).lte('transaction_date',bounds.end).order('id').range(from,from+499),level)});
+  if(ledger.error || ledger.level!=='full') fail('Complete Finance amounts, currencies, exchange rates and categories must load before calculating investor profit.');
+  ledgerRows.push(...ledger.data); if(ledger.data.length<500) break;
+  if(from===99500) fail('Finance source exceeded the safe verification limit.');
+ }
+ const movementIds=Array.from(new Set(manualSalesResult.data.map((row:any)=>String(row.inventory_movement_id??'')).filter(Boolean)));
+ const movements:any[]=[];
+ for(let offset=0;offset<movementIds.length;offset+=250) {
+  const result=await operationalReadClient.from('inventory_movements').select('id,line_total_lyd,unit_cost_lyd').in('id',movementIds.slice(offset,offset+250));
+  if(result.error) fail('Manual-sale product costs could not load.'); movements.push(...(result.data??[]));
+ }
+ const manualProfitRows=manualRouteSalesAsProfitRows(manualSalesResult.data,movements);
+ const calculation=calculateInvestorMonth({salesRows:[...salesResult.data,...manualProfitRows],ledgerRows,sharePercent:Number(agreement.profit_share_percent),profitBasis:agreement.profit_basis as InvestorProfitBasis});
+ const pendingExpenseRows=ledgerRows.filter((row)=>row.direction==='money_out' && row.transaction_status==='active' && !row.is_void && (row.needs_review || row.review_status==='needs_review'));
+ const complete=calculation.complete && pendingExpenseRows.length===0;
+ const priorDue=(priorStatementsResult.data??[]).reduce((sum,row)=>sum+Number(row.investor_share_due_lyd),0);
+ const cap=agreement.payout_cap_lyd==null?null:Number(agreement.payout_cap_lyd);
+ const investorDue=cap===null?calculation.investorShareDueLyd:Math.min(calculation.investorShareDueLyd,Math.max(0,cap-priorDue));
+ const sourceNote=[`period ${bounds.start} to ${bounds.end}`,`VMS source: ${salesResult.source}`,`manual sales revenue: ${calculation.manualSalesRevenueLyd}`,`manual sales COGS: ${calculation.manualSalesCogsLyd}`,`stock cash-out (not deducted twice): ${calculation.stockPurchasesLyd}`,`unreviewed expenses: ${pendingExpenseRows.length}`,`complete=${complete}`,...calculation.accountingWarnings].join('; ');
+ const {error:saveError}=await supabase.from('investor_monthly_statements').upsert({
+  ...(existing?.id?{id:existing.id}:{}),agreement_id:agreementId,month_start:bounds.start,revenue_lyd:calculation.revenueLyd,cogs_lyd:calculation.cogsLyd,gross_profit_lyd:calculation.grossProfitLyd,
+  operating_expenses_lyd:calculation.operatingExpensesLyd,operating_profit_lyd:calculation.operatingProfitLyd,capital_purchases_lyd:calculation.capitalPurchasesLyd,
+  distribution_basis_lyd:calculation.distributionBasisLyd,profit_basis:calculation.profitBasis,expense_breakdown:calculation.expenseBreakdown,source_complete:complete,review_checks:null,
+  share_percent:calculation.sharePercent,investor_share_due_lyd:investorDue,calculation_status:'draft',data_source_note:sourceNote,generated_by:profile.id,generated_at:new Date().toISOString(),finalized_at:null,updated_at:new Date().toISOString(),
+ },{onConflict:'agreement_id,month_start'});
+ if(saveError) fail(saveError.message);
+ revalidatePath('/finance/investors');revalidatePath('/investor');
+ redirect(investorsUrl(agreementId,{type:complete?'success':'warning',text:complete?'Monthly draft ready. Review rent/payroll, all expenses, sales completeness and machine purchases before finalizing.':'Draft is incomplete. Resolve sales costs, unreviewed expenses or missing USD rates, then recalculate. No entitlement was finalized.'}));
+}
 
-  const [{ data: statement }, { data: priorPayments }] = await Promise.all([
-    supabase
-      .from("investor_monthly_statements")
-      .select("id, month_start, investor_share_due_lyd, calculation_status, agreement_id")
-      .eq("id", statementId)
-      .eq("agreement_id", agreementId)
-      .maybeSingle(),
-    supabase.from("investor_payments").select("amount_lyd").eq("statement_id", statementId),
-  ]);
-  if (!statement || statement.calculation_status !== "finalized") redirect(investorsUrl(agreementId, { type: "error", text: "Only finalized monthly statements can be paid." }));
-  const alreadyPaid = (priorPayments ?? []).reduce((sum, row) => sum + Number(row.amount_lyd ?? 0), 0);
-  const remaining = Math.max(0, Number(statement.investor_share_due_lyd ?? 0) - alreadyPaid);
-  if (amount > remaining + 0.005) redirect(investorsUrl(agreementId, { type: "error", text: `Payment exceeds the remaining ${remaining.toFixed(2)} LYD due.` }));
+export async function finalizeInvestorStatement(fd:FormData) {
+ const {supabase}=await requireOwnerAdmin();
+ const agreementId=text(fd,'agreement_id'),statementId=text(fd,'statement_id');
+ const checks=Object.fromEntries(['sales','rent_payroll','expenses','capital'].map((key)=>[key,text(fd,`review_${key}`)==='yes']));
+ const {error}=await supabase.rpc('snacky_finalize_investor_statement_v1',{p_statement_id:statementId,p_generated_at:text(fd,'generated_at'),p_review_checks:checks});
+ if(error) redirect(investorsUrl(agreementId,{type:'error',text:error.message}));
+ revalidatePath('/finance/investors');revalidatePath('/investor');
+ redirect(investorsUrl(agreementId,{type:'success',text:'Monthly entitlement finalized. It remains unpaid until an actual payout is recorded.'}));
+}
 
-  const { data: payment, error: paymentError } = await supabase
-    .from("investor_payments")
-    .insert({
-      agreement_id: agreementId,
-      statement_id: statementId,
-      payment_date: paymentDate,
-      amount_lyd: amount,
-      payment_reference: text(formData, "payment_reference") || null,
-      notes: text(formData, "notes") || null,
-      finance_posting_status: "pending",
-      recorded_by: profile.id,
-    })
-    .select("id")
-    .single();
-  if (paymentError || !payment?.id) redirect(investorsUrl(agreementId, { type: "error", text: paymentError?.message ?? "Could not save investor payment." }));
-
-  const transactionPayload = {
-    transaction_date: paymentDate,
-    transaction_datetime: `${paymentDate}T12:00:00.000Z`,
-    direction: "money_out",
-    transaction_kind: "investor_distribution",
-    transaction_type: "Investor Profit Share",
-    description: `Investor profit share for ${String(statement.month_start).slice(0, 7)}`,
-    notes: text(formData, "notes") || null,
-    amount,
-    signed_amount: -amount,
-    currency: "LYD",
-    account_id: "snacky_lyd",
-    transaction_effect: "expense",
-    category: "Investor Profit Share",
-    final_bucket: "Investor Profit Share",
-    payment_method: text(formData, "payment_method") || "cash",
-    source_type: "investor_payment",
-    source_id: payment.id,
-    transaction_status: "active",
-    import_status: "imported",
-    needs_review: false,
-    created_by: profile.id,
-  };
-
-  const { data: financeTransaction, error: financeError } = await supabase
-    .from(FINANCE_TRANSACTIONS_TABLE)
-    .insert(transactionPayload)
-    .select("id")
-    .single();
-  await supabase
-    .from("investor_payments")
-    .update(financeError || !financeTransaction?.id
-      ? { finance_posting_status: "needs_review", finance_posting_error: financeError?.message ?? "Finance transaction ID was not returned." }
-      : { finance_posting_status: "posted", finance_transaction_id: financeTransaction.id, finance_posting_error: null })
-    .eq("id", payment.id);
-
-  revalidatePath("/finance/investors");
-  revalidatePath("/finance");
-  revalidatePath("/finance/operations");
-  revalidatePath("/investor");
-  redirect(investorsUrl(agreementId, financeError
-    ? { type: "warning", text: "Payment was recorded, but its Finance ledger posting needs review." }
-    : { type: "success", text: "Investor payment recorded and posted to Finance." }));
+/** Compatibility entry point. New forms use the same atomic command directly. */
+export async function recordInvestorPayment(fd:FormData) {
+ fd.set('kind','payout');fd.set('entity_id',text(fd,'statement_id'));fd.set('amount',text(fd,'amount_lyd'));fd.set('date',text(fd,'payment_date'));fd.set('account',text(fd,'account_id')||'snacky_lyd');fd.set('method',text(fd,'payment_method')||'cash');fd.set('reference',text(fd,'payment_reference'));fd.set('confirm','yes');
+ const result=await recordInvestorCommand(fd);
+ redirect(investorsUrl(text(fd,'agreement_id'),{type:result.ok?'success':'error',text:result.message}));
 }
