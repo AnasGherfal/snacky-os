@@ -49,7 +49,9 @@ export function readSavedBusinessRecord(raw: string, kind: BusinessRecordKind): 
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid saved request");
   const record = value as Record<string, unknown>;
   if (record.kind !== kind || !commandIdPattern.test(String(record.client_submission_id ?? "")) || Object.values(record).some((item) => typeof item !== "string")) throw new Error("Invalid saved request");
-  // Preserve exact submitted values. Server-side validation and its durable
-  // database receipt remain authoritative, including on a later-day retry.
-  return record as Record<string, string>;
+  const request = record as Record<string, string>;
+  // A surviving UUID without its original fields may refer to a committed
+  // operation. Never clear it merely because a truncated payload is invalid.
+  if (validateBusinessRecord(kind, request)) throw new Error("Incomplete saved request; review history before creating another entry");
+  return request;
 }
