@@ -4,42 +4,23 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { isOwnerAdminRole } from "@/lib/authz";
+import { logActivity } from "@/lib/activity-log";
+const clean=(fd:FormData,key:string)=>String(fd.get(key)??'').trim();
+const validDate=(date:string)=>/^\d{4}-\d{2}-\d{2}$/.test(date)&&!Number.isNaN(Date.parse(date))&&new Date(date).toISOString().slice(0,10)===date;
 
-const clean = (formData: FormData, key: string) => String(formData.get(key) ?? "").trim();
-const optionalNumber = (formData: FormData, key: string) => {
-  const raw = clean(formData, key);
-  if (!raw) return null;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) ? parsed : null;
-};
-
-export async function updateInvestorAgreement(formData: FormData) {
-  const profile = await getCurrentProfile();
-  if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
-  const agreementId = clean(formData, "agreement_id");
-  const supabase = await getAuthenticatedSupabaseServerClient();
-  if (!supabase || !agreementId) redirect("/finance/investors?error=Missing%20investor%20agreement.");
-
-  const startDate = clean(formData, "start_date");
-  const endDate = clean(formData, "end_date") || null;
-  if (!startDate || (endDate && endDate < startDate)) {
-    redirect(`/finance/investors?agreement=${agreementId}&error=Agreement%20dates%20are%20invalid.`);
-  }
-
-  const { error } = await supabase.from("investor_agreements").update({
-    investor_name: clean(formData, "investor_name"),
-    investment_amount_lyd: Math.max(0, Number(optionalNumber(formData, "investment_amount_lyd") ?? 0)),
-    profit_share_percent: Math.min(100, Math.max(0, Number(optionalNumber(formData, "profit_share_percent") ?? 30))),
-    start_date: startDate,
-    end_date: endDate,
-    payout_cap_lyd: optionalNumber(formData, "payout_cap_lyd"),
-    status: clean(formData, "status") || "active",
-    notes: clean(formData, "notes") || null,
-    updated_at: new Date().toISOString(),
-  }).eq("id", agreementId);
-
-  if (error) redirect(`/finance/investors?agreement=${agreementId}&error=${encodeURIComponent(error.message)}`);
-  revalidatePath("/finance/investors");
-  revalidatePath("/investor");
-  redirect(`/finance/investors?agreement=${agreementId}&success=Investor%20agreement%20updated.`);
+export async function updateInvestorAgreement(fd:FormData) {
+ const profile=await getCurrentProfile();if(!profile||profile.active_status!=='active'||!isOwnerAdminRole(profile))redirect('/unauthorized');
+ const id=clean(fd,'agreement_id'),db=await getAuthenticatedSupabaseServerClient();
+ const fail=(message:string):never=>redirect(`/finance/investors?agreement=${encodeURIComponent(id)}&error=${encodeURIComponent(message)}`);
+ if(!db||!id)fail('Missing investor agreement or database session.');
+ const {data:before,error:loadError}=await db.from('investor_agreements').select('*').eq('id',id).maybeSingle();
+ if(loadError||!before)fail('Could not verify the investor agreement.');
+ const name=clean(fd,'investor_name'),start=clean(fd,'start_date'),end=clean(fd,'end_date')||null,basis=clean(fd,'profit_basis'),status=clean(fd,'status');
+ const share=Number(clean(fd,'profit_share_percent')),capital=Number(clean(fd,'investment_amount_lyd')),cap=clean(fd,'payout_cap_lyd')?Number(clean(fd,'payout_cap_lyd')):null;
+ if(!name||!validDate(start)||!start.endsWith('-01')||(end&&(!validDate(end)||end<start))||!['operating_profit','operating_profit_after_capex'].includes(basis)||!['draft','active','completed','cancelled'].includes(status)||!Number.isFinite(share)||share<=0||share>100||!Number.isFinite(capital)||capital<0||(cap!==null&&(!Number.isFinite(cap)||cap<0)))fail('Check the dates, positive share percentage, capital amount and agreed profit basis.');
+ const {data:after,error}=await db.from('investor_agreements').update({investor_name:name,investment_amount_lyd:capital,profit_share_percent:share,start_date:start,end_date:end,profit_basis:basis,profit_basis_confirmed:true,payout_cap_lyd:cap,status,notes:clean(fd,'notes')||null,updated_at:new Date().toISOString()}).eq('id',id).select('*').single();
+ if(error||!after)fail(error?.message??'Agreement update could not be confirmed.');
+ await logActivity({profile,action:'update_investor_agreement',entityType:'investor_agreement',entityId:id,entityLabel:name,beforeData:before,afterData:after,summary:'Updated investor agreement terms; no capital receipt or payout was posted'});
+ revalidatePath('/finance/investors');revalidatePath('/investor');
+ redirect(`/finance/investors?agreement=${id}&success=${encodeURIComponent('Agreement saved. Capital receipts and payouts remain separate money records.')}`);
 }
