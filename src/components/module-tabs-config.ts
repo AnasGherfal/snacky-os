@@ -30,8 +30,15 @@ const machinesTabs: ModuleTab[] = [
   { label: "Maintenance", href: "/machines/maintenance", labelAr: "الصيانة" },
 ];
 const crmTabs: ModuleTab[] = [
+  { label: "My Work", href: "/my-work", labelAr: "عملي اليوم", exact: true },
   { label: "Leads & Visits", href: "/locations-pipeline", labelAr: "الجهات والزيارات" },
   { label: "Customer Issues", href: "/issues", labelAr: "مشاكل العملاء" },
+  { label: "Existing Locations", href: "/relationships", labelAr: "المواقع الحالية", exact: true },
+  { label: "Contacts", href: "/contacts", labelAr: "جهات الاتصال" },
+  { label: "Follow-ups", href: "/follow-ups", labelAr: "المتابعات" },
+  { label: "Location Payments", href: "/relationships/obligations", labelAr: "دفعات المواقع" },
+  { label: "Search", href: "/my-work/search", labelAr: "البحث" },
+  { label: "Team Work", href: "/my-work/team", labelAr: "عمل الفريق" },
 ];
 const financeTabs: ModuleTab[] = [
   { label: "Overview", href: "/finance", labelAr: "نظرة عامة", exact: true },
@@ -76,7 +83,7 @@ const groups: Record<AppModuleKey, ModuleTabGroup> = {
   cash: { name: "Cash", nameAr: "النقدية", tabs: cashTabs },
   stock: { name: "Stock & Purchasing", nameAr: "المخزون والمشتريات", tabs: stockTabs },
   machines: { name: "Machines", nameAr: "الماكينات", tabs: machinesTabs },
-  crm: { name: "CRM", nameAr: "العملاء والجهات", tabs: crmTabs },
+  crm: { name: "Customer Relations", nameAr: "علاقات العملاء", tabs: crmTabs },
   finance: { name: "Finance", nameAr: "المالية", tabs: financeTabs },
   reports: { name: "Reports", nameAr: "التقارير", tabs: reportsTabs },
   admin: { name: "Admin", nameAr: "الإدارة", tabs: adminTabs },
