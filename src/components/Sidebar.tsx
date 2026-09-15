@@ -86,7 +86,13 @@ const operatorIssuesItem: NavItem = {
   labelKey: "issues",
   href: "/operator/issues",
   icon: AlertCircle,
-  activePrefixes: ["/operator/issues"],
+  exact: true,
+};
+const operatorTasksItem: NavItem = {
+  label: { en: "Customer issue tasks", ar: "مهام مشاكل العملاء" },
+  href: "/operator/issues/actions",
+  icon: ClipboardList,
+  activePrefixes: ["/operator/issues/actions", "/follow-ups"],
 };
 const accountItem: NavItem = {
   labelKey: "account",
@@ -124,8 +130,8 @@ const machinesItem: NavItem = {
   moduleKey: "machines",
 };
 const crmItem: NavItem = {
-  label: { en: "CRM", ar: "العملاء والجهات" },
-  href: "/locations-pipeline",
+  label: { en: "Customer Relations", ar: "علاقات العملاء" },
+  href: "/my-work",
   icon: UserCircle,
   moduleKey: "crm",
 };
@@ -185,6 +191,7 @@ const operatorNavItems: NavItem[] = [
   operatorAvailableRoutesItem,
   cashRemovalItem,
   operatorIssuesItem,
+  operatorTasksItem,
 ];
 
 function itemIdentity(item: NavItem) {

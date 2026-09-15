@@ -5,6 +5,7 @@ select current_database()='crm_tests' as isolated \gset
  \echo 'Refusing fixtures outside crm_tests'
  \quit 2
 \endif
+create role authenticator nologin;
 create role anon nologin;
 create role authenticated nologin;
 create role service_role nologin bypassrls;
@@ -43,6 +44,7 @@ create policy fixture_self on public.profiles for select to authenticated using(
 \ir ../supabase/migrations/20260915200100_connected_relations_commands.sql
 \ir ../supabase/migrations/20260915200200_connected_relations_reads.sql
 \ir ../supabase/migrations/20260915200300_connected_relations_guards.sql
+\ir ../supabase/migrations/20260915200400_connected_relations_api_boundary.sql
 begin;
 insert into auth.users values('11111111-1111-4111-8111-111111111111'),('22222222-2222-4222-8222-222222222222'),('33333333-3333-4333-8333-333333333333'),('44444444-4444-4444-8444-444444444444'),('55555555-5555-4555-8555-555555555555');
 insert into public.team_members(id,full_name,role,roles,auth_user_id) values
@@ -58,7 +60,7 @@ insert into public.finance_opening_balances(balance) values(98765);
 select set_config('request.jwt.claim.sub','11111111-1111-4111-8111-111111111111',true);
 set local role authenticated;
 do $$
-declare lead uuid;issue uuid;task uuid;contact uuid;site uuid;rent uuid;res jsonb;again jsonb;payload jsonb;version text;blocked boolean;count_before int;
+declare lead uuid;issue uuid;task uuid;contact uuid;site uuid;rent uuid;res jsonb;again jsonb;payload jsonb;version text;blocked boolean;count_before int;history_first jsonb;history_next jsonb;j integer;
 begin
  payload:=jsonb_build_object('place_name','Fixture university','place_type','university','assigned_to','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','visibility','assigned','next_action','Call manager','next_action_date',current_date-1);
  res:=public.snacky_crm_command_v1('10000000-0000-4000-8000-000000000001','lead.save',null,payload);lead:=(res->>'id')::uuid;
@@ -74,6 +76,20 @@ begin
  if exists(select 1 from public.finance_opening_balances) or exists(select 1 from public.machines) or exists(select 1 from public.locations) then raise exception 'CRM can access unfiltered raw balances/machine/location records';end if;
  if (select count(*) from public.team_members)<>1 then raise exception 'CRM raw directory is not self-only';end if;
  perform public.snacky_crm_command_v1(gen_random_uuid(),'note.add',lead,'{"kind":"lead","activity_type":"call","summary":"Manager interested; meeting requested."}');
+ perform set_config('request.path','/rpc/snacky_crm_workspace_v1',true);perform set_config('request.method','POST',true);
+ perform public.snacky_crm_api_request_guard();
+ perform set_config('request.path','/rpc/legacy_finance_function',true);
+ blocked:=false;begin perform public.snacky_crm_api_request_guard();exception when insufficient_privilege then blocked:=true;end;if not blocked then raise exception 'CRM legacy RPC boundary failed';end if;
+ perform set_config('request.path','/profiles',true);perform set_config('request.method','PATCH',true);
+ blocked:=false;begin perform public.snacky_crm_api_request_guard();exception when insufficient_privilege then blocked:=true;end;if not blocked then raise exception 'CRM raw profile edit boundary failed';end if;
+ perform set_config('request.path','/rpc/snacky_crm_command_v1',true);perform set_config('request.method','POST',true);
+ for j in 1..45 loop
+  perform public.snacky_crm_command_v1(gen_random_uuid(),'note.add',lead,jsonb_build_object('kind','lead','activity_type','note','summary','Timeline fixture '||j));
+ end loop;
+ history_first:=public.snacky_crm_timeline_v1('lead',lead,0);history_next:=public.snacky_crm_timeline_v1('lead',lead,40);
+ if jsonb_array_length(history_first->'rows')<>40 or jsonb_array_length(history_next->'rows')=0 then raise exception 'Older history is not accessible';end if;
+ if exists(select 1 from jsonb_array_elements(history_first->'rows') a join jsonb_array_elements(history_next->'rows') b on a->>'id'=b->>'id') then raise exception 'History pages overlap';end if;
+
  res:=public.snacky_crm_command_v1(gen_random_uuid(),'contact.save',null,jsonb_build_object('name','Fixture manager contact','phone','0911234567','kind','lead','related_id',lead));contact:=(res->>'id')::uuid;
  again:=public.snacky_crm_command_v1(gen_random_uuid(),'contact.save',null,jsonb_build_object('name','Same person','phone','+218911234567','kind','lead','related_id',lead));
  if again->>'id'<>contact::text then raise exception 'Contact phone normalization duplicated person';end if;
@@ -109,6 +125,12 @@ begin
  if res#>>'{record,status}'<>'paid' or res#>>'{record,data,finance_verified_at}' is not null then raise exception 'Administrative paid state confused with Finance';end if;
  perform set_config('request.jwt.claim.sub','33333333-3333-4333-8333-333333333333',true);
  if exists(select 1 from public.location_admin_obligations) then raise exception 'Unassigned rent leaked';end if;
+ if exists(select 1 from public.crm_activities where obligation_id=rent) then raise exception 'Rent amount leaked through location activity';end if;
+ res:=public.snacky_crm_workspace_v1('location','99999999-9999-4999-8999-999999999999');
+ if (res->'activities')::text like '%Fixture rent%' then raise exception 'Rent leaked through location timeline';end if;
+ res:=public.snacky_crm_workspace_v1('search',null,'{"q":"Fixture rent"}');
+ if (res->>'total')::int<>0 then raise exception 'Private rent found through global search';end if;
+
  perform set_config('request.jwt.claim.sub','11111111-1111-4111-8111-111111111111',true);
  if exists(select 1 from public.financial_transactions) then raise exception 'CRM workflow invented a payment';end if;
  res:=public.snacky_crm_workspace_v1('management');
@@ -116,6 +138,17 @@ begin
  perform set_config('request.jwt.claim.sub','55555555-5555-4555-8555-555555555555',true);
  blocked:=false;begin perform public.snacky_crm_workspace_v1('work');exception when insufficient_privilege then blocked:=true;end;if not blocked then raise exception 'Investor entered CRM workspace';end if;
  raise notice 'PASS: scoped ownership, private leads, unified overdue work, retained conversion history, reusable contacts, operator handoff, retained resolution, rent proof, no Finance writes, investor isolation';
+end $$;
+reset role;
+-- Restricted inactive accounts must remain restricted, not gain legacy access.
+update public.profiles set active_status='inactive' where id='22222222-2222-4222-8222-222222222222';
+select set_config('request.jwt.claim.sub','22222222-2222-4222-8222-222222222222',true);
+set local role authenticated;
+do $$declare blocked boolean:=false;begin
+ if not public.snacky_crm_is_limited() then raise exception 'Deactivation bypasses limited-role boundary';end if;
+ if exists(select 1 from public.finance_opening_balances) then raise exception 'Inactive CRM can read balances';end if;
+ begin perform public.snacky_crm_api_request_guard();exception when insufficient_privilege then blocked:=true;end;
+ if not blocked then raise exception 'Inactive CRM passed API request guard';end if;
 end $$;
 reset role;
 rollback;

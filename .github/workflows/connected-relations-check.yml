@@ -60,6 +60,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Public browser-test dependencies
+        run: tar -czf diagnostics/browser-libs.tar.gz node_modules/react node_modules/react-dom node_modules/scheduler
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crm-browser-libs
+          path: diagnostics/browser-libs.tar.gz
+          retention-days: 2
       - name: Actual migrations, cross-team workflows, no-money side effects and RLS
         env:
           PGHOST: localhost
@@ -78,6 +85,12 @@ jobs:
         run: |
           npm run build > diagnostics/build.log 2>&1 || { tail -n 90 diagnostics/build.log; exit 1; }
           tail -n 35 diagnostics/build.log
+          find .next/static -name '*.css' -print0 | tar --null -T - -czf diagnostics/browser-styles.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crm-browser-styles
+          path: diagnostics/browser-styles.tar.gz
+          retention-days: 2
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

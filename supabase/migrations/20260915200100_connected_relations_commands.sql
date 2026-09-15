@@ -83,6 +83,7 @@ begin
   if coalesce(p->>'status',lead.status)='machine_placed' and lead.converted_location_id is null then raise exception 'Convert an accepted lead instead of marking a machine as placed';end if;
   -- Partial saves preserve unspecified fields. Assignment uses the same team ID everywhere.
   select * into lead from jsonb_populate_record(lead,p-array['assigned_to','is_practice','version']);
+  lead.google_maps_url:=nullif(trim(lead.google_maps_url),'');lead.website:=nullif(trim(lead.website),'');
   if lead.google_maps_url is not null and lead.google_maps_url!~'^https?://' then raise exception 'Map links must use http or https';end if;
   if lead.website is not null and lead.website!~'^https?://' then raise exception 'Website links must use http or https';end if;
   update public.location_pipeline_leads set place_name=trim(lead.place_name),place_type=lead.place_type,status=lead.status,assigned_to_user_id=assignee,
@@ -188,7 +189,7 @@ begin
   if previous is not null and p->>'version' is distinct from (previous->>'updated_at')::timestamptz::text then raise exception 'Location relationship changed. Reload before saving' using errcode='40001';end if;
   insert into public.location_relationships(location_id,assigned_to,next_action,next_action_date,next_action_time,notes,agreement_type,payment_frequency,created_by,updated_by)
   values(target,coalesce(nullif(p->>'assigned_to','')::uuid,(previous->>'assigned_to')::uuid,me),coalesce(p->>'next_action',previous->>'next_action'),coalesce(nullif(p->>'next_action_date','')::date,(previous->>'next_action_date')::date),nullif(p->>'next_action_time','')::time,coalesce(p->>'notes',previous->>'notes'),coalesce(p->>'agreement_type',previous->>'agreement_type','other'),coalesce(p->>'payment_frequency',previous->>'payment_frequency','monthly'),me,me)
-  on conflict(location_id) do update set assigned_to=excluded.assigned_to,next_action=excluded.next_action,next_action_date=excluded.next_action_date,next_action_time=excluded.next_action_time,notes=excluded.notes,agreement_type=excluded.agreement_type,payment_frequency=excluded.payment_frequency,updated_by=me,updated_at=now();
+  on conflict(location_id) do update set assigned_to=excluded.assigned_to,next_action=excluded.next_action,next_action_date=case when p?'next_action_date' then nullif(p->>'next_action_date','')::date else location_relationships.next_action_date end,next_action_time=excluded.next_action_time,notes=excluded.notes,agreement_type=excluded.agreement_type,payment_frequency=excluded.payment_frequency,updated_by=me,updated_at=now();
   kind:='location';
 
  elsif p_action='lead.convert' then
@@ -271,7 +272,9 @@ begin
   elsif kind='issue' then update public.issues set archived_at=case when coalesce((p->>'restore')::boolean,false) then null else now() end,archive_reason=p->>'reason',updated_at=now(),updated_by=me where id=target;
   elsif kind='task' then update public.crm_tasks set archived_at=case when coalesce((p->>'restore')::boolean,false) then null else now() end,updated_at=now(),updated_by=me where id=target;
   elsif kind='contact' then update public.crm_contacts set archived_at=case when coalesce((p->>'restore')::boolean,false) then null else now() end,updated_at=now(),updated_by=me where id=target;
-  elsif kind='obligation' then update public.location_admin_obligations set status='cancelled',notes=concat_ws(E'\n',notes,p->>'reason'),updated_at=now(),updated_by=me where id=target and status='open';
+  elsif kind='obligation' then
+   if coalesce((p->>'restore')::boolean,false) or not exists(select 1 from public.location_admin_obligations where id=target and status='open') then raise exception 'Only an open obligation can be cancelled; paid history cannot be reversed here';end if;
+   update public.location_admin_obligations set status='cancelled',notes=concat_ws(E'\n',notes,p->>'reason'),updated_at=now(),updated_by=me where id=target and status='open';
   else raise exception 'Unsupported archive target';end if;
   perform public.snacky_crm_emit(kind,target,'archive_change',trim(p->>'reason'));
  else raise exception 'Unsupported relationship action' using errcode='22023';end if;

@@ -17,7 +17,7 @@ export function crmContactLink(kind:'phone'|'whatsapp'|'email',value:unknown):st
 export function crmStatus(status:string,ar:boolean):string {const row=[...leadStatuses,...issueStatuses,...taskStatuses].find(r=>r[0]===status);if(row)return row[ar?2:1];const legacy:Record<string,[string,string]>={machine_placed:['Active location','موقع فعّال'],meeting_needed:['Meeting needed','يحتاج موعداً'],visited:['Visited','تمت الزيارة'],trial_contract:['Trial / contract','تجربة / عقد'],paid:['Reported paid','مسجّل كمدفوع'],not_applicable:['Not applicable','لا ينطبق'],cancelled:['Cancelled','ملغى'],active:['Active','فعّال'],closed:['Resolved','تم الحل']};return legacy[status]?.[ar?1:0]??status;}
 export function crmOptionRows(rows:readonly (readonly [string,string,string])[],ar:boolean):CrmOption[]{return rows.map(row=>({value:row[0],label:row[ar?2:1]}));}
 const numericFields=new Set(['estimated_traffic','rent_expectation','amount_involved_lyd','refund_amount_lyd','amount_lyd']);
-const nullableFields=new Set(['machine_id','product_id','due_time','next_action_time','next_action_date','happened_at','existing_location_id','related_id','finance_transaction_id',...numericFields]);
+const nullableFields=new Set(['machine_id','product_id','due_time','next_action_time','next_action_date','happened_at','existing_location_id','related_id','finance_transaction_id','google_maps_url','website',...numericFields]);
 export function crmPayload(values:Record<string,string>):Record<string,unknown> {
  const out:Record<string,unknown>={};
  for(const [name,value] of Object.entries(values)){
@@ -25,7 +25,8 @@ export function crmPayload(values:Record<string,string>):Record<string,unknown> 
   if(value.length>4000)throw new Error('A field is too long');
   if(value===''&&nullableFields.has(name)){out[name]=null;continue;}
   if(numericFields.has(name)){const n=Number(value);if(!Number.isFinite(n)||n<0)throw new Error('Use a valid non-negative amount');out[name]=n;}
-  else if(name==='happened_at'&&value){if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value))throw new Error('Invalid incident time');out[name]=`${value}:00+02:00`;}
+  else if(name==='happened_at'&&value){if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/.test(value)||Number.isNaN(Date.parse(value)))throw new Error('Invalid incident time');out[name]=`${value.length===16?value+':00':value}+02:00`;}
+  else if(['google_maps_url','website'].includes(name)&&value){const url=new URL(value);if(!['https:','http:'].includes(url.protocol)||url.username||url.password)throw new Error('Use a public http or https URL');out[name]=value;}
   else out[name]=value;
  }
  return out;

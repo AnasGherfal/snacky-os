@@ -1,3 +1,3 @@
-import {CrmWorkspace} from '@/components/CrmWorkspace';
+import {CrmWorkspace,type CrmSearchParams} from '@/components/CrmWorkspace';
 export const dynamic='force-dynamic';
-export default async function Page({params}:{params:Promise<{id:string}>}){return <CrmWorkspace section="obligation" id={(await params).id}/>;}
+export default async function Page({params,searchParams}:{params:Promise<{id:string}>;searchParams:Promise<CrmSearchParams>}){return <CrmWorkspace section="obligation" id={(await params).id} searchParams={await searchParams}/>;}
