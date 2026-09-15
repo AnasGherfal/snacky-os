@@ -2,11 +2,12 @@ name: Historical investor records
 on:
   pull_request:
     paths:
-      - 'src/lib/investor-history.ts'
+      - 'src/lib/investor-history*.ts'
       - 'src/components/InvestorHistory*.tsx'
       - 'src/app/investor/layout.tsx'
       - 'src/app/finance/investors/layout.tsx'
       - 'supabase/migrations/*investor_historical*'
+      - 'supabase/migrations/*investor_history*'
       - 'scripts/test-investor-history*'
       - '.github/workflows/investor-history-check.yml'
 permissions:
