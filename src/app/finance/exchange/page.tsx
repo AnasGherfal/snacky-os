@@ -7,7 +7,8 @@ import { accountLabel, formatFinanceMoney } from "@/lib/finance-balance";
 import { businessDate } from "@/lib/business-record-validation";
 
 export const dynamic = "force-dynamic";
-export default async function CurrencyExchangePage() {
+export default async function CurrencyExchangePage({ searchParams }: { searchParams: Promise<{ recorded?: string }> }) {
+  const { recorded = "" } = await searchParams;
   const profile = await requireCurrentProfileForPath("/finance/exchange");
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) return <ErrorState title="Currency exchanges unavailable" body="Could not connect to Finance. Nothing has been recorded." />;
@@ -15,9 +16,11 @@ export default async function CurrencyExchangePage() {
     .select("id, transaction_date, amount, transfer_destination_amount, source_account_id, destination_account_id, exchange_rate_usd_to_lyd, transaction_status, notes")
     .eq("source_type", "currency_exchange").order("transaction_date", { ascending: false }).order("created_at", { ascending: false }).limit(100);
   if (error) return <ErrorState title="Could not load currency exchanges" body="The currency-exchange database update may not be active, or Finance could not be loaded. Retry before recording an exchange." action={<SecondaryButton href="/finance/exchange">Retry</SecondaryButton>} />;
+  const saved = exchanges?.find((entry) => entry.id === recorded);
   return <>
     <PageHeader title="Buy USD / شراء الدولار" subtitle="Record the LYD you paid and the USD you received. This is an account transfer, not a supplier payment." breadcrumbs={[{ label: "Finance", href: "/finance" }, { label: "Buy USD" }]} />
-    {hasPermission(profile, "finance.edit") ? <BusinessRecordForm kind="exchange" userId={profile.id} today={businessDate()} /> : null}
+    {saved ? <p role="status" className="mb-4 rounded-lg bg-emerald-50 p-4 text-sm text-emerald-900">Exchange recorded: {formatFinanceMoney(Number(saved.amount), "LYD")} → {formatFinanceMoney(Number(saved.transfer_destination_amount), "USD")}.</p> : null}
+    {hasPermission(profile, "finance.edit") ? <BusinessRecordForm key={`exchange:${profile.id}:${recorded}`} kind="exchange" userId={profile.id} today={businessDate()} /> : null}
     <section className="surface-card mt-6">
       <h2 className="mb-4 text-lg font-semibold">Currency exchange history / سجل شراء الدولار</h2>
       {!exchanges?.length ? <EmptyState title="No exchanges recorded here yet" body="New exchanges will appear here and in Finance → Transactions. Historical imports remain in their existing ledger records." /> : <DataTable headers={["Date", "LYD paid", "USD received", "Accounts", "LYD per USD", "Status", "Note", "Record"]}>
