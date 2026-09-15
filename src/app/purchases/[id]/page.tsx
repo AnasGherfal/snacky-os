@@ -8,6 +8,7 @@ import { canManagePurchases, canRecordPurchasePayments, isAdminRole } from "@/li
 import { accountLabel } from "@/lib/finance-balance";
 import { lyd } from "@/lib/format";
 import { purchaseLineTotalReconciles } from "@/lib/purchase-accounting";
+import { supplierPaymentState } from "@/lib/supplier-payment-state";
 import { dateOnly } from "@/lib/purchase-finance-date";
 import { privateStorageObjectUrl, RECEIPT_IMAGE_BUCKET } from "@/lib/storage-buckets";
 
@@ -232,26 +233,17 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
     movementHistoryAvailable &&
     paymentSummaryAvailable &&
     derivedPaymentStatus === "unpaid";
-  const canAddPayment =
-    canRecordPayment &&
-    purchaseAccountingReady &&
-    paymentSummaryAvailable &&
-    purchaseRow.status === "received" &&
-    derivedPaymentStatus !== "voided" &&
-    Number(remainingAmount ?? 0) > 0;
+  // Paying an already-received invoice does not revalue or receive its stock.
+  // Keep inventory accounting checks above, and verify the supplier ledger here.
+  const supplierPayment = supplierPaymentState(purchaseRow, paymentSummaryAvailable ? paymentSummaryRow : null);
+  const canAddPayment = canRecordPayment && supplierPayment.ready;
   const paymentNeedsRecording =
     paymentSummaryAvailable &&
     ["unpaid", "partially_paid"].includes(derivedPaymentStatus) &&
     Number(remainingAmount ?? 0) > 0;
   const paymentUnavailableReason = !canRecordPayment
     ? "Only an owner, admin, or finance user can record supplier payments."
-    : purchaseRow.status !== "received"
-      ? "Receive this purchase into storage before recording its supplier payment."
-      : !paymentSummaryAvailable
-        ? "Payment totals could not be loaded. Reload this purchase before paying it."
-        : !purchaseAccountingReady
-          ? "The purchase totals need accounting review before payment can be recorded."
-          : "Payment cannot be recorded until the purchase is ready.";
+    : supplierPayment.reason;
   const existingPaymentAccount = String(purchaseRow.payment_account_id ?? "");
   const paymentAccountDefault = ["snacky_lyd", "owner_lyd"].includes(existingPaymentAccount)
     ? existingPaymentAccount
@@ -286,7 +278,7 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
         title={`Purchase ${purchaseRow.receipt_number ?? purchaseRow.id.slice(0, 8)}`}
         subtitle="Supplier receipt, purchased items, and inventory receiving status."
         breadcrumbs={[
-          { label: module === "finance" ? "Finance" : "Inventory", href: module === "finance" ? "/finance" : "/inventory" },
+          { label: "Stock & Purchasing", href: "/purchases" },
           { label: "Purchases", href: `/purchases${moduleQuery}` },
           { label: purchaseRow.receipt_number ?? purchaseRow.id.slice(0, 8) },
         ]}
@@ -306,7 +298,7 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
       ) : null}
       {lineItemsAvailable && !purchaseAccountingReady && purchaseRow.status !== "cancelled" && purchaseRow.status !== "voided" ? (
         <div className="mb-4 rounded-lg border border-rose-300 bg-rose-50 p-4 text-sm font-medium text-rose-900">
-          Purchase accounting needs review: line quantities/costs and the recorded total do not reconcile to one positive payable amount. Receiving, supplier payment, and purchase void actions are locked; no automatic legacy repair was made.
+          Inventory accounting needs review: line quantities/costs and the recorded totals do not reconcile. Receiving and purchase void actions remain locked; no automatic legacy repair was made. Supplier payments are checked separately against the saved invoice total and payment ledger.
         </div>
       ) : null}
       {financeWarning === "manual-review" ? <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Finance transaction was not created automatically. Review finance manually.</div> : null}
@@ -582,7 +574,7 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
         <h2 className="mb-4 text-lg font-semibold text-slate-900">Line items</h2>
         {!lineItemsAvailable ? (
           <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm font-medium text-amber-900">
-            Line items are unavailable. Snacky OS is not treating this query failure as an empty purchase; reload before receiving or paying it.
+            Line items are unavailable. Snacky OS is not treating this query failure as an empty purchase; reload before receiving it or correcting inventory.
           </div>
         ) : !lineRows.length ? (
           <EmptyState title="No items" body="This purchase has no item lines." />
