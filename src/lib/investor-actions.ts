@@ -30,9 +30,9 @@ async function loadInvestorVmsProfit(client: any,dateFrom:string,dateTo:string) 
  const detailed=await client.rpc('sales_dashboard_summary',{p_date_from:dateFrom,p_date_to:dateTo});
  const detailedRow=(detailed.data ?? [])[0];
  if(!detailed.error && Number(detailedRow?.revenue_amount)>0) return {data:toRows(detailedRow),error:null,source:'detailed_sales'};
- if(!monthly.error) return {data:toRows(monthlyRow),error:null,source:'monthly_product_profit'};
- if(!detailed.error) return {data:toRows(detailedRow),error:null,source:'detailed_sales'};
- return {data:[],error:new Error('Monthly and detailed VMS totals could not load.'),source:null};
+ if(!monthly.error && monthlyRow) return {data:toRows(monthlyRow),error:null,source:'monthly_product_profit'};
+ if(!detailed.error && detailedRow) return {data:toRows(detailedRow),error:null,source:'detailed_sales'};
+ return {data:[],error:new Error('Monthly and detailed VMS totals could not be verified.'),source:null};
 }
 
 async function pagedRows(build:(from:number,to:number)=>any): Promise<{data:any[];error:any}> {
@@ -77,7 +77,7 @@ export async function createInvestorAgreement(fd:FormData) {
 export async function generateInvestorStatement(fd:FormData) {
  const {profile,supabase}=await requireOwnerAdmin();
  const agreementId=text(fd,'agreement_id'),bounds=monthBounds(text(fd,'month'));
- const fail=(message:string):never=>redirect(investorsUrl(agreementId,{type:'error',text:message}));
+ function fail(message:string):never { redirect(investorsUrl(agreementId,{type:'error',text:message})); }
  if(!agreementId || !bounds) fail('Choose a valid agreement and month.');
  const {data:agreement,error:agreementError}=await supabase.from('investor_agreements').select('*').eq('id',agreementId).maybeSingle();
  if(agreementError || !agreement) fail('Investor agreement could not be verified.');
@@ -111,7 +111,7 @@ export async function generateInvestorStatement(fd:FormData) {
  }
  const manualProfitRows=manualRouteSalesAsProfitRows(manualSalesResult.data,movements);
  const calculation=calculateInvestorMonth({salesRows:[...salesResult.data,...manualProfitRows],ledgerRows,sharePercent:Number(agreement.profit_share_percent),profitBasis:agreement.profit_basis as InvestorProfitBasis});
- const pendingExpenseRows=ledgerRows.filter((row)=>row.direction==='money_out' && row.transaction_status==='active' && !row.is_void && (row.needs_review || row.review_status==='needs_review'));
+ const pendingExpenseRows=ledgerRows.filter(row=>row.direction==='money_out' && row.transaction_status==='active' && !row.is_void && (row.needs_review || row.review_status==='needs_review'));
  const complete=calculation.complete && pendingExpenseRows.length===0;
  const priorDue=(priorStatementsResult.data??[]).reduce((sum,row)=>sum+Number(row.investor_share_due_lyd),0);
  const cap=agreement.payout_cap_lyd==null?null:Number(agreement.payout_cap_lyd);
@@ -131,7 +131,7 @@ export async function generateInvestorStatement(fd:FormData) {
 export async function finalizeInvestorStatement(fd:FormData) {
  const {supabase}=await requireOwnerAdmin();
  const agreementId=text(fd,'agreement_id'),statementId=text(fd,'statement_id');
- const checks=Object.fromEntries(['sales','rent_payroll','expenses','capital'].map((key)=>[key,text(fd,`review_${key}`)==='yes']));
+ const checks=Object.fromEntries(['sales','rent_payroll','expenses','capital'].map(key=>[key,text(fd,`review_${key}`)==='yes']));
  const {error}=await supabase.rpc('snacky_finalize_investor_statement_v1',{p_statement_id:statementId,p_generated_at:text(fd,'generated_at'),p_review_checks:checks});
  if(error) redirect(investorsUrl(agreementId,{type:'error',text:error.message}));
  revalidatePath('/finance/investors');revalidatePath('/investor');
