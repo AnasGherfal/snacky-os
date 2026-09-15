@@ -116,11 +116,12 @@ const rolePermissions = {
     "vms_import.confirm",
     "vms_import.manage_mappings",
   ],
+  // Customer Relations & Business Development reads safe location/machine
+  // projections in the shared workspace, not operational or financial screens.
   crm: [
     "locations.pipeline.manage",
     "issues.view",
     "issues.create",
-    "machines.view",
   ],
   operator: [
     "assigned_routes.view",
@@ -340,7 +341,7 @@ export function canAccessOperatorRoute(user: AuthUserContext | null | undefined,
 
 export function getDefaultPathForRole(input: RoleInput) {
   if (isOwnerAdminRole(input) || isSupervisorRole(input)) return "/dashboard";
-  if (hasRole(input, "crm")) return "/locations-pipeline";
+  if (hasRole(input, "crm")) return "/my-work";
   if (hasPermission(input, "investor.view")) return "/investor";
   if (hasPermission(input, "finance.view")) return "/finance";
   if (hasPermission(input, "inventory.view") || hasPermission(input, "storage.view")) return "/inventory";
@@ -362,6 +363,12 @@ export function canAccessPath(user: AuthUserContext | null | undefined, pathname
   if (pathname === "/account" || pathname.startsWith("/account/")) return true;
   if (pathname === "/install" || pathname.startsWith("/install/")) return true;
   if (matchesPrefix(pathname, ["/investor"])) return hasPermission(user, "investor.view");
+
+  // Shared customer-relations records have their own scoped database reads.
+  // Operators receive assigned actions, never the broader CRM directory.
+  if (matchesPrefix(pathname, ["/my-work/team"])) return isAdminRole(user);
+  if (matchesPrefix(pathname, ["/my-work/search", "/relationships", "/contacts"])) return canManageLocationPipeline(user);
+  if (matchesPrefix(pathname, ["/my-work", "/follow-ups"])) return hasAnyRole(user, ["owner", "admin", "supervisor", "crm", "operator"]);
 
   if (pathname === "/dashboard") return hasPermission(user, "dashboard.view");
   if (matchesPrefix(pathname, ["/reports", "/sales", "/products-dashboard", "/machines-dashboard", "/inventory-dashboard"])) return hasPermission(user, "reports.view");

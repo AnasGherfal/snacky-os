@@ -41,7 +41,7 @@ export function TeamMemberForm({ action, submitLabel, backHref = "/team", member
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {appRoles.map((role) => <label key={role} className="flex items-start gap-3 rounded-lg border border-slate-200 bg-white p-3">
               <input name="roles" type="checkbox" value={role} defaultChecked={selectedRoles.has(role)} className="mt-1" />
-              <span><span className="mb-2 block"><StatusBadge status={role} /></span><span className="block text-xs leading-5 text-slate-600">{roleDescriptions[role]}</span></span>
+              <span><span className="mb-2 block"><StatusBadge status={role} />{role === "crm" ? <span className="mt-2 block font-semibold">Customer Relations &amp; Business Development<span dir="rtl" className="block">علاقات العملاء وتطوير الأعمال</span></span> : null}</span><span className="block text-xs leading-5 text-slate-600">{roleDescriptions[role]}</span></span>
             </label>)}
           </div>
           <label className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">

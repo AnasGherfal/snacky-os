@@ -93,7 +93,15 @@ test('database migration guards exact amounts, replay, privacy, and immutable ex
   assert.match(migration, /before update on public\.financial_transactions/); assert.match(migration, /'transfer'/);
   assert.match(support, /enable row level security/); assert.match(support, /reported_by=public\.snacky_current_team_member_id\(\)/);
   assert.match(support, /from public,anon/); assert.doesNotMatch(support, /insert into public\.financial_transactions/);
-  const page = read('src/app/issues/page.tsx'); assert.match(page, /href="\/issues\/new"/); assert.match(page, /!hasPermission\(profile, "issues.view"\)/);
+  // The route delegates to the integrated workspace; verify the real entry
+  // and its authorization rather than requiring copied markup in page.tsx.
+  const page = read('src/app/issues/page.tsx');
+  const workspace = read('src/components/CrmWorkspace.tsx');
+  assert.match(page, /CrmWorkspace section="issue"/);
+  assert.match(workspace, /href="\/issues\/new"/);
+  assert.match(workspace, /profile.active_status!==?'active'|profile.active_status !== 'active'/);
+  assert.equal(authz.canAccessPath({id:'viewer',role:'viewer',activeStatus:'active'},'/issues'),false);
+  assert.equal(authz.canAccessPath({id:'crm',role:'crm',activeStatus:'active'},'/issues/new'),true);
 });
 
 // Output read-model call sites for review. Pure projection unit tests cannot
