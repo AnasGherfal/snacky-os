@@ -96,6 +96,7 @@ export default function PickListPage() {
   const rawRouteId = params?.id;
   const routeId = Array.isArray(rawRouteId) ? rawRouteId[0] ?? "" : rawRouteId ?? "";
   const shouldStartRoute = searchParams.get("start") === "1";
+  const requestedStopId = searchParams.get("stop")?.trim() ?? "";
   const startAttempted = useRef(false);
   const submissionIdRef = useRef(crypto.randomUUID());
 
@@ -144,11 +145,12 @@ export default function PickListPage() {
             chooseStop: "اختر محطة واحدة على الأقل.",
             chooseProduct: "اختر منتجًا لكل سطر إضافي أو احذف السطر.",
             chooseExtraDestination: "كل منتج إضافي يجب ربطه بمحطة / ماكينة حتى يُضاف فعليًا للجولة.",
+            checkAll: "علّم كل منتجات الاستلام المحددة قبل تأكيد الاستلام.",
             locked: "هذا المسار مقفل ولا يمكن تعديل الاستلام.",
             alreadyConfirmed: "تم تأكيد استلام هذا المسار مسبقًا.",
             noItems: "لا توجد منتجات مطلوبة للاستلام.",
             stockWarning: "الكمية المختارة أعلى من المخزون الظاهر. سيقوم النظام بالتحقق من المخزون الفعلي مرة أخرى عند التأكيد.",
-            directNote: "علامات الصح للتتبع فقط ولا تمنع التأكيد. المنتجات الإضافية تُحفظ فعليًا على المحطة وتظهر للإدارة في ملخص الجولة بعد التأكيد.",
+            directNote: "يجب وضع علامة الصح على كل منتج محدد قبل تأكيد الاستلام. المنتجات الإضافية تُحفظ فعليًا على المحطة وتظهر للإدارة في ملخص الجولة بعد التأكيد.",
             extraNote: "المنتج الإضافي ليس مجرد ملاحظة: عند التأكيد يُضاف للمحطة المختارة ويُخصم من المخزن ويظهر في ملخص الإدارة.",
             startFailed: "تعذر بدء المسار.",
           }
@@ -182,11 +184,12 @@ export default function PickListPage() {
             chooseStop: "Select at least one stop.",
             chooseProduct: "Choose a product for every extra row or remove the empty row.",
             chooseExtraDestination: "Every extra product must be assigned to a stop / machine so it becomes part of the route.",
+            checkAll: "Check every selected pickup item before confirming pickup.",
             locked: "This route is locked and pickup cannot be edited.",
             alreadyConfirmed: "Pickup for this route has already been confirmed.",
             noItems: "There are no products to pick up.",
             stockWarning: "Selected quantity is above visible stock. The system will validate physical stock again on confirmation.",
-            directNote: "Checks are only a progress aid and never block confirmation. Extra products are saved to the selected stop and appear in the admin route summary after confirmation.",
+            directNote: "Every selected pickup item must be checked before confirmation. Extra products are saved to the selected stop and appear in the admin route summary after confirmation.",
             extraNote: "An extra product is a real route item: confirmation assigns it to the selected stop, deducts stock, and exposes it in the admin summary.",
             startFailed: "Could not start route.",
           },
@@ -203,9 +206,14 @@ export default function PickListPage() {
     () => selectedGroups.flatMap((group) => group.items.map((item) => item.routeStopItemId)),
     [selectedGroups],
   );
+  const checkedPickupItemSet = useMemo(() => new Set(checkedPickupItemIds), [checkedPickupItemIds]);
   const pickedProgressCount = useMemo(
-    () => selectedPickupItemIds.filter((id) => checkedPickupItemIds.includes(id)).length,
-    [selectedPickupItemIds, checkedPickupItemIds],
+    () => selectedPickupItemIds.filter((id) => checkedPickupItemSet.has(id)).length,
+    [selectedPickupItemIds, checkedPickupItemSet],
+  );
+  const allSelectedPickupItemsChecked = useMemo(
+    () => selectedPickupItemIds.length > 0 && selectedPickupItemIds.every((id) => checkedPickupItemSet.has(id)),
+    [selectedPickupItemIds, checkedPickupItemSet],
   );
   const totalUnits = useMemo(
     () =>
@@ -304,7 +312,8 @@ export default function PickListPage() {
         .filter((item) => Boolean(item.productId) || item.quantity > 0);
 
       setStopGroups(groups);
-      setSelectedStopIds(groups.map((group) => group.routeStopId));
+      const requestedGroup = requestedStopId ? groups.find((group) => group.routeStopId === requestedStopId) : null;
+      setSelectedStopIds(requestedGroup ? [requestedGroup.routeStopId] : groups.map((group) => group.routeStopId));
       setProductOptions(products);
       setExtras(loadedExtras);
       setLocked(Boolean(payload.locked));
@@ -314,7 +323,7 @@ export default function PickListPage() {
     } finally {
       setLoading(false);
     }
-  }, [copy.startFailed, isArabic, routeId, shouldStartRoute]);
+  }, [copy.startFailed, isArabic, requestedStopId, routeId, shouldStartRoute]);
 
   useEffect(() => {
     void loadPickList();
@@ -390,6 +399,10 @@ export default function PickListPage() {
       setError(copy.chooseStop);
       return;
     }
+    if (!allSelectedPickupItemsChecked) {
+      setError(copy.checkAll);
+      return;
+    }
     if (extras.some((item) => item.quantity > 0 && !item.productId)) {
       setError(copy.chooseProduct);
       return;
@@ -432,6 +445,7 @@ export default function PickListPage() {
       const result = await confirmPickupDirect(routeId, pickedItems, extraPayload, {
         stopIds: [...selectedStopIds],
         clientSubmissionId: submissionIdRef.current,
+        acknowledgedPickupLineIds: selectedPickupItemIds.filter((id) => checkedPickupItemSet.has(id)),
       });
       if (!result.success) throw new Error(result.error || "Could not confirm pickup.");
 
@@ -669,7 +683,7 @@ export default function PickListPage() {
             <div className="text-sm font-semibold text-slate-900">{selectedStopIds.length} {copy.stops} · {totalUnits} {copy.units}</div>
             <div className="text-xs text-slate-500">{copy.progress} {pickedProgressCount}/{selectedPickupItemIds.length}</div>
           </div>
-          <button type="button" className="min-h-12 w-full rounded-xl bg-emerald-600 px-6 py-3 text-base font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300 sm:w-auto" disabled={submitting || locked || confirmed || !selectedStopIds.length || !stopGroups.length} onClick={() => void handleConfirm()}>{submitting ? copy.confirming : copy.confirm}</button>
+          <button type="button" className="min-h-12 w-full rounded-xl bg-emerald-600 px-6 py-3 text-base font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300 sm:w-auto" disabled={submitting || locked || confirmed || !selectedStopIds.length || !stopGroups.length || !allSelectedPickupItemsChecked} onClick={() => void handleConfirm()}>{submitting ? copy.confirming : copy.confirm}</button>
         </div>
       </div>
     </main>
