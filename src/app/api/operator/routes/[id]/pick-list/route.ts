@@ -880,7 +880,11 @@ export async function GET(
       .filter((group: any) => group.items.length > 0)
       .sort((a: any, b: any) => Number(a.stop_order ?? 0) - Number(b.stop_order ?? 0));
 
-    let confirmed = Boolean(preparedBatch?.confirmedAt);
+    // Pickup confirmation is route-wide only after every stop has left Pending.
+    // A previous stop may already have moved stock into the operator bag while
+    // later stops are still waiting to be picked. Treating any prior movement as
+    // "confirmed" locks those later stops out of the pickup screen.
+    let hasAnyConfirmedPickup = false;
     failingStep = "load_pickup_confirmation_state";
     failingResource = "inventory_movements";
     const pickMovementsResult = await readClient
@@ -892,8 +896,9 @@ export async function GET(
     if (pickMovementsResult.error) {
       logOptionalFailure({ step: "load_pickup_confirmation_state", resource: "inventory_movements", error: pickMovementsResult.error });
     } else {
-      confirmed = Boolean(pickMovementsResult.data?.length);
+      hasAnyConfirmedPickup = Boolean(pickMovementsResult.data?.length);
     }
+    const confirmed = pendingStopCount === 0 && hasAnyConfirmedPickup;
     const isPrepared = Boolean(preparedBatch && !preparedBatch.confirmedAt && !preparedBatch.returnedToAssignedAt);
 
     const items = Array.from(plannedByProduct.values()).map((line: any) => ({
