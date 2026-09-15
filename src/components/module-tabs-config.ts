@@ -1,63 +1,75 @@
 import type { ModuleTab } from "@/components/ModuleTabs";
+import { getAppModuleKey, type AppModuleKey } from "@/components/app-navigation";
 
-export type ModuleTabGroup = { name: string; tabs: ModuleTab[] };
+export type ModuleTabGroup = {
+  name: string;
+  nameAr: string;
+  tabs: ModuleTab[];
+};
 
-const financeTabs: ModuleTab[] = [
-  { label: "Overview", href: "/finance", exact: true },
-  { label: "Operations", href: "/finance/operations" },
-  { label: "Growth Decisions", href: "/finance/growth-decisions" },
-  { label: "Investors", href: "/finance/investors" },
-  { label: "Payroll", href: "/payroll", match: ["/payroll"] },
-  { label: "Transactions", href: "/finance/transactions" },
-  { label: "Import Review", href: "/finance/import/review", match: ["/finance/import"] },
-  { label: "Cleanup", href: "/finance/cleanup" },
-  { label: "Cash Collections", href: "/cash-collections" },
-  { label: "Purchases", href: "/purchases?module=finance", match: ["/purchases"] },
-  { label: "Expenses", href: "/finance/expenses" },
-  { label: "Rent", href: "/finance/rent" },
-  { label: "Machine Investments", href: "/finance/machine-investments" },
-  { label: "Reports", href: "/finance/reports" },
-  { label: "Health", href: "/admin/finance-health" },
+const operationsTabs: ModuleTab[] = [
+  { label: "Routes", href: "/routes", labelAr: "المسارات" },
+  { label: "New Route", href: "/routes/new", labelAr: "مسار جديد" },
+  { label: "Refills", href: "/refills", labelAr: "التعبئة" },
 ];
 
-const inventoryTabs: ModuleTab[] = [
-  { label: "Storage", href: "/inventory", exact: true },
-  { label: "Stock Check", href: "/inventory/stock-check" },
-  { label: "Product Planning", href: "/product-planning" },
-  { label: "Restock Priority", href: "/restock-priority" },
-  { label: "Movements", href: "/inventory/movements" },
-  { label: "Purchases", href: "/purchases", match: ["/purchases"] },
-  { label: "Storage Locations", href: "/storage-locations" },
-  { label: "Suppliers", href: "/suppliers" },
-  { label: "Products", href: "/products" },
+const cashTabs: ModuleTab[] = [
+  { label: "Cash Collections", href: "/cash-collections", labelAr: "تحصيل النقدية" },
+  { label: "Remove Cash", href: "/cash-collections/new", labelAr: "سحب النقد" },
+];
+
+const stockTabs: ModuleTab[] = [
+  { label: "Storage", href: "/inventory", labelAr: "المخزون", exact: true },
+  { label: "Stock Check", href: "/inventory/stock-check", labelAr: "جرد المخزون" },
+  { label: "Restock Priority", href: "/restock-priority", labelAr: "أولوية التزويد" },
+  { label: "Purchases", href: "/purchases", labelAr: "المشتريات" },
+  { label: "Products", href: "/products", labelAr: "المنتجات" },
+  { label: "Suppliers", href: "/suppliers", labelAr: "الموردون" },
+  { label: "Storage Locations", href: "/storage-locations", labelAr: "مواقع التخزين" },
+  { label: "Movements", href: "/inventory/movements", labelAr: "حركة المخزون" },
+  { label: "Product Planning", href: "/product-planning", labelAr: "تخطيط المنتجات" },
 ];
 
 const machinesTabs: ModuleTab[] = [
-  { label: "Machines", href: "/machines", exact: true },
-  { label: "Locations", href: "/locations" },
-  { label: "Pipeline", href: "/locations-pipeline", match: ["/locations-pipeline"] },
-  { label: "Planograms", href: "/machine-slots" },
-  { label: "Status", href: "/machines/status" },
-  { label: "Issues", href: "/issues" },
-  { label: "Maintenance", href: "/machines/maintenance" },
+  { label: "Machines", href: "/machines", labelAr: "الماكينات", exact: true },
+  { label: "Locations", href: "/locations", labelAr: "المواقع" },
+  { label: "Planograms", href: "/machine-slots", labelAr: "توزيع المنتجات" },
+  { label: "Status", href: "/machines/status", labelAr: "الحالة" },
+  { label: "Maintenance", href: "/machines/maintenance", labelAr: "الصيانة" },
 ];
 
 const crmTabs: ModuleTab[] = [
-  { label: "Leads & Visits", href: "/locations-pipeline", match: ["/locations-pipeline"] },
-  { label: "Customer Issues", href: "/issues" },
+  { label: "Leads & Visits", href: "/locations-pipeline", labelAr: "الجهات والزيارات" },
+  { label: "Customer Issues", href: "/issues", labelAr: "مشاكل العملاء" },
+];
+
+const financeTabs: ModuleTab[] = [
+  { label: "Overview", href: "/finance", labelAr: "نظرة عامة", exact: true },
+  { label: "Operations", href: "/finance/operations", labelAr: "العمليات" },
+  { label: "Growth Decisions", href: "/finance/growth-decisions", labelAr: "قرارات النمو" },
+  { label: "Investors", href: "/finance/investors", labelAr: "المستثمرون" },
+  { label: "Payroll", href: "/payroll", labelAr: "المرتبات" },
+  { label: "Transactions", href: "/finance/transactions", labelAr: "المعاملات" },
+  { label: "Import Review", href: "/finance/import/review", labelAr: "مراجعة الاستيراد", match: ["/finance/import"] },
+  { label: "Cleanup", href: "/finance/cleanup", labelAr: "التنظيف" },
+  { label: "Expenses", href: "/finance/expenses", labelAr: "المصروفات" },
+  { label: "Rent", href: "/finance/rent", labelAr: "الإيجارات" },
+  { label: "Machine Investments", href: "/finance/machine-investments", labelAr: "استثمارات الماكينات" },
+  { label: "Reports", href: "/finance/reports", labelAr: "التقارير" },
+  { label: "Health", href: "/admin/finance-health", labelAr: "سلامة النظام" },
 ];
 
 const adminTabs: ModuleTab[] = [
-  { label: "Overview", href: "/admin", exact: true },
-  { label: "Stop Override", href: "/admin/stop-override" },
-  { label: "Team", href: "/team" },
-  { label: "Settings", href: "/settings" },
-  { label: "Activity Log", href: "/activity" },
-  { label: "VMS Import", href: "/vms-import" },
-  { label: "Monthly Profit Activation", href: "/vms-import/monthly-profit-repair" },
-  { label: "VMS Data Sources", href: "/vms-import/sources" },
-  { label: "XY VMS API", href: "/admin/vms-api" },
-  { label: "Product Mapping", href: "/vms-mappings" },
+  { label: "Overview", href: "/admin", labelAr: "نظرة عامة", exact: true },
+  { label: "Stop Override", href: "/admin/stop-override", labelAr: "تجاوز نقطة التوقف" },
+  { label: "Team", href: "/team", labelAr: "الفريق" },
+  { label: "Settings", href: "/settings", labelAr: "الإعدادات" },
+  { label: "Activity Log", href: "/activity", labelAr: "سجل النشاط" },
+  { label: "VMS Import", href: "/vms-import", labelAr: "استيراد VMS" },
+  { label: "Monthly Profit Activation", href: "/vms-import/monthly-profit-repair", labelAr: "تفعيل الربح الشهري" },
+  { label: "VMS Data Sources", href: "/vms-import/sources", labelAr: "مصادر بيانات VMS" },
+  { label: "XY VMS API", href: "/admin/vms-api", labelAr: "واجهة XY VMS" },
+  { label: "Product Mapping", href: "/vms-mappings", labelAr: "مطابقة المنتجات" },
 ];
 
 const reportsTabs: ModuleTab[] = [
@@ -71,26 +83,22 @@ const reportsTabs: ModuleTab[] = [
   { label: "Inventory", href: "/inventory-dashboard", labelAr: "المخزون" },
 ];
 
-const groups = {
-  finance: { name: "Finance", tabs: financeTabs },
-  inventory: { name: "Inventory", tabs: inventoryTabs },
-  machines: { name: "Machines", tabs: machinesTabs },
-  crm: { name: "CRM", tabs: crmTabs },
-  admin: { name: "Admin", tabs: adminTabs },
-  reports: { name: "Reports", tabs: reportsTabs },
-} satisfies Record<string, ModuleTabGroup>;
+const groups: Record<AppModuleKey, ModuleTabGroup> = {
+  operations: { name: "Operations", nameAr: "العمليات", tabs: operationsTabs },
+  cash: { name: "Cash", nameAr: "النقدية", tabs: cashTabs },
+  stock: { name: "Stock & Purchasing", nameAr: "المخزون والمشتريات", tabs: stockTabs },
+  machines: { name: "Machines", nameAr: "الماكينات", tabs: machinesTabs },
+  crm: { name: "CRM", nameAr: "العملاء والجهات", tabs: crmTabs },
+  finance: { name: "Finance", nameAr: "المالية", tabs: financeTabs },
+  reports: { name: "Reports", nameAr: "التقارير", tabs: reportsTabs },
+  admin: { name: "Admin", nameAr: "الإدارة", tabs: adminTabs },
+};
 
-function matchesPrefix(pathname: string, prefix: string) { return pathname === prefix || pathname.startsWith(`${prefix}/`); }
-function isPurchasesPath(pathname: string) { return matchesPrefix(pathname, "/purchases"); }
-export function pathnameFromHref(href: string) { return href.split("?")[0]?.split("#")[0] || href; }
+export function pathnameFromHref(href: string) {
+  return href.split("?")[0]?.split("#")[0] || href;
+}
 
-export function getModuleTabGroupForPath(pathname: string, moduleParam?: string | null): ModuleTabGroup | null {
-  if (isPurchasesPath(pathname)) return moduleParam === "finance" ? groups.finance : groups.inventory;
-  if (matchesPrefix(pathname, "/locations-pipeline")) return groups.crm;
-  if (matchesPrefix(pathname, "/finance") || matchesPrefix(pathname, "/cash-collections") || matchesPrefix(pathname, "/payroll")) return groups.finance;
-  if (matchesPrefix(pathname, "/inventory") || matchesPrefix(pathname, "/product-planning") || matchesPrefix(pathname, "/restock-priority") || matchesPrefix(pathname, "/storage-locations") || matchesPrefix(pathname, "/suppliers") || matchesPrefix(pathname, "/products")) return groups.inventory;
-  if (matchesPrefix(pathname, "/machines") || matchesPrefix(pathname, "/locations") || matchesPrefix(pathname, "/machine-slots") || matchesPrefix(pathname, "/issues")) return groups.machines;
-  if (matchesPrefix(pathname, "/admin") || matchesPrefix(pathname, "/team") || matchesPrefix(pathname, "/settings") || matchesPrefix(pathname, "/activity") || matchesPrefix(pathname, "/vms-import") || matchesPrefix(pathname, "/vms-mappings")) return groups.admin;
-  if (matchesPrefix(pathname, "/reports") || matchesPrefix(pathname, "/sales") || matchesPrefix(pathname, "/products-dashboard") || matchesPrefix(pathname, "/machines-dashboard") || matchesPrefix(pathname, "/inventory-dashboard")) return groups.reports;
-  return null;
+export function getModuleTabGroupForPath(pathname: string): ModuleTabGroup | null {
+  const key = getAppModuleKey(pathname);
+  return key ? groups[key] : null;
 }
