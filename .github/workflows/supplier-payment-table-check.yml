@@ -1,0 +1,49 @@
+name: Supplier table payment checks
+
+on:
+  pull_request:
+    paths:
+      - 'src/app/purchases/**'
+      - 'src/components/PurchaseTablePayment.tsx'
+      - 'src/components/PurchaseOperationForm.tsx'
+      - 'src/lib/supplier-payment-*.ts'
+      - 'src/lib/purchase-*.ts'
+      - 'src/lib/authz.ts'
+      - 'scripts/test-supplier-payment-*.mjs'
+      - 'scripts/test-purchase-payment-ledger.mjs'
+      - '.github/workflows/supplier-payment-table-check.yml'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supplier-table-payments-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Supplier balance, server action, and dialog regressions
+        run: node --experimental-strip-types --test scripts/test-supplier-payment-table.mjs scripts/test-supplier-payment-dialog.mjs
+      - name: Existing payment and inventory contracts
+        run: |
+          npm run test:purchase-payment-ledger
+          npm run test:purchase-payment-atomicity
+          npm run test:purchase-operation-idempotency
+          npm run test:atomic-purchase-lifecycle
+      - name: Typecheck Snacky OS
+        run: npm run typecheck
+      - name: Build Snacky OS
+        run: npm run build

@@ -1,11 +1,13 @@
 import Link from "next/link";
 import { PaginationControls } from "@/components/PaginationControls";
+import { PurchaseTablePayment } from "@/components/PurchaseTablePayment";
 import { DataTable, EmptyState, ErrorState, MobileCardList, MobileField, MobileRecordCard, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
 import { canManagePurchases, canRecordPurchasePayments } from "@/lib/authz";
 import { lyd } from "@/lib/format";
 import { cleanSearchParams, getPagination, SearchParamsRecord } from "@/lib/pagination";
 import { privateStorageObjectUrl, RECEIPT_IMAGE_BUCKET } from "@/lib/storage-buckets";
+import { supplierPaymentState } from "@/lib/supplier-payment-state";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +38,7 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
 
   const { data: purchases, count, error: purchasesError } = await supabase
     .from("purchase_orders")
-    .select("id, order_date, receipt_number, receipt_url, receipt_storage_path, total_amount, manual_total_lyd, calculated_total_lyd, payment_method, status, created_at, supplier:suppliers(name), created_by_member:team_members!purchase_orders_created_by_fkey(full_name)", { count: "exact" })
+    .select("id, order_date, receipt_number, receipt_url, receipt_storage_path, total_amount, manual_total_lyd, calculated_total_lyd, total_source, payment_method, payment_account_id, status, created_at, supplier:suppliers(name), created_by_member:team_members!purchase_orders_created_by_fkey(full_name)", { count: "exact" })
     .order("order_date", { ascending: false })
     .order("created_at", { ascending: false })
     .range(from, to);
@@ -62,14 +64,28 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
   const paymentByPurchase = new Map<string, PaymentSummary>(
     ((summaryResult.data ?? []) as PaymentSummary[]).map((row) => [String(row.purchase_order_id), row]),
   );
+  const paymentAction = (purchase: any) => {
+    if (!canRecordPayment || purchase.status !== "received") return null;
+    const summary = paymentDataAvailable ? paymentByPurchase.get(String(purchase.id)) : null;
+    if (summary?.payment_status === "paid" || summary?.payment_status === "voided") return null;
+    return <PurchaseTablePayment
+      purchaseId={String(purchase.id)}
+      userId={profile.id}
+      supplier={purchase.supplier?.name ?? "Unknown supplier"}
+      receipt={purchase.receipt_number ?? String(purchase.id).slice(0, 8)}
+      paymentState={supplierPaymentState(purchase, summary)}
+      defaultAccount={purchase.payment_account_id}
+      defaultMethod={purchase.payment_method}
+    />;
+  };
 
   return (
     <>
       <PageHeader
         title="Supplier Stock Purchases"
-        subtitle="Stock bought from suppliers for Snacky storage. Operator personal items are recorded separately in Operator Money."
+        subtitle="Stock bought from suppliers for Snacky storage. Operator personal items are recorded separately in Operator Money. Use Mark paid on a row to record the supplier payment without leaving this list."
         breadcrumbs={[
-          { label: sourceModule === "finance" ? "Finance" : "Inventory", href: sourceModule === "finance" ? "/finance" : "/inventory" },
+          { label: "Stock & Purchasing", href: "/purchases" },
           { label: "Supplier Stock Purchases" },
         ]}
         action={canCreatePurchase ? <PrimaryButton href={`/purchases/new${moduleQuery}`}>New purchase</PrimaryButton> : null}
@@ -77,7 +93,7 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
       {error ? <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{error}</div> : null}
       {!paymentDataAvailable ? (
         <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm font-medium text-amber-900">
-          Supplier payment totals are temporarily unavailable. Snacky OS will not guess from the old status label; open a purchase after the payment ledger is restored.
+          Supplier payment totals are temporarily unavailable. Snacky OS will not guess from the old status label; refresh after the payment ledger is restored.
         </div>
       ) : null}
       {!purchases?.length ? (
@@ -93,13 +109,6 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
               const receiptUrl = String(purchase.receipt_url ?? "").trim() || privateStorageObjectUrl(RECEIPT_IMAGE_BUCKET, purchase.receipt_storage_path);
               const payment = paymentByPurchase.get(String(purchase.id));
               const paymentStatus = paymentDataAvailable && payment ? payment.payment_status : "unknown";
-              const canPayPurchase = canRecordPayment
-                && purchase.status === "received"
-                && paymentDataAvailable
-                && Boolean(payment)
-                && ["unpaid", "partially_paid"].includes(paymentStatus)
-                && Number(payment?.remaining_amount_lyd ?? 0) > 0;
-              const paymentHref = `/purchases/${purchase.id}${moduleQuery}#record-supplier-payment`;
 
               return (
                 <MobileRecordCard key={purchase.id}>
@@ -124,8 +133,8 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
                     <MobileField label="Created by">{purchase.created_by_member?.full_name ?? "-"}</MobileField>
                   </div>
                   <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                    {paymentAction(purchase)}
                     <Link href={`/purchases/${purchase.id}${moduleQuery}`} className="btn-secondary w-full">View</Link>
-                    {canPayPurchase ? <Link href={paymentHref} className="btn-primary w-full">Mark paid</Link> : null}
                     {receiptUrl ? <a href={receiptUrl} target="_blank" rel="noreferrer" className="btn-secondary w-full">View Receipt</a> : null}
                     {canCreatePurchase && purchase.status === "draft" ? <Link href={`/purchases/${purchase.id}/edit${moduleQuery}`} className="btn-secondary w-full">Edit</Link> : null}
                   </div>
@@ -142,13 +151,6 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
               const difference = receiptTotal === null ? null : receiptTotal - calculatedTotal;
               const payment = paymentByPurchase.get(String(purchase.id));
               const paymentStatus = paymentDataAvailable && payment ? payment.payment_status : "unknown";
-              const canPayPurchase = canRecordPayment
-                && purchase.status === "received"
-                && paymentDataAvailable
-                && Boolean(payment)
-                && ["unpaid", "partially_paid"].includes(paymentStatus)
-                && Number(payment?.remaining_amount_lyd ?? 0) > 0;
-              const paymentHref = `/purchases/${purchase.id}${moduleQuery}#record-supplier-payment`;
 
               return (
                 <tr key={purchase.id}>
@@ -165,8 +167,8 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
                   <td>{purchase.created_by_member?.full_name ?? "-"}</td>
                   <td>
                     <div className="flex flex-wrap gap-2">
+                      {paymentAction(purchase)}
                       <Link href={`/purchases/${purchase.id}${moduleQuery}`} className="btn-secondary">View</Link>
-                      {canPayPurchase ? <Link href={paymentHref} className="btn-primary">Mark paid</Link> : null}
                       {canCreatePurchase && purchase.status === "draft" ? <Link href={`/purchases/${purchase.id}/edit${moduleQuery}`} className="btn-secondary">Edit</Link> : null}
                     </div>
                   </td>
