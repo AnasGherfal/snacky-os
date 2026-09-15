@@ -4,10 +4,12 @@ on:
     paths:
       - 'src/lib/crm-*'
       - 'src/lib/authz.ts'
+      - 'src/lib/team.ts'
       - 'src/components/Crm*'
       - 'src/components/Sidebar.tsx'
       - 'src/components/app-navigation.ts'
       - 'src/components/module-tabs-config.ts'
+      - 'src/app/operator/**'
       - 'src/app/api/crm/**'
       - 'src/app/my-work/**'
       - 'src/app/contacts/**'
@@ -17,6 +19,7 @@ on:
       - 'src/app/locations-pipeline/**'
       - 'supabase/migrations/*connected_relations*'
       - 'scripts/test-connected-relations*'
+      - 'scripts/test-currency-exchange-support.mjs'
       - '.github/workflows/connected-relations-check.yml'
 permissions:
   contents: read
@@ -43,6 +46,15 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v4
+      - name: Snapshot reviewed source (no runtime files or secrets)
+        run: |
+          mkdir -p diagnostics
+          git archive --format=tar.gz -o diagnostics/source.tar.gz HEAD src scripts supabase .github package.json package-lock.json tsconfig.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crm-reviewed-source
+          path: diagnostics/source.tar.gz
+          retention-days: 2
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -58,7 +70,18 @@ jobs:
         run: psql -X -v ON_ERROR_STOP=1 -f scripts/test-connected-relations-db.sql
       - name: Form handlers, saved retries, role routes, source links and Arabic direction
         run: node --experimental-strip-types --test scripts/test-connected-relations.mjs
+      - name: Existing exchange, support and permissions regressions
+        run: node --experimental-strip-types --test scripts/test-currency-exchange-support.mjs scripts/test-authz-permissions.mjs
       - name: Typecheck
         run: npm run typecheck
-      - name: Production build
-        run: npm run build
+      - name: Production build with existing ledger protections
+        run: |
+          npm run build > diagnostics/build.log 2>&1 || { tail -n 90 diagnostics/build.log; exit 1; }
+          tail -n 35 diagnostics/build.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: crm-build-diagnostics
+          path: diagnostics/build.log
+          if-no-files-found: ignore
+          retention-days: 2
