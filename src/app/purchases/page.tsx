@@ -83,7 +83,7 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
     <>
       <PageHeader
         title="Supplier Stock Purchases"
-        subtitle="Stock bought from suppliers for Snacky storage. Use Mark paid on a row to record the supplier payment without leaving this list."
+        subtitle="Stock bought from suppliers for Snacky storage. Operator personal items are recorded separately in Operator Money. Use Mark paid on a row to record the supplier payment without leaving this list."
         breadcrumbs={[
           { label: "Stock & Purchasing", href: "/purchases" },
           { label: "Supplier Stock Purchases" },
