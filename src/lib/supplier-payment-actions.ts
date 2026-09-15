@@ -94,20 +94,19 @@ export async function recordInlineSupplierPayment(fd: FormData): Promise<InlineS
     // The existing database transaction owns the payment, its Finance entry,
     // row locking, remaining-balance guard and unique submission ID. Never flip
     // payment_status or insert a separate money-out from the browser/server action.
-    const { data: receipt, error } = await supabase.rpc("record_purchase_payment", {
+    const { error } = await supabase.rpc("record_purchase_payment", {
       p_purchase_order_id: id, p_amount: amountCents / 100, p_paid_at: paidAt,
       p_payment_method: method, p_account_id: account, p_reference: reference || null,
       p_note: note || null, p_client_submission_id: submissionId,
     });
-    if (!error && receipt) return await confirmReceipt(receipt);
 
-    // A concurrent retry may hit the unique constraint after the other request
-    // commits. Confirm that exact receipt instead of creating another payment.
+    // Read the committed row, not an assumed object/array RPC response envelope.
+    // This also recovers concurrent retries that encounter the unique constraint.
     const recovered = await readReceipt();
     if (!recovered.error && recovered.data) return await confirmReceipt(recovered.data);
     console.error("[supplier-payment] Recording did not return a verified receipt", { purchase_id: id, error });
     if (error?.code === "23514" && !recovered.error) return failed("The purchase or remaining balance changed. Refresh the list before confirming payment again.");
-    if (["42501", "28000"].includes(String(error?.code))) return failed("Your account is not permitted to record this payment. Sign in again.");
+    if (["42501", "28000"].includes(String(error?.code)) && !recovered.error) return failed("Your account is not permitted to record this payment. Sign in again.");
     return failed("The payment result could not be confirmed. Retry with the same saved request; do not record another payment.", true);
   } catch (error) {
     console.error("[supplier-payment] Payment result unavailable", { purchase_id: id, attempted, error });
