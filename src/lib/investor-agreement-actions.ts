@@ -11,7 +11,7 @@ const validDate=(date:string)=>/^\d{4}-\d{2}-\d{2}$/.test(date)&&!Number.isNaN(D
 export async function updateInvestorAgreement(fd:FormData) {
  const profile=await getCurrentProfile();if(!profile||profile.active_status!=='active'||!isOwnerAdminRole(profile))redirect('/unauthorized');
  const id=clean(fd,'agreement_id'),db=await getAuthenticatedSupabaseServerClient();
- const fail=(message:string):never=>redirect(`/finance/investors?agreement=${encodeURIComponent(id)}&error=${encodeURIComponent(message)}`);
+ function fail(message:string):never { redirect(`/finance/investors?agreement=${encodeURIComponent(id)}&error=${encodeURIComponent(message)}`); }
  if(!db||!id)fail('Missing investor agreement or database session.');
  const {data:before,error:loadError}=await db.from('investor_agreements').select('*').eq('id',id).maybeSingle();
  if(loadError||!before)fail('Could not verify the investor agreement.');
