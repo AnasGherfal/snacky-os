@@ -13,7 +13,10 @@ export function BusinessRecordForm({ kind, userId, today, machines = [] }: { kin
   const { locale } = useLanguage();
   const tr = (en: string, ar: string) => locale === "ar" ? ar : en;
   const key = `snacky:business-record:v1:${kind}:${userId}`;
-  const [draft, setDraft] = useState<Record<string, string>>(() => kind === "exchange" ? { kind, source_account_id: "snacky_lyd", destination_account_id: "snacky_usd", source_amount: "", destination_amount: "", transaction_date: today, note: "" } : { kind, machine_id: "", customer_name: "", customer_phone: "", contact_channel: "whatsapp", issue_type: "payment_problem", priority: "normal", description: "" });
+  const [draft, setDraft] = useState<Record<string, string>>((): Record<string, string> => {
+    if (kind === "exchange") return { kind, source_account_id: "snacky_lyd", destination_account_id: "snacky_usd", source_amount: "", destination_amount: "", transaction_date: today, note: "" };
+    return { kind, machine_id: "", customer_name: "", customer_phone: "", contact_channel: "whatsapp", issue_type: "payment_problem", priority: "normal", description: "" };
+  });
   const pendingRequest = useRef<Record<string, string> | null>(null);
   const inFlight = useRef(false);
   const [frozen, setFrozen] = useState(false);
@@ -57,8 +60,7 @@ export function BusinessRecordForm({ kind, userId, today, machines = [] }: { kin
     if (inFlight.current || !ready || blocked || savedHref) return;
     let request = pendingRequest.current;
     if (!request) {
-      // Another tab may already have submitted the same form. Recover that
-      // request on reload rather than overwrite its durable retry receipt.
+      // Recover another tab's pending request rather than overwrite it.
       try {
         if (window.localStorage.getItem(key)) { setBlocked(true); setError("Another saved request exists. Reload to recover it before recording a new entry."); return; }
       } catch { setStorageWarning(true); }
