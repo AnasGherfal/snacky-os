@@ -1,3 +1,3 @@
 import {CrmWorkspace} from '@/components/CrmWorkspace';
 export const dynamic='force-dynamic';
-export default function Page(){return <CrmWorkspace section="issue" create/>;}
+export default function Page(){return <CrmWorkspace section="contact" create/>;}
