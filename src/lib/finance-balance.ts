@@ -75,7 +75,7 @@ export function isFinanceLedgerTransaction(row: BalanceTransaction, cutoffDate =
   if (!isPostFinanceCutoffTransaction(row, cutoffDate)) return false;
   return String(row.transaction_effect ?? "") !== "opening_balance";
 }
-const nonProfitCategories = new Set(["owner funding", "owner withdrawal", "bank / exchange", "bank exchange", "exchange", "opening balance", "investor profit share", "investor distribution", "profit distribution"]);
+const nonProfitCategories = new Set(["owner funding", "owner withdrawal", "bank / exchange", "bank exchange", "exchange", "opening balance", "investor profit share", "investor distribution", "profit distribution", "investor capital", "investor contribution", "investor capital return"]);
 function normalizedCategory(row: BalanceTransaction) { return String(row.category ?? row.final_bucket ?? row.transaction_type ?? "").trim().toLowerCase(); }
 export function isProfitAffectingTransaction(row: BalanceTransaction, cutoffDate = FINANCE_RECONCILIATION_CUTOFF_DATE) {
   if (!isFinanceLedgerTransaction(row, cutoffDate)) return false;
