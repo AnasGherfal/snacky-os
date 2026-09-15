@@ -5,15 +5,22 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { logActivity } from "@/lib/activity-log";
 import { getCurrentProfile } from "@/lib/auth";
-import { hasAnyRole, isOwnerAdminRole, normalizeRoles } from "@/lib/authz";
+import { isOwnerAdminRole, normalizeRoles } from "@/lib/authz";
+import { selectedTeamRoles, teamProductPermission } from "@/lib/team-role-selection";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { tempPasswordCookie } from "@/lib/team";
 
 function teamPayload(formData: FormData) {
-  const roles = normalizeRoles(formData.getAll("roles"), String(formData.get("role") || "operator"));
-  const role = roles[0] ?? "operator";
-  const canAddProducts = String(formData.get("can_add_products") || "") === "yes" || hasAnyRole(roles, ["owner", "admin"]);
-
+  let roles;
+  try {
+    roles = selectedTeamRoles(formData.getAll("roles"));
+  } catch (error) {
+    const id = String(formData.get("id") ?? "");
+    const path = /^[0-9a-f-]{36}$/i.test(id) ? `/team/${id}/edit` : "/team/new";
+    redirect(`${path}?error=${encodeURIComponent(error instanceof Error ? error.message : "Select a role.")}`);
+  }
+  const role = roles[0];
+  const canAddProducts = teamProductPermission(roles, String(formData.get("can_add_products") || "") === "yes");
   return {
     full_name: String(formData.get("full_name") || "").trim(),
     email: String(formData.get("email") || "").trim() || null,
@@ -26,9 +33,7 @@ function teamPayload(formData: FormData) {
   };
 }
 
-function clean(value: FormDataEntryValue | null) {
-  return String(value ?? "").trim();
-}
+function clean(value: FormDataEntryValue | null) { return String(value ?? "").trim(); }
 
 function requireConfirmedReason(formData: FormData, path: string) {
   if (clean(formData.get("confirm_action")) !== "yes") redirect(`${path}?error=Confirmation%20is%20required.`);
@@ -40,113 +45,66 @@ function requireConfirmedReason(formData: FormData, path: string) {
 async function setTemporaryPasswordBanner(payload: { fullName: string; email: string; password: string }) {
   const cookieStore = await cookies();
   cookieStore.set(tempPasswordCookie, encodeURIComponent(JSON.stringify(payload)), {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/team",
-    maxAge: 60 * 5,
+    httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/team", maxAge: 60 * 5,
   });
 }
 
 async function createOrResetAuthUser(teamMemberId: string, payload: ReturnType<typeof teamPayload>, password: string, existingAuthUserId?: string | null) {
   if (!payload.email) throw new Error("Email is required to create login access.");
   if (!password || password.length < 10) throw new Error("Temporary password must be at least 10 characters.");
-
   const admin = getSupabaseAdminClient();
   if (!admin) throw new Error("SUPABASE_SERVICE_ROLE_KEY is required to create Supabase Auth users.");
-
   const userResult = existingAuthUserId
-    ? await admin.auth.admin.updateUserById(existingAuthUserId, {
-        email: payload.email,
-        password,
-        email_confirm: true,
-        user_metadata: { full_name: payload.full_name },
-      })
-    : await admin.auth.admin.createUser({
-        email: payload.email,
-        password,
-        email_confirm: true,
-        user_metadata: { full_name: payload.full_name },
-      });
-
+    ? await admin.auth.admin.updateUserById(existingAuthUserId, { email: payload.email, password, email_confirm: true, user_metadata: { full_name: payload.full_name } })
+    : await admin.auth.admin.createUser({ email: payload.email, password, email_confirm: true, user_metadata: { full_name: payload.full_name } });
   if (userResult.error || !userResult.data.user) throw userResult.error ?? new Error("Could not create login access.");
-
   const authUserId = userResult.data.user.id;
-  await admin.from("team_members").update({ auth_user_id: authUserId, must_change_password: true }).eq("id", teamMemberId);
-  await admin.from("profiles").upsert({
-    id: authUserId,
-    full_name: payload.full_name,
-    email: payload.email,
-    phone: payload.phone,
-    role: payload.role,
-    roles: payload.roles,
-    can_add_products: payload.can_add_products,
-    active_status: payload.active_status,
-    team_member_id: teamMemberId,
-    must_change_password: true,
-    updated_at: new Date().toISOString(),
+  const memberResult = await admin.from("team_members").update({ auth_user_id: authUserId, must_change_password: true }).eq("id", teamMemberId);
+  if (memberResult.error) throw memberResult.error;
+  const profileResult = await admin.from("profiles").upsert({
+    id: authUserId, full_name: payload.full_name, email: payload.email, phone: payload.phone,
+    role: payload.role, roles: payload.roles, can_add_products: payload.can_add_products,
+    active_status: payload.active_status, team_member_id: teamMemberId, must_change_password: true, updated_at: new Date().toISOString(),
   });
-
+  if (profileResult.error) throw profileResult.error;
   await setTemporaryPasswordBanner({ fullName: payload.full_name, email: payload.email, password });
 }
 
 async function syncProfile(teamMemberId: string, payload: ReturnType<typeof teamPayload>, authUserId?: string | null) {
   const supabase = getSupabaseAdminClient();
-  if (!supabase) return;
-
-  await supabase
-    .from("profiles")
-    .update({
-      full_name: payload.full_name,
-      email: payload.email,
-      phone: payload.phone,
-      role: payload.role,
-      roles: payload.roles,
-      can_add_products: payload.can_add_products,
-      active_status: payload.active_status,
-      team_member_id: teamMemberId,
-      updated_at: new Date().toISOString(),
-    })
-    .or(`team_member_id.eq.${teamMemberId}${authUserId ? `,id.eq.${authUserId}` : ""}${payload.email ? `,email.eq.${payload.email}` : ""}`);
+  if (!supabase) throw new Error("Could not connect to synchronize login access.");
+  // Only stable identity links may change access; a matching email is not authority.
+  const { data, error } = await supabase.from("profiles").update({
+    full_name: payload.full_name, email: payload.email, phone: payload.phone,
+    role: payload.role, roles: payload.roles, can_add_products: payload.can_add_products,
+    active_status: payload.active_status, team_member_id: teamMemberId, updated_at: new Date().toISOString(),
+  }).or(`team_member_id.eq.${teamMemberId}${authUserId ? `,id.eq.${authUserId}` : ""}`).select("id");
+  if (error) throw error;
+  if (authUserId && !data?.some((row) => row.id === authUserId)) throw new Error("The linked login profile was not found. Access changes need review.");
 }
 
 export async function createTeamMember(formData: FormData) {
   const profile = await getCurrentProfile();
   if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
-
   const supabase = getSupabaseAdminClient();
   if (!supabase) redirect("/team/new?error=Supabase%20is%20not%20configured.");
-
   const payload = teamPayload(formData);
   if (!payload.full_name) redirect("/team/new?error=Full%20name%20is%20required.");
-
   const { data, error } = await supabase.from("team_members").insert(payload).select("id").single();
   if (error || !data?.id) {
     console.error("[team:create] Failed to create team member", error);
     redirect("/team/new?error=Could%20not%20create%20team%20member.");
   }
-
   try {
     if (String(formData.get("create_login_access") || "") === "yes") {
       await createOrResetAuthUser(data.id, payload, String(formData.get("temporary_password") || ""));
-    } else {
-      await syncProfile(data.id, payload);
-    }
+    } else { await syncProfile(data.id, payload); }
   } catch (error) {
     console.error("[team:create] Login access creation failed", error);
     redirect(`/team/${data.id}/edit?error=${encodeURIComponent(error instanceof Error ? error.message : "Could not create login access.")}`);
   }
-
-  await logActivity({
-    profile,
-    action: "create",
-    entityType: "team_member",
-    entityId: data.id,
-    entityLabel: payload.full_name,
-    afterData: { ...payload, login_access_created: String(formData.get("create_login_access") || "") === "yes" },
-    summary: `Created team member ${payload.full_name}`,
-  });
-
+  await logActivity({ profile, action: "create", entityType: "team_member", entityId: data.id, entityLabel: payload.full_name,
+    afterData: { ...payload, login_access_created: String(formData.get("create_login_access") || "") === "yes" }, summary: `Created team member ${payload.full_name}` });
   revalidatePath("/team");
   redirect("/team");
 }
@@ -154,165 +112,97 @@ export async function createTeamMember(formData: FormData) {
 export async function updateTeamMember(formData: FormData) {
   const profile = await getCurrentProfile();
   if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
-
   const supabase = getSupabaseAdminClient();
   const id = String(formData.get("id") || "");
-  if (!supabase) redirect(`/team/${id}/edit?error=Supabase%20is%20not%20configured.`);
   if (!id) redirect("/team?error=Missing%20team%20member.");
-
+  if (!supabase) redirect(`/team/${id}/edit?error=Supabase%20is%20not%20configured.`);
   const payload = teamPayload(formData);
   if (!payload.full_name) redirect(`/team/${id}/edit?error=Full%20name%20is%20required.`);
-
-  const { data: existingMember } = await supabase.from("team_members").select("*").eq("id", id).maybeSingle();
-  const deactivationReason = existingMember?.active_status !== "inactive" && payload.active_status === "inactive"
-    ? requireConfirmedReason(formData, `/team/${id}`)
-    : null;
-
+  const { data: existingMember, error: existingError } = await supabase.from("team_members").select("*").eq("id", id).maybeSingle();
+  if (existingError || !existingMember) redirect(`/team/${id}/edit?error=Could%20not%20load%20team%20member.`);
+  if ((id === profile?.team_member_id || existingMember.auth_user_id === profile?.id)
+    && (payload.active_status === "inactive" || !isOwnerAdminRole(payload.roles))) {
+    redirect(`/team/${id}/edit?error=${encodeURIComponent("You cannot remove your own administrative access. Use another administrator.")}`);
+  }
+  const deactivationReason = existingMember.active_status !== "inactive" && payload.active_status === "inactive"
+    ? requireConfirmedReason(formData, `/team/${id}`) : null;
+  // A database trigger synchronizes the linked profile's access in this same transaction.
   const { error } = await supabase.from("team_members").update(payload).eq("id", id);
   if (error) {
     console.error("[team:update] Failed to update team member", { id, error });
-    redirect(`/team/${id}/edit?error=Could%20not%20update%20team%20member.`);
+    redirect(`/team/${id}/edit?error=${encodeURIComponent("Could not update team member. " + error.message)}`);
   }
-
   try {
     if (String(formData.get("create_login_access") || "") === "yes") {
-      await createOrResetAuthUser(id, payload, String(formData.get("temporary_password") || ""), existingMember?.auth_user_id ?? null);
-    } else {
-      await syncProfile(id, payload, existingMember?.auth_user_id ?? null);
-    }
+      await createOrResetAuthUser(id, payload, String(formData.get("temporary_password") || ""), existingMember.auth_user_id ?? null);
+    } else { await syncProfile(id, payload, existingMember.auth_user_id ?? null); }
   } catch (error) {
     console.error("[team:update] Login access update failed", error);
     redirect(`/team/${id}/edit?error=${encodeURIComponent(error instanceof Error ? error.message : "Could not update login access.")}`);
   }
-
-  await logActivity({
-    profile,
-    action: JSON.stringify(normalizeRoles(existingMember?.roles, existingMember?.role)) !== JSON.stringify(payload.roles) ? "change_roles" : "update",
-    entityType: "team_member",
-    entityId: id,
-    entityLabel: payload.full_name,
-    beforeData: existingMember,
-    afterData: { ...payload, login_access_updated: String(formData.get("create_login_access") || "") === "yes" },
+  const rolesChanged = JSON.stringify(normalizeRoles(existingMember.roles, existingMember.role)) !== JSON.stringify(payload.roles);
+  await logActivity({ profile, action: rolesChanged ? "change_roles" : "update", entityType: "team_member", entityId: id, entityLabel: payload.full_name,
+    beforeData: existingMember, afterData: { ...payload, login_access_updated: String(formData.get("create_login_access") || "") === "yes" },
     metadata: deactivationReason ? { reason: deactivationReason } : undefined,
-    summary: JSON.stringify(normalizeRoles(existingMember?.roles, existingMember?.role)) !== JSON.stringify(payload.roles)
-      ? `Changed ${payload.full_name} roles to ${payload.roles.join(", ")}`
-      : `Updated team member ${payload.full_name}`,
-  });
-
-  revalidatePath("/team");
-  revalidatePath(`/team/${id}`);
-  revalidatePath(`/team/${id}/edit`);
+    summary: rolesChanged ? `Changed ${payload.full_name} roles to ${payload.roles.join(", ")}` : `Updated team member ${payload.full_name}` });
+  revalidatePath("/team"); revalidatePath(`/team/${id}`); revalidatePath(`/team/${id}/edit`); revalidatePath("/finance/investors");
   redirect("/team");
 }
 
 export async function deactivateTeamMember(formData: FormData) {
   const profile = await getCurrentProfile();
   if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
-
   const id = clean(formData.get("id"));
   if (!id) redirect("/team");
   if (id === profile?.team_member_id) redirect(`/team/${id}?error=You%20cannot%20deactivate%20your%20own%20account.`);
   const reason = requireConfirmedReason(formData, `/team/${id}`);
-
   const supabase = getSupabaseAdminClient();
   if (!supabase) redirect(`/team/${id}?error=Supabase%20is%20not%20configured.`);
-
   const { data: before } = await supabase.from("team_members").select("*").eq("id", id).maybeSingle();
   if (!before) redirect("/team?error=Team%20member%20not%20found.");
+  if (before.auth_user_id === profile?.id) redirect(`/team/${id}?error=You%20cannot%20deactivate%20your%20own%20account.`);
   if (before.active_status === "inactive" || before.active === false) redirect(`/team/${id}?error=Team%20member%20is%20already%20inactive.`);
-
-  const payload = {
-    active: false,
-    active_status: "inactive",
-  };
+  const payload = { active: false, active_status: "inactive" };
   const { data: after, error } = await supabase.from("team_members").update(payload).eq("id", id).select("*").single();
-  if (error) {
-    console.error("[team:deactivate] Failed to deactivate team member", { id, error });
-    redirect(`/team/${id}?error=Could%20not%20deactivate%20team%20member.`);
-  }
-
-  await supabase
-    .from("profiles")
-    .update({ active_status: "inactive", updated_at: new Date().toISOString() })
-    .or(`team_member_id.eq.${id}${before.auth_user_id ? `,id.eq.${before.auth_user_id}` : ""}${before.email ? `,email.eq.${before.email}` : ""}`);
-
-  await logActivity({
-    profile,
-    action: "deactivate",
-    entityType: "team_member",
-    entityId: id,
-    entityLabel: after.full_name,
-    beforeData: before,
-    afterData: after,
-    metadata: { reason },
-    summary: `Deactivated team member ${after.full_name}`,
-  });
-
-  revalidatePath("/team");
-  revalidatePath(`/team/${id}`);
-  revalidatePath(`/team/${id}/edit`);
+  if (error) { console.error("[team:deactivate] Failed to deactivate team member", { id, error }); redirect(`/team/${id}?error=Could%20not%20deactivate%20team%20member.`); }
+  const profileResult = await supabase.from("profiles").update({ active_status: "inactive", updated_at: new Date().toISOString() })
+    .or(`team_member_id.eq.${id}${before.auth_user_id ? `,id.eq.${before.auth_user_id}` : ""}`);
+  if (profileResult.error) redirect(`/team/${id}?error=Could%20not%20verify%20login%20deactivation.`);
+  await logActivity({ profile, action: "deactivate", entityType: "team_member", entityId: id, entityLabel: after.full_name, beforeData: before, afterData: after, metadata: { reason }, summary: `Deactivated team member ${after.full_name}` });
+  revalidatePath("/team"); revalidatePath(`/team/${id}`); revalidatePath(`/team/${id}/edit`);
   redirect(`/team/${id}`);
 }
 
 export async function deleteTeamMember(formData: FormData) {
   const profile = await getCurrentProfile();
   if (!isOwnerAdminRole(profile)) redirect("/unauthorized");
-
   const id = clean(formData.get("id"));
   if (!id) redirect("/team");
   const returnPath = `/team/${id}/edit`;
-  if (id === profile?.team_member_id) {
-    redirect(`${returnPath}?error=${encodeURIComponent("You cannot permanently delete your own account.")}`);
-  }
-
+  if (id === profile?.team_member_id) redirect(`${returnPath}?error=${encodeURIComponent("You cannot permanently delete your own account.")}`);
   const reason = requireConfirmedReason(formData, returnPath);
-  if (clean(formData.get("delete_confirmation")) !== "DELETE") {
-    redirect(`${returnPath}?error=${encodeURIComponent("Type DELETE to confirm permanent removal.")}`);
-  }
-
+  if (clean(formData.get("delete_confirmation")) !== "DELETE") redirect(`${returnPath}?error=${encodeURIComponent("Type DELETE to confirm permanent removal.")}`);
   const supabase = getSupabaseAdminClient();
   if (!supabase) redirect(`${returnPath}?error=Supabase%20is%20not%20configured.`);
-
-  const { data: before, error: loadError } = await supabase
-    .from("team_members")
-    .select("*")
-    .eq("id", id)
-    .maybeSingle();
-
+  const { data: before, error: loadError } = await supabase.from("team_members").select("*").eq("id", id).maybeSingle();
   if (loadError || !before) {
     console.error("[team:delete] Failed to load team member", { id, error: loadError });
     redirect(`${returnPath}?error=${encodeURIComponent("Team member could not be loaded for deletion.")}`);
   }
-  if (before.auth_user_id && before.auth_user_id === profile?.id) {
-    redirect(`${returnPath}?error=${encodeURIComponent("You cannot permanently delete your own account.")}`);
-  }
-
-  const { data: blockerData, error: blockerError } = await supabase.rpc(
-    "snacky_team_member_delete_blockers",
-    { p_team_member_id: id },
-  );
-  if (blockerError) {
+  if (before.auth_user_id && before.auth_user_id === profile?.id) redirect(`${returnPath}?error=${encodeURIComponent("You cannot permanently delete your own account.")}`);
+  const { data: blockerData, error: blockerError } = await supabase.rpc("snacky_team_member_delete_blockers", { p_team_member_id: id });
+  if (blockerError || !Array.isArray(blockerData)) {
     console.error("[team:delete] Failed to check delete blockers", { id, error: blockerError });
     redirect(`${returnPath}?error=${encodeURIComponent("Could not safely check this member's history. Permanent delete was stopped.")}`);
   }
-
-  const blockers = Array.isArray(blockerData)
-    ? blockerData as Array<{ table?: string; column?: string; count?: number | string }>
-    : [];
+  const blockers = blockerData as Array<{ table?: string; column?: string; count?: number | string }>;
   if (blockers.length) {
-    const tables = Array.from(
-      new Set(
-        blockers
-          .map((blocker) => String(blocker.table ?? "").trim())
-          .filter(Boolean),
-      ),
-    );
+    const tables = Array.from(new Set(blockers.map((blocker) => String(blocker.table ?? "").trim()).filter(Boolean)));
     const visibleTables = tables.slice(0, 4).map((table) => table.replaceAll("_", " "));
     const suffix = tables.length > visibleTables.length ? ` and ${tables.length - visibleTables.length} more` : "";
     const detail = visibleTables.length ? ` History exists in ${visibleTables.join(", ")}${suffix}.` : "";
     redirect(`${returnPath}?error=${encodeURIComponent(`This member has Snacky history and cannot be permanently deleted.${detail} Deactivate the member instead so the history stays intact.`)}`);
   }
-
   if (before.auth_user_id) {
     const { error: authDeleteError } = await supabase.auth.admin.deleteUser(before.auth_user_id);
     if (authDeleteError) {
@@ -320,40 +210,18 @@ export async function deleteTeamMember(formData: FormData) {
       redirect(`${returnPath}?error=${encodeURIComponent("Could not remove this member's login account, so permanent delete was stopped.")}`);
     }
   }
-
-  const profileFilters = [
-    `team_member_id.eq.${id}`,
-    before.auth_user_id ? `id.eq.${before.auth_user_id}` : "",
-    before.email ? `email.eq.${before.email}` : "",
-  ].filter(Boolean);
-  if (profileFilters.length) {
-    const { error: profileDeleteError } = await supabase
-      .from("profiles")
-      .delete()
-      .or(profileFilters.join(","));
-    if (profileDeleteError) {
-      console.error("[team:delete] Failed to delete linked profiles", { id, error: profileDeleteError });
-      redirect(`${returnPath}?error=${encodeURIComponent("Login access was removed, but the linked profile could not be cleaned up. Try again before deleting the team member.")}`);
-    }
+  const profileFilters = [`team_member_id.eq.${id}`, before.auth_user_id ? `id.eq.${before.auth_user_id}` : ""].filter(Boolean);
+  const { error: profileDeleteError } = await supabase.from("profiles").delete().or(profileFilters.join(","));
+  if (profileDeleteError) {
+    console.error("[team:delete] Failed to delete linked profiles", { id, error: profileDeleteError });
+    redirect(`${returnPath}?error=${encodeURIComponent("Login access was removed, but the linked profile could not be cleaned up. Try again before deleting the team member.")}`);
   }
-
   const { error: deleteError } = await supabase.from("team_members").delete().eq("id", id);
   if (deleteError) {
     console.error("[team:delete] Failed to delete team member", { id, error: deleteError });
     redirect(`${returnPath}?error=${encodeURIComponent("Could not permanently delete this team member. No operational history was removed.")}`);
   }
-
-  await logActivity({
-    profile,
-    action: "delete",
-    entityType: "team_member",
-    entityId: id,
-    entityLabel: before.full_name,
-    beforeData: before,
-    metadata: { reason, permanent: true },
-    summary: `Permanently deleted unused team member ${before.full_name}`,
-  });
-
+  await logActivity({ profile, action: "delete", entityType: "team_member", entityId: id, entityLabel: before.full_name, beforeData: before, metadata: { reason, permanent: true }, summary: `Permanently deleted unused team member ${before.full_name}` });
   revalidatePath("/team");
   redirect("/team");
 }
