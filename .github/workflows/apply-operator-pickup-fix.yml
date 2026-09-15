@@ -1,0 +1,34 @@
+name: Apply operator pickup fix once
+
+on:
+  push:
+    branches:
+      - fix/operator-pickup-checklist
+    paths:
+      - scripts/apply-operator-pickup-fix.cjs
+      - .github/workflows/apply-operator-pickup-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/operator-pickup-checklist
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply source patch
+        run: node scripts/apply-operator-pickup-fix.cjs
+      - name: Commit patched route files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add 'src/app/operator/routes/[id]/pick-list/page.tsx' 'src/app/operator/routes/[id]/page.tsx'
+          git diff --cached --check
+          git commit -m "Require checked pickup items before confirmation"
+          git push origin HEAD:fix/operator-pickup-checklist
