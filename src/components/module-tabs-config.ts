@@ -1,23 +1,16 @@
 import type { ModuleTab } from "@/components/ModuleTabs";
 import { getAppModuleKey, type AppModuleKey } from "@/components/app-navigation";
 
-export type ModuleTabGroup = {
-  name: string;
-  nameAr: string;
-  tabs: ModuleTab[];
-};
-
+export type ModuleTabGroup = { name: string; nameAr: string; tabs: ModuleTab[]; };
 const operationsTabs: ModuleTab[] = [
   { label: "Routes", href: "/routes", labelAr: "المسارات" },
   { label: "New Route", href: "/routes/new", labelAr: "مسار جديد" },
   { label: "Refills", href: "/refills", labelAr: "التعبئة" },
 ];
-
 const cashTabs: ModuleTab[] = [
   { label: "Cash Collections", href: "/cash-collections", labelAr: "تحصيل النقدية" },
   { label: "Remove Cash", href: "/cash-collections/new", labelAr: "سحب النقد" },
 ];
-
 const stockTabs: ModuleTab[] = [
   { label: "Storage", href: "/inventory", labelAr: "المخزون", exact: true },
   { label: "Stock Check", href: "/inventory/stock-check", labelAr: "جرد المخزون" },
@@ -29,7 +22,6 @@ const stockTabs: ModuleTab[] = [
   { label: "Movements", href: "/inventory/movements", labelAr: "حركة المخزون" },
   { label: "Product Planning", href: "/product-planning", labelAr: "تخطيط المنتجات" },
 ];
-
 const machinesTabs: ModuleTab[] = [
   { label: "Machines", href: "/machines", labelAr: "الماكينات", exact: true },
   { label: "Locations", href: "/locations", labelAr: "المواقع" },
@@ -37,12 +29,10 @@ const machinesTabs: ModuleTab[] = [
   { label: "Status", href: "/machines/status", labelAr: "الحالة" },
   { label: "Maintenance", href: "/machines/maintenance", labelAr: "الصيانة" },
 ];
-
 const crmTabs: ModuleTab[] = [
   { label: "Leads & Visits", href: "/locations-pipeline", labelAr: "الجهات والزيارات" },
   { label: "Customer Issues", href: "/issues", labelAr: "مشاكل العملاء" },
 ];
-
 const financeTabs: ModuleTab[] = [
   { label: "Overview", href: "/finance", labelAr: "نظرة عامة", exact: true },
   { label: "Operations", href: "/finance/operations", labelAr: "العمليات" },
@@ -50,6 +40,7 @@ const financeTabs: ModuleTab[] = [
   { label: "Investors", href: "/finance/investors", labelAr: "المستثمرون" },
   { label: "Payroll", href: "/payroll", labelAr: "المرتبات" },
   { label: "Transactions", href: "/finance/transactions", labelAr: "المعاملات" },
+  { label: "Buy USD", href: "/finance/exchange", labelAr: "شراء الدولار" },
   { label: "Import Review", href: "/finance/import/review", labelAr: "مراجعة الاستيراد", match: ["/finance/import"] },
   { label: "Cleanup", href: "/finance/cleanup", labelAr: "التنظيف" },
   { label: "Expenses", href: "/finance/expenses", labelAr: "المصروفات" },
@@ -58,7 +49,6 @@ const financeTabs: ModuleTab[] = [
   { label: "Reports", href: "/finance/reports", labelAr: "التقارير" },
   { label: "Health", href: "/admin/finance-health", labelAr: "سلامة النظام" },
 ];
-
 const adminTabs: ModuleTab[] = [
   { label: "Overview", href: "/admin", labelAr: "نظرة عامة", exact: true },
   { label: "Stop Override", href: "/admin/stop-override", labelAr: "تجاوز نقطة التوقف" },
@@ -71,7 +61,6 @@ const adminTabs: ModuleTab[] = [
   { label: "XY VMS API", href: "/admin/vms-api", labelAr: "واجهة XY VMS" },
   { label: "Product Mapping", href: "/vms-mappings", labelAr: "مطابقة المنتجات" },
 ];
-
 const reportsTabs: ModuleTab[] = [
   { label: "Overview", href: "/reports", labelAr: "نظرة عامة", exact: true },
   { label: "Sales", href: "/sales", labelAr: "المبيعات" },
@@ -82,7 +71,6 @@ const reportsTabs: ModuleTab[] = [
   { label: "Machines", href: "/machines-dashboard", labelAr: "الأجهزة" },
   { label: "Inventory", href: "/inventory-dashboard", labelAr: "المخزون" },
 ];
-
 const groups: Record<AppModuleKey, ModuleTabGroup> = {
   operations: { name: "Operations", nameAr: "العمليات", tabs: operationsTabs },
   cash: { name: "Cash", nameAr: "النقدية", tabs: cashTabs },
@@ -93,12 +81,5 @@ const groups: Record<AppModuleKey, ModuleTabGroup> = {
   reports: { name: "Reports", nameAr: "التقارير", tabs: reportsTabs },
   admin: { name: "Admin", nameAr: "الإدارة", tabs: adminTabs },
 };
-
-export function pathnameFromHref(href: string) {
-  return href.split("?")[0]?.split("#")[0] || href;
-}
-
-export function getModuleTabGroupForPath(pathname: string): ModuleTabGroup | null {
-  const key = getAppModuleKey(pathname);
-  return key ? groups[key] : null;
-}
+export function pathnameFromHref(href: string) { return href.split("?")[0]?.split("#")[0] || href; }
+export function getModuleTabGroupForPath(pathname: string): ModuleTabGroup | null { const key = getAppModuleKey(pathname); return key ? groups[key] : null; }
