@@ -1,0 +1,64 @@
+name: Connected customer relations
+on:
+  pull_request:
+    paths:
+      - 'src/lib/crm-*'
+      - 'src/lib/authz.ts'
+      - 'src/components/Crm*'
+      - 'src/components/Sidebar.tsx'
+      - 'src/components/app-navigation.ts'
+      - 'src/components/module-tabs-config.ts'
+      - 'src/app/api/crm/**'
+      - 'src/app/my-work/**'
+      - 'src/app/contacts/**'
+      - 'src/app/follow-ups/**'
+      - 'src/app/relationships/**'
+      - 'src/app/issues/**'
+      - 'src/app/locations-pipeline/**'
+      - 'supabase/migrations/*connected_relations*'
+      - 'scripts/test-connected-relations*'
+      - '.github/workflows/connected-relations-check.yml'
+permissions:
+  contents: read
+concurrency:
+  group: connected-relations-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated-crm-only
+          POSTGRES_DB: crm_tests
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Actual migrations, cross-team workflows, no-money side effects and RLS
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: isolated-crm-only
+          PGDATABASE: crm_tests
+        run: psql -X -v ON_ERROR_STOP=1 -f scripts/test-connected-relations-db.sql
+      - name: Form handlers, saved retries, role routes, source links and Arabic direction
+        run: node --experimental-strip-types --test scripts/test-connected-relations.mjs
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Production build
+        run: npm run build
