@@ -1,0 +1,43 @@
+name: Company audited compatibility repair
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/company-final-repair.yml'
+      - 'scripts/company-final-repair.py'
+permissions:
+  contents: read
+jobs:
+  repair:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feat/company-hub'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Apply exact reviewed repairs, preserving canonical writers
+        run: python3 scripts/company-final-repair.py
+      - name: Weekly classification, dispatch, binary spreadsheet and dashboard regressions
+        run: |
+          node --check scripts/company-e2e/native.mjs
+          node --experimental-strip-types --loader ./scripts/ts-alias-loader.mjs --test scripts/test-vms-weekly-dispatch.mjs scripts/test-company-excel-compat.mjs scripts/test-company-polish.mjs scripts/test-vms-sales-import-parser.mjs scripts/test-vms-import-validation.mjs
+      - run: npm run typecheck
+      - name: Commit only the reviewed source and real-test harness to this branch
+        env:
+          REVIEWED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"
+          git fetch origin feat/company-hub
+          test "$(git rev-parse FETCH_HEAD)" = "$REVIEWED_SHA"
+          git add src/app/dashboard/page.tsx src/lib/vms-import-actions.ts scripts/company-e2e/native.mjs
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Dispatch weekly sales to transaction persistence and keep planograms separate; repair dashboard read compatibility'
+          git push origin HEAD:refs/heads/feat/company-hub
