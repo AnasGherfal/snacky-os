@@ -8,7 +8,7 @@ import {
   orderDetailsQuantity,
   orderDetailsTransactionStatus,
   orderDetailsValue,
-} from './vms-order-details';
+} from './vms-order-details.ts';
 
 /** Weekly sales are transaction evidence, never an instruction to change a machine layout.
  * Reuse the established weekly interpretation and deduplication rules unchanged.

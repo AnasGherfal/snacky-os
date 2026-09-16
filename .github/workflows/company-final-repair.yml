@@ -4,6 +4,7 @@ on:
     paths:
       - '.github/workflows/company-final-repair.yml'
       - 'scripts/company-final-repair.py'
+      - 'src/lib/vms-weekly-import-row.ts'
 permissions:
   contents: read
 jobs:
