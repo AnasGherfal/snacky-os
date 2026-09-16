@@ -1,0 +1,26 @@
+name: Generate CRM recurring migration
+on:
+  push:
+    branches: [feat/crm-recurring-management]
+    paths:
+      - '.github/workflows/crm-recurring-bootstrap.yml'
+permissions:
+  contents: write
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/crm-recurring-management
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.117.0
+      - name: Generate migration filename with Supabase CLI
+        run: |
+          supabase migration new crm_recurring_management
+          git add supabase/migrations
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Add generated CRM recurring management migration'
+          git push origin HEAD:feat/crm-recurring-management
