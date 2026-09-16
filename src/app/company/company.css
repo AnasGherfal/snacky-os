@@ -1,0 +1,17 @@
+/* Company-only contrast and focus improvements; existing operational screens
+   retain their current design and behavior. Use Snacky's existing green token. */
+.company-hub .btn-primary {
+  background: var(--snacky-accent);
+  color: #fff;
+}
+.company-hub .btn-primary:hover {
+  background: var(--snacky-accent-hover);
+}
+.company-hub :is(button, a, input, select, textarea):focus-visible {
+  outline-color: var(--snacky-accent);
+  outline-width: 2px;
+  outline-offset: 3px;
+}
+.company-hub .field-input {
+  min-width: 0;
+}
