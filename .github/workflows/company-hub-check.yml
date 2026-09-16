@@ -11,7 +11,11 @@ on:
       - 'src/components/Sidebar.tsx'
       - 'src/components/app-navigation.ts'
       - 'src/components/module-tabs-config.ts'
-      - 'src/components/CrmWorkspace.tsx'
+      - 'src/app/my-work/layout.tsx'
+      - 'src/app/locations-pipeline/layout.tsx'
+      - 'src/app/issues/layout.tsx'
+      - 'src/app/follow-ups/layout.tsx'
+      - 'src/app/relationships/obligations/layout.tsx'
       - 'src/lib/authz.ts'
       - 'supabase/migrations/*company_hub*'
       - 'scripts/test-company-hub*'
@@ -40,22 +44,14 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v4
-      - uses: supabase/setup-cli@v1
-        with:
-          version: 2.117.0
-      - name: Generate migration with the Supabase CLI when preparing this feature
+      - name: Snapshot reviewed source without runtime files or secrets
         run: |
           mkdir -p diagnostics
-          if ! find supabase/migrations -name '*_company_hub.sql' -print -quit | grep -q .; then
-            supabase migration new --help
-            supabase migration new company_hub
-            find supabase/migrations -name '*_company_hub.sql' -exec cp {} diagnostics/ \;
-          fi
+          git archive --format=tar.gz -o diagnostics/source.tar.gz HEAD src scripts supabase .github package.json package-lock.json tsconfig.json
       - uses: actions/upload-artifact@v4
         with:
-          name: company-generated-migration
-          path: diagnostics/*_company_hub.sql
-          if-no-files-found: ignore
+          name: company-reviewed-source
+          path: diagnostics/source.tar.gz
           retention-days: 2
       - uses: actions/setup-node@v4
         with:
@@ -63,10 +59,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Company contracts and real client handler tests
-        run: |
-          if test -f scripts/test-company-hub.mjs; then
-            node --experimental-strip-types --test scripts/test-company-hub.mjs
-          fi
+        run: node --experimental-strip-types --test scripts/test-company-hub.mjs
       - name: Actual isolated migrations, access controls and no-money effects
         env:
           PGHOST: localhost
@@ -75,18 +68,25 @@ jobs:
           PGPASSWORD: isolated-company-only
           PGDATABASE: crm_tests
         run: |
-          if test -f scripts/test-company-hub-db.sql; then
-            psql -X -v ON_ERROR_STOP=1 -f scripts/test-company-hub-db.sql > diagnostics/database.log 2>&1 || { tail -n 100 diagnostics/database.log; exit 1; }
-            tail -n 35 diagnostics/database.log
-          fi
+          psql -X -v ON_ERROR_STOP=1 -f scripts/test-company-hub-db.sql > diagnostics/database.log 2>&1 || { tail -n 100 diagnostics/database.log; exit 1; }
+          tail -n 35 diagnostics/database.log
       - name: Existing permissions and customer-relations regression tests
         run: node --experimental-strip-types --test scripts/test-authz-permissions.mjs scripts/test-connected-relations.mjs
       - name: Typecheck
         run: npm run typecheck
-      - name: Production build, including core ledger checks
+      - name: Production build with Company enabled and existing ledger checks
+        env:
+          NEXT_PUBLIC_SNACKY_COMPANY_HUB_ENABLED: 'true'
         run: |
           npm run build > diagnostics/build.log 2>&1 || { tail -n 100 diagnostics/build.log; exit 1; }
           tail -n 35 diagnostics/build.log
+          find .next/static -name '*.css' -print0 | tar --null -T - -czf diagnostics/browser-styles.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: company-browser-styles
+          path: diagnostics/browser-styles.tar.gz
+          if-no-files-found: ignore
+          retention-days: 2
       - uses: actions/upload-artifact@v4
         if: always()
         with:

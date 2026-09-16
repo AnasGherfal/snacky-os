@@ -64,7 +64,7 @@ declare k text; txt text; owner uuid;
 begin
  if d is null or jsonb_typeof(d)<>'object' then raise exception 'Invalid content' using errcode='22023';end if;
  foreach k in array array['title_en','title_ar','summary_en','summary_ar','body_en','body_ar','owner_id','review_date','source_url','file_id','work_path','section'] loop
-  if jsonb_typeof(d->k) is distinct from 'string' or length(d->>k)>case when k like 'body_%' then 20000 when k like 'summary_%' then 600 when k like 'title_%' then 160 else 2048 end then raise exception 'Invalid text field' using errcode='22023';end if;
+  if jsonb_typeof(d->k) is distinct from 'string' or length(d->>k)>(case when k like 'body_%' then 20000 when k like 'summary_%' then 600 when k like 'title_%' then 160 else 2048 end) then raise exception 'Invalid text field' using errcode='22023';end if;
  end loop;
  if trim(d->>'title_en')='' and trim(d->>'title_ar')='' then raise exception 'A title is required' using errcode='22023';end if;
  if d->>'section' not in ('start','guides','documents','people') then raise exception 'Invalid section' using errcode='22023';end if;

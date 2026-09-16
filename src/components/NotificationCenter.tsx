@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Bell, CheckCheck, Loader2, X } from "lucide-react";
+import { CompanyNoticesPanel, useCompanyNotices } from "@/components/CompanyNotices";
 import { useLanguage } from "@/components/I18nProvider";
 
 type NotificationRow = {
@@ -23,6 +24,8 @@ type NotificationsResponse = {
 
 type NotificationCenterProps = {
   compact?: boolean;
+  routeAlerts?: boolean;
+  companyUpdates?: boolean;
   label?: string;
   className?: string;
 };
@@ -76,8 +79,9 @@ function detectDeviceLabel() {
   return "Desktop browser";
 }
 
-export function NotificationCenter({ compact = false, label = "Notifications", className = "" }: NotificationCenterProps) {
+export function NotificationCenter({ compact = false, label = "Notifications", className = "", routeAlerts = true, companyUpdates = false }: NotificationCenterProps) {
   const { locale } = useLanguage();
+  const company = useCompanyNotices(companyUpdates);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
   const [loadingNotifications, setLoadingNotifications] = useState(false);
@@ -90,12 +94,14 @@ export function NotificationCenter({ compact = false, label = "Notifications", c
   const [vapidPublicKey, setVapidPublicKey] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const browserSupportsPush = typeof window !== "undefined" && "Notification" in window && "serviceWorker" in navigator && "PushManager" in window;
-  const buttonLabel = compact ? "Alerts" : label;
-  const unreadBadge = unreadCount > 9 ? "9+" : String(unreadCount);
+  const buttonLabel = locale === "ar" ? "الإشعارات" : compact ? "Alerts" : label;
+  const totalBadgeCount = (routeAlerts ? unreadCount : 0) + (companyUpdates ? company.data?.attention_count ?? 0 : 0);
+  const unreadBadge = totalBadgeCount > 9 ? "9+" : String(totalBadgeCount);
 
   const closePanel = () => setOpen(false);
 
   const loadNotifications = async () => {
+    if (!routeAlerts) return;
     setLoadingNotifications(true);
     try {
       const response = await fetch("/api/notifications?limit=6", { cache: "no-store" });
@@ -111,6 +117,7 @@ export function NotificationCenter({ compact = false, label = "Notifications", c
   };
 
   const loadPushConfiguration = async () => {
+    if (!routeAlerts) return "";
     if (!browserSupportsPush) {
       setPushStatus("unsupported");
       setPushConfigStatus("unavailable");
@@ -252,6 +259,7 @@ export function NotificationCenter({ compact = false, label = "Notifications", c
   };
 
   useEffect(() => {
+    if (!routeAlerts) return;
     const refresh = async () => {
       void loadNotifications();
       const publicKey = await loadPushConfiguration();
@@ -266,7 +274,7 @@ export function NotificationCenter({ compact = false, label = "Notifications", c
       window.clearInterval(interval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [routeAlerts]);
 
   useEffect(() => {
     if (!open) return;
@@ -274,7 +282,7 @@ export function NotificationCenter({ compact = false, label = "Notifications", c
       void loadNotifications();
     }, 0);
     return () => window.clearTimeout(refreshTimer);
-  }, [open]);
+  }, [open, routeAlerts]);
 
   useEffect(() => {
     if (!open) return;
@@ -312,7 +320,7 @@ export function NotificationCenter({ compact = false, label = "Notifications", c
       >
         <Bell className="h-5 w-5" />
         {!compact ? <span className="hidden sm:inline">{buttonLabel}</span> : null}
-        {unreadCount > 0 ? (
+        {totalBadgeCount > 0 ? (
           <span className="absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-rose-600 px-1 text-[10px] font-bold leading-none text-white">
             {unreadBadge}
           </span>
@@ -320,17 +328,19 @@ export function NotificationCenter({ compact = false, label = "Notifications", c
       </button>
 
       {open ? (
-        <div className="absolute right-0 top-full z-50 mt-2 w-[min(24rem,calc(100vw-1.5rem))] rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
+        <div className="absolute end-0 top-full z-50 mt-2 w-[min(24rem,calc(100vw-1.5rem))] rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <div className="text-sm font-semibold text-slate-900">Notifications</div>
-              <p className="mt-1 text-xs leading-5 text-slate-500">Route alerts and in-app updates for your account.</p>
+              <div className="text-sm font-semibold text-slate-900">{locale === "ar" ? "الإشعارات" : "Notifications"}</div>
+              <p className="mt-1 text-xs leading-5 text-slate-500">{locale === "ar" ? "التحديثات المخصصة لحسابك داخل النظام." : "Updates for your account inside Snacky OS."}</p>
             </div>
             <button type="button" onClick={closePanel} className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50" aria-label="Close notifications">
               <X className="h-4 w-4" />
             </button>
           </div>
 
+          {companyUpdates ? <CompanyNoticesPanel data={company.data} failed={company.failed} ar={locale === "ar"} close={closePanel} /> : null}
+          {routeAlerts ? <>
           <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -381,7 +391,7 @@ export function NotificationCenter({ compact = false, label = "Notifications", c
                 const href = notification.action_url || (notification.related_route_id ? `/operator/routes/${notification.related_route_id}` : "#");
                 const unread = !notification.read_at;
                 const body = (
-                  <div className={`rounded-xl border p-3 text-left transition ${unread ? "border-slate-300 bg-white" : "border-slate-200 bg-slate-50"}`}>
+                  <div className={`rounded-xl border p-3 text-start transition ${unread ? "border-slate-300 bg-white" : "border-slate-200 bg-slate-50"}`}>
                     <div className="flex items-start gap-3">
                       <div className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${unread ? "bg-emerald-500" : "bg-slate-300"}`} />
                       <div className="min-w-0 flex-1">
@@ -407,6 +417,7 @@ export function NotificationCenter({ compact = false, label = "Notifications", c
               </div>
             )}
           </div>
+          </> : null}
         </div>
       ) : null}
     </div>
