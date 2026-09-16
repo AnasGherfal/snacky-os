@@ -2,6 +2,8 @@
 
 The end-to-end job creates disposable Supabase Auth, PostgREST, Storage and PostgreSQL services on loopback and builds the actual application against them. Accounts, documents and ledger fixtures are synthetic. It does not connect to production, receive production secrets or mutate the connected project.
 
+Company acceptance runs with the feature enabled. The native-workflow suite rebuilds with the feature disabled, using the same real backend that contains the Company schema. The checks therefore cover both application enablement states rather than assuming a flag makes regressions impossible.
+
 ## Original repository migration replay
 
 Historical migrations do not recreate an empty database without compatibility handling. The test builder applies the original SQL files, but explicitly:
@@ -29,10 +31,16 @@ This is explicit schema drift, not proof that a clean, unmodified replay of all 
 
 The route fixture supplies the current canonical pickup writer's provenance and genuine acknowledged line IDs. Its obsolete raw zero-cash inserts are replaced with assertions that stop completion creates no cash removal. These changes adapt the test to the existing protected workflow; they do not relax SQL permissions or change the route implementation.
 
-VMS tests use the actual production build's exported server-action IDs rather than development-only function-name text in public HTML. They accept either a 303 redirect or a streamed 200 action response WITH an explicit redirect header; they still require the expected destination and verify saved batches, imported rows, current stock sources and views. No arbitrary 200 response is accepted as successful import.
+VMS tests use the actual production build's exported server-action IDs rather than development-only function-name text in public HTML. They accept either a 303 redirect or a streamed 200 action response WITH an explicit redirect header, require the exact persisted import-batch ID and success message in the destination, and verify saved rows/current sources/views. They also require the existing canonical `machine_stock_snapshot` type for legacy `stock` input, guarded against an unexpected change to the importer's canonicalization function. No arbitrary 200, unrelated batch or generic imported status is accepted as proof of success.
 
-Legacy English UI assertions run with an explicit English cookie. The Company browser tests independently exercise Arabic and English. A lost response is simulated only after the real request reaches the real backend and commits; the subsequent retry must not create another revision.
+Legacy English UI assertions run with an explicit English cookie. Company browser tests independently exercise Arabic and English. A lost response is simulated only after the real request reaches the real backend and commits; the subsequent reload/retry must not create another revision.
+
+## Presentation and narrow existing read repair
+
+The Company area uses scoped contrast/focus improvements, human-readable Arabic/English working-screen labels, an exact draft-review step, explicit historical-version warnings and multipage printing. The actual full-shell screenshots and accessibility outputs are retained as artifacts; they contain QA data, not approved company documents.
+
+The audit also reproduced an existing dashboard route-query ambiguity: `routes` has several foreign keys to `team_members`. The two dashboard route-read shapes now explicitly use `routes_operator_id_fkey`, which was verified read-only in the connected production schema. This corrects a read selector only; no route creation, completion, inventory, payroll or financial calculation is altered.
 
 ## What this establishes
 
-These tests exercise a real isolated application/backend, not mocked data responses. They do not establish production deployment, disaster-recovery readiness, every possible workflow, or absolute absence of future failures. The exact head, test results, observed baseline differences, remaining failures and visual review must be recorded in the PR before any release decision.
+These tests exercise a real isolated application/backend, not mocked data responses. They do not establish production deployment, disaster-recovery readiness, every possible workflow, or absolute absence of future failures. The exact head, test results, observed baseline differences, remaining failures and visual review must be recorded in the PR before any release decision. Production activation also requires the prior connected-relations migrations, the Company migration, approved materials and verified backups/rollback.
