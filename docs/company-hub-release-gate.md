@@ -1,79 +1,75 @@
-# Company Hub — release hold and acceptance standard
+# Company Hub release acceptance
 
-**Status: DRAFT / DO NOT MERGE OR ENABLE.** The owner requested a higher release
-standard after the initial implementation. A passing build is not a release
-approval. Keep this PR in draft until the evidence below is complete and reviewed.
-No production database changes, permissions, operational records or employee
-policies are authorized by this checklist.
+## Two separate decisions
 
-## Findings reproduced during the review
+**Code merge readiness is not permission to enable the feature for staff.**
+The current decision, exact reviewed commit, workflow runs, unresolved blockers and
+visual evidence must be recorded in PR #173. Do not reuse a green result from an
+older application commit as approval for newer code.
 
-1. A published page could show version 1 while its Publish latest draft button
-   published a different saved draft. The review view must show the exact saved
-   body, file, audience, owner, sharing choice and notification/acknowledgement
-   effects before allowing publication. The existing revision lock must reject
-   a concurrent edit. Saving now opens that private review view, and successful
-   publication returns to the current published record.
-2. Historical instructions lacked a conspicuous warning and a direct route to
-   the current version. Older versions must stay accessible as history without
-   masquerading as the current instructions or prompting current-policy consent.
-3. Relations staff saw duplicate My Work buttons on their Company home screen.
-   Show one primary daily-work action and use employee-facing language.
+A merge candidate must pass its exact-head checks, preserve existing workflows,
+remain disabled by default, and have no unresolved feature-critical functional or
+security finding. Activation additionally requires the deployed database's CRM
+prerequisites, the Company migration, approved materials, real staff assignments,
+backup/restore readiness, a rollback plan and owner acceptance of the interface.
+No production database or data mutation is authorized by this document.
 
-The dedicated regression tests were first run against the original head and
-failed on these gaps. They execute the actual server component with controlled
-framework/data boundaries. They do not prove production-account access.
+## Code gates
 
-## Gates
+- Run the repository-wide node:test sweep; identify any skipped integration cases
+  and execute them separately against the disposable real backend. Keep original
+  business assertions or document why a legacy fixture no longer represents the
+  existing protected contract. Do not weaken a ledger/API guard to make tests pass.
+- Run Company and CRM scenarios before and after the Company migration in isolated
+  PostgreSQL. Run the real application with real local Auth, REST and Storage;
+  test staff authorization, draft isolation, publish/revision safety, search,
+  upload/download/preview, old versions, acknowledgements, notifications, archive,
+  deactivation and lost-response recovery.
+- Verify important existing purchase, route, pickup, inventory, permissions and
+  VMS import behavior. Build with Company enabled for its acceptance suite and
+  disabled for the native-workflow suite. Company must not create money/stock
+  movements or an independent operational task ledger.
+- Production and full dependency audits must be reviewed. Unresolved high/critical
+  findings block release. Use pinned, reviewed fixes and a lockfile; never bypass
+  the gate or run a blind force-upgrade.
+- Inspect actual full-shell Arabic/English mobile and desktop screens, not only
+  mocked cards. Check navigation, labels, RTL, focus/contrast, long content,
+  loading/error/empty/retry states, previews and multipage printing. Report the
+  scope of any automated accessibility scan accurately.
 
-- **Scope and data:** review the exact base/head diff; do not change route,
-  pickup, stock, purchase, cash, payment, payroll or VMS behavior to accommodate
-  Company. No duplicate operational ledgers, tasks or contacts. Use synthetic
-  records only in tests. Keep the feature disabled by default.
-- **Before/after database regression:** the release runner applies the actual
-  migrations in isolated PostgreSQL, runs Company invariants, then reruns the
-  original CRM scenarios after the Company migration. This matters because the
-  migration touches the shared CRM storage/API guard. It is not sufficient to
-  test those original scenarios only before the migration.
-- **Security:** production dependency audit must not have unresolved high or
-  critical findings. Audit failure is a release blocker, even if inherited from
-  the base branch; it is not proof the new feature introduced the issue. Do not
-  run a force-upgrade or bypass the check. Triage exact locked versions, repair
-  with a reviewed patch and rerun the full regression suite.
-- **Real staging integration:** on a nonproduction database and the matching
-  application, verify login, active/inactive staff, owner/admin, relations,
-  operator and mixed-role access; private draft search/file isolation; uploads,
-  download and preview; publication, concurrent edits, reloads and timeouts;
-  per-version acknowledgements; notification recipient scope; archive/restore;
-  company-disabled and database-unavailable behavior. Review any differences
-  between live/staging helper definitions and the simplified isolated fixtures.
-- **Existing workflows in staging:** route creation, partial/multiple-stop
-  pickup, stop completion and evidence; storage and reservations; supplier
-  payment; cash removal/counting; customer issue handoff/resolution; lead
-  conversion; rent proof versus verified Finance payment. Match before/after
-  ledger totals. No live money or stock may be moved merely to demonstrate QA.
-- **Presentation:** inspect full app-shell screens, not only component cards,
-  in Arabic and English, at phone and desktop sizes. Check RTL, typography,
-  visible tab/breadcrumb context, keyboard/focus behavior, long names/text,
-  loading/error/empty states, disabled and retry states, the notification panel,
-  PDF/image preview, and multipage printing. No fake buttons or placeholder
-  resources presented as approved material. Obtain owner visual acceptance.
-- **Content/setup:** approved current logo, presentation, role pack and contact
-  information must be supplied and reviewed. Generic templates are not approved
-  company policies. Sensitive employee files remain outside the general library.
-- **Deployment:** verify migration prerequisites, backing database and file
-  restoration, exact reviewed commit, feature enablement and rollback plan.
-  Merge approval and staff rollout approval are separate. A preview deployment
-  is not production deployment evidence.
+## Publication safety
 
-## Evidence boundary
+Management reviews the exact saved draft, revision, attachment, audience, owner,
+sharing choice and notification/acknowledgement effects before publishing. A
+concurrent edit invalidates that review. Historical instructions show an explicit
+older-version warning and a route to current instructions. Read/acknowledge/task
+completion remain different actions. Generic starter wording is never adopted
+as company policy automatically.
 
-The initial 15 green workflows did not establish the real-account/staging,
-production-dependency or owner visual gates. This review must not reuse an older
-screenshot or PR description as proof that a later code change was tested.
-Record the exact commit, date, environment, commands, failures and remaining
-blockers when updating this PR. Never label a partial or mocked test end-to-end.
+## Deployment gates
 
-Follow-on functionality (onboarding task packages, recurring responsibilities,
-escalations, external Company notifications, global search, private HR documents
-and Drive synchronization) remains separate scope until implemented and tested.
+1. Confirm the reviewed base/head and assess any concurrent application changes.
+2. Inspect the current deployed schema and migration prerequisites read-only.
+   The prior connected-relations release must exist before Company. Never apply
+   all pending historical files blindly.
+3. Verify backups and restoration of both database records and file objects.
+4. Coordinate the reviewed schema and application deployment with the feature off.
+   Verify owner, relations, operator and mixed/inactive access before staff rollout.
+5. Load/review the approved logo, presentation and role procedures. Configure
+   underlying Drive permissions for master links. Keep private employee records
+   outside the general library. Obtain owner visual acceptance.
+6. Enable the feature deliberately. Keep a tested application rollback path;
+   retain private versions, history and receipts rather than dropping their data.
+
+## Evidence limits
+
+See `docs/company-qa-environment.md` for the explicit differences needed to build
+the disposable full-schema test environment and the read-only verified production
+permission baseline. These tests are real local integration, not a production
+clone, production deployment or proven disaster recovery. Dependency scans and
+passing tests reduce risk; they cannot guarantee absence of every future defect.
+
+The first release does not include task-based onboarding automation, recurring
+escalations, scheduled external Company notifications, private HR document
+management or Drive synchronization. Those require their own implementation and
+acceptance evidence, not an untested claim of completion.

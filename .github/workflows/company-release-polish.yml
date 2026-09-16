@@ -1,0 +1,46 @@
+name: Company final reviewed presentation patch
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/company-release-polish.yml'
+      - 'scripts/company-release-polish.py'
+permissions:
+  contents: read
+concurrency:
+  group: company-release-polish-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  polish:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feat/company-hub'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Apply only the reviewed exact-match edits
+        run: python3 scripts/company-release-polish.py
+      - name: Verify labels, safe read selector and actual Company handlers
+        run: |
+          node --check scripts/company-e2e/native.mjs
+          node --experimental-strip-types --test scripts/test-company-polish.mjs scripts/test-company-hub.mjs scripts/test-company-release-gate.mjs scripts/test-company-request.mjs scripts/test-authz-permissions.mjs
+      - run: npm run typecheck
+      - name: Commit only reviewed source/test files on this branch
+        env:
+          REVIEWED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"
+          git fetch origin feat/company-hub
+          test "$(git rev-parse FETCH_HEAD)" = "$REVIEWED_SHA"
+          git add -- src/app/dashboard/page.tsx src/components/CompanyEditor.tsx src/components/CompanyHub.tsx src/lib/company-hub.ts scripts/test-company-polish.mjs scripts/company-e2e/native.mjs
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Use clear Company labels, explicit dashboard operator relationship and canonical import assertions'
+          git push origin HEAD:refs/heads/feat/company-hub
