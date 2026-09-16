@@ -465,7 +465,7 @@ async function loadRouteRows(
 ) {
   const withError = await supabase
     .from("routes")
-    .select("id, route_date, status, started_at, updated_at, completed_at, last_completion_error, operator:team_members(full_name)")
+    .select("id, route_date, status, started_at, completed_at, last_completion_error, operator:team_members!routes_operator_id_fkey(full_name)")
     .order("route_date", { ascending: true })
     .limit(80);
 
@@ -473,7 +473,7 @@ async function loadRouteRows(
 
   return supabase
     .from("routes")
-    .select("id, route_date, status, started_at, updated_at, completed_at, operator:team_members(full_name)")
+    .select("id, route_date, status, started_at, completed_at, operator:team_members!routes_operator_id_fkey(full_name)")
     .order("route_date", { ascending: true })
     .limit(80);
 }

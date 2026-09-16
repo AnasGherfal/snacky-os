@@ -6,7 +6,8 @@ export type AppModuleKey =
   | "crm"
   | "finance"
   | "reports"
-  | "admin";
+  | "admin"
+  | "company";
 
 export const appModuleLabels: Record<AppModuleKey, { en: string; ar: string }> = {
   operations: { en: "Operations", ar: "العمليات" },
@@ -17,6 +18,7 @@ export const appModuleLabels: Record<AppModuleKey, { en: string; ar: string }> =
   finance: { en: "Finance", ar: "المالية" },
   reports: { en: "Reports", ar: "التقارير" },
   admin: { en: "Admin", ar: "الإدارة" },
+  company: { en: "Company", ar: "الشركة" },
 };
 
 type AppModuleRule = { key: AppModuleKey; prefixes: string[]; };
@@ -26,6 +28,7 @@ function matchesPrefix(pathname: string, prefix: string) {
 
 // One module map for sidebar, top tabs and topbar. Specific routes precede broad ones.
 const appModuleRules: AppModuleRule[] = [
+  { key: "company", prefixes: ["/company"] },
   { key: "finance", prefixes: ["/admin/finance-health"] },
   { key: "crm", prefixes: ["/my-work", "/locations-pipeline", "/issues", "/relationships", "/contacts", "/follow-ups"] },
   { key: "cash", prefixes: ["/cash-collections"] },

@@ -1,0 +1,47 @@
+name: Company repository-wide regression sweep
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'scripts/**'
+      - 'supabase/migrations/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/company-all-regressions.yml'
+permissions:
+  contents: read
+concurrency:
+  group: company-all-regressions-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: All node:test modules, with no live connection or secret
+        run: |
+          mkdir -p diagnostics
+          node <<'NODE'
+          const fs=require('node:fs'),{spawnSync}=require('node:child_process');
+          for(const name of Object.keys(process.env)) if(/SUPABASE|SMOKE_TEST|QA_PASSWORD/.test(name)) throw Error('External integration environment must not be present in this unit sweep');
+          if(fs.existsSync('.env.local')) throw Error('No local credentials allowed');
+          const files=fs.readdirSync('scripts').filter(f=>f.endsWith('.mjs')&&/from\s+['"]node:test['"]/.test(fs.readFileSync('scripts/'+f,'utf8'))).sort().map(f=>'scripts/'+f);
+          fs.writeFileSync('diagnostics/unit-files.json',JSON.stringify(files,null,2));
+          const result=spawnSync(process.execPath,['--experimental-strip-types','--loader','./scripts/ts-alias-loader.mjs','--test','--test-concurrency=4',...files],{encoding:'utf8',maxBuffer:40e6});
+          fs.writeFileSync('diagnostics/all-unit.tap',(result.stdout||'')+'\n'+(result.stderr||''));
+          console.log((result.stdout||'').slice(-6000));process.exit(result.status??1);
+          NODE
+      - name: Full dependency audit, including development tools
+        run: npm audit --json > diagnostics/all-dependencies-audit.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: company-all-regressions
+          path: diagnostics/*
+          retention-days: 7

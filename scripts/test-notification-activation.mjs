@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import vm from "node:vm";
+import ts from "typescript";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -79,11 +81,87 @@ test("route assignment still creates the operator notification", () => {
   assert.match(delivery, /type:\s*"route_assigned"/);
 });
 
-test("notification bell is visible on desktop and mobile", () => {
-  assert.match(topbar, /<NotificationCenter compact \/>/);
-  const index = topbar.indexOf("<NotificationCenter compact />");
-  const nearby = topbar.slice(Math.max(0, index - 100), index + 100);
-  assert.doesNotMatch(nearby, /md:hidden/);
+// Execute the actual Topbar and authorization code with framework boundaries stubbed.
+// Do not lock the test to a specific JSX spelling or remove role restrictions.
+function loadModule(source, imports = {}) {
+  const exports = {};
+  const output = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
+  }).outputText;
+  vm.runInNewContext(output, { exports, require(name) {
+    assert.ok(name in imports, `Unexpected import: ${name}`);
+    return imports[name];
+  }});
+  return exports;
+}
+
+function renderTopbar(role, enabled = true, locale = "en", roles = [role]) {
+  const authz = loadModule(read("src/lib/authz.ts"));
+  const domain = loadModule(read("src/lib/company-hub.ts").replace(
+    /process\.env\.NEXT_PUBLIC_SNACKY_COMPANY_HUB_ENABLED === 'true'/, String(enabled),
+  ));
+  const navigation = loadModule(read("src/components/app-navigation.ts"));
+  const jsx = (type, props) => ({ type, props });
+  const NotificationCenter = () => null;
+  const dictionary = { nav: {}, app: { name: "Snacky", subtitle: "Operations" }, language: { arabic: "العربية", english: "English" }, shell: {} };
+  const imports = {
+    "react/jsx-runtime": { jsx, jsxs: jsx },
+    "react": { useState: initial => [initial, () => {}] },
+    "next/image": { default: "img" }, "next/link": { default: "a" },
+    "next/navigation": { usePathname: () => "/company", useRouter: () => ({}) },
+    "lucide-react": { Menu: "menu-icon", UserCircle: "user-icon" },
+    "@/components/I18nProvider": { useLanguage: () => ({ locale, dictionary, setLocale() {} }) },
+    "@/components/NotificationCenter": { NotificationCenter },
+    "@/components/app-navigation": navigation,
+    "@/lib/company-hub": domain, "@/lib/authz": authz,
+  };
+  const { Topbar } = loadModule(topbar, imports);
+  const tree = Topbar({ profile: { id: "fixture", full_name: "Fixture", role, roles } });
+  const bells = [];
+  function walk(node, ancestors = []) {
+    if (Array.isArray(node)) return node.forEach(child => walk(child, ancestors));
+    if (!node || typeof node !== "object") return;
+    if (node.type === NotificationCenter) bells.push({ node, ancestors });
+    walk(node.props?.children, [...ancestors, node]);
+  }
+  walk(tree);
+  return bells;
+}
+
+test("actual bell remains visible on desktop and mobile in either language", () => {
+  for (const locale of ["ar", "en"]) {
+    const bells = renderTopbar("operator", true, locale);
+    assert.equal(bells.length, 1);
+    assert.equal(bells[0].node.props.compact, true);
+    for (const ancestor of bells[0].ancestors) {
+      assert.doesNotMatch(ancestor.props?.className ?? "", /(?:^|\s)(?:[a-z]+:)?hidden(?:\s|$)/);
+    }
+  }
+});
+
+test("relations and other staff receive Company updates without route privileges", () => {
+  for (const role of ["crm", "finance", "warehouse", "purchasing"]) {
+    const bells = renderTopbar(role);
+    assert.equal(bells.length, 1);
+    assert.equal(bells[0].node.props.companyUpdates, true);
+    assert.equal(bells[0].node.props.routeAlerts, false);
+    assert.equal(renderTopbar(role, false).length, 0);
+  }
+});
+
+test("existing route alerts survive Company being disabled and multi-role staff retain access", () => {
+  for (const role of ["owner", "admin", "supervisor", "operator"]) {
+    for (const enabled of [false, true]) {
+      const bells = renderTopbar(role, enabled);
+      assert.equal(bells.length, 1);
+      assert.equal(bells[0].node.props.routeAlerts, true);
+      assert.equal(bells[0].node.props.companyUpdates, enabled);
+    }
+  }
+  for (const role of ["investor", "viewer"]) assert.equal(renderTopbar(role).length, 0);
+  const mixed = renderTopbar("investor", true, "en", ["investor", "crm"]);
+  assert.equal(mixed[0].node.props.companyUpdates, true);
+  assert.equal(mixed[0].node.props.routeAlerts, false);
 });
 
 test("private material is never browser-exposed", () => {

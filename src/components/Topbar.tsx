@@ -9,7 +9,8 @@ import { useLanguage } from "@/components/I18nProvider";
 import { NotificationCenter } from "@/components/NotificationCenter";
 import { appModuleLabels, getAppModuleKey } from "@/components/app-navigation";
 import type { Dictionary, SupportedLocale } from "@/lib/i18n";
-import { AppRole, canExecuteRoutes } from "@/lib/authz";
+import { companyHubEnabled, companyRoles } from "@/lib/company-hub";
+import { AppRole, canExecuteRoutes, hasAnyRole } from "@/lib/authz";
 
 type TopbarProfile = {
   id: string;
@@ -79,7 +80,9 @@ export function Topbar({ profile, onMenuClick }: { profile: TopbarProfile; onMen
   const topbarTitle = directTitle ?? (titleKey ? dictionary.nav[titleKey] : moduleTitle ?? dictionary.app.name);
   const nextLocale: SupportedLocale = locale === "ar" ? "en" : "ar";
   const nextLocaleLabel = nextLocale === "ar" ? dictionary.language.arabic : dictionary.language.english;
-  const canSeeNotifications = canExecuteRoutes(profile);
+  const routeAlerts = canExecuteRoutes(profile);
+  const companyUpdates = companyHubEnabled && hasAnyRole(profile, companyRoles);
+  const canSeeNotifications = routeAlerts || companyUpdates;
 
   const logout = async () => {
     setLoggingOut(true);
@@ -114,7 +117,7 @@ export function Topbar({ profile, onMenuClick }: { profile: TopbarProfile; onMen
         <div className="flex shrink-0 items-center gap-2">
           {canSeeNotifications ? (
             <div>
-              <NotificationCenter compact />
+              <NotificationCenter key={profile.id} routeAlerts={routeAlerts} companyUpdates={companyUpdates} compact />
             </div>
           ) : null}
           <button

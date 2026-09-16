@@ -78,7 +78,16 @@ const reportsTabs: ModuleTab[] = [
   { label: "Machines", href: "/machines-dashboard", labelAr: "الأجهزة" },
   { label: "Inventory", href: "/inventory-dashboard", labelAr: "المخزون" },
 ];
+const companyTabs: ModuleTab[] = [
+  { label: "Start Here", labelAr: "ابدأ هنا", href: "/company", exact: true, match: ["/company/start"] },
+  { label: "How We Work", labelAr: "كيف نعمل", href: "/company/guides" },
+  { label: "Documents & Brand", labelAr: "الوثائق والهوية", href: "/company/documents" },
+  { label: "Responsibilities", labelAr: "المسؤوليات", href: "/company/people" },
+  { label: "Updates", labelAr: "التحديثات", href: "/company/updates" },
+  { label: "Manage", labelAr: "إدارة المحتوى", href: "/company/manage" },
+];
 const groups: Record<AppModuleKey, ModuleTabGroup> = {
+  company: { name: "Company", nameAr: "الشركة", tabs: companyTabs },
   operations: { name: "Operations", nameAr: "العمليات", tabs: operationsTabs },
   cash: { name: "Cash", nameAr: "النقدية", tabs: cashTabs },
   stock: { name: "Stock & Purchasing", nameAr: "المخزون والمشتريات", tabs: stockTabs },

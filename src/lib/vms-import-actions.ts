@@ -3,6 +3,7 @@
 import { createHash } from "node:crypto";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { weeklyImportRow } from "@/lib/vms-weekly-import-row";
 import { logActivity } from "@/lib/activity-log";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canConfirmVmsImports, canCreateVmsImports, getEffectivePermissions, isOwnerAdminRole } from "@/lib/authz";
@@ -2436,6 +2437,38 @@ async function runVmsImport({
     }
 
     if (reportType === "vms_order_details_weekly") {
+      const transaction = weeklyImportRow({
+        row, originalRow, batchId: batch.id, rowNumber,
+        machineId: machine?.id ?? null, productId: productId ?? null,
+      });
+      const amount = orderDetailsGrossSalesAmount(row) ?? 0;
+      const status = transaction.transaction_status;
+      if (status === "successful_sale") {
+        summary.successfulSalesRows = (summary.successfulSalesRows ?? 0) + 1;
+        summary.estimatedSuccessfulSales = (summary.estimatedSuccessfulSales ?? 0) + amount;
+      } else if (status === "failed_vend") {
+        summary.failedVendRows = (summary.failedVendRows ?? 0) + 1;
+        summary.failedVendAmount = (summary.failedVendAmount ?? 0) + amount;
+      } else if (status === "refunded") {
+        summary.refundedRows = (summary.refundedRows ?? 0) + 1;
+        summary.refundedAmount = (summary.refundedAmount ?? 0) + amount;
+      } else if (status === "failed_payment") {
+        summary.failedPaymentRows = (summary.failedPaymentRows ?? 0) + 1;
+      } else {
+        summary.needsReviewTransactionRows = (summary.needsReviewTransactionRows ?? 0) + 1;
+      }
+      const warnings: string[] = [];
+      if (!identifier) warnings.push("missing machine id");
+      else if (!machine) warnings.push("unknown machine: " + identifier);
+      if (!productId) warnings.push("unmapped product: " + productLabel);
+      if (status === "needs_review") warnings.push("transaction status needs review");
+      transactionRawRows.push(transaction);
+      summary.importedRows += 1;
+      finishRow("imported", warnings);
+      continue;
+    }
+
+    if (reportType === "planogram") {
       const slotCode = value(row, ["slot_code", "slot", "slot_no", "selection", "selection_code", "selection_no", "tray", "tray_code", "channel", "channel_no", "coil"]);
       if (!slotCode) {
         const reason = "missing slot/selection code.";

@@ -1,0 +1,121 @@
+name: Company Hub checks
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/company-hub-check.yml'
+      - 'src/**/company/**'
+      - 'src/lib/company-*'
+      - 'src/components/Company*'
+      - 'src/components/NotificationCenter.tsx'
+      - 'src/components/Topbar.tsx'
+      - 'src/components/Sidebar.tsx'
+      - 'src/components/app-navigation.ts'
+      - 'src/components/module-tabs-config.ts'
+      - 'src/app/my-work/layout.tsx'
+      - 'src/app/locations-pipeline/layout.tsx'
+      - 'src/app/issues/layout.tsx'
+      - 'src/app/follow-ups/layout.tsx'
+      - 'src/app/relationships/obligations/layout.tsx'
+      - 'src/lib/authz.ts'
+      - 'supabase/migrations/*company_hub*'
+      - 'scripts/test-company-hub*'
+      - 'scripts/test-company-release*'
+      - 'docs/company-hub-release-gate.md'
+permissions:
+  contents: read
+concurrency:
+  group: company-hub-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated-company-only
+          POSTGRES_DB: crm_tests
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Snapshot reviewed source without runtime files or secrets
+        run: |
+          mkdir -p diagnostics
+          git archive --format=tar.gz -o diagnostics/source.tar.gz HEAD src scripts supabase .github package.json package-lock.json tsconfig.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: company-reviewed-source
+          path: diagnostics/source.tar.gz
+          retention-days: 2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Company contracts and real client handler tests
+        run: node --experimental-strip-types --test scripts/test-company-hub.mjs scripts/test-company-release-gate.mjs
+      - name: Actual isolated migrations, access controls and no-money effects
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: isolated-company-only
+          PGDATABASE: crm_tests
+        run: |
+          node scripts/test-company-release-db.mjs > diagnostics/database.log 2>&1 || { tail -n 100 diagnostics/database.log; exit 1; }
+          tail -n 35 diagnostics/database.log
+      - name: Existing permissions and customer-relations regression tests
+        run: node --experimental-strip-types --test scripts/test-authz-permissions.mjs scripts/test-connected-relations.mjs
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Production build with Company enabled and existing ledger checks
+        env:
+          NEXT_PUBLIC_SNACKY_COMPANY_HUB_ENABLED: 'true'
+        run: |
+          npm run build > diagnostics/build.log 2>&1 || { tail -n 100 diagnostics/build.log; exit 1; }
+          tail -n 35 diagnostics/build.log
+          find .next/static -name '*.css' -print0 | tar --null -T - -czf diagnostics/browser-styles.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: company-browser-styles
+          path: diagnostics/browser-styles.tar.gz
+          if-no-files-found: ignore
+          retention-days: 2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: company-test-diagnostics
+          path: diagnostics/*.log
+          if-no-files-found: ignore
+          retention-days: 2
+
+  dependency-release-gate:
+    name: Production dependency security gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Reject unresolved high or critical production dependency findings
+        run: |
+          mkdir -p diagnostics
+          npm audit --omit=dev --audit-level=high --json > diagnostics/production-audit.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: company-production-dependency-audit
+          path: diagnostics/production-audit.json
+          if-no-files-found: ignore
+          retention-days: 7

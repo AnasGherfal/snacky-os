@@ -1,0 +1,93 @@
+name: Company full-stack integration
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/company-full-stack-check.yml'
+      - 'scripts/company-e2e/**'
+      - 'src/components/Company*'
+      - 'src/lib/company-*'
+      - 'src/app/api/company/**'
+      - 'src/app/company/**'
+      - 'supabase/migrations/*company_hub*'
+      - 'package.json'
+      - 'package-lock.json'
+permissions:
+  contents: read
+concurrency:
+  group: company-full-stack-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.117.0
+      - name: Prepare disposable local project (no production data or link)
+        run: |
+          mkdir -p .qa/full/supabase diagnostics
+          python3 - <<'PY'
+          from pathlib import Path
+          text=Path('supabase/config.toml').read_text()
+          text=text.replace('project_id = "snacky-os"','project_id = "snacky-company-isolated"')
+          for section in ['db.migrations','db.seed','studio','inbucket','realtime','edge_runtime']:
+            start=text.index('['+section+']')
+            end=text.find('\n[',start+1)
+            if end<0:end=len(text)
+            text=text[:start]+text[start:end].replace('enabled = true','enabled = false')+text[end:]
+          Path('.qa/full/supabase/config.toml').write_text(text)
+          PY
+      - name: Start real local Auth, REST, Storage and PostgreSQL
+        run: |
+          supabase start --workdir .qa/full > diagnostics/local-start.log 2>&1 || { tail -n 80 diagnostics/local-start.log; exit 1; }
+          supabase status --workdir .qa/full -o env > .qa/local-status.env
+      - name: Build disposable schema from original SQL with documented fresh-bootstrap exceptions
+        run: python3 scripts/company-e2e/migrate.py
+      - name: Install app and isolated browser test tools
+        id: browserdeps
+        run: |
+          npm ci
+          npm install --prefix .qa/browser --no-package-lock --ignore-scripts playwright@1.55.0 @axe-core/playwright@4.10.2
+          .qa/browser/node_modules/.bin/playwright install --with-deps chromium
+      - name: Full-stack Company browser acceptance
+        run: node --import ./scripts/company-e2e/diagnostics.mjs scripts/company-e2e/run.mjs
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.browserdeps.outcome == 'success'
+        with:
+          name: company-browser-acceptance
+          path: diagnostics/company-e2e/**
+          retention-days: 7
+      - name: Existing real integration suites on the disposable backend
+        if: always() && steps.browserdeps.outcome == 'success'
+        run: node scripts/company-e2e/native.mjs
+      - name: Preserve failure details without credentials
+        if: always()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          for p in Path('diagnostics').glob('*.log'):
+            text=p.read_text(errors='replace')
+            text=re.sub(r'eyJ[A-Za-z0-9_\-.]+','[LOCAL_JWT_REDACTED]',text)
+            text=re.sub(r'sb_(?:secret|publishable)_[A-Za-z0-9_-]+','[LOCAL_KEY_REDACTED]',text)
+            p.write_text(text)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: company-full-stack-diagnostics
+          path: |
+            diagnostics/*.log
+            diagnostics/native-results.json
+            diagnostics/company-e2e/**
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Destroy disposable local project
+        if: always()
+        run: supabase stop --workdir .qa/full --no-backup || true

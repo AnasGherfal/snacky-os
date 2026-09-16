@@ -29,6 +29,7 @@ import {
   isOwnerAdminRole,
   isSupervisorRole,
 } from "@/lib/authz";
+import { companyHubEnabled, companyRoles } from "@/lib/company-hub";
 import type { Dictionary } from "@/lib/i18n";
 
 type NavLabelKey = keyof Dictionary["nav"];
@@ -166,16 +167,18 @@ const adminItem: NavItem = {
   moduleKey: "admin",
 };
 
+const companyItem: NavItem = { label: { en: "Company", ar: "الشركة" }, href: "/company", icon: ClipboardList, moduleKey: "company" };
+
 const ownerAdminNav: NavSection[] = [
   { items: [dashboardItem] },
-  { title: sectionTitles.work, items: [operationsItem, cashCustodyItem, stockItem, machinesItem, crmItem] },
+  { title: sectionTitles.work, items: [operationsItem, cashCustodyItem, stockItem, machinesItem, crmItem, ...(companyHubEnabled ? [companyItem] : [])] },
   { title: sectionTitles.business, items: [financeItem, reportsItem] },
   { title: sectionTitles.system, items: [adminItem] },
 ];
 
 const supervisorNav: NavSection[] = [
   { items: [dashboardItem] },
-  { title: sectionTitles.work, items: [operationsItem, cashCustodyItem, stockItem, machinesItem, crmItem] },
+  { title: sectionTitles.work, items: [operationsItem, cashCustodyItem, stockItem, machinesItem, crmItem, ...(companyHubEnabled ? [companyItem] : [])] },
   { title: sectionTitles.business, items: [financeItem] },
 ];
 
@@ -250,6 +253,7 @@ function sectionsForRoles(role: AppRole, roles?: AppRole[] | null): NavSection[]
     business.push(financeItem);
     work.push(cashCustodyItem);
   }
+  if (companyHubEnabled && hasAnyRole(context, companyRoles)) work.push(companyItem);
   if (hasPermission(context, "reports.view")) business.push(reportsItem);
   if (hasPermission(context, "investor.view")) business.push(investorPortalItem);
 

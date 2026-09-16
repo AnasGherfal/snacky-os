@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-
 const profileSource = readFileSync("src/app/team/[id]/page.tsx", "utf8");
-
-test("operator profile reads complete manual sales and damaged history", () => {
-  assert.match(profileSource, /getSupabaseAdminClient\(\) \?\? getSupabaseServerClient\(\)/);
+test("operator profile guards owner/admin or self before reading complete history", () => {
+  const guard='if (!manager && !viewingSelf) redirect("/unauthorized")';
+  assert.ok(profileSource.includes(guard));
+  assert.ok(profileSource.indexOf(guard)<profileSource.indexOf('const client = getSupabaseAdminClient()'));
+  assert.match(profileSource,/profile\.team_member_id === id/);
+  assert.doesNotMatch(profileSource,/getSupabaseAdminClient\(\) \?\? getSupabaseServerClient\(\)/);
+  assert.match(profileSource,/\.eq\("operator_id", id\)/);
   assert.match(profileSource, /route_manual_sales/);
   assert.match(profileSource, /inventory_adjustments/);
   assert.doesNotMatch(profileSource, /inventory_adjustments[\s\S]{0,300}\.neq\("status", "cancelled"\)/);

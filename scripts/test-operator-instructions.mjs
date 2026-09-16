@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
-
 const migrationPath = "supabase/migrations/202608040001_operator_instructions.sql";
 const apiPath = "src/app/api/operator-instructions/route.ts";
 const panelPath = "src/components/operator/OperatorInstructionsPanel.tsx";
@@ -23,7 +22,6 @@ test("operator instructions ledger is append-only, scoped, and idempotent", () =
   assert.match(sql, /Operators can read only their own|You can only update your own instructions|operator_instructions_read/i);
   assert.doesNotMatch(sql, /grant\s+(insert|update|delete)[^;]*operator_instructions\s+to\s+authenticated/i);
 });
-
 test("price change updates the product and creates an operator task atomically", () => {
   const sql = read(migrationPath);
   assert.match(sql, /v_type = 'price_change'/);
@@ -35,17 +33,14 @@ test("price change updates the product and creates an operator task atomically",
   assert.match(sql, /requested_selling_price_lyd/);
   assert.match(sql, /v_requires_completion := true/);
 });
-
-test("operators acknowledge and complete while only managers cancel", () => {
+test("normalized operator actions preserve acknowledgement/completion and manager-only cancellation", () => {
   const sql = read(migrationPath);
-  assert.match(sql, /p_action = 'acknowledge'/);
-  assert.match(sql, /p_action = 'complete'/);
-  assert.match(sql, /p_action = 'cancel'/);
+  assert.match(sql, /v_action text := lower\(trim\(coalesce\(p_action, ''\)\)\)/);
+  for (const action of ['acknowledge','complete','cancel']) assert.match(sql,new RegExp(`v_action = '${action}'`));
   assert.match(sql, /Only owner\/admin can cancel instructions/);
   assert.match(sql, /completion_note = v_note/);
   assert.match(sql, /Completed instruction cannot be cancelled/);
 });
-
 test("instructions reuse the existing in-app notification system", () => {
   const sql = read(migrationPath);
   assert.match(sql, /to_regclass\('public\.notifications'\)/);
@@ -53,7 +48,6 @@ test("instructions reuse the existing in-app notification system", () => {
   assert.match(sql, /\/operator\/routes#operator-instructions/);
   assert.match(sql, /operator_instruction_completed/);
 });
-
 test("API enforces permissions, setup diagnostics, and self-only actions", () => {
   const source = read(apiPath);
   assert.match(source, /isOwnerAdminRole/);
@@ -66,29 +60,15 @@ test("API enforces permissions, setup diagnostics, and self-only actions", () =>
   assert.match(source, /202608040001_operator_instructions\.sql/);
   assert.match(source, /revalidatePath\("\/products"\)/);
 });
-
 test("UI supports tasks, notes, price search, Arabic, and completion", () => {
   const source = read(panelPath);
-  assert.match(source, /Instructions & tasks/);
-  assert.match(source, /التعليمات والمهام/);
-  assert.match(source, /Price change/);
-  assert.match(source, /تغيير سعر/);
-  assert.match(source, /Search by product, brand, or category/);
-  assert.match(source, /ابحث باسم المنتج أو العلامة أو التصنيف/);
-  assert.match(source, /Current selling price/);
-  assert.match(source, /New selling price/);
-  assert.match(source, /Mark completed/);
-  assert.match(source, /تأكيد التنفيذ/);
-  assert.match(source, /acknowledge/);
-  assert.match(source, /complete/);
+  for(const label of ['Instructions & tasks','التعليمات والمهام','Price change','تغيير سعر','Search by product, brand, or category','ابحث باسم المنتج أو العلامة أو التصنيف','Current selling price','New selling price','Mark completed','تأكيد التنفيذ','acknowledge','complete'])assert.ok(source.includes(label),label);
   assert.doesNotMatch(source, /WhatsApp|whatsapp/i);
 });
-
-test("daily routes and permanent operator profile both show the same instruction ledger", () => {
-  const routes = read(routesPath);
-  const profile = read(profilePath);
+test("daily routes and permanent operator profile render the same anchored instruction ledger", () => {
+  const routes = read(routesPath), profile = read(profilePath), panel = read(panelPath);
   assert.match(routes, /OperatorInstructionsPanel/);
-  assert.match(routes, /operator-instructions/);
+  assert.match(panel, /id="operator-instructions"/);
   assert.match(profile, /OperatorInstructionsPanel/);
   assert.match(profile, /initialOperatorId=\{id\}/);
   assert.match(profile, /Assign instruction/);
