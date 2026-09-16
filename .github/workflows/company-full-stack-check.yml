@@ -56,7 +56,13 @@ jobs:
           npm install --prefix .qa/browser --no-package-lock --ignore-scripts playwright@1.55.0 @axe-core/playwright@4.10.2
           .qa/browser/node_modules/.bin/playwright install --with-deps chromium
       - name: Full-stack Company browser acceptance
-        run: node scripts/company-e2e/run.mjs
+        run: node --import ./scripts/company-e2e/diagnostics.mjs scripts/company-e2e/run.mjs
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.browserdeps.outcome == 'success'
+        with:
+          name: company-browser-acceptance
+          path: diagnostics/company-e2e/**
+          retention-days: 7
       - name: Existing real integration suites on the disposable backend
         if: always() && steps.browserdeps.outcome == 'success'
         run: node scripts/company-e2e/native.mjs
