@@ -33,7 +33,7 @@ jobs:
           if(fs.existsSync('.env.local')) throw Error('No local credentials allowed');
           const files=fs.readdirSync('scripts').filter(f=>f.endsWith('.mjs')&&/from\s+['"]node:test['"]/.test(fs.readFileSync('scripts/'+f,'utf8'))).sort().map(f=>'scripts/'+f);
           fs.writeFileSync('diagnostics/unit-files.json',JSON.stringify(files,null,2));
-          const result=spawnSync(process.execPath,['--experimental-strip-types','--test','--test-concurrency=4',...files],{encoding:'utf8',maxBuffer:40e6});
+          const result=spawnSync(process.execPath,['--experimental-strip-types','--loader','./scripts/ts-alias-loader.mjs','--test','--test-concurrency=4',...files],{encoding:'utf8',maxBuffer:40e6});
           fs.writeFileSync('diagnostics/all-unit.tap',(result.stdout||'')+'\n'+(result.stderr||''));
           console.log((result.stdout||'').slice(-6000));process.exit(result.status??1);
           NODE
