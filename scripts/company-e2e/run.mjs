@@ -197,7 +197,7 @@ try {
     const lead = await c('owner', 'lead.save', null, { place_name: 'QA University', place_type: 'university', assigned_to: accounts.crm.member, visibility: 'assigned', next_action: 'Call the QA contact', next_action_date: today });
     let w = await read('crm', 'lead', lead.id); await c('crm', 'lead.save', lead.id, { version: w.record.data.version, status: 'accepted' });
     const location = await c('crm', 'lead.convert', lead.id, {}); assert.equal((await c('crm', 'lead.convert', lead.id, {})).id, location.id);
-    const issue = await c('crm', 'issue.save', null, { location_id: location.id, description: 'QA vending issue', issue_type: 'product_stuck', status: 'waiting', waiting_on: 'Operator inspection', next_action_date: today });
+    const issue = await c('crm', 'issue.save', null, { customer_phone: '0000000000', location_id: location.id, description: 'QA vending issue', issue_type: 'product_stuck', status: 'waiting', waiting_on: 'Operator inspection', next_action_date: today });
     const task = await c('crm', 'task.save', null, { kind: 'issue', related_id: issue.id, title: 'QA inspect machine', task_type: 'field_action', assigned_to: accounts.operator.member, due_date: today });
     w = await read('operator', 'task', task.id); await c('operator', 'task.save', task.id, { version: w.record.data.version, status: 'completed', result: 'QA field action complete' });
     w = await read('crm', 'issue', issue.id); assert.notEqual(w.record.status, 'resolved'); assert.ok(w.record.data.field_completed_at);

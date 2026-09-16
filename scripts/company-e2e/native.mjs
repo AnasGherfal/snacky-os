@@ -1,20 +1,28 @@
 // Real-loopback integration harness for existing suites. No response mocking.
 import assert from 'node:assert/strict';
-import {readFileSync,writeFileSync,openSync,mkdirSync,existsSync,unlinkSync} from 'node:fs';
+import {readFileSync,writeFileSync,openSync,mkdirSync,unlinkSync} from 'node:fs';
 import {spawn,spawnSync} from 'node:child_process';
 const status=Object.fromEntries(readFileSync('.qa/local-status.env','utf8').split('\n').map(l=>l.match(/^([A-Z_]+)="(.*)"$/)).filter(Boolean).map(m=>[m[1],m[2]]));
 assert.equal(new URL(status.API_URL).hostname,'127.0.0.1');assert.equal(new URL(status.API_URL).port,'54321');assert.ok(status.SERVICE_ROLE_KEY&&status.ANON_KEY);
-const app='http://localhost:3001',env={...process.env,NEXT_PUBLIC_SUPABASE_URL:status.API_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY:status.ANON_KEY,SUPABASE_SERVICE_ROLE_KEY:status.SERVICE_ROLE_KEY,NEXT_PUBLIC_SNACKY_COMPANY_HUB_ENABLED:'true',NEXT_PUBLIC_APP_URL:app,SNACKY_SMOKE_BASE_URL:app};
+// Build a separate feature-OFF application after the feature-ON browser suite.
+// The same real backend includes Company; ordinary operations must still work.
+const app='http://localhost:3001',env={...process.env,NEXT_PUBLIC_SUPABASE_URL:status.API_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY:status.ANON_KEY,SUPABASE_SERVICE_ROLE_KEY:status.SERVICE_ROLE_KEY,NEXT_PUBLIC_SNACKY_COMPANY_HUB_ENABLED:'false',NEXT_PUBLIC_APP_URL:app,SNACKY_SMOKE_BASE_URL:app};
 mkdirSync('diagnostics',{recursive:true});
-if(!existsSync('.next/BUILD_ID')){const b=spawnSync('npm',['run','build'],{env,encoding:'utf8',maxBuffer:30e6});writeFileSync('diagnostics/native-build.log',b.stdout+'\n'+b.stderr);assert.equal(b.status,0,'Native build failed');}
+const build=spawnSync('npm',['run','build'],{env,encoding:'utf8',maxBuffer:30e6});writeFileSync('diagnostics/native-build.log',build.stdout+'\n'+build.stderr);assert.equal(build.status,0,'Feature-off native build failed');
 const original='scripts/test-vms-import-flow.mjs',temp='scripts/.qa-native-vms.mjs',routeOriginal='scripts/test-route-inventory-regression.mjs',routeTemp='scripts/.qa-native-route.mjs';
 let text=readFileSync(original,'utf8');const marker='function extractActionId(html, actionName) {';assert.equal(text.split(marker).length,2);
 text=text.replace(marker,marker+`\n const manifest=JSON.parse(readFileSync('.next/server/server-reference-manifest.json','utf8'));\n const candidates=Object.entries({...manifest.node,...manifest.edge}).filter(([,e])=>e.exportedName===actionName);\n const scoped=candidates.filter(([,e])=>Object.keys(e.workers??{}).some(k=>k.includes('vms-import')));\n if(scoped.length===1)return scoped[0][0];\n if(candidates.length===1)return candidates[0][0];\n`);
 const statusPattern=/assert\.equal\(result\.status, 303, (`[^`]+`)\);/g;
 assert.equal([...text.matchAll(statusPattern)].length,2);
 text=text.replace(statusPattern,'assert.ok(result.status === 303 || (result.status === 200 && Boolean(result.redirect || result.location)), $1);');
+// Current imports navigate to /vms-import?importBatchId=...; older ones used
+// /vms-import/:id. Require the exact saved batch and a success message in either.
+text+='\nfunction assertSavedBatchDestination(path,expectedId){const url=new URL(path,"http://localhost:3001");assert.equal(url.origin,"http://localhost:3001");assert.ok(url.searchParams.get("success"));assert.equal(url.searchParams.has("error"),false);const id=url.pathname==="/vms-import"?url.searchParams.get("importBatchId"):url.pathname.match(/^\\/vms-import\\/([0-9a-f-]+)$/)?.[1];assert.equal(id,expectedId,"Redirect must identify the actual imported batch");}\n';
+for(const [path,state] of [['stockDetailPath','stockPreviewState'],['machineSnapshotDetailPath','machineSnapshotPreviewState'],['salesDetailPath','salesPreviewState'],['detailImportPath','detailPreviewState']]){
+ const old=`assert.match(${path}, /^\\/vms-import\\/[0-9a-f-]+\\?success=/);`;
+ assert.equal(text.split(old).length,2,old);text=text.replace(old,`assertSavedBatchDestination(${path}, ${state}.importBatchId);`);
+}
 writeFileSync(temp,text);
-// Preserve the real canonical writer and add provenance required by its current contract.
 let route=readFileSync(routeOriginal,'utf8');
 const movement='    reason: "storage_to_operator_bag",\n  }));';assert.equal(route.split(movement).length,2);
 route=route.replace(movement,'    reason: "storage_to_operator_bag",\n    source_type: "admin_missed_route_pickup",\n    source_id: pickupBatchId,\n    related_pickup_batch_id: pickupBatchId,\n    idempotency_key: `qa-admin-pickup:${pickupBatchId}:${row.productId}`,\n    created_by: owner.teamMemberId,\n  }));');
@@ -37,4 +45,4 @@ try{
   results.push({file:actual,status:code===0?'passed':'failed',exit_code:code});console.log(`${code===0?'PASS':'FAIL'} ${actual}`);
  }
  assert.ok(results.every(r=>r.status==='passed'),'Native integration failures: '+results.filter(r=>r.status!=='passed').map(r=>r.file).join(', '));
-}finally{server.kill('SIGTERM');unlinkSync(temp);unlinkSync(routeTemp);writeFileSync('diagnostics/native-results.json',JSON.stringify({fixture_adaptations:['Explicit English locale','Actual build manifest export lookup and explicit redirect header for streamed VMS actions','Current admin pickup provenance and genuine acknowledgements','No implicit route cash removal','Verified production service-role receipt permission baseline; see environment documentation'],results},null,2));}
+}finally{server.kill('SIGTERM');unlinkSync(temp);unlinkSync(routeTemp);writeFileSync('diagnostics/native-results.json',JSON.stringify({company_feature_enabled:false,fixture_adaptations:['Explicit English locale','Actual build manifest IDs and explicit redirect headers','Redirect destination must identify exact persisted VMS batch','Current admin pickup provenance and genuine acknowledgements','No implicit route cash removal','Verified production service-role receipt permission baseline; see environment documentation'],results},null,2));}
