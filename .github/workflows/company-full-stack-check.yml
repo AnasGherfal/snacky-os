@@ -47,28 +47,8 @@ jobs:
         run: |
           supabase start --workdir .qa/full > diagnostics/local-start.log 2>&1 || { tail -n 80 diagnostics/local-start.log; exit 1; }
           supabase status --workdir .qa/full -o env > .qa/local-status.env
-      - name: Replay original SQL in disposable database with documented historical bootstrap ordering
-        run: |
-          python3 - <<'PY'
-          import subprocess,os
-          from pathlib import Path
-          files=sorted(Path('supabase/migrations').glob('*.sql'))
-          # Historical compatibility bridge precedes the table it requires in an empty DB.
-          # Production files and SQL are untouched; this is a fresh-test bootstrap exception.
-          bridge=next(p for p in files if p.name=='2026061300015_operator_pay_profiles_legacy_compat.sql')
-          files.remove(bridge)
-          engine=next(p for p in files if p.name=='202606130002_operator_payroll_engine.sql')
-          files.insert(files.index(engine)+1,bridge)
-          env={**os.environ,'PGHOST':'127.0.0.1','PGPORT':'54322','PGUSER':'postgres','PGDATABASE':'postgres','PGPASSWORD':'postgres'}
-          with open('diagnostics/migration-replay.log','w') as log:
-            log.write('ISOLATED LOOPBACK ONLY. Bootstrap ordering exception: payroll legacy bridge follows payroll engine.\n');log.flush()
-            for p in files:
-              log.write('\nAPPLY '+p.name+'\n');log.flush()
-              r=subprocess.run(['psql','-X','-v','ON_ERROR_STOP=1','-f',str(p)],env=env,stdout=log,stderr=log)
-              if r.returncode:
-                log.flush();print('\n'.join(Path(log.name).read_text(errors='replace').splitlines()[-100:]));raise SystemExit(r.returncode)
-          print('All '+str(len(files))+' original SQL files applied in the disposable database.')
-          PY
+      - name: Build disposable schema from original SQL with documented fresh-bootstrap exceptions
+        run: python3 scripts/company-e2e/migrate.py
       - name: Install app and isolated browser test tools
         run: |
           npm ci

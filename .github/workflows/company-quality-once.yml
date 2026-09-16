@@ -1,0 +1,45 @@
+name: Company reviewed quality patch
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/company-quality-once.yml'
+      - 'scripts/company-quality-once.py'
+permissions:
+  contents: read
+jobs:
+  patch:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feat/company-hub'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Apply reviewed scoped fixes and readable formatting
+        run: |
+          python3 scripts/company-quality-once.py
+          npm install --prefix .qa/tools --no-package-lock --ignore-scripts prettier@3.6.2
+          node .qa/tools/node_modules/prettier/bin/prettier.cjs --write --single-quote src/lib/company-*.ts src/components/Company*.tsx src/app/api/company/**/route.ts 'src/app/api/company/files/[id]/route.ts' scripts/test-company-request.mjs
+      - name: Actual handlers, authorization and release regressions
+        run: node --experimental-strip-types --test scripts/test-company-hub.mjs scripts/test-company-release-gate.mjs scripts/test-company-request.mjs scripts/test-authz-permissions.mjs scripts/test-connected-relations.mjs
+      - run: npm run typecheck
+      - name: Commit reviewed files only, never merge or force-push
+        env:
+          REVIEWED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"
+          git fetch origin feat/company-hub
+          test "$(git rev-parse FETCH_HEAD)" = "$REVIEWED_SHA"
+          git rm .github/workflows/company-quality-once.yml scripts/company-quality-once.py
+          git add src/lib/company-*.ts src/components/Company*.tsx src/app/api/company scripts/test-company-request.mjs supabase/migrations/20260916150634_company_hub.sql .github/workflows/company-hub-check.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Harden Company access, bounded uploads and draft navigation; format reviewed components'
+          git push origin HEAD:refs/heads/feat/company-hub
