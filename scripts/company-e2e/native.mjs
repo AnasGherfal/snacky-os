@@ -26,6 +26,23 @@ assert.ok(readFileSync('src/lib/vms-import-actions.ts','utf8').includes('return 
 const oldType='assert.equal(batch.report_type, expectations.reportType);';
 assert.equal(text.split(oldType).length,2);
 text=text.replace(oldType,'assert.equal(batch.report_type, expectations.reportType === "stock" ? "machine_stock_snapshot" : expectations.reportType);');
+const weeklyStart='    const detailPreviewPath = await uploadPreview({';
+assert.equal(text.split(weeklyStart).length,2);
+text=text.replace(weeklyStart,`    const {data: beforeWeeklySlots, error: beforeWeeklyError}=await service.from("machine_slots").select("id,machine_id,slot_code,product_id,capacity").in("machine_id",created.machineIds).order("id");
+    assert.ifError(beforeWeeklyError);
+`+weeklyStart);
+const weeklyEnd='    await fetchHtml(detailImportPath, owner.cookie);';
+assert.equal(text.split(weeklyEnd).length,2);
+text=text.replace(weeklyEnd,weeklyEnd+`
+    const {data: weeklyRows,error: weeklyError}=await service.from("vms_transactions_raw").select("order_number,cargo_lane_number,payment_amount,quantity,transaction_status").eq("import_batch_id",detailPreviewState.importBatchId);
+    assert.ifError(weeklyError);assert.equal(weeklyRows.length,3);
+    assert.equal(weeklyRows.reduce((sum,r)=>sum+Number(r.payment_amount),0),11);
+    assert.equal(weeklyRows.reduce((sum,r)=>sum+Number(r.quantity),0),4);
+    assert.ok(weeklyRows.every(r=>r.transaction_status==="successful_sale"));
+    assert.deepEqual(weeklyRows.map(r=>r.cargo_lane_number).sort(),["A1","A4","B1"]);
+    const {data: afterWeeklySlots,error: afterWeeklyError}=await service.from("machine_slots").select("id,machine_id,slot_code,product_id,capacity").in("machine_id",created.machineIds).order("id");
+    assert.ifError(afterWeeklyError);assert.deepEqual(afterWeeklySlots,beforeWeeklySlots,"Sales imports must not change machine layouts");
+`);
 writeFileSync(temp,text);
 let route=readFileSync(routeOriginal,'utf8');
 const movement='    reason: "storage_to_operator_bag",\n  }));';assert.equal(route.split(movement).length,2);
