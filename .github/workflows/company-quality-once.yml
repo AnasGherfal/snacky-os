@@ -6,6 +6,9 @@ on:
       - 'scripts/company-quality-once.py'
 permissions:
   contents: read
+concurrency:
+  group: company-quality-once-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   patch:
     if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feat/company-hub'
@@ -30,15 +33,15 @@ jobs:
       - name: Actual handlers, authorization and release regressions
         run: node --experimental-strip-types --test scripts/test-company-hub.mjs scripts/test-company-release-gate.mjs scripts/test-company-request.mjs scripts/test-authz-permissions.mjs scripts/test-connected-relations.mjs
       - run: npm run typecheck
-      - name: Commit reviewed files only, never merge or force-push
+      - name: Commit reviewed source only, never workflows, merge or force-push
         env:
           REVIEWED_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"
           git fetch origin feat/company-hub
           test "$(git rev-parse FETCH_HEAD)" = "$REVIEWED_SHA"
-          git rm .github/workflows/company-quality-once.yml scripts/company-quality-once.py
-          git add src/lib/company-*.ts src/components/Company*.tsx src/app/api/company scripts/test-company-request.mjs supabase/migrations/20260916150634_company_hub.sql .github/workflows/company-hub-check.yml
+          git restore .github/workflows/company-hub-check.yml
+          git add src/lib/company-*.ts src/components/Company*.tsx src/app/api/company scripts/test-company-request.mjs supabase/migrations/20260916150634_company_hub.sql
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'Harden Company access, bounded uploads and draft navigation; format reviewed components'
