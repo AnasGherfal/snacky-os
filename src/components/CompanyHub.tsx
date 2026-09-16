@@ -830,7 +830,7 @@ html, body { background: white !important; height: auto !important; overflow: vi
           )}
           <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
             <span>
-              {data.total} {tr('materials', 'مادة')}
+              {data.total} {tr(data.total === 1 ? 'material' : 'materials', 'مادة')}
             </span>
             <div className="flex gap-2">
               {data.offset > 0 ? (

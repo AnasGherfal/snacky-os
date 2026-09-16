@@ -269,3 +269,26 @@ export function companySameOrigin(request: Request): boolean {
       request.headers.get('sec-fetch-site') !== 'cross-site',
   );
 }
+
+/** Human-readable choices; stored values remain the canonical existing routes. */
+const companyWorkLabels: Record<string, [string, string]> = {
+  '/my-work': ['My Work', 'عملي اليوم'],
+  '/my-work/team': ['Team Work', 'عمل الفريق'],
+  '/locations-pipeline': ['Leads & Visits', 'الجهات والزيارات'],
+  '/locations-pipeline/new': ['Add a lead', 'إضافة جهة'],
+  '/issues': ['Customer Issues', 'مشاكل العملاء'],
+  '/issues/new': ['Add a customer issue', 'إضافة مشكلة عميل'],
+  '/relationships': ['Existing Locations', 'المواقع الحالية'],
+  '/relationships/obligations': ['Location Payments', 'دفعات المواقع'],
+  '/follow-ups': ['Follow-ups', 'المتابعات'],
+  '/follow-ups/new': ['Add a follow-up', 'إضافة متابعة'],
+  '/operator/routes': ['My Routes', 'مساراتي'],
+  '/operator/issues/actions': ['Assigned customer actions', 'إجراءات العملاء المسندة إليّ'],
+  '/inventory': ['Storage Inventory', 'مخزون المخزن'],
+  '/purchases': ['Purchases', 'المشتريات'],
+  '/finance': ['Finance', 'المالية'],
+  '/team': ['Team', 'الفريق'],
+};
+export function companyWorkLabel(path: string, ar: boolean): string {
+  return companyWorkLabels[path]?.[ar ? 1 : 0] ?? path;
+}

@@ -6,6 +6,7 @@ import {
   companyRoles,
   companyRoleLabels,
   companyWorkPaths,
+  companyWorkLabel,
   validateCompanyContent,
   validCompanyCommand,
   type CompanyContent,
@@ -466,7 +467,7 @@ export function CompanyEditor({
               <option value="">{tr('None', 'لا يوجد')}</option>
               {companyWorkPaths.map((path) => (
                 <option key={path} value={path}>
-                  {path}
+                  {companyWorkLabel(path, ar)}
                 </option>
               ))}
             </select>

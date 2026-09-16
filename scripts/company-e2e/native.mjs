@@ -22,6 +22,10 @@ for(const [path,state] of [['stockDetailPath','stockPreviewState'],['machineSnap
  const old=`assert.match(${path}, /^\\/vms-import\\/[0-9a-f-]+\\?success=/);`;
  assert.equal(text.split(old).length,2,old);text=text.replace(old,`assertSavedBatchDestination(${path}, ${state}.importBatchId);`);
 }
+assert.ok(readFileSync('src/lib/vms-import-actions.ts','utf8').includes('return isMachineStockReport(reportType) ? "machine_stock_snapshot" : reportType;'),'Re-review any importer canonical type change');
+const oldType='assert.equal(batch.report_type, expectations.reportType);';
+assert.equal(text.split(oldType).length,2);
+text=text.replace(oldType,'assert.equal(batch.report_type, expectations.reportType === "stock" ? "machine_stock_snapshot" : expectations.reportType);');
 writeFileSync(temp,text);
 let route=readFileSync(routeOriginal,'utf8');
 const movement='    reason: "storage_to_operator_bag",\n  }));';assert.equal(route.split(movement).length,2);
