@@ -1,6 +1,6 @@
 /** Shared validation and navigation only. Never place employee/company documents in this file. */
 export const companyHubEnabled =
-  process.env.NEXT_PUBLIC_SNACKY_COMPANY_HUB_ENABLED === 'true';
+  process.env.NEXT_PUBLIC_SNACKY_COMPANY_HUB_ENABLED !== 'false';
 export const companyRoles = [
   'owner',
   'admin',
