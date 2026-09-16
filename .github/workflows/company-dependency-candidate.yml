@@ -5,12 +5,20 @@ on:
       - '.github/workflows/company-dependency-candidate.yml'
 permissions:
   contents: read
+concurrency:
+  group: company-dependency-candidate-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   candidate:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feat/company-hub'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -36,10 +44,11 @@ jobs:
           fs.writeFileSync('package.json',JSON.stringify(manifest,null,2)+'\n');
           NODE
           npm install --package-lock-only --ignore-scripts
+          npm update --package-lock-only --ignore-scripts brace-expansion browserslist js-yaml @babel/core
           cp package.json package-lock.json diagnostics/
           npm view next@16.3.5 version dependencies peerDependencies --json > diagnostics/next-metadata.json
-          npm audit --omit=dev --json > diagnostics/candidate-production-audit.json || true
-          npm audit --json > diagnostics/candidate-all-audit.json || true
+          npm audit --omit=dev --json > diagnostics/candidate-production-audit.json
+          npm audit --json > diagnostics/candidate-all-audit.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -47,13 +56,17 @@ jobs:
           path: diagnostics/*.json
           retention-days: 7
       - name: Install candidate using its integrity-locked dependencies
+        id: install
         run: npm ci
-      - name: Exercise spreadsheet imports and current Company regression tests
-        run: node --experimental-strip-types --test scripts/test-company-hub.mjs scripts/test-company-release-gate.mjs scripts/test-vms-sales-import-parser.mjs scripts/test-finance-import.mjs scripts/test-vms-import-validation.mjs scripts/test-vms-monthly-xls.mjs
-      - name: Public dependencies for isolated offline review (no application data)
+      - name: Exercise parser and Company unit tests (the monthly XLS script requires a running integration environment)
+        run: node --experimental-strip-types --test scripts/test-company-hub.mjs scripts/test-company-release-gate.mjs scripts/test-vms-sales-import-parser.mjs scripts/test-finance-import.mjs scripts/test-vms-import-validation.mjs
+      - name: Public dependencies and formatter for offline review
+        if: always() && steps.install.outcome == 'success'
         run: |
-          tar --exclude='node_modules/@next' --exclude='node_modules/@img' --exclude='node_modules/@swc' --exclude='node_modules/.cache' -czf diagnostics/review-libs.tar.gz node_modules
+          npm install --prefix .qa/tools --no-package-lock --ignore-scripts prettier@3.6.2
+          tar --exclude='node_modules/@next/swc*' --exclude='node_modules/@img' --exclude='node_modules/.cache' -czf diagnostics/review-libs.tar.gz node_modules .qa/tools/node_modules
       - uses: actions/upload-artifact@v4
+        if: always() && steps.install.outcome == 'success'
         with:
           name: company-public-review-libs
           path: diagnostics/review-libs.tar.gz
@@ -64,9 +77,28 @@ jobs:
         run: |
           npm run typecheck > diagnostics/typecheck.log 2>&1 || { tail -n 80 diagnostics/typecheck.log; exit 1; }
           npm run build > diagnostics/build.log 2>&1 || { tail -n 80 diagnostics/build.log; exit 1; }
+      - name: Commit only tested dependency files to this PR branch (never merge or force-push)
+        env:
+          HEAD_BRANCH: ${{ github.head_ref }}
+          REVIEWED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test "$HEAD_BRANCH" = 'feat/company-hub'
+          test "$(git rev-parse HEAD)" = "$REVIEWED_SHA"
+          git fetch origin "$HEAD_BRANCH"
+          test "$(git rev-parse FETCH_HEAD)" = "$REVIEWED_SHA"
+          if ! git diff --quiet -- package.json package-lock.json; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add -- package.json package-lock.json
+            git commit -m 'Pin reviewed dependencies and resolve runtime/build dependency advisories'
+            git push origin "HEAD:refs/heads/$HEAD_BRANCH"
+          fi
+          git rev-parse HEAD > diagnostics/dependency-commit.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: company-dependency-test-results
-          path: diagnostics/*.log
+          path: |
+            diagnostics/*.log
+            diagnostics/dependency-commit.txt
           retention-days: 7
