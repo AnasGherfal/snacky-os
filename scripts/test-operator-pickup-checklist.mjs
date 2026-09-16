@@ -28,3 +28,13 @@ test("Pick this stop opens a checklist scoped to that stop", () => {
   assert.match(pickupPage, /const requestedStopId = searchParams\.get\("stop"\)/);
   assert.match(pickupPage, /setSelectedStopIds\(requestedGroup \? \[requestedGroup\.routeStopId\]/);
 });
+
+test("a confirmed pickup batch for one stop never locks later pending stops", () => {
+  const api = read("src/app/api/operator/routes/[id]/pick-list/route.ts");
+
+  assert.match(api, /let hasAnyConfirmedPickup = false/);
+  assert.match(api, /hasAnyConfirmedPickup = Boolean\(pickMovementsResult\.data\?\.length\)/);
+  assert.match(api, /const confirmed = pendingStopCount === 0 && hasAnyConfirmedPickup/);
+  assert.match(api, /pendingStopCount = stops\.filter/);
+  assert.doesNotMatch(api, /confirmed = Boolean\(pickMovementsResult\.data\?\.length\)/);
+});
