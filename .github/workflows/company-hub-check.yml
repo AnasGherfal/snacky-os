@@ -19,6 +19,8 @@ on:
       - 'src/lib/authz.ts'
       - 'supabase/migrations/*company_hub*'
       - 'scripts/test-company-hub*'
+      - 'scripts/test-company-release*'
+      - 'docs/company-hub-release-gate.md'
 permissions:
   contents: read
 concurrency:
@@ -59,7 +61,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Company contracts and real client handler tests
-        run: node --experimental-strip-types --test scripts/test-company-hub.mjs
+        run: node --experimental-strip-types --test scripts/test-company-hub.mjs scripts/test-company-release-gate.mjs
       - name: Actual isolated migrations, access controls and no-money effects
         env:
           PGHOST: localhost
@@ -68,7 +70,7 @@ jobs:
           PGPASSWORD: isolated-company-only
           PGDATABASE: crm_tests
         run: |
-          psql -X -v ON_ERROR_STOP=1 -f scripts/test-company-hub-db.sql > diagnostics/database.log 2>&1 || { tail -n 100 diagnostics/database.log; exit 1; }
+          node scripts/test-company-release-db.mjs > diagnostics/database.log 2>&1 || { tail -n 100 diagnostics/database.log; exit 1; }
           tail -n 35 diagnostics/database.log
       - name: Existing permissions and customer-relations regression tests
         run: node --experimental-strip-types --test scripts/test-authz-permissions.mjs scripts/test-connected-relations.mjs
@@ -94,3 +96,26 @@ jobs:
           path: diagnostics/*.log
           if-no-files-found: ignore
           retention-days: 2
+
+  dependency-release-gate:
+    name: Production dependency security gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Reject unresolved high or critical production dependency findings
+        run: |
+          mkdir -p diagnostics
+          npm audit --omit=dev --audit-level=high --json > diagnostics/production-audit.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: company-production-dependency-audit
+          path: diagnostics/production-audit.json
+          if-no-files-found: ignore
+          retention-days: 7

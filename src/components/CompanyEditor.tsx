@@ -20,7 +20,7 @@ export function CompanyAction({action,itemId,revision,version,userId,ar,label,co
    if(!request.current){const saved=sessionStorage.getItem(key);request.current=saved?validCompanyCommand(JSON.parse(saved)):{request_id:crypto.randomUUID(),action,item_id:itemId,revision,version};
     if(request.current.item_id!==itemId||request.current.action!==action||request.current.revision!==revision||request.current.version!==version)throw new Error('Saved request does not match');sessionStorage.setItem(key,JSON.stringify(request.current));}
    const reply=await submitCompanyCommand(request.current);
-   if(reply.ok){setDone(true);sessionStorage.removeItem(key);request.current=null;setMessage(ar?'تم الحفظ.':'Saved.');window.dispatchEvent(new Event('snacky-company-updated'));router.refresh();}
+   if(reply.ok){setDone(true);sessionStorage.removeItem(key);request.current=null;setMessage(ar?'تم الحفظ.':'Saved.');window.dispatchEvent(new Event('snacky-company-updated'));if(action==='publish')router.push(`/company/items/${itemId}`);router.refresh();}
    else{setMessage(reply.message??(ar?'تعذر التأكيد. أعد المحاولة.':'Could not confirm. Retry.'));if(reply.retryable===false){sessionStorage.removeItem(key);request.current=null;}}
   }catch{setMessage(ar?'لم يتأكد الحفظ. أعد المحاولة لإرسال نفس الطلب دون تكرار.':'Save unconfirmed. Retry to send the same request without duplicating it.');}
   finally{busy.current=false;setPending(false);}
@@ -37,7 +37,7 @@ export function CompanyEditor({initial,itemId,revision,userId,directory,ar}:{ini
   try{
    if(!pending.current){const payload=validateCompanyContent(content);const cmd:CompanyCommand={request_id:crypto.randomUUID(),item_id:itemId,revision,action:'save',payload};sessionStorage.setItem(key,JSON.stringify(cmd));pending.current=cmd;}
    setUncertain(true);const reply=await submitCompanyCommand(pending.current);
-   if(reply.ok){setSaved(true);sessionStorage.removeItem(key);pending.current=null;router.push(`/company/items/${itemId}`);router.refresh();}
+   if(reply.ok){setSaved(true);sessionStorage.removeItem(key);pending.current=null;router.push(`/company/items/${itemId}?draft=1`);router.refresh();}
    else{setMessage(reply.message??tr('Could not save.','تعذر الحفظ.'));if(reply.retryable===false){sessionStorage.removeItem(key);pending.current=null;setUncertain(false);}}
   }catch(error){setMessage(pending.current?tr('Save unconfirmed. Retry the saved request; your exact content is retained in this browser session.','لم يتأكد الحفظ. أعد إرسال الطلب المحفوظ؛ المحتوى نفسه محفوظ في جلسة المتصفح.'):error instanceof Error?error.message:tr('Browser storage is unavailable. Enable it before saving.','تخزين المتصفح غير متاح. فعّله قبل الحفظ.'));}
   finally{busy.current=false;setSaving(false);}
