@@ -1,0 +1,72 @@
+name: Company dependency remediation candidate
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/company-dependency-candidate.yml'
+permissions:
+  contents: read
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Generate exact-version candidate from the reviewed lockfile
+        run: |
+          mkdir -p diagnostics
+          node <<'NODE'
+          const fs = require('node:fs');
+          const manifest = JSON.parse(fs.readFileSync('package.json','utf8'));
+          const lock = JSON.parse(fs.readFileSync('package-lock.json','utf8'));
+          for (const section of ['dependencies','devDependencies']) {
+            for (const name of Object.keys(manifest[section] || {})) {
+              const version = lock.packages['node_modules/'+name]?.version;
+              if (!version) throw Error('Missing locked version: '+name);
+              manifest[section][name] = version;
+            }
+          }
+          manifest.dependencies.next = '16.3.5';
+          manifest.devDependencies['eslint-config-next'] = '16.3.5';
+          manifest.dependencies.xlsx = 'https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz';
+          manifest.overrides = {...manifest.overrides, postcss: '8.5.23', nanoid: '3.3.18', sharp: '0.35.4', 'baseline-browser-mapping': '2.11.0'};
+          fs.writeFileSync('package.json',JSON.stringify(manifest,null,2)+'\n');
+          NODE
+          npm install --package-lock-only --ignore-scripts
+          cp package.json package-lock.json diagnostics/
+          npm view next@16.3.5 version dependencies peerDependencies --json > diagnostics/next-metadata.json
+          npm audit --omit=dev --json > diagnostics/candidate-production-audit.json || true
+          npm audit --json > diagnostics/candidate-all-audit.json || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: company-dependency-candidate
+          path: diagnostics/*.json
+          retention-days: 7
+      - name: Install candidate using its integrity-locked dependencies
+        run: npm ci
+      - name: Exercise spreadsheet imports and current Company regression tests
+        run: node --experimental-strip-types --test scripts/test-company-hub.mjs scripts/test-company-release-gate.mjs scripts/test-vms-sales-import-parser.mjs scripts/test-finance-import.mjs scripts/test-vms-import-validation.mjs scripts/test-vms-monthly-xls.mjs
+      - name: Public dependencies for isolated offline review (no application data)
+        run: |
+          tar --exclude='node_modules/@next' --exclude='node_modules/@img' --exclude='node_modules/@swc' --exclude='node_modules/.cache' -czf diagnostics/review-libs.tar.gz node_modules
+      - uses: actions/upload-artifact@v4
+        with:
+          name: company-public-review-libs
+          path: diagnostics/review-libs.tar.gz
+          retention-days: 2
+      - name: Typecheck and build candidate
+        env:
+          NEXT_PUBLIC_SNACKY_COMPANY_HUB_ENABLED: 'true'
+        run: |
+          npm run typecheck > diagnostics/typecheck.log 2>&1 || { tail -n 80 diagnostics/typecheck.log; exit 1; }
+          npm run build > diagnostics/build.log 2>&1 || { tail -n 80 diagnostics/build.log; exit 1; }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: company-dependency-test-results
+          path: diagnostics/*.log
+          retention-days: 7
