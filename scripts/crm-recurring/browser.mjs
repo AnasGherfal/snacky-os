@@ -1,5 +1,6 @@
 // Full-stack acceptance: loopback-only real Supabase and production Next.js.
 import assert from 'node:assert/strict';
+import {saveTaskThroughUi} from './save-response.mjs';
 import {readFileSync,writeFileSync,mkdirSync,openSync} from 'node:fs';
 import {spawn,spawnSync} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
@@ -80,7 +81,7 @@ try{
  await check('employee sees and completes generated work through the existing UI',async()=>{
   const w=await rpc('crm','snacky_crm_workspace_v1',{p_section:'work',p_filters:{scope:'mine',window:'today'}});assert.equal(w.total,1);task=w.rows[0].id;
   await crm.goto(app+'/follow-ups/'+task);await crm.getByRole('combobox',{name:'Status',exact:true}).selectOption('completed');await crm.getByRole('textbox',{name:/^Work performed \/ result/}).fill('Reviewed contacts and recorded the next step.');
-  await crm.getByRole('button',{name:'Save changes',exact:true}).click();await crm.getByText('Reviewed contacts and recorded the next step.',{exact:true}).first().waitFor();
+  await saveTaskThroughUi(crm,task);
   assert.equal((await rpc('crm','snacky_crm_workspace_v1',{p_section:'task',p_id:task})).record.status,'completed');
  });
  await check('catch-up does not flood or rewrite existing work',async()=>{

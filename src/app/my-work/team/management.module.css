@@ -1,0 +1,17 @@
+/* Scope contrast/focus changes to the opted-in management screens only. */
+.workspace {
+  min-width: 0;
+}
+.workspace :global(.btn-primary) {
+  background: #9a3412;
+  border-color: #9a3412;
+  color: #fff;
+}
+.workspace :global(.btn-primary):hover:not(:disabled) {
+  background: #7c2d12;
+  border-color: #7c2d12;
+}
+.workspace :is(a, button, input, select, textarea, summary):focus-visible {
+  outline: 3px solid #334155;
+  outline-offset: 3px;
+}
