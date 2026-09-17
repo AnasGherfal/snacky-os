@@ -1,0 +1,34 @@
+name: Generate scheduler activation prerequisite
+on:
+  push:
+    branches: ['feat/crm-recurring-management']
+    paths: ['.github/workflows/crm-activation-migration.yml']
+permissions:
+  contents: write
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/crm-recurring-management
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.117.0
+      - name: Generate through CLI without connecting to any database
+        run: |
+          supabase migration new --help
+          supabase migration new crm_scheduler_extension
+          FILE=$(find supabase/migrations -name '*_crm_scheduler_extension.sql' -print -quit)
+          test -n "$FILE"
+          cat > "$FILE" <<'SQL'
+          -- Scheduler extension only. No job, task or enabled routine is created.
+          create extension if not exists pg_cron with schema pg_catalog;
+          grant usage on schema cron to postgres;
+          grant all privileges on all tables in schema cron to postgres;
+          SQL
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$FILE"
+          git commit -m 'Add CLI-generated pg_cron prerequisite without enabling jobs'
+          git push origin HEAD:feat/crm-recurring-management
