@@ -48,7 +48,7 @@ const ledger=()=>sql("select jsonb_build_object('routes',(select count(*) from p
 const baseline=ledger(),results=[],pageErrors=[];let browser,server;
 async function check(name,fn){
  try{await fn();results.push({name,status:'passed'});console.log('PASS '+name);}
- catch(e){results.push({name,status:'failed',message:String(e.message).slice(0,1600)});let i=0;for(const c of browser?.contexts()??[])for(const p of c.pages())try{await p.screenshot({path:`${out}/failure-${++i}.png`,fullPage:true});}catch{}throw e;}
+ catch(e){results.push({name,status:'failed',message:String(e.message).slice(0,1600)});let i=0;for(const c of browser?.contexts()??[])for(const p of c.pages())try{await p.screenshot({path:`${out}/failure-${results.length}-${++i}.png`,fullPage:true});}catch{}console.error('FAIL '+name+': '+String(e.message).slice(0,1600));}
  finally{writeFileSync(out+'/results.json',JSON.stringify({results,pageErrors},null,2));}
 }
 const build=spawnSync('npm',['run','build'],{env,encoding:'utf8',maxBuffer:30e6});
@@ -89,16 +89,16 @@ try{
  await check('search applies to all pages and real form stage and employee filters',async()=>{
   await go(owner);await owner.getByRole('searchbox',{name:'Search',exact:true}).fill('Zebra');
   await owner.getByRole('button',{name:'Apply',exact:true}).click();await owner.waitForURL(u=>u.searchParams.get('q')==='Zebra');
-  await table(owner).getByRole('link',{name:/Zebra final-page target/}).waitFor();assert.equal(await table(owner).locator('tbody tr').count(),1);
+  await table(owner).getByRole('link',{name:'Zebra final-page target',exact:true}).waitFor();assert.equal(await table(owner).locator('tbody tr').count(),1);
   await go(owner);await owner.getByRole('combobox',{name:'Stage',exact:true}).selectOption('negotiating');await owner.getByRole('button',{name:'Apply',exact:true}).click();
   await owner.waitForURL(u=>u.searchParams.get('status')==='negotiating');await table(owner).getByText('Negotiation',{exact:true}).waitFor();assert.equal(await table(owner).locator('tbody tr').count(),1);
   await go(owner);await owner.getByRole('combobox',{name:'Owner',exact:true}).selectOption(accounts.crm.member);
   await owner.getByRole('button',{name:'Apply',exact:true}).click();await owner.waitForURL(u=>u.searchParams.get('assigned_to')===accounts.crm.member);
-  await table(owner).getByRole('link',{name:/Training place 00/}).waitFor();assert.equal(await table(owner).locator('tbody tr').count(),5);
+  await table(owner).getByRole('link',{name:leads[0].place_name,exact:true}).waitFor();assert.equal(await table(owner).locator('tbody tr').count(),5);
  });
  await check('quick mine and overdue filters preserve their meaning',async()=>{
   await go(crm);await crm.getByRole('link',{name:'Assigned to me',exact:true}).click();await crm.waitForURL(u=>u.searchParams.get('scope')==='mine');
-  await table(crm).getByRole('link',{name:/Training place 00/}).waitFor();assert.equal(await table(crm).locator('tbody tr').count(),5);
+  await table(crm).getByRole('link',{name:leads[0].place_name,exact:true}).waitFor();assert.equal(await table(crm).locator('tbody tr').count(),5);
   await crm.getByRole('link',{name:'Overdue follow-ups',exact:true}).click();await crm.waitForURL(u=>u.searchParams.get('window')==='overdue');
   await table(crm).getByText('Overdue',{exact:true}).waitFor();assert.equal(await table(crm).locator('tbody tr').count(),1);
  });
@@ -112,7 +112,7 @@ try{
   assert.equal(await owner.getByRole('checkbox',{name:'Include archived',exact:true}).isChecked(),true);assert.equal(await owner.getByRole('checkbox',{name:'Include practice',exact:true}).isChecked(),true);
  });
  await check('opening and assigning a lead uses the native edit form and persists after returning',async()=>{
-  await go(owner,'?q=Zebra');await table(owner).getByRole('link',{name:/Zebra final-page target/}).click();await owner.waitForURL(u=>u.pathname.endsWith(leads[44].id));
+  await go(owner,'?q=Zebra');await table(owner).getByRole('link',{name:'Zebra final-page target',exact:true}).click();await owner.waitForURL(u=>u.pathname.endsWith(leads[44].id));
   await owner.getByText('Edit record',{exact:true}).click();
   const responsible=owner.getByRole('combobox',{name:'Responsible employee',exact:true});
   await responsible.selectOption(accounts.crm.member);await owner.getByRole('textbox',{name:'Next action',exact:true}).fill('First assigned call — real test save');
@@ -137,6 +137,7 @@ try{
  });
  await check('existing routes, inventory and financial records untouched',async()=>assert.equal(ledger(),baseline));
  assert.deepEqual(pageErrors,[]);
+ assert.equal(results.filter(r=>r.status!=='passed').length,0,'Every browser acceptance scenario must pass; see results.json');
 }finally{
  await browser?.close();server?.kill('SIGTERM');
  if(server)await new Promise(r=>{server.once('exit',r);setTimeout(r,2000);});
