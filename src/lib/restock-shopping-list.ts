@@ -2,6 +2,9 @@ export type RestockShoppingListItem = {
   productId: string;
   name: string;
   suggestedQty: number;
+  purchaseUnit?: "box";
+  unitsPerBox?: number;
+  boxesQty?: number;
   priorityScore?: number;
   status?: string | null;
   lastPurchaseCost?: number | null;
@@ -22,9 +25,20 @@ function normalizeRestockShoppingListItem(item: Partial<RestockShoppingListItem>
   const parsedCost = Number(item?.lastPurchaseCost ?? 0);
   const lastPurchaseCost = Number.isFinite(parsedCost) && parsedCost > 0 ? parsedCost : null;
 
-  if (!productId || !name || suggestedQty <= 0) return null;
+  if (!productId || !name || !Number.isSafeInteger(suggestedQty) || suggestedQty <= 0) return null;
+  // Keep legacy unit-only lists readable, but never drop invalid box metadata.
+  // A broken box payload must fail visibly, not silently revert to loose units.
+  let boxFields: Pick<RestockShoppingListItem, "purchaseUnit" | "unitsPerBox" | "boxesQty"> = {};
+  if (item?.purchaseUnit === "box") {
+    const unitsPerBox = Number(item.unitsPerBox), boxesQty = Number(item.boxesQty);
+    if (!Number.isSafeInteger(unitsPerBox) || unitsPerBox <= 1 || !Number.isSafeInteger(boxesQty) || boxesQty <= 0 || boxesQty * unitsPerBox !== suggestedQty || Number(item.suggestedQty) !== suggestedQty) {
+      throw new Error("Saved box quantities are inconsistent. Recreate this list from Purchase List.");
+    }
+    boxFields = { purchaseUnit: "box", unitsPerBox, boxesQty };
+  }
 
   return {
+    ...boxFields,
     productId,
     name,
     suggestedQty,
@@ -48,8 +62,21 @@ export function readRestockShoppingList() {
   }
 }
 
+export function readRestockShoppingListStrict() {
+  if (!hasBrowserStorage()) throw new Error("Browser storage is unavailable. Reopen the purchase list.");
+  const raw = window.localStorage.getItem(RESTOCK_SHOPPING_LIST_STORAGE_KEY);
+  if (raw === null) return [] as RestockShoppingListItem[];
+  const parsed: unknown = JSON.parse(raw);
+  if (!Array.isArray(parsed)) throw new Error("Saved purchase list is invalid. Recreate it.");
+  return parsed.map(item => {
+    const normalized = normalizeRestockShoppingListItem(item);
+    if (!normalized) throw new Error("A saved purchase item is invalid. Recreate the list.");
+    return normalized;
+  });
+}
+
 export function writeRestockShoppingList(items: Array<Partial<RestockShoppingListItem> | null | undefined>) {
-  if (!hasBrowserStorage()) return;
+  if (!hasBrowserStorage()) throw new Error("Browser storage is unavailable. The purchase list was not saved.");
 
   const normalized = items
     .map((item) => normalizeRestockShoppingListItem(item))
@@ -80,10 +107,12 @@ export function clearRestockShoppingList() {
   window.localStorage.removeItem(RESTOCK_SHOPPING_LIST_STORAGE_KEY);
 }
 
-
 export function updateRestockShoppingListQuantity(productId: string, suggestedQty: number) {
-  const quantity = Math.max(1, Math.floor(Number(suggestedQty ?? 1)));
-  const next = readRestockShoppingList().map((item) => item.productId === productId ? { ...item, suggestedQty: quantity } : item);
+  const quantity = Math.max(1, Math.ceil(Number(suggestedQty ?? 1)));
+  if (!Number.isSafeInteger(quantity)) throw new Error("Invalid purchase quantity.");
+  const next = readRestockShoppingList().map((item) => item.productId === productId ? (item.purchaseUnit === "box"
+    ? { ...item, boxesQty: Math.ceil(quantity / item.unitsPerBox!), suggestedQty: Math.ceil(quantity / item.unitsPerBox!) * item.unitsPerBox! }
+    : { ...item, suggestedQty: quantity }) : item);
   writeRestockShoppingList(next);
   return next;
 }

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { LocalDraftForm } from "@/components/LocalDraft";
-import { PurchaseForm } from "@/components/PurchaseForm";
+import { BoxAwarePurchaseForm as PurchaseForm } from "@/components/BoxAwarePurchaseForm";
 import { FormField, FormSection } from "@/components/ui";
 import type { PurchaseSubmitResult } from "@/lib/purchase-actions";
 import type { ReceiptConfidenceLabel, ReceiptScanDraft } from "@/lib/receipt-scan-types";
