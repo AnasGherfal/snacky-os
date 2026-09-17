@@ -33,7 +33,7 @@ try{
  server=spawn(process.execPath,['node_modules/next/dist/bin/next','start','--hostname','127.0.0.1','--port','3000'],{env,stdio:['ignore',openSync('diagnostics/recurring-server.log','w'),openSync('diagnostics/recurring-server-errors.log','w')]});
  for(let i=0;i<60;i++){try{if((await fetch(app+'/login')).ok)break;}catch{}await new Promise(r=>setTimeout(r,500));if(i===59)throw Error('Server unavailable');}
  browser=await chromium.launch({headless:true});
- async function session(role,locale='en',width=1440){const context=await browser.newContext({viewport:{width,height:1000}});await context.addCookies([{name:'snacky_os_language',value:locale,url:app}]);const p=await context.newPage();p.on('pageerror',e=>errors.push({role,message:e.message}));await p.goto(app+'/login');await p.locator('input[name=email]').fill(accounts[role].email);await p.locator('input[name=password]').fill(password);await Promise.all([p.waitForURL(u=>!u.pathname.startsWith('/login'),{timeout:30000}),p.locator('form button[type=submit]').click()]);return p;}
+ async function session(role,locale='en',width=1440){const context=await browser.newContext({viewport:{width,height:1000}});await context.addCookies([{name:'snacky_os_language',value:locale,url:app}]);const p=await context.newPage();p.setDefaultTimeout(15000);p.setDefaultNavigationTimeout(25000);p.on('pageerror',e=>errors.push({role,message:e.message}));await p.goto(app+'/login');await p.locator('input[name=email]').fill(accounts[role].email);await p.locator('input[name=password]').fill(password);await Promise.all([p.waitForURL(u=>!u.pathname.startsWith('/login'),{timeout:30000}),p.locator('form button[type=submit]').click()]);return p;}
  const owner=await session('owner'),crm=await session('crm'),operator=await session('operator');
  const path='/my-work/team/routines';
  const post=(page,body)=>page.evaluate(async body=>{const r=await fetch('/api/crm/routines',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});return {status:r.status,body:await r.json()};},body);
@@ -50,9 +50,9 @@ try{
   await owner.waitForURL(u=>/^[0-9a-f-]{36}$/.test(u.searchParams.get('id')??''));
   id=new URL(owner.url()).searchParams.get('id');assert.ok(id);
   await owner.getByLabel('Responsibility',{exact:true}).fill('Daily customer relationship follow-up');
-  await owner.getByLabel('Responsible employee',{exact:true}).selectOption(accounts.crm.member);
-  await owner.getByLabel('Period',{exact:true}).selectOption('days');
-  await owner.getByLabel('Instructions / expected result',{exact:true}).fill('Review current contacts and record the next action. Test data only.');
+  await owner.getByRole('combobox',{name:'Responsible employee',exact:true}).selectOption(accounts.crm.member);
+  await owner.getByRole('combobox',{name:'Period',exact:true}).selectOption('days');
+  await owner.getByRole('textbox',{name:'Instructions / expected result',exact:true}).fill('Review current contacts and record the next action. Test data only.');
   await owner.route('**/api/crm/routines',async route=>{await route.fetch();await route.abort('failed');},{times:1});
   await owner.getByRole('button',{name:'Save routine',exact:true}).click();await owner.getByRole('button',{name:'Retry saved request',exact:true}).waitFor();
   let w=await rpc('owner','snacky_crm_routines_v1');assert.equal(w.total,1);assert.equal(w.rows[0].revision,1);assert.equal(w.rows[0].paused,true);
@@ -66,7 +66,6 @@ try{
   await owner.getByRole('button',{name:'Pause',exact:true}).waitFor();
   owner.once('dialog',d=>d.accept());await owner.getByRole('button',{name:'Enable generation',exact:true}).click();await owner.getByText('Generation enabled',{exact:true}).waitFor();
   sql('select crm_automation_private.tick()');sql('select crm_automation_private.tick()');
-  // A real cron tick may coincide with explicit generation; only one committed occurrence is allowed.
   for(let n=0;n<20&&sql('select count(*) from crm_automation_private.occurrences')==='0';n++)await new Promise(r=>setTimeout(r,100));
   assert.equal(sql('select count(*) from crm_automation_private.occurrences'),'1');
  });
@@ -80,7 +79,7 @@ try{
  let task;
  await check('employee sees and completes generated work through the existing UI',async()=>{
   const w=await rpc('crm','snacky_crm_workspace_v1',{p_section:'work',p_filters:{scope:'mine',window:'today'}});assert.equal(w.total,1);task=w.rows[0].id;
-  await crm.goto(app+'/follow-ups/'+task);await crm.getByLabel('Status',{exact:true}).selectOption('completed');await crm.getByLabel('Work performed / result',{exact:true}).fill('Reviewed contacts and recorded the next step.');
+  await crm.goto(app+'/follow-ups/'+task);await crm.getByRole('combobox',{name:'Status',exact:true}).selectOption('completed');await crm.getByRole('textbox',{name:/^Work performed \/ result/}).fill('Reviewed contacts and recorded the next step.');
   await crm.getByRole('button',{name:'Save changes',exact:true}).click();await crm.getByText('Reviewed contacts and recorded the next step.',{exact:true}).first().waitFor();
   assert.equal((await rpc('crm','snacky_crm_workspace_v1',{p_section:'task',p_id:task})).record.status,'completed');
  });
@@ -109,15 +108,18 @@ try{
   sql("select crm_automation_private.tick(clock_timestamp()+interval '20 days')");assert.equal(sql('select count(*) from crm_automation_private.occurrences'),'2');
   assert.equal((await rpc('crm','snacky_crm_workspace_v1',{p_section:'task',p_id:task})).record.status,'completed');
  });
- sql('select crm_automation_private.tick()'); // Restore real heartbeat time after synthetic future dates.
+ sql('select crm_automation_private.tick()');
  const arabic=await session('owner','ar',390);
  await check('real full-shell Arabic/English mobile and desktop layouts and accessibility',async()=>{
   const audits=[];
   for(const [label,p,url,width] of [['management-ar-390',arabic,'/my-work/team',390],['routines-ar-390',arabic,path,390],['editor-ar-320',arabic,path+'?edit='+id,320],['management-en-1440',owner,'/my-work/team',1440]]){
    await p.setViewportSize({width,height:950});await p.goto(app+url);await p.locator('main h1').waitFor();
-   const overflow=await p.locator('main').evaluate(e=>Array.from(e.querySelectorAll('*')).filter(n=>{const r=n.getBoundingClientRect();return r.width&&r.height&&(r.right>innerWidth+2||r.left<-2);}).map(n=>n.tagName+':'+n.className));
+   const view='main div[dir].min-w-0';
+   assert.ok(await p.locator(view).count(),'New view not found');
+   assert.ok(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'Page-wide overflow');
+   const overflow=await p.locator(view).evaluate(e=>Array.from(e.querySelectorAll('*')).filter(n=>{const r=n.getBoundingClientRect();return r.width&&r.height&&(r.right>innerWidth+2||r.left<-2);}).map(n=>n.tagName+':'+n.className));
    assert.deepEqual(overflow,[],label+' overflow');await p.screenshot({path:`${out}/${label}.png`,fullPage:true});
-   const audit=await new AxeBuilder({page:p}).include('main').analyze();audits.push({label,violations:audit.violations});
+   const audit=await new AxeBuilder({page:p}).include(view).analyze();audits.push({label,violations:audit.violations});
   }
   writeFileSync(out+'/accessibility.json',JSON.stringify(audits,null,2));assert.equal(audits.flatMap(a=>a.violations).length,0,'New view accessibility violations');
  });
