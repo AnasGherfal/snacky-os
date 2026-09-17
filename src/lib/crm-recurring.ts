@@ -1,5 +1,6 @@
 /** Recurrence configuration only. Live work remains in crm_tasks. */
-export const crmRecurringEnabled = process.env.NEXT_PUBLIC_SNACKY_CRM_RECURRING_ENABLED === 'true';
+// Live schema rollout approved. Explicit false remains the application rollback switch.
+export const crmRecurringEnabled = process.env.NEXT_PUBLIC_SNACKY_CRM_RECURRING_ENABLED !== 'false';
 export const routineId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export type RoutineInput = {
   title:string; instructions:string; target_kind:'none'|'lead'|'location'|'issue'|'obligation';
