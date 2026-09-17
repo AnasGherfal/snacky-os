@@ -1,0 +1,30 @@
+name: Smart purchase list checks
+on:
+  pull_request:
+    paths:
+      - 'src/lib/purchase-list*'
+      - 'src/app/restock-priority/purchase-list/**'
+      - 'src/components/module-tabs-config.ts'
+      - 'src/components/CreatePurchaseListButton.tsx'
+      - 'src/lib/restock-shopping-list.ts'
+      - 'scripts/test-smart-purchase-list.mjs'
+      - '.github/workflows/smart-purchase-list-check.yml'
+permissions:
+  contents: read
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Recent-sales purchase list regressions
+        run: node --experimental-strip-types --test scripts/test-smart-purchase-list.mjs
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Production build
+        run: npm run build
