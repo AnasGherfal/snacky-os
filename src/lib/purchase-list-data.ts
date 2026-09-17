@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
-import { safeSupabaseQuery, supabaseQueryErrorMessage } from "@/lib/safe-supabase-query";
+import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
 import {
   computePurchaseList,
   type PurchaseListItem,
