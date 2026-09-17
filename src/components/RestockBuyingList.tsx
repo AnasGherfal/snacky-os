@@ -51,7 +51,7 @@ export function RestockBuyingList({products = []}: {products?:BoxProduct[]}) {
         </>}
         <button type="button" className="btn-secondary" onClick={() => save(items.filter(old => old.productId !== item.productId))}>{tr("Remove","إزالة")}</button>
       </section>)}</div>
-      <div className="flex flex-wrap gap-3">{!blocked && !error ? <CreatePurchaseListButton items={safeItems}/> : null}<Link href="/restock-priority/purchase-list" className="btn-secondary">{tr("Refresh from sales and storage","تحديث من المبيعات والمخزون")}</Link><button type="button" className="btn-secondary" onClick={() => {try {clearRestockShoppingList();setItems([]);setError("");} catch {setError(tr("Could not clear the saved list.","تعذر مسح القائمة المحفوظة."));}}}>{tr("Clear list","مسح القائمة")}</button></div>
+      <div className="flex flex-wrap gap-3">{!blocked && !error ? <CreatePurchaseListButton items={safeItems} label={tr("Create purchase draft","إنشاء مسودة شراء")}/> : null}<Link href="/restock-priority/purchase-list" className="btn-secondary">{tr("Refresh from sales and storage","تحديث من المبيعات والمخزون")}</Link><button type="button" className="btn-secondary" onClick={() => {try {clearRestockShoppingList();setItems([]);setError("");} catch {setError(tr("Could not clear the saved list.","تعذر مسح القائمة المحفوظة."));}}}>{tr("Clear list","مسح القائمة")}</button></div>
     </>}
   </div>;
 }

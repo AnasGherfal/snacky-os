@@ -6,8 +6,8 @@ import { useRouter } from "next/navigation";
 import { useLanguage } from "@/components/I18nProvider";
 import { readRestockShoppingListStrict, writeRestockShoppingList, type RestockShoppingListItem } from "@/lib/restock-shopping-list";
 
-export function CreatePurchaseListButton({ items, className = "", destination = "draft" }: {
-  items: RestockShoppingListItem[]; className?: string; destination?: "draft" | "review";
+export function CreatePurchaseListButton({ items, className = "", destination = "draft", label }: {
+  items: RestockShoppingListItem[]; className?: string; destination?: "draft" | "review"; label?: string;
 }) {
   const router = useRouter(), {locale} = useLanguage();
   const ar = locale === "ar";
@@ -28,7 +28,7 @@ export function CreatePurchaseListButton({ items, className = "", destination = 
         } catch { setError(ar ? "تعذر حفظ قائمة الشراء في المتصفح. لم يتم فتح المسودة؛ أعد المحاولة." : "Could not save the buying list in this browser. No draft was opened; retry."); }
       }}>
       <PackagePlus className="h-4 w-4" />
-      {destination === "review" ? (ar ? "مراجعة الصناديق" : "Review buying list") : (ar ? "إنشاء مسودة شراء" : "Create Purchase List")}
+      {label ?? (destination === "review" ? (ar ? "مراجعة الصناديق" : "Review buying list") : (ar ? "إنشاء مسودة شراء" : "Create Purchase List"))}
       <span className="rounded-full bg-white/15 px-2 py-0.5 text-xs font-semibold">{boxed ? `${totalBoxes} ${ar ? "صندوق" : "boxes"}` : `${totalSuggestedQty} ${ar ? "وحدة" : "units"}`}</span>
     </button>
     {error ? <p role="alert" className="mt-2 text-sm text-rose-800">{error}</p> : null}
