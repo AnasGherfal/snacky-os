@@ -2,7 +2,7 @@ import {NextResponse} from 'next/server';
 import {revalidatePath} from 'next/cache';
 import {getCurrentProfile,getAuthenticatedSupabaseServerClient} from '@/lib/auth';
 import {hasAnyRole} from '@/lib/authz';
-import {readCompanyBody} from '@/lib/company-request';
+import {CompanyRequestTooLarge,readCompanyBody} from '@/lib/company-request';
 import {crmRecurringEnabled,validateRoutineCommand} from '@/lib/crm-recurring';
 export const runtime='nodejs';
 const headers={'Cache-Control':'private, no-store',Vary:'Cookie'};
@@ -14,7 +14,7 @@ export async function POST(request:Request){
  if(!profile||profile.active_status!=='active'||!hasAnyRole(profile,['owner','admin','supervisor']))return failure('denied',403);
  let command;
  try{command=validateRoutineCommand(JSON.parse(new TextDecoder().decode(await readCompanyBody(request,30000))));}
- catch{return failure('invalid',400);}
+ catch(error){return failure('invalid',error instanceof CompanyRequestTooLarge?413:400);}
  const db=await getAuthenticatedSupabaseServerClient();if(!db)return failure('uncertain',503,true);
  try{
   const {data,error}=await db.rpc('snacky_crm_routine_command_v1',{p_request_id:command.request_id,p_action:command.action,p_id:command.id,p_revision:command.revision,p_payload:command.payload??{}});

@@ -45,7 +45,7 @@ jobs:
           PGDATABASE: crm_tests
         run: |
           mkdir -p diagnostics
-          psql -X -v ON_ERROR_STOP=1 -f scripts/test-crm-recurring-db.sql > diagnostics/recurring-database.log 2>&1 || { tail -n 90 diagnostics/recurring-database.log; exit 1; }
+          psql -X -v ON_ERROR_STOP=1 -f scripts/test-crm-recurring-edges.sql > diagnostics/recurring-database.log 2>&1 || { tail -n 90 diagnostics/recurring-database.log; exit 1; }
           tail -n 20 diagnostics/recurring-database.log
       - name: Actual form handlers, schedule previews and native regressions
         run: node --experimental-strip-types --test scripts/test-crm-recurring.mjs scripts/test-connected-relations.mjs scripts/test-authz-permissions.mjs
