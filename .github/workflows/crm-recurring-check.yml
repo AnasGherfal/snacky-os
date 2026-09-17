@@ -1,0 +1,63 @@
+name: CRM recurring work and management
+on:
+  pull_request:
+    paths:
+      - 'src/lib/crm-recurring.ts'
+      - 'src/components/CrmRoutine*'
+      - 'src/components/CrmManagement.tsx'
+      - 'src/app/my-work/team/**'
+      - 'src/app/api/crm/routines/**'
+      - 'supabase/migrations/*crm_recurring_management*'
+      - 'scripts/test-crm-recurring*'
+      - '.github/workflows/crm-recurring-check.yml'
+permissions:
+  contents: read
+concurrency:
+  group: crm-recurring-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated-only
+          POSTGRES_DB: crm_tests
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Actual CRM, Company and recurring migration/database invariants
+        env:
+          PGHOST: localhost
+          PGUSER: postgres
+          PGPASSWORD: isolated-only
+          PGDATABASE: crm_tests
+        run: |
+          mkdir -p diagnostics
+          psql -X -v ON_ERROR_STOP=1 -f scripts/test-crm-recurring-edges.sql > diagnostics/recurring-database.log 2>&1 || { tail -n 90 diagnostics/recurring-database.log; exit 1; }
+          tail -n 20 diagnostics/recurring-database.log
+      - name: Actual form handlers, schedule previews and native regressions
+        run: node --experimental-strip-types --test scripts/test-crm-recurring.mjs scripts/test-connected-relations.mjs scripts/test-authz-permissions.mjs
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Production build with recurrence enabled
+        env:
+          NEXT_PUBLIC_SNACKY_CRM_RECURRING_ENABLED: 'true'
+        run: npm run build
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: recurring-test-evidence
+          path: diagnostics/recurring-*.log
+          retention-days: 7

@@ -83,12 +83,12 @@ test("route assignment still creates the operator notification", () => {
 
 // Execute the actual Topbar and authorization code with framework boundaries stubbed.
 // Do not lock the test to a specific JSX spelling or remove role restrictions.
-function loadModule(source, imports = {}) {
+function loadModule(source, imports = {}, globals = {}) {
   const exports = {};
   const output = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
   }).outputText;
-  vm.runInNewContext(output, { exports, require(name) {
+  vm.runInNewContext(output, { ...globals, exports, require(name) {
     assert.ok(name in imports, `Unexpected import: ${name}`);
     return imports[name];
   }});
@@ -97,9 +97,10 @@ function loadModule(source, imports = {}) {
 
 function renderTopbar(role, enabled = true, locale = "en", roles = [role]) {
   const authz = loadModule(read("src/lib/authz.ts"));
-  const domain = loadModule(read("src/lib/company-hub.ts").replace(
-    /process\.env\.NEXT_PUBLIC_SNACKY_COMPANY_HUB_ENABLED === 'true'/, String(enabled),
-  ));
+  // Exercise the real feature expression with a controlled environment, not source replacement.
+  const domain = loadModule(read("src/lib/company-hub.ts"), {}, {
+    process: { env: { NEXT_PUBLIC_SNACKY_COMPANY_HUB_ENABLED: enabled ? "true" : "false" } },
+  });
   const navigation = loadModule(read("src/components/app-navigation.ts"));
   const jsx = (type, props) => ({ type, props });
   const NotificationCenter = () => null;
@@ -167,5 +168,13 @@ test("existing route alerts survive Company being disabled and multi-role staff 
 test("private material is never browser-exposed", () => {
   for (const browserFile of [center, card, serviceWorker, pushConfigApi, statusApi]) {
     assert.doesNotMatch(browserFile, /VAPID_PRIVATE_KEY|SUPABASE_SERVICE_ROLE_KEY|privateKey|private_key/);
+  }
+});
+
+// Production activated Company separately; explicit false must remain a reliable off switch.
+test("Company activation defaults on while the emergency false switch remains effective", () => {
+  for (const [value, expected] of [[undefined, true], ["true", true], ["false", false]]) {
+    const domain = loadModule(read("src/lib/company-hub.ts"), {}, {process:{env:{NEXT_PUBLIC_SNACKY_COMPANY_HUB_ENABLED:value}}});
+    assert.equal(domain.companyHubEnabled, expected);
   }
 });
