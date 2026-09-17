@@ -51,7 +51,9 @@ function toDraftItem(item: PurchaseListItem): RestockShoppingListItem {
   };
 }
 
-function DemandBadge({ item, ar }: { item: PurchaseListItem; ar: boolean }) {
+function DemandBadge({ item, ar, comparable = true }: { item: PurchaseListItem; ar: boolean; comparable?: boolean }) {
+  // An unavailable month is not a month with zero sales.
+  if (!comparable) return null;
   const accelerating = item.currentDailyRate > item.previousDailyRate * 1.05;
   const slowing = item.previousDailyRate > 0 && item.currentDailyRate < item.previousDailyRate * 0.8;
   if (accelerating) {
@@ -63,7 +65,7 @@ function DemandBadge({ item, ar }: { item: PurchaseListItem; ar: boolean }) {
   return <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-700">{ar ? "طلب مستقر" : "Steady demand"}</span>;
 }
 
-function PurchaseCard({ item, rank, storageReliable, ar }: { item: PurchaseListItem; rank: number; storageReliable: boolean; ar: boolean }) {
+function PurchaseCard({ item, rank, storageReliable, ar, previousAvailable, currentAvailable }: { item: PurchaseListItem; rank: number; storageReliable: boolean; ar: boolean; previousAvailable: boolean; currentAvailable: boolean }) {
   const tr = (en: string, arabic: string) => ar ? arabic : en;
   return (
     <MobileRecordCard>
@@ -73,13 +75,13 @@ function PurchaseCard({ item, rank, storageReliable, ar }: { item: PurchaseListI
           <div className="text-base font-semibold text-slate-950">{item.name}</div>
           <div className="mt-1 text-xs text-slate-500">{item.sku ?? "—"}</div>
         </div>
-        <DemandBadge item={item} ar={ar} />
+        <DemandBadge item={item} ar={ar} comparable={previousAvailable && currentAvailable} />
       </div>
       <div className="mt-4 grid grid-cols-2 gap-3">
-        <MobileField label={tr("Last month", "الشهر الماضي")}>{integer(item.previousMonthUnits)}</MobileField>
+        <MobileField label={tr("Last month", "الشهر الماضي")}>{previousAvailable ? integer(item.previousMonthUnits) : "—"}</MobileField>
         <MobileField label={tr("This month", "هذا الشهر")}>
-          <div>{integer(item.currentMonthUnits)}</div>
-          {item.currentMonthProjectedUnits > 0 ? <div className="text-[11px] text-slate-500">{tr("Projected", "متوقع")}: {integer(item.currentMonthProjectedUnits)}</div> : null}
+          <div>{currentAvailable ? integer(item.currentMonthUnits) : "—"}</div>
+          {currentAvailable && item.currentMonthProjectedUnits > 0 ? <div className="text-[11px] text-slate-500">{tr("Projected", "متوقع")}: {integer(item.currentMonthProjectedUnits)}</div> : null}
         </MobileField>
         <MobileField label={tr("Storage now", "المخزون الآن")}>{storageReliable ? integer(item.storageQty) : "—"}</MobileField>
         <MobileField label={tr("Sales / day", "المبيعات / يوم")}>{oneDecimal(item.demandDailyRate)}</MobileField>
@@ -106,6 +108,24 @@ export default async function PurchaseListPage({ searchParams }: { searchParams:
   }
 
   const result = await loadPurchaseListData(supabase, coverageDays);
+  // Failed sales/product reads must not become a healthy empty buying list.
+  // Storage failures have their own warning and suppress quantities below.
+  const sourceLoadFailed = Object.entries(result.errors).some(([key, error]) => key !== "storage" && Boolean(error));
+  if (sourceLoadFailed) {
+    const hasRecentReport = Boolean(result.previousPeriod || result.currentPeriod);
+    return (
+      <div className="space-y-6" dir={direction}>
+        <PageHeader title={tr("Purchase List", "قائمة الشراء")} />
+        <ErrorState
+          title={tr("Recent sales or products could not be verified", "تعذر التحقق من المبيعات الحديثة أو المنتجات")}
+          body={hasRecentReport
+            ? tr("The purchase list could not load completely. No zero sales, covered stock, or purchase quantities have been assumed. Reload to try again.", "تعذر تحميل قائمة الشراء كاملة. لم تُفترض مبيعات صفرية أو كفاية المخزون أو كميات شراء. أعد التحميل للمحاولة مجدداً.")
+            : tr("No recent sales report could be verified. Check the connection and the active report for last month or this month. Older months will not be substituted.", "تعذر التحقق من تقرير مبيعات حديث. تحقق من الاتصال ومن التقرير النشط للشهر الماضي أو الحالي. لن تُستخدم الأشهر الأقدم بدلاً منهما.")}
+        />
+        <a href={`/restock-priority/purchase-list?days=${coverageDays}`} className="btn-secondary">{tr("Reload purchase list", "إعادة تحميل قائمة الشراء")}</a>
+      </div>
+    );
+  }
   const buyItems = result.storageLoaded ? result.items.filter((item) => item.suggestedBuyQty > 0) : [];
   const coveredItems = result.items.filter((item) => item.suggestedBuyQty <= 0);
   const draftItems = buyItems.map(toDraftItem);
@@ -138,6 +158,7 @@ export default async function PurchaseListPage({ searchParams }: { searchParams:
             "تظهر هنا فقط المنتجات التي بيعت الشهر الماضي أو هذا الشهر. المنتجات التي كانت تُباع قبل عدة أشهر فقط لا تظهر. يُخصم المخزون الحالي قبل اقتراح كمية الشراء.",
           )}
         </p>
+        <p className="mt-2 text-xs">{tr("The higher daily sales rate from the two available reports sets the target. Each rate uses the days actually covered by its report, not a full month for a partial report. Quantities are units, not cartons; review incoming orders before placing another order.", "يُستخدم معدل المبيعات اليومي الأعلى في التقريرين المتاحين لتحديد الهدف. يُحسب كل معدل على أيام التقرير الفعلية، وليس شهراً كاملاً للتقرير الجزئي. الكميات بالوحدات وليست بالكراتين؛ راجع الطلبات المنتظرة قبل تقديم طلب آخر.")}</p>
       </section>
 
       <section className="surface-card">
@@ -219,13 +240,13 @@ export default async function PurchaseListPage({ searchParams }: { searchParams:
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <h2 className="text-xl font-semibold text-slate-950">{tr("Buy these first", "اشترِ هذه أولاً")}</h2>
-              <p className="mt-1 text-sm text-slate-600">{tr("Highest current sales rate first. Suggested quantity brings Storage up to your selected coverage target.", "مرتبة من الأعلى مبيعاً. الكمية المقترحة ترفع المخزون لتغطية عدد الأيام الذي اخترته.")}</p>
+              <p className="mt-1 text-sm text-slate-600">{tr("Highest recent daily sales rate first. Suggested quantity brings Storage up to your selected coverage target.", "مرتبة حسب معدل المبيعات اليومية الحديثة من الأعلى. الكمية المقترحة ترفع المخزون لتغطية عدد الأيام الذي اخترته.")}</p>
             </div>
             <CreatePurchaseListButton items={draftItems} className="w-full justify-center sm:w-auto" />
           </div>
 
           <MobileCardList>
-            {buyItems.map((item, index) => <PurchaseCard key={item.productId} item={item} rank={index + 1} storageReliable={result.storageLoaded} ar={ar} />)}
+            {buyItems.map((item, index) => <PurchaseCard key={item.productId} item={item} rank={index + 1} storageReliable={result.storageLoaded} ar={ar} previousAvailable={Boolean(result.previousPeriod)} currentAvailable={Boolean(result.currentPeriod)} />)}
           </MobileCardList>
 
           <DataTable className="hidden md:block" headers={[
@@ -243,12 +264,12 @@ export default async function PurchaseListPage({ searchParams }: { searchParams:
                 <td className="text-slate-400">{index + 1}</td>
                 <td>
                   <div className="font-semibold text-slate-950">{item.name}</div>
-                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500"><span>{item.sku ?? "—"}</span><DemandBadge item={item} ar={ar} /></div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500"><span>{item.sku ?? "—"}</span><DemandBadge item={item} ar={ar} comparable={Boolean(result.previousPeriod && result.currentPeriod)} /></div>
                 </td>
-                <td>{integer(item.previousMonthUnits)}</td>
+                <td>{result.previousPeriod ? integer(item.previousMonthUnits) : "—"}</td>
                 <td>
-                  <div>{integer(item.currentMonthUnits)}</div>
-                  {item.currentMonthProjectedUnits > 0 ? <div className="text-xs text-slate-500">{tr("Projected", "متوقع")}: {integer(item.currentMonthProjectedUnits)}</div> : null}
+                  <div>{result.currentPeriod ? integer(item.currentMonthUnits) : "—"}</div>
+                  {result.currentPeriod && item.currentMonthProjectedUnits > 0 ? <div className="text-xs text-slate-500">{tr("Projected", "متوقع")}: {integer(item.currentMonthProjectedUnits)}</div> : null}
                 </td>
                 <td>{integer(item.storageQty)}</td>
                 <td className="font-medium">{oneDecimal(item.demandDailyRate)}</td>
@@ -266,8 +287,11 @@ export default async function PurchaseListPage({ searchParams }: { searchParams:
         </section>
       ) : null}
 
-      {result.storageLoaded && !salesUnavailable && !buyItems.length ? (
+      {result.storageLoaded && !salesUnavailable && result.items.length > 0 && !buyItems.length ? (
         <EmptyState title={tr("Nothing to buy for this coverage window", "لا توجد مشتريات مطلوبة لهذه الفترة")} body={tr("Current Storage already covers the recent sales rate for the selected number of days.", "المخزون الحالي يغطي معدل المبيعات الحديث لعدد الأيام المحدد.")} />
+      ) : null}
+      {result.storageLoaded && !salesUnavailable && !result.items.length ? (
+        <EmptyState title={tr("No mapped recent sellers to calculate", "لا توجد منتجات مباعة حديثاً ومربوطة للحساب")} body={tr("There are no eligible active products matched to these reports. Check product mappings and report coverage. This does not establish that Storage is sufficient.", "لا توجد منتجات نشطة مؤهلة ومربوطة بهذه التقارير. راجع مطابقة المنتجات وتغطية التقارير. هذا لا يعني أن المخزون كافٍ.")} />
       ) : null}
 
       {result.storageLoaded && coveredItems.length ? (
