@@ -26,8 +26,10 @@ for(const role of ['owner','crm','other','operator']){
   const client=createClient(status.API_URL,status.ANON_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
   assert.ifError((await client.auth.signInWithPassword({email,password})).error);accounts[role]={email,id,member,client};
 }
+const fixtureMarker='Lead table acceptance';
+// Historical repository seed rows remain intact; scope count assertions to this test's records.
 async function rpc(role,section='lead',filters={},id=null){
- const r=await accounts[role].client.rpc('snacky_crm_workspace_v1',{p_section:section,p_id:id,p_filters:filters});assert.ifError(r.error);return r.data;
+ const r=await accounts[role].client.rpc('snacky_crm_workspace_v1',{p_section:section,p_id:id,p_filters:{q:fixtureMarker,...filters}});assert.ifError(r.error);return r.data;
 }
 const today=sql("select (now() at time zone 'Africa/Tripoli')::date"),yesterday=sql("select (now() at time zone 'Africa/Tripoli')::date-1");
 const leads=Array.from({length:45},(_,n)=>({
@@ -36,7 +38,7 @@ const leads=Array.from({length:45},(_,n)=>({
  contact_person_name:'Office contact',contact_phone:'0911234567',contact_whatsapp:'0911234567',
  assigned_to_user_id:n<5?accounts.crm.member:accounts.owner.member,created_by_member_id:accounts.owner.member,
  area:n%2?'East':'West',visibility:'team',next_action:'Call the administrator and record the result',
- next_action_date:n===1?yesterday:today,is_practice:false,is_archived:false,
+ next_action_date:n===1?yesterday:today,is_practice:false,is_archived:false,notes:fixtureMarker,
 }));
 const privateLead={...leads[0],id:randomUUID(),place_name:'Private other-employee fixture',visibility:'assigned',assigned_to_user_id:accounts.other.member,created_by_member_id:accounts.other.member};
 const archived={...leads[0],id:randomUUID(),place_name:'Archived fixture',is_archived:true};
@@ -65,7 +67,12 @@ try{
   return p;
  }
  const owner=await session('owner'),crm=await session('crm'),operator=await session('operator');
- const go=async(p,query='')=>{await p.goto(app+'/locations-pipeline'+query);await p.locator('#crm-leads').waitFor();};
+ const go=async(p,query='')=>{
+  const search=new URLSearchParams(query);
+  if(!search.has('q'))search.set('q',fixtureMarker);
+  await p.goto(app+'/locations-pipeline?'+search);
+  await p.locator('#crm-leads').waitFor();
+ };
  const table=p=>p.locator('#crm-leads table');
  await check('real desktop table, six aligned columns and original permission-checked data',async()=>{
   await go(owner);assert.equal(await table(owner).isVisible(),true);
