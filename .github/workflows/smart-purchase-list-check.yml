@@ -1,0 +1,51 @@
+name: Smart purchase list checks
+on:
+  pull_request:
+    paths:
+      - 'src/lib/purchase-list*'
+      - 'src/app/restock-priority/purchase-list/**'
+      - 'src/components/module-tabs-config.ts'
+      - 'src/components/CreatePurchaseListButton.tsx'
+      - 'src/lib/restock-shopping-list.ts'
+      - 'scripts/test-smart-purchase-list.mjs'
+      - '.github/workflows/smart-purchase-list-check.yml'
+permissions:
+  contents: read
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Recent-sales purchase list regressions
+        run: node --experimental-strip-types --test scripts/test-smart-purchase-list.mjs
+      - name: Repository unit regressions
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const { spawnSync } = require('node:child_process');
+          const files = fs.readdirSync('scripts')
+            .filter((file) => file.endsWith('.mjs') && /from\s+['"]node:test['"]/.test(fs.readFileSync(`scripts/${file}`, 'utf8')))
+            .sort()
+            .map((file) => `scripts/${file}`);
+          const result = spawnSync(process.execPath, ['--experimental-strip-types', '--loader', './scripts/ts-alias-loader.mjs', '--test', '--test-concurrency=4', ...files], { encoding: 'utf8', maxBuffer: 40e6 });
+          const output = `${result.stdout || ''}\n${result.stderr || ''}`;
+          if ((result.status ?? 1) !== 0) {
+            const lines = output.split('\n');
+            lines.forEach((line, index) => {
+              if (!line.startsWith('not ok ')) return;
+              console.error('\n--- failing regression ---\n' + lines.slice(Math.max(0, index - 4), Math.min(lines.length, index + 30)).join('\n'));
+            });
+            process.exit(result.status ?? 1);
+          }
+          console.log(`Repository unit regressions passed (${files.length} test modules).`);
+          NODE
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Production build
+        run: npm run build
