@@ -27,7 +27,7 @@ for(const role of ['owner','crm','operator']){
 async function rpc(role,name,args={}){const r=await accounts[role].client.rpc(name,args);assert.ifError(r.error);return r.data;}
 const ledger=()=>sql("select jsonb_build_object('finance',(select count(*) from public.financial_transactions),'stock',(select count(*) from public.inventory_movements),'routes',(select count(*) from public.routes))::text");
 const baseline=ledger(),results=[],errors=[];let browser,server;
-async function check(name,fn){try{await fn();results.push({name,status:'passed'});console.log('PASS '+name);}catch(e){results.push({name,status:'failed',message:String(e.message).slice(0,2000)});throw e;}finally{writeFileSync(out+'/results.json',JSON.stringify({results,errors},null,2));}}
+async function check(name,fn){try{await fn();results.push({name,status:'passed'});console.log('PASS '+name);}catch(e){results.push({name,status:'failed',message:String(e.message).slice(0,2000)});let n=0;for(const c of browser?.contexts()??[])for(const p of c.pages())try{await p.screenshot({path:`${out}/failure-${++n}.png`,fullPage:true});}catch{}throw e;}finally{writeFileSync(out+'/results.json',JSON.stringify({results,errors},null,2));}}
 const build=spawnSync('npm',['run','build'],{env,encoding:'utf8',maxBuffer:30e6});writeFileSync('diagnostics/recurring-build.log',build.stdout+'\n'+build.stderr);assert.equal(build.status,0,'Recurring enabled build failed');
 try{
  server=spawn(process.execPath,['node_modules/next/dist/bin/next','start','--hostname','127.0.0.1','--port','3000'],{env,stdio:['ignore',openSync('diagnostics/recurring-server.log','w'),openSync('diagnostics/recurring-server-errors.log','w')]});
@@ -46,7 +46,9 @@ try{
  });
  let id;
  await check('real editor save with response loss and reload keeps exactly one routine',async()=>{
-  await owner.goto(app+path+'?new=1');id=new URL(owner.url()).searchParams.get('id');assert.ok(id);
+  await owner.goto(app+path+'?new=1');
+  await owner.waitForURL(u=>/^[0-9a-f-]{36}$/.test(u.searchParams.get('id')??''));
+  id=new URL(owner.url()).searchParams.get('id');assert.ok(id);
   await owner.getByLabel('Responsibility',{exact:true}).fill('Daily customer relationship follow-up');
   await owner.getByLabel('Responsible employee',{exact:true}).selectOption(accounts.crm.member);
   await owner.getByLabel('Period',{exact:true}).selectOption('days');
@@ -63,7 +65,9 @@ try{
   owner.once('dialog',d=>d.accept());await owner.getByRole('button',{name:'Activate',exact:true}).click();
   await owner.getByRole('button',{name:'Pause',exact:true}).waitFor();
   owner.once('dialog',d=>d.accept());await owner.getByRole('button',{name:'Enable generation',exact:true}).click();await owner.getByText('Generation enabled',{exact:true}).waitFor();
-  assert.equal(JSON.parse(sql('select crm_automation_private.tick()')).generated,1);sql('select crm_automation_private.tick()');
+  sql('select crm_automation_private.tick()');sql('select crm_automation_private.tick()');
+  // A real cron tick may coincide with explicit generation; only one committed occurrence is allowed.
+  for(let n=0;n<20&&sql('select count(*) from crm_automation_private.occurrences')==='0';n++)await new Promise(r=>setTimeout(r,100));
   assert.equal(sql('select count(*) from crm_automation_private.occurrences'),'1');
  });
  await check('concurrent worker lock prevents overlapping generation',async()=>{
@@ -105,6 +109,7 @@ try{
   sql("select crm_automation_private.tick(clock_timestamp()+interval '20 days')");assert.equal(sql('select count(*) from crm_automation_private.occurrences'),'2');
   assert.equal((await rpc('crm','snacky_crm_workspace_v1',{p_section:'task',p_id:task})).record.status,'completed');
  });
+ sql('select crm_automation_private.tick()'); // Restore real heartbeat time after synthetic future dates.
  const arabic=await session('owner','ar',390);
  await check('real full-shell Arabic/English mobile and desktop layouts and accessibility',async()=>{
   const audits=[];
