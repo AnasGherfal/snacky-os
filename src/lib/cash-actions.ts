@@ -201,12 +201,6 @@ export async function receiveCashIntoStorage(formData: FormData) {
   redirect(`${path}?success=${encodeURIComponent("Storage receipt saved. The bag is ready to count.")}`);
 }
 
-function cashPeriodDate(value: FormDataEntryValue | null, path: string, label: string) {
-  const raw = clean(value);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) fail(path, `${label} is required.`);
-  return raw;
-}
-
 export async function confirmCashCollectionCount(formData: FormData) {
   const id = clean(formData.get("id"));
   if (!id) redirect("/cash-collections");
@@ -216,15 +210,10 @@ export async function confirmCashCollectionCount(formData: FormData) {
   const totalRaw = clean(formData.get("total_amount_lyd"));
   const totalAmount = optionalAmount(formData.get("total_amount_lyd"));
   if (!totalRaw || totalAmount === null || totalAmount < 0) fail(path, "Enter a valid total cash amount.");
-  const periodStart = cashPeriodDate(formData.get("period_start"), path, "Cash period start");
-  const periodEnd = cashPeriodDate(formData.get("period_end"), path, "Cash period end");
-  if (periodStart > periodEnd) fail(path, "Cash period start cannot be after its end.");
 
-  const { error } = await supabase.rpc("confirm_cash_count_simple", {
+  const { data: automaticPeriod, error } = await supabase.rpc("confirm_cash_count_auto_period_v1", {
     p_collection_id: id,
     p_total_amount_lyd: totalAmount,
-    p_period_start: periodStart,
-    p_period_end: periodEnd,
     p_client_submission_id: submissionId,
   });
   if (error) {
@@ -237,8 +226,8 @@ export async function confirmCashCollectionCount(formData: FormData) {
     action: "confirm_cash_count",
     entityType: "cash_collection",
     entityId: id,
-    afterData: { custody_status: "counted", total_amount_lyd: totalAmount, period_start: periodStart, period_end: periodEnd },
-    metadata: { related_finance: true },
+    afterData: { custody_status: "counted", total_amount_lyd: totalAmount, automatic_period: automaticPeriod ?? null },
+    metadata: { related_finance: true, period_source: "previous_full_cash_removal" },
     summary: "Saved one combined stored-cash total; VMS reconciliation remains available for later",
   });
   revalidateCashPaths(id);
