@@ -11,6 +11,7 @@ const migration = read("supabase/migrations/20260906235157_cash_custody_chain.sq
 const simplificationMigration = read("supabase/migrations/20260907144816_simplify_cash_reconciliation.sql");
 const ownerSelfHandoffMigration = read("supabase/migrations/20260908120000_owner_admin_self_cash_handoff.sql");
 const simpleCountMigration = read("supabase/migrations/20260910001500_simplify_cash_count_to_total_and_period.sql");
+const autoPeriodMigration = read("supabase/migrations/20260918211800_cash_period_from_last_removal.sql");
 const actions = read("src/lib/cash-actions.ts");
 const removalForm = read("src/components/CashRemovalForm.tsx");
 const custodyForms = read("src/components/CashCustodyForms.tsx");
@@ -62,27 +63,36 @@ test("operational receipt tables contain no financial amounts", () => {
   assert.match(detailPage, /if \(!canSeeMoney\)[\s\S]*?from\("cash_removal_receipts"\)/);
 });
 
-test("cash count requires only one combined total and its date period", () => {
+test("cash count asks only for one combined total and derives its period automatically", () => {
   assert.equal(calculateDenominationTotal({ "0.5": 2, "5": 3, "20": 4 }, 1.25), 97.25);
   assert.match(simpleCountMigration, /add column if not exists cash_period_start date/);
   assert.match(simpleCountMigration, /add column if not exists cash_period_end date/);
-  assert.match(simpleCountMigration, /actual_cash_collected = v_total/);
-  assert.match(simpleCountMigration, /count_witnessed_by = null/);
-  assert.match(simpleCountMigration, /'vms_reconciliation_deferred', true/);
-  assert.match(actions, /confirm_cash_count_simple/);
+  assert.match(autoPeriodMigration, /previous_full_cash_removal_at/);
+  assert.match(autoPeriodMigration, /previous_link\.removal_type = 'full'/);
+  assert.match(autoPeriodMigration, /coalesce\(previous_cash\.custody_status, ''\) <> 'voided'/);
+  assert.match(autoPeriodMigration, /coalesce\(previous_cash\.review_status, ''\) <> 'voided'/);
+  assert.match(autoPeriodMigration, /interval_start_at = snacky_private\.previous_full_cash_removal_at/);
+  assert.match(autoPeriodMigration, /v_period_end := \(v_cash\.collected_at at time zone 'Africa\/Tripoli'\)::date/);
+  assert.match(autoPeriodMigration, /actual_cash_collected = v_total/);
+  assert.match(autoPeriodMigration, /count_witnessed_by = null/);
+  assert.match(autoPeriodMigration, /'vms_reconciliation_deferred', true/);
+  assert.match(actions, /confirm_cash_count_auto_period_v1/);
   assert.match(actions, /p_total_amount_lyd: totalAmount/);
+  assert.doesNotMatch(actions, /formData\.get\("period_start"\)|formData\.get\("period_end"\)/);
   assert.match(custodyForms, /name="total_amount_lyd"/);
-  assert.match(custodyForms, /name="period_start"/);
-  assert.match(custodyForms, /name="period_end"/);
+  assert.doesNotMatch(custodyForms, /name="period_start"|name="period_end"|Cash period from|Cash period to/);
+  assert.match(custodyForms, /previous full cash-removal record/);
+  assert.match(detailPage, /last full cash-removal record for each machine/);
   assert.doesNotMatch(custodyForms, /name="count_witness_id"|denominationFieldName|Count every denomination/);
   assert.doesNotMatch(custodyForms, /formType="cash-total-count"[\s\S]*name="evidence_file"/);
   assert.doesNotMatch(custodyForms, /machine_expected|machine_counted/);
 });
 
 test("reconciliation uses exact intervals or one documented manual batch total", () => {
-  assert.match(migration, /calculate_cash_expectation_impl/);
-  assert.match(migration, /previous_cash\.custody_status in \('reconciled', 'banked'\)/);
-  assert.match(migration, /coalesce\(tx\.payment_time, tx\.delivery_time\) > v_interval_start/);
+  assert.match(autoPeriodMigration, /calculate_cash_expectation_impl/);
+  assert.match(autoPeriodMigration, /v_interval_start := snacky_private\.previous_full_cash_removal_at/);
+  assert.doesNotMatch(autoPeriodMigration, /previous_cash\.custody_status in \('reconciled', 'banked'\)/);
+  assert.match(autoPeriodMigration, /coalesce\(tx\.payment_time, tx\.delivery_time\) > v_interval_start/);
   assert.match(migration, /duplicate_rank = 1/);
   assert.match(migration, /manual_batch_total_lyd/);
   assert.match(migration, /expected_source = 'manual_override'/);
