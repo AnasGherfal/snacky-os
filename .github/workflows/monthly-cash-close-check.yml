@@ -6,22 +6,28 @@ on:
       - master
     paths:
       - "src/components/CashCollectionForm.tsx"
+      - "src/components/CashCustodyForms.tsx"
       - "src/app/cash-collections/**"
       - "src/app/finance/operations/page.tsx"
       - "src/lib/cash-actions.ts"
       - "src/lib/monthly-cash-close.ts"
       - "scripts/test-monthly-cash-close.mjs"
+      - "scripts/test-cash-custody-chain.mjs"
+      - "supabase/migrations/20260918211800_cash_period_from_last_removal.sql"
       - ".github/workflows/monthly-cash-close-check.yml"
   push:
     branches:
       - fix/monthly-cash-close-workflow
     paths:
       - "src/components/CashCollectionForm.tsx"
+      - "src/components/CashCustodyForms.tsx"
       - "src/app/cash-collections/**"
       - "src/app/finance/operations/page.tsx"
       - "src/lib/cash-actions.ts"
       - "src/lib/monthly-cash-close.ts"
       - "scripts/test-monthly-cash-close.mjs"
+      - "scripts/test-cash-custody-chain.mjs"
+      - "supabase/migrations/20260918211800_cash_period_from_last_removal.sql"
       - ".github/workflows/monthly-cash-close-check.yml"
 
 jobs:
@@ -38,5 +44,7 @@ jobs:
         run: npm ci
       - name: Test monthly cash close workflow
         run: node --experimental-strip-types --test scripts/test-monthly-cash-close.mjs
+      - name: Test cash custody flow
+        run: npm run test:cash-removal
       - name: Build Snacky OS
         run: npm run build
