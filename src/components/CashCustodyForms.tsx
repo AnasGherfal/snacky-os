@@ -42,29 +42,22 @@ export function CashCountForm({
   action,
   id,
   clientSubmissionId,
-  defaultPeriodEnd,
 }: {
   action: FormAction;
   id: string;
   clientSubmissionId: string;
-  defaultPeriodEnd: string;
 }) {
   return (
     <LocalDraftForm action={action} formType="cash-total-count" draftKeyParts={[id]} className="mt-5 space-y-4">
       <input type="hidden" name="id" value={id} />
       <input type="hidden" name="client_submission_id" value={clientSubmissionId} />
-      <div className="grid gap-4 sm:grid-cols-2">
-        <FormField label="Cash period from" required>
-          <input name="period_start" type="date" required max={defaultPeriodEnd} className="field-input" />
-        </FormField>
-        <FormField label="Cash period to" required>
-          <input name="period_end" type="date" required defaultValue={defaultPeriodEnd} max={defaultPeriodEnd} className="field-input" />
-        </FormField>
-      </div>
+      <p className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm leading-6 text-sky-900">
+        No date range is needed here. Snacky OS uses each machine&apos;s previous full cash-removal record as the start and the removal date already saved on this bag as the end.
+      </p>
       <FormField label="Total cash counted (LYD)" required hint="Enter one combined total for the whole bag. Do not split it by denomination or machine.">
         <input name="total_amount_lyd" type="number" inputMode="decimal" min="0" step="0.01" required className="field-input text-2xl font-semibold" placeholder="0.00" />
       </FormField>
-      <p className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">Save the count now. The VMS comparison is a separate step and can be completed later.</p>
+      <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">Save the count now. The VMS comparison is a separate step and can be completed later.</p>
       <button className="btn-primary w-full">Save cash total</button>
     </LocalDraftForm>
   );
