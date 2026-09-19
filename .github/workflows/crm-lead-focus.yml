@@ -5,6 +5,7 @@ on:
       - 'src/**'
       - 'supabase/migrations/*crm_lead_focus*'
       - 'scripts/test-crm-lead-focus*'
+      - 'scripts/test-crm-lead-quick*'
       - 'scripts/crm-lead-focus/**'
       - '.github/workflows/crm-lead-focus.yml'
 permissions:
@@ -41,7 +42,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: node --experimental-strip-types --test scripts/test-crm-lead-focus.mjs scripts/test-crm-lead-table.mjs scripts/test-connected-relations.mjs scripts/test-authz-permissions.mjs
+      - run: node --experimental-strip-types --test scripts/test-crm-lead-focus.mjs scripts/test-crm-lead-quick.mjs scripts/test-crm-lead-table.mjs scripts/test-connected-relations.mjs scripts/test-authz-permissions.mjs
       - name: Actual migration, access, atomicity, global ordering and expiry
         env:
           PGHOST: localhost
@@ -94,7 +95,9 @@ jobs:
           npm install --prefix .qa/browser --no-package-lock --ignore-scripts playwright@1.55.0 @axe-core/playwright@4.10.2
           .qa/browser/node_modules/.bin/playwright install --with-deps chromium
       - name: Actual UI, bulk save recovery, native editing and Arabic acceptance
-        run: node --import ./scripts/company-e2e/diagnostics.mjs scripts/crm-lead-focus/browser.mjs
+        run: |
+          node --import ./scripts/company-e2e/diagnostics.mjs scripts/crm-lead-focus/browser.mjs
+          node --import ./scripts/company-e2e/diagnostics.mjs scripts/crm-lead-focus/quick.mjs
       - name: Existing real integration suites after installing focus
         if: always() && steps.tools.outcome == 'success'
         run: node scripts/company-e2e/native.mjs
