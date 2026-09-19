@@ -1,0 +1,124 @@
+name: CRM lead focus
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'supabase/migrations/*crm_lead_focus*'
+      - 'scripts/test-crm-lead-focus*'
+      - 'scripts/crm-lead-focus/**'
+      - '.github/workflows/crm-lead-focus.yml'
+permissions:
+  contents: read
+concurrency:
+  group: crm-lead-focus-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated-focus-only
+          POSTGRES_DB: crm_tests
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Snapshot exact reviewed source without runtime credentials
+        run: |
+          mkdir -p diagnostics
+          git archive --format=tar.gz -o diagnostics/review-source.tar.gz HEAD src scripts supabase .github docs package.json package-lock.json tsconfig.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lead-focus-reviewed-source
+          path: diagnostics/review-source.tar.gz
+          retention-days: 2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node --experimental-strip-types --test scripts/test-crm-lead-focus.mjs scripts/test-crm-lead-table.mjs scripts/test-connected-relations.mjs scripts/test-authz-permissions.mjs
+      - name: Actual migration, access, atomicity, global ordering and expiry
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: isolated-focus-only
+          PGDATABASE: crm_tests
+        run: |
+          mkdir -p diagnostics
+          psql -X -v ON_ERROR_STOP=1 -f scripts/test-crm-lead-focus-db.sql > diagnostics/lead-focus-db.log 2>&1 || { tail -n 80 diagnostics/lead-focus-db.log; exit 1; }
+      - run: npm run typecheck
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lead-focus-contracts
+          path: diagnostics/*.log
+          retention-days: 7
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: contracts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.117.0
+      - name: Disposable local backend only
+        run: |
+          mkdir -p .qa/full/supabase diagnostics
+          python3 - <<'PY'
+          from pathlib import Path
+          text=Path('supabase/config.toml').read_text().replace('project_id = "snacky-os"','project_id = "snacky-company-isolated"')
+          for section in ['db.migrations','db.seed','studio','inbucket','realtime','edge_runtime']:
+            start=text.index('['+section+']');end=text.find('\n[',start+1)
+            if end<0:end=len(text)
+            text=text[:start]+text[start:end].replace('enabled = true','enabled = false')+text[end:]
+          Path('.qa/full/supabase/config.toml').write_text(text)
+          PY
+          supabase start --workdir .qa/full > diagnostics/local-start.log 2>&1 || { tail -n 50 diagnostics/local-start.log; exit 1; }
+          supabase status --workdir .qa/full -o env > .qa/local-status.env
+          python3 scripts/company-e2e/migrate.py
+      - name: Isolated browser tools
+        id: tools
+        run: |
+          npm install --prefix .qa/browser --no-package-lock --ignore-scripts playwright@1.55.0 @axe-core/playwright@4.10.2
+          .qa/browser/node_modules/.bin/playwright install --with-deps chromium
+      - name: Actual UI, bulk save recovery, native editing and Arabic acceptance
+        run: node --import ./scripts/company-e2e/diagnostics.mjs scripts/crm-lead-focus/browser.mjs
+      - name: Existing real integration suites after installing focus
+        if: always() && steps.tools.outcome == 'success'
+        run: node scripts/company-e2e/native.mjs
+      - name: Remove local runtime credentials from diagnostic logs
+        if: always()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          for p in Path('diagnostics').glob('*.log'):
+            text=p.read_text(errors='replace')
+            text=re.sub(r'eyJ[A-Za-z0-9_\-.]+','[LOCAL_JWT_REDACTED]',text)
+            text=re.sub(r'sb_(?:secret|publishable)_[A-Za-z0-9_-]+','[LOCAL_KEY_REDACTED]',text)
+            p.write_text(text)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lead-focus-browser
+          path: |
+            diagnostics/crm-lead-focus/**
+            diagnostics/*.log
+            diagnostics/native-results.json
+          retention-days: 7
+      - name: Destroy disposable backend
+        if: always()
+        run: supabase stop --workdir .qa/full --no-backup || true

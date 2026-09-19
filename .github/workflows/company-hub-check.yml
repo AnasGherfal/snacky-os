@@ -110,9 +110,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --ignore-scripts
-      - name: Use pinned audit client (CI only; no app dependency changes)
+      - name: Install pinned audit CLI (tooling only, no application dependency changes)
         run: |
-          npm install --global npm@11.19.0 --ignore-scripts --no-fund
+          npm install --global npm@11.19.1 --ignore-scripts --no-audit
           npm --version
       - name: Test audit failure handling
         run: node --test scripts/test-ci-npm-audit.mjs

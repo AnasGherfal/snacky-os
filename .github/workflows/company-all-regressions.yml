@@ -37,12 +37,12 @@ jobs:
           fs.writeFileSync('diagnostics/all-unit.tap',(result.stdout||'')+'\n'+(result.stderr||''));
           console.log((result.stdout||'').slice(-6000));process.exit(result.status??1);
           NODE
-      - name: Use pinned audit client (CI only; no app dependency changes)
+      - name: Install pinned audit CLI (tooling only, no application dependency changes)
+        run: npm install --global npm@11.19.1 --ignore-scripts --no-audit
+      - name: Full lockfile dependency audit, including development and optional tools
         run: |
-          npm install --global npm@11.19.0 --ignore-scripts --no-fund
           npm --version
-      - name: Full dependency audit, including development tools
-        run: node scripts/ci-npm-audit.mjs all diagnostics/all-dependencies-audit.json
+          node scripts/ci-npm-audit.mjs all diagnostics/all-dependencies-audit.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:

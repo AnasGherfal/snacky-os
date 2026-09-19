@@ -29,6 +29,8 @@ function harness({profile={id:me,role:'crm',roles:['crm'],active_status:'active'
     '@/lib/auth':{getCurrentProfile:async()=>profile,getAuthenticatedSupabaseServerClient:async()=>session?{rpc:async(...args)=>{calls.push(args);return {data:result,error};}}:null},
     '@/lib/authz':{hasAnyRole:(p,roles)=>(p.roles??[p.role]).some(r=>roles.includes(r))},
     '@/lib/i18n/server':{getServerI18n:async()=>({locale:ar?'ar':'en'})},
+    '@/components/CrmLeadFocusList':{CrmLeadFocusList:()=>null},
+    '@/lib/crm-lead-focus':{leadFocusEnabled:false,missingLeadFocus:()=>false},
     '@/components/CrmClientTools':{CrmRefresh:()=>null},'@/components/CrmLeadTable':tableModule,
     '@/lib/crm-workspace':domain,'@/lib/crm-lead-list':helpers,'./CrmLeads.module.css':{__esModule:true,default:styles},
   });
@@ -46,7 +48,7 @@ test('date-only formatting cannot shift the due day across timezones',()=>{
   assert.match(helpers.leadDate('2026-09-20',false),/20.*Sept?.*2026/);
   assert.equal(helpers.leadDate('2026-02-30',false),'Invalid date');assert.equal(helpers.leadDate(null,true),'لم يُحدد');
 });
-test('actual list uses exactly the original scoped CRM RPC with filters and no mutation',async()=>{
+test('flag-off list uses exactly the original scoped CRM RPC with filters and no mutation',async()=>{
   const h=harness();const html=await h.render({q:'School',assigned_to:me,offset:'40',area:'Ain Zara'});
   assert.equal(h.calls.length,1);assert.equal(h.calls[0][0],'snacky_crm_workspace_v1');
   assert.equal(h.calls[0][1].p_section,'lead');assert.equal(h.calls[0][1].p_id,null);assert.equal(h.calls[0][1].p_filters.assigned_to,me);assert.equal(h.calls[0][1].p_filters.offset,'40');
