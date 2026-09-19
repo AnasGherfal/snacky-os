@@ -4,7 +4,7 @@ on:
     branches: [fix/pwa-push-activation]
   pull_request:
     branches: [master]
-    paths: ["src/components/Notification*.tsx", "src/lib/*push*.ts", "src/lib/notification-delivery.ts", "src/app/api/notifications/**", "src/app/api/push-*/**", "public/sw.js", "supabase/migrations/*push*.sql", "scripts/*notification*.mjs", "scripts/test-pwa-push.mjs", "scripts/push-tests/**", ".github/workflows/pwa-push-check.yml"]
+    paths: ["src/components/Notification*.tsx", "src/components/Notification*.module.css", "src/lib/*push*.ts", "src/lib/notification-delivery.ts", "src/app/api/notifications/**", "src/app/api/push-*/**", "public/sw.js", "supabase/migrations/*push*.sql", "scripts/*notification*.mjs", "scripts/test-pwa-push.mjs", "scripts/push-tests/**", ".github/workflows/pwa-push-check.yml"]
 permissions:
   contents: read
 concurrency:
@@ -52,9 +52,18 @@ jobs:
         run: npm run test:critical-workflows
       - name: Full production build and existing prebuild regressions
         run: npm run build
+      - name: Prepare isolated browser checks
+        run: |
+          python3 -m venv .qa/push-browser
+          .qa/push-browser/bin/pip install playwright==1.55.0
+          .qa/push-browser/bin/playwright install --with-deps chromium
+      - name: Mobile notification viewport and recovery checks
+        run: .qa/push-browser/bin/python scripts/push-tests/test_panel.py
       - name: Save verification evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: push-verification
-          path: push-tests.tap
+          path: |
+            push-tests.tap
+            .qa/push-panel/evidence/**

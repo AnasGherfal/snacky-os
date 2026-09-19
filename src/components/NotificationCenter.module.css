@@ -1,0 +1,51 @@
+.panel {
+  --edge-top: max(0.75rem, env(safe-area-inset-top, 0px));
+  --edge-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+  --edge-left: max(0.75rem, env(safe-area-inset-left, 0px));
+  --edge-right: max(0.75rem, env(safe-area-inset-right, 0px));
+  position: fixed;
+  inset: var(--edge-top) var(--edge-right) var(--edge-bottom) var(--edge-left);
+  margin: auto;
+  width: calc(100vw - var(--edge-left) - var(--edge-right));
+  max-width: 28rem;
+  max-height: calc(100vh - var(--edge-top) - var(--edge-bottom));
+  max-height: calc(100dvh - var(--edge-top) - var(--edge-bottom));
+  box-sizing: border-box;
+  padding: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 1rem;
+  background: white;
+  color: #0f172a;
+  box-shadow: 0 24px 64px rgb(15 23 42 / 0.24);
+  overflow: hidden;
+  text-align: start;
+}
+
+.panel[open] { display: flex; flex-direction: column; }
+.panel::backdrop { background: rgb(15 23 42 / 0.35); }
+.header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+.body {
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  overflow-wrap: anywhere;
+  padding: 1rem;
+  -webkit-overflow-scrolling: touch;
+}
+.body button, .body a { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.body button { min-height: 2.75rem; }
+
+/* The panel is narrow even on desktop; viewport sm: grids must not force long
+   notification-control labels into two columns. This is scoped to this panel. */
+.body section > [class~="grid"] { grid-template-columns: minmax(0, 1fr); }
+.body section { min-width: 0; }
