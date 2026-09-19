@@ -8,7 +8,7 @@ import { NotificationActivationCard } from "@/components/NotificationActivationC
 import { useLanguage } from "@/components/I18nProvider";
 import styles from "./NotificationCenter.module.css";
 
-type NotificationRow = { id: string; title: string; message: string; action_url: string | null; related_route_id: string | null; read_at: string | null; created_at: string };
+type NotificationRow = { id: string; title: string; message: string; title_ar?: string; message_ar?: string; action_url: string | null; related_route_id: string | null; read_at: string | null; created_at: string };
 type NotificationCenterProps = { compact?: boolean; routeAlerts?: boolean; companyUpdates?: boolean; label?: string; className?: string };
 
 function safeLink(value: string | null) {
@@ -16,7 +16,7 @@ function safeLink(value: string | null) {
     !Array.from(value).some((character) => character.charCodeAt(0) < 33 || character === "\\") ? value : "/account";
 }
 
-export function NotificationCenter({ compact = false, label = "Notifications", className = "", routeAlerts = true, companyUpdates = false }: NotificationCenterProps) {
+export function NotificationCenter({ compact = false, label = "Notifications", className = "", companyUpdates = false }: NotificationCenterProps) {
   const { locale } = useLanguage();
   const ar = locale === "ar";
   const company = useCompanyNotices(companyUpdates);
@@ -28,9 +28,8 @@ export function NotificationCenter({ compact = false, label = "Notifications", c
   const [failed, setFailed] = useState(false);
   const [notifications, setNotifications] = useState<NotificationRow[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
-  const totalBadgeCount = (routeAlerts ? unreadCount : 0) + (companyUpdates ? company.data?.attention_count ?? 0 : 0);
+  const totalBadgeCount = unreadCount + (companyUpdates ? company.data?.attention_count ?? 0 : 0);
   const loadNotifications = useCallback(async () => {
-    if (!routeAlerts) return;
     setLoading(true);
     try {
       const response = await fetch("/api/notifications?limit=6", { cache: "no-store" });
@@ -40,7 +39,7 @@ export function NotificationCenter({ compact = false, label = "Notifications", c
       setNotifications(payload.notifications); setUnreadCount(Number(payload.unreadCount ?? 0)); setFailed(false);
     } catch { setFailed(true); }
     finally { setLoading(false); }
-  }, [routeAlerts]);
+  }, []);
   async function markAllRead() {
     try {
       const response = await fetch("/api/notifications", { method: "PATCH" });
@@ -82,10 +81,10 @@ export function NotificationCenter({ compact = false, label = "Notifications", c
       <div className={styles.body}>
       {companyUpdates ? <CompanyNoticesPanel data={company.data} failed={company.failed} ar={ar} close={() => setOpen(false)} /> : null}
       <div className="mt-3"><NotificationActivationCard compact /></div>
-      {routeAlerts ? <>
-        <div className="mt-4 flex items-center justify-between gap-2"><span className="text-xs text-slate-500">{ar ? "تنبيهات الجولات" : "Route alerts"}</span>{unreadCount > 0 ? <button type="button" onClick={() => void markAllRead()} className="inline-flex items-center gap-1 text-xs font-semibold"><CheckCheck className="h-4 w-4" />{ar ? "تحديد الكل كمقروء" : "Mark all read"}</button> : null}</div>
-        {failed ? <button type="button" onClick={() => void loadNotifications()} className="mt-3 w-full rounded-lg border border-amber-200 bg-amber-50 p-3 text-start text-sm text-amber-900">{ar ? "تعذر تحميل الإشعارات. اضغط لإعادة المحاولة." : "Could not load notifications. Tap to retry."}</button> : loading ? <p className="py-5 text-center text-sm text-slate-500">{ar ? "جارٍ التحميل…" : "Loading…"}</p> : notifications.length ? <div className="mt-3 space-y-2">{notifications.map((notification) => <Link key={notification.id} href={safeLink(notification.action_url || (notification.related_route_id ? `/operator/routes/${encodeURIComponent(notification.related_route_id)}` : null))} onClick={() => setOpen(false)} className={`block rounded-xl border p-3 ${notification.read_at ? "border-slate-200 bg-slate-50" : "border-slate-300 bg-white"}`}><div className="text-sm font-semibold text-slate-900">{notification.title}</div><p className="mt-1 text-sm leading-6 text-slate-600">{notification.message}</p><time className="mt-2 block text-xs text-slate-500" dateTime={notification.created_at}>{new Date(notification.created_at).toLocaleString(locale)}</time></Link>)}</div> : <p className="py-5 text-center text-sm text-slate-500">{ar ? "لا توجد إشعارات بعد." : "No notifications yet."}</p>}
-      </> : null}
+      {<>
+        <div className="mt-4 flex items-center justify-between gap-2"><span className="text-xs text-slate-500">{ar ? "تحديثات العمل المسند إليك" : "Your work updates"}</span>{unreadCount > 0 ? <button type="button" onClick={() => void markAllRead()} className="inline-flex items-center gap-1 text-xs font-semibold"><CheckCheck className="h-4 w-4" />{ar ? "تحديد الكل كمقروء" : "Mark all read"}</button> : null}</div>
+        {failed ? <button type="button" onClick={() => void loadNotifications()} className="mt-3 w-full rounded-lg border border-amber-200 bg-amber-50 p-3 text-start text-sm text-amber-900">{ar ? "تعذر تحميل الإشعارات. اضغط لإعادة المحاولة." : "Could not load notifications. Tap to retry."}</button> : loading ? <p className="py-5 text-center text-sm text-slate-500">{ar ? "جارٍ التحميل…" : "Loading…"}</p> : notifications.length ? <div className="mt-3 space-y-2">{notifications.map((notification) => <Link key={notification.id} href={safeLink(notification.action_url || (notification.related_route_id ? `/operator/routes/${encodeURIComponent(notification.related_route_id)}` : null))} onClick={() => setOpen(false)} className={`block rounded-xl border p-3 ${notification.read_at ? "border-slate-200 bg-slate-50" : "border-slate-300 bg-white"}`}><div className="text-sm font-semibold text-slate-900">{ar ? notification.title_ar || notification.title : notification.title}</div><p className="mt-1 text-sm leading-6 text-slate-600">{ar ? notification.message_ar || notification.message : notification.message}</p><time className="mt-2 block text-xs text-slate-500" dateTime={notification.created_at}>{new Date(notification.created_at).toLocaleString(locale)}</time></Link>)}</div> : <p className="py-5 text-center text-sm text-slate-500">{ar ? "لا توجد إشعارات بعد." : "No notifications yet."}</p>}
+      </>}
       </div>
       </> : null}
     </dialog>

@@ -89,14 +89,14 @@ test("actual bell remains visible on desktop and mobile in either language",()=>
 });
 test("relations and other staff receive Company updates without route privileges",()=>{
   for(const role of ["crm","finance","warehouse","purchasing"]){
-    const bells=renderTopbar(role);assert.equal(bells.length,1);assert.equal(bells[0].node.props.companyUpdates,true);assert.equal(bells[0].node.props.routeAlerts,false);assert.equal(renderTopbar(role,false).length,0);
+    const bells=renderTopbar(role);assert.equal(bells.length,1);assert.equal(bells[0].node.props.companyUpdates,true);assert.equal(bells[0].node.props.routeAlerts,false);assert.equal(renderTopbar(role,false).length,1);
   }
 });
 test("route alerts survive Company being disabled and multi-role staff retain access",()=>{
   for(const role of ["owner","admin","supervisor","operator"])for(const enabled of [false,true]){
     const bells=renderTopbar(role,enabled);assert.equal(bells.length,1);assert.equal(bells[0].node.props.routeAlerts,true);assert.equal(bells[0].node.props.companyUpdates,enabled);
   }
-  for(const role of ["investor","viewer"])assert.equal(renderTopbar(role).length,0);
+  for(const role of ["investor","viewer"]){const bells=renderTopbar(role);assert.equal(bells.length,1);assert.equal(bells[0].node.props.routeAlerts,false);assert.equal(bells[0].node.props.companyUpdates,false);}
   const mixed=renderTopbar("investor",true,"en",["investor","crm"]);assert.equal(mixed[0].node.props.companyUpdates,true);assert.equal(mixed[0].node.props.routeAlerts,false);
 });
 test("Company defaults on while the emergency false switch remains effective",()=>{

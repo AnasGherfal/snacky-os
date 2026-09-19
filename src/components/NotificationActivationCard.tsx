@@ -8,6 +8,7 @@ import { getPushRegistration, needsHomeScreenInstall, subscriptionMatchesPublicK
 type SetupStatus = {
   configured: boolean; schemaReady: boolean; publicKey: string;
   activeSubscriptions: number | null; deviceRegistered: boolean;
+  workAlerts?: { enabled: boolean; worker_recent: boolean; pending: number; failed: number } | null;
 };
 type BrowserState = "checking" | "unsupported" | "install" | "blocked" | "available" | "enabled" | "error";
 
@@ -100,7 +101,7 @@ export function NotificationActivationCard({ compact = false }: { compact?: bool
         }));
         const response = await withPushTimeout(fetch("/api/push-subscriptions", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ subscription: subscription.toJSON(), deviceLabel: /Mobile|Android|iPhone|iPad/.test(navigator.userAgent) ? "Phone / tablet" : "Desktop" }),
+          body: JSON.stringify({ subscription: subscription.toJSON(), locale, deviceLabel: /Mobile|Android|iPhone|iPad/.test(navigator.userAgent) ? "Phone / tablet" : "Desktop" }),
         }));
         if (response.status === 409 && attempt === 0) {
           if (!await withPushTimeout(subscription.unsubscribe())) throw new Error("Could not replace the previous subscription.");
@@ -171,12 +172,15 @@ export function NotificationActivationCard({ compact = false }: { compact?: bool
         <BellRing className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold text-slate-950">{ar ? "إشعارات الجهاز" : "Device notifications"}</h2>
-          <p className="mt-1 text-xs leading-5 text-slate-600">{ar ? "تصلك التنبيهات الموصولة بحسابك حتى والتطبيق مغلق. إسناد الجولات مفعّل؛ ليست كل تحديثات النظام إشعارات هاتف بعد." : "Receive connected alerts while the app is closed. Route assignments are connected; not every in-app update sends a phone alert yet."}</p>
+          <p className="mt-1 text-xs leading-5 text-slate-600">{ar ? "تصلك إسنادات العمل وتحديثاته المهمة حتى والتطبيق مغلق. فعّل الإشعارات على كل جهاز تستخدمه." : "Receive assignments and important work updates while Snacky OS is closed. Enable notifications separately on each device."}</p>
         </div>
       </div>
       <p className="mt-3 text-sm font-medium text-slate-800" role="status">{stateText[browserState]}</p>
       {!compact ? <div className="mt-3 grid gap-2 text-sm">
         <div className="flex justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2"><span>{ar ? "الخادم" : "Server"}</span><strong>{status === null ? "—" : serverReady ? (ar ? "جاهز" : "Ready") : (ar ? "يحتاج إعداد" : "Needs setup")}</strong></div>
+        <div className="flex justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2"><span>{ar ? "تنبيهات إسناد العمل" : "Work assignment alerts"}</span><strong>{status?.workAlerts?.enabled ? (ar ? "مفعّلة" : "Active") : (ar ? "بانتظار تفعيل الخادم" : "Awaiting server activation")}</strong></div>
+        {status?.workAlerts?.enabled && !status.workAlerts.worker_recent ? <p className="text-sm text-amber-800">{ar ? "إرسال التنبيهات يحتاج مراجعة؛ تظل الإشعارات محفوظة في النظام." : "Background delivery needs attention; notifications remain saved in the inbox."}</p> : null}
+        {Boolean(status?.workAlerts?.failed) ? <p className="text-sm text-amber-800">{ar ? "تعذر إرسال بعض إشعارات الهاتف. راجعها في قائمة الإشعارات." : "Some phone alerts could not be sent. Review them in your notification inbox."}</p> : null}
         <div className="flex justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2"><span>{ar ? "الأجهزة المسجلة لحسابك" : "Registered account devices"}</span><strong>{status?.activeSubscriptions ?? "—"}</strong></div>
       </div> : null}
       {status && !serverReady ? <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{ar ? "إعداد الإشعارات غير مكتمل في الخادم. الإذن في الهاتف وحده لا يكفي." : "Server notification setup is incomplete. Phone permission alone is not enough."}</p> : null}

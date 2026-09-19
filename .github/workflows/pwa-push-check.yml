@@ -4,7 +4,7 @@ on:
     branches: [fix/pwa-push-activation]
   pull_request:
     branches: [master]
-    paths: ["src/components/Notification*.tsx", "src/components/Notification*.module.css", "src/lib/*push*.ts", "src/lib/notification-delivery.ts", "src/app/api/notifications/**", "src/app/api/push-*/**", "public/sw.js", "supabase/migrations/*push*.sql", "scripts/*notification*.mjs", "scripts/test-pwa-push.mjs", "scripts/push-tests/**", ".github/workflows/pwa-push-check.yml"]
+    paths: ["src/components/Notification*.tsx", "src/components/Notification*.module.css", "src/lib/*push*.ts", "src/lib/notification-delivery.ts", "src/lib/work-notification-dispatch.ts", "supabase/migrations/*assignment_notification*.sql", "src/app/api/notifications/**", "src/app/api/push-*/**", "public/sw.js", "supabase/migrations/*push*.sql", "scripts/*notification*.mjs", "scripts/test-pwa-push.mjs", "scripts/push-tests/**", ".github/workflows/pwa-push-check.yml"]
 permissions:
   contents: read
 concurrency:
@@ -32,13 +32,13 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Check push lint
-        run: npx eslint src/lib/push-browser.ts src/lib/push-subscription.ts src/lib/notification-delivery.ts src/components/NotificationActivationCard.tsx src/components/NotificationCenter.tsx src/app/api/notifications/push-status/route.ts src/app/api/notifications/test/route.ts src/app/api/notifications/test-push/route.ts src/app/api/push-subscriptions/route.ts
+        run: npx eslint src/lib/work-notification-dispatch.ts src/app/api/notifications/dispatch/route.ts src/lib/push-browser.ts src/lib/push-subscription.ts src/lib/notification-delivery.ts src/components/NotificationActivationCard.tsx src/components/NotificationCenter.tsx src/app/api/notifications/push-status/route.ts src/app/api/notifications/test/route.ts src/app/api/notifications/test-push/route.ts src/app/api/push-subscriptions/route.ts
       - name: Typecheck
         run: npm run typecheck
       - name: Behavioral notification tests and role regressions
         run: |
           set -euo pipefail
-          node --test scripts/test-pwa-push.mjs scripts/test-notification-activation.mjs | tee push-tests.tap
+          node --test scripts/test-pwa-push.mjs scripts/test-notification-activation.mjs scripts/test-assignment-notifications.mjs | tee push-tests.tap
       - name: Fresh and previously provisioned database migrations
         run: |
           set -euo pipefail
@@ -48,6 +48,18 @@ jobs:
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/202607020002_push_notifications.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260919170000_push_notification_activation.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/push-tests/rls.sql
+      - name: Actual assignment queue and scheduler contract tests
+        run: |
+          set -euo pipefail
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/push-tests/assignments-bootstrap.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260919220000_assignment_notifications.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/push-tests/assignments.sql
+          mkdir -p .qa
+          # Vanilla PostgreSQL lacks pg_net; only its extension/transport boundary is simulated.
+          sed '/^create extension if not exists pg_net with schema extensions;$/d' supabase/migrations/20260919220100_assignment_notification_scheduler.sql > .qa/scheduler-under-test.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/push-tests/scheduler.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260919220000_assignment_notifications.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/push-tests/assignments.sql
       - name: Critical workflow regressions
         run: npm run test:critical-workflows
       - name: Full production build and existing prebuild regressions
