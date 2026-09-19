@@ -104,3 +104,25 @@
   .pagination > div { align-self:stretch; justify-content:space-between; }
 }
 @media(prefers-reduced-motion:reduce) { .workspace * { scroll-behavior:auto; } }
+.focusControls { border:1px solid #b9cddd; background:#f4f8fb; border-radius:12px; padding:14px 16px; margin-block:12px; }
+.focusHeading { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; color:#174562; }
+.focusHeading span,.focusHint { font-size:12px; line-height:1.65; color:#475569; }
+.selectionNames { font-size:13px; margin-block:12px; overflow-wrap:anywhere; }
+.focusFields { display:grid; grid-template-columns:minmax(160px,1fr) minmax(150px,1fr); gap:12px; margin-block:12px; border:0; padding:0; min-width:0; }
+.focusFields label { display:flex; flex-direction:column; gap:6px; font-weight:600; font-size:12px; min-width:0; }
+.focusFields select,.focusFields input { min-height:44px; padding:8px 10px; border:1px solid #94a3b8; border-radius:8px; width:100%; min-width:0; background:white; color:#172033; font:inherit; font-size:14px; }
+.focusStep { grid-column:1/-1; }
+.focusHint { margin-block:10px; }
+.focusBadge { display:inline-flex; align-items:center; border:1px solid #a6c8df; background:#eaf4fb; color:#174562; border-radius:6px; padding:3px 7px; font-weight:700; font-size:11px; }
+.focusRow { background:#f3f9fd; }
+.pick { display:flex; align-items:center; justify-content:center; min-width:28px; min-height:32px; }
+.pick input { width:19px; height:19px; accent-color:#174562; cursor:pointer; }
+.pick input:disabled { cursor:not-allowed; }
+.focusControls button:disabled { opacity:.55; cursor:not-allowed; }
+.groupTabs { display:flex; flex-wrap:wrap; gap:6px; margin-block:12px; }
+@media(max-width:500px) { .focusFields { grid-template-columns:1fr; } .focusControls { padding:12px; } .focusControls .filterActions { display:grid; grid-template-columns:1fr; } .focusControls button { white-space:normal; } }
+
+.locationLink { color:#174562; font-size:12px; font-weight:600; text-decoration:underline; text-underline-offset:3px; }
+
+/* Focus tint must not reduce small-text contrast below AA. */
+.focusRow .muted, .focusRow .fieldLabel, .focusRow .mobileMeta dt { color:#475569; }
