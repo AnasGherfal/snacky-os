@@ -1,53 +1,47 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { savePushSubscription } from "@/lib/notification-delivery";
+import { isPushEndpoint, isSameOriginRequest, parseDeviceSubscription } from "@/lib/push-subscription";
 
-type PushSubscriptionBody = {
-  subscription?: {
-    endpoint?: string;
-    keys?: {
-      p256dh?: string;
-      auth?: string;
-    };
-  };
-  deviceLabel?: string | null;
-};
+const error = (message: string, status = 400) => NextResponse.json({ error: message }, { status });
 
-function jsonError(message: string, status = 400) {
-  return NextResponse.json({ error: message }, { status });
-}
-
-export async function POST(request: Request) {
+async function handle(request: Request, deactivate: boolean) {
+  if (!isSameOriginRequest(request)) return error("Invalid origin.", 403);
   const profile = await getCurrentProfile();
-  if (!profile) return jsonError("Not authenticated.", 401);
-
+  if (!profile) return error("Not authenticated.", 401);
+  if (profile.active_status !== "active") return error("Account is inactive.", 403);
   const supabase = await getAuthenticatedSupabaseServerClient();
-  if (!supabase) return jsonError("Supabase is not configured.", 500);
-
-  let body: PushSubscriptionBody;
+  if (!supabase) return error("Notification service is unavailable.", 503);
+  let body: { subscription?: unknown; endpoint?: unknown; deviceLabel?: unknown };
   try {
-    body = (await request.json()) as PushSubscriptionBody;
-  } catch {
-    return jsonError("Invalid subscription payload.");
-  }
-
-  const result = await savePushSubscription(
-    supabase,
-    profile.id,
-    body.subscription ?? {},
-    {
-      deviceLabel: body.deviceLabel ?? null,
+    const text = await request.text();
+    if (text.length > 8192) return error("Subscription is too large.", 413);
+    const value: unknown = JSON.parse(text);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return error("Invalid subscription payload.");
+    body = value;
+  } catch { return error("Invalid subscription payload."); }
+  try {
+    if (deactivate) {
+      if (!isPushEndpoint(body.endpoint)) return error("Invalid push endpoint.");
+      const result = await supabase.from("push_subscriptions")
+        .update({ is_active: false, failure_reason: "device_disabled", updated_at: new Date().toISOString() })
+        .eq("user_id", profile.id).eq("endpoint", body.endpoint);
+      return result.error ? error("Could not disable this device.", 503) : NextResponse.json({ disabled: true });
+    }
+    const subscription = parseDeviceSubscription(body.subscription);
+    if (!subscription) return error("Invalid or unsupported browser push subscription.");
+    const result = await savePushSubscription(supabase, profile.id, subscription, {
+      deviceLabel: typeof body.deviceLabel === "string" ? body.deviceLabel.slice(0, 160) : null,
       userAgent: request.headers.get("user-agent"),
-    },
-  );
-
-  if (!result.saved) {
-    console.error("[push-subscriptions] Failed to save subscription", {
-      user_id: profile.id,
-      reason: result.reason,
     });
-    return jsonError("Could not save push subscription.", 500);
-  }
-
-  return NextResponse.json({ saved: true });
+    if (!result.saved) {
+      // RLS deliberately prohibits moving another account's endpoint to this one.
+      // The UI replaces its local subscription and retries instead.
+      if (/42501|row.level security|duplicate key/i.test(result.reason ?? "")) return error("Please replace this browser subscription.", 409);
+      return error("Could not save this device. Check notification setup and retry.", 503);
+    }
+    return NextResponse.json({ saved: true });
+  } catch { return error("Notification service is unavailable.", 503); }
 }
+export async function POST(request: Request) { return handle(request, false); }
+export async function DELETE(request: Request) { return handle(request, true); }

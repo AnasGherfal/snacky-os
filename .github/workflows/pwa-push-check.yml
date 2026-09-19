@@ -1,0 +1,60 @@
+name: PWA push release checks
+on:
+  push:
+    branches: [fix/pwa-push-activation]
+  pull_request:
+    branches: [master]
+    paths: ["src/components/Notification*.tsx", "src/lib/*push*.ts", "src/lib/notification-delivery.ts", "src/app/api/notifications/**", "src/app/api/push-*/**", "public/sw.js", "supabase/migrations/*push*.sql", "scripts/*notification*.mjs", "scripts/test-pwa-push.mjs", "scripts/push-tests/**", ".github/workflows/pwa-push-check.yml"]
+permissions:
+  contents: read
+concurrency:
+  group: pwa-push-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  release-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: push_test
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/push_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Check push lint
+        run: npx eslint src/lib/push-browser.ts src/lib/push-subscription.ts src/lib/notification-delivery.ts src/components/NotificationActivationCard.tsx src/components/NotificationCenter.tsx src/app/api/notifications/push-status/route.ts src/app/api/notifications/test/route.ts src/app/api/notifications/test-push/route.ts src/app/api/push-subscriptions/route.ts
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Behavioral notification tests and role regressions
+        run: |
+          set -euo pipefail
+          node --test scripts/test-pwa-push.mjs scripts/test-notification-activation.mjs | tee push-tests.tap
+      - name: Fresh and previously provisioned database migrations
+        run: |
+          set -euo pipefail
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/push-tests/bootstrap.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260919170000_push_notification_activation.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/push-tests/rls.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/202607020002_push_notifications.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260919170000_push_notification_activation.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/push-tests/rls.sql
+      - name: Critical workflow regressions
+        run: npm run test:critical-workflows
+      - name: Full production build and existing prebuild regressions
+        run: npm run build
+      - name: Save verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: push-verification
+          path: push-tests.tap
