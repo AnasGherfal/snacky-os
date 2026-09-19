@@ -18,7 +18,7 @@ const domain=load('src/lib/crm-workspace.ts',{});
 const helpers=load('src/lib/crm-lead-list.ts',{'./crm-workspace':domain});
 const styles=new Proxy({},{get:(_target,key)=>String(key)});
 const Link=({children,href,...props})=>React.createElement('a',{href,...props},children);
-const tableModule=load('src/components/CrmLeadTable.tsx',{'react/jsx-runtime':jsx,'next/link':{__esModule:true,default:Link},'@/lib/crm-workspace':domain,'@/lib/crm-lead-list':helpers,'./CrmLeads.module.css':{__esModule:true,default:styles}});
+const tableModule=load('src/components/CrmLeadTable.tsx',{'react/jsx-runtime':jsx,'next/link':{__esModule:true,default:Link},'@/components/CrmLeadQuickLink':{CrmLeadQuickLink:()=>null},'@/lib/crm-workspace':domain,'@/lib/crm-lead-list':helpers,'./CrmLeads.module.css':{__esModule:true,default:styles}});
 const id='11111111-1111-4111-8111-111111111111',me='22222222-2222-4222-8222-222222222222';
 const row={id,kind:'lead',title:'Example school مدرسة تجريبية',status:'interested',assigned_to:me,assigned_name:'Relations fixture',next_action:'Call the decision-maker',due_date:'2026-09-20',due_time:'09:30:00',overdue:false,data:{area:'Ain Zara',place_type:'school',contact_phone:'0911234567',contact_person_name:'Office contact'}};
 const workspace=()=>({me,staff:true,manager:true,total:48,offset:0,page_size:40,rows:[row],directory:[{id:me,name:'Relations fixture'}]});
@@ -31,8 +31,8 @@ function harness({profile={id:me,role:'crm',roles:['crm'],active_status:'active'
     '@/lib/i18n/server':{getServerI18n:async()=>({locale:ar?'ar':'en'})},
     '@/components/CrmLeadFocusList':{CrmLeadFocusList:()=>null},
     '@/lib/crm-lead-focus':{leadFocusEnabled:false,missingLeadFocus:()=>false},
-    '@/components/CrmClientTools':{CrmRefresh:()=>null},'@/components/CrmLeadTable':tableModule,
-    '@/lib/crm-workspace':domain,'@/lib/crm-lead-list':helpers,'./CrmLeads.module.css':{__esModule:true,default:styles},
+    '@/components/CrmLeadQuickPanel':{CrmLeadQuickPanel:()=>null},'@/components/CrmClientTools':{CrmRefresh:()=>null},'@/components/CrmLeadTable':tableModule,
+    '@/components/CrmLeadQuickLink':{CrmLeadQuickLink:()=>null},'@/lib/crm-workspace':domain,'@/lib/crm-lead-list':helpers,'./CrmLeads.module.css':{__esModule:true,default:styles},
   });
   return {calls,async render(params={}){return renderToStaticMarkup(await component.CrmLeadsWorkspace({searchParams:params}));}};
 }
@@ -69,7 +69,7 @@ test('read failure, missing session and malformed data are never shown as no mat
 });
 test('empty assigned work gives the employee an honest actionable empty state',async()=>{
   const html=await harness({result:{...workspace(),rows:[],total:0}}).render({scope:'mine'});
-  assert.match(html,/No assigned leads/);assert.match(html,/0 \/ 0/);assert.doesNotMatch(html,/<table/);assert.match(html,new RegExp('value="'+me+'" selected=""'));
+  assert.match(html,/No assigned leads/);assert.match(html,/0 \/ 0/);assert.doesNotMatch(html,/<table/);assert.match(html,/No matching leads/);
 });
 test('all displayed status, missing ownership and due indicators retain independent meanings',()=>{
   const html=renderToStaticMarkup(React.createElement(tableModule.CrmLeadTable,{rows:[{...row,overdue:true,assigned_to:null,assigned_name:null,next_action:null,priority:'high',is_practice:true,archived:true}],ar:false}));
