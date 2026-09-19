@@ -69,7 +69,7 @@ test('read failure, missing session and malformed data are never shown as no mat
 });
 test('empty assigned work gives the employee an honest actionable empty state',async()=>{
   const html=await harness({result:{...workspace(),rows:[],total:0}}).render({scope:'mine'});
-  assert.match(html,/No assigned leads/);assert.match(html,/0 \/ 0/);assert.doesNotMatch(html,/<table/);assert.match(html,/No matching leads/);
+  assert.match(html,/No assigned leads/);assert.match(html,/0 \/ 0/);assert.doesNotMatch(html,/<table/);assert.match(html,new RegExp('value="'+me+'" selected=""'));
 });
 test('all displayed status, missing ownership and due indicators retain independent meanings',()=>{
   const html=renderToStaticMarkup(React.createElement(tableModule.CrmLeadTable,{rows:[{...row,overdue:true,assigned_to:null,assigned_name:null,next_action:null,priority:'high',is_practice:true,archived:true}],ar:false}));

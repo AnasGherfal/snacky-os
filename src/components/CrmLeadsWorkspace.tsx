@@ -19,9 +19,9 @@ export async function CrmLeadsWorkspace({searchParams={}}:{searchParams?:LeadSea
  let context:LeadWorkspaceData;
  try{
   const db=await getAuthenticatedSupabaseServerClient();if(!db)throw Error('session_unavailable');
-  if(!leadFocusEnabled&&(filters.focus||filters.group))throw Error('focus_disabled');
+  if(!leadFocusEnabled&&(filters.focus||(filters.group&&filters.group!=='all')))throw Error('focus_disabled');
   let result=leadFocusEnabled?await db.rpc('snacky_crm_lead_desk_v1',{p_filters:deskFilters}):await db.rpc('snacky_crm_workspace_v1',{p_section:'lead',p_id:null,p_filters:filters});
-  if(leadFocusEnabled&&missingLeadFocus(result.error)&&!filters.focus&&!filters.group)result=await db.rpc('snacky_crm_workspace_v1',{p_section:'lead',p_id:null,p_filters:filters});
+  if(leadFocusEnabled&&missingLeadFocus(result.error)&&!filters.focus&&(!filters.group||filters.group==='all'))result=await db.rpc('snacky_crm_workspace_v1',{p_section:'lead',p_id:null,p_filters:filters});
   if(result.error)throw result.error;const data=result.data as LeadWorkspaceData|null;
   if(data?.focus_ready&&(!data.today||!Array.isArray(data.focus_assignees)))throw Error('invalid_focus_workspace');
   if(!data||!Array.isArray(data.rows)||!Array.isArray(data.directory)||!Number.isSafeInteger(data.total)||!Number.isSafeInteger(data.offset)||!Number.isSafeInteger(data.page_size)||data.page_size<1||data.page_size>100||data.total<0||data.offset<0||data.rows.some(row=>row.kind!=='lead'||!usableLeadId(row.id)||typeof row.title!=='string'))throw Error('invalid_workspace');
