@@ -100,7 +100,42 @@ export function routeManualSaleTotal(quantity: unknown, unitSalePriceLyd: unknow
   return Number(total.toFixed(2));
 }
 
-export function normalizeRouteManualSale(row: RouteManualSaleRow): NormalizedRouteManualSale {
+function isNormalizedRouteManualSale(row: RouteManualSaleRow | NormalizedRouteManualSale): row is NormalizedRouteManualSale {
+  return "productName" in row || "unitSalePriceLyd" in row || "routeId" in row;
+}
+
+export function normalizeRouteManualSale(row: RouteManualSaleRow | NormalizedRouteManualSale): NormalizedRouteManualSale {
+  if (isNormalizedRouteManualSale(row)) {
+    const quantity = parseRouteManualSaleQuantity(row.quantity);
+    const unitSalePriceLyd = parseRouteManualSalePrice(row.unitSalePriceLyd);
+    const statusText = cleanRouteManualSaleText(row.status);
+    return {
+      id: row.id,
+      routeId: row.routeId ?? null,
+      routeStopId: row.routeStopId ?? null,
+      machineId: row.machineId ?? null,
+      locationId: row.locationId ?? null,
+      operatorId: row.operatorId ?? null,
+      productId: row.productId ?? null,
+      productName: cleanRouteManualSaleText(row.productName) || "Unknown product",
+      quantity,
+      unitSalePriceLyd,
+      totalAmountLyd: routeManualSaleTotal(quantity, unitSalePriceLyd),
+      paymentMethod: parseRouteManualSalePaymentMethod(row.paymentMethod),
+      notes: cleanRouteManualSaleText(row.notes),
+      saleTime: row.saleTime ?? null,
+      status: ROUTE_MANUAL_SALE_STATUSES.includes(statusText as RouteManualSaleStatus)
+        ? (statusText as RouteManualSaleStatus)
+        : statusText || "confirmed",
+      clientSubmissionId: row.clientSubmissionId ?? null,
+      inventoryMovementId: row.inventoryMovementId ?? null,
+      cashCollectionId: row.cashCollectionId ?? null,
+      cancellationReason: cleanRouteManualSaleText(row.cancellationReason),
+      cancelledAt: row.cancelledAt ?? null,
+      cancelledByUserId: row.cancelledByUserId ?? null,
+    };
+  }
+
   const product = relationValue(row.product);
   const quantity = parseRouteManualSaleQuantity(row.quantity);
   const unitSalePriceLyd = parseRouteManualSalePrice(row.unit_sale_price_lyd);
@@ -112,7 +147,7 @@ export function normalizeRouteManualSale(row: RouteManualSaleRow): NormalizedRou
     locationId: row.location_id ?? null,
     operatorId: row.operator_id ?? null,
     productId: row.product_id ?? product?.id?.toString?.() ?? null,
-    productName: row.product_name ?? String(product?.name ?? "Unknown product"),
+    productName: cleanRouteManualSaleText(row.product_name ?? product?.name) || "Unknown product",
     quantity,
     unitSalePriceLyd,
     totalAmountLyd: routeManualSaleTotal(quantity, unitSalePriceLyd),
