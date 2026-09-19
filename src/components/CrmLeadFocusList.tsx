@@ -69,6 +69,6 @@ export function CrmLeadFocusList({rows,ar,userId,today,assignees,manager}:{rows:
    </form>:null}
    {message?<p role="status" className={styles.focusHint}>{message}</p>:null}{stale?<button className={styles.secondary} onClick={()=>window.location.reload()}>{tr('Reload records','تحديث السجلات')}</button>:null}
   </section>:null}
-  <CrmLeadTable rows={rows} ar={ar} selection={manager?{items,locked,toggle}:undefined}/>
+  {rows.length?<CrmLeadTable rows={rows} ar={ar} selection={manager?{items,locked,toggle}:undefined}/>:null}
  </>;
 }

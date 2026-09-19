@@ -76,3 +76,16 @@ test('name-only creation remains valid; native completion and relationship stage
  const migration=read('supabase/migrations/20260919162204_crm_lead_focus.sql');assert.doesNotMatch(migration,/create or replace function public\.snacky_crm_(?:command_v1|workspace_v1)|insert into public\.(?:crm_tasks|financial_transactions|inventory_movements|routes)/i);
  assert.match(migration,/result:=public\.snacky_crm_command_v1/);assert.match(migration,/order by importance,focus_until/);assert.match(migration,/crm_lead_private\.focus enable row level security/);
 });
+
+
+test('focus recovery remains mounted when reassignment empties the current filter',async()=>{
+ const h=workspace({result:{me:person,staff:true,manager:true,today:'2026-09-19',focus_ready:true,focus_assignees:[],rows:[],directory:[],total:0,offset:0,page_size:40}});
+ const html=await h.render({scope:'mine',q:'moved away'});
+ assert.match(html,/focus-selection/);assert.match(html,/No matching leads/);
+});
+test('installed and declined records preserve history links without false prospecting prompts',()=>{
+ const html=renderToStaticMarkup(React.createElement(table.CrmLeadTable,{rows:[{...row,status:'machine_placed',focused:false,data:{version:'v1',converted_location_id:person}},{...row,id:person,status:'rejected',focused:false}],ar:false}));
+ assert.match(html,/Open location record/);assert.ok(html.includes('/relationships/'+person));
+ assert.match(html,/Prospecting closed/);assert.match(html,/No prospecting due/);
+ assert.doesNotMatch(html,/Set a next action|No date set|Contact details needed/);
+});

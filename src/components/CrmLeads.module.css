@@ -121,3 +121,8 @@
 .focusControls button:disabled { opacity:.55; cursor:not-allowed; }
 .groupTabs { display:flex; flex-wrap:wrap; gap:6px; margin-block:12px; }
 @media(max-width:500px) { .focusFields { grid-template-columns:1fr; } .focusControls { padding:12px; } .focusControls .filterActions { display:grid; grid-template-columns:1fr; } .focusControls button { white-space:normal; } }
+
+.locationLink { color:#174562; font-size:12px; font-weight:600; text-decoration:underline; text-underline-offset:3px; }
+
+/* Focus tint must not reduce small-text contrast below AA. */
+.focusRow .muted, .focusRow .fieldLabel, .focusRow .mobileMeta dt { color:#475569; }

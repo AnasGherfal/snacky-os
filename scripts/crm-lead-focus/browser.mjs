@@ -163,6 +163,28 @@ try{
   await go(crm,'scope=mine&focus=active');assert.equal(await table(crm).locator('tbody tr').count(),3);assert.equal(await crm.getByRole('button',{name:'Assign & set focus',exact:true}).count(),0);
   await crm.goto(app+'/my-work');await crm.getByRole('heading',{name:'Your focused places',exact:true}).waitFor();
  });
+ await check('pending bulk command recovers when reassignment empties the filtered list',async()=>{
+  await go(owner,'q=Training place 43&scope=mine');
+  await table(owner).getByRole('checkbox',{name:'Select — '+leads[43].place_name,exact:true}).check();
+  await owner.getByRole('combobox',{name:'Assign to employee',exact:true}).selectOption(accounts.crm.member);
+  let request,reply;
+  await owner.route('**/api/crm/lead-focus',async route=>{
+   request=route.request().postDataJSON();const response=await route.fetch();reply=await response.json();
+   if(reply.ok)await route.abort('failed');else await route.fulfill({response});
+  },{times:1});
+  owner.once('dialog',d=>d.accept());await owner.getByRole('button',{name:'Assign & set focus',exact:true}).click();
+  await owner.getByText('Save not confirmed. Retry the same saved request; do not create another selection.',{exact:true}).waitFor();
+  assert.equal(reply.ok,true);assert.equal((await rpc('owner','lead',{q:'Training place 43',scope:'mine'})).total,0);
+  const count=sql("select count(*) from crm_lead_private.receipts");
+  await owner.reload();await owner.getByRole('heading',{name:'No matching leads',exact:true}).waitFor();
+  const response=owner.waitForResponse(r=>r.url().endsWith('/api/crm/lead-focus'));
+  await owner.getByRole('button',{name:'Retry saved request',exact:true}).click();const saved=await response;
+  assert.deepEqual(saved.request().postDataJSON(),request);assert.equal((await saved.json()).ok,true);
+  assert.equal(sql("select count(*) from crm_lead_private.receipts"),count);
+  // Clear only this extra test's focus to retain the original three-record expiry checks.
+  const focused=(await rpc('owner','lead',{q:'Training place 43'})).rows[0];
+  const cleared=await accounts.owner.client.rpc('snacky_crm_lead_focus_command_v1',{p_request_id:randomUUID(),p_action:'clear',p_items:[{id:focused.id,version:focused.data.version,focus_revision:focused.focus_revision}]});assert.ifError(cleared.error);
+ });
  await check('employee fills the assigned research record and logs an introduction in original activity history',async()=>{
   const id=leads[40].id;
   await crm.goto(app+'/locations-pipeline/'+id);await crm.getByText('Edit record',{exact:true}).click();
@@ -179,9 +201,18 @@ try{
    assert.ok(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'Page overflow: '+label);
    if(width<768){assert.equal(await table(p).isVisible(),false);assert.equal(await p.locator('#crm-leads ol').isVisible(),true);assert.equal(await p.locator('#crm-leads').getAttribute('dir'),'rtl');}
    else{assert.equal(await table(p).isVisible(),true);await p.getByRole('region',{name:/Leads and visits table/}).focus();assert.equal(await p.getByRole('region',{name:/Leads and visits table/}).evaluate(el=>el===document.activeElement),true);}
-   await p.screenshot({path:`${out}/${label}.png`,fullPage:true});
+   await p.evaluate(()=>{window.scrollTo(0,0);document.querySelector('main')?.scrollTo(0,0);});
+   await p.screenshot({path:`${out}/${label}.png`,fullPage:false});
    const scan=await new AxeBuilder({page:p}).include('#crm-leads').analyze();audits.push({label,violations:scan.violations});
   }
+  await arabic.setViewportSize({width:320,height:950});await go(arabic,'q=Training place 40');
+  await arabic.locator('#crm-leads ol').getByRole('checkbox').first().check();
+  await arabic.getByRole('combobox',{name:'إسناد إلى الموظف',exact:true}).selectOption(accounts.crm.member);
+  const controls=arabic.getByRole('region',{name:'تحديد تركيز الجهات',exact:true});
+  await controls.scrollIntoViewIfNeeded();
+  assert.ok(await arabic.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'Focus form mobile overflow');
+  await arabic.screenshot({path:out+'/focus-selection-ar-320.png',fullPage:false});
+  const formScan=await new AxeBuilder({page:arabic}).include('#crm-leads').analyze();audits.push({label:'focus-selection-ar-320',violations:formScan.violations});
   writeFileSync(out+'/accessibility.json',JSON.stringify(audits,null,2));assert.equal(audits.flatMap(a=>a.violations).length,0);
  });
 

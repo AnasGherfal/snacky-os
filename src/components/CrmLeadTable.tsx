@@ -11,7 +11,7 @@ function Stage({row,ar}:{row:LeadRow;ar:boolean}){
   return <span className={`${styles.stage} ${positive?styles.positive:interested?styles.interested:styles.neutral}`}>{crmStatus(row.status,ar)}</span>;
 }
 function Flags({row,ar}:{row:LeadRow;ar:boolean}){
-  return <>{row.focused?<span className={styles.focusBadge}>{ar?'تركيز حتى':'Focus through'} {leadDate(row.focus_until,ar)}</span>:null}{row.needs_research&&!['machine_placed','rejected'].includes(row.status)?<span className={styles.flag}>{ar?'بيانات التواصل ناقصة':'Contact details needed'}</span>:null}{row.archived?<span className={styles.flag}>{ar?'مؤرشف':'Archived'}</span>:null}{row.is_practice?<span className={styles.flag}>{ar?'تدريب':'Practice'}</span>:null}</>;
+  return <>{row.focused?<span className={styles.focusBadge} title={ar?'اختارت الإدارة هذه الجهة للتركيز':'Selected by management'}><span aria-hidden="true">★ </span>{ar?'تركيز حتى':'Focus through'} {leadDate(row.focus_until,ar)}</span>:null}{row.needs_research&&!['machine_placed','rejected'].includes(row.status)?<span className={styles.flag}>{ar?'بيانات التواصل ناقصة':'Contact details needed'}</span>:null}{row.archived?<span className={styles.flag}>{ar?'مؤرشف':'Archived'}</span>:null}{row.is_practice?<span className={styles.flag}>{ar?'تدريب':'Practice'}</span>:null}</>;
 }
 function Contact({row,ar}:{row:LeadRow;ar:boolean}){
   const d=row.data??{},phone=d.contact_phone,whatsapp=d.contact_whatsapp||phone;
@@ -28,9 +28,11 @@ function Contact({row,ar}:{row:LeadRow;ar:boolean}){
   </div>;
 }
 function NextAction({row,ar}:{row:LeadRow;ar:boolean}){
+  if(['machine_placed','rejected'].includes(row.status))return <span className={styles.muted}>{row.status==='machine_placed'?(ar?'متابعة الخدمة في سجل الموقع':'Service follow-up in the location record'):(ar?'انتهت متابعة الفرصة':'Prospecting closed')}</span>;
   return <span className={row.next_action?.trim()?styles.nextAction:styles.missing}>{row.next_action?.trim()||(ar?'حدّد الخطوة القادمة':'Set a next action')}</span>;
 }
 function Due({row,ar}:{row:LeadRow;ar:boolean}){
+  if(['machine_placed','rejected'].includes(row.status))return <span className={styles.muted}>{ar?'لا توجد متابعة مبيعات':'No prospecting due'}</span>;
   return <div className={styles.due}>
     {row.due_date?<time dateTime={row.due_date}>{leadDate(row.due_date,ar)}</time>:<span className={styles.missing}>{ar?'لم يُحدد موعد':'No date set'}</span>}
     {row.due_time?<span dir="ltr">{row.due_time.slice(0,5)}</span>:null}
@@ -46,13 +48,14 @@ function LeadName({row,ar}:{row:LeadRow;ar:boolean}){
   return <div className={styles.nameCell}>
     <Link className={styles.leadName} href={crmHref('lead',row.id)}>{row.title}<span aria-hidden="true" className={styles.openArrow}>↗</span></Link>
     {meta?<span className={styles.muted}>{meta}</span>:null}
+    {row.status==='machine_placed'&&d.converted_location_id?<Link className={styles.locationLink} href={crmHref('location',d.converted_location_id)}>{ar?'فتح سجل الموقع':'Open location record'}</Link>:null}
     <div className={styles.flags}><Flags row={row} ar={ar}/></div>
   </div>;
 }
 
 /** Display only: no client-side re-sorting, mutations or unscoped fetches. */
 export function CrmLeadTable({rows,ar,selection}:{rows:LeadRow[];ar:boolean;selection?:{items:FocusSelection[];locked:boolean;toggle:(row:LeadRow)=>void}}){
-  const select=(row:LeadRow)=>selection?<label className={styles.pick}><input type="checkbox" aria-label={`${ar?'تحديد':'Select'} — ${row.title}`} checked={selection.items.some(x=>x.id===row.id)} disabled={selection.locked||row.archived||['machine_placed','rejected'].includes(row.status)||!row.data?.version} onChange={()=>selection.toggle(row)}/><span className={styles.srOnly}>{ar?'تحديد الجهة':'Select lead'}</span></label>:null;
+  const select=(row:LeadRow)=>selection?<label className={styles.pick}><input type="checkbox" aria-label={`${ar?'تحديد':'Select'} — ${row.title}`} checked={selection.items.some(x=>x.id===row.id)} disabled={selection.locked||row.archived||['machine_placed','rejected'].includes(row.status)||!row.data?.version||(selection.items.length>=20&&!selection.items.some(x=>x.id===row.id))} onChange={()=>selection.toggle(row)}/><span className={styles.srOnly}>{ar?'تحديد الجهة':'Select lead'}</span></label>:null;
   const headings=ar?['الجهة / المنطقة','التواصل','المرحلة','الخطوة القادمة','موعد المتابعة','الموظف المسؤول']:['Place / area','Contact','Stage','Next action','Follow-up due','Assigned to'];
   return <>
     <div className={styles.desktop}>
