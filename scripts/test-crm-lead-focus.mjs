@@ -74,7 +74,7 @@ test('name-only creation remains valid; native completion and relationship stage
  const form=read('src/components/CrmRecordForms.tsx');assert.match(form,/A name is enough to start/);assert.match(form,/advanced:!row/);assert.match(form,/if\(d\.converted_location_id\)statusOptions.push/);
  assert.match(read('src/components/CrmRecordForms.tsx'),/A result is required before completing the task/);
  const migration=read('supabase/migrations/20260919162204_crm_lead_focus.sql');assert.doesNotMatch(migration,/create or replace function public\.snacky_crm_(?:command_v1|workspace_v1)|insert into public\.(?:crm_tasks|financial_transactions|inventory_movements|routes)/i);
- assert.match(migration,/result:=public\.snacky_crm_command_v1/);assert.match(migration,/order by importance,focus_until/);assert.match(migration,/crm_lead_private\.focus enable row level security/);
+ assert.match(migration,/result:=public\.snacky_crm_command_v1/);assert.match(migration,/order by importance,case when focused then focus_until end/);assert.match(migration,/crm_lead_private\.focus enable row level security/);
 });
 
 

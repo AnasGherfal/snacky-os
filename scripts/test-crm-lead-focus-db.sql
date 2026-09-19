@@ -72,6 +72,17 @@ end $$;
 reset role;
 -- Time passes without a cleanup job. Metadata persists but expired focus is not active.
 update crm_lead_private.focus set starts_on=(now() at time zone 'Africa/Tripoli')::date-7,ends_on=(now() at time zone 'Africa/Tripoli')::date-1 where lead_id='60000000-0000-4000-8000-000000000041';
+-- An expired focus date must not keep boosting a later follow-up ahead of an earlier one.
+update public.location_pipeline_leads set next_action_date=(now() at time zone 'Africa/Tripoli')::date+1 where id='60000000-0000-4000-8000-000000000002';
+select set_config('request.jwt.claim.sub','11111111-1111-4111-8111-111111111111',true);
+set local role authenticated;
+do $$declare earlier bigint;expired bigint;result jsonb;begin
+ result:=public.snacky_crm_lead_desk_v1('{"group":"active"}');
+ select ordinality into earlier from jsonb_array_elements(result->'rows') with ordinality where value->>'id'='60000000-0000-4000-8000-000000000002';
+ select ordinality into expired from jsonb_array_elements(result->'rows') with ordinality where value->>'id'='60000000-0000-4000-8000-000000000041';
+ if earlier is null or expired is null or earlier>=expired then raise exception 'Expired focus still overrides a more immediate follow-up';end if;
+end $$;
+reset role;
 select set_config('request.jwt.claim.sub','22222222-2222-4222-8222-222222222222',true);
 set local role authenticated;
 do $$begin

@@ -115,8 +115,8 @@ begin
   select r.*,case when archived or is_practice then 8 when focused then 0 when overdue then 1 when lifecycle='agreed' then 2 when lifecycle='installed' then 6 when lifecycle='declined' then 7
    when due_date=today then 3 when priority in ('urgent','critical','high') then 4 else 5 end as importance from filtered r
  ), page as (
-  select * from ranked order by importance,focus_until nulls last,due_date nulls last,updated_at desc,id limit 40 offset off
- ) select (select count(*) from ranked),coalesce((select jsonb_agg(to_jsonb(p)-array['search_text','importance'] order by importance,focus_until nulls last,due_date nulls last,updated_at desc,id) from page p),'[]') into total,rows;
+  select * from ranked order by importance,case when focused then focus_until end nulls last,due_date nulls last,updated_at desc,id limit 40 offset off
+ ) select (select count(*) from ranked),coalesce((select jsonb_agg(to_jsonb(p)-array['search_text','importance'] order by importance,case when focused then focus_until end nulls last,due_date nulls last,updated_at desc,id) from page p),'[]') into total,rows;
  select coalesce(jsonb_agg(jsonb_build_object('id',t.id,'name',t.full_name,'role',t.role) order by t.full_name),'[]') into directory from public.team_members t where t.active and t.active_status='active' and (t.role::text in ('owner','admin','supervisor','crm','operator') or t.roles::text[]&&array['owner','admin','supervisor','crm','operator']);
  select coalesce(jsonb_agg(jsonb_build_object('id',t.id,'name',t.full_name) order by t.full_name),'[]') into assignees from public.team_members t where manager and crm_lead_private.assignee(t.id);
  return jsonb_build_object('me',me,'manager',manager,'staff',true,'today',today,'rows',rows,'total',total,'offset',off,'page_size',40,'directory',directory,'focus_assignees',assignees,'focus_ready',true);
