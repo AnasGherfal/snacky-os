@@ -2,6 +2,7 @@ import "server-only";
 import { type SupabaseClient } from "@supabase/supabase-js";
 import webpush, { type PushSubscription as WebPushSubscription } from "web-push";
 import { createECDH, createHmac } from "node:crypto";
+import { parseDeviceSubscription } from "@/lib/push-subscription";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 
 type RouteAssignmentNotificationInput = {
@@ -41,6 +42,8 @@ type NotificationPayload = {
   routeId?: string | null;
   routeDate?: string | null;
   assignedBy?: string | null;
+  lang?: string;
+  dir?: "rtl" | "ltr";
 };
 
 type PushSubscriptionInput = {
@@ -235,22 +238,27 @@ async function sendPushToSubscription(
     },
   };
 
+  if (!parseDeviceSubscription(pushSubscription)) {
+    await updateSubscriptionState(supabase, subscription.id, { is_active: false, failure_reason: "invalid_push_subscription" });
+    return { sent: false as const, reason: "invalid_push_subscription" };
+  }
+
   try {
-    await webpush.sendNotification(pushSubscription, JSON.stringify(payload));
+    await webpush.sendNotification(pushSubscription, JSON.stringify(payload), { timeout: 8000, TTL: 3600 });
     await updateSubscriptionState(supabase, subscription.id, {
       last_used_at: new Date().toISOString(),
       failed_at: null,
       failure_reason: null,
-      is_active: true,
+      // Never reactivate a device disabled while the network request was in flight.
     });
     return { sent: true as const };
   } catch (error) {
     const statusCode = Number((error as { statusCode?: unknown } | null)?.statusCode ?? 0);
-    const reason = shortErrorText(error) || "Push notification delivery failed.";
+    const reason = statusCode ? `push_service_http_${statusCode}` : "push_service_unreachable";
     await updateSubscriptionState(supabase, subscription.id, {
       failed_at: new Date().toISOString(),
       failure_reason: reason,
-      is_active: statusCode === 404 || statusCode === 410 ? false : subscription.is_active,
+      ...(statusCode === 404 || statusCode === 410 ? { is_active: false } : {}),
     });
     return { sent: false as const, statusCode, reason };
   }
@@ -265,7 +273,7 @@ export async function savePushSubscription(
   const endpoint = cleanText(input.endpoint);
   const p256dh = cleanText(input.keys?.p256dh);
   const auth = cleanText(input.keys?.auth);
-  if (!endpoint || !p256dh || !auth) {
+  if (!parseDeviceSubscription({ endpoint, keys: { p256dh, auth } })) {
     return { saved: false, reason: "invalid_subscription_payload" as const };
   }
 
@@ -276,8 +284,8 @@ export async function savePushSubscription(
       endpoint,
       p256dh,
       auth,
-      user_agent: optionalText(context?.userAgent),
-      device_label: optionalText(context?.deviceLabel),
+      user_agent: optionalText(context?.userAgent)?.slice(0, 512) ?? null,
+      device_label: optionalText(context?.deviceLabel)?.slice(0, 160) ?? null,
       is_active: true,
       last_used_at: now,
       failed_at: null,
@@ -373,63 +381,44 @@ export async function markAllNotificationsReadForUser(supabase: NonNullable<Supa
 export async function sendTestPushNotification(
   supabase: NonNullable<SupabaseClient>,
   userId: string,
+  options: { endpoint?: string; locale?: "ar" | "en" } = {},
 ) {
   const adminClient = getSupabaseAdminClient() ?? supabase;
+  const failed = (reason: string) => ({ sent: false, acceptedCount: 0, deliveredCount: 0, subscriptionCount: 0, reason });
   const config = await ensurePushNotificationConfig(adminClient);
-  if (!config.configured) {
-    return { sent: false as const, deliveredCount: 0, subscriptionCount: 0, reason: config.reason };
-  }
+  if (!config.configured) return failed(config.reason);
 
-  const subscriptionResult = await adminClient
-    .from("push_subscriptions")
+  // Recheck at send time: signing out, disabling a device or disabling an account
+  // during a delayed test must prevent that test from being sent.
+  const profile = await adminClient.from("profiles").select("active_status").eq("id", userId).maybeSingle();
+  if (profile.error || profile.data?.active_status !== "active") return failed("inactive_recipient");
+  let query = adminClient.from("push_subscriptions")
     .select("id, endpoint, p256dh, auth, user_agent, device_label, is_active")
-    .eq("user_id", userId)
-    .eq("is_active", true)
-    .order("created_at", { ascending: false });
-
-  if (subscriptionResult.error) {
-    return {
-      sent: false as const,
-      deliveredCount: 0,
-      subscriptionCount: 0,
-      reason: shortErrorText(subscriptionResult.error) || "subscription_load_failed",
-    };
-  }
-
+    .eq("user_id", userId).eq("is_active", true);
+  if (options.endpoint) query = query.eq("endpoint", options.endpoint);
+  const subscriptionResult = await query;
+  if (subscriptionResult.error) return failed("subscription_load_failed");
   const subscriptions = (subscriptionResult.data ?? []) as PushSubscriptionRecord[];
-  if (!subscriptions.length) {
-    return { sent: false as const, deliveredCount: 0, subscriptionCount: 0, reason: "no_active_subscription" };
-  }
+  if (!subscriptions.length) return failed("no_active_subscription");
 
+  const ar = options.locale === "ar";
   const payload: NotificationPayload = {
     type: "push_test",
-    title: "Snacky OS notifications are working",
-    body: "This device can now receive route assignments before the app is opened.",
-    url: "/operator/routes",
-    routeId: null,
-    routeDate: null,
-    assignedBy: null,
+    title: ar ? "إشعار تجريبي من سناكي" : "Snacky OS test notification",
+    body: ar ? "وصلك هذا الإشعار عبر خدمة إشعارات الجهاز، حتى لو كان التطبيق مغلقاً." : "This is a device push notification. Snacky OS does not need to be open to receive it.",
+    url: "/account", routeId: null, lang: ar ? "ar" : "en", dir: ar ? "rtl" : "ltr",
   };
-
-  await adminClient.from("notifications").insert({
-    user_id: userId,
-    type: payload.type,
-    title: payload.title,
-    message: payload.body,
-    action_url: payload.url,
-    related_route_id: null,
+  const saved = await adminClient.from("notifications").insert({
+    user_id: userId, type: payload.type, title: payload.title,
+    message: payload.body, action_url: payload.url, related_route_id: null,
   });
-
-  const settled = await Promise.allSettled(
-    subscriptions.map((subscription) => sendPushToSubscription(adminClient, subscription, payload)),
-  );
-  const deliveredCount = settled.filter((item) => item.status === "fulfilled" && item.value.sent).length;
-  return {
-    sent: deliveredCount > 0,
-    deliveredCount,
-    subscriptionCount: subscriptions.length,
-    reason: deliveredCount > 0 ? null : "delivery_failed",
-  };
+  if (saved.error) return failed("notification_save_failed");
+  const settled = await Promise.allSettled(subscriptions.map((subscription) => sendPushToSubscription(adminClient, subscription, payload)));
+  const acceptedCount = settled.filter((item) => item.status === "fulfilled" && item.value.sent).length;
+  // deliveredCount remains a legacy compatibility alias. Push service acceptance
+  // does NOT establish that a notification was displayed, seen or read.
+  return { sent: acceptedCount > 0, acceptedCount, deliveredCount: acceptedCount,
+    subscriptionCount: subscriptions.length, reason: acceptedCount > 0 ? null : "delivery_failed" };
 }
 
 export async function notifyRouteAssigned(
@@ -455,6 +444,11 @@ export async function notifyRouteAssigned(
       operator_team_member_id: operatorTeamMemberId,
     });
     return { skipped: true as const, reason: "missing_recipient_user" };
+  }
+
+  const recipient = await adminClient.from("profiles").select("active_status").eq("id", recipientUserId).maybeSingle();
+  if (recipient.error || recipient.data?.active_status !== "active") {
+    return { skipped: true as const, reason: "inactive_recipient" };
   }
 
   const payload = buildRouteAssignmentPayload({
@@ -548,4 +542,3 @@ export async function notifyRouteAssigned(
     pushResults: normalizedPushResults,
   };
 }
-
