@@ -42,7 +42,7 @@ jobs:
       - name: Full lockfile dependency audit, including development and optional tools
         run: |
           npm --version
-          npm audit --package-lock-only --include=dev --include=optional --include=peer --json --loglevel=silly > diagnostics/all-dependencies-audit.json 2> diagnostics/npm-audit.log
+          node scripts/ci-npm-audit.mjs all diagnostics/all-dependencies-audit.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:

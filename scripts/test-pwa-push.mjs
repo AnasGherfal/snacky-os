@@ -211,3 +211,35 @@ test('in-flight push results cannot reactivate a device disabled concurrently', 
     assert.equal(db.rows.push_subscriptions[0].is_active,false);
   }
 });
+
+test('missing notification storage is a server setup error, not a phone delivery error', async () => {
+  const db = database(); db.errors.notifications = true;
+  let sent = 0;
+  const result = await api(testPath, db, {send: async () => { sent++; }}).POST(request({endpoint:device().endpoint}));
+  assert.equal(result.status, 503);
+  assert.equal(result.body.code, 'notification_storage_unavailable');
+  assert.equal(result.body.sent, false); assert.equal(sent, 0);
+  assert.doesNotMatch(result.body.error, /Re-enable/);
+});
+
+test('missing test migration reports server setup and never sends', async () => {
+  const db=database(); db.rpc=async()=>({error:{code:'PGRST202'},data:null});
+  let sent=0;
+  const result=await api(testPath,db,{send:async()=>{sent++;}}).POST(request({endpoint:device().endpoint,locale:'ar'}));
+  assert.equal(result.status,503);assert.equal(result.body.code,'push_test_setup_unavailable');
+  assert.match(result.body.error,/الخادم/);assert.equal(sent,0);
+});
+
+for (const code of [401,403,404,410,429,503]) {
+  test(`provider ${code} is reported safely with the right recovery action`,async()=>{
+    const db=database();
+    const result=await api(testPath,db,{send:async()=>{throw {statusCode:code,message:'private endpoint and credential details'};}}).POST(request({endpoint:device().endpoint,locale:'ar'}));
+    const expired=[404,410].includes(code),server=[401,403].includes(code);
+    assert.equal(result.status,expired?409:server?503:502);
+    assert.equal(result.body.code,expired?'push_device_expired':server?'push_server_configuration':'push_delivery_failed');
+    assert.equal(result.body.sent,false);
+    assert.doesNotMatch(JSON.stringify(result.body),/credential|endpoint|fcm.googleapis|private/);
+    assert.equal(db.rows.push_subscriptions[0].is_active,!expired);
+    assert.equal(db.rows.push_subscriptions[1].is_active,true);
+  });
+}

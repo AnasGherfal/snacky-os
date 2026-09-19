@@ -6,7 +6,22 @@ import { isPushEndpoint, isSameOriginRequest } from "@/lib/push-subscription";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
-const error = (message: string, status: number) => NextResponse.json({ sent: false, error: message }, { status });
+const error = (message: string, status: number, code?: string) => NextResponse.json({ sent: false, error: message, ...(code ? { code } : {}) }, { status });
+
+function deliveryError(reason: string | null, ar: boolean) {
+  const message = (en: string, arabic: string) => ar ? arabic : en;
+  if (["notification_save_failed", "subscription_load_failed"].includes(reason ?? "")) {
+    return error(message("Server notification storage is unavailable. Ask the administrator to check the notification database setup; changing phone permissions will not fix this.", "تخزين الإشعارات غير متاح في الخادم. يجب على الإدارة التحقق من إعداد قاعدة بيانات الإشعارات؛ تغيير أذونات الهاتف لن يحل المشكلة."), 503, "notification_storage_unavailable");
+  }
+  if (["missing_server_notification_secret", "missing_vapid_configuration", "push_service_http_401", "push_service_http_403"].includes(reason ?? "")) {
+    return error(message("The server could not authenticate with the push service. Ask the administrator to check the server push configuration.", "تعذر توثيق الخادم لدى خدمة الإشعارات. يجب على الإدارة التحقق من إعداد خدمة الإشعارات في الخادم."), 503, "push_server_configuration");
+  }
+  if (["no_active_subscription", "invalid_push_subscription", "push_service_http_404", "push_service_http_410"].includes(reason ?? "")) {
+    return error(message("This device registration is missing or expired. Press Recheck, then Enable notifications and test again.", "تسجيل هذا الجهاز مفقود أو انتهت صلاحيته. اضغط إعادة التحقق، ثم تفعيل الإشعارات وأعد الاختبار."), 409, "push_device_expired");
+  }
+  if (reason === "inactive_recipient") return error(message("This account is no longer active. Sign in with an active account.", "هذا الحساب لم يعد نشطاً. سجّل الدخول بحساب نشط."), 403, "inactive_account");
+  return error(message("The push service did not accept the test. Wait 30 seconds and retry. Your device registration has not been removed.", "لم تقبل خدمة الإشعارات الاختبار. انتظر 30 ثانية وأعد المحاولة. لم يتم حذف تسجيل جهازك."), 502, "push_delivery_failed");
+}
 
 export async function POST(request: Request) {
   if (!isSameOriginRequest(request)) return error("Invalid origin.", 403);
@@ -32,10 +47,10 @@ export async function POST(request: Request) {
     let query = supabase.from("push_subscriptions").select("id").eq("user_id", profile.id).eq("is_active", true);
     if (body.endpoint) query = query.eq("endpoint", body.endpoint);
     const devices = await query.limit(1);
-    if (devices.error) return error("Could not verify registered devices.", 503);
+    if (devices.error) return error(body.locale === "ar" ? "إعداد قاعدة بيانات الإشعارات غير متاح. يجب على الإدارة إكمال إعداد الخادم." : "Notification database setup is unavailable. The administrator must complete the server setup.", 503, "notification_schema_unavailable");
     if (!devices.data?.length) return error("Enable notifications on this device first.", 409);
     const reservation = await supabase.rpc("reserve_push_test_v1");
-    if (reservation.error) return error("Notification test setup is unavailable.", 503);
+    if (reservation.error) return error(body.locale === "ar" ? "إعداد اختبار الإشعارات في الخادم غير مكتمل. يجب على الإدارة التحقق من تحديث قاعدة البيانات." : "Server notification test setup is incomplete. The administrator must check the database migration.", 503, "push_test_setup_unavailable");
     if (reservation.data !== true) return error("Please wait 30 seconds before testing again.", 429);
 
     const send = () => sendTestPushNotification(supabase, profile.id, { endpoint: body.endpoint, locale: body.locale });
@@ -51,8 +66,21 @@ export async function POST(request: Request) {
       });
       return NextResponse.json({ scheduled: true, sent: false, delaySeconds: 15 }, { status: 202 });
     }
+    const startedAt = Date.now();
     const result = await send();
-    if (!result.sent) return error("The push service did not accept the test. Re-enable this device and retry.", 502);
+    if (!result.sent) {
+      let reason = result.reason;
+      // The sender stores sanitized provider outcomes. Read only THIS device's
+      // outcome from THIS attempt; do not expose provider bodies or endpoint keys.
+      if (reason === "delivery_failed" && body.endpoint) {
+        const failure = await supabase.from("push_subscriptions").select("failure_reason,failed_at")
+          .eq("user_id", profile.id).eq("endpoint", body.endpoint).maybeSingle();
+        if (!failure.error && failure.data?.failed_at && Date.parse(failure.data.failed_at) >= startedAt) {
+          reason = failure.data.failure_reason ?? reason;
+        }
+      }
+      return deliveryError(reason, body.locale === "ar");
+    }
     return NextResponse.json({ sent: true, acceptedCount: result.acceptedCount,
       deliveredCount: result.acceptedCount, subscriptionCount: result.subscriptionCount });
   } catch { return error("Notification service is unavailable.", 503); }

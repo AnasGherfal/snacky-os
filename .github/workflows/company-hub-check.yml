@@ -20,6 +20,8 @@ on:
       - 'supabase/migrations/*company_hub*'
       - 'scripts/test-company-hub*'
       - 'scripts/test-company-release*'
+      - 'scripts/ci-npm-audit.mjs'
+      - 'scripts/test-ci-npm-audit.mjs'
       - 'docs/company-hub-release-gate.md'
 permissions:
   contents: read
@@ -108,14 +110,18 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --ignore-scripts
-      - name: Reject unresolved high or critical production dependency findings
+      - name: Install pinned audit CLI (tooling only, no application dependency changes)
         run: |
-          mkdir -p diagnostics
-          npm audit --omit=dev --audit-level=high --json > diagnostics/production-audit.json
+          npm install --global npm@11.19.1 --ignore-scripts --no-audit
+          npm --version
+      - name: Test audit failure handling
+        run: node --test scripts/test-ci-npm-audit.mjs
+      - name: Reject unresolved high or critical production dependency findings
+        run: node scripts/ci-npm-audit.mjs production diagnostics/production-audit.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: company-production-dependency-audit
-          path: diagnostics/production-audit.json
+          path: diagnostics/production-audit.json*
           if-no-files-found: ignore
           retention-days: 7
