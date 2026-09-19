@@ -6,6 +6,10 @@ create schema if not exists extensions;
 create schema net;
 create schema vault;
 create schema cron;
+create table net.http_request_queue(id bigint);
+create table net._http_response(id bigint);
+grant usage on schema net to authenticated;
+grant select on net.http_request_queue,net._http_response to authenticated;
 create table net.test_requests(id bigserial primary key,url text,headers jsonb,body jsonb,timeout_ms integer);
 create function net.http_post(url text,headers jsonb,body jsonb,timeout_milliseconds integer) returns bigint language sql as $$insert into net.test_requests(url,headers,body,timeout_ms) values(url,headers,body,timeout_milliseconds) returning id$$;
 create table vault.decrypted_secrets(id uuid default gen_random_uuid(),name text unique,decrypted_secret text,description text);
@@ -18,6 +22,7 @@ select snacky_notice_private.wake();
 do $$begin
  if (select count(*) from net.test_requests)<>1 then raise exception 'Wake burst was not coalesced';end if;
  if not exists(select 1 from net.test_requests r join vault.decrypted_secrets v on r.headers->>'Authorization'='Bearer '||v.decrypted_secret where r.url='https://snacky-os.vercel.app/api/notifications/dispatch' and r.timeout_ms=55000 and r.body='{}') then raise exception 'Wrong scheduler URL/authentication/body';end if;
+ if has_table_privilege('authenticated','net.http_request_queue','SELECT') or has_table_privilege('authenticated','net._http_response','SELECT') then raise exception 'Request headers exposed to client';end if;
  if (select enabled from snacky_notice_private.settings) then raise exception 'Scheduler activated without new code handshake';end if;
  if (select count(*) from cron.test_jobs where schedule='* * * * *' and command='select snacky_notice_private.wake();')<>1 then raise exception 'Independent periodic wake missing';end if;
  if has_function_privilege('authenticated','snacky_notice_private.wake()','EXECUTE') then raise exception 'Private wake exposed';end if;

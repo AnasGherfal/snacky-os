@@ -1,6 +1,8 @@
 -- Independent server wake-ups: no open browser, polling tab, or user cookie needed.
 -- Vault keeps the worker token out of the repository and public schemas.
 create extension if not exists pg_net with schema extensions;
+-- Requests contain the worker Authorization header. Clients must never read it.
+revoke all on net.http_request_queue, net._http_response from public,anon,authenticated;
 create or replace function snacky_notice_private.wake() returns void
 language plpgsql security definer set search_path='' as $$
 declare token text;stamp timestamptz;
