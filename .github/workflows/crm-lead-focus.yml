@@ -27,6 +27,15 @@ jobs:
         options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
+      - name: Snapshot exact reviewed source without runtime credentials
+        run: |
+          mkdir -p diagnostics
+          git archive --format=tar.gz -o diagnostics/review-source.tar.gz HEAD src scripts supabase .github docs package.json package-lock.json tsconfig.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lead-focus-reviewed-source
+          path: diagnostics/review-source.tar.gz
+          retention-days: 2
       - uses: actions/setup-node@v4
         with:
           node-version: 22
