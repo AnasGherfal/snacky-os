@@ -7,7 +7,7 @@ import ts from 'typescript';
 const read = path => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 function load(path, imports = {}, globals = {}) {
   const exports = {};
-  const output = ts.transpileModule(read(path), {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
+  const output = ts.transpileModule(read(path), {compilerOptions:{esModuleInterop:true,module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
   vm.runInNewContext(output, {exports, URL, atob, Buffer, Date, Promise, setTimeout, clearTimeout,
     console: {warn(){},error(){},info(){}}, ...globals, require(name) {
       assert.ok(name in imports, `Unexpected import ${name}`); return imports[name];
@@ -62,7 +62,7 @@ function database(){return {
 };}
 function sender(db,transport = async()=>{}) {
   return load('src/lib/notification-delivery.ts', {
-    'server-only':{},'web-push':{default:{setVapidDetails(){},sendNotification:transport}},
+    'server-only':{},'web-push':{__esModule:true,default:{setVapidDetails(){},sendNotification:transport}},
     'node:crypto':crypto,'@/lib/supabase-server':{getSupabaseAdminClient:()=>db},'@/lib/push-subscription':validation,
   },{process:{env:{SUPABASE_SERVICE_ROLE_KEY:'nonproduction-fixed-test-secret'}}});
 }
@@ -168,7 +168,7 @@ function worker({clients=[],richFails=false}={}) {
   async function click(data){let work;listeners.notificationclick({notification:{data,close(){}},waitUntil:value=>{work=value;}});await work;}
   return {push,click,shown,opened,focused,navigated};
 }
-test('service worker displays a real notification without an open app window',async()=>{
+test('service worker invokes notification display without an open app window',async()=>{
   const sw=worker();await sw.push({title:'Test',body:'Body',url:'/account',lang:'ar',dir:'rtl'});
   assert.equal(sw.shown.length,1);assert.equal(sw.shown[0].options.dir,'rtl');assert.equal('renotify' in sw.shown[0].options,false);
   await sw.click(sw.shown[0].options.data);assert.equal(sw.opened[0],'https://os.test/account');
