@@ -2,7 +2,7 @@ import {uuidPattern} from './crm-workspace';
 
 export type LeadFilters = Record<string,string>;
 export type LeadSearchParams = Record<string,string|string[]|undefined>;
-const allowed = ['q','scope','window','status','type','area','assigned_to','archived','practice','created_from','created_to','offset'] as const;
+const allowed = ['q','scope','window','status','type','area','assigned_to','archived','practice','created_from','created_to','offset','group','focus'] as const;
 
 /** All filtering and ordering stay with the existing permission-checked CRM RPC. */
 export function leadFilters(params:LeadSearchParams):LeadFilters {
@@ -38,9 +38,11 @@ export type LeadRow={
   id:string;kind:string;title:string;status:string;priority?:string|null;
   assigned_to?:string|null;assigned_name?:string|null;next_action?:string|null;
   due_date?:string|null;due_time?:string|null;overdue?:boolean;archived?:boolean;is_practice?:boolean;
-  data?:{area?:string|null;city?:string|null;place_type?:string|null;contact_person_name?:string|null;contact_phone?:string|null;contact_whatsapp?:string|null;contact_email?:string|null};
+  focused?:boolean;focus_revision?:number;focus_start?:string|null;focus_until?:string|null;lifecycle?:string;needs_research?:boolean;
+  data?:{version?:string;converted_location_id?:string|null;area?:string|null;city?:string|null;place_type?:string|null;contact_person_name?:string|null;contact_phone?:string|null;contact_whatsapp?:string|null;contact_email?:string|null};
 };
 export type LeadWorkspaceData={
   me:string;staff:boolean;manager:boolean;rows:LeadRow[];
+  today?:string;focus_ready?:boolean;focus_assignees?:{id:string;name:string}[];
   total:number;offset:number;page_size:number;directory:{id:string;name:string;role?:string}[];
 };

@@ -8,11 +8,11 @@ import {createClient} from '@supabase/supabase-js';
 const require=createRequire(import.meta.url);
 const {chromium}=require('../../.qa/browser/node_modules/playwright');
 const AxeBuilder=require('../../.qa/browser/node_modules/@axe-core/playwright').default;
-const out='diagnostics/crm-leads';mkdirSync(out,{recursive:true});
+const out='diagnostics/crm-lead-focus';mkdirSync(out,{recursive:true});
 const status=Object.fromEntries(readFileSync('.qa/local-status.env','utf8').split('\n').map(l=>l.match(/^([A-Z_]+)="(.*)"$/)).filter(Boolean).map(m=>[m[1],m[2]]));
 assert.equal(new URL(status.API_URL).hostname,'127.0.0.1');assert.equal(new URL(status.API_URL).port,'54321');
 assert.ok(status.ANON_KEY&&status.SERVICE_ROLE_KEY);
-const app='http://localhost:3000',env={...process.env,NEXT_PUBLIC_SNACKY_LEAD_FOCUS_ENABLED:'false',NEXT_PUBLIC_SUPABASE_URL:status.API_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY:status.ANON_KEY,SUPABASE_SERVICE_ROLE_KEY:status.SERVICE_ROLE_KEY,NEXT_PUBLIC_APP_URL:app};
+const app='http://localhost:3000',env={...process.env,NEXT_PUBLIC_SNACKY_LEAD_FOCUS_ENABLED:'true',NEXT_PUBLIC_SUPABASE_URL:status.API_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY:status.ANON_KEY,SUPABASE_SERVICE_ROLE_KEY:status.SERVICE_ROLE_KEY,NEXT_PUBLIC_APP_URL:app};
 const pg={...process.env,PGHOST:'127.0.0.1',PGPORT:'54322',PGUSER:'postgres',PGDATABASE:'postgres',PGPASSWORD:'postgres'};
 function sql(q){const r=spawnSync('psql',['-X','-At','-v','ON_ERROR_STOP=1','-c',q],{env:pg,encoding:'utf8'});assert.equal(r.status,0,r.stderr);return r.stdout.trim();}
 const admin=createClient(status.API_URL,status.SERVICE_ROLE_KEY,{auth:{persistSession:false,autoRefreshToken:false}}),accounts={};
@@ -29,7 +29,7 @@ for(const role of ['owner','crm','other','operator']){
 const fixtureMarker='Lead table acceptance';
 // Historical repository seed rows remain intact; scope count assertions to this test's records.
 async function rpc(role,section='lead',filters={},id=null){
- const r=await accounts[role].client.rpc('snacky_crm_workspace_v1',{p_section:section,p_id:id,p_filters:{q:fixtureMarker,...filters}});assert.ifError(r.error);return r.data;
+ const r=section==='lead'&&!id?await accounts[role].client.rpc('snacky_crm_lead_desk_v1',{p_filters:{q:fixtureMarker,...filters}}):await accounts[role].client.rpc('snacky_crm_workspace_v1',{p_section:section,p_id:id,p_filters:{q:fixtureMarker,...filters}});assert.ifError(r.error);return r.data;
 }
 const today=sql("select (now() at time zone 'Africa/Tripoli')::date"),yesterday=sql("select (now() at time zone 'Africa/Tripoli')::date-1");
 const leads=Array.from({length:45},(_,n)=>({
@@ -52,9 +52,9 @@ async function check(name,fn){
  finally{writeFileSync(out+'/results.json',JSON.stringify({results,pageErrors},null,2));}
 }
 const build=spawnSync('npm',['run','build'],{env,encoding:'utf8',maxBuffer:30e6});
-writeFileSync('diagnostics/leads-build.log',build.stdout+'\n'+build.stderr);assert.equal(build.status,0,'Production build failed');
+writeFileSync('diagnostics/focus-build.log',build.stdout+'\n'+build.stderr);assert.equal(build.status,0,'Production build failed');
 try{
- server=spawn(process.execPath,['node_modules/next/dist/bin/next','start','--hostname','127.0.0.1','--port','3000'],{env,stdio:['ignore',openSync('diagnostics/leads-server.log','w'),openSync('diagnostics/leads-server-errors.log','w')]});
+ server=spawn(process.execPath,['node_modules/next/dist/bin/next','start','--hostname','127.0.0.1','--port','3000'],{env,stdio:['ignore',openSync('diagnostics/focus-server.log','w'),openSync('diagnostics/focus-server-errors.log','w')]});
  for(let i=0;i<60;i++){try{if((await fetch(app+'/login')).ok)break;}catch{}await new Promise(r=>setTimeout(r,500));if(i===59)throw Error('Server unavailable');}
  browser=await chromium.launch({headless:true});
  async function session(role,locale='en',width=1440){
@@ -74,11 +74,11 @@ try{
   await p.locator('#crm-leads').waitFor();
  };
  const table=p=>p.locator('#crm-leads table');
- await check('real desktop table, six aligned columns and original permission-checked data',async()=>{
+ await check('real desktop table, six data columns plus manager selection and original permission-checked data',async()=>{
   await go(owner);assert.equal(await table(owner).isVisible(),true);
-  assert.equal(await table(owner).locator('thead th').count(),6);assert.equal(await table(owner).locator('tbody tr').count(),40);
+  assert.equal(await table(owner).locator('thead th').count(),7);assert.equal(await table(owner).locator('tbody tr').count(),40);
   assert.equal((await rpc('owner')).total,46);assert.match(await owner.locator('#crm-leads').innerText(),/1–40 \/ 46/);
-  assert.match(await table(owner).innerText(),/Contact|Owner/);assert.equal(await owner.locator('a[rel=next]').count(),1);
+  assert.match(await table(owner).innerText(),/Contact|Assigned to/);assert.equal(await owner.locator('a[rel=next]').count(),1);
  });
  await check('CRM sees shared leads, cannot see other employees private leads, operator stays excluded',async()=>{
   await go(crm);assert.equal((await rpc('crm')).total,45);assert.doesNotMatch(await table(crm).innerText(),/Private other-employee fixture/);
@@ -123,6 +123,55 @@ try{
   const actual=(await rpc('owner','lead',{},leads[44].id)).record;assert.equal(actual.assigned_to,accounts.crm.member);assert.equal(actual.next_action,'First assigned call — real test save');
   await go(crm,'?scope=mine&q=Zebra');await table(crm).getByText('First assigned call — real test save',{exact:true}).waitFor();
  });
+
+ let focusRequest;
+ const focusIds=[leads[40].id,leads[41].id,leads[42].id];
+ await check('name-only creation is valid; contacts can be filled later without invented information',async()=>{
+  await owner.goto(app+'/locations-pipeline/new');
+  await owner.locator('input[name=place_name]').fill('Name-only research acceptance');
+  const form=owner.locator('input[name=place_name]').locator('xpath=ancestor::form');
+  const response=owner.waitForResponse(r=>r.url().endsWith('/api/crm/command')&&r.request().postDataJSON()?.action==='lead.save');
+  await form.getByRole('button',{name:'Add record',exact:true}).click();
+  const reply=await (await response).json();assert.equal(reply.ok,true);
+  const fresh=await rpc('owner','lead',{},reply.id);assert.equal(fresh.record.title,'Name-only research acceptance');
+  assert.equal(fresh.record.data.contact_phone??'','');assert.equal(fresh.record.data.contact_person_name??'','');
+  await go(owner,'q=Name-only research acceptance');assert.match(await table(owner).innerText(),/Contact details needed/);
+ });
+ await check('bulk focus commits exactly selected places, survives lost response and reload, and creates no duplicate tasks',async()=>{
+  await go(owner,'q=Training place 4');
+  for(const n of [40,41,42])await table(owner).getByRole('checkbox',{name:'Select — '+leads[n].place_name,exact:true}).check();
+  await owner.getByRole('combobox',{name:'Assign to employee',exact:true}).selectOption(accounts.crm.member);
+  await owner.getByPlaceholder('Research contact details and report back',{exact:true}).fill('Confirm contact details and report the next step');
+  let actualReply;
+  await owner.route('**/api/crm/lead-focus',async route=>{
+   focusRequest=route.request().postDataJSON();
+   const response=await route.fetch();actualReply=await response.json();
+   if(actualReply.ok===true)await route.abort('failed');else await route.fulfill({response});
+  },{times:1});
+  owner.once('dialog',d=>d.accept());
+  await owner.getByRole('button',{name:'Assign & set focus',exact:true}).click();
+  await owner.getByText('Save not confirmed. Retry the same saved request; do not create another selection.',{exact:true}).waitFor();
+  assert.equal(actualReply.ok,true);assert.equal(actualReply.count,3);
+  const before=sql("select jsonb_build_object('focus',(select count(*) from crm_lead_private.focus),'receipts',(select count(*) from crm_lead_private.receipts),'tasks',(select count(*) from public.crm_tasks))::text");
+  await owner.reload();await owner.getByRole('button',{name:'Retry saved request',exact:true}).waitFor();
+  const response=owner.waitForResponse(r=>r.url().endsWith('/api/crm/lead-focus'));
+  await owner.getByRole('button',{name:'Retry saved request',exact:true}).click();const saved=await response;
+  assert.deepEqual(saved.request().postDataJSON(),focusRequest);assert.equal((await saved.json()).ok,true);
+  assert.equal(sql("select jsonb_build_object('focus',(select count(*) from crm_lead_private.focus),'receipts',(select count(*) from crm_lead_private.receipts),'tasks',(select count(*) from public.crm_tasks))::text"),before);
+  const full=await rpc('owner');assert.deepEqual(new Set(full.rows.slice(0,3).map(x=>x.id)),new Set(focusIds));
+  for(const lead of full.rows.slice(0,3)){assert.equal(lead.focused,true);assert.equal(lead.assigned_to,accounts.crm.member);assert.equal(lead.next_action,'Confirm contact details and report the next step');assert.equal(lead.due_date,today);}
+  await go(crm,'scope=mine&focus=active');assert.equal(await table(crm).locator('tbody tr').count(),3);assert.equal(await crm.getByRole('button',{name:'Assign & set focus',exact:true}).count(),0);
+  await crm.goto(app+'/my-work');await crm.getByRole('heading',{name:'Your focused places',exact:true}).waitFor();
+ });
+ await check('employee fills the assigned research record and logs an introduction in original activity history',async()=>{
+  const id=leads[40].id;
+  await crm.goto(app+'/locations-pipeline/'+id);await crm.getByText('Edit record',{exact:true}).click();
+  const input=crm.locator('input[name=contact_person_name]');await input.fill('New decision-maker');
+  const form=input.locator('xpath=ancestor::form'),response=crm.waitForResponse(r=>r.url().endsWith('/api/crm/command')&&r.request().postDataJSON()?.recordId===id);
+  await form.getByRole('button',{name:'Save changes',exact:true}).click();assert.equal((await(await response).json()).ok,true);
+  const note=await accounts.crm.client.rpc('snacky_crm_command_v1',{p_command_id:randomUUID(),p_action:'note.add',p_id:id,p_payload:{kind:'lead',activity_type:'note',summary:'Synthetic training introduction recorded; decision-maker details confirmed.'}});assert.ifError(note.error);
+  const verified=await rpc('crm','lead',{},id);assert.equal(verified.record.data.contact_person_name,'New decision-maker');assert.ok(verified.activities.some(a=>a.summary.includes('training introduction recorded')));
+ });
  const arabic=await session('owner','ar',390),audits=[];
  await check('actual Arabic mobile and English desktop layouts, keyboard focus and scoped accessibility',async()=>{
   for(const [label,p,width] of [['leads-en-1440',owner,1440],['leads-en-1024',owner,1024],['leads-ar-390',arabic,390],['leads-ar-320',arabic,320]]){
@@ -134,6 +183,23 @@ try{
    const scan=await new AxeBuilder({page:p}).include('#crm-leads').analyze();audits.push({label,violations:scan.violations});
   }
   writeFileSync(out+'/accessibility.json',JSON.stringify(audits,null,2));assert.equal(audits.flatMap(a=>a.violations).length,0);
+ });
+
+ await check('expired focus and installed/declined outcomes remain recorded but leave active prospecting',async()=>{
+  const id=leads[40].id;
+  sql(`update crm_lead_private.focus set starts_on=current_date-7,ends_on=current_date-1 where lead_id='${id}'`);
+  assert.equal((await rpc('crm','lead',{scope:'mine',focus:'active'})).total,2);
+  assert.equal((await rpc('crm','lead',{},id)).record.assigned_to,accounts.crm.member);
+  async function native(id,changes){const current=await rpc('owner','lead',{},id);const r=await accounts.owner.client.rpc('snacky_crm_command_v1',{p_command_id:randomUUID(),p_action:'lead.save',p_id:id,p_payload:{version:current.record.data.version,...changes}});assert.ifError(r.error);}
+  await native(leads[41].id,{status:'accepted'});
+  assert.equal((await rpc('owner','lead',{group:'agreed'})).total,1);
+  const location=await accounts.owner.client.rpc('snacky_crm_command_v1',{p_command_id:randomUUID(),p_action:'lead.convert',p_id:leads[41].id,p_payload:{existing_location_id:null}});assert.ifError(location.error);
+  assert.equal((await rpc('owner','lead',{group:'installed'})).total,0,'Linking a location is not proof of installation');
+  await native(leads[41].id,{status:'machine_placed'});await native(leads[42].id,{status:'rejected'});
+  assert.equal((await rpc('owner','lead',{group:'installed'})).total,1);assert.equal((await rpc('owner','lead',{group:'declined'})).total,1);
+  assert.equal((await rpc('crm','lead',{focus:'active',scope:'mine'})).total,0);
+  await go(owner,'group=installed');assert.match(await table(owner).innerText(),/Installed \/ operating/);
+  await go(owner,'group=declined');assert.match(await table(owner).innerText(),/Declined/);
  });
  await check('existing routes, inventory and financial records untouched',async()=>assert.equal(ledger(),baseline));
  assert.deepEqual(pageErrors,[]);
