@@ -13,7 +13,7 @@ const id='11111111-1111-4111-8111-111111111111',person='22222222-2222-4222-8222-
 const command=()=>({request_id:id,action:'set',items:[{id,version:'2026-09-19 10:00:00+00',focus_revision:0}],assigned_to:person,until:'2026-09-25',next_action:'Find the decision-maker'});
 const row={id,kind:'lead',title:'Research example',status:'want_to_contact',focused:true,focus_revision:1,focus_until:'2026-09-25',needs_research:true,assigned_to:person,assigned_name:'Fixture employee',data:{version:'2026-09-19 10:00:00+00'}};
 const styles=new Proxy({},{get:(_t,k)=>String(k)}),Link=({children,...p})=>React.createElement('a',p,children);
-const table=load('src/components/CrmLeadTable.tsx',{'react/jsx-runtime':jsx,'next/link':{__esModule:true,default:Link},'@/lib/crm-workspace':domain,'@/lib/crm-lead-list':helpers,'./CrmLeads.module.css':{__esModule:true,default:styles}});
+const table=load('src/components/CrmLeadTable.tsx',{'react/jsx-runtime':jsx,'next/link':{__esModule:true,default:Link},'@/components/CrmLeadQuickLink':{CrmLeadQuickLink:()=>null},'@/lib/crm-workspace':domain,'@/lib/crm-lead-list':helpers,'./CrmLeads.module.css':{__esModule:true,default:styles}});
 test('focus is date-based, inclusive seven-day default, and can be switched off',()=>{
  assert.equal(focus.focusDefaultEnd('2026-09-19'),'2026-09-25');assert.equal(focus.focusDefaultEnd('2026-12-28'),'2027-01-03');assert.equal(focus.focusDate('2026-02-30'),false);
  assert.equal(load('src/lib/crm-lead-focus.ts',{'./crm-workspace':domain},{process:{env:{NEXT_PUBLIC_SNACKY_LEAD_FOCUS_ENABLED:'false'}}}).leadFocusEnabled,false);
@@ -41,7 +41,7 @@ test('real table distinguishes employee assignment, focus, missing details and c
 });
 function workspace({enabled=true,error=null,result,firstMissing=false}={}){
  const calls=[],data=result??{me:person,staff:true,manager:true,today:'2026-09-19',focus_ready:true,focus_assignees:[{id:person,name:'Employee'}],rows:[row],directory:[{id:person,name:'Employee'}],total:1,offset:0,page_size:40};
- const c=load('src/components/CrmLeadsWorkspace.tsx',{'react/jsx-runtime':jsx,'next/link':{__esModule:true,default:Link},'next/navigation':{redirect:()=>{throw Error('denied');}},'@/lib/auth':{getCurrentProfile:async()=>({id:person,roles:['owner'],active_status:'active'}),getAuthenticatedSupabaseServerClient:async()=>({rpc:async(...args)=>{calls.push(args);return firstMissing&&calls.length===1?{error:{code:'PGRST202',message:'snacky_crm_lead_desk_v1'}}:{data,error};}})},'@/lib/authz':{hasAnyRole:()=>true},'@/lib/i18n/server':{getServerI18n:async()=>({locale:'en'})},'@/components/CrmClientTools':{CrmRefresh:()=>null},'@/components/CrmLeadTable':table,'@/components/CrmLeadFocusList':{CrmLeadFocusList:()=>React.createElement('p',null,'focus-selection')},'@/lib/crm-workspace':domain,'@/lib/crm-lead-list':helpers,'@/lib/crm-lead-focus':{...focus,leadFocusEnabled:enabled},'./CrmLeads.module.css':{__esModule:true,default:styles}});
+ const c=load('src/components/CrmLeadsWorkspace.tsx',{'react/jsx-runtime':jsx,'next/link':{__esModule:true,default:Link},'next/navigation':{redirect:()=>{throw Error('denied');}},'@/lib/auth':{getCurrentProfile:async()=>({id:person,roles:['owner'],active_status:'active'}),getAuthenticatedSupabaseServerClient:async()=>({rpc:async(...args)=>{calls.push(args);return firstMissing&&calls.length===1?{error:{code:'PGRST202',message:'snacky_crm_lead_desk_v1'}}:{data,error};}})},'@/lib/authz':{hasAnyRole:()=>true},'@/lib/i18n/server':{getServerI18n:async()=>({locale:'en'})},'@/components/CrmLeadQuickPanel':{CrmLeadQuickPanel:()=>null},'@/components/CrmClientTools':{CrmRefresh:()=>null},'@/components/CrmLeadTable':table,'@/components/CrmLeadFocusList':{CrmLeadFocusList:()=>React.createElement('p',null,'focus-selection')},'@/components/CrmLeadQuickLink':{CrmLeadQuickLink:()=>null},'@/lib/crm-workspace':domain,'@/lib/crm-lead-list':helpers,'@/lib/crm-lead-focus':{...focus,leadFocusEnabled:enabled},'./CrmLeads.module.css':{__esModule:true,default:styles}});
  return {calls,render:async(params={})=>renderToStaticMarkup(await c.CrmLeadsWorkspace({searchParams:params}))};
 }
 test('enabled workspace asks the server for focus/global ordering and shows explicit outcome tabs',async()=>{
@@ -76,8 +76,6 @@ test('name-only creation remains valid; native completion and relationship stage
  const migration=read('supabase/migrations/20260919162204_crm_lead_focus.sql');assert.doesNotMatch(migration,/create or replace function public\.snacky_crm_(?:command_v1|workspace_v1)|insert into public\.(?:crm_tasks|financial_transactions|inventory_movements|routes)/i);
  assert.match(migration,/result:=public\.snacky_crm_command_v1/);assert.match(migration,/order by importance,case when focused then focus_until end/);assert.match(migration,/crm_lead_private\.focus enable row level security/);
 });
-
-
 test('focus recovery remains mounted when reassignment empties the current filter',async()=>{
  const h=workspace({result:{me:person,staff:true,manager:true,today:'2026-09-19',focus_ready:true,focus_assignees:[],rows:[],directory:[],total:0,offset:0,page_size:40}});
  const html=await h.render({scope:'mine',q:'moved away'});
