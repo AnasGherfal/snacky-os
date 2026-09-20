@@ -59,11 +59,13 @@
 .printFooter {font-size:11px;margin-top:18px;padding-top:10px;border-top:1px solid #cbd5e1;color:#475569;}
 @media(max-width:650px){.fields,.listGrid{grid-template-columns:1fr;}.metrics{grid-template-columns:repeat(2,minmax(0,1fr));}.header h1{font-size:25px;}.table{min-width:650px;}.share,.notice{padding:14px;}.printSheet{padding:15px;}.printMeta{grid-template-columns:1fr;}.printHeader{flex-direction:column;}}
 @media print {
- :global(body:has([data-buying-print])) {background:white!important;}
- :global(body:has([data-buying-print]) *) {visibility:hidden;}
- :global([data-buying-print]),:global([data-buying-print] *) {visibility:visible!important;}
- :global(html:has([data-buying-print])),:global(body:has([data-buying-print])),:global(body:has([data-buying-print]) main),:global(body:has([data-buying-print]) .app-shell) {height:auto!important;min-height:0!important;overflow:visible!important;}
- .printSheet {position:absolute;inset:0 auto auto 0;width:100%;max-width:none;margin:0;padding:0;border:0;color:#111;font-size:10pt;}
+ :global(body):has(.printSheet) {background:white!important;}
+ :global(body):has(.printSheet) * {visibility:hidden;}
+ .printSheet,.printSheet * {visibility:visible!important;}
+ :global(html):has(.printSheet),:global(body):has(.printSheet),:global(body):has(.printSheet) *:has(.printSheet) {height:auto!important;min-height:0!important;overflow:visible!important;}
+ :global(body):has(.printSheet) *:not(:has(.printSheet)):not(.printSheet):not(.printSheet *) {display:none!important;}
+ :global(body):has(.printSheet) *:has(.printSheet) {display:block!important;position:static!important;margin:0!important;padding:0!important;}
+ .printSheet {page:snacky-buying;position:static;width:100%;max-width:none;margin:0;padding:0;border:0;color:#111;font-size:10pt;}
  .printSheet .table{min-width:0;font-size:9pt;table-layout:fixed;}
  .printSheet .table th,.printSheet .table td{padding:7px 5px;overflow-wrap:anywhere;}
  .printSheet .table th{background:white;color:#111;border-bottom:1.5px solid #555;}
@@ -72,5 +74,5 @@
  .printHeader{display:flex;flex-direction:row;break-inside:avoid;}
  .printMeta{grid-template-columns:repeat(2,minmax(0,1fr));}
  .printFooter{break-inside:avoid;}
- @page{size:A4 portrait;margin:14mm;}
+ @page snacky-buying {size:A4 portrait;margin:14mm;}
 }
