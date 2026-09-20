@@ -37,7 +37,7 @@ export async function CrmRelationshipOverview(){
  );
  const locations=(locationResult.data?.rows??[]) as any[];
  const payments=((paymentResult.data?.rows??[]) as any[])
-  .filter(row=>row.status==='open'||(row.status==='paid'&&!row.data?.finance_verified_at))
+  .filter(row=>!row.data?.is_historical&&(row.status==='open'||(row.status==='paid'&&!row.data?.finance_verified_at)))
   .sort((a,b)=>String(a.due_date??'9999').localeCompare(String(b.due_date??'9999')));
  const today=String(locationResult.data?.today??'');
  return <div className="space-y-5" dir={ar?'rtl':'ltr'}>
