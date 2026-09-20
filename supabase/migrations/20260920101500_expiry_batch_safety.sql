@@ -551,7 +551,9 @@ select snacky_expiry_private.seed_legacy_unknown_v1();
 -- Reconcile fresh VMS machine quantities and scan for new expiry milestones hourly.
 do $$begin
   if exists(select 1 from pg_extension where extname='pg_cron') then
-    perform cron.unschedule('snacky-expiry-safety') where exists(select 1 from cron.job where jobname='snacky-expiry-safety');
+    if exists(select 1 from cron.job where jobname='snacky-expiry-safety') then
+      perform cron.unschedule('snacky-expiry-safety');
+    end if;
     perform cron.schedule('snacky-expiry-safety','7 * * * *','select public.snacky_scan_expiry_safety_v1();');
   end if;
 exception when others then
