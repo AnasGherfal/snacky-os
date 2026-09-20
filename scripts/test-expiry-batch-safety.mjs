@@ -38,7 +38,11 @@ test("expiry tracking is additive and follows inventory movements by FEFO", () =
   assert.match(migration, /create table if not exists public\.inventory_batch_balances/);
   assert.match(migration, /create table if not exists public\.inventory_batch_movement_allocations/);
   assert.match(migration, /after insert on public\.inventory_movements/);
-  assert.match(migration, /order by \(b\.expiry_date is null\) desc,b\.expiry_date asc/);
+  assert.match(migration, /order by \(b\.expiry_date is null\) asc,b\.expiry_date asc/);
+  assert.match(migration, /snacky_expiry_sellable_outbound_guard/);
+  assert.match(migration, /Known expired stock is excluded from sellable inventory/);
+  assert.match(migration, /new\.to_entity_type::text not in \('operator_bag','machine','customer'\)/);
+  assert.match(migration, /not v_sellable_outbound or b\.expiry_date is null or b\.expiry_date>v_today/);
   assert.match(migration, /source_kind in \('purchase','legacy_unknown'\)/);
   assert.match(migration, /seed_legacy_unknown_v1/);
   assert.match(migration, /latest_vms_stock_by_slot/);
@@ -53,6 +57,9 @@ test("alerts happen only for remaining stock and use the existing private push q
   }
   assert.match(migration, /snacky_notice_private\.deliveries/);
   assert.match(migration, /source_kind='expiry_batch'/);
+  assert.match(migration, /source_kind='expiry_audit'/);
+  assert.match(migration, /Expiry audit required/);
+  assert.match(migration, /expiry_audit:'\|\|\(\(now\(\) at time zone 'Africa\/Tripoli'\)::date\)::text/);
   assert.match(migration, /snacky-assignment-notifications/);
   assert.match(migration, /snacky-expiry-safety/);
   assert.match(sw, /relationships\|inventory/);
@@ -67,4 +74,10 @@ test("expiry control makes legacy uncertainty and machine reconciliation explici
   assert.match(expiryPage, /machine_qty/);
   assert.match(nav, /Expiry Control/);
   assert.match(detail, /Expiry not recorded/);
+  const pickupApi = read("src/app/api/operator/routes/[id]/pick-list/route.ts");
+  const pickupPage = read("src/app/operator/routes/[id]/pick-list/page.tsx");
+  assert.match(pickupApi, /snacky_safe_storage_expiry_by_product/);
+  assert.match(pickupApi, /safeOrUnknownQty/);
+  assert.match(pickupPage, /Expired stock exists and is excluded from available quantity/);
+  assert.match(pickupPage, /Expiry is not recorded for this stock/);
 });
