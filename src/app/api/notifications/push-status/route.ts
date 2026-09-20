@@ -36,7 +36,10 @@ async function status(request?: Request) {
       if (current.error) return NextResponse.json({ error: "Could not verify this device." }, { status: 503 });
       deviceRegistered = Boolean(current.data);
     }
+    const health = await supabase.rpc("snacky_notification_health_v1");
+    const workAlerts = !health.error && health.data && typeof health.data === "object" ? health.data : null;
     return NextResponse.json({
+      workAlerts,
       configured: config.configured, publicKey: config.configured ? config.publicKey : "",
       source: config.configured ? config.source : null, schemaReady, deviceRegistered,
       activeSubscriptions: schemaReady ? subscriptions.count ?? 0 : null,

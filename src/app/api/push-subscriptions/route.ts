@@ -12,7 +12,7 @@ async function handle(request: Request, deactivate: boolean) {
   if (profile.active_status !== "active") return error("Account is inactive.", 403);
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) return error("Notification service is unavailable.", 503);
-  let body: { subscription?: unknown; endpoint?: unknown; deviceLabel?: unknown };
+  let body: { subscription?: unknown; endpoint?: unknown; deviceLabel?: unknown; locale?: unknown };
   try {
     const text = await request.text();
     if (text.length > 8192) return error("Subscription is too large.", 413);
@@ -33,6 +33,7 @@ async function handle(request: Request, deactivate: boolean) {
     const result = await savePushSubscription(supabase, profile.id, subscription, {
       deviceLabel: typeof body.deviceLabel === "string" ? body.deviceLabel.slice(0, 160) : null,
       userAgent: request.headers.get("user-agent"),
+      locale: body.locale === "en" ? "en" : "ar",
     });
     if (!result.saved) {
       // RLS deliberately prohibits moving another account's endpoint to this one.

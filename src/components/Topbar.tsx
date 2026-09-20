@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Image from "next/image";
 import Link from "next/link";
@@ -46,6 +46,7 @@ const titleKeys: Record<string, keyof Dictionary["nav"]> = {
   "/vms-mappings": "productMapping",
   "/finance": "financeOverview",
   "/finance/import": "financeImport",
+  "/finance/review": "financeImport",
   "/finance/import/review": "financeImport",
   "/finance/transactions": "financeTransactions",
   "/finance/cleanup": "financeCleanup",
@@ -82,7 +83,8 @@ export function Topbar({ profile, onMenuClick }: { profile: TopbarProfile; onMen
   const nextLocaleLabel = nextLocale === "ar" ? dictionary.language.arabic : dictionary.language.english;
   const routeAlerts = canExecuteRoutes(profile);
   const companyUpdates = companyHubEnabled && hasAnyRole(profile, companyRoles);
-  const canSeeNotifications = routeAlerts || companyUpdates;
+  // Personal alerts never grant access to the related work; pages retain their own authorization.
+  const canSeeNotifications = true;
 
   const logout = async () => {
     setLoggingOut(true);

@@ -1,4 +1,4 @@
-const CACHE_NAME = "snacky-os-offline-v3";
+const CACHE_NAME = "snacky-os-offline-v4";
 const OFFLINE_URL = "/offline.html";
 const CORE_ASSETS = [OFFLINE_URL, "/manifest.webmanifest", "/brand/snacky-logo.png", "/icons/favicon-32.png", "/icons/apple-touch-icon.png", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/maskable-icon-512.png"];
 
@@ -9,9 +9,7 @@ function getNotificationTargetUrl(data) {
     : typeof data.routeId === "string" && data.routeId.trim() ? `/operator/routes/${encodeURIComponent(data.routeId.trim())}` : fallback;
   try {
     const target = new URL(value, self.location.origin);
-    // Never open an external origin, javascript URL, embedded credentials, or
-    // public/login redirect from a notification payload.
-    if (target.origin !== self.location.origin || target.username || target.password || !/^\/(account|operator\/routes|routes|company|issues|follow-ups|my-work)(\/|$)/.test(target.pathname)) return fallback;
+    if (target.origin !== self.location.origin || target.username || target.password || !/^\/(account|operator\/routes|routes|company|issues|follow-ups|my-work|locations-pipeline|relationships)(\/|$)/.test(target.pathname)) return fallback;
     return target.pathname + target.search + target.hash;
   } catch { return fallback; }
 }
@@ -43,10 +41,10 @@ self.addEventListener("push", (event) => {
   const title = typeof payload.title === "string" && payload.title.trim() ? payload.title.trim() : "Snacky OS";
   const body = typeof payload.body === "string" ? payload.body : typeof payload.message === "string" ? payload.message : "";
   const data = { url: getNotificationTargetUrl(payload), routeId: typeof payload.routeId === "string" ? payload.routeId : null, type: typeof payload.type === "string" ? payload.type : null };
-  const notificationTag = typeof payload.type === "string" && typeof data.routeId === "string" ? `${payload.type}:${data.routeId}` : "";
+  const notificationTag = typeof payload.notificationId === "string" && /^[0-9a-f-]{36}$/i.test(payload.notificationId) ? `work:${payload.notificationId}`
+    : typeof payload.type === "string" && typeof data.routeId === "string" ? `${payload.type}:${data.routeId}` : "";
   const options = { body, icon: "/icons/icon-192.png", badge: "/icons/favicon-32.png", data, lang: payload.lang === "ar" ? "ar" : "en", dir: payload.dir === "rtl" ? "rtl" : "ltr" };
-  // Chromium rejects renotify without a tag. A malformed push still gets a visible fallback.
-  if (notificationTag) { options.tag = notificationTag; options.renotify = true; }
+  if (notificationTag) { options.tag = notificationTag; options.renotify = !payload.notificationId; }
   event.waitUntil(self.registration.showNotification(title, options).catch((error) => {
     console.error("[notifications] Could not display rich notification", error);
     return self.registration.showNotification(title, { body, data });

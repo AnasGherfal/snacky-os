@@ -8,7 +8,7 @@ function jsonError(message: string, status = 400) {
 
 export async function GET(request: Request) {
   const profile = await getCurrentProfile();
-  if (!profile) return jsonError("Not authenticated.", 401);
+  if (!profile || profile.active_status !== "active") return jsonError("Active account required.", 401);
 
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) return jsonError("Supabase is not configured.", 500);
@@ -34,7 +34,7 @@ export async function GET(request: Request) {
 
 export async function PATCH() {
   const profile = await getCurrentProfile();
-  if (!profile) return jsonError("Not authenticated.", 401);
+  if (!profile || profile.active_status !== "active") return jsonError("Active account required.", 401);
 
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) return jsonError("Supabase is not configured.", 500);

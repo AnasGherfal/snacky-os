@@ -28,6 +28,8 @@ type NotificationSummary = {
   type: string;
   title: string;
   message: string;
+  title_ar?: string | null;
+  message_ar?: string | null;
   action_url: string | null;
   related_route_id: string | null;
   read_at: string | null;
@@ -42,6 +44,7 @@ type NotificationPayload = {
   routeId?: string | null;
   routeDate?: string | null;
   assignedBy?: string | null;
+  notificationId?: string;
   lang?: string;
   dir?: "rtl" | "ltr";
 };
@@ -268,7 +271,7 @@ export async function savePushSubscription(
   supabase: NonNullable<SupabaseClient>,
   userId: string,
   input: PushSubscriptionInput,
-  context?: { deviceLabel?: string | null; userAgent?: string | null },
+  context?: { deviceLabel?: string | null; userAgent?: string | null; locale?: string },
 ) {
   const endpoint = cleanText(input.endpoint);
   const p256dh = cleanText(input.keys?.p256dh);
@@ -286,6 +289,7 @@ export async function savePushSubscription(
       auth,
       user_agent: optionalText(context?.userAgent)?.slice(0, 512) ?? null,
       device_label: optionalText(context?.deviceLabel)?.slice(0, 160) ?? null,
+      locale: context?.locale === "en" ? "en" : "ar",
       is_active: true,
       last_used_at: now,
       failed_at: null,
@@ -335,7 +339,7 @@ export async function loadNotificationsForUser(
   const [{ data: notifications, error: notificationError }, { count: unreadCount, error: unreadCountError }] = await Promise.all([
     supabase
       .from("notifications")
-      .select("id, type, title, message, action_url, related_route_id, read_at, created_at")
+      .select("id, type, title, message, title_ar, message_ar, action_url, related_route_id, read_at, created_at")
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
       .limit(safeLimit),
@@ -435,6 +439,18 @@ export async function notifyRouteAssigned(
   const adminClient = getSupabaseAdminClient() ?? supabase;
   if (!adminClient) {
     return { skipped: true as const, reason: "missing_notification_client" };
+  }
+
+  // New installations persist route assignment events in the same transaction.
+  // Keep the previous sender only until the database-worker deployment handshake.
+  const mode = await adminClient.rpc("snacky_notification_delivery_mode_v1");
+  if (!mode.error && mode.data === true) {
+    return { skipped: false as const, handledByOutbox: true };
+  }
+
+  if (mode.error && !["PGRST202", "42883"].includes(String(mode.error.code))) {
+    // A transient mode check cannot safely fall back and send the same route twice.
+    return { skipped: true as const, reason: "notification_mode_unavailable" };
   }
 
   const recipientUserId = await resolveRecipientUserId(adminClient, operatorTeamMemberId);
@@ -541,4 +557,11 @@ export async function notifyRouteAssigned(
     recipientUserId,
     pushResults: normalizedPushResults,
   };
+}
+
+/** The private leased-outbox RPC is the only source of work push packets. */
+export async function sendWorkNotification(supabase: SupabaseClient, packet: {
+  subscription: PushSubscriptionRecord; payload: NotificationPayload;
+}) {
+  return sendPushToSubscription(supabase, packet.subscription, packet.payload);
 }
