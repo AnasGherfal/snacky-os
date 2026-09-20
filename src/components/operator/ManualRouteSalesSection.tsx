@@ -227,7 +227,7 @@ export function ManualRouteSalesSection({
         throw new Error(payloadMessage(parsed.payload, parsed.text || tr("Could not save the manual sale.", "تعذر حفظ البيع اليدوي.")));
       }
 
-      const sale = normalizeRouteManualSale(parsed.payload.sale as RouteManualSaleRow);
+      const sale = normalizeRouteManualSale(parsed.payload.sale as RouteManualSaleRow | NormalizedRouteManualSale);
       const responseWarning = cleanText(parsed.payload.warning);
       onSaved(sale, {
         inventoryMovementCreated: Boolean(parsed.payload.inventoryMovementCreated),
@@ -266,7 +266,7 @@ export function ManualRouteSalesSection({
         throw new Error(payloadMessage(parsed.payload, parsed.text || tr("Could not cancel the manual sale.", "تعذر إلغاء البيع اليدوي.")));
       }
 
-      const sale = normalizeRouteManualSale(parsed.payload.sale as RouteManualSaleRow);
+      const sale = normalizeRouteManualSale(parsed.payload.sale as RouteManualSaleRow | NormalizedRouteManualSale);
       const responseWarning = cleanText(parsed.payload.warning);
       onCancelled(sale, {
         inventoryReversed: Boolean(parsed.payload.inventoryReversed),
