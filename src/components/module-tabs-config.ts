@@ -12,6 +12,7 @@ const cashTabs: ModuleTab[] = [
   { label: "Remove Cash", href: "/cash-collections/new", labelAr: "سحب النقد" },
 ];
 const stockTabs: ModuleTab[] = [
+  { label: "Shared Buying Lists", href: "/buying-lists", labelAr: "قوائم الشراء المشتركة" },
   { label: "Storage", href: "/inventory", labelAr: "المخزون", exact: true },
   { label: "Stock Check", href: "/inventory/stock-check", labelAr: "جرد المخزون" },
   { label: "Purchase List", href: "/restock-priority/purchase-list", labelAr: "قائمة الشراء" },

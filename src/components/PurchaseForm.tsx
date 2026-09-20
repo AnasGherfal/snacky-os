@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from "@/components/LocalDraft";
+import { PurchaseReceiptPicker } from "@/components/PurchaseReceiptPicker";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { FormField, FormSection } from "@/components/ui";
 import { FINANCE_ACCOUNTS } from "@/lib/finance-balance";
@@ -1298,8 +1299,8 @@ export function PurchaseForm({
             ) : null}
             {detailsErrors.receivingStorageLocationId ? <p className="mt-2 text-xs font-medium text-rose-700">{detailsErrors.receivingStorageLocationId}</p> : null}
           </FormField>
-          <FormField label="Receipt upload" hint="Stored privately in receipt-images when Supabase Storage is configured. PNG, JPG, WEBP, or PDF. Maximum 5MB.">
-            <input name="receipt_file" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" className="field-input" onChange={(event) => handleReceiptFileChange(event.target.files?.[0] ?? null)} />
+          <div className="space-y-3">
+            <PurchaseReceiptPicker onFile={handleReceiptFileChange} disabled={Boolean(submitIntent)}/>
             {initialPurchase?.receiptUrl ? (
               <label className="mt-3 flex items-start gap-2 rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700">
                 <input
@@ -1322,7 +1323,7 @@ export function PurchaseForm({
                 <span>Remove saved receipt from this draft purchase</span>
               </label>
             ) : null}
-          </FormField>
+          </div>
           <FormField label="Receipt URL fallback">
             <input name="receipt_url" type="text" inputMode="url" className="field-input" placeholder="https://example.com/receipt.jpg" value={details.receiptUrl} onChange={(event) => handleReceiptUrlChange(event.target.value)} />
           </FormField>

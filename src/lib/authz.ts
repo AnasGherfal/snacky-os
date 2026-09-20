@@ -362,6 +362,7 @@ export function canAccessPath(user: AuthUserContext | null | undefined, pathname
   if (!user || user.activeStatus === "inactive") return false;
   if (matchesPrefix(pathname, ["/company/manage", "/company/new"])) return isOwnerAdminRole(user);
   if (matchesPrefix(pathname, ["/company"])) return hasAnyRole(user, ["owner", "admin", "supervisor", "crm", "operator", "warehouse", "purchasing", "finance"]);
+  if (matchesPrefix(pathname, ["/buying-lists"])) return hasAnyRole(user, ["owner", "admin", "supervisor", "crm", "operator", "warehouse", "purchasing", "finance"]);
   if (pathname === "/account" || pathname.startsWith("/account/")) return true;
   if (pathname === "/install" || pathname.startsWith("/install/")) return true;
   if (matchesPrefix(pathname, ["/investor"])) return hasPermission(user, "investor.view");

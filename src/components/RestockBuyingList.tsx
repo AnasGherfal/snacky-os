@@ -1,5 +1,6 @@
 "use client";
 
+import {ShareBuyingList} from "@/components/BuyingListClient";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useLanguage } from "@/components/I18nProvider";
@@ -7,7 +8,7 @@ import { CreatePurchaseListButton } from "@/components/CreatePurchaseListButton"
 import { boxShoppingItem, type BoxProduct } from "@/lib/purchase-boxes";
 import { clearRestockShoppingList, readRestockShoppingListStrict, writeRestockShoppingList, type RestockShoppingListItem } from "@/lib/restock-shopping-list";
 
-export function RestockBuyingList({products = []}: {products?:BoxProduct[]}) {
+export function RestockBuyingList({products = [], userId}: {products?:BoxProduct[]; userId?:string}) {
   const {locale} = useLanguage(), ar = locale === "ar";
   const tr = (en:string,arabic:string) => ar ? arabic : en;
   const [items,setItems] = useState<RestockShoppingListItem[]>([]), [ready,setReady] = useState(false), [error,setError] = useState("");
@@ -53,5 +54,6 @@ export function RestockBuyingList({products = []}: {products?:BoxProduct[]}) {
       </section>)}</div>
       <div className="flex flex-wrap gap-3">{!blocked && !error ? <CreatePurchaseListButton items={safeItems} label={tr("Create purchase draft","إنشاء مسودة شراء")}/> : null}<Link href="/restock-priority/purchase-list" className="btn-secondary">{tr("Refresh from sales and storage","تحديث من المبيعات والمخزون")}</Link><button type="button" className="btn-secondary" onClick={() => {try {clearRestockShoppingList();setItems([]);setError("");} catch {setError(tr("Could not clear the saved list.","تعذر مسح القائمة المحفوظة."));}}}>{tr("Clear list","مسح القائمة")}</button></div>
     </>}
+    {userId?<ShareBuyingList items={safeItems} blocked={blocked||Boolean(error)} userId={userId}/>:null}
   </div>;
 }
