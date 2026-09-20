@@ -142,7 +142,7 @@ begin
   if not found or r.expiry_date is null then
     raise exception 'Expiry date is required before receiving stock.' using errcode='23514';
   end if;
-  days_left:=r.expiry_date-current_date;
+  days_left:=r.expiry_date-(now() at time zone 'Africa/Tripoli')::date;
   if days_left<=0 then
     raise exception 'Expired stock cannot be received.' using errcode='23514';
   end if;
@@ -167,6 +167,45 @@ create trigger snacky_expiry_purchase_receipt_guard
 before insert on public.inventory_movements
 for each row execute function snacky_expiry_private.guard_purchase_receipt();
 
+create or replace function snacky_expiry_private.guard_sellable_outbound()
+returns trigger language plpgsql security definer set search_path='' as $
+declare
+  v_tracked integer;
+  v_safe integer;
+  v_today date:=(now() at time zone 'Africa/Tripoli')::date;
+begin
+  if coalesce(new.quantity,0)<=0
+     or new.from_entity_id is null
+     or new.from_entity_type::text not in ('storage','operator_bag','machine')
+     or new.to_entity_type::text not in ('operator_bag','machine','customer') then
+    return new;
+  end if;
+
+  select
+    coalesce(sum(bal.quantity),0)::integer,
+    coalesce(sum(bal.quantity) filter(where b.expiry_date is null or b.expiry_date>v_today),0)::integer
+  into v_tracked,v_safe
+  from public.inventory_batch_balances bal
+  join public.inventory_batches b on b.id=bal.batch_id
+  where bal.entity_type=new.from_entity_type::text
+    and bal.entity_id=new.from_entity_id
+    and b.product_id=new.product_id
+    and bal.quantity>0;
+
+  -- A zero tracked balance can occur only before initial seeding / during a
+  -- shadow-ledger repair. Core inventory remains available, but once any
+  -- batch provenance exists we fail closed against known-expired units.
+  if v_tracked>0 and v_safe<new.quantity then
+    raise exception 'Known expired stock is excluded from sellable inventory. Safe/unknown units available %, requested %.',v_safe,new.quantity
+      using errcode='23514';
+  end if;
+  return new;
+end $;
+drop trigger if exists snacky_expiry_sellable_outbound_guard on public.inventory_movements;
+create trigger snacky_expiry_sellable_outbound_guard
+before insert on public.inventory_movements
+for each row execute function snacky_expiry_private.guard_sellable_outbound();
+
 create or replace function snacky_expiry_private.allocate_movement()
 returns trigger language plpgsql security definer set search_path='' as $$
 declare
@@ -175,6 +214,8 @@ declare
   v_take integer;
   v_source_tracked boolean:=new.from_entity_type::text in ('storage','operator_bag','machine') and new.from_entity_id is not null;
   v_dest_tracked boolean:=new.to_entity_type::text in ('storage','operator_bag','machine') and new.to_entity_id is not null;
+  v_sellable_outbound boolean:=new.to_entity_type::text in ('operator_bag','machine','customer');
+  v_today date:=(now() at time zone 'Africa/Tripoli')::date;
   r record;
   line record;
 begin
@@ -222,7 +263,8 @@ begin
       from public.inventory_batch_balances bal join public.inventory_batches b on b.id=bal.batch_id
       where bal.entity_type=new.from_entity_type::text and bal.entity_id=new.from_entity_id
         and b.product_id=new.product_id and bal.quantity>0
-      order by (b.expiry_date is null) desc,b.expiry_date asc,b.created_at asc,b.id
+        and (not v_sellable_outbound or b.expiry_date is null or b.expiry_date>v_today)
+      order by (b.expiry_date is null) asc,b.expiry_date asc,b.created_at asc,b.id
     loop
       exit when v_remaining<=0;
       v_take:=least(v_remaining,r.quantity);
@@ -366,6 +408,19 @@ begin
     from public.inventory_batches b join public.products p on p.id=b.product_id where b.id=i;
     return r;
   end if;
+  if k='expiry_audit' then
+    select jsonb_build_object(
+      'row',jsonb_build_object('unknown_batches',count(distinct b.id),'unknown_units',coalesce(sum(bal.quantity),0)),
+      'member',null,
+      'active',coalesce(sum(bal.quantity),0)>0,
+      'label','Expiry audit required',
+      'href','/inventory/expiry'
+    ) into r
+    from public.inventory_batches b
+    join public.inventory_batch_balances bal on bal.batch_id=b.id
+    where b.expiry_date is null and bal.quantity>0;
+    return r;
+  end if;
   return snacky_notice_private.source_base(k,i);
 end $$;
 
@@ -377,6 +432,13 @@ begin
     if snacky_notice_private.member_user(n.recipient_member_id) is distinct from n.user_id then return false;end if;
     select array[p.role::text]||coalesce(p.roles::text[],'{}') into roles from public.profiles p where id=n.user_id;
     s:=snacky_notice_private.source('expiry_batch',n.source_id);
+    return coalesce((s->>'active')::boolean,false)
+      and roles&&array['owner','admin','supervisor','warehouse','purchasing'];
+  end if;
+  if n.source_kind='expiry_audit' then
+    if snacky_notice_private.member_user(n.recipient_member_id) is distinct from n.user_id then return false;end if;
+    select array[p.role::text]||coalesce(p.roles::text[],'{}') into roles from public.profiles p where id=n.user_id;
+    s:=snacky_notice_private.source('expiry_audit',null);
     return coalesce((s->>'active')::boolean,false)
       and roles&&array['owner','admin','supervisor','warehouse','purchasing'];
   end if;
@@ -438,6 +500,47 @@ begin
       end if;
     end loop;
   end loop;
+  -- Existing pre-feature stock has no trustworthy historical expiry date.
+  -- Send one aggregate reminder per recipient/day until the physical audit is resolved;
+  -- never emit one notification per legacy batch.
+  if exists(
+    select 1
+    from public.inventory_batches b
+    join public.inventory_batch_balances bal on bal.batch_id=b.id
+    where b.expiry_date is null and bal.quantity>0
+  ) then
+    for person in
+      select distinct t.id
+      from public.team_members t join public.profiles p on p.team_member_id=t.id
+      where t.active is not false and t.active_status='active' and p.active_status='active'
+        and (array[p.role::text]||coalesce(p.roles::text[],'{}'))&&array['owner','admin','supervisor','warehouse','purchasing']
+    loop
+      uid:=snacky_notice_private.member_user(person.id);
+      if uid is null then continue;end if;
+      insert into public.notifications(
+        user_id,type,title,message,action_url,event_key,source_kind,source_id,recipient_member_id,event_kind,title_ar,message_ar
+      )
+      select
+        uid,'expiry_audit','Expiry audit required',
+        count(distinct b.product_id)::text||' products still have stock with no recorded expiry date. Physically check them before sale.',
+        '/inventory/expiry',
+        'expiry_audit:'||((now() at time zone 'Africa/Tripoli')::date)::text||':'||person.id::text,
+        'expiry_audit',null,person.id,'unknown_audit',
+        'مراجعة الصلاحية مطلوبة',
+        'يوجد '||count(distinct b.product_id)::text||' منتجاً بمخزون دون تاريخ صلاحية مسجل. تحقق منه فعلياً قبل البيع.'
+      from public.inventory_batches b
+      join public.inventory_batch_balances bal on bal.batch_id=b.id
+      where b.expiry_date is null and bal.quantity>0
+      on conflict(event_key) where event_key is not null do nothing
+      returning id into nid;
+      if nid is not null then
+        insert into snacky_notice_private.deliveries(notification_id,subscription_id)
+        select nid,id from public.push_subscriptions where user_id=uid and is_active on conflict do nothing;
+        sent:=sent+1;
+      end if;
+    end loop;
+  end if;
+
   if sent>0 then begin perform snacky_notice_private.wake();exception when others then null;end;end if;
   return jsonb_build_object('notifications_created',sent);
 end $$;
@@ -451,21 +554,36 @@ select
   coalesce(sum(bal.quantity) filter(where bal.entity_type='storage'),0)::integer storage_qty,
   coalesce(sum(bal.quantity) filter(where bal.entity_type='operator_bag'),0)::integer operator_bag_qty,
   coalesce(sum(bal.quantity) filter(where bal.entity_type='machine'),0)::integer machine_qty,
-  case when b.expiry_date is null then null else b.expiry_date-current_date end days_left,
+  case when b.expiry_date is null then null else b.expiry_date-(now() at time zone 'Africa/Tripoli')::date end days_left,
   case
     when b.expiry_date is null then 'unknown'
-    when b.expiry_date<=current_date then 'expired'
-    when b.expiry_date<=current_date+1 then '1_day'
-    when b.expiry_date<=current_date+3 then '3_days'
-    when b.expiry_date<=current_date+7 then '7_days'
-    when b.expiry_date<=current_date+14 then '14_days'
-    when b.expiry_date<=current_date+30 then '30_days'
+    when b.expiry_date<=(now() at time zone 'Africa/Tripoli')::date then 'expired'
+    when b.expiry_date<=(now() at time zone 'Africa/Tripoli')::date+1 then '1_day'
+    when b.expiry_date<=(now() at time zone 'Africa/Tripoli')::date+3 then '3_days'
+    when b.expiry_date<=(now() at time zone 'Africa/Tripoli')::date+7 then '7_days'
+    when b.expiry_date<=(now() at time zone 'Africa/Tripoli')::date+14 then '14_days'
+    when b.expiry_date<=(now() at time zone 'Africa/Tripoli')::date+30 then '30_days'
     else 'safe' end risk
 from public.inventory_batches b
 join public.products p on p.id=b.product_id
 left join public.inventory_batch_balances bal on bal.batch_id=b.id
 group by b.id,p.name,p.sku;
 grant select on public.snacky_expiry_batch_status to authenticated;
+
+create or replace view public.snacky_safe_storage_expiry_by_product
+with (security_invoker=true) as
+select
+  b.product_id,
+  coalesce(sum(bal.quantity),0)::integer tracked_storage_qty,
+  coalesce(sum(bal.quantity) filter(where b.expiry_date is null or b.expiry_date>(now() at time zone 'Africa/Tripoli')::date),0)::integer safe_or_unknown_qty,
+  coalesce(sum(bal.quantity) filter(where b.expiry_date is not null and b.expiry_date<=(now() at time zone 'Africa/Tripoli')::date),0)::integer expired_qty,
+  coalesce(sum(bal.quantity) filter(where b.expiry_date is null),0)::integer unknown_expiry_qty,
+  min(b.expiry_date) filter(where b.expiry_date>(now() at time zone 'Africa/Tripoli')::date) earliest_safe_expiry
+from public.inventory_batches b
+join public.inventory_batch_balances bal on bal.batch_id=b.id
+where bal.entity_type='storage' and bal.quantity>0
+group by b.product_id;
+grant select on public.snacky_safe_storage_expiry_by_product to authenticated;
 
 -- Wrapper keeps existing heavily-tested purchase creation intact, adds expiry atomically,
 -- then receives only after the expiry metadata exists.
