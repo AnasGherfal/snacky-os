@@ -1,0 +1,35 @@
+name: Apply reviewed buying-list integration hunks
+on:
+  push:
+    branches: [feat/shared-buying-lists]
+    paths: ['.github/workflows/buying-existing-apply.yml']
+permissions:
+  contents: write
+jobs:
+  integrate:
+    if: github.repository == 'AnasGherfal/snacky-os' && github.ref == 'refs/heads/feat/shared-buying-lists'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Apply only the nine reviewed integration paths
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          allowed={'src/components/RestockBuyingList.tsx','src/app/restock-priority/shopping-list/page.tsx','src/lib/authz.ts','src/components/app-navigation.ts','src/components/module-tabs-config.ts','src/components/Sidebar.tsx','src/components/PurchaseForm.tsx','src/components/NewPurchaseWithReceiptScan.tsx','scripts/test-purchase-boxes.mjs'}
+          patch=Path('.github/buying-existing.patch').read_text()
+          paths={line.split(' b/',1)[1] for line in patch.splitlines() if line.startswith('diff --git ')}
+          assert paths == allowed, 'Unexpected patch paths'
+          subprocess.run(['git','apply','--check','--index','.github/buying-existing.patch'],check=True)
+          subprocess.run(['git','apply','--index','.github/buying-existing.patch'],check=True)
+          changed=set(subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines())
+          assert changed == allowed, 'Unexpected staged files'
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          PY
+          git config user.name 'Snacky reviewed integration'
+          git config user.email '79544599+AnasGherfal@users.noreply.github.com'
+          git commit -m 'Integrate shared list handoff and native receipt picker without changing purchase writers'
+          git push origin HEAD:refs/heads/feat/shared-buying-lists
