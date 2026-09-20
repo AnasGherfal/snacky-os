@@ -70,6 +70,7 @@
  .printSheet .table{min-width:0;font-size:9pt;table-layout:fixed;}
  .printSheet .table th,.printSheet .table td{padding:5px 5px;overflow-wrap:anywhere;}
  .printSheet .table td strong{font-size:9pt;line-height:1.35;}
+ .printSheet .table small{font-size:8pt;line-height:1.25;}
  .printSheet .table th{background:white;color:#111;border-bottom:1.5px solid #555;}
  .printSheet .table thead{display:table-header-group;}
  .printSheet .table tr{break-inside:avoid;}
