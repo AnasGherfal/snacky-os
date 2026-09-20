@@ -56,6 +56,7 @@
 .printMeta div {display:flex;gap:8px;}
 .printMeta dt {color:#475569;}
 .printMeta dd {font-weight:650;margin:0;}
+.printReference {display:block;direction:ltr;unicode-bidi:isolate;overflow-wrap:anywhere;}
 .printFooter {font-size:11px;margin-top:18px;padding-top:10px;border-top:1px solid #cbd5e1;color:#475569;}
 @media(max-width:650px){.fields,.listGrid{grid-template-columns:1fr;}.metrics{grid-template-columns:repeat(2,minmax(0,1fr));}.header h1{font-size:25px;}.table{min-width:650px;}.share,.notice{padding:14px;}.printSheet{padding:15px;}.printMeta{grid-template-columns:1fr;}.printHeader{flex-direction:column;}}
 @media print {
@@ -67,7 +68,8 @@
  :global(body):has(.printSheet) *:has(.printSheet) {display:block!important;position:static!important;margin:0!important;padding:0!important;}
  .printSheet {page:snacky-buying;position:static;width:100%;max-width:none;margin:0;padding:0;border:0;color:#111;font-size:10pt;}
  .printSheet .table{min-width:0;font-size:9pt;table-layout:fixed;}
- .printSheet .table th,.printSheet .table td{padding:7px 5px;overflow-wrap:anywhere;}
+ .printSheet .table th,.printSheet .table td{padding:5px 5px;overflow-wrap:anywhere;}
+ .printSheet .table td strong{font-size:9pt;line-height:1.35;}
  .printSheet .table th{background:white;color:#111;border-bottom:1.5px solid #555;}
  .printSheet .table thead{display:table-header-group;}
  .printSheet .table tr{break-inside:avoid;}

@@ -21,7 +21,7 @@ export default async function Page({params}:{params:Promise<{id:string}>}){
    <BuyingListTable items={list.items} ar={ar} print/>
    <p><b>{totals.boxes} {ar?'صندوق':'boxes'} · {totals.units} {ar?'وحدة':'units'}</b> — {ar?'التكلفة التقديرية':'Estimated total'}: {totals.missing===list.items.length?'—':totals.estimate.toFixed(2)} LYD{totals.missing?` (${ar?'غير مكتملة':'incomplete'})`:''}</p>
    <p className={styles.hint}>{ar?'الموردون والأسعار إرشادية. افحص المنتج والتاريخ الفعلي للصلاحية وحجم الصندوق عند الشراء. دوّن النقص في النظام.':'Suppliers and prices are indicative. Check the product, actual expiry date and box size when buying. Record shortages in Snacky OS.'}</p>
-   <footer className={styles.printFooter}>{ar?'ليست فاتورة أو إثبات دفع أو استلام مخزون. النسخة المطبوعة ثابتة؛ راجع آخر تحديث في سناكي.':'Not an invoice, payment proof or stock receipt. Printed copies are snapshots; check the latest version in Snacky OS.'}<br/>/buying-lists/{id}</footer>
+   <footer className={styles.printFooter}>{ar?'ليست فاتورة أو إثبات دفع أو استلام مخزون. النسخة المطبوعة ثابتة؛ راجع آخر تحديث في سناكي.':'Not an invoice, payment proof or stock receipt. Printed copies are snapshots; check the latest version in Snacky OS.'}<span className={styles.printReference} dir="ltr">/buying-lists/{id}</span></footer>
   </article>
  </div>;
 }

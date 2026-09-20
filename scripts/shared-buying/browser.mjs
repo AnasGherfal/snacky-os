@@ -5,6 +5,7 @@ import {spawn,spawnSync} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {createClient} from '@supabase/supabase-js';
+import {startBuyingTestTLS} from './https-fixture.mjs';
 const require=createRequire(import.meta.url),{chromium,webkit}=require('../../.qa/browser/node_modules/playwright'),AxeBuilder=require('../../.qa/browser/node_modules/@axe-core/playwright').default;
 const out='diagnostics/shared-buying';mkdirSync(out,{recursive:true});
 const config=Object.fromEntries(readFileSync('.qa/local-status.env','utf8').split('\n').map(x=>x.match(/^([A-Z_]+)="(.*)"$/)).filter(Boolean).map(m=>[m[1],m[2]]));
@@ -24,14 +25,14 @@ assert.ifError((await admin.from('products').insert(products)).error);
 const date=sql("select (now() at time zone 'Africa/Tripoli')::date"),ledger=()=>sql("select jsonb_build_object('routes',(select count(*) from public.routes),'inventory',(select count(*) from public.inventory_movements),'finance',(select count(*) from public.financial_transactions),'purchases',(select count(*) from public.purchase_orders),'purchase_lines',(select count(*) from public.purchase_order_lines),'purchase_payments',(select count(*) from public.purchase_payments))::text"),baseline=ledger();
 async function record(role,id){const r=await accounts[role].client.rpc('snacky_buying_workspace_v1',{p_id:id,p_filters:{}});assert.ifError(r.error);return r.data;}
 async function command(role,action,id,revision,payload={}){const r=await accounts[role].client.rpc('snacky_buying_command_v1',{p_command:{request_id:randomUUID(),list_id:id,revision,action,payload}});assert.ifError(r.error);return r.data;}
-let browser,safari,server,listId;const results=[],pageErrors=[],audits=[];
+let browser,safari,server,listId,tls;const results=[],pageErrors=[],audits=[];
 async function check(name,fn){try{await fn();results.push({name,status:'passed'});console.log('PASS '+name);}catch(e){results.push({name,status:'failed',message:String(e.message).slice(0,2000)});let i=0;for(const b of [browser,safari])for(const c of b?.contexts()??[])for(const p of c.pages())try{await p.screenshot({path:`${out}/failed-${results.length}-${++i}.png`,fullPage:true});}catch{}console.error('FAIL '+name+': '+e.message);}finally{writeFileSync(out+'/results.json',JSON.stringify({results,pageErrors},null,2));}}
 const build=spawnSync('npm',['run','build'],{env,encoding:'utf8',maxBuffer:35e6});writeFileSync('diagnostics/buying-build.log',build.stdout+'\n'+build.stderr);assert.equal(build.status,0,'Production build failed');
 try{
  server=spawn(process.execPath,['node_modules/next/dist/bin/next','start','--hostname','127.0.0.1','--port','3000'],{env,stdio:['ignore',openSync('diagnostics/buying-server.log','w'),openSync('diagnostics/buying-server-errors.log','w')]});
  for(let i=0;i<60;i++){try{if((await fetch(app+'/login')).ok)break;}catch{}await new Promise(r=>setTimeout(r,500));if(i===59)throw Error('Server unavailable');}
  browser=await chromium.launch({headless:true});
- async function session(role,locale='en',width=1440,b=browser){const c=await b.newContext({viewport:{width,height:960},hasTouch:width<700});await c.addCookies([{name:'snacky_os_language',value:locale,url:app}]);const p=await c.newPage();p.setDefaultTimeout(20000);p.setDefaultNavigationTimeout(45000);p.on('pageerror',e=>pageErrors.push(e.message));await p.goto(app+'/login');await p.locator('input[name=email]').fill(accounts[role].email);await p.locator('input[name=password]').fill(password);await Promise.all([p.waitForURL(u=>!u.pathname.startsWith('/login')),p.locator('form button[type=submit]').click()]);return p;}
+ async function session(role,locale='en',width=1440,b=browser,origin=app){const c=await b.newContext({viewport:{width,height:960},hasTouch:width<700,ignoreHTTPSErrors:origin==='https://127.0.0.1:3443'});await c.addCookies([{name:'snacky_os_language',value:locale,url:origin}]);const p=await c.newPage();p.setDefaultTimeout(20000);p.setDefaultNavigationTimeout(45000);p.on('pageerror',e=>pageErrors.push(e.message));await p.goto(origin+'/login');await p.locator('input[name=email]').fill(accounts[role].email);await p.locator('input[name=password]').fill(password);await Promise.all([p.waitForURL(u=>!u.pathname.startsWith('/login')),p.locator('form button[type=submit]').click()]);return p;}
  const owner=await session('owner'),buyer=await session('operator'),other=await session('other'),crm=await session('crm');
  await check('owner shares the existing whole-box planning list; lost creation response recovers without duplicate',async()=>{
   await owner.evaluate(items=>localStorage.setItem('snacky-restock-shopping-list',JSON.stringify(items)),products.slice(0,3).map(p=>({productId:p.id,name:p.name,suggestedQty:24,purchaseUnit:'box',unitsPerBox:12,boxesQty:2,lastPurchaseCost:2})));
@@ -77,15 +78,15 @@ try{
   const arText=spawnSync('pdftotext',[out+'/Buying_List_Sample_AR.pdf','-'],{encoding:'utf8'});assert.equal(arText.status,0);assert.match(arText.stdout,/Buying fixture 32/);assert.ok(arText.stdout.includes('/buying-lists/'));
  });
  const image=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jV5EAAAAASUVORK5CYII=','base64');
- async function fileTest(b,label){const p=await session('owner','en',390,b);await p.goto(app+'/purchases/new');const inputs=p.locator('[data-purchase-receipt-picker] input[type=file]');assert.equal(await inputs.count(),2);
+ async function fileTest(b,label,origin=app){const p=await session('owner','en',390,b,origin);await p.goto(origin+'/purchases/new');assert.equal(new URL(p.url()).pathname,'/purchases/new','File-picker test requires a signed-in purchase form');if(origin.startsWith('https:'))assert.ok((await p.context().cookies(origin)).some(c=>c.secure&&c.httpOnly),'Production Secure/HttpOnly session must be present');const inputs=p.locator('[data-purchase-receipt-picker] input[type=file]');assert.equal(await inputs.count(),2);
   for(let n=0;n<2;n++){const input=inputs.nth(n);await input.scrollIntoViewIfNeeded();const event=p.waitForEvent('filechooser');await input.tap();const chooser=await event;assert.equal(chooser.isMultiple(),false);await chooser.setFiles({name:`receipt-${label}-${n}.png`,mimeType:'image/png',buffer:image});assert.equal(await input.evaluate(el=>el.files?.[0]?.name),`receipt-${label}-${n}.png`);assert.equal(await input.evaluate(el=>el.closest('label')===null),true);}
   await inputs.first().setInputFiles({name:'unsupported.txt',mimeType:'text/plain',buffer:Buffer.from('not a receipt')});await p.locator('[data-purchase-receipt-picker]').first().getByRole('alert').waitFor();assert.equal(await inputs.first().evaluate(el=>el.files.length),0);await p.context().close();
  }
  await check('Chromium phone-sized native taps open both purchase receipt choosers without submitting a purchase',async()=>fileTest(browser,'chromium'));
- await check('WebKit touch input opens the manual and scan file choosers; unsupported files fail explicitly',async()=>{safari=await webkit.launch({headless:true});await fileTest(safari,'webkit');});
+ await check('WebKit touch input opens the manual and scan file choosers; unsupported files fail explicitly',async()=>{tls=await startBuyingTestTLS();safari=await webkit.launch({headless:true});await fileTest(safari,'webkit',tls.origin);});
  await check('reassignment removes old buyer access while CRM can access only its newly assigned list',async()=>{
   const list=(await record('owner',listId)).record;await command('owner','assign',listId,list.revision,{assigned_to:accounts.crm.member});assert.ok((await accounts.operator.client.rpc('snacky_buying_workspace_v1',{p_id:listId})).error);await crm.goto(app+'/buying-lists/'+listId);await crm.getByRole('heading',{name:'Shared buyer acceptance',exact:true}).waitFor();assert.equal((await record('crm',listId)).planner,false);
   await crm.goto(app+'/purchases/new');await crm.waitForURL(/\/unauthorized/);assert.equal(ledger(),baseline);
  });
  assert.deepEqual(pageErrors,[]);assert.equal(results.filter(r=>r.status!=='passed').length,0,'Every scenario must pass');
-}finally{await browser?.close();await safari?.close();server?.kill('SIGTERM');if(server)await new Promise(r=>{server.once('exit',r);setTimeout(r,1500);});writeFileSync(out+'/results.json',JSON.stringify({results,pageErrors},null,2));}
+}finally{await browser?.close();await safari?.close();await tls?.close();server?.kill('SIGTERM');if(server)await new Promise(r=>{server.once('exit',r);setTimeout(r,1500);});writeFileSync(out+'/results.json',JSON.stringify({results,pageErrors},null,2));}
