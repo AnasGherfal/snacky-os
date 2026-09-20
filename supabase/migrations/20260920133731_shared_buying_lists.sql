@@ -68,16 +68,16 @@ begin
  return jsonb_build_object('me',me,'planner',plan,'today',(now() at time zone 'Africa/Tripoli')::date,'record',list_data,'rows',rows,'total',total,'offset',off,'people',people);
 end $$;
 create function buying_private.command(p_command jsonb) returns jsonb language plpgsql security definer set search_path='' as $$
-declare me uuid:=buying_private.member(); request uuid:=(p_command->>'request_id')::uuid; listid uuid:=(p_command->>'list_id')::uuid;
+declare me uuid:=buying_private.member(); v_request_id uuid:=(p_command->>'request_id')::uuid; listid uuid:=(p_command->>'list_id')::uuid;
  act text:=p_command->>'action'; payload jsonb:=p_command->'payload'; version integer:=(p_command->>'revision')::integer;
  old buying_private.commands; l buying_private.lists; item buying_private.items; product public.products;
  selection jsonb; ids uuid[]:='{}'; target uuid; n integer:=0; boxes integer; size integer; cost numeric; answer jsonb;
 begin
  if me is null then raise exception 'Active staff access required' using errcode='42501';end if;
- if request is null or listid is null or act is null or act not in ('create','item','complete','cancel','reopen','assign') or version is null or version<0 or jsonb_typeof(payload) is distinct from 'object' then raise exception 'Invalid command' using errcode='22023';end if;
+ if v_request_id is null or listid is null or act is null or act not in ('create','item','complete','cancel','reopen','assign') or version is null or version<0 or jsonb_typeof(payload) is distinct from 'object' then raise exception 'Invalid command' using errcode='22023';end if;
  if octet_length(p_command::text)>100000 then raise exception 'Command too large' using errcode='22023';end if;
- perform pg_advisory_xact_lock(hashtextextended('buying:'||request::text,0));
- select * into old from buying_private.commands where id=request;
+ perform pg_advisory_xact_lock(hashtextextended('buying:'||v_request_id::text,0));
+ select * into old from buying_private.commands where id=v_request_id;
  if found then
   if old.actor<>auth.uid() or old.request is distinct from p_command then raise exception 'Request identity conflict' using errcode='23505';end if;
   if not buying_private.visible(old.list_id) then raise exception 'Access changed' using errcode='42501';end if;
@@ -130,8 +130,8 @@ begin
   end if;
   update buying_private.lists set revision=revision+1,updated_at=now() where id=listid returning * into l;
  end if;
- answer:=jsonb_build_object('request_id',request,'list_id',listid,'revision',l.revision);
- insert into buying_private.commands(id,actor,list_id,request,response) values(request,auth.uid(),listid,p_command,answer);
+ answer:=jsonb_build_object('request_id',v_request_id,'list_id',listid,'revision',l.revision);
+ insert into buying_private.commands(id,actor,list_id,request,response) values(v_request_id,auth.uid(),listid,p_command,answer);
  return answer;
 end $$;
 create function public.snacky_buying_workspace_v1(p_id uuid default null,p_filters jsonb default '{}') returns jsonb language sql stable security invoker set search_path='' as $$select buying_private.workspace(p_id,p_filters);$$;
