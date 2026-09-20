@@ -21,7 +21,7 @@ begin
  elsif p_kind='task' then return exists(select 1 from public.crm_tasks t where t.id=p_id and (manager or t.assigned_to=me or (staff and (t.created_by=me or public.snacky_crm_allowed('issue',t.issue_id,true) or public.snacky_crm_allowed('lead',t.lead_id,true) or public.snacky_crm_allowed('location',t.location_id,true) or public.snacky_crm_allowed('obligation',t.obligation_id,true)))));
  end if;
  return false;
-end $function$
+end $function$;
 
 
 CREATE OR REPLACE FUNCTION public.snacky_crm_workspace_v1(p_section text, p_id uuid DEFAULT NULL::uuid, p_filters jsonb DEFAULT '{}'::jsonb)
@@ -127,7 +127,7 @@ begin
   ) order by u.full_name),'[]'::jsonb) into related from public.team_members u where u.active and (u.role::text in ('crm','operator') or u.roles::text[]&&array['crm','operator']);
  end if;
  return jsonb_build_object('me',me,'manager',manager,'owner_admin',owner_admin,'staff',staff,'today',day,'directory',directory,'options',options,'rows',rows,'counts',counts,'total',total,'offset',skip,'page_size',40,'performance',related);
-end $function$
+end $function$;
 
 
 CREATE OR REPLACE FUNCTION crm_automation_private.overview(p_filters jsonb DEFAULT '{}'::jsonb)
@@ -173,7 +173,7 @@ begin
   order by a.occurred_at desc,a.id desc limit 20)v;
  select coalesce(jsonb_agg(jsonb_build_object('id',id,'name',full_name) order by full_name),'[]') into people from public.team_members where active is not false and active_status='active' and (role::text=any(array['owner','admin','supervisor','crm','operator']) or roles::text[]&&array['owner','admin','supervisor','crm','operator']);
  return jsonb_build_object('today',today,'days',period,'metrics',metrics,'cards',cards,'queue',queue,'total',total,'offset',off,'activity',activity,'people',people);
-end $function$
+end $function$;
 
 
 revoke all on function public.snacky_crm_allowed(text,uuid,boolean) from public,anon;
