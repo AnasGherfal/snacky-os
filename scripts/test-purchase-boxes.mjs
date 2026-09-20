@@ -75,7 +75,7 @@ function renderer(file,imports) {
   const output=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
   const exports={};
   const jsx=(type,props)=>({type,props});
-  const modules={'react':hooks,'react/jsx-runtime':{jsx,jsxs:jsx},'next/link':{default:'a'},...imports};
+  const modules={'@/components/BuyingListClient':{ShareBuyingList:()=>null},'react':hooks,'react/jsx-runtime':{jsx,jsxs:jsx},'next/link':{default:'a'},...imports};
   vm.runInNewContext(output,{exports,require:name=>{assert.ok(name in modules,name);return modules[name];}});
   return {exports,render:fn=>{cursor=0;return fn();},effects:()=>{effects.splice(0).forEach(fn=>fn());}};
 }

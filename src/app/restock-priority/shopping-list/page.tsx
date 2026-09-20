@@ -7,7 +7,7 @@ import type { BoxProduct } from "@/lib/purchase-boxes";
 
 export const dynamic = "force-dynamic";
 export default async function RestockShoppingListPage() {
-  await requireCurrentProfileForPath("/restock-priority");
+  const profile = await requireCurrentProfileForPath("/restock-priority");
   const {locale} = await getServerI18n(), ar = locale === "ar";
   const db = getSupabaseAdminClient() ?? await getAuthenticatedSupabaseServerClient();
   const products:BoxProduct[] = [];
@@ -24,6 +24,6 @@ export default async function RestockShoppingListPage() {
     <PageHeader title={ar ? "قائمة الشراء المحفوظة — صناديق" : "Buying List — Whole boxes"}
       subtitle={ar ? "راجع عدد الصناديق ثم أنشئ مسودة الشراء." : "Review box counts, then create your purchase draft."}
       action={<SecondaryButton href="/restock-priority/purchase-list">{ar ? "الاقتراحات التلقائية" : "Automatic Purchase List"}</SecondaryButton>}/>
-    {failed ? <ErrorState title={ar ? "تعذر تحميل أحجام الصناديق" : "Box sizes unavailable"} body={ar ? "أعد التحميل قبل تعديل أو إنشاء شراء. لم يتم افتراض صندوق بحجم 1." : "Reload before editing or creating a purchase. A one-unit box has not been assumed."}/> : <RestockBuyingList products={products}/>}
+    {failed ? <ErrorState title={ar ? "تعذر تحميل أحجام الصناديق" : "Box sizes unavailable"} body={ar ? "أعد التحميل قبل تعديل أو إنشاء شراء. لم يتم افتراض صندوق بحجم 1." : "Reload before editing or creating a purchase. A one-unit box has not been assumed."}/> : <RestockBuyingList products={products} userId={profile.id}/>}
   </div>;
 }

@@ -167,6 +167,8 @@ const adminItem: NavItem = {
   moduleKey: "admin",
 };
 
+const buyingListsItem: NavItem = { label: {en:"My buying lists", ar:"قوائم الشراء المسندة"}, href:"/buying-lists", icon:ClipboardList, activePrefixes:["/buying-lists"] };
+
 const companyItem: NavItem = { label: { en: "Company", ar: "الشركة" }, href: "/company", icon: ClipboardList, moduleKey: "company" };
 
 const ownerAdminNav: NavSection[] = [
@@ -253,6 +255,7 @@ function sectionsForRoles(role: AppRole, roles?: AppRole[] | null): NavSection[]
     business.push(financeItem);
     work.push(cashCustodyItem);
   }
+  if (hasAnyRole(context, ["crm", "operator", "finance"]) && !hasAnyRole(context, ["warehouse", "purchasing"])) work.push(buyingListsItem);
   if (companyHubEnabled && hasAnyRole(context, companyRoles)) work.push(companyItem);
   if (hasPermission(context, "reports.view")) business.push(reportsItem);
   if (hasPermission(context, "investor.view")) business.push(investorPortalItem);

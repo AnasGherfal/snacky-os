@@ -34,7 +34,7 @@ const appModuleRules: AppModuleRule[] = [
   { key: "cash", prefixes: ["/cash-collections"] },
   {
     key: "stock",
-    prefixes: ["/inventory", "/product-planning", "/restock-priority", "/purchases", "/storage-locations", "/suppliers", "/products", "/warehouse"],
+    prefixes: ["/buying-lists", "/inventory", "/product-planning", "/restock-priority", "/purchases", "/storage-locations", "/suppliers", "/products", "/warehouse"],
   },
   { key: "machines", prefixes: ["/machines", "/locations", "/machine-slots"] },
   { key: "operations", prefixes: ["/routes", "/refills"] },

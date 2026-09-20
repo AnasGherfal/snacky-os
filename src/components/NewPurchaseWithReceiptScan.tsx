@@ -1,9 +1,10 @@
 "use client";
 
+import { PurchaseReceiptPicker } from "@/components/PurchaseReceiptPicker";
 import { useState } from "react";
 import { LocalDraftForm } from "@/components/LocalDraft";
 import { BoxAwarePurchaseForm as PurchaseForm } from "@/components/BoxAwarePurchaseForm";
-import { FormField, FormSection } from "@/components/ui";
+import { FormSection } from "@/components/ui";
 import type { PurchaseSubmitResult } from "@/lib/purchase-actions";
 import type { ReceiptConfidenceLabel, ReceiptScanDraft } from "@/lib/receipt-scan-types";
 
@@ -121,24 +122,10 @@ export function NewPurchaseWithReceiptScan({
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">
               AI extraction may be wrong. Review before receiving purchase.
             </div>
-            <FormField label="Receipt image or PDF">
-              <input
-                name="receipt_file"
-                type="file"
-                accept="image/png,image/jpeg,image/webp,application/pdf"
-                required
-                className="field-input"
-                onChange={(event) => {
-                  const file = event.target.files?.[0] ?? null;
-                  setFileName(file?.name ?? "");
-                  setPreviewType(file?.type ?? null);
-                  setPreviewUrl((current) => {
-                    if (current) URL.revokeObjectURL(current);
-                    return file ? URL.createObjectURL(file) : null;
-                  });
-                }}
-              />
-            </FormField>
+            <PurchaseReceiptPicker required disabled={isScanning} onFile={(file) => {
+              setFileName(file?.name ?? "");setPreviewType(file?.type ?? null);
+              setPreviewUrl((current) => {if(current)URL.revokeObjectURL(current);return file?URL.createObjectURL(file):null;});
+            }}/>
             <button className="btn-primary w-full sm:w-auto" disabled={isScanning}>
               {isScanning ? "Scanning..." : "Scan receipt with AI"}
             </button>
