@@ -19,7 +19,7 @@ for(const role of ['owner','operator','other','crm']){
  assert.ifError((await admin.from('profiles').upsert({id,team_member_id:member,full_name:`Buying ${role}`,email,role:actualRole,roles:[actualRole],active_status:'active',must_change_password:false})).error);
  const client=createClient(config.API_URL,config.ANON_KEY,{auth:{persistSession:false,autoRefreshToken:false}});assert.ifError((await client.auth.signInWithPassword({email,password})).error);accounts[role]={id,member,email,client};
 }
-const products=Array.from({length:32},(_,i)=>({id:randomUUID(),name:`Buying fixture ${String(i+1).padStart(2,'0')} — منتج تجريبي`,active:true,case_quantity:12,cost_price:2}));
+const products=Array.from({length:32},(_,i)=>({id:randomUUID(),sku:`QA-BUYING-${String(i+1).padStart(3,'0')}`,name:`Buying fixture ${String(i+1).padStart(2,'0')} — منتج تجريبي`,active:true,case_quantity:12,cost_price:2}));
 assert.ifError((await admin.from('products').insert(products)).error);
 const date=sql("select (now() at time zone 'Africa/Tripoli')::date"),ledger=()=>sql("select jsonb_build_object('routes',(select count(*) from public.routes),'inventory',(select count(*) from public.inventory_movements),'finance',(select count(*) from public.financial_transactions),'purchases',(select count(*) from public.purchases))::text"),baseline=ledger();
 async function record(role,id){const r=await accounts[role].client.rpc('snacky_buying_workspace_v1',{p_id:id,p_filters:{}});assert.ifError(r.error);return r.data;}
