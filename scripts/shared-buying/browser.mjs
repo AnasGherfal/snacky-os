@@ -21,7 +21,7 @@ for(const role of ['owner','operator','other','crm']){
 }
 const products=Array.from({length:32},(_,i)=>({id:randomUUID(),sku:`QA-BUYING-${String(i+1).padStart(3,'0')}`,name:`Buying fixture ${String(i+1).padStart(2,'0')} — منتج تجريبي`,active:true,case_quantity:12,cost_price:2}));
 assert.ifError((await admin.from('products').insert(products)).error);
-const date=sql("select (now() at time zone 'Africa/Tripoli')::date"),ledger=()=>sql("select jsonb_build_object('routes',(select count(*) from public.routes),'inventory',(select count(*) from public.inventory_movements),'finance',(select count(*) from public.financial_transactions),'purchases',(select count(*) from public.purchases))::text"),baseline=ledger();
+const date=sql("select (now() at time zone 'Africa/Tripoli')::date"),ledger=()=>sql("select jsonb_build_object('routes',(select count(*) from public.routes),'inventory',(select count(*) from public.inventory_movements),'finance',(select count(*) from public.financial_transactions),'purchases',(select count(*) from public.purchase_orders),'purchase_lines',(select count(*) from public.purchase_order_lines),'purchase_payments',(select count(*) from public.purchase_payments))::text"),baseline=ledger();
 async function record(role,id){const r=await accounts[role].client.rpc('snacky_buying_workspace_v1',{p_id:id,p_filters:{}});assert.ifError(r.error);return r.data;}
 async function command(role,action,id,revision,payload={}){const r=await accounts[role].client.rpc('snacky_buying_command_v1',{p_command:{request_id:randomUUID(),list_id:id,revision,action,payload}});assert.ifError(r.error);return r.data;}
 let browser,safari,server,listId;const results=[],pageErrors=[],audits=[];

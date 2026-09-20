@@ -5,6 +5,7 @@ on:
       - 'src/**'
       - 'supabase/migrations/*shared_buying_lists*'
       - 'scripts/test-shared-buying*'
+      - 'scripts/test-buying-print-css.mjs'
       - 'scripts/shared-buying/**'
       - '.github/workflows/shared-buying-lists.yml'
 permissions:
@@ -41,7 +42,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: node --experimental-strip-types --test scripts/test-shared-buying.mjs scripts/test-purchase-boxes.mjs scripts/test-box-list-navigation.mjs scripts/test-authz-permissions.mjs
+      - run: node --experimental-strip-types --test scripts/test-buying-print-css.mjs scripts/test-shared-buying.mjs scripts/test-purchase-boxes.mjs scripts/test-box-list-navigation.mjs scripts/test-authz-permissions.mjs
       - name: Actual migration, buyer isolation, replay and no financial effects
         env:
           PGHOST: localhost
@@ -96,7 +97,8 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y poppler-utils
       - name: Real cross-account checklist, touch file choosers and print acceptance
         run: |
-          node --import ./scripts/company-e2e/diagnostics.mjs scripts/shared-buying/browser.mjs
+          set -o pipefail
+          node --import ./scripts/company-e2e/diagnostics.mjs scripts/shared-buying/browser.mjs 2>&1 | tee diagnostics/shared-buying-run.log
       - name: Existing real integration suites after installing shared lists
         if: always() && steps.tools.outcome == 'success'
         run: node scripts/company-e2e/native.mjs
