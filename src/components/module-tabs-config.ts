@@ -14,6 +14,7 @@ const cashTabs: ModuleTab[] = [
 const stockTabs: ModuleTab[] = [
   { label: "Storage", href: "/inventory", labelAr: "المخزون", exact: true },
   { label: "Stock Check", href: "/inventory/stock-check", labelAr: "جرد المخزون" },
+  { label: "Expiry Control", href: "/inventory/expiry", labelAr: "مراقبة الصلاحية" },
   { label: "Purchase List", href: "/restock-priority/purchase-list", labelAr: "قائمة الشراء" },
   { label: "Restock Priority", href: "/restock-priority", labelAr: "أولوية التزويد" },
   { label: "Purchases", href: "/purchases", labelAr: "المشتريات" },
