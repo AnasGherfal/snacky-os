@@ -867,7 +867,7 @@ export function RouteCreateForm({
     const filtered = manualSearchQuery
       ? machineScopedProductCandidates.filter((candidate) => productMatchesSearch(candidate.product, manualSearchQuery))
       : machineScopedProductCandidates;
-    return [...filtered].slice(0, manualSearchQuery ? 18 : 12);
+    return [...filtered];
   }, [machineScopedProductCandidates, manualSearchQuery]);
 
   const machineFallbackProducts = useMemo(() => {
@@ -957,10 +957,16 @@ export function RouteCreateForm({
       return;
     }
 
+    const safeQuantity = unitQuantity(quantity);
     setManualStopItems((current) => {
-      const next = current.filter((item) => !(item.machineId === machineId && item.productId === productId));
-      const safeQuantity = unitQuantity(quantity);
-      if (safeQuantity > 0) next.push({ machineId, productId, quantity: safeQuantity });
+      const existingIndex = current.findIndex((item) => item.machineId === machineId && item.productId === productId);
+      if (safeQuantity <= 0) {
+        return existingIndex < 0 ? current : current.filter((_, index) => index !== existingIndex);
+      }
+      if (existingIndex < 0) return [...current, { machineId, productId, quantity: safeQuantity }];
+
+      const next = [...current];
+      next[existingIndex] = { ...next[existingIndex], quantity: safeQuantity };
       return next;
     });
   };
@@ -975,13 +981,6 @@ export function RouteCreateForm({
     }
     const maxTotal = availableForMachine;
     const safeTotal = Math.min(unitQuantity(desiredManual), maxTotal);
-    if (unitQuantity(desiredManual) > availableForMachine) {
-      setError(tr(
-        locale,
-        `Only ${availableForMachine} units remain available for this machine after the other route stops.`,
-        `المتاح لهذا الجهاز هو ${availableForMachine} وحدة فقط بعد كميات أجهزة الجولة الأخرى.`,
-      ));
-    }
     setManualStopQty(machineId, productId, safeTotal);
   };
 
@@ -1287,22 +1286,28 @@ export function RouteCreateForm({
     { id: "review", label: creationMode === "full" ? tr(locale, "4. Review", "4. المراجعة") : tr(locale, "3. Review", "3. المراجعة"), helper: tr(locale, "Confirm and create", "تأكيد وإنشاء") },
   ];
   const activeBuilderStepIndex = Math.max(0, builderSteps.findIndex((step) => step.id === builderStep));
+  const uniqueAvailabilityWarnings = Array.from(new Set(availabilityWarnings));
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       <DraftRestoreBanner pendingDraft={localDraft.pendingDraft} onRestore={localDraft.restoreDraft} onDiscard={localDraft.discardDraft} />
       {!localDraft.pendingDraft ? <DraftSaveStatus status={localDraft.status} /> : null}
-      <div className={`rounded-xl border p-3 text-sm ${xyRefreshStatus === "warning" ? "border-amber-200 bg-amber-50 text-amber-950" : "border-sky-200 bg-sky-50 text-sky-950"}`} role="status" aria-live="polite">
-        <span className="font-semibold">{xyRefreshStatus === "refreshing" ? tr(locale, "Live machine refresh", "تحديث الأجهزة المباشر") : tr(locale, "XY machine data", "بيانات أجهزة XY")}</span>
-        <span className="ms-2">{xyRefreshMessage}</span>
-      </div>
-      {availabilityWarnings.length ? (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950" role="status">
-          <div className="font-semibold">{tr(locale, "Route creation is still available", "لا يزال إنشاء الجولة متاحًا")}</div>
-          <ul className="mt-2 list-disc space-y-1 ps-5">
-            {availabilityWarnings.map((warning) => <li key={warning}>{warning}</li>)}
-          </ul>
+      {xyRefreshStatus !== "fresh" ? (
+        <div className={`rounded-xl border p-3 text-sm ${xyRefreshStatus === "warning" ? "border-amber-200 bg-amber-50 text-amber-950" : "border-sky-200 bg-sky-50 text-sky-950"}`} role="status" aria-live="polite">
+          <span className="font-semibold">{xyRefreshStatus === "refreshing" ? tr(locale, "Live machine refresh", "تحديث الأجهزة المباشر") : tr(locale, "XY machine data", "بيانات أجهزة XY")}</span>
+          <span className="ms-2">{xyRefreshMessage}</span>
         </div>
+      ) : null}
+      {uniqueAvailabilityWarnings.length ? (
+        <details className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          <summary className="cursor-pointer font-semibold">
+            {tr(locale, "Planning notices", "ملاحظات التخطيط")} ({uniqueAvailabilityWarnings.length})
+          </summary>
+          <div className="mt-2 text-xs text-amber-800">{tr(locale, "These notices do not stop route creation. Open only when you need the details.", "هذه الملاحظات لا تمنع إنشاء الجولة. افتحها فقط عند الحاجة للتفاصيل.")}</div>
+          <ul className="mt-2 list-disc space-y-1 ps-5">
+            {uniqueAvailabilityWarnings.map((warning) => <li key={warning}>{warning}</li>)}
+          </ul>
+        </details>
       ) : null}
       {error ? (
         <div ref={saveErrorRef} className="fixed inset-x-3 bottom-3 z-50 max-h-[60vh] overflow-y-auto rounded-xl border border-rose-200 bg-white p-4 text-sm shadow-2xl md:left-auto md:right-4 md:w-[440px]" role="alert" aria-live="assertive">
@@ -1469,17 +1474,31 @@ export function RouteCreateForm({
                   const machine = machinesById.get(machineId);
                   if (!machine) return null;
                   const selected = machineId === selectedManualMachineId;
-                  const machineManualCount = manualItemsByMachine.get(machineId)?.length ?? 0;
-                  const machineRecommendedCount = recommendationGroupsByMachine.get(machineId)?.length ?? 0;
+                  const machineManualItems = manualItemsByMachine.get(machineId) ?? [];
+                  const assignedProductIds = new Set(machineManualItems.filter((item) => unitQuantity(item.quantity) > 0).map((item) => item.productId));
+                  const requiredRefillGroups = (recommendationGroupsByMachine.get(machineId) ?? []).filter((group) => group.recommendedTotal > 0);
+                  const assignedRequiredCount = requiredRefillGroups.filter((group) => assignedProductIds.has(group.productId)).length;
+                  const unresolvedRequiredCount = Math.max(0, requiredRefillGroups.length - assignedRequiredCount);
                   return (
                     <button
                       key={machineId}
                       type="button"
                       onClick={() => focusManualMachine(machineId)}
-                      className={`rounded-full border px-3 py-2 text-left text-sm transition ${selected ? "border-[var(--snacky-primary)] bg-emerald-50 text-slate-950" : "border-slate-200 bg-white text-slate-700 hover:border-slate-400"}`}
+                      className={`rounded-xl border px-3 py-2 text-left text-sm transition ${selected ? "border-[var(--snacky-primary)] bg-emerald-50 text-slate-950" : unresolvedRequiredCount > 0 ? "border-amber-300 bg-amber-50 text-slate-800 hover:border-amber-400" : "border-slate-200 bg-white text-slate-700 hover:border-slate-400"}`}
                     >
                       <div className="font-medium">{machineLabel(machine)}</div>
-                      <div className="text-xs text-slate-500">{machine.machine_code} - Manual {machineManualCount} - Recommended {machineRecommendedCount}</div>
+                      <div className="mt-0.5 text-xs text-slate-500">{machine.machine_code}</div>
+                      {requiredRefillGroups.length ? (
+                        <div className={`mt-1 text-xs font-semibold ${unresolvedRequiredCount > 0 ? "text-amber-800" : "text-emerald-700"}`}>
+                          {tr(
+                            locale,
+                            `${assignedRequiredCount}/${requiredRefillGroups.length} refill products assigned${unresolvedRequiredCount > 0 ? ` · ${unresolvedRequiredCount} missing` : " · ready"}`,
+                            `تم تحديد ${assignedRequiredCount}/${requiredRefillGroups.length} من منتجات التعبئة${unresolvedRequiredCount > 0 ? ` · ${unresolvedRequiredCount} غير محدد` : " · جاهز"}`,
+                          )}
+                        </div>
+                      ) : (
+                        <div className="mt-1 text-xs text-slate-500">{tr(locale, `${machineManualItems.length} products assigned · no automatic refill pending`, `تم تحديد ${machineManualItems.length} منتجات · لا توجد تعبئة تلقائية معلقة`)}</div>
+                      )}
                     </button>
                   );
                 })}

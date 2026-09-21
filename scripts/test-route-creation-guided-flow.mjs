@@ -59,7 +59,8 @@ test("stale VMS stock cannot silently populate route quantities", () => {
 test("optional planning timeouts never replace the route builder", () => {
   assert.match(pageSource, /const blockingQueryIssues = queryIssues\.filter\(\(issue\) => issue\.key === "machines"\)/);
   assert.doesNotMatch(pageSource, /if \(queryIssues\.length\)/);
-  assert.match(source, /Route creation is still available/);
+  assert.match(source, /Planning notices/);
+  assert.match(source, /These notices do not stop route creation/);
   assert.match(pageSource, /fullRouteAvailable=\{!productsError && !storageError\}/);
   assert.match(source, /Storage quantities must be verified before products can be assigned/);
   assert.match(source, /if \(!storageKnown \|\| storageAvailable <= 0\) return 0/);
@@ -85,7 +86,8 @@ test("manual product controls display and enforce machine-specific remaining sto
   assert.match(source, /Available for this machine/);
   assert.match(source, /Unassigned after route/);
   assert.match(source, /availableForMachine <= 0/);
-  assert.match(source, /Only \$\{availableForMachine\} units remain available for this machine after the other route stops/);
+  assert.match(source, /const safeTotal = Math\.min\(unitQuantity\(desiredManual\), maxTotal\)/);
+  assert.match(source, /max=\{storageKnown \? available : 0\}/);
 });
 
 test("route creation fails closed when stock cannot be verified", () => {
@@ -112,4 +114,53 @@ test("route planning uses narrow storage balances and the latest active VMS batc
   assert.match(resilienceMigration, /join latest_batch lb on lb\.id = vss\.import_batch_id/);
   assert.match(resilienceMigration, /security_invoker = true/);
   assert.match(resilienceMigration, /revoke all on table public\.refill_recommendations from public, anon/);
+});
+
+
+test("manual quantity edits keep their row position instead of moving to the bottom", () => {
+  const setterStart = source.indexOf("const setManualStopQty");
+  const setterEnd = source.indexOf("const setDesiredManualQty", setterStart);
+  assert.notEqual(setterStart, -1);
+  assert.notEqual(setterEnd, -1);
+  const setterSource = source.slice(setterStart, setterEnd);
+
+  assert.match(setterSource, /const existingIndex = current\.findIndex/);
+  assert.match(setterSource, /next\[existingIndex\] = \{ \.\.\.next\[existingIndex\], quantity: safeQuantity \}/);
+  assert.match(setterSource, /existingIndex < 0 \? current : current\.filter/);
+});
+
+test("the machine product picker shows the complete machine-scoped list", () => {
+  const pickerStart = source.indexOf("const machineScopedSearchResults");
+  const pickerEnd = source.indexOf("const machineFallbackProducts", pickerStart);
+  assert.notEqual(pickerStart, -1);
+  assert.notEqual(pickerEnd, -1);
+  const pickerSource = source.slice(pickerStart, pickerEnd);
+
+  assert.match(pickerSource, /return \[\.\.\.filtered\];/);
+  assert.doesNotMatch(pickerSource, /\.slice\(/);
+});
+
+test("route creation shows assignment completeness per selected machine", () => {
+  assert.match(source, /unresolvedRequiredCount/);
+  assert.match(source, /refill products assigned/);
+  assert.match(source, /missing/);
+  assert.match(source, /no automatic refill pending/);
+});
+
+test("non-blocking route planning notices are compact and deduplicated", () => {
+  assert.match(source, /const uniqueAvailabilityWarnings = Array\.from\(new Set\(availabilityWarnings\)\)/);
+  assert.match(source, /<details className="rounded-xl border border-amber-200/);
+  assert.match(source, /Planning notices/);
+  assert.match(source, /xyRefreshStatus !== "fresh"/);
+});
+
+test("manual overages clamp to verified stock without stacking another global warning", () => {
+  const setterStart = source.indexOf("const setDesiredManualQty");
+  const setterEnd = source.indexOf("const addProductQty", setterStart);
+  assert.notEqual(setterStart, -1);
+  assert.notEqual(setterEnd, -1);
+  const setterSource = source.slice(setterStart, setterEnd);
+
+  assert.match(setterSource, /const safeTotal = Math\.min\(unitQuantity\(desiredManual\), maxTotal\)/);
+  assert.doesNotMatch(setterSource, /Only \$\{availableForMachine\} units remain available/);
 });
