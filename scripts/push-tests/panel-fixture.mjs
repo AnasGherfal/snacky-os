@@ -18,6 +18,7 @@ for(const [id,pkg,file] of [
 ]) modules[id]=fs.readFileSync(path.join(path.dirname(require.resolve(pkg+'/package.json')),file),'utf8');
 for(const name of ['NotificationCenter','NotificationActivationCard','CompanyNotices']) modules['@/components/'+name]=transpile('src/components/'+name+'.tsx');
 modules['@/lib/push-browser']=transpile('src/lib/push-browser.ts');
+modules['@/lib/notification-prompt']=transpile('src/lib/notification-prompt.ts');
 modules['./NotificationCenter.module.css']='module.exports={panel:"panel",header:"panel-header",body:"panel-body"};';
 modules['next/link']='module.exports=function Link(props){return require("react").createElement("a",props,props.children);};';
 modules['lucide-react']='for(const name of ["Bell","CheckCheck","X","BellRing","Loader2"])exports[name]=function Icon(props){return require("react").createElement("span",{...props,"aria-hidden":true},name==="X"?"×":"●");};';

@@ -1,0 +1,60 @@
+name: Notification opt-in checks
+
+on:
+  pull_request:
+    paths:
+      - 'src/components/NotificationActivationCard.tsx'
+      - 'src/components/NotificationOptInPrompt.tsx'
+      - 'src/components/ShellChrome.tsx'
+      - 'src/lib/notification-prompt.ts'
+      - 'src/lib/push-browser.ts'
+      - 'scripts/test-notification-opt-in*.mjs'
+      - '.github/workflows/notification-opt-in.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'src/components/NotificationActivationCard.tsx'
+      - 'src/components/NotificationOptInPrompt.tsx'
+      - 'src/lib/notification-prompt.ts'
+      - 'scripts/test-notification-opt-in*.mjs'
+      - '.github/workflows/notification-opt-in.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: notification-opt-in-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked application dependencies
+        run: npm ci
+      - name: Notification and PWA unit regressions
+        run: |
+          find scripts -maxdepth 1 \( -name 'test-*notification*.mjs' -o -name 'test-*push*.mjs' -o -name 'test-*pwa*.mjs' \) ! -name '*browser*' -print0 | xargs -0 -r node --experimental-strip-types --test
+      - name: Lint changed application files
+        run: npx eslint src/components/NotificationActivationCard.tsx src/components/NotificationOptInPrompt.tsx src/components/ShellChrome.tsx src/lib/notification-prompt.ts
+      - name: Production build and TypeScript check
+        run: npm run build && npm run typecheck
+      - name: Install isolated browser test tools
+        run: npm install --no-save --package-lock=false esbuild@0.25.9 playwright@1.55.1
+      - name: Install test browser
+        run: npx playwright install --with-deps chromium
+      - name: Opt-in browser behavior and RTL layout
+        run: node scripts/test-notification-opt-in-browser.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: notification-opt-in-${{ github.sha }}
+          path: artifacts/notification-opt-in
+          if-no-files-found: ignore
+          retention-days: 7
