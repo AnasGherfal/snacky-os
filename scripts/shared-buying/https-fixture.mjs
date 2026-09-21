@@ -15,8 +15,20 @@ export async function startBuyingTestTLS(){
  assert.equal(created.status,0,'Could not prepare the isolated TLS fixture');
  const server=createServer({key:readFileSync(key),cert:readFileSync(cert)},(incoming,outgoing)=>{
   // Fixed loopback upstream, never a destination taken from browser input.
-  const upstream=request({hostname:host,port:3000,path:incoming.url,method:incoming.method,headers:{...incoming.headers,host:`${host}:${port}`,'x-forwarded-host':`${host}:${port}`,'x-forwarded-proto':'https','x-forwarded-port':String(port)}},response=>{
-   outgoing.writeHead(response.statusCode??502,response.headers);response.pipe(outgoing);
+  // Present one internally consistent HTTPS origin to Next so Server Actions,
+  // CSRF checks and secure cookies behave like production while the browser
+  // still connects only to the isolated loopback TLS endpoint.
+  const upstreamOrigin='https://localhost:3000';
+  const headers={...incoming.headers,host:'localhost:3000','x-forwarded-host':'localhost:3000','x-forwarded-proto':'https','x-forwarded-port':'3000'};
+  if(headers.origin===origin)headers.origin=upstreamOrigin;
+  if(typeof headers.referer==='string'&&headers.referer.startsWith(origin))headers.referer=upstreamOrigin+headers.referer.slice(origin.length);
+  const upstream=request({hostname:host,port:3000,path:incoming.url,method:incoming.method,headers},response=>{
+   const responseHeaders={...response.headers};
+   for(const name of ['location','x-action-redirect']){
+    const value=responseHeaders[name];
+    if(typeof value==='string'&&value.startsWith(upstreamOrigin))responseHeaders[name]=origin+value.slice(upstreamOrigin.length);
+   }
+   outgoing.writeHead(response.statusCode??502,responseHeaders);response.pipe(outgoing);
   });
   upstream.on('error',()=>{if(!outgoing.headersSent)outgoing.writeHead(502);outgoing.end('Isolated upstream unavailable');});
   incoming.on('aborted',()=>upstream.destroy());incoming.pipe(upstream);
