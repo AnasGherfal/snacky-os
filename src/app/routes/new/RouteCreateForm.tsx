@@ -1628,7 +1628,7 @@ export function RouteCreateForm({
                                   ) : null}
                                   {!candidate.product.storageKnown ? (
                                     <span className="rounded-full bg-amber-100 px-2 py-1 font-semibold text-amber-900">{tr(locale, "Stock unknown", "المخزون غير معروف")}</span>
-                                  ) : availableForMachine <= 0 && selectedQty === 0 ? (
+                                  ) : availableForMachine !== null && availableForMachine <= 0 && selectedQty === 0 ? (
                                     <span className="rounded-full bg-rose-100 px-2 py-1 font-semibold text-rose-800">{tr(locale, "Out of stock", "غير متوفر")}</span>
                                   ) : null}
                                 </div>
