@@ -59,7 +59,8 @@ test("stale VMS stock cannot silently populate route quantities", () => {
 test("optional planning timeouts never replace the route builder", () => {
   assert.match(pageSource, /const blockingQueryIssues = queryIssues\.filter\(\(issue\) => issue\.key === "machines"\)/);
   assert.doesNotMatch(pageSource, /if \(queryIssues\.length\)/);
-  assert.match(source, /Route creation is still available/);
+  assert.match(source, /Planning notices/);
+  assert.match(source, /These notices do not stop route creation/);
   assert.match(pageSource, /fullRouteAvailable=\{!productsError && !storageError\}/);
   assert.match(source, /Storage quantities must be verified before products can be assigned/);
   assert.match(source, /if \(!storageKnown \|\| storageAvailable <= 0\) return 0/);
@@ -85,7 +86,8 @@ test("manual product controls display and enforce machine-specific remaining sto
   assert.match(source, /Available for this machine/);
   assert.match(source, /Unassigned after route/);
   assert.match(source, /availableForMachine <= 0/);
-  assert.match(source, /Only \$\{availableForMachine\} units remain available for this machine after the other route stops/);
+  assert.match(source, /const safeTotal = Math\.min\(unitQuantity\(desiredManual\), maxTotal\)/);
+  assert.match(source, /max=\{storageKnown \? available : 0\}/);
 });
 
 test("route creation fails closed when stock cannot be verified", () => {
