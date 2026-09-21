@@ -28,6 +28,7 @@ test('CRM compensation is capped at 10 LYD for non-management users at UI and DB
   assert.match(migration,/new\.refund_amount_lyd > 10/);
   assert.match(migration,/not public\.snacky_crm_manager\(\)/);
   assert.match(migration,/before insert or update of refund_amount_lyd on public\.issues/);
+  assert.match(migration,/new\.refund_amount_lyd is distinct from old\.refund_amount_lyd/);
 });
 
 test('quick intake defaults to WhatsApp but preserves other channels in optional details',()=>{
