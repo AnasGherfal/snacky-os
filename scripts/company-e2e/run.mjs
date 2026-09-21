@@ -209,8 +209,11 @@ try {
     const task = await c('crm', 'task.save', null, { kind: 'issue', related_id: issue.id, title: 'QA inspect machine', task_type: 'field_action', assigned_to: accounts.operator.member, due_date: today });
     w = await read('operator', 'task', task.id); await c('operator', 'task.save', task.id, { version: w.record.data.version, status: 'completed', result: 'QA field action complete' });
     w = await read('crm', 'issue', issue.id); assert.notEqual(w.record.status, 'resolved'); assert.ok(w.record.data.field_completed_at);
-    await c('crm', 'issue.save', issue.id, { version: w.record.data.version, status: 'resolved', resolution: 'QA customer contacted and resolved', refund_amount_lyd: 0 });
-    assert.equal((await read('crm', 'issue', issue.id)).record.status, 'resolved'); assert.equal(ledger(), moneyBefore);
+    const excessiveCompensation = await accounts.crm.client.rpc('snacky_crm_command_v1', { p_command_id: randomUUID(), p_action: 'issue.save', p_id: issue.id, p_payload: { version: w.record.data.version, refund_amount_lyd: 11 } });
+    assert.ok(excessiveCompensation.error, 'Customer Relations must not approve more than 10 LYD');
+    w = await read('crm', 'issue', issue.id); assert.equal(Number(w.record.data.refund_amount_lyd ?? 0), 0);
+    await c('crm', 'issue.save', issue.id, { version: w.record.data.version, status: 'resolved', resolution: 'QA customer contacted and resolved', refund_amount_lyd: 10 });
+    w = await read('crm', 'issue', issue.id); assert.equal(w.record.status, 'resolved'); assert.equal(Number(w.record.data.refund_amount_lyd), 10); assert.equal(ledger(), moneyBefore);
     const rent = await c('owner', 'obligation.create', null, { location_id: location.id, title: 'QA rent follow-up', amount_lyd: 100, due_date: today, frequency: 'monthly', assigned_to: accounts.crm.member });
     const rejected = await accounts.crm.client.rpc('snacky_crm_command_v1', { p_command_id: randomUUID(), p_action: 'obligation.paid', p_id: rent.id, p_payload: { payment_date: today, payment_method: 'cash' } }); assert.ok(rejected.error, 'Rent must not be reported paid without proof');
     assert.equal((await read('crm', 'obligation', rent.id)).record.status, 'open'); assert.equal(ledger(), moneyBefore);
