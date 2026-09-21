@@ -7,7 +7,7 @@ returns trigger
 language plpgsql
 security definer
 set search_path = public, pg_catalog
-as $
+as $compensation$
 declare
   compensation_changed boolean := false;
 begin
@@ -28,7 +28,7 @@ begin
   end if;
   return new;
 end;
-$;
+$compensation$;
 
 drop trigger if exists issues_customer_compensation_limit_v1 on public.issues;
 create trigger issues_customer_compensation_limit_v1
