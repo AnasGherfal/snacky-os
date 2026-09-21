@@ -1658,7 +1658,7 @@ export function RouteCreateForm({
                                   <div className="mt-0.5 text-xs text-slate-500">
                                     {candidate.product.sku ?? tr(locale, "No SKU", "لا يوجد SKU")}
                                     {candidate.product.storageKnown
-                                      ? tr(locale, ` · Available ${availableForMachine ?? 0} · Left after route ${remainingAfterRoute ?? 0}`, ` · المتاح ${availableForMachine ?? 0} · المتبقي بعد الجولة ${remainingAfterRoute ?? 0}`)
+                                      ? tr(locale, ` · Storage ${candidate.product.storageQty} · Available for this machine ${availableForMachine ?? 0} · Unassigned after route ${remainingAfterRoute ?? 0}`, ` · المخزون ${candidate.product.storageQty} · المتاح لهذا الجهاز ${availableForMachine ?? 0} · غير المخصص بعد الجولة ${remainingAfterRoute ?? 0}`)
                                       : tr(locale, " · Storage unknown", " · المخزون غير معروف")}
                                   </div>
                                   {candidate.lanes.length ? (
@@ -1670,7 +1670,7 @@ export function RouteCreateForm({
                                         {candidate.lanes.map((lane) => (
                                           <div key={lane.slotCode} className="flex flex-wrap justify-between gap-2">
                                             <span>{tr(locale, "Lane", "الفتحة")} {lane.slotCode}</span>
-                                            <span>{tr(locale, `Current ${lane.currentQty} / ${lane.capacity} · Bring ${lane.neededQty}`, `الحالي ${lane.currentQty} / ${lane.capacity} · أحضر ${lane.neededQty}`)}</span>
+                                            <span>{tr(locale, `Current ${lane.currentQty} / Capacity ${lane.capacity} / Bring ${lane.neededQty}`, `الحالي ${lane.currentQty} / السعة ${lane.capacity} / أحضر ${lane.neededQty}`)}</span>
                                           </div>
                                         ))}
                                       </div>
