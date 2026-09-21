@@ -5,6 +5,8 @@ on:
     paths:
       - 'src/components/CrmRecordForms.tsx'
       - 'src/components/CrmWorkspace.tsx'
+      - 'src/components/CompanyHub.tsx'
+      - 'src/app/company/profile/page.tsx'
       - 'supabase/migrations/20260921173500_customer_support_compensation_limit.sql'
       - 'scripts/test-customer-support-quick.mjs'
       - '.github/workflows/customer-support-quick.yml'
