@@ -59,8 +59,8 @@ test("stale VMS stock cannot silently populate route quantities", () => {
 test("optional planning timeouts never replace the route builder", () => {
   assert.match(pageSource, /const blockingQueryIssues = queryIssues\.filter\(\(issue\) => issue\.key === "machines"\)/);
   assert.doesNotMatch(pageSource, /if \(queryIssues\.length\)/);
-  assert.match(source, /Planning notices/);
-  assert.match(source, /These notices do not stop route creation/);
+  assert.match(source, /const planningWarnings = Array\.from\(new Set/);
+  assert.match(source, /Planning notice/);
   assert.match(pageSource, /fullRouteAvailable=\{!productsError && !storageError\}/);
   assert.match(source, /Storage quantities must be verified before products can be assigned/);
   assert.match(source, /if \(!storageKnown \|\| storageAvailable <= 0\) return 0/);
@@ -129,15 +129,16 @@ test("manual quantity edits keep their row position instead of moving to the bot
   assert.match(setterSource, /existingIndex < 0 \? current : current\.filter/);
 });
 
-test("the machine product picker shows the complete machine-scoped list", () => {
-  const pickerStart = source.indexOf("const machineScopedSearchResults");
-  const pickerEnd = source.indexOf("const machineFallbackProducts", pickerStart);
+test("the machine product picker shows one complete stable active-product catalog", () => {
+  const pickerStart = source.indexOf("const stableMachineProductCatalog");
+  const pickerEnd = source.indexOf("const toggleValue", pickerStart);
   assert.notEqual(pickerStart, -1);
   assert.notEqual(pickerEnd, -1);
   const pickerSource = source.slice(pickerStart, pickerEnd);
 
-  assert.match(pickerSource, /return \[\.\.\.filtered\];/);
-  assert.doesNotMatch(pickerSource, /\.slice\(/);
+  assert.match(pickerSource, /return products/);
+  assert.match(pickerSource, /const visibleMachineProductCatalog/);
+  assert.doesNotMatch(pickerSource, /\.slice\(0,/);
 });
 
 test("route creation shows assignment completeness per selected machine", () => {
@@ -148,10 +149,10 @@ test("route creation shows assignment completeness per selected machine", () => 
 });
 
 test("non-blocking route planning notices are compact and deduplicated", () => {
-  assert.match(source, /const uniqueAvailabilityWarnings = Array\.from\(new Set\(availabilityWarnings\)\)/);
+  assert.match(source, /const planningWarnings = Array\.from\(new Set/);
+  assert.match(source, /xyRefreshStatus === "warning"/);
   assert.match(source, /<details className="rounded-xl border border-amber-200/);
-  assert.match(source, /Planning notices/);
-  assert.match(source, /xyRefreshStatus !== "fresh"/);
+  assert.match(source, /Planning notice/);
 });
 
 test("manual overages clamp to verified stock without stacking another global warning", () => {

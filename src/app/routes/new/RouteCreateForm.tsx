@@ -231,7 +231,7 @@ export function RouteCreateForm({
   diagnostics,
   machinePlanogramRows,
   products,
-  recentProductIds,
+  recentProductIds: _recentProductIds,
   allowAdminOverride,
   defaultRouteDate,
   availabilityWarnings,
@@ -839,63 +839,43 @@ export function RouteCreateForm({
     });
 
     return Array.from(candidates.values())
-      .sort((a, b) => {
-        const selectedDifference = b.selectedQty - a.selectedQty;
-        if (selectedDifference) return selectedDifference;
-        const recommendationDifference = b.recommendedQty - a.recommendedQty;
-        if (recommendationDifference) return recommendationDifference;
-        const planogramDifference = Number(b.sourceKinds.has("planogram")) - Number(a.sourceKinds.has("planogram"));
-        if (planogramDifference) return planogramDifference;
-        return comparePickupProductRows(
-          { productName: a.product.name, productCategory: a.product.category, productBrand: a.product.brand },
-          { productName: b.product.name, productCategory: b.product.category, productBrand: b.product.brand },
-        );
-      });
+      .sort((a, b) => comparePickupProductRows(
+        { productName: a.product.name, productCategory: a.product.category, productBrand: a.product.brand },
+        { productName: b.product.name, productCategory: b.product.category, productBrand: b.product.brand },
+      ));
   }, [productsById, selectedManualItems, selectedManualPlanogramRows, selectedManualRecommendationGroups]);
 
-  const machineScopedProductIds = useMemo(
-    () => new Set(machineScopedProductCandidates.map((candidate) => candidate.product.id)),
+  const machineScopedCandidateByProductId = useMemo(
+    () => new Map(machineScopedProductCandidates.map((candidate) => [candidate.product.id, candidate])),
     [machineScopedProductCandidates],
   );
 
-  const recentFallbackProducts = useMemo(
-    () => recentProductIds.map((id) => productsById.get(id)).filter(Boolean) as ProductPickOption[],
-    [productsById, recentProductIds],
-  );
-
-  const machineScopedSearchResults = useMemo(() => {
-    const filtered = manualSearchQuery
-      ? machineScopedProductCandidates.filter((candidate) => productMatchesSearch(candidate.product, manualSearchQuery))
-      : machineScopedProductCandidates;
-    return [...filtered];
-  }, [machineScopedProductCandidates, manualSearchQuery]);
-
-  const machineFallbackProducts = useMemo(() => {
-    const fallbackSource = products.filter((product) => {
-      if (machineScopedProductIds.has(product.id)) return false;
-      if (!product.storageKnown || product.availableQty <= 0) return false;
-      return true;
-    });
-    if (manualSearchQuery) {
-      return fallbackSource
-        .filter((product) => productMatchesSearch(product, manualSearchQuery))
-        .sort((a, b) => comparePickupProductRows(
-          { productName: a.name, productCategory: a.category, productBrand: a.brand },
-          { productName: b.name, productCategory: b.category, productBrand: b.brand },
-        ) || b.availableQty - a.availableQty || a.name.localeCompare(b.name))
-        .slice(0, 18);
-    }
-
-    const recent = recentFallbackProducts.filter((product) => !machineScopedProductIds.has(product.id));
-    const recentIds = new Set(recent.map((product) => product.id));
-    const remaining = fallbackSource
-      .filter((product) => !recentIds.has(product.id))
+  const stableMachineProductCatalog = useMemo(() => {
+    return products
+      .map((product) => {
+        const scoped = machineScopedCandidateByProductId.get(product.id);
+        const selectedQty = scoped?.selectedQty
+          ?? selectedManualItems.find((item) => item.productId === product.id)?.quantity
+          ?? 0;
+        return scoped ?? {
+          product,
+          selectedQty,
+          recommendedQty: 0,
+          sourceKinds: new Set<string>(),
+          slotCodes: new Set<string>(),
+          lanes: [] as Array<{ slotCode: string; currentQty: number; capacity: number; neededQty: number }>,
+        };
+      })
       .sort((a, b) => comparePickupProductRows(
-        { productName: a.name, productCategory: a.category, productBrand: a.brand },
-        { productName: b.name, productCategory: b.category, productBrand: b.brand },
-      ) || b.availableQty - a.availableQty || a.name.localeCompare(b.name));
-    return [...recent, ...remaining].slice(0, 12);
-  }, [machineScopedProductIds, manualSearchQuery, products, recentFallbackProducts]);
+        { productName: a.product.name, productCategory: a.product.category, productBrand: a.product.brand },
+        { productName: b.product.name, productCategory: b.product.category, productBrand: b.product.brand },
+      ));
+  }, [machineScopedCandidateByProductId, products, selectedManualItems]);
+
+  const visibleMachineProductCatalog = useMemo(() => {
+    if (!manualSearchQuery) return stableMachineProductCatalog;
+    return stableMachineProductCatalog.filter((candidate) => productMatchesSearch(candidate.product, manualSearchQuery));
+  }, [manualSearchQuery, stableMachineProductCatalog]);
 
   const toggleValue = (values: string[], value: string) => (values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
   const toggleRecommendationFamily = (groupKey: string, defaultExpanded = false) => {
@@ -1020,7 +1000,7 @@ export function RouteCreateForm({
   };
 
   const showMissingProduct = Boolean(notFoundQuery)
-    || (Boolean(search.trim()) && selectedManualMachineId !== "" && machineScopedSearchResults.length === 0 && machineFallbackProducts.length === 0);
+    || (Boolean(search.trim()) && selectedManualMachineId !== "" && visibleMachineProductCatalog.length === 0);
 
   const toggleRouteMachine = (machineId: string) => {
     if (!machineIds.includes(machineId)) {
@@ -1286,28 +1266,29 @@ export function RouteCreateForm({
     { id: "review", label: creationMode === "full" ? tr(locale, "4. Review", "4. المراجعة") : tr(locale, "3. Review", "3. المراجعة"), helper: tr(locale, "Confirm and create", "تأكيد وإنشاء") },
   ];
   const activeBuilderStepIndex = Math.max(0, builderSteps.findIndex((step) => step.id === builderStep));
-  const uniqueAvailabilityWarnings = Array.from(new Set(availabilityWarnings));
+  const planningWarnings = Array.from(new Set([
+    ...(xyRefreshStatus === "warning" ? [xyRefreshMessage] : []),
+    ...availabilityWarnings.map((warning) => String(warning ?? "").trim()).filter(Boolean),
+  ]));
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       <DraftRestoreBanner pendingDraft={localDraft.pendingDraft} onRestore={localDraft.restoreDraft} onDiscard={localDraft.discardDraft} />
       {!localDraft.pendingDraft ? <DraftSaveStatus status={localDraft.status} /> : null}
-      {xyRefreshStatus !== "fresh" ? (
-        <div className={`rounded-xl border p-3 text-sm ${xyRefreshStatus === "warning" ? "border-amber-200 bg-amber-50 text-amber-950" : "border-sky-200 bg-sky-50 text-sky-950"}`} role="status" aria-live="polite">
-          <span className="font-semibold">{xyRefreshStatus === "refreshing" ? tr(locale, "Live machine refresh", "تحديث الأجهزة المباشر") : tr(locale, "XY machine data", "بيانات أجهزة XY")}</span>
-          <span className="ms-2">{xyRefreshMessage}</span>
-        </div>
-      ) : null}
-      {uniqueAvailabilityWarnings.length ? (
-        <details className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+      {planningWarnings.length ? (
+        <details className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950" role="status" open={false}>
           <summary className="cursor-pointer font-semibold">
-            {tr(locale, "Planning notices", "ملاحظات التخطيط")} ({uniqueAvailabilityWarnings.length})
+            {tr(locale, "Route creation is still available", "لا يزال إنشاء الجولة متاحًا")} · {tr(locale, `Planning notice${planningWarnings.length === 1 ? "" : "s"} (${planningWarnings.length})`, `تنبيهات التخطيط (${planningWarnings.length})`)}
           </summary>
-          <div className="mt-2 text-xs text-amber-800">{tr(locale, "These notices do not stop route creation. Open only when you need the details.", "هذه الملاحظات لا تمنع إنشاء الجولة. افتحها فقط عند الحاجة للتفاصيل.")}</div>
           <ul className="mt-2 list-disc space-y-1 ps-5">
-            {uniqueAvailabilityWarnings.map((warning) => <li key={warning}>{warning}</li>)}
+            {planningWarnings.map((warning) => <li key={warning}>{warning}</li>)}
           </ul>
         </details>
+      ) : xyRefreshStatus === "refreshing" ? (
+        <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-950" role="status" aria-live="polite">
+          <span className="font-semibold">{tr(locale, "Refreshing XY", "تحديث XY")}</span>
+          <span className="ms-2">{xyRefreshMessage}</span>
+        </div>
       ) : null}
       {error ? (
         <div ref={saveErrorRef} className="fixed inset-x-3 bottom-3 z-50 max-h-[60vh] overflow-y-auto rounded-xl border border-rose-200 bg-white p-4 text-sm shadow-2xl md:left-auto md:right-4 md:w-[440px]" role="alert" aria-live="assertive">
@@ -1610,127 +1591,150 @@ export function RouteCreateForm({
                 ) : null}
 
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between gap-3">
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                     <div>
-                      <div className="text-sm font-semibold text-slate-800">{tr(locale, "Planogram and recommended products for this machine", "منتجات المخطط والمنتجات الموصى بها لهذا الجهاز")}</div>
-                      <div className="text-xs text-slate-500">{tr(locale, "Snacky OS keeps this list scoped to", "يحصر Snacky OS هذه القائمة على")} {machineLabel(selectedManualMachine)} {tr(locale, "only.", "فقط.")}</div>
+                      <div className="text-sm font-semibold text-slate-800">{tr(locale, "All active products — same order for every machine", "كل المنتجات النشطة — نفس الترتيب لكل جهاز")}</div>
+                      <div className="text-xs text-slate-500">
+                        {tr(locale, "Machine-specific planogram and XY recommendations are labels only; products are never hidden just because another machine uses a different setup.", "مخطط الجهاز وتوصيات XY تظهر كعلامات فقط؛ لا يتم إخفاء المنتج بسبب اختلاف إعداد جهاز آخر.")}
+                      </div>
                     </div>
-                    <div className="text-xs text-slate-500">{tr(locale, "Enter adds scanned products instantly.", "زر Enter يضيف المنتجات الممسوحة فورًا.")}</div>
+                    <div className="text-xs font-medium text-slate-500">
+                      {visibleMachineProductCatalog.length} {tr(locale, "products", "منتج")}
+                    </div>
                   </div>
-                  {!machineScopedSearchResults.length ? (
+
+                  {!visibleMachineProductCatalog.length ? (
                     <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
-                      {manualSearchQuery
-                        ? tr(locale, "No planogram or recommended products matched the current search for this machine.", "لم تطابق أي منتجات من المخطط أو التوصيات البحث الحالي لهذا الجهاز.")
-                        : tr(locale, "This machine does not currently have planogram or recommended products. Use the fallback storage list below if needed.", "لا يملك هذا الجهاز حاليًا منتجات مخطط أو توصيات. استخدم قائمة المخزون البديلة أدناه إذا لزم الأمر.")}
+                      {tr(locale, "No products match this search.", "لا توجد منتجات تطابق هذا البحث.")}
                     </div>
                   ) : (
                     <div className="grid gap-2 md:grid-cols-2">
-                      {machineScopedSearchResults.map((candidate) => {
+                      {visibleMachineProductCatalog.map((candidate) => {
                         const availableForMachine = availableStockForMachine(candidate.product.id, selectedManualMachineId);
                         const remainingAfterRoute = remainingStockForRoute(candidate.product.id);
+                        const selectedQty = unitQuantity(candidate.selectedQty);
+                        const canIncrease = candidate.product.storageKnown && availableForMachine !== null && selectedQty < availableForMachine;
+                        const sourceLabel = candidate.sourceKinds.has("planogram")
+                          ? tr(locale, "In this machine", "موجود في هذا الجهاز")
+                          : candidate.recommendedQty > 0
+                            ? tr(locale, "XY recommendation", "توصية XY")
+                            : tr(locale, "Other product", "منتج آخر");
                         return (
-                        <button
-                          key={candidate.product.id}
-                          type="button"
-                          onClick={() => {
-                            const nextQty = candidate.recommendedQty > 0
-                              ? candidate.recommendedQty
-                              : Math.max(1, candidate.selectedQty + 1);
-                            setDesiredManualQty(selectedManualMachineId, candidate.product.id, nextQty);
-                          }}
-                          className={`rounded-lg border p-3 text-left transition disabled:cursor-not-allowed disabled:opacity-50 ${candidate.selectedQty > 0 ? "border-emerald-300 bg-emerald-50/70" : "border-slate-200 bg-white hover:border-slate-400"}`}
-                          disabled={saving || availableForMachine === null || (availableForMachine <= 0 && candidate.selectedQty <= 0)}
-                        >
-                          <div className="flex gap-3">
-                            <ProductThumbnail imageUrl={candidate.product.imageUrl} name={candidate.product.name} size="md" />
-                            <div className="min-w-0 flex-1">
-                              <div className="truncate font-medium text-slate-900">{candidate.product.name}</div>
-                              <div className="text-xs text-slate-500">
-                                {candidate.product.sku ?? tr(locale, "No SKU", "لا يوجد SKU")} - {candidate.product.category ?? tr(locale, "Uncategorized", "غير مصنف")} {candidate.product.brand ? `- ${candidate.product.brand}` : ""}
-                              </div>
-                              <div className="mt-1 text-xs text-slate-600">
-                                {candidate.product.storageKnown
-                                  ? tr(
+                          <article
+                            key={candidate.product.id}
+                            data-route-product-id={candidate.product.id}
+                            className={`rounded-lg border p-3 transition ${selectedQty > 0 ? "border-emerald-300 bg-emerald-50/70" : "border-slate-200 bg-white"}`}
+                          >
+                            <div className="flex gap-3">
+                              <ProductThumbnail imageUrl={candidate.product.imageUrl} name={candidate.product.name} size="md" />
+                              <div className="min-w-0 flex-1">
+                                <div className="font-medium text-slate-900">{candidate.product.name}</div>
+                                <div className="text-xs text-slate-500">
+                                  {candidate.product.sku ?? tr(locale, "No SKU", "لا يوجد SKU")} · {candidate.product.category ?? tr(locale, "Uncategorized", "غير مصنف")}
+                                  {candidate.product.brand ? ` · ${candidate.product.brand}` : ""}
+                                </div>
+                                <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                                  <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-700">{sourceLabel}</span>
+                                  {candidate.recommendedQty > 0 ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-800">{tr(locale, "Suggested", "المقترح")} {candidate.recommendedQty}</span> : null}
+                                  {candidate.slotCodes.size ? (
+                                    <span className="rounded-full bg-sky-100 px-2 py-1 text-sky-800">
+                                      {tr(locale, "Slots", "الفتحات")} {Array.from(candidate.slotCodes).slice(0, 3).join(", ")}{candidate.slotCodes.size > 3 ? ` +${candidate.slotCodes.size - 3}` : ""}
+                                    </span>
+                                  ) : null}
+                                  {!candidate.product.storageKnown ? (
+                                    <span className="rounded-full bg-amber-100 px-2 py-1 font-semibold text-amber-900">{tr(locale, "Stock unknown", "المخزون غير معروف")}</span>
+                                  ) : availableForMachine !== null && availableForMachine <= 0 && selectedQty === 0 ? (
+                                    <span className="rounded-full bg-rose-100 px-2 py-1 font-semibold text-rose-800">{tr(locale, "Out of stock", "غير متوفر")}</span>
+                                  ) : null}
+                                </div>
+                                <div className="mt-2 text-xs text-slate-600">
+                                  {candidate.product.storageKnown
+                                    ? tr(
+                                        locale,
+                                        `Storage ${candidate.product.storageQty} · Available for this machine ${availableForMachine ?? 0} · Unassigned after route ${remainingAfterRoute ?? 0}`,
+                                        `المخزون ${candidate.product.storageQty} · المتاح لهذا الجهاز ${availableForMachine ?? 0} · غير المخصص بعد الجولة ${remainingAfterRoute ?? 0}`,
+                                      )
+                                    : tr(locale, "Storage quantity temporarily unknown", "كمية المخزون غير معروفة مؤقتًا")}
+                                </div>
+                                {candidate.product.storageKnown && availableForMachine !== null && availableForMachine > 0 && selectedQty >= availableForMachine ? (
+                                  <div className="mt-1 text-xs font-medium text-amber-800">
+                                    {tr(
                                       locale,
-                                      `Storage ${candidate.product.storageQty} / Available for this machine ${availableForMachine ?? 0} / Unassigned after route ${remainingAfterRoute ?? 0}`,
-                                      `المخزون ${candidate.product.storageQty} / المتاح لهذا الجهاز ${availableForMachine ?? 0} / غير المخصص بعد الجولة ${remainingAfterRoute ?? 0}`,
-                                    )
-                                  : tr(locale, "Storage quantity temporarily unknown", "كمية المخزون غير معروفة مؤقتًا")}
-                              </div>
-                              <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                                {candidate.sourceKinds.has("planogram") ? <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-700">Planogram</span> : null}
-                                {candidate.recommendedQty > 0 ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-800">{tr(locale, "Suggested", "المقترح")} {candidate.recommendedQty}</span> : null}
-                                {candidate.selectedQty > 0 ? <span className="rounded-full bg-amber-100 px-2 py-1 text-amber-900">{tr(locale, "Assigned", "المحدد")} {candidate.selectedQty}</span> : null}
-                                <span className="rounded-full bg-slate-100 px-2 py-1 font-medium text-slate-700">
-                                  {candidate.recommendedQty > 0 ? tr(locale, "Tap to use suggested qty", "اضغط لاستخدام الكمية المقترحة") : tr(locale, "Tap to add", "اضغط للإضافة")}
-                                </span>
-                                {candidate.slotCodes.size ? (
-                                  <span className="rounded-full bg-sky-100 px-2 py-1 text-sky-800">
-                                    {tr(locale, "Slots", "الفتحات")} {Array.from(candidate.slotCodes).slice(0, 3).join(", ")}{candidate.slotCodes.size > 3 ? ` +${candidate.slotCodes.size - 3}` : ""}
-                                  </span>
+                                      `Only ${availableForMachine} units remain available for this machine after the other route stops.`,
+                                      `المتاح لهذا الجهاز هو ${availableForMachine} وحدة فقط بعد كميات أجهزة الجولة الأخرى.`,
+                                    )}
+                                  </div>
+                                ) : null}
+                                {candidate.lanes.length ? (
+                                  <div className="mt-2 space-y-1 rounded-lg border border-sky-100 bg-sky-50 p-2 text-xs text-sky-950">
+                                    {candidate.lanes.slice(0, 6).map((lane) => (
+                                      <div key={lane.slotCode} className="flex flex-wrap items-center justify-between gap-2">
+                                        <span className="font-semibold">{tr(locale, "Lane", "الفتحة")} {lane.slotCode}</span>
+                                        <span>{tr(locale, `Current ${lane.currentQty} / Capacity ${lane.capacity} / Bring ${lane.neededQty}`, `الحالي ${lane.currentQty} / السعة ${lane.capacity} / أحضر ${lane.neededQty}`)}</span>
+                                      </div>
+                                    ))}
+                                    {candidate.lanes.length > 6 ? <div>+{candidate.lanes.length - 6} {tr(locale, "more lanes", "فتحات إضافية")}</div> : null}
+                                  </div>
                                 ) : null}
                               </div>
-                              {candidate.lanes.length ? (
-                                <div className="mt-2 space-y-1 rounded-lg border border-sky-100 bg-sky-50 p-2 text-xs text-sky-950">
-                                  {candidate.lanes.slice(0, 6).map((lane) => (
-                                    <div key={lane.slotCode} className="flex flex-wrap items-center justify-between gap-2">
-                                      <span className="font-semibold">{tr(locale, "Lane", "الفتحة")} {lane.slotCode}</span>
-                                      <span>{tr(locale, `Current ${lane.currentQty} / Capacity ${lane.capacity} / Bring ${lane.neededQty}`, `الحالي ${lane.currentQty} / السعة ${lane.capacity} / أحضر ${lane.neededQty}`)}</span>
-                                    </div>
-                                  ))}
-                                  {candidate.lanes.length > 6 ? <div>+{candidate.lanes.length - 6} {tr(locale, "more lanes", "فتحات إضافية")}</div> : null}
-                                </div>
+                            </div>
+
+                            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+                              <button
+                                type="button"
+                                className="btn-secondary min-w-10 px-2 py-1 text-sm"
+                                onClick={() => setDesiredManualQty(selectedManualMachineId, candidate.product.id, selectedQty - 1)}
+                                disabled={saving || selectedQty <= 0}
+                                aria-label={tr(locale, `Remove one ${candidate.product.name}`, `إنقاص وحدة من ${candidate.product.name}`)}
+                              >
+                                −1
+                              </button>
+                              <input
+                                type="number"
+                                inputMode="numeric"
+                                min={0}
+                                max={candidate.product.storageKnown && availableForMachine !== null ? availableForMachine : 0}
+                                step={1}
+                                value={selectedQty}
+                                onChange={(event) => setDesiredManualQty(selectedManualMachineId, candidate.product.id, Number(event.target.value) || 0)}
+                                className="field-input w-20 text-center font-semibold"
+                                disabled={saving || !candidate.product.storageKnown || availableForMachine === null}
+                                aria-label={tr(locale, `${candidate.product.name} quantity`, `كمية ${candidate.product.name}`)}
+                              />
+                              <button
+                                type="button"
+                                className="btn-secondary min-w-10 px-2 py-1 text-sm"
+                                onClick={() => setDesiredManualQty(selectedManualMachineId, candidate.product.id, selectedQty + 1)}
+                                disabled={saving || !canIncrease}
+                                aria-label={tr(locale, `Add one ${candidate.product.name}`, `زيادة وحدة من ${candidate.product.name}`)}
+                              >
+                                +1
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-secondary min-w-10 px-2 py-1 text-sm"
+                                onClick={() => setDesiredManualQty(selectedManualMachineId, candidate.product.id, selectedQty + 5)}
+                                disabled={saving || !candidate.product.storageKnown || availableForMachine === null || selectedQty >= availableForMachine}
+                              >
+                                +5
+                              </button>
+                              {candidate.recommendedQty > 0 ? (
+                                <button
+                                  type="button"
+                                  className="btn-secondary px-2 py-1 text-xs"
+                                  onClick={() => setDesiredManualQty(selectedManualMachineId, candidate.product.id, candidate.recommendedQty)}
+                                  disabled={saving || !candidate.product.storageKnown || availableForMachine === null}
+                                >
+                                  {tr(locale, `Use suggested ${candidate.recommendedQty}`, `استخدم المقترح ${candidate.recommendedQty}`)}
+                                </button>
+                              ) : null}
+                              {selectedQty > 0 ? (
+                                <button type="button" className="link-secondary ms-auto text-xs" onClick={() => setManualStopQty(selectedManualMachineId, candidate.product.id, 0)} disabled={saving}>
+                                  {tr(locale, "Clear", "مسح")}
+                                </button>
                               ) : null}
                             </div>
-                          </div>
-                        </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                <div className="space-y-3">
-                  <div>
-                    <div className="text-sm font-semibold text-slate-800">{tr(locale, "Other storage products", "منتجات تخزين أخرى")}</div>
-                    <div className="text-xs text-slate-500">{tr(locale, "Fallback catalog items not currently in this machine’s planogram or recommendation set.", "عناصر بديلة من الكتالوج غير موجودة حاليًا في مخطط هذا الجهاز أو مجموعة توصياته.")}</div>
-                  </div>
-                  {!machineFallbackProducts.length ? (
-                    <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
-                      {manualSearchQuery ? tr(locale, "No fallback storage products matched the current search.", "لا توجد منتجات تخزين بديلة تطابق البحث الحالي.") : tr(locale, "No additional storage products are available right now.", "لا توجد منتجات تخزين إضافية متاحة الآن.")}
-                    </div>
-                  ) : (
-                    <div className="grid gap-2 md:grid-cols-2">
-                      {machineFallbackProducts.map((product) => {
-                        const availableForMachine = availableStockForMachine(product.id, selectedManualMachineId);
-                        const remainingAfterRoute = remainingStockForRoute(product.id);
-                        return (
-                        <button
-                          key={product.id}
-                          type="button"
-                          onClick={() => addProductQty(product.id, 1)}
-                          className="rounded-lg border border-dashed border-slate-200 bg-white p-3 text-left transition hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-50"
-                          disabled={saving || availableForMachine === null || availableForMachine <= 0}
-                        >
-                          <div className="flex gap-3">
-                            <ProductThumbnail imageUrl={product.imageUrl} name={product.name} size="md" />
-                            <div className="min-w-0 flex-1">
-                              <div className="truncate font-medium text-slate-900">{product.name}</div>
-                              <div className="text-xs text-slate-500">
-                                {product.sku ?? tr(locale, "No SKU", "لا يوجد SKU")} - {product.category ?? tr(locale, "Uncategorized", "غير مصنف")} {product.brand ? `- ${product.brand}` : ""}
-                              </div>
-                              <div className="mt-1 text-xs text-slate-600">
-                                {product.storageKnown
-                                  ? tr(
-                                      locale,
-                                      `Storage ${product.storageQty} / Available for this machine ${availableForMachine ?? 0} / Unassigned after route ${remainingAfterRoute ?? 0}`,
-                                      `المخزون ${product.storageQty} / المتاح لهذا الجهاز ${availableForMachine ?? 0} / غير المخصص بعد الجولة ${remainingAfterRoute ?? 0}`,
-                                    )
-                                  : tr(locale, "Storage quantity temporarily unknown", "كمية المخزون غير معروفة مؤقتًا")}
-                              </div>
-                            </div>
-                          </div>
-                        </button>
+                          </article>
                         );
                       })}
                     </div>
