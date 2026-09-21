@@ -6,6 +6,7 @@ import { SessionGuard } from "@/components/SessionGuard";
 import { Sidebar } from "@/components/Sidebar";
 import { Topbar } from "@/components/Topbar";
 import { XyBackgroundSync } from "@/components/XyBackgroundSync";
+import { NotificationOptInPrompt } from "@/components/NotificationOptInPrompt";
 import { AppRole, hasPermission } from "@/lib/authz";
 
 type ShellProfile = {
@@ -31,6 +32,7 @@ export function ShellChrome({ children, profile, pathname }: { children: ReactNo
         <Topbar profile={profile} onMenuClick={() => setMobileNavOpen(true)} />
         <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
           <div className="mx-auto w-full max-w-7xl px-3 py-4 sm:px-4 md:p-8">
+            <NotificationOptInPrompt userId={profile.id} />
             <ModuleTabsLayout profile={profile}>{children}</ModuleTabsLayout>
           </div>
         </main>
