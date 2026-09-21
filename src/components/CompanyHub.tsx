@@ -227,7 +227,7 @@ export async function CompanyHub({
       {section === 'documents' && !record && !isNew ? (
         <section className="surface-card flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--snacky-primary)]">{tr('Approved profile','ملف معتمد')}</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">{tr('Approved profile','ملف معتمد')}</p>
             <h2 className="mt-1 text-lg font-semibold">{tr('Snacky Company Profile','الملف التعريفي بسناكي')}</h2>
             <p className="mt-1 text-sm text-slate-600">{tr('Open the approved presentation reference used with prospective locations.','افتح المرجع التعريفي المعتمد المستخدم مع الجهات المحتملة.')}</p>
           </div>
