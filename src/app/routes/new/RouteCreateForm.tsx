@@ -1277,7 +1277,7 @@ export function RouteCreateForm({
       {planningWarnings.length ? (
         <details className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950" role="status" open={false}>
           <summary className="cursor-pointer font-semibold">
-            {tr(locale, `Planning notice${planningWarnings.length === 1 ? "" : "s"} (${planningWarnings.length})`, `تنبيهات التخطيط (${planningWarnings.length})`)}
+            {tr(locale, "Route creation is still available", "لا يزال إنشاء الجولة متاحًا")} · {tr(locale, `Planning notice${planningWarnings.length === 1 ? "" : "s"} (${planningWarnings.length})`, `تنبيهات التخطيط (${planningWarnings.length})`)}
           </summary>
           <ul className="mt-2 list-disc space-y-1 ps-5">
             {planningWarnings.map((warning) => <li key={warning}>{warning}</li>)}
@@ -1636,11 +1636,22 @@ export function RouteCreateForm({
                                   {candidate.product.storageKnown
                                     ? tr(
                                         locale,
-                                        `Storage ${candidate.product.storageQty} · Available here ${availableForMachine ?? 0} · Unassigned after route ${remainingAfterRoute ?? 0}`,
-                                        `المخزون ${candidate.product.storageQty} · المتاح هنا ${availableForMachine ?? 0} · غير المخصص بعد الجولة ${remainingAfterRoute ?? 0}`,
+                                        `Storage ${candidate.product.storageQty} · Available for this machine ${availableForMachine ?? 0} · Unassigned after route ${remainingAfterRoute ?? 0}`,
+                                        `المخزون ${candidate.product.storageQty} · المتاح لهذا الجهاز ${availableForMachine ?? 0} · غير المخصص بعد الجولة ${remainingAfterRoute ?? 0}`,
                                       )
                                     : tr(locale, "Storage quantity temporarily unknown", "كمية المخزون غير معروفة مؤقتًا")}
                                 </div>
+                                {candidate.lanes.length ? (
+                                  <div className="mt-2 space-y-1 rounded-lg border border-sky-100 bg-sky-50 p-2 text-xs text-sky-950">
+                                    {candidate.lanes.slice(0, 6).map((lane) => (
+                                      <div key={lane.slotCode} className="flex flex-wrap items-center justify-between gap-2">
+                                        <span className="font-semibold">{tr(locale, "Lane", "الفتحة")} {lane.slotCode}</span>
+                                        <span>{tr(locale, `Current ${lane.currentQty} / Capacity ${lane.capacity} / Bring ${lane.neededQty}`, `الحالي ${lane.currentQty} / السعة ${lane.capacity} / أحضر ${lane.neededQty}`)}</span>
+                                      </div>
+                                    ))}
+                                    {candidate.lanes.length > 6 ? <div>+{candidate.lanes.length - 6} {tr(locale, "more lanes", "فتحات إضافية")}</div> : null}
+                                  </div>
+                                ) : null}
                               </div>
                             </div>
 
