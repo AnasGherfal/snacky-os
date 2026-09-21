@@ -34,3 +34,14 @@ test('quick intake defaults to WhatsApp but preserves other channels in optional
   assert.match(forms,/kind==='issue'\?\{contact_channel:'whatsapp'\}/);
   for(const channel of ['whatsapp','phone','email','other']) assert.match(forms,new RegExp("\\['"+channel+"'"));
 });
+
+
+test('Company Documents surfaces the approved Snacky profile inside the OS',()=>{
+  const hub=fs.readFileSync('src/components/CompanyHub.tsx','utf8');
+  const profile=fs.readFileSync('src/app/company/profile/page.tsx','utf8');
+  assert.match(hub,/href="\\/company\\/profile"/);
+  assert.match(hub,/Snacky Company Profile/);
+  assert.match(profile,/خدمة أقرب\. ويوم أسهل\./);
+  assert.match(profile,/requireCurrentProfileForPath\('\/company\/profile'\)/);
+  assert.match(profile,/snacky\.ly/);
+});
