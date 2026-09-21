@@ -15,8 +15,15 @@ export async function startBuyingTestTLS(){
  assert.equal(created.status,0,'Could not prepare the isolated TLS fixture');
  const server=createServer({key:readFileSync(key),cert:readFileSync(cert)},(incoming,outgoing)=>{
   // Fixed loopback upstream, never a destination taken from browser input.
-  const upstream=request({hostname:host,port:3000,path:incoming.url,method:incoming.method,headers:{...incoming.headers,host:`${host}:${port}`,'x-forwarded-host':`${host}:${port}`,'x-forwarded-proto':'https','x-forwarded-port':String(port)}},response=>{
-   outgoing.writeHead(response.statusCode??502,response.headers);response.pipe(outgoing);
+  // Rewrite only the proxy-facing Origin/Referer for Next's CSRF/access-control
+  // checks; the browser still sees and tests the real HTTPS loopback origin.
+  const headers={...incoming.headers,host:'localhost:3000','x-forwarded-host':`${host}:${port}`,'x-forwarded-proto':'https','x-forwarded-port':String(port)};
+  if(headers.origin===origin)headers.origin='http://localhost:3000';
+  if(typeof headers.referer==='string'&&headers.referer.startsWith(origin))headers.referer='http://localhost:3000'+headers.referer.slice(origin.length);
+  const upstream=request({hostname:host,port:3000,path:incoming.url,method:incoming.method,headers},response=>{
+   const responseHeaders={...response.headers};
+   if(typeof responseHeaders.location==='string'&&responseHeaders.location.startsWith('http://localhost:3000'))responseHeaders.location=origin+responseHeaders.location.slice('http://localhost:3000'.length);
+   outgoing.writeHead(response.statusCode??502,responseHeaders);response.pipe(outgoing);
   });
   upstream.on('error',()=>{if(!outgoing.headersSent)outgoing.writeHead(502);outgoing.end('Isolated upstream unavailable');});
   incoming.on('aborted',()=>upstream.destroy());incoming.pipe(upstream);
