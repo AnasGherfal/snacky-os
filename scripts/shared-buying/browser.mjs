@@ -78,7 +78,21 @@ try{
   const arText=spawnSync('pdftotext',[out+'/Buying_List_Sample_AR.pdf','-'],{encoding:'utf8'});assert.equal(arText.status,0);assert.match(arText.stdout,/Buying fixture 32/);assert.ok(arText.stdout.includes('/buying-lists/'));
  });
  const image=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jV5EAAAAASUVORK5CYII=','base64');
- async function fileTest(b,label,origin=app){const p=await session('owner','en',390,b,origin);await p.goto(origin+'/purchases/new');assert.equal(new URL(p.url()).pathname,'/purchases/new','File-picker test requires a signed-in purchase form');if(origin.startsWith('https:'))assert.ok((await p.context().cookies(origin)).some(c=>c.secure&&c.httpOnly),'Production Secure/HttpOnly session must be present');const selector='[data-purchase-receipt-picker] input[type=file]';assert.equal(await p.locator(selector).count(),2);
+ async function fileTest(b,label,origin=app){let p;
+  if(origin===app){p=await session('owner','en',390,b,origin);}
+  else{
+   const auth=await accounts.owner.client.auth.getSession();assert.ifError(auth.error);assert.ok(auth.data.session?.access_token&&auth.data.session?.refresh_token,'Disposable owner session is required');
+   const context=await b.newContext({viewport:{width:390,height:960},hasTouch:true,ignoreHTTPSErrors:true});
+   await context.addCookies([
+    {name:'snacky_os_language',value:'en',url:origin},
+    {name:'snacky-auth-access-token',value:auth.data.session.access_token,url:origin,httpOnly:true,secure:true,sameSite:'Lax'},
+    {name:'snacky-auth-refresh-token',value:auth.data.session.refresh_token,url:origin,httpOnly:true,secure:true,sameSite:'Lax'}
+   ]);
+   p=await context.newPage();p.setDefaultTimeout(20000);p.setDefaultNavigationTimeout(45000);p.on('pageerror',e=>pageErrors.push(`owner ${new URL(p.url()).pathname}: ${e.message}`));
+  }
+  await p.goto(origin+'/purchases/new');await p.waitForLoadState('networkidle');assert.equal(new URL(p.url()).pathname,'/purchases/new','File-picker test requires a signed-in purchase form');
+  if(origin.startsWith('https:')){const cookies=await p.context().cookies(origin);assert.ok(cookies.some(c=>c.name==='snacky-auth-access-token'&&c.secure&&c.httpOnly),'Production Secure/HttpOnly access cookie must be present');assert.ok(cookies.some(c=>c.name==='snacky-auth-refresh-token'&&c.secure&&c.httpOnly),'Production Secure/HttpOnly refresh cookie must be present');}
+  const selector='[data-purchase-receipt-picker] input[type=file]';assert.equal(await p.locator(selector).count(),2);
   for(let n=0;n<2;n++){const input=()=>p.locator(selector).nth(n);await input().waitFor({state:'attached'});const event=p.waitForEvent('filechooser');await input().tap();const chooser=await event;assert.equal(chooser.isMultiple(),false);await chooser.setFiles({name:`receipt-${label}-${n}.png`,mimeType:'image/png',buffer:image});assert.equal(await input().evaluate(el=>el.files?.[0]?.name),`receipt-${label}-${n}.png`);assert.equal(await input().evaluate(el=>el.closest('label')===null),true);}
   await p.locator(selector).first().setInputFiles({name:'unsupported.txt',mimeType:'text/plain',buffer:Buffer.from('not a receipt')});await p.locator('[data-purchase-receipt-picker]').first().getByRole('alert').waitFor();assert.equal(await p.locator(selector).first().evaluate(el=>el.files.length),0);await p.waitForLoadState('networkidle');await p.context().close();
  }
