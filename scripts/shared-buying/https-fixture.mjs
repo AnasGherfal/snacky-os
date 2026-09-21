@@ -15,14 +15,19 @@ export async function startBuyingTestTLS(){
  assert.equal(created.status,0,'Could not prepare the isolated TLS fixture');
  const server=createServer({key:readFileSync(key),cert:readFileSync(cert)},(incoming,outgoing)=>{
   // Fixed loopback upstream, never a destination taken from browser input.
-  // Rewrite only the proxy-facing Origin/Referer for Next's CSRF/access-control
-  // checks; the browser still sees and tests the real HTTPS loopback origin.
-  const headers={...incoming.headers,host:'localhost:3000','x-forwarded-host':`${host}:${port}`,'x-forwarded-proto':'https','x-forwarded-port':String(port)};
-  if(headers.origin===origin)headers.origin='http://localhost:3000';
-  if(typeof headers.referer==='string'&&headers.referer.startsWith(origin))headers.referer='http://localhost:3000'+headers.referer.slice(origin.length);
+  // Present one internally consistent HTTPS origin to Next so Server Actions,
+  // CSRF checks and secure cookies behave like production while the browser
+  // still connects only to the isolated loopback TLS endpoint.
+  const upstreamOrigin='https://localhost:3000';
+  const headers={...incoming.headers,host:'localhost:3000','x-forwarded-host':'localhost:3000','x-forwarded-proto':'https','x-forwarded-port':'3000'};
+  if(headers.origin===origin)headers.origin=upstreamOrigin;
+  if(typeof headers.referer==='string'&&headers.referer.startsWith(origin))headers.referer=upstreamOrigin+headers.referer.slice(origin.length);
   const upstream=request({hostname:host,port:3000,path:incoming.url,method:incoming.method,headers},response=>{
    const responseHeaders={...response.headers};
-   if(typeof responseHeaders.location==='string'&&responseHeaders.location.startsWith('http://localhost:3000'))responseHeaders.location=origin+responseHeaders.location.slice('http://localhost:3000'.length);
+   for(const name of ['location','x-action-redirect']){
+    const value=responseHeaders[name];
+    if(typeof value==='string'&&value.startsWith(upstreamOrigin))responseHeaders[name]=origin+value.slice(upstreamOrigin.length);
+   }
    outgoing.writeHead(response.statusCode??502,responseHeaders);response.pipe(outgoing);
   });
   upstream.on('error',()=>{if(!outgoing.headersSent)outgoing.writeHead(502);outgoing.end('Isolated upstream unavailable');});
