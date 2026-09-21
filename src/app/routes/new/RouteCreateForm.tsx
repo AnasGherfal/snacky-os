@@ -1628,7 +1628,7 @@ export function RouteCreateForm({
                                   ) : null}
                                   {!candidate.product.storageKnown ? (
                                     <span className="rounded-full bg-amber-100 px-2 py-1 font-semibold text-amber-900">{tr(locale, "Stock unknown", "المخزون غير معروف")}</span>
-                                  ) : availableForMachine === 0 && selectedQty === 0 ? (
+                                  ) : availableForMachine <= 0 && selectedQty === 0 ? (
                                     <span className="rounded-full bg-rose-100 px-2 py-1 font-semibold text-rose-800">{tr(locale, "Out of stock", "غير متوفر")}</span>
                                   ) : null}
                                 </div>
@@ -1641,6 +1641,15 @@ export function RouteCreateForm({
                                       )
                                     : tr(locale, "Storage quantity temporarily unknown", "كمية المخزون غير معروفة مؤقتًا")}
                                 </div>
+                                {candidate.product.storageKnown && availableForMachine !== null && availableForMachine > 0 && selectedQty >= availableForMachine ? (
+                                  <div className="mt-1 text-xs font-medium text-amber-800">
+                                    {tr(
+                                      locale,
+                                      `Only ${availableForMachine} units remain available for this machine after the other route stops.`,
+                                      `المتاح لهذا الجهاز هو ${availableForMachine} وحدة فقط بعد كميات أجهزة الجولة الأخرى.`,
+                                    )}
+                                  </div>
+                                ) : null}
                                 {candidate.lanes.length ? (
                                   <div className="mt-2 space-y-1 rounded-lg border border-sky-100 bg-sky-50 p-2 text-xs text-sky-950">
                                     {candidate.lanes.slice(0, 6).map((lane) => (
