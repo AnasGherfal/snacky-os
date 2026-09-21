@@ -50,7 +50,7 @@ export function CrmRecordForm({kind,row,context,userId,ar}:{kind:CrmKind;row?:an
  }
  if(kind==='obligation')fields=[f('title','Obligation','الالتزام',{value:'',required:true}),f('location_id','Location','الموقع',{type:'select',options:locationOptions,required:true}),f('amount_lyd','Amount (LYD)','المبلغ (د.ل)',{type:'number',min:0,required:true}),f('due_date','Due date','تاريخ الاستحقاق',{type:'date',required:true}),assignee,f('frequency','Frequency','التكرار',{type:'select',value:'monthly',options:crmOptionRows([['once','Once','مرة واحدة'],['monthly','Monthly','شهري'],['quarterly','Quarterly','ربع سنوي'],['yearly','Yearly','سنوي']],ar)}),f('notes','Notes','ملاحظات',{type:'textarea'})];
  if(!row&&context.manager&&['lead','issue','obligation'].includes(kind))fields.push(f('is_practice','Practice record — excluded from real work reports','سجل تدريبي — مستبعد من تقارير العمل الفعلي',{type:'checkbox',value:'false',advanced:true}));
- const hidden=row?{version:d.version??''}:kind==='issue'?{contact_channel:'whatsapp'}:{};
+ const hidden:Record<string,string>=row?{version:String(d.version??'')}:kind==='issue'?{contact_channel:'whatsapp'}:{};
  return <CrmForm key={`${kind}:${row?.id??'new'}:${d.version??''}`} action={kind==='obligation'?'obligation.create':`${kind}.save`} recordId={row?.id} userId={userId} hidden={hidden} fields={fields} submitLabel={row?tr('Save changes','حفظ التغييرات'):kind==='issue'?tr('Create customer issue','تسجيل بلاغ العميل'):tr('Add record','إضافة السجل')}/>;
 }
 
