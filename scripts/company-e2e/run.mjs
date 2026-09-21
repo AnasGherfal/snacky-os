@@ -137,7 +137,15 @@ try {
   });
   await check('lost response after a real commit recovers through the actual editor', async () => {
     const before = await rpc(accounts.owner.client, 'snacky_company_workspace_v1', { p_id: itemId });
-    await owner.goto(app + `/company/items/${itemId}?edit=1`); await instructions(owner).fill('Confirmed once after response loss.');
+    await owner.goto(app + `/company/items/${itemId}?edit=1`);
+    const editorBody = instructions(owner);
+    await editorBody.waitFor();
+    await assert.doesNotReject(async () => {
+      for (let i = 0; i < 20 && await editorBody.inputValue() !== 'Updated current instructions.'; i++) await owner.waitForTimeout(50);
+      assert.equal(await editorBody.inputValue(), 'Updated current instructions.');
+    });
+    await editorBody.fill('Confirmed once after response loss.');
+    assert.equal(await editorBody.inputValue(), 'Confirmed once after response loss.');
     let savedRequest;
     await owner.route('**/api/company/command', async route => { savedRequest = route.request().postDataJSON(); await route.fetch(); await route.abort('failed'); }, { times: 1 });
     await owner.getByRole('button', { name: 'Save draft', exact: true }).click(); await owner.getByRole('button', { name: 'Retry saved request', exact: true }).waitFor();
