@@ -13,12 +13,14 @@ test("editing a route product quantity keeps that product in the same manual-ite
   assert.doesNotMatch(source, /const next = current\.filter\(\(item\) => !\(item\.machineId === machineId && item\.productId === productId\)\)[\s\S]{0,220}next\.push/);
 });
 
-test("the route product catalog has the same complete active-product source for every machine", () => {
-  assert.match(source, /const stableMachineProductCatalog = useMemo/);
-  assert.match(source, /return products[\s\S]*\.map\(\(product\) =>/);
-  assert.match(source, /All active products — same order for every machine/);
-  assert.match(source, /products are never hidden just because another machine uses a different setup/);
-  assert.doesNotMatch(source, /stableMachineProductCatalog[\s\S]{0,300}\.slice\(0,/);
+test("the route product list is focused by default and searches the full catalog only on demand", () => {
+  assert.match(source, /const machineProductsToLoad = useMemo/);
+  assert.match(source, /candidate\.recommendedQty > 0 \|\| candidate\.selectedQty > 0/);
+  assert.match(source, /const otherConfiguredMachineProducts = useMemo/);
+  assert.match(source, /if \(!manualSearchQuery\) return machineProductsToLoad/);
+  assert.match(source, /return products[\s\S]*\.filter\(\(product\) => productMatchesSearch/);
+  assert.match(source, /Products to load for this machine/);
+  assert.match(source, /Search results/);
 });
 
 test("machine-specific signals label products without changing the catalog order", () => {
@@ -29,11 +31,12 @@ test("machine-specific signals label products without changing the catalog order
   assert.doesNotMatch(source, /recommendationDifference = b\.recommendedQty/);
 });
 
-test("quantities are edited inline on a stable product card", () => {
+test("quantities are edited inline without expanding every product into a large card", () => {
   assert.match(source, /data-route-product-id=\{candidate\.product\.id\}/);
   assert.match(source, /aria-label=\{tr\(locale, `\$\{candidate\.product\.name\} quantity`/);
   assert.match(source, /setDesiredManualQty\(selectedManualMachineId, candidate\.product\.id, selectedQty \+ 1\)/);
-  assert.match(source, /Use suggested \$\{candidate\.recommendedQty\}/);
+  assert.match(source, /candidate\.lanes\.length \? \([\s\S]*<details/);
+  assert.match(source, /Use \$\{candidate\.recommendedQty\}/);
 });
 
 test("non-blocking planning warnings are consolidated instead of stacked", () => {
@@ -48,4 +51,11 @@ test("normal quantity clamping does not throw a global route-builder warning", (
   const block = source.slice(start, end);
   assert.match(block, /const safeTotal = Math\.min/);
   assert.doesNotMatch(block, /Only \$\{availableForMachine\} units remain/);
+});
+
+
+test("non-refill machine products stay collapsed until the planner asks for them", () => {
+  assert.match(source, /otherConfiguredMachineProducts\.length \? \(/);
+  assert.match(source, /<details className="rounded-xl border border-slate-200 bg-slate-50/);
+  assert.match(source, /Other products already configured in this machine/);
 });

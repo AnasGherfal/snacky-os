@@ -129,15 +129,16 @@ test("manual quantity edits keep their row position instead of moving to the bot
   assert.match(setterSource, /existingIndex < 0 \? current : current\.filter/);
 });
 
-test("the machine product picker shows one complete stable active-product catalog", () => {
-  const pickerStart = source.indexOf("const stableMachineProductCatalog");
+test("the machine product picker stays focused while retaining full-catalog search", () => {
+  const pickerStart = source.indexOf("const machineProductsToLoad");
   const pickerEnd = source.indexOf("const toggleValue", pickerStart);
   assert.notEqual(pickerStart, -1);
   assert.notEqual(pickerEnd, -1);
   const pickerSource = source.slice(pickerStart, pickerEnd);
 
+  assert.match(pickerSource, /candidate\.recommendedQty > 0 \|\| candidate\.selectedQty > 0/);
+  assert.match(pickerSource, /if \(!manualSearchQuery\) return machineProductsToLoad/);
   assert.match(pickerSource, /return products/);
-  assert.match(pickerSource, /const visibleMachineProductCatalog/);
   assert.doesNotMatch(pickerSource, /\.slice\(0,/);
 });
 

@@ -850,32 +850,38 @@ export function RouteCreateForm({
     [machineScopedProductCandidates],
   );
 
-  const stableMachineProductCatalog = useMemo(() => {
+  const machineProductsToLoad = useMemo(
+    () => machineScopedProductCandidates.filter((candidate) => candidate.recommendedQty > 0 || candidate.selectedQty > 0),
+    [machineScopedProductCandidates],
+  );
+
+  const otherConfiguredMachineProducts = useMemo(
+    () => machineScopedProductCandidates.filter((candidate) => (
+      candidate.sourceKinds.has("planogram")
+      && candidate.recommendedQty <= 0
+      && candidate.selectedQty <= 0
+    )),
+    [machineScopedProductCandidates],
+  );
+
+  const visibleMachineProductCatalog = useMemo(() => {
+    if (!manualSearchQuery) return machineProductsToLoad;
+
     return products
-      .map((product) => {
-        const scoped = machineScopedCandidateByProductId.get(product.id);
-        const selectedQty = scoped?.selectedQty
-          ?? selectedManualItems.find((item) => item.productId === product.id)?.quantity
-          ?? 0;
-        return scoped ?? {
-          product,
-          selectedQty,
-          recommendedQty: 0,
-          sourceKinds: new Set<string>(),
-          slotCodes: new Set<string>(),
-          lanes: [] as Array<{ slotCode: string; currentQty: number; capacity: number; neededQty: number }>,
-        };
+      .filter((product) => productMatchesSearch(product, manualSearchQuery))
+      .map((product) => machineScopedCandidateByProductId.get(product.id) ?? {
+        product,
+        selectedQty: selectedManualItems.find((item) => item.productId === product.id)?.quantity ?? 0,
+        recommendedQty: 0,
+        sourceKinds: new Set<string>(),
+        slotCodes: new Set<string>(),
+        lanes: [] as Array<{ slotCode: string; currentQty: number; capacity: number; neededQty: number }>,
       })
       .sort((a, b) => comparePickupProductRows(
         { productName: a.product.name, productCategory: a.product.category, productBrand: a.product.brand },
         { productName: b.product.name, productCategory: b.product.category, productBrand: b.product.brand },
       ));
-  }, [machineScopedCandidateByProductId, products, selectedManualItems]);
-
-  const visibleMachineProductCatalog = useMemo(() => {
-    if (!manualSearchQuery) return stableMachineProductCatalog;
-    return stableMachineProductCatalog.filter((candidate) => productMatchesSearch(candidate.product, manualSearchQuery));
-  }, [manualSearchQuery, stableMachineProductCatalog]);
+  }, [machineProductsToLoad, machineScopedCandidateByProductId, manualSearchQuery, products, selectedManualItems]);
 
   const toggleValue = (values: string[], value: string) => (values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
   const toggleRecommendationFamily = (groupKey: string, defaultExpanded = false) => {
@@ -1593,9 +1599,15 @@ export function RouteCreateForm({
                 <div className="space-y-3">
                   <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                     <div>
-                      <div className="text-sm font-semibold text-slate-800">{tr(locale, "All active products — same order for every machine", "كل المنتجات النشطة — نفس الترتيب لكل جهاز")}</div>
+                      <div className="text-sm font-semibold text-slate-800">
+                        {manualSearchQuery
+                          ? tr(locale, "Search results", "نتائج البحث")
+                          : tr(locale, "Products to load for this machine", "المنتجات المطلوب تحميلها لهذا الجهاز")}
+                      </div>
                       <div className="text-xs text-slate-500">
-                        {tr(locale, "Machine-specific planogram and XY recommendations are labels only; products are never hidden just because another machine uses a different setup.", "مخطط الجهاز وتوصيات XY تظهر كعلامات فقط؛ لا يتم إخفاء المنتج بسبب اختلاف إعداد جهاز آخر.")}
+                        {manualSearchQuery
+                          ? tr(locale, "Searching the full active catalog. Clear search to return to this machine's refill list.", "يتم البحث في كامل المنتجات النشطة. امسح البحث للعودة إلى قائمة تعبئة هذا الجهاز.")
+                          : tr(locale, "Only products that need refill or already have a quantity are shown here. Use search only when you need to add an exception.", "تظهر هنا فقط المنتجات التي تحتاج تعبئة أو التي تم تحديد كمية لها. استخدم البحث فقط عند الحاجة لإضافة منتج استثنائي.")}
                       </div>
                     </div>
                     <div className="text-xs font-medium text-slate-500">
@@ -1604,141 +1616,147 @@ export function RouteCreateForm({
                   </div>
 
                   {!visibleMachineProductCatalog.length ? (
-                    <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
-                      {tr(locale, "No products match this search.", "لا توجد منتجات تطابق هذا البحث.")}
+                    <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm text-slate-500">
+                      {manualSearchQuery
+                        ? tr(locale, "No products match this search.", "لا توجد منتجات تطابق هذا البحث.")
+                        : tr(locale, "No refill products are pending for this machine. Use search above only if you need to add something manually.", "لا توجد منتجات تعبئة معلقة لهذا الجهاز. استخدم البحث أعلاه فقط إذا احتجت لإضافة منتج يدويًا.")}
                     </div>
                   ) : (
-                    <div className="grid gap-2 md:grid-cols-2">
+                    <div className="divide-y divide-slate-200 overflow-hidden rounded-xl border border-slate-200 bg-white">
                       {visibleMachineProductCatalog.map((candidate) => {
                         const availableForMachine = availableStockForMachine(candidate.product.id, selectedManualMachineId);
                         const remainingAfterRoute = remainingStockForRoute(candidate.product.id);
                         const selectedQty = unitQuantity(candidate.selectedQty);
                         const canIncrease = candidate.product.storageKnown && availableForMachine !== null && selectedQty < availableForMachine;
-                        const sourceLabel = candidate.sourceKinds.has("planogram")
-                          ? tr(locale, "In this machine", "موجود في هذا الجهاز")
-                          : candidate.recommendedQty > 0
-                            ? tr(locale, "XY recommendation", "توصية XY")
-                            : tr(locale, "Other product", "منتج آخر");
+                        const sourceLabel = candidate.recommendedQty > 0
+                          ? tr(locale, "Needs refill", "يحتاج تعبئة")
+                          : candidate.sourceKinds.has("planogram")
+                            ? tr(locale, "In this machine", "موجود في هذا الجهاز")
+                            : tr(locale, "Catalog", "الكتالوج");
+
                         return (
-                          <article
+                          <div
                             key={candidate.product.id}
                             data-route-product-id={candidate.product.id}
-                            className={`rounded-lg border p-3 transition ${selectedQty > 0 ? "border-emerald-300 bg-emerald-50/70" : "border-slate-200 bg-white"}`}
+                            className={`p-3 ${selectedQty > 0 ? "bg-emerald-50/60" : ""}`}
                           >
-                            <div className="flex gap-3">
-                              <ProductThumbnail imageUrl={candidate.product.imageUrl} name={candidate.product.name} size="md" />
-                              <div className="min-w-0 flex-1">
-                                <div className="font-medium text-slate-900">{candidate.product.name}</div>
-                                <div className="text-xs text-slate-500">
-                                  {candidate.product.sku ?? tr(locale, "No SKU", "لا يوجد SKU")} · {candidate.product.category ?? tr(locale, "Uncategorized", "غير مصنف")}
-                                  {candidate.product.brand ? ` · ${candidate.product.brand}` : ""}
-                                </div>
-                                <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                                  <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-700">{sourceLabel}</span>
-                                  {candidate.recommendedQty > 0 ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-800">{tr(locale, "Suggested", "المقترح")} {candidate.recommendedQty}</span> : null}
-                                  {candidate.slotCodes.size ? (
-                                    <span className="rounded-full bg-sky-100 px-2 py-1 text-sky-800">
-                                      {tr(locale, "Slots", "الفتحات")} {Array.from(candidate.slotCodes).slice(0, 3).join(", ")}{candidate.slotCodes.size > 3 ? ` +${candidate.slotCodes.size - 3}` : ""}
+                            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                              <div className="flex min-w-0 gap-3">
+                                <ProductThumbnail imageUrl={candidate.product.imageUrl} name={candidate.product.name} size="sm" />
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <div className="font-medium text-slate-900">{candidate.product.name}</div>
+                                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${candidate.recommendedQty > 0 ? "bg-amber-100 text-amber-900" : "bg-slate-100 text-slate-700"}`}>
+                                      {sourceLabel}
                                     </span>
-                                  ) : null}
-                                  {!candidate.product.storageKnown ? (
-                                    <span className="rounded-full bg-amber-100 px-2 py-1 font-semibold text-amber-900">{tr(locale, "Stock unknown", "المخزون غير معروف")}</span>
-                                  ) : availableForMachine !== null && availableForMachine <= 0 && selectedQty === 0 ? (
-                                    <span className="rounded-full bg-rose-100 px-2 py-1 font-semibold text-rose-800">{tr(locale, "Out of stock", "غير متوفر")}</span>
-                                  ) : null}
-                                </div>
-                                <div className="mt-2 text-xs text-slate-600">
-                                  {candidate.product.storageKnown
-                                    ? tr(
-                                        locale,
-                                        `Storage ${candidate.product.storageQty} · Available for this machine ${availableForMachine ?? 0} · Unassigned after route ${remainingAfterRoute ?? 0}`,
-                                        `المخزون ${candidate.product.storageQty} · المتاح لهذا الجهاز ${availableForMachine ?? 0} · غير المخصص بعد الجولة ${remainingAfterRoute ?? 0}`,
-                                      )
-                                    : tr(locale, "Storage quantity temporarily unknown", "كمية المخزون غير معروفة مؤقتًا")}
-                                </div>
-                                {candidate.product.storageKnown && availableForMachine !== null && availableForMachine > 0 && selectedQty >= availableForMachine ? (
-                                  <div className="mt-1 text-xs font-medium text-amber-800">
-                                    {tr(
-                                      locale,
-                                      `Only ${availableForMachine} units remain available for this machine after the other route stops.`,
-                                      `المتاح لهذا الجهاز هو ${availableForMachine} وحدة فقط بعد كميات أجهزة الجولة الأخرى.`,
-                                    )}
+                                    {candidate.recommendedQty > 0 ? (
+                                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
+                                        {tr(locale, "Suggested", "المقترح")} {candidate.recommendedQty}
+                                      </span>
+                                    ) : null}
                                   </div>
-                                ) : null}
-                                {candidate.lanes.length ? (
-                                  <div className="mt-2 space-y-1 rounded-lg border border-sky-100 bg-sky-50 p-2 text-xs text-sky-950">
-                                    {candidate.lanes.slice(0, 6).map((lane) => (
-                                      <div key={lane.slotCode} className="flex flex-wrap items-center justify-between gap-2">
-                                        <span className="font-semibold">{tr(locale, "Lane", "الفتحة")} {lane.slotCode}</span>
-                                        <span>{tr(locale, `Current ${lane.currentQty} / Capacity ${lane.capacity} / Bring ${lane.neededQty}`, `الحالي ${lane.currentQty} / السعة ${lane.capacity} / أحضر ${lane.neededQty}`)}</span>
+                                  <div className="mt-0.5 text-xs text-slate-500">
+                                    {candidate.product.sku ?? tr(locale, "No SKU", "لا يوجد SKU")}
+                                    {candidate.product.storageKnown
+                                      ? tr(locale, ` · Storage ${candidate.product.storageQty} · Available for this machine ${availableForMachine ?? 0} · Unassigned after route ${remainingAfterRoute ?? 0}`, ` · المخزون ${candidate.product.storageQty} · المتاح لهذا الجهاز ${availableForMachine ?? 0} · غير المخصص بعد الجولة ${remainingAfterRoute ?? 0}`)
+                                      : tr(locale, " · Storage unknown", " · المخزون غير معروف")}
+                                  </div>
+                                  {candidate.lanes.length ? (
+                                    <details className="mt-1 text-xs text-sky-900">
+                                      <summary className="cursor-pointer font-medium">
+                                        {candidate.lanes.length} {tr(locale, "lanes", "فتحات")}
+                                      </summary>
+                                      <div className="mt-1 space-y-1 rounded-lg bg-sky-50 p-2">
+                                        {candidate.lanes.map((lane) => (
+                                          <div key={lane.slotCode} className="flex flex-wrap justify-between gap-2">
+                                            <span>{tr(locale, "Lane", "الفتحة")} {lane.slotCode}</span>
+                                            <span>{tr(locale, `Current ${lane.currentQty} / Capacity ${lane.capacity} / Bring ${lane.neededQty}`, `الحالي ${lane.currentQty} / السعة ${lane.capacity} / أحضر ${lane.neededQty}`)}</span>
+                                          </div>
+                                        ))}
                                       </div>
-                                    ))}
-                                    {candidate.lanes.length > 6 ? <div>+{candidate.lanes.length - 6} {tr(locale, "more lanes", "فتحات إضافية")}</div> : null}
-                                  </div>
+                                    </details>
+                                  ) : null}
+                                </div>
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                                <button
+                                  type="button"
+                                  className="btn-secondary min-w-10 px-2 py-1 text-sm"
+                                  onClick={() => setDesiredManualQty(selectedManualMachineId, candidate.product.id, selectedQty - 1)}
+                                  disabled={saving || selectedQty <= 0}
+                                  aria-label={tr(locale, `Remove one ${candidate.product.name}`, `إنقاص وحدة من ${candidate.product.name}`)}
+                                >
+                                  −1
+                                </button>
+                                <input
+                                  type="number"
+                                  inputMode="numeric"
+                                  min={0}
+                                  max={candidate.product.storageKnown && availableForMachine !== null ? availableForMachine : 0}
+                                  step={1}
+                                  value={selectedQty}
+                                  onChange={(event) => setDesiredManualQty(selectedManualMachineId, candidate.product.id, Number(event.target.value) || 0)}
+                                  className="field-input w-20 text-center font-semibold"
+                                  disabled={saving || !candidate.product.storageKnown || availableForMachine === null}
+                                  aria-label={tr(locale, `${candidate.product.name} quantity`, `كمية ${candidate.product.name}`)}
+                                />
+                                <button
+                                  type="button"
+                                  className="btn-secondary min-w-10 px-2 py-1 text-sm"
+                                  onClick={() => setDesiredManualQty(selectedManualMachineId, candidate.product.id, selectedQty + 1)}
+                                  disabled={saving || !canIncrease}
+                                  aria-label={tr(locale, `Add one ${candidate.product.name}`, `زيادة وحدة من ${candidate.product.name}`)}
+                                >
+                                  +1
+                                </button>
+                                {candidate.recommendedQty > 0 && selectedQty !== candidate.recommendedQty ? (
+                                  <button
+                                    type="button"
+                                    className="btn-secondary px-2 py-1 text-xs"
+                                    onClick={() => setDesiredManualQty(selectedManualMachineId, candidate.product.id, candidate.recommendedQty)}
+                                    disabled={saving || !candidate.product.storageKnown || availableForMachine === null}
+                                  >
+                                    {tr(locale, `Use ${candidate.recommendedQty}`, `استخدم ${candidate.recommendedQty}`)}
+                                  </button>
+                                ) : null}
+                                {selectedQty > 0 ? (
+                                  <button type="button" className="link-secondary text-xs" onClick={() => setManualStopQty(selectedManualMachineId, candidate.product.id, 0)} disabled={saving}>
+                                    {tr(locale, "Clear", "مسح")}
+                                  </button>
                                 ) : null}
                               </div>
                             </div>
-
-                            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-                              <button
-                                type="button"
-                                className="btn-secondary min-w-10 px-2 py-1 text-sm"
-                                onClick={() => setDesiredManualQty(selectedManualMachineId, candidate.product.id, selectedQty - 1)}
-                                disabled={saving || selectedQty <= 0}
-                                aria-label={tr(locale, `Remove one ${candidate.product.name}`, `إنقاص وحدة من ${candidate.product.name}`)}
-                              >
-                                −1
-                              </button>
-                              <input
-                                type="number"
-                                inputMode="numeric"
-                                min={0}
-                                max={candidate.product.storageKnown && availableForMachine !== null ? availableForMachine : 0}
-                                step={1}
-                                value={selectedQty}
-                                onChange={(event) => setDesiredManualQty(selectedManualMachineId, candidate.product.id, Number(event.target.value) || 0)}
-                                className="field-input w-20 text-center font-semibold"
-                                disabled={saving || !candidate.product.storageKnown || availableForMachine === null}
-                                aria-label={tr(locale, `${candidate.product.name} quantity`, `كمية ${candidate.product.name}`)}
-                              />
-                              <button
-                                type="button"
-                                className="btn-secondary min-w-10 px-2 py-1 text-sm"
-                                onClick={() => setDesiredManualQty(selectedManualMachineId, candidate.product.id, selectedQty + 1)}
-                                disabled={saving || !canIncrease}
-                                aria-label={tr(locale, `Add one ${candidate.product.name}`, `زيادة وحدة من ${candidate.product.name}`)}
-                              >
-                                +1
-                              </button>
-                              <button
-                                type="button"
-                                className="btn-secondary min-w-10 px-2 py-1 text-sm"
-                                onClick={() => setDesiredManualQty(selectedManualMachineId, candidate.product.id, selectedQty + 5)}
-                                disabled={saving || !candidate.product.storageKnown || availableForMachine === null || selectedQty >= availableForMachine}
-                              >
-                                +5
-                              </button>
-                              {candidate.recommendedQty > 0 ? (
-                                <button
-                                  type="button"
-                                  className="btn-secondary px-2 py-1 text-xs"
-                                  onClick={() => setDesiredManualQty(selectedManualMachineId, candidate.product.id, candidate.recommendedQty)}
-                                  disabled={saving || !candidate.product.storageKnown || availableForMachine === null}
-                                >
-                                  {tr(locale, `Use suggested ${candidate.recommendedQty}`, `استخدم المقترح ${candidate.recommendedQty}`)}
-                                </button>
-                              ) : null}
-                              {selectedQty > 0 ? (
-                                <button type="button" className="link-secondary ms-auto text-xs" onClick={() => setManualStopQty(selectedManualMachineId, candidate.product.id, 0)} disabled={saving}>
-                                  {tr(locale, "Clear", "مسح")}
-                                </button>
-                              ) : null}
-                            </div>
-                          </article>
+                          </div>
                         );
                       })}
                     </div>
                   )}
+
+                  {!manualSearchQuery && otherConfiguredMachineProducts.length ? (
+                    <details className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                      <summary className="cursor-pointer text-sm font-medium text-slate-700">
+                        {tr(locale, "Other products already configured in this machine", "منتجات أخرى موجودة في هذا الجهاز")} ({otherConfiguredMachineProducts.length})
+                      </summary>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {otherConfiguredMachineProducts.map((candidate) => {
+                          const availableForMachine = availableStockForMachine(candidate.product.id, selectedManualMachineId);
+                          return (
+                            <button
+                              key={candidate.product.id}
+                              type="button"
+                              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs text-slate-700 hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-50"
+                              onClick={() => setDesiredManualQty(selectedManualMachineId, candidate.product.id, 1)}
+                              disabled={saving || !candidate.product.storageKnown || availableForMachine === null || availableForMachine <= 0}
+                            >
+                              <span className="font-medium text-slate-900">{candidate.product.name}</span>
+                              <span className="ms-2 text-slate-500">{tr(locale, "Add", "إضافة")}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </details>
+                  ) : null}
                 </div>
               </div>
             ) : null}
