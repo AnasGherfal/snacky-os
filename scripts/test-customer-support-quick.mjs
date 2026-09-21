@@ -32,7 +32,8 @@ test('CRM compensation is capped at 10 LYD for non-management users at UI and DB
 });
 
 test('quick intake defaults to WhatsApp but preserves other channels in optional details',()=>{
-  assert.match(forms,/kind==='issue'\?\{contact_channel:'whatsapp'\}/);
+  assert.match(forms,/f\('contact_channel','Contact channel'[^\n]*value:'whatsapp'[^\n]*advanced:true/);
+  assert.doesNotMatch(forms,/hidden:Record<string,string>[^\n]*contact_channel/);
   for(const channel of ['whatsapp','phone','email','other']) assert.match(forms,new RegExp("\\['"+channel+"'"));
 });
 
