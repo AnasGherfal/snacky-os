@@ -23,7 +23,7 @@ export default async function SnackyCompanyProfilePage(){
   <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
    <div className="grid gap-6 p-6 sm:p-8 lg:grid-cols-[1.15fr_.85fr] lg:items-center">
     <div>
-     <p className="text-sm font-semibold text-[var(--snacky-primary)]">{tr('SELF-SERVICE VENDING','خدمة بيع ذاتي')}</p>
+     <p className="text-sm font-semibold text-slate-700">{tr('SELF-SERVICE VENDING','خدمة بيع ذاتي')}</p>
      <h2 className="mt-3 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">{tr('A closer service. An easier day.','خدمة أقرب. ويوم أسهل.')}</h2>
      <p className="mt-4 max-w-2xl text-base leading-8 text-slate-600">{tr('Snacky operates self-service vending machines for snacks and drinks in high-traffic locations. We handle setup, products, refilling, follow-up and day-to-day operation so the host location receives a simple, managed service.','تدير سناكي ماكينات بيع ذاتي للوجبات الخفيفة والمشروبات في الأماكن ذات الحركة المرتفعة. نتولى التجهيز والمنتجات والتعبئة والمتابعة والتشغيل اليومي لتصل للموقع خدمة بسيطة ومدارة بالكامل.')}</p>
     </div>
@@ -58,7 +58,7 @@ export default async function SnackyCompanyProfilePage(){
   </section>
 
   <section className="grid gap-4 md:grid-cols-3">
-   {[['1',tr('Tell us about the location','عرّفنا بالموقع')],['2',tr('Snacky reviews suitability','تقيّم سناكي ملاءمة الموقع')],['3',tr('Agree the setup and next step','نتفق على التجهيز والخطوة التالية')]].map(([n,label])=><article key={n} className="surface-card"><span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-[var(--snacky-primary)] text-sm font-semibold text-white">{n}</span><p className="mt-3 font-semibold">{label}</p></article>)}
+   {[['1',tr('Tell us about the location','عرّفنا بالموقع')],['2',tr('Snacky reviews suitability','تقيّم سناكي ملاءمة الموقع')],['3',tr('Agree the setup and next step','نتفق على التجهيز والخطوة التالية')]].map(([n,label])=><article key={n} className="surface-card"><span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">{n}</span><p className="mt-3 font-semibold">{label}</p></article>)}
   </section>
 
   <section className="rounded-2xl bg-slate-950 p-6 text-white sm:p-8">
