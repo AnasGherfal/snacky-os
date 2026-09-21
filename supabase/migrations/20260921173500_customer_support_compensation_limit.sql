@@ -7,9 +7,18 @@ returns trigger
 language plpgsql
 security definer
 set search_path = public, pg_catalog
-as $$
+as $
+declare
+  compensation_changed boolean := false;
 begin
-  if new.refund_amount_lyd is not null
+  if tg_op = 'INSERT' then
+    compensation_changed := new.refund_amount_lyd is not null;
+  elsif tg_op = 'UPDATE' then
+    compensation_changed := new.refund_amount_lyd is distinct from old.refund_amount_lyd;
+  end if;
+
+  if compensation_changed
+     and new.refund_amount_lyd is not null
      and new.refund_amount_lyd > 10
      and auth.uid() is not null
      and not public.snacky_crm_manager()
@@ -19,7 +28,7 @@ begin
   end if;
   return new;
 end;
-$$;
+$;
 
 drop trigger if exists issues_customer_compensation_limit_v1 on public.issues;
 create trigger issues_customer_compensation_limit_v1
