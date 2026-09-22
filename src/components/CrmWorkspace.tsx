@@ -9,6 +9,7 @@ import { CrmForm } from '@/components/CrmForm';
 import { CrmDocumentUpload,CrmRefresh,CrmWelcome } from '@/components/CrmClientTools';
 import { CrmRecordForm,CrmFollowupForm,CrmNoteForm } from '@/components/CrmRecordForms';
 import {CrmLocationPaymentScheduleForm} from '@/components/CrmLocationPaymentScheduleForm';
+import {CustomerSupportPanel} from '@/components/CustomerSupportPanel';
 import { crmContactLink,crmHref,crmNames,crmPaths,crmStatus,crmOptionRows,issueStatuses,leadStatuses,taskStatuses,issueCategories,locationTypes,type CrmKind,type CrmSection } from '@/lib/crm-workspace';
 
 export type CrmSearchParams=Record<string,string|string[]|undefined>;
@@ -47,6 +48,12 @@ export async function CrmWorkspace({section,id,searchParams={},create=false}:{se
   const result=await db.rpc('snacky_crm_workspace_v1',{p_section:section,p_id:id??null,p_filters:filters});
   if(result.error)throw result.error;if(!result.data||typeof result.data!=='object')throw new Error('Invalid workspace data');context=result.data;
  }catch(error){console.error('[crm-workspace] Could not verify records',{section,error});return <ErrorState title={tr('Customer relations unavailable','علاقات العملاء غير متاحة')} body={tr('Could not verify these records or your access. This is not an empty task list. Reload after the database update or connection is restored.','تعذر التحقق من السجلات أو صلاحياتك. هذا لا يعني عدم وجود مهام. أعد التحميل بعد تحديث قاعدة البيانات أو استعادة الاتصال.')}/>;}
+ let support:any=null;
+ if(section==='work'&&context.staff&&db){
+  const supportResult=await db.rpc('snacky_customer_support_dashboard_v1',{});
+  if(!supportResult.error&&supportResult.data&&typeof supportResult.data==='object')support=supportResult.data;
+  else console.error('[crm-workspace] Customer support panel unavailable',{error:supportResult.error});
+ }
  const row=context.record,d=row?.data??{},kind=section as CrmKind;
  const rows=(context.rows??[]).map((r:any)=>({...r,assigned_name:r.assigned_name??context.directory.find((p:any)=>p.id===r.assigned_to)?.name}));
  const name=(member:any)=>context.directory.find((p:any)=>p.id===member)?.name??(ar?'غير مسجّل':'Not recorded');
@@ -58,6 +65,7 @@ export async function CrmWorkspace({section,id,searchParams={},create=false}:{se
   <CrmRefresh/>
   <PageHeader title={title} subtitle={row?tr('Ownership, next action and complete relationship history.','المسؤول والخطوة القادمة وسجل العلاقة.'):create&&section==='issue'?tr('Record only the essentials now. After saving, open the case to assign field work, follow up with the customer, record compensation and close it.','سجّلي الأساسيات فقط الآن. بعد الحفظ افتحي الحالة لتعيين إجراء ميداني أو متابعة العميل وتسجيل التعويض ثم إغلاقها.'):tr('External conversations happen by phone, WhatsApp and visits. The outcome and next action live here.','التواصل الخارجي بالمكالمات وواتساب والزيارات. النتيجة والخطوة القادمة تُسجّلان هنا.')} action={row||create?<Link className="btn-secondary" href={listHref}>{tr('Back to list','العودة للقائمة')}</Link>:canCreate?<Link className="btn-primary" href={`${listHref}/new`}>+ {section==='issue'?tr('Add customer issue','إضافة مشكلة عميل'):section==='lead'?tr('Add lead','إضافة جهة'):tr('Add record','إضافة سجل')}</Link>:null}/>
   {section==='work'&&context.staff?<CrmWelcome userId={profile.id}/>:null}
+  {section==='work'&&context.staff&&support?<CustomerSupportPanel data={support} ar={ar}/>:null}
   {!row&&!create&&section==='work'?<>
    <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">{[
     ['issue_action','Issues requiring action','مشاكل تحتاج إجراء','/issues?status=open'],['issue_waiting','Waiting on someone else','بانتظار طرف آخر','/issues?status=waiting'],['leads_today','Lead follow-ups today','متابعات الجهات اليوم','/locations-pipeline?window=today'],['leads_overdue','Overdue leads','جهات متأخرة','/locations-pipeline?window=overdue'],['locations_today','Location follow-ups','متابعات المواقع','/relationships?window=today'],['admin_today','Administrative tasks','مهام إدارية','/follow-ups?type=admin&window=today'],['rent_week','Rent / payments due soon','دفعات المواقع القريبة','/relationships/obligations?window=week'],['meetings_today','Meetings today','مواعيد اليوم','/follow-ups?type=meeting&window=today'],['recent_completed','Recently completed','أُنجز مؤخراً','/follow-ups?window=completed']
