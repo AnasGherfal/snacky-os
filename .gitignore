@@ -7,4 +7,7 @@ node_modules
 .DS_Store
 .next-start-*.log
 supabase/.branches
-supabase/.temp\n.edge-*.log\n.next-dev-*.log\n.npm-cache/\n
+supabase/.temp
+.edge-*.log
+.next-dev-*.log
+.npm-cache/
