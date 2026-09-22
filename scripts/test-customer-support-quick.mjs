@@ -47,3 +47,35 @@ test('Company Documents surfaces the approved Snacky profile inside the OS',()=>
   assert.match(profile,/requireCurrentProfileForPath\('\/company\/profile'\)/);
   assert.match(profile,/snacky\.ly/);
 });
+
+
+test('My Work loads the focused customer support dashboard without replacing the normal work queue',()=>{
+  const panel=fs.readFileSync('src/components/CustomerSupportPanel.tsx','utf8');
+  assert.match(workspace,/snacky_customer_support_dashboard_v1/);
+  assert.match(workspace,/CustomerSupportPanel data=\{support\}/);
+  assert.match(panel,/Support queue/);
+  assert.match(panel,/قائمة دعم العملاء/);
+  for(const key of ['open','waiting_operator','waiting_customer','needs_management','due_today','overdue','recent_resolved']) assert.match(panel,new RegExp("'"+key+"'"));
+  assert.match(panel,/href="\/issues\/new"/);
+  assert.match(panel,/WhatsApp/);
+});
+
+test('support dashboard SQL is read-only, scoped to the signed-in CRM owner and excludes historical or practice issues',()=>{
+  const supportSql=fs.readFileSync('supabase/migrations/20260922102000_customer_support_dashboard.sql','utf8');
+  assert.match(supportSql,/create or replace function public\.snacky_customer_support_dashboard_v1/);
+  assert.match(supportSql,/i\.assigned_to=me/);
+  assert.match(supportSql,/not coalesce\(i\.is_practice,false\)/);
+  assert.match(supportSql,/not coalesce\(i\.is_historical,false\)/);
+  assert.match(supportSql,/task_type='field_action'/);
+  assert.match(supportSql,/task_type='admin'/);
+  assert.doesNotMatch(supportSql,/insert\s+into\s+public\.financial_transactions/i);
+  assert.doesNotMatch(supportSql,/update\s+public\.financial_transactions/i);
+  assert.doesNotMatch(supportSql,/delete\s+from\s+public\.financial_transactions/i);
+});
+
+test('support waiting reasons and management approval are standardized for routing',()=>{
+  for(const value of ['operator','customer','management','other']) assert.match(forms,new RegExp("\\['"+value+"'"));
+  assert.match(forms,/Management approval/);
+  assert.match(forms,/موافقة الإدارة/);
+  assert.match(forms,/Waiting for','بانتظار'.*type:'select'/);
+});
