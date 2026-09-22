@@ -70,7 +70,8 @@
     "smoke": "npm run test:route-ledger-core && npm run test:route-product-grouping && npm run test:route-inventory-summary && npm run test:critical-workflows && npm run smoke:auth-pages && npm run test:route-workflow && npm run test:route-inventory-regression && npm run test:vms-import-validation && npm run test:vms-sales-import-parser && npm run test:sales-coverage-cleanup && npm run test:finance-ledger",
     "test:vms-sales-import-parser": "node --experimental-strip-types --test scripts/test-vms-sales-import-parser.mjs",
     "test:xy-vms-protocol": "node --experimental-strip-types --test scripts/test-xy-vms-protocol.mjs scripts/test-xy-vms-data.mjs scripts/test-xy-vms-safety.mjs scripts/test-xy-vms-route-automation.mjs",
-    "test:sales-coverage-cleanup": "node --experimental-strip-types --test scripts/test-sales-coverage-cleanup.mjs"
+    "test:sales-coverage-cleanup": "node --experimental-strip-types --test scripts/test-sales-coverage-cleanup.mjs",
+    "audit:performance": "node scripts/audit-performance-baseline.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.105.4",
@@ -101,4 +102,4 @@
     "sharp": "0.35.4",
     "baseline-browser-mapping": "2.11.0"
   }
-}
+}\n
