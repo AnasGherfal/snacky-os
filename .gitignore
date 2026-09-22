@@ -8,3 +8,6 @@ node_modules
 .next-start-*.log
 supabase/.branches
 supabase/.temp
+.edge-*.log
+.next-dev-*.log
+.npm-cache/
