@@ -113,7 +113,7 @@ const rolePermissions = {
     "vms_import.view",
     "vms_import.create",
     "vms_import.validate",
-    "vms_import.confirm",
+    "vms_import_confirm",
     "vms_import.manage_mappings",
   ],
   // Customer Relations & Business Development reads safe location/machine
@@ -360,6 +360,7 @@ function matchesPrefix(pathname: string, prefixes: string[]) {
 
 export function canAccessPath(user: AuthUserContext | null | undefined, pathname: string) {
   if (!user || user.activeStatus === "inactive") return false;
+  if (matchesPrefix(pathname, ["/cash-handling"])) return hasAnyRole(user, ["owner", "admin", "supervisor", "operator", "warehouse", "purchasing", "finance"]);
   if (matchesPrefix(pathname, ["/company/manage", "/company/new"])) return isOwnerAdminRole(user);
   if (matchesPrefix(pathname, ["/company"])) return hasAnyRole(user, ["owner", "admin", "supervisor", "crm", "operator", "warehouse", "purchasing", "finance"]);
   if (matchesPrefix(pathname, ["/buying-lists"])) return hasAnyRole(user, ["owner", "admin", "supervisor", "crm", "operator", "warehouse", "purchasing", "finance"]);
