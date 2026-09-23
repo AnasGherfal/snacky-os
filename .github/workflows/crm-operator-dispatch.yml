@@ -58,7 +58,16 @@ jobs:
             text=text[:start]+text[start:end].replace('enabled = true','enabled = false')+text[end:]
           Path('.qa/full/supabase/config.toml').write_text(text)
           PY
-          supabase start --workdir .qa/full > diagnostics/local-start.log 2>&1 || { tail -n 80 diagnostics/local-start.log; exit 1; }
+          started=0
+          for attempt in 1 2 3; do
+            if supabase start --workdir .qa/full > diagnostics/local-start.log 2>&1; then
+              started=1
+              break
+            fi
+            supabase stop --workdir .qa/full --no-backup >/dev/null 2>&1 || true
+            sleep 20
+          done
+          if [ "$started" -ne 1 ]; then tail -n 100 diagnostics/local-start.log; exit 1; fi
           supabase status --workdir .qa/full -o env > .qa/local-status.env
           python3 scripts/company-e2e/migrate.py
 
