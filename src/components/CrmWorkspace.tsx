@@ -9,7 +9,8 @@ import { CrmForm } from '@/components/CrmForm';
 import { CrmDocumentUpload,CrmRefresh,CrmWelcome } from '@/components/CrmClientTools';
 import { CrmRecordForm,CrmFollowupForm,CrmNoteForm } from '@/components/CrmRecordForms';
 import {CrmLocationPaymentScheduleForm} from '@/components/CrmLocationPaymentScheduleForm';
-import {CustomerSupportPanel} from '@/components/CustomerSupportPanel';\nimport {CrmDispatchTaskPanel,CrmIssueDispatchSummary} from '@/components/CrmDispatchPanel';
+import {CustomerSupportPanel} from '@/components/CustomerSupportPanel';
+import {CrmDispatchTaskPanel,CrmIssueDispatchSummary} from '@/components/CrmDispatchPanel';
 import { crmContactLink,crmHref,crmNames,crmPaths,crmStatus,crmOptionRows,issueStatuses,leadStatuses,taskStatuses,issueCategories,locationTypes,type CrmKind,type CrmSection } from '@/lib/crm-workspace';
 
 export type CrmSearchParams=Record<string,string|string[]|undefined>;
