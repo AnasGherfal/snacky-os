@@ -1,0 +1,33 @@
+name: Cash handover isolated scaffold
+on:
+  push:
+    branches: ['feat/cash-handover-coordinator-v1']
+    paths: ['.github/workflows/cash-handover-scaffold.yml']
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.117.0
+      - name: Generate migration using the CLI without connecting to any database
+        run: |
+          supabase --version
+          supabase migration new --help
+          mkdir -p .qa/scaffold/supabase
+          supabase migration new cash_handover_coordinator_v1 --workdir .qa/scaffold
+          find .qa/scaffold/supabase/migrations -name '*.sql'
+      - name: Package source-only test input (no environment files, credentials, or production data)
+        run: |
+          mkdir -p .qa/export
+          tar -czf .qa/export/source.tgz src scripts supabase docs .github package.json package-lock.json tsconfig.json next.config.ts next-env.d.ts lucide-react.d.ts eslint.config.mjs postcss.config.mjs AGENTS.md README.md
+          cp .qa/scaffold/supabase/migrations/*.sql .qa/export/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cash-handover-source-scaffold
+          path: .qa/export/*
+          retention-days: 1
