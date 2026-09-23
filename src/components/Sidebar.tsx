@@ -167,20 +167,22 @@ const adminItem: NavItem = {
   moduleKey: "admin",
 };
 
+const cashHandlingItem: NavItem = { label: { en: "Cash handling", ar: "تسليم وعد النقد" }, href: "/cash-handling", icon: HandCoins, activePrefixes: ["/cash-handling"] };
+
 const buyingListsItem: NavItem = { label: {en:"My buying lists", ar:"قوائم الشراء المسندة"}, href:"/buying-lists", icon:ClipboardList, activePrefixes:["/buying-lists"] };
 
 const companyItem: NavItem = { label: { en: "Company", ar: "الشركة" }, href: "/company", icon: ClipboardList, moduleKey: "company" };
 
 const ownerAdminNav: NavSection[] = [
   { items: [dashboardItem] },
-  { title: sectionTitles.work, items: [operationsItem, cashCustodyItem, stockItem, machinesItem, crmItem, ...(companyHubEnabled ? [companyItem] : [])] },
+  { title: sectionTitles.work, items: [operationsItem, cashCustodyItem, cashHandlingItem, stockItem, machinesItem, crmItem, ...(companyHubEnabled ? [companyItem] : [])] },
   { title: sectionTitles.business, items: [financeItem, reportsItem] },
   { title: sectionTitles.system, items: [adminItem] },
 ];
 
 const supervisorNav: NavSection[] = [
   { items: [dashboardItem] },
-  { title: sectionTitles.work, items: [operationsItem, cashCustodyItem, stockItem, machinesItem, crmItem, ...(companyHubEnabled ? [companyItem] : [])] },
+  { title: sectionTitles.work, items: [operationsItem, cashCustodyItem, cashHandlingItem, stockItem, machinesItem, crmItem, ...(companyHubEnabled ? [companyItem] : [])] },
   { title: sectionTitles.business, items: [financeItem] },
 ];
 
@@ -256,6 +258,7 @@ function sectionsForRoles(role: AppRole, roles?: AppRole[] | null): NavSection[]
     work.push(cashCustodyItem);
   }
   if (hasAnyRole(context, ["crm", "operator", "finance"]) && !hasAnyRole(context, ["warehouse", "purchasing"])) work.push(buyingListsItem);
+  if (hasAnyRole(context, ["operator", "warehouse", "purchasing", "finance"])) work.push(cashHandlingItem);
   if (companyHubEnabled && hasAnyRole(context, companyRoles)) work.push(companyItem);
   if (hasPermission(context, "reports.view")) business.push(reportsItem);
   if (hasPermission(context, "investor.view")) business.push(investorPortalItem);
