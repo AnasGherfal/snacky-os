@@ -1,0 +1,88 @@
+name: CRM operator dispatch checks
+on:
+  push:
+    branches: ['feat/crm-operator-dispatch-v1']
+  pull_request:
+    paths:
+      - 'src/lib/crm-dispatch.ts'
+      - 'src/lib/crm-workspace.ts'
+      - 'src/components/CrmDispatchPanel.tsx'
+      - 'src/components/CrmWorkspace.tsx'
+      - 'src/components/CrmRecordForms.tsx'
+      - 'src/app/api/crm/dispatch/**'
+      - 'supabase/migrations/*crm_operator_dispatch*'
+      - 'scripts/test-crm-operator-dispatch.mjs'
+      - 'scripts/crm-operator-dispatch-e2e.mjs'
+      - '.github/workflows/crm-operator-dispatch.yml'
+permissions:
+  contents: read
+concurrency:
+  group: crm-dispatch-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Dispatch contracts and existing CRM/notification regressions
+        run: |
+          node --test scripts/test-crm-operator-dispatch.mjs
+          node --experimental-strip-types --test scripts/test-connected-relations.mjs scripts/test-assignment-notifications.mjs scripts/test-authz-permissions.mjs
+
+      - name: TypeScript and focused lint
+        run: |
+          npm run typecheck
+          npx eslint src/lib/crm-dispatch.ts src/lib/crm-workspace.ts src/components/CrmDispatchPanel.tsx src/components/CrmWorkspace.tsx src/components/CrmRecordForms.tsx src/app/api/crm/dispatch/route.ts
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.117.0
+
+      - name: Disposable backend only
+        run: |
+          mkdir -p .qa/full/supabase diagnostics
+          python3 - <<'PY'
+          from pathlib import Path
+          text=Path('supabase/config.toml').read_text().replace('project_id = "snacky-os"','project_id = "snacky-company-isolated"')
+          for section in ['db.migrations','db.seed','studio','inbucket','realtime','edge_runtime']:
+            start=text.index('['+section+']'); end=text.find('\n[',start+1)
+            if end<0:end=len(text)
+            text=text[:start]+text[start:end].replace('enabled = true','enabled = false')+text[end:]
+          Path('.qa/full/supabase/config.toml').write_text(text)
+          PY
+          supabase start --workdir .qa/full > diagnostics/local-start.log 2>&1 || { tail -n 80 diagnostics/local-start.log; exit 1; }
+          supabase status --workdir .qa/full -o env > .qa/local-status.env
+          python3 scripts/company-e2e/migrate.py
+
+      - name: Real CRM to operator dispatch lifecycle
+        run: |
+          set -a
+          source .qa/local-status.env
+          set +a
+          node scripts/crm-operator-dispatch-e2e.mjs
+
+      - name: Database security boundary checks
+        run: |
+          export PGHOST=127.0.0.1 PGPORT=54322 PGUSER=postgres PGPASSWORD=postgres PGDATABASE=postgres
+          test "$(psql -X -At -c "select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='crm_dispatch_private' and c.relname='requests' and c.relrowsecurity")" = "1"
+          test "$(psql -X -At -c "select has_table_privilege('authenticated','crm_dispatch_private.requests','SELECT')")" = "f"
+          test "$(psql -X -At -c "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='snacky_issue_dispatch_command_v1' and not p.prosecdef")" = "1"
+          test "$(psql -X -At -c "select count(*) from pg_trigger where tgrelid='public.crm_tasks'::regclass and tgname='crm_dispatch_guard_v1' and tgenabled='O'")" = "1"
+
+      - name: Existing critical workflow safety
+        run: npm run test:critical-workflows
+
+      - name: Production build
+        run: npm run build
+
+      - name: Destroy disposable backend
+        if: always()
+        run: supabase stop --workdir .qa/full --no-backup || true
