@@ -309,6 +309,10 @@ begin
     where id=v_task_id;
   end if;
 
+  -- Do not let this scoped trigger bypass leak into another CRM command that
+  -- happens to execute later in the same transaction.
+  perform pg_catalog.set_config('snacky.crm_dispatch_task_id','',true);
+
   select * into v_task from public.crm_tasks where id=v_task_id;
 
   v_response:=pg_catalog.jsonb_build_object(
