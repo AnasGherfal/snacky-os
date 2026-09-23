@@ -55,7 +55,6 @@ jobs:
         run: |
           export PGHOST=127.0.0.1 PGPORT=54322 PGUSER=postgres PGPASSWORD=postgres PGDATABASE=postgres
           test "$(psql -X -At -c "select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='stocktake_private' and c.relname in ('assignments','lines','events','requests') and c.relrowsecurity")" = "4"
-          test "$(psql -X -At -c "select count(*) from pg_proc p join pg_namespace n on n.oid=p.relnamespace where false" 2>/dev/null || true)" = "" || true
           test "$(psql -X -At -c "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in ('snacky_storage_stocktake_workspace_v1','snacky_storage_stocktake_command_v1') and not p.prosecdef")" = "2"
           test "$(psql -X -At -c "select has_table_privilege('authenticated','stocktake_private.assignments','SELECT')")" = "f"
           test "$(psql -X -At -c "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='stocktake_private' and p.proname in ('workspace','command','ledger_quantity_at','manager','eligible_assignee','can_view')")" = "6"
