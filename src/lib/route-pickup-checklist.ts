@@ -120,6 +120,7 @@ function groupKeyForProduct(productName: string, productCategory?: string | null
     || includesAny(text, SPUDS_ALIASES)
     || includesAny(text, CHIPS_KEYWORDS)
   ) return "chips";
+  if (includesAny(text, ALMARAI_FEATURED_ALIASES) || includesAny(text, ALMARAI_KEYWORDS)) return "almarai_dairy";
   if (
     includesAny(text, LUPPO_ALIASES)
     || includesAny(text, LAVIVA_ALIASES)
@@ -145,7 +146,6 @@ function groupKeyForProduct(productName: string, productCategory?: string | null
     || includesAny(text, XIR_ALIASES)
     || includesAny(text, DRINK_KEYWORDS)
   ) return "drinks";
-  if (includesAny(text, ALMARAI_FEATURED_ALIASES) || includesAny(text, ALMARAI_KEYWORDS)) return "almarai_dairy";
   if (includesAny(text, BAKERY_KEYWORDS)) return "rolls_bakery";
   return "other";
 }
