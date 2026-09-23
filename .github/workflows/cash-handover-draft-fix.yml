@@ -18,7 +18,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - name: Fix browser hydration without changing business or permission logic
+      - name: Restore browser state before mounting and update after network completion
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -56,9 +56,22 @@ jobs:
           change("const [error, setError] = useState('')","const [error, setError] = useState(initial.pending ? 'uncertain' : '')")
           change('const [ready, setReady] = useState(false), [memoryOnly, setMemoryOnly] = useState(false);','const [memoryOnly, setMemoryOnly] = useState(initial.memoryOnly);')
           change('  const storageKey = `snacky.cash-handover.pending.v1.${userId}`;\n  const load','  const load')
-          change('const seq = ++sequence.current; setLoading(true);','const seq = ++sequence.current;')
-          a=s.index('  useEffect(() => {');b=s.index('  function keep',a)
-          s=s[:a]+"  useEffect(() => { void load(); return () => { sequence.current += 1; }; }, [load]);\n"+s[b:]
+          a=s.index('  const load = useCallback(');b=s.index('  function keep',a)
+          s=s[:a]+'''  const load = useCallback(() => {
+              const seq = ++sequence.current;
+              const params = new URLSearchParams({ status, offset: String(offset) }); if (selected) params.set('id', selected);
+              return fetch(`/api/cash-handling?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(20000) })
+                .then(async response => {
+                  const body = await response.json();
+                  if (!response.ok || !body.ok || body.data?.me !== userId) throw Error(body.code ?? 'unavailable');
+                  return body.data as CashWorkspace;
+                })
+                .then(data => { if (seq === sequence.current) setView(data); })
+                .catch(e => { if (seq === sequence.current) { setView(null); setError(e instanceof Error && ['denied', 'invalid'].includes(e.message) ? e.message : 'unavailable'); } })
+                .finally(() => { if (seq === sequence.current) setLoading(false); });
+            }, [selected, status, offset, userId]);
+            useEffect(() => { void load(); return () => { sequence.current += 1; }; }, [load]);
+          '''+s[b:]
           change("setSelected(id); setAction(null); setError(''); setReceipt(null);","setLoading(true); setSelected(id); setAction(null); setError(''); setReceipt(null);")
           s=s.replace("setError(''); void load();","setError(''); setLoading(true); void load();")
           s=s.replace('setStatus(value); setOffset(0);','setLoading(true); setStatus(value); setOffset(0);')
@@ -73,5 +86,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add src/components/CashHandlingWorkspace.tsx src/lib/authz.ts .github/workflows/cash-handover-draft-fix.yml
-          git commit -m 'fix(cash): restore browser state before mounting the cash workspace'
+          git commit -m 'fix(cash): restore browser retry state and load records asynchronously'
           git push origin HEAD:refs/heads/feat/cash-handover-coordinator-v1
