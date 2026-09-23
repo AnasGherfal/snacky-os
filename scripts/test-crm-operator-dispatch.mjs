@@ -54,6 +54,7 @@ test('fixed requires report plus image proof and completes field task only',()=>
 test('generic field-task updates cannot bypass managed dispatch state',()=>{
  assert.match(migration,/Use the operator dispatch controls for this field action/i);
  assert.ok(migration.includes("current_setting('snacky.crm_dispatch_task_id'"));
+ assert.ok(migration.includes("set_config('snacky.crm_dispatch_task_id','',true)"));
  assert.match(migration,/new\.status is distinct from old\.status/i);
  assert.ok(workspace.includes("d.task_type==='field_action'&&d.dispatch_state&&!context.staff"));
 });
