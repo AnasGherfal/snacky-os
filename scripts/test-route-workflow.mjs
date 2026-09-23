@@ -185,9 +185,10 @@ test("route reservation queries do not send UI-only statuses into route_status e
   }
 });
 
-test("route pickup checklist prioritizes Mr Crunch, then Doritos, then other products", () => {
+test("route pickup checklist prioritizes Mr Crunch, Doritos, Spuds, and keeps water last", () => {
   const sorted = sortPickupProductRows([
     { productName: "Water 500ml" },
+    { productName: "Spuds Onion" },
     { productName: "Doritos Nacho" },
     { productName: "طربوش Cheese" },
     { productName: "Chips Classic" },
@@ -200,12 +201,14 @@ test("route pickup checklist prioritizes Mr Crunch, then Doritos, then other pro
     "طربوش Cheese",
     "Doritos Nacho",
     "دوريتوس Green Hot",
+    "Spuds Onion",
     "Chips Classic",
     "Water 500ml",
   ]);
   assert.equal(pickupProductPriorityGroup("Tarboouch"), 1);
   assert.equal(pickupProductPriorityGroup("Doritos Green Hot"), 2);
-  assert.equal(pickupProductPriorityGroup("Water"), 3);
+  assert.equal(pickupProductPriorityGroup("Spuds Onion"), 3);
+  assert.equal(pickupProductPriorityGroup("Water"), 4);
 });
 
 test("route product grouping keeps similar products together in the expected family order", () => {
@@ -227,18 +230,18 @@ test("route product grouping keeps similar products together in the expected fam
 
   assert.deepEqual(grouped.map((group) => group.groupKey), [
     "chips",
-    "chocolates",
-    "rolls_bakery",
-    "almarai_dairy",
-    "candy",
     "drinks",
-    "water",
+    "chocolates",
+    "candy",
+    "almarai_dairy",
     "other",
+    "water",
   ]);
   assert.deepEqual(grouped[0].items.map((item) => item.productName), ["Mr Crunch Tarboosh", "Doritos Nacho"]);
-  assert.deepEqual(grouped[1].items.map((item) => item.productName), ["Galaxy Chocolate", "Snickers", "Twix", "Luppo"]);
-  assert.deepEqual(grouped[5].items.map((item) => item.productName), ["Pepsi Cola", "X!R"]);
+  assert.deepEqual(grouped[1].items.map((item) => item.productName), ["Pepsi Cola", "X!R"]);
+  assert.deepEqual(grouped[2].items.map((item) => item.productName), ["Luppo", "Brioche Roll", "Galaxy Chocolate", "Snickers", "Twix"]);
   assert.equal(grouped[0].totalQuantity, 9);
   assert.equal(grouped[0].defaultExpanded, true);
-  assert.equal(grouped[2].defaultExpanded, false);
+  assert.equal(grouped[4].defaultExpanded, false);
+  assert.equal(grouped.at(-1)?.groupKey, "water");
 });

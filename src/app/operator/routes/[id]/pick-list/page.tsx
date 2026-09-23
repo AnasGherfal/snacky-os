@@ -8,6 +8,7 @@ import { useLanguage } from "@/components/I18nProvider";
 import { confirmPickupDirect } from "@/lib/direct-pickup-actions";
 import { startRoute } from "@/lib/operator-actions";
 import { formatProductQuantity } from "@/lib/product-quantity";
+import { comparePickupProductRows } from "@/lib/route-pickup-checklist";
 
 const LEGACY_PICKUP_CHECKLIST_STORAGE_PREFIX = "snacky:route-pickup-checklist";
 const PICKUP_PROGRESS_STORAGE_PREFIX = "snacky:route-pick-progress";
@@ -273,7 +274,8 @@ export default function PickListPage() {
                 notes: optionalText(item.notes) ?? "",
               };
             })
-            .filter((item): item is PickStopItem => Boolean(item));
+            .filter((item): item is PickStopItem => Boolean(item))
+            .sort((a, b) => comparePickupProductRows(a, b));
 
           return {
             routeStopId,
