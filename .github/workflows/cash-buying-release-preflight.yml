@@ -1,0 +1,105 @@
+name: Cash and buying combined release rehearsal
+on:
+  push:
+    branches: ['qa/cash-buying-release-preflight']
+    paths: ['.github/workflows/cash-buying-release-preflight.yml']
+permissions:
+  contents: read
+concurrency:
+  group: cash-buying-release-rehearsal
+  cancel-in-progress: false
+jobs:
+  combined:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Combine only the two exact reviewed feature commits locally
+        run: |
+          git config user.name 'Isolated release verification'
+          git config user.email 'verification@example.invalid'
+          git merge-base --is-ancestor 78fc33cfba592901320fd7aff767d5ff43458455 HEAD
+          git cat-file -e e83959583562a858bf1ddb65c06fb197840b95c0^{commit}
+          git cat-file -e 97570baf350f17564282467ce6145c7957c8153d^{commit}
+          git merge --no-edit --no-ff e83959583562a858bf1ddb65c06fb197840b95c0
+          git merge --no-edit --no-ff 97570baf350f17564282467ce6145c7957c8153d
+          git diff --check 78fc33cfba592901320fd7aff767d5ff43458455
+          mkdir -p diagnostics
+          git diff --name-only 78fc33cfba592901320fd7aff767d5ff43458455 > diagnostics/combined-files.txt
+          sha256sum supabase/migrations/20260920133731_shared_buying_lists.sql supabase/migrations/20260923120059_cash_handover_coordinator_v1.sql supabase/migrations/20260923130938_buying_store_guidance_v1.sql > diagnostics/migration-sha256.txt
+          git ls-tree -r HEAD src supabase package.json package-lock.json > diagnostics/tested-source-blobs.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.117.0
+      - name: Isolated loopback services only
+        run: |
+          mkdir -p .qa/full/supabase
+          python3 - <<'PY'
+          from pathlib import Path
+          text=Path('supabase/config.toml').read_text().replace('project_id = "snacky-os"','project_id = "snacky-company-isolated"')
+          for section in ['db.migrations','db.seed','studio','inbucket','realtime','edge_runtime']:
+            start=text.index('['+section+']'); end=text.find('\n[',start+1)
+            if end<0:end=len(text)
+            text=text[:start]+text[start:end].replace('enabled = true','enabled = false')+text[end:]
+          Path('.qa/full/supabase/config.toml').write_text(text)
+          PY
+          supabase start --workdir .qa/full > diagnostics/local-start.log 2>&1 || { tail -n 60 diagnostics/local-start.log; exit 1; }
+          supabase status --workdir .qa/full -o env > .qa/local-status.env
+          python3 scripts/company-e2e/migrate.py
+      - name: Install pinned app and isolated browser tools
+        run: |
+          npm ci
+          npm install --prefix .qa/browser --no-package-lock --ignore-scripts playwright@1.55.0 @axe-core/playwright@4.10.2
+          .qa/browser/node_modules/.bin/playwright install --with-deps chromium
+      - name: Both feature contracts and critical existing workflows
+        run: |
+          npm run typecheck
+          npx eslint src/lib/cash-handover.ts src/lib/cash-photo.ts src/components/CashHandlingWorkspace.tsx src/app/api/cash-handling/route.ts src/app/cash-handling/page.tsx src/app/cash-collections/layout.tsx src/lib/buying-sources.ts src/components/BuyingSourceEditor.tsx src/components/BuyingListTable.tsx
+          node --experimental-strip-types --test scripts/test-cash-handover.mjs scripts/test-buying-sources.mjs scripts/test-shared-buying.mjs scripts/test-buying-print-css.mjs scripts/test-authz-permissions.mjs
+          npm run test:cash-removal
+          npm run test:critical-workflows
+          npm run test:route-ledger-core
+      - name: Real cash lifecycle and bilingual browser acceptance with both features installed
+        run: |
+          set -o pipefail
+          node scripts/cash-handover-e2e.mjs 2>&1 | tee diagnostics/combined-cash.log
+      - name: Real buying lifecycle and bilingual browser acceptance after cash operations
+        run: |
+          set -o pipefail
+          node --import ./scripts/company-e2e/diagnostics.mjs scripts/buying-sources-e2e.mjs 2>&1 | tee diagnostics/combined-buying.log
+      - name: Record combined result
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          reports=[json.loads(Path('diagnostics/'+s+'/results.json').read_text()) for s in ['cash-handover','buying-sources']]
+          assert all(not r['errors'] and all(t['status']=='passed' for t in r['results']) for r in reports)
+          Path('diagnostics/combined-result.json').write_text(json.dumps({'cash_head':'e83959583562a858bf1ddb65c06fb197840b95c0','buying_head':'97570baf350f17564282467ce6145c7957c8153d','cash_scenarios':len(reports[0]['results']),'buying_scenarios':len(reports[1]['results']),'production_connected':False,'passed':True},indent=2))
+          PY
+      - name: Redact local credentials
+        if: always()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          for p in Path('diagnostics').rglob('*.log'):
+            text=p.read_text(errors='replace')
+            text=re.sub(r'eyJ[A-Za-z0-9_\-.]+','[LOCAL_JWT_REDACTED]',text)
+            text=re.sub(r'sb_(?:secret|publishable)_[A-Za-z0-9_-]+','[LOCAL_KEY_REDACTED]',text)
+            p.write_text(text)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cash-buying-combined-release
+          path: diagnostics/
+          retention-days: 7
+      - name: Destroy disposable backend
+        if: always()
+        run: supabase stop --workdir .qa/full --no-backup || true
