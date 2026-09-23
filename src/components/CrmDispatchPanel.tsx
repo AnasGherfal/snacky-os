@@ -1,6 +1,10 @@
 'use client';
-import {useEffect,useMemo,useRef,useState} from 'react';
+import {useMemo,useRef,useState,useSyncExternalStore} from 'react';
 import {useRouter} from 'next/navigation';
+
+const subscribe=()=>()=>{};
+const clientSnapshot=()=>true;
+const serverSnapshot=()=>false;
 import {
  crmDispatchAckOverdue,crmDispatchError,crmDispatchLabel,crmDispatchReceiptMatches,
  validateCrmDispatchCommand,type CrmDispatchCommand,type CrmDispatchTask
@@ -18,11 +22,18 @@ function tone(state:string|null){
  return 'border-amber-200 bg-amber-50 text-amber-900';
 }
 
-export function CrmDispatchTaskPanel({task,userId,ar,canAct,proofImages}:{task:CrmDispatchTask;userId:string;ar:boolean;canAct:boolean;proofImages:number}){
+export function CrmDispatchTaskPanel(props:{task:CrmDispatchTask;userId:string;ar:boolean;canAct:boolean;proofImages:number}){
+ const hydrated=useSyncExternalStore(subscribe,clientSnapshot,serverSnapshot);
+ if(!hydrated)return <section className="surface-card"><p role="status">{props.ar?'جارٍ تحميل الإجراء الميداني…':'Loading field dispatch…'}</p></section>;
+ return <CrmDispatchTaskPanelClient {...props}/>;
+}
+
+function CrmDispatchTaskPanelClient({task,userId,ar,canAct,proofImages}:{task:CrmDispatchTask;userId:string;ar:boolean;canAct:boolean;proofImages:number}){
  const router=useRouter(),key='snacky:crm-dispatch:v1:'+userId+':'+task.id,lock=useRef(false);
- const [pending,setPending]=useState<CrmDispatchCommand|null>(null),[ready,setReady]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[note,setNote]=useState('');
- const [ackOverdue,setAckOverdue]=useState(false);
- useEffect(()=>{setAckOverdue(crmDispatchAckOverdue(task));try{const raw=sessionStorage.getItem(key);if(raw)setPending(validateCrmDispatchCommand(JSON.parse(raw)));}catch{setError(crmDispatchError('uncertain',ar));}finally{setReady(true);}},[key,task,ar]);
+ const [pending,setPending]=useState<CrmDispatchCommand|null>(()=>{try{const raw=sessionStorage.getItem(key);return raw?validateCrmDispatchCommand(JSON.parse(raw)):null;}catch{return null;}});
+ const [busy,setBusy]=useState(false),[error,setError]=useState(''),[note,setNote]=useState('');
+ const ready=true;
+ const ackOverdue=crmDispatchAckOverdue(task);
 
  async function send(action:CrmDispatchCommand['action'],text=''){
   if(lock.current||!ready)return;lock.current=true;setBusy(true);setError('');
@@ -85,7 +96,8 @@ export function CrmDispatchTaskPanel({task,userId,ar,canAct,proofImages}:{task:C
 }
 
 export function CrmIssueDispatchSummary({tasks,ar}:{tasks:Array<CrmDispatchTask&{assigned_name?:string|null}>;ar:boolean}){
- const [now,setNow]=useState<number|null>(null);useEffect(()=>setNow(Date.now()),[]);
+ const hydrated=useSyncExternalStore(subscribe,clientSnapshot,serverSnapshot);
+ const now=hydrated?Date.now():null;
  if(!tasks.length)return null;
  return <section className="surface-card space-y-3">
   <div><h2 className="font-semibold">{ar?'الإجراءات الميدانية':'Field dispatches'}</h2><p className="mt-1 text-xs text-slate-500">{ar?'إنهاء المشغّل للإجراء لا يغلق بلاغ العميل؛ يبقى التحقق والإغلاق لدى علاقات العملاء.':'Operator completion does not close the customer complaint; CRM still verifies and closes it.'}</p></div>
