@@ -1,0 +1,77 @@
+name: Cash draft source correction
+on:
+  push:
+    branches: ['feat/cash-handover-coordinator-v1']
+    paths: ['.github/workflows/cash-handover-draft-fix.yml']
+permissions:
+  contents: write
+jobs:
+  correct:
+    if: github.ref == 'refs/heads/feat/cash-handover-coordinator-v1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/cash-handover-coordinator-v1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Fix browser hydration without changing business or permission logic
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('src/components/CashHandlingWorkspace.tsx');s=p.read_text()
+          def change(a,b):
+            global s
+            assert s.count(a)==1,(a,s.count(a))
+            s=s.replace(a,b)
+          change('useCallback, useEffect, useRef, useState, type FormEvent','useCallback, useEffect, useRef, useState, useSyncExternalStore, type FormEvent')
+          change('export function CashHandlingWorkspace({ userId }: { userId: string }) {', '''const subscribeHydration = () => () => {};
+          const clientSnapshot = () => true;
+          const serverSnapshot = () => false;
+
+          function browserState(storageKey: string) {
+            const selected = new URL(window.location.href).searchParams.get('id');
+            try {
+              const saved = sessionStorage.getItem(storageKey);
+              const pending = saved ? validateCashCommand(JSON.parse(saved)) : null;
+              return { selected: pending ? pending.collection_id : selected, pending, memoryOnly: false };
+            } catch { return { selected, pending: null, memoryOnly: true }; }
+          }
+
+          export function CashHandlingWorkspace({ userId }: { userId: string }) {
+            const hydrated = useSyncExternalStore(subscribeHydration, clientSnapshot, serverSnapshot);
+            const { locale } = useI18n();
+            return hydrated ? <CashHandlingClient key={userId} userId={userId} />
+              : <p role="status">{locale === 'ar' ? 'جارٍ تحميل سجلات النقد…' : 'Loading cash records…'}</p>;
+          }
+
+          function CashHandlingClient({ userId }: { userId: string }) {
+            const storageKey = `snacky.cash-handover.pending.v1.${userId}`;
+            const [initial] = useState(() => browserState(storageKey));''')
+          change('const [selected, setSelected] = useState<string | null>(null)','const [selected, setSelected] = useState<string | null>(initial.selected)')
+          change('const [pending, setPending] = useState<CashCommand | null>(null)','const [pending, setPending] = useState<CashCommand | null>(initial.pending)')
+          change("const [error, setError] = useState('')","const [error, setError] = useState(initial.pending ? 'uncertain' : '')")
+          change('const [ready, setReady] = useState(false), [memoryOnly, setMemoryOnly] = useState(false);','const [memoryOnly, setMemoryOnly] = useState(initial.memoryOnly);')
+          change('  const storageKey = `snacky.cash-handover.pending.v1.${userId}`;\n  const load','  const load')
+          change('const seq = ++sequence.current; setLoading(true);','const seq = ++sequence.current;')
+          a=s.index('  useEffect(() => {');b=s.index('  function keep',a)
+          s=s[:a]+"  useEffect(() => { void load(); return () => { sequence.current += 1; }; }, [load]);\n"+s[b:]
+          change("setSelected(id); setAction(null); setError(''); setReceipt(null);","setLoading(true); setSelected(id); setAction(null); setError(''); setReceipt(null);")
+          s=s.replace("setError(''); void load();","setError(''); setLoading(true); void load();")
+          s=s.replace('setStatus(value); setOffset(0);','setLoading(true); setStatus(value); setOffset(0);')
+          p.write_text(s)
+          p=Path('src/lib/authz.ts');p.write_text(p.read_text().rstrip()+'\n')
+          Path('.github/workflows/cash-handover-draft-fix.yml').unlink()
+          PY
+          git diff --check
+          npm ci
+          npx eslint src/components/CashHandlingWorkspace.tsx
+          node --experimental-strip-types --test scripts/test-cash-handover.mjs scripts/test-authz-permissions.mjs
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/components/CashHandlingWorkspace.tsx src/lib/authz.ts .github/workflows/cash-handover-draft-fix.yml
+          git commit -m 'fix(cash): restore browser state before mounting the cash workspace'
+          git push origin HEAD:refs/heads/feat/cash-handover-coordinator-v1
