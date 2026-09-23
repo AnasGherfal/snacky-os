@@ -13,6 +13,8 @@ insert into public.team_members(id,full_name,role,roles,auth_user_id) values
  ('6ccccccc-cccc-4ccc-8ccc-cccccccccccc','Operator B','operator',array['operator']::public.team_role[],'63333333-3333-4333-8333-333333333333');
 insert into public.profiles(id,team_member_id,role,roles)
 select auth_user_id,id,role,roles from public.team_members where id::text like '6%';
+insert into public.locations(id,name,location_type,status)
+values('69999999-9999-4999-8999-999999999999','Dispatch Fixture Location','office','active');
 
 create function public.qa_dispatch_photo(p_task uuid,p_uploader uuid)
 returns void language sql security definer set search_path=public,pg_catalog
@@ -29,7 +31,7 @@ declare
 begin
  perform set_config('request.jwt.claim.sub','61111111-1111-4111-8111-111111111111',true);
  v:=public.snacky_crm_command_v1(gen_random_uuid(),'issue.save',null,
-   '{"customer_phone":"0910000000","issue_type":"machine_unavailable","description":"Dispatch acceptance","priority":"critical","contact_channel":"whatsapp"}');
+   '{"customer_phone":"0910000000","location_id":"69999999-9999-4999-8999-999999999999","issue_type":"machine_unavailable","description":"Dispatch acceptance","priority":"critical","contact_channel":"whatsapp"}');
  issue_id:=(v->>'id')::uuid;
  v:=public.snacky_crm_command_v1(gen_random_uuid(),'task.save',null,jsonb_build_object(
    'kind','issue','related_id',issue_id,'title','Restore machine','task_type','field_action',
@@ -98,7 +100,7 @@ begin
  if i.status<>'resolved' then raise exception 'CRM could not close verified issue';end if;
 
  v:=public.snacky_crm_command_v1(gen_random_uuid(),'issue.save',null,
-   '{"customer_phone":"0910000001","issue_type":"screen_keypad","description":"Reassignment test","priority":"high","contact_channel":"phone"}');
+   '{"customer_phone":"0910000001","location_id":"69999999-9999-4999-8999-999999999999","issue_type":"screen_keypad","description":"Reassignment test","priority":"high","contact_channel":"phone"}');
  issue2_id:=(v->>'id')::uuid;
  v:=public.snacky_crm_command_v1(gen_random_uuid(),'task.save',null,jsonb_build_object(
    'kind','issue','related_id',issue2_id,'title','Check screen','task_type','field_action',
