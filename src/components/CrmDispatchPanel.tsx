@@ -97,11 +97,11 @@ function CrmDispatchTaskPanelClient({task,userId,ar,canAct,proofImages}:{task:Cr
 
 export function CrmIssueDispatchSummary({tasks,ar}:{tasks:Array<CrmDispatchTask&{assigned_name?:string|null}>;ar:boolean}){
  const hydrated=useSyncExternalStore(subscribe,clientSnapshot,serverSnapshot);
- const now=hydrated?Date.now():null;
  if(!tasks.length)return null;
+ if(!hydrated)return <section className="surface-card"><p role="status">{ar?'جارٍ تحميل حالة الإجراءات الميدانية…':'Loading field dispatch status…'}</p></section>;
  return <section className="surface-card space-y-3">
   <div><h2 className="font-semibold">{ar?'الإجراءات الميدانية':'Field dispatches'}</h2><p className="mt-1 text-xs text-slate-500">{ar?'إنهاء المشغّل للإجراء لا يغلق بلاغ العميل؛ يبقى التحقق والإغلاق لدى علاقات العملاء.':'Operator completion does not close the customer complaint; CRM still verifies and closes it.'}</p></div>
-  {tasks.map(task=>{const overdue=now!==null&&crmDispatchAckOverdue(task,now);return <div key={task.id} className="rounded-xl border border-slate-200 p-3">
+  {tasks.map(task=>{const overdue=crmDispatchAckOverdue(task);return <div key={task.id} className="rounded-xl border border-slate-200 p-3">
    <div className="flex flex-wrap items-start justify-between gap-2"><div><strong>{task.title}</strong><p className="text-xs text-slate-500">{task.assigned_name??(ar?'غير معيّن':'Unassigned')}</p></div><span className={'rounded-full border px-2.5 py-1 text-xs font-semibold '+tone(task.dispatch_state)}>{crmDispatchLabel(task.dispatch_state,ar)}</span></div>
    <div className="mt-2 grid gap-2 text-xs text-slate-600 sm:grid-cols-3"><p>{ar?'موعد القبول: ':'Accept by: '}{fmt(task.ack_due_at,ar)}{overdue?' · '+(ar?'متأخر':'overdue'):''}</p><p>{ar?'بدأ العمل: ':'Started: '}{fmt(task.work_started_at,ar)}</p><p>{ar?'الإصلاح: ':'Fixed: '}{fmt(task.fixed_at,ar)}</p></div>
    {task.dispatch_state==='blocked'&&task.blocked_reason?<p className="mt-2 rounded-lg bg-rose-50 p-2 text-sm">{task.blocked_reason}</p>:null}
