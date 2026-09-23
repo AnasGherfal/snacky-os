@@ -72,6 +72,9 @@ const SAID_ALIASES = ["said"];
 const MAESTRO_ALIASES = ["maestro"];
 const MILKA_ALIASES = ["milka"];
 const GARDENA_ALIASES = ["gardena"];
+const GALAXY_ALIASES = ["galaxy"];
+const SNICKERS_ALIASES = ["snickers"];
+const TWIX_ALIASES = ["twix"];
 const CHOCOLATE_KEYWORDS = ["chocolate", "choco", "cocoa", "شوكولاتة"];
 
 const BAKERY_KEYWORDS = ["brioche", "croissant", "cake", "bakery", "bread", "pastry", "toast", "بريوش", "كرواسون", "كيك", "خبز"];
@@ -127,6 +130,9 @@ function groupKeyForProduct(productName: string, productCategory?: string | null
     || includesAny(text, MAESTRO_ALIASES)
     || includesAny(text, MILKA_ALIASES)
     || includesAny(text, GARDENA_ALIASES)
+    || includesAny(text, GALAXY_ALIASES)
+    || includesAny(text, SNICKERS_ALIASES)
+    || includesAny(text, TWIX_ALIASES)
     || includesAny(text, CHOCOLATE_KEYWORDS)
   ) return "chocolates";
   if (includesAny(text, BEBETO_ALIASES) || includesAny(text, CANDY_KEYWORDS)) return "candy";
