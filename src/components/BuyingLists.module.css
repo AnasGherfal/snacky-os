@@ -79,3 +79,14 @@
  .printFooter{break-inside:avoid;}
  @page snacky-buying {size:A4 portrait;margin:14mm;}
 }
+
+.storeGroup {display:grid;gap:10px;min-width:0;}
+.storeHeading {display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;margin:6px 0 0;background:#eef4f7;border-inline-start:3px solid #174562;border-radius:8px;font-size:16px;line-height:1.5;overflow-wrap:anywhere;}
+.storeHeading small {font-weight:400;font-size:12px;white-space:nowrap;}
+.sourceDetails {display:grid;gap:6px;padding:14px;margin-block:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;overflow-wrap:anywhere;}
+.sourceDetails p {margin:0;line-height:1.6;}
+.sourceNote {white-space:pre-wrap;}
+.sourceEditor {border-block-start:1px solid #e2e8f0;padding-block:10px;}
+.sourceEditor summary {min-height:44px;cursor:pointer;font-weight:600;}
+.sourceEditor select {min-width:0;max-width:100%;}
+@media print {.storeHeading{break-after:avoid;}.sourceDetails{break-inside:avoid;}}

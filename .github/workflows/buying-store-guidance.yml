@@ -1,0 +1,79 @@
+name: Store-guided buying acceptance
+on:
+  pull_request:
+    paths:
+      - 'src/lib/buying-*'
+      - 'src/components/Buying*'
+      - 'src/app/buying-lists/**'
+      - 'src/app/api/buying-lists/**'
+      - 'supabase/migrations/*buying_store_guidance*'
+      - 'scripts/*buying-sources*'
+      - '.github/workflows/buying-store-guidance.yml'
+permissions:
+  contents: read
+concurrency:
+  group: buying-store-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Typecheck and new source controls lint
+        run: |
+          npm run typecheck
+          npx eslint src/lib/buying-sources.ts src/components/BuyingSourceEditor.tsx src/components/BuyingListTable.tsx 'src/app/buying-lists/[id]/page.tsx' 'src/app/buying-lists/[id]/print/page.tsx'
+          node --experimental-strip-types --test scripts/test-buying-sources.mjs scripts/test-shared-buying.mjs scripts/test-buying-print-css.mjs scripts/test-authz-permissions.mjs
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.117.0
+      - name: Disposable backend only; never link to a project
+        run: |
+          mkdir -p .qa/full/supabase diagnostics
+          python3 - <<'PY'
+          from pathlib import Path
+          text=Path('supabase/config.toml').read_text().replace('project_id = "snacky-os"','project_id = "snacky-company-isolated"')
+          for section in ['db.migrations','db.seed','studio','inbucket','realtime','edge_runtime']:
+            start=text.index('['+section+']');end=text.find('\n[',start+1)
+            if end<0:end=len(text)
+            text=text[:start]+text[start:end].replace('enabled = true','enabled = false')+text[end:]
+          Path('.qa/full/supabase/config.toml').write_text(text)
+          PY
+          supabase start --workdir .qa/full > diagnostics/local-start.log 2>&1 || { tail -n 60 diagnostics/local-start.log; exit 1; }
+          supabase status --workdir .qa/full -o env > .qa/local-status.env
+          python3 scripts/company-e2e/migrate.py
+      - name: Isolated browser tools only
+        run: |
+          npm install --prefix .qa/browser --no-package-lock --ignore-scripts playwright@1.55.0 @axe-core/playwright@4.10.2
+          .qa/browser/node_modules/.bin/playwright install --with-deps chromium
+      - name: Real supplier history, concurrency, ledger isolation and Arabic browser acceptance
+        run: |
+          set -o pipefail
+          node --import ./scripts/company-e2e/diagnostics.mjs scripts/buying-sources-e2e.mjs 2>&1 | tee diagnostics/buying-sources-run.log
+      - name: Redact isolated credentials
+        if: always()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          for p in Path('diagnostics').rglob('*.log'):
+            text=p.read_text(errors='replace')
+            text=re.sub(r'eyJ[A-Za-z0-9_\-.]+','[LOCAL_JWT_REDACTED]',text)
+            text=re.sub(r'sb_(?:secret|publishable)_[A-Za-z0-9_-]+','[LOCAL_KEY_REDACTED]',text)
+            p.write_text(text)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: buying-store-guidance-acceptance
+          path: diagnostics/
+          retention-days: 7
+      - name: Destroy disposable backend
+        if: always()
+        run: supabase stop --workdir .qa/full --no-backup || true
