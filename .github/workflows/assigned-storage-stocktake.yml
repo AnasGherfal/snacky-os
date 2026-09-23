@@ -41,7 +41,7 @@ jobs:
           mkdir -p .qa/full/supabase diagnostics
           python3 - <<'PY'
           from pathlib import Path
-          text=Path('supabase/config.toml').read_text().replace('project_id = "snacky-os"','project_id = "snacky-stocktake-isolated"')
+          text=Path('supabase/config.toml').read_text().replace('project_id = "snacky-os"','project_id = "snacky-company-isolated"')
           for section in ['db.migrations','db.seed','studio','inbucket','realtime','edge_runtime']:
             start=text.index('['+section+']'); end=text.find('\n[',start+1)
             if end<0:end=len(text)
