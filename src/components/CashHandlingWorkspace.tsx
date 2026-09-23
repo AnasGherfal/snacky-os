@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
 import { useI18n } from '@/components/I18nProvider';
 import {
-  cashActionLabels, cashStateLabels, cashError, cashReceiptMatches, validateCashCommand,
+  cashActionLabels, cashStateLabels, cashError, cashReceiptMatches, validateCashCommand, cashReferenceMissing,
   type CashAction, type CashBox, type CashCommand, type CashReceipt, type CashWorkspace,
 } from '@/lib/cash-handover';
 import styles from './CashHandlingWorkspace.module.css';
@@ -98,7 +98,7 @@ function CashHandlingClient({ userId }: { userId: string }) {
     window.history.replaceState(null, '', id ? `/cash-handling?id=${encodeURIComponent(id)}` : '/cash-handling');
   }
   function submit(event: FormEvent<HTMLFormElement>, box: CashBox) {
-    event.preventDefault(); if (!action || pending || busy) return;
+    event.preventDefault(); if (!action || pending || busy || cashReferenceMissing(box)) return;
     const form = new FormData(event.currentTarget), get = (key: string) => String(form.get(key) ?? '').trim();
     const payload: CashCommand['payload'] = action === 'assign' ? { assigned_to: get('assigned_to') }
       : action === 'dropoff' ? { assigned_to: get('assigned_to'), storage_location: get('storage_location'), seal_condition: get('seal_condition'), notes: get('notes') }
@@ -155,12 +155,12 @@ function CashHandlingClient({ userId }: { userId: string }) {
         <div className={styles.grid}>{view.rows.map(row => <article key={row.id} className={styles.card}>
           <div className={styles.cardTop}><span className={styles.badge}>{(cashStateLabels[row.state] ?? [row.state, row.state])[ar ? 1 : 0]}</span>{row.seal_exception ? <span className={styles.warning}>{text('Seal exception', 'ملاحظة على الختم')}</span> : null}</div>
           <h3>{row.machines.map(m => m.location || m.name).join(' · ') || text('Cash collection', 'تحصيل نقد')}</h3>
-          <p className={styles.boxId}>{text('Box / seal', 'العلبة / الختم')} <bdi>{row.bag}</bdi></p>
+          <p className={styles.boxId}>{text('Box / seal', 'العلبة / الختم')} <bdi>{cashReferenceMissing(row) ? text('Not recorded', 'غير مسجل') : row.bag}</bdi></p>
           <dl className={styles.facts}><div><dt>{text('Collector', 'المحصّل')}</dt><dd>{row.collector ?? '—'}</dd></div><div><dt>{text('Coordinator', 'المسؤول')}</dt><dd>{row.assignee ?? text('Not assigned', 'غير مسند')}</dd></div>
             <div><dt>{text('Collected', 'وقت السحب')}</dt><dd>{date(row.collected_at)}</dd></div><div><dt>{text('Storage', 'المخزن')}</dt><dd>{row.storage ?? '—'}</dd></div></dl>
           {row.amount !== null ? <p className={styles.amount}><bdi>{row.amount} LYD</bdi></p> : null}
           {row.assignee && !row.assignee_active && row.state !== 'counted' ? <p className={styles.warning}>{text('Coordinator inactive. Owner action required.', 'المسؤول غير مفعل. يلزم إجراء من المالك.')}</p> : null}
-          <button className={styles.secondary} disabled={locked} onClick={() => open(row.id)}>{text('Open box', 'فتح العلبة')}</button>
+          <button className={styles.secondary} disabled={locked} onClick={() => open(row.id)}>{cashReferenceMissing(row) ? text('Review existing record', 'مراجعة السجل السابق') : text('Open box', 'فتح العلبة')}</button>
         </article>)}</div>
         <nav className={styles.buttons} aria-label={text('Queue pages', 'صفحات القائمة')}>
           {offset > 0 ? <button disabled={locked} className={styles.secondary} onClick={() => setOffset(Math.max(0, offset - 25))}>{text('Previous', 'السابق')}</button> : null}
@@ -171,16 +171,20 @@ function CashHandlingClient({ userId }: { userId: string }) {
         {box ? <article className={styles.detail}>
           <span className={styles.badge}>{(cashStateLabels[box.state] ?? [box.state, box.state])[ar ? 1 : 0]}</span>
           <h2>{box.machines.map(m => m.location || m.name).join(' · ') || text('Cash collection', 'تحصيل نقد')}</h2>
-          <p className={styles.boxId}>{text('Box / seal', 'العلبة / الختم')}: <bdi>{box.bag}</bdi></p>
+          <p className={styles.boxId}>{text('Box / seal', 'العلبة / الختم')}: <bdi>{cashReferenceMissing(box) ? text('Not recorded', 'غير مسجل') : box.bag}</bdi></p>
           <p className={styles.hint}>{text('Collection reference', 'مرجع التحصيل')}: <bdi>{box.id}</bdi></p>
+          {cashReferenceMissing(box) ? <div className={styles.notice} role="note" data-testid="cash-reference-review">
+            <strong>{text('Physical box reference not recorded', 'رقم العلبة الفعلي غير مسجل')}</strong>
+            <p>{text('This earlier record is not evidence of a newly collected box. Assignment, handover and counting are unavailable here. Ask the owner to review the existing cash record; do not invent a box number or create another collection.', 'هذا السجل السابق لا يثبت وجود علبة جُمعت الآن. لا يمكن إسناده أو تسليمه أو عده من هذه الصفحة. اطلب من المالك مراجعة سجل النقد الأصلي؛ لا تخترع رقماً للعلبة ولا تنشئ تحصيلاً آخر.')}</p>
+          </div> : null}
           {box.amount !== null ? <p className={styles.amount}><bdi>{box.amount} LYD</bdi></p> : null}
           <dl className={styles.facts}><div><dt>{text('Collector', 'المحصّل')}</dt><dd>{box.collector ?? '—'}</dd></div><div><dt>{text('Coordinator', 'المسؤول')}</dt><dd>{box.assignee ?? '—'}</dd></div>
-            <div><dt>{text('Current custodian', 'المسؤول عن العهدة')}</dt><dd>{box.custodian ?? box.collector ?? '—'}</dd></div><div><dt>{text('Recorded cash location', 'موقع النقد المسجل')}</dt><dd>{box.cash_location ?? box.storage ?? '—'}</dd></div></dl>
+            <div><dt>{text('Current custodian', 'المسؤول عن العهدة')}</dt><dd>{cashReferenceMissing(box) ? text('Not verified', 'غير مؤكد') : box.custodian ?? box.collector ?? '—'}</dd></div><div><dt>{text('Recorded cash location', 'موقع النقد المسجل')}</dt><dd>{box.cash_location ?? box.storage ?? '—'}</dd></div></dl>
           {box.state === 'dropped' ? <p className={styles.notice}>{text('The collector recorded a storage drop-off. The coordinator has not acknowledged pickup yet.', 'سجّل المحصّل وضع العلبة في المخزن. لم يؤكد المسؤول استلامها بعد.')}</p> : null}
           {box.seal_exception ? <p className={styles.error}>{text('Seal exception recorded. Count the actual money; owner review is still required.', 'تم تسجيل ملاحظة على الختم. يُعد المبلغ الفعلي، وتبقى مراجعة المالك مطلوبة.')}</p> : null}
           {box.evidence_url ? <a className={styles.secondary} href={box.evidence_url} target="_blank" rel="noreferrer noopener">{text('View storage photo', 'عرض صورة المخزن')}</a> : box.deposited_at ? <p className={styles.hint}>{text('Refresh to load the private storage photo.', 'حدّث الصفحة لتحميل صورة المخزن الخاصة.')}</p> : null}
-          {!action ? <div className={styles.buttons}>{box.actions.map(a => <button className={a === 'count' || a === 'pickup' || a === 'dropoff' ? styles.primary : styles.secondary} key={a} disabled={locked} onClick={() => { setAction(a); setError(''); }}>{label(a)}</button>)}</div> : null}
-          {action && box.actions.includes(action) && !pending ? <form className={styles.form} onSubmit={e => submit(e, box)} key={`${box.id}-${action}-${box.revision}`}>
+          {!action && !cashReferenceMissing(box) ? <div className={styles.buttons}>{box.actions.map(a => <button className={a === 'count' || a === 'pickup' || a === 'dropoff' ? styles.primary : styles.secondary} key={a} disabled={locked} onClick={() => { setAction(a); setError(''); }}>{label(a)}</button>)}</div> : null}
+          {action && !cashReferenceMissing(box) && box.actions.includes(action) && !pending ? <form className={styles.form} onSubmit={e => submit(e, box)} key={`${box.id}-${action}-${box.revision}`}>
             <h3>{label(action)}</h3>
             <fieldset disabled={locked}>
               {['assign', 'dropoff'].includes(action) ? <label>{text('Coordinator', 'المسؤول عن العد')}
@@ -205,7 +209,7 @@ function CashHandlingClient({ userId }: { userId: string }) {
             </fieldset>
           </form> : null}
           <section className={styles.timeline}><h3>{text('Custody history', 'سجل العهدة')}</h3><ol>
-            <li><strong>{text('Collected from machine', 'تم السحب من الآلة')}</strong><p>{box.collector} · {date(box.collected_at)}</p></li>
+            <li><strong>{cashReferenceMissing(box) ? text('Earlier collection record', 'سجل تحصيل سابق') : text('Collected from machine', 'تم السحب من الآلة')}</strong><p>{box.collector} · {date(box.collected_at)}</p></li>
             {!box.deposited_at && box.storage && box.state !== 'collected' && box.state !== 'assigned' ? <li><strong>{text('Earlier storage record', 'سجل المخزن السابق')}</strong><p>{box.storage}</p></li> : null}
             {box.events.map(e => <li key={e.id}><strong>{label(e.action)}</strong><p>{e.by} · {date(e.at)}</p>{e.detail.location ? <p>{e.detail.location}</p> : null}{e.detail.notes ? <p>{e.detail.notes}</p> : null}</li>)}
           </ol></section>

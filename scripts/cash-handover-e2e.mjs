@@ -86,6 +86,49 @@ await check('pilot defaults off and unauthorized grant / enrollment is denied', 
   assert.ok((await anon.rpc('snacky_cash_handover_workspace_v1', {})).error);
 });
 await enabled(true); await grant('warehouse'); await grant('purchasing');
+const unidentified = [];
+for (const [description, value] of [['NULL', null], ['empty', ''], ['whitespace', '   ']]) {
+  await check(`unidentified ${description} records remain visible but cannot enter handover`, async () => {
+    const legacy = await removal('owner');
+    sql(`update public.cash_collections set cash_bag_id=${value === null ? 'null' : "'" + value + "'"} where id='${legacy.id}'`);
+    unidentified.push(legacy);
+    const before = sql(`select row_to_json(c)::text from public.cash_collections c where id='${legacy.id}'`);
+    const view = await workspace('owner', legacy.id);
+    assert.equal(view.rows[0].reference_missing, true); assert.equal(view.rows[0].bag, value);
+    assert.equal(view.rows[0].state, 'reference_review'); assert.deepEqual(view.rows[0].actions, []);
+    for (const c of [
+      command('assign', legacy.id, 0, { assigned_to: accounts.warehouse.id }),
+      command('dropoff', legacy.id, 0, { assigned_to: accounts.warehouse.id, storage_location: 'Safe A', seal_condition: 'intact', notes: '' }),
+      command('direct_pickup', legacy.id, 0, { confirm_bag_id: 'MADE-UP-REF', seal_condition: 'intact', notes: '' }),
+      command('pickup', legacy.id, 0, { confirm_bag_id: 'MADE-UP-REF', seal_condition: 'intact', notes: '' }),
+      command('takeover', legacy.id, 0, { confirm_bag_id: 'MADE-UP-REF', seal_condition: 'intact', notes: 'Unverified earlier record' }),
+      command('count', legacy.id, 0, { amount: '125', cash_location: 'Safe A' }),
+    ]) {
+      await failed('owner', c, '23514');
+      assert.equal(sql(`select count(*) from snacky_private.cash_handover_requests where request_id='${c.request_id}'`), '0');
+    }
+    assert.equal(sql(`select row_to_json(c)::text from public.cash_collections c where id='${legacy.id}'`), before);
+    assert.equal(sql(`select count(*) from snacky_private.cash_handovers where collection_id='${legacy.id}'`), '0');
+    assert.equal(sql(`select count(*) from snacky_private.cash_handover_events where collection_id='${legacy.id}'`), '0');
+    assert.equal(financeRows(legacy.id).length, 0);
+  });
+}
+await check('tab and newline references are also unidentified, not new boxes', async () => {
+  const legacy = await removal('owner');
+  sql(`update public.cash_collections set cash_bag_id=chr(9)||chr(10) where id='${legacy.id}'`);
+  assert.equal((await workspace('owner', legacy.id)).rows[0].reference_missing, true);
+  assert.deepEqual((await workspace('owner', legacy.id)).rows[0].actions, []);
+  await failed('owner', command('direct_pickup', legacy.id, 0, { confirm_bag_id: 'GUESS', seal_condition: 'intact', notes: '' }), '23514');
+  assert.equal(financeRows(legacy.id).length, 0);
+});
+await check('unidentified legacy records retain their original owner review and counting path', async () => {
+  const legacy = await removal('owner');
+  sql(`update public.cash_collections set cash_bag_id=null where id='${legacy.id}'`);
+  await rpc('owner', 'receive_cash_into_storage', { p_collection_id: legacy.id, p_received_at: new Date().toISOString(), p_storage_location: 'Legacy review safe', p_seal_condition: 'intact', p_evidence_path: legacy.path, p_evidence_file_name: 'qa.png', p_notes: 'Local fixture only; existing owner review', p_client_submission_id: randomUUID() });
+  await rpc('owner', 'confirm_cash_count_auto_period_v1', { p_collection_id: legacy.id, p_total_amount_lyd: 17, p_client_submission_id: randomUUID() });
+  assert.equal(financeRows(legacy.id).length, 1); assert.equal(financeRows(legacy.id)[0].amount, '17.00');
+  assert.equal(sql(`select count(*) from snacky_private.cash_handovers where collection_id='${legacy.id}'`), '0');
+});
 await check('coordinator access does not grant Finance tables, raw cash totals or unrelated boxes', async () => {
   assert.equal((await workspace('warehouse')).can_count, true);
   for (const key of ['operator', 'warehouse', 'purchasing']) for (const table of ['financial_transactions', 'cash_collections']) {
@@ -98,6 +141,13 @@ await check('coordinator access does not grant Finance tables, raw cash totals o
   assert.equal(sql("select has_table_privilege('authenticated','snacky_private.cash_handover_requests','INSERT')::text"), 'false');
 });
 await assign(first);
+await check('an enrolled box keeps its original physical reference and rejects a mismatched pickup', async () => {
+  const r = spawnSync('psql', ['-X', '-At', '-v', 'ON_ERROR_STOP=1', '-c', `update public.cash_collections set cash_bag_id=null where id='${first.id}'`], { env: pg, encoding: 'utf8' });
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /enrolled box reference cannot be changed/);
+  assert.equal((await workspace('owner', first.id)).rows[0].bag, first.bag);
+  await failed('warehouse', command('pickup', first.id, 1, { confirm_bag_id: 'WRONG-BOX', seal_condition: 'intact', notes: '' }), '22023');
+  assert.equal(financeRows(first.id).length, 0);
+});
 await check('collector cannot change the assigned coordinator or count before pickup', async () => {
   await failed('operator', command('dropoff', first.id, 1, { assigned_to: accounts.purchasing.id, storage_location: 'Safe', seal_condition: 'intact', notes: '' }), '22023');
   await failed('warehouse', command('count', first.id, 1, { amount: '10', cash_location: 'With me' }), '42501');
@@ -218,6 +268,22 @@ try {
     return { page, context };
   }
   const owner = await session('owner', 'en', 1440), operator = await session('operator'), counter = await session('warehouse', 'ar');
+  await check('English and Arabic legacy review screens do not offer handover or invented references', async () => {
+    for (const locale of ['en', 'ar']) {
+      const s = await session('owner', locale, 390);
+      try {
+        await s.page.goto(app + `/cash-handling?id=${unidentified[0].id}`);
+        const notice = s.page.getByTestId('cash-reference-review'); await notice.waitFor();
+        assert.match(await notice.innerText(), locale === 'en' ? /Physical box reference not recorded/ : /رقم العلبة الفعلي غير مسجل/);
+        const labels = locale === 'en' ? ['Assign coordinator','Left in storage','I will count my collected box','Count and record'] : ['إسناد المسؤول','وضعتها في المخزن','سأعد العلبة التي جمعتها','عد النقد وتسجيله'];
+        for (const name of labels) assert.equal(await s.page.getByRole('button', { name, exact: true }).count(), 0);
+        assert.equal(await s.page.locator('form').count(), 0);
+        assert.equal(await s.page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
+        await s.page.getByRole('link', { name: locale === 'en' ? 'Open owner reconciliation' : 'فتح مطابقة النقد للمالك', exact: true }).waitFor();
+        await s.page.screenshot({ path: `${out}/legacy-reference-review-${locale}.png`, fullPage: true });
+      } finally { await s.context.close(); }
+    }
+  });
   await check('real operator phone form uploads evidence and records unattended drop-off', async () => {
     const p = operator.page; await p.getByRole('button', { name: 'Left in storage', exact: true }).click();
     await p.getByLabel('Exact storage / safe location', { exact: true }).fill('Storage secure cabinet B');

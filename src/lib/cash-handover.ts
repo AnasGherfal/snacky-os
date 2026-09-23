@@ -7,7 +7,7 @@ export type CashCommand = { request_id: string; collection_id: string | null; ac
 export type CashReceipt = { ok: true; request_id: string; collection_id: string | null; action: CashAction; revision: number; amount?: string; finance_posted?: boolean };
 export type CashPerson = { id: string; name: string; enabled?: boolean; can_count?: boolean; owner?: boolean; finance_access?: boolean };
 export type CashBox = {
-  id: string; bag: string; revision: number; state: string; collector: string | null; collected_at: string;
+  id: string; bag: string | null; reference_missing: boolean; revision: number; state: string; collector: string | null; collected_at: string;
   assigned_to: string | null; assignee: string | null; assignee_active: boolean; storage: string | null;
   deposited_at: string | null; depositor: string | null; picked_up_at: string | null; custodian: string | null;
   cash_location: string | null; counted_at: string | null; counter: string | null; amount: string | null;
@@ -15,6 +15,10 @@ export type CashBox = {
   machines: { name: string; location: string | null }[]; actions: CashAction[];
   events: { id: string; action: CashAction; at: string; by: string; detail: { location?: string; seal?: string; notes?: string } }[];
 };
+/** Older records remain reviewable, never actionable without a physical reference. */
+export function cashReferenceMissing(box: Pick<CashBox, 'bag'> & { reference_missing?: boolean }): boolean {
+  return box.reference_missing === true || typeof box.bag !== 'string' || box.bag.trim().length === 0;
+}
 export type CashWorkspace = { me: string; owner: boolean; can_count: boolean; enabled: boolean; can_remove: boolean; people: CashPerson[]; counters: CashPerson[]; rows: CashBox[]; total: number; offset: number };
 const actionFields: Record<CashAction, string[]> = {
   enable: ['enabled'], counter: ['user_id', 'enabled'], assign: ['assigned_to'],
@@ -81,6 +85,7 @@ export const cashActionLabels: Record<CashAction, [string, string]> = {
   takeover: ['Take over custody', 'استلام العهدة من المسؤول'], count: ['Count and record', 'عد النقد وتسجيله'],
 };
 export const cashStateLabels: Record<string, [string, string]> = {
+  reference_review: ['Earlier record · reference missing', 'سجل سابق · رقم العلبة غير مسجل'],
   collected: ['With collector', 'مع المحصّل'], assigned: ['Coordinator assigned', 'تم إسناد المسؤول'],
   dropped: ['In storage · pickup pending', 'في المخزن · بانتظار الاستلام'], stored: ['Stored · assignment / pickup pending', 'في المخزن · بانتظار الإسناد أو الاستلام'],
   picked_up: ['With coordinator · count pending', 'مع المسؤول · بانتظار العد'], counted: ['Counted', 'تم العد'], voided: ['Voided', 'ملغاة'],

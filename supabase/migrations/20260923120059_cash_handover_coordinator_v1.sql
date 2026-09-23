@@ -114,6 +114,9 @@ set search_path = pg_catalog,public,auth,snacky_private
 as $$
 begin
   if exists(select 1 from snacky_private.cash_handovers where collection_id=old.id) then
+    if new.cash_bag_id is distinct from old.cash_bag_id then
+      raise exception 'An enrolled box reference cannot be changed; preserve its custody history' using errcode='23514';
+    end if;
     if new.actual_cash_collected is distinct from old.actual_cash_collected then
       if old.actual_cash_collected is not null or not snacky_private.cash_handover_count_context_v1(old.id) then
         raise exception 'Use Cash handling to count this picked-up box; confirmed amounts require the existing owner reversal process' using errcode='42501';
@@ -544,6 +547,11 @@ begin
     if not (v_owner or v_cash.operator_id=v_team or (v_has_handover and h.assigned_to=v_actor)) then
       raise exception 'Collection unavailable' using errcode='42501';
     end if;
+    -- Older cash records may have no physical box/seal identifier. Never
+    -- manufacture one or enroll them through an unchecked NULL comparison.
+    if coalesce(v_cash.cash_bag_id,'') !~ '[^[:space:]]' then
+      raise exception 'This record has no physical box reference; review the existing cash record without creating a replacement collection' using errcode='23514';
+    end if;
     if v_cash.custody_status not in ('removed','in_storage') or v_cash.actual_cash_collected is not null or v_cash.voided_at is not null then
       raise exception 'This collection is already counted or closed' using errcode='23514';
     end if;
@@ -608,7 +616,7 @@ begin
         jsonb_build_object('handover_mode','unattended_dropoff','receiver_confirmed',false),v_request);
       v_event_detail:=jsonb_build_object('location',trim(p->>'storage_location'),'seal',p->>'seal_condition','notes',trim(p->>'notes'),'assigned_to',v_target);
     when 'pickup','direct_pickup','takeover' then
-      if upper(trim(p->>'confirm_bag_id'))<>upper(trim(v_cash.cash_bag_id)) then raise exception 'The physical box reference does not match' using errcode='22023'; end if;
+      if upper(trim(p->>'confirm_bag_id')) is distinct from upper(trim(v_cash.cash_bag_id)) then raise exception 'The physical box reference does not match' using errcode='22023'; end if;
       if v_action='pickup' and (not v_has_handover or h.assigned_to<>v_actor or h.stage not in ('assigned','dropped') or v_cash.custody_status<>'in_storage') then
         raise exception 'This box is not waiting for your pickup' using errcode='42501';
       end if;
@@ -725,10 +733,13 @@ begin
   )
   select (select count(*)::integer from filtered),coalesce(jsonb_agg(jsonb_build_object(
     'id',c.id,'bag',c.cash_bag_id,'revision',coalesce(c.revision,0),'collected_at',c.collected_at,
+    'reference_missing',coalesce(c.cash_bag_id,'') !~ '[^[:space:]]',
     'collector',c.collector_name,'assigned_to',c.assigned_to,'assignee',c.assignee_name,
     'assignee_active',case when c.assigned_to is null then false else snacky_private.cash_handover_counter_v1(c.assigned_to) end,
     'state',case when c.voided_at is not null or c.custody_status='voided' then 'voided'
-      when c.actual_cash_collected is not null then 'counted' when c.stage='picked_up' then 'picked_up'
+      when c.actual_cash_collected is not null then 'counted'
+      when coalesce(c.cash_bag_id,'') !~ '[^[:space:]]' then 'reference_review'
+      when c.stage='picked_up' then 'picked_up'
       when c.stage='dropped' then 'dropped' when c.custody_status='in_storage' then 'stored'
       when c.stage='assigned' then 'assigned' else 'collected' end,
     'storage',c.physical_storage,'deposited_at',c.deposited_at,'depositor',c.depositor_name,
@@ -741,13 +752,13 @@ begin
       from public.cash_collection_machines cm join public.machines m on m.id=cm.machine_id
       left join public.locations l on l.id=m.location_id where cm.cash_collection_id=c.id),
     'actions',to_jsonb(array_remove(array[
-      case when c.pending and (v_enabled or c.handover_id is not null) and v_owner and coalesce(c.stage,'assigned')<>'picked_up' then 'assign' end,
-      case when c.pending and (v_enabled or c.handover_id is not null) and c.operator_id=v_team and c.custody_status='removed' and coalesce(c.stage,'assigned')='assigned' then 'dropoff' end,
-      case when c.pending and v_counter and c.assigned_to=v_actor and c.custody_status='in_storage' and c.stage in ('assigned','dropped') then 'pickup' end,
-      case when c.pending and (v_enabled or c.handover_id is not null) and v_counter and c.operator_id=v_team and c.custody_status='removed'
+      case when c.pending and coalesce(c.cash_bag_id,'') ~ '[^[:space:]]' and (v_enabled or c.handover_id is not null) and v_owner and coalesce(c.stage,'assigned')<>'picked_up' then 'assign' end,
+      case when c.pending and coalesce(c.cash_bag_id,'') ~ '[^[:space:]]' and (v_enabled or c.handover_id is not null) and c.operator_id=v_team and c.custody_status='removed' and coalesce(c.stage,'assigned')='assigned' then 'dropoff' end,
+      case when c.pending and coalesce(c.cash_bag_id,'') ~ '[^[:space:]]' and v_counter and c.assigned_to=v_actor and c.custody_status='in_storage' and c.stage in ('assigned','dropped') then 'pickup' end,
+      case when c.pending and coalesce(c.cash_bag_id,'') ~ '[^[:space:]]' and (v_enabled or c.handover_id is not null) and v_counter and c.operator_id=v_team and c.custody_status='removed'
         and (c.handover_id is null or (c.assigned_to=v_actor and c.stage='assigned')) then 'direct_pickup' end,
-      case when c.pending and v_owner and c.stage='picked_up' and c.picked_up_by<>v_actor then 'takeover' end,
-      case when c.pending and v_counter and c.assigned_to=v_actor and c.picked_up_by=v_actor and c.stage='picked_up' then 'count' end
+      case when c.pending and coalesce(c.cash_bag_id,'') ~ '[^[:space:]]' and v_owner and c.stage='picked_up' and c.picked_up_by<>v_actor then 'takeover' end,
+      case when c.pending and coalesce(c.cash_bag_id,'') ~ '[^[:space:]]' and v_counter and c.assigned_to=v_actor and c.picked_up_by=v_actor and c.stage='picked_up' then 'count' end
     ],null)),
     'events',case when p_id is null then '[]'::jsonb else (select coalesce(jsonb_agg(jsonb_build_object(
       'id',e.id::text,'action',e.event_type,'at',e.event_at,'by',p.full_name,'detail',e.detail) order by e.event_at,e.id),'[]'::jsonb)

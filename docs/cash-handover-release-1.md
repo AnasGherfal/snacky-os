@@ -98,3 +98,29 @@ history; never delete private tables or rewrite historical amounts as rollback.
 
 Later releases: assigned purchasing, approved inventory counts, CRM dispatch.
 No phone push notifications or scheduled collection tasks are added in release 1.
+
+
+## Production preflight: unidentified older records
+
+A read-only preflight on 2026-09-23 found 33 uncounted records, of which 32 had
+no recorded physical box/seal reference. These are **records**, not proof of 32
+physical boxes or a confirmed shortage. No amounts, labels, roles, or ownership
+were inferred or changed.
+
+Unidentified records remain visible as **Earlier record · reference missing**.
+The database rejects all new handover actions on null, empty, or whitespace-only
+references, even for owner/admin accounts or direct RPC calls. The UI provides
+an English/Arabic review notice rather than inventing a label. Existing owner
+reconciliation/count/void workflows remain the review path. Do not create a new
+collection to replace an old record: that could duplicate the accounting.
+
+After a referenced box is enrolled, its physical reference is immutable. Pickup
+uses a null-safe comparison. Receipt recovery still occurs before new action
+validation so a committed retry does not duplicate work.
+
+The migration is still unmerged/unapplied; these guards were added to the same
+reviewed release migration, not as a rewrite of production historical data.
+Local-only regressions cover null, empty, spaces, tabs/newlines, forced commands,
+no ledger side effects, legacy owner count, immutable references, and bilingual
+phone review screens. Passing test results must be verified for the new head;
+earlier acceptance results alone do not cover this change.

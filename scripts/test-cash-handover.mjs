@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { validateCashCommand, cashReceiptMatches, cashCents, cashSameOrigin } from '../src/lib/cash-handover.ts';
+import { validateCashCommand, cashReceiptMatches, cashCents, cashSameOrigin, cashReferenceMissing } from '../src/lib/cash-handover.ts';
 import { canAccessPath, canViewFinancials, canEditFinancialTransactions, canCountCash } from '../src/lib/authz.ts';
 const id = () => randomUUID();
 const command = (action = 'count', payload = { amount: '120.25', cash_location: 'Storage safe A' }) => ({ request_id: id(), collection_id: id(), action, revision: 2, payload });
@@ -83,4 +83,25 @@ test('mobile workspace keeps the immutable retry across reload and never display
   assert.match(ui, /sessionStorage\.setItem\(storageKey, JSON\.stringify\(command\)\)/);
   assert.match(ui, /send\(pending, true\)/); assert.match(ui, /dir=\{ar \? 'rtl' : 'ltr'\}/);
   assert.doesNotMatch(ui, /totalAvailableCash|owner_lyd|finance\.view/);
+});
+
+
+test('missing physical references fail closed in both current and older projections', () => {
+  for (const bag of [null, '', '   ', '\t\r\n']) assert.equal(cashReferenceMissing({ bag }), true);
+  assert.equal(cashReferenceMissing({ bag: 'REAL-123' }), false);
+  assert.equal(cashReferenceMissing({ bag: 'REAL-123', reference_missing: true }), true);
+  const commandSection = sql.slice(sql.indexOf('create function snacky_private.cash_handover_command_v1_impl'));
+  const guard = commandSection.indexOf("if coalesce(v_cash.cash_bag_id,'') !~ '[^[:space:]]'");
+  assert.ok(guard > 0 && guard < commandSection.indexOf('insert into snacky_private.cash_handover_requests'));
+  assert.match(commandSection, /confirm_bag_id.*is distinct from upper\(trim\(v_cash\.cash_bag_id\)\)/);
+  assert.equal((sql.match(/case when c\.pending and coalesce\(c\.cash_bag_id,''\) ~ '\[\^\[:space:\]\]'/g) ?? []).length, 6);
+  assert.match(sql, /new\.cash_bag_id is distinct from old\.cash_bag_id/);
+});
+test('unidentified records stay visible and never substitute a generated ID for a physical label', () => {
+  const ui = read('src/components/CashHandlingWorkspace.tsx');
+  assert.match(ui, /cash-reference-review/);
+  assert.match(ui, /!cashReferenceMissing\(box\) && box\.actions\.includes/);
+  assert.match(ui, /Earlier collection record/);
+  assert.match(ui, /do not invent a box number or create another collection/);
+  assert.match(sql, /'reference_missing',coalesce\(c\.cash_bag_id,''\)/);
 });
