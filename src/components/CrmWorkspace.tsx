@@ -9,7 +9,7 @@ import { CrmForm } from '@/components/CrmForm';
 import { CrmDocumentUpload,CrmRefresh,CrmWelcome } from '@/components/CrmClientTools';
 import { CrmRecordForm,CrmFollowupForm,CrmNoteForm } from '@/components/CrmRecordForms';
 import {CrmLocationPaymentScheduleForm} from '@/components/CrmLocationPaymentScheduleForm';
-import {CustomerSupportPanel} from '@/components/CustomerSupportPanel';
+import {CustomerSupportPanel} from '@/components/CustomerSupportPanel';\nimport {CrmDispatchTaskPanel,CrmIssueDispatchSummary} from '@/components/CrmDispatchPanel';
 import { crmContactLink,crmHref,crmNames,crmPaths,crmStatus,crmOptionRows,issueStatuses,leadStatuses,taskStatuses,issueCategories,locationTypes,type CrmKind,type CrmSection } from '@/lib/crm-workspace';
 
 export type CrmSearchParams=Record<string,string|string[]|undefined>;
@@ -61,6 +61,10 @@ export async function CrmWorkspace({section,id,searchParams={},create=false}:{se
  const listHref=crmPaths[section];
  const canCreate=context.staff&&['lead','issue','contact','task'].includes(section)||context.manager&&section==='obligation';
  const detailEdit=row?.can_edit&&!(row.kind==='task'&&d.status==='completed')&&!row.archived;
+ const dispatchTasks=(context.tasks??[]).filter((task:any)=>task.task_type==='field_action'&&task.dispatch_state&&task.archived_at===null).map((task:any)=>({...task,assigned_name:name(task.assigned_to)}));
+ const taskDispatch=section==='task'&&d.task_type==='field_action'&&d.dispatch_state?{...d,id:row.id,title:row.title,updated_at:d.updated_at??d.version??row.updated_at}:null;
+ const taskProofImages=section==='task'?(context.documents??[]).filter((doc:any)=>String(doc.mime_type??'').toLowerCase().startsWith('image/')).length:0;
+ const fieldWorkReadyForCrm=section==='issue'&&dispatchTasks.length>0&&dispatchTasks.every((task:any)=>task.dispatch_state==='fixed');
  return <div className="min-w-0 space-y-5" dir={ar?'rtl':'ltr'}>
   <CrmRefresh/>
   <PageHeader title={title} subtitle={row?tr('Ownership, next action and complete relationship history.','المسؤول والخطوة القادمة وسجل العلاقة.'):create&&section==='issue'?tr('Record only the essentials now. After saving, open the case to assign field work, follow up with the customer, record compensation and close it.','سجّلي الأساسيات فقط الآن. بعد الحفظ افتحي الحالة لتعيين إجراء ميداني أو متابعة العميل وتسجيل التعويض ثم إغلاقها.'):tr('External conversations happen by phone, WhatsApp and visits. The outcome and next action live here.','التواصل الخارجي بالمكالمات وواتساب والزيارات. النتيجة والخطوة القادمة تُسجّلان هنا.')} action={row||create?<Link className="btn-secondary" href={listHref}>{tr('Back to list','العودة للقائمة')}</Link>:canCreate?<Link className="btn-primary" href={`${listHref}/new`}>+ {section==='issue'?tr('Add customer issue','إضافة مشكلة عميل'):section==='lead'?tr('Add lead','إضافة جهة'):tr('Add record','إضافة سجل')}</Link>:null}/>
