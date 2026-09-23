@@ -427,7 +427,7 @@ $$;
 create function snacky_private.cash_handover_validate_v1(p_command jsonb)
 returns void language plpgsql set search_path=pg_catalog
 as $$
-declare p jsonb; a text; k text; allowed text[];
+declare p jsonb; a text; v_key text; allowed text[];
 begin
   if jsonb_typeof(p_command) is distinct from 'object'
     or (select count(*) from jsonb_object_keys(p_command))<>5
@@ -460,8 +460,8 @@ begin
   elsif coalesce(p_command->>'collection_id','') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' then
     raise exception 'A collection reference is required' using errcode='22023';
   end if;
-  foreach k in array allowed loop
-    if k<>'enabled' and jsonb_typeof(p->k) is distinct from 'string' then
+  foreach v_key in array allowed loop
+    if v_key<>'enabled' and jsonb_typeof(p->v_key) is distinct from 'string' then
       raise exception 'Invalid text field' using errcode='22023';
     end if;
   end loop;

@@ -113,7 +113,7 @@ const rolePermissions = {
     "vms_import.view",
     "vms_import.create",
     "vms_import.validate",
-    "vms_import_confirm",
+    "vms_import.confirm",
     "vms_import.manage_mappings",
   ],
   // Customer Relations & Business Development reads safe location/machine
