@@ -64,7 +64,7 @@ function StorageStocktakeClient({userId}:{userId:string}){
   return()=>controller.abort();
  },[selected,ar]);
 
- async function send(command:StocktakeCommand,onSuccess?:(result:any)=>void){
+ async function send(command:StocktakeCommand,onSuccess?:(result:Record<string,unknown>)=>void){
   if(lock.current)return;lock.current=true;setBusy(true);setError('');
   let saved=pending;
   try{
@@ -116,7 +116,7 @@ function StorageStocktakeClient({userId}:{userId:string}){
   {error?<p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</p>:null}
   {pending?<div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><p>{ar?'يوجد إجراء محفوظ لم نتأكد من نتيجته. أعد نفس الطلب قبل أي تغيير آخر.':'A saved action has an uncertain result. Retry the exact same action before doing anything else.'}</p><button className="btn-primary mt-3" disabled={busy} onClick={()=>void send(pending)}>{ar?'إعادة الطلب المحفوظ':'Retry saved action'}</button></div>:null}
 
-  {!selected&&workspace.manager?<CreateStocktake workspace={workspace} ar={ar} disabled={busy||Boolean(pending)} create={command=>send(command,result=>{setSelected(result.assignment_id);setLoading(true);})}/>:null}
+  {!selected&&workspace.manager?<CreateStocktake workspace={workspace} ar={ar} disabled={busy||Boolean(pending)} create={command=>send(command,result=>{setSelected(String(result.assignment_id));setLoading(true);})}/>:null}
 
   {!selected?<section className="surface-card">
    <div className="mb-4"><h2 className="text-lg font-semibold">{ar?'عمليات الجرد':'Stocktakes'}</h2><p className="text-sm text-slate-500">{workspace.manager?(ar?'أنشئ جرداً لمخزن واحد وأسنده لموظف واحد.':'Assign one physical storage location to one employee.'):(ar?'تظهر هنا عمليات الجرد المسندة لك فقط.':'Only stocktakes assigned to you appear here.')}</p></div>
