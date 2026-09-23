@@ -1,0 +1,194 @@
+name: Harden unidentified legacy cash records
+on:
+  push:
+    branches: ['feat/cash-handover-coordinator-v1']
+    paths: ['.github/workflows/cash-reference-hardening.yml']
+permissions:
+  contents: write
+jobs:
+  correction:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Apply exact bounded source corrections without a database connection
+        run: |
+          test "$(git rev-parse HEAD^)" = e83959583562a858bf1ddb65c06fb197840b95c0
+          python3 - <<'PY'
+          from pathlib import Path
+          def change(path, old, new, count=1):
+            p=Path(path); s=p.read_text(); assert s.count(old)==count,(path,s.count(old),old); p.write_text(s.replace(old,new))
+          sql='supabase/migrations/20260923120059_cash_handover_coordinator_v1.sql'
+          change(sql,"  if exists(select 1 from snacky_private.cash_handovers where collection_id=old.id) then\n","  if exists(select 1 from snacky_private.cash_handovers where collection_id=old.id) then\n    if new.cash_bag_id is distinct from old.cash_bag_id then\n      raise exception 'An enrolled box reference cannot be changed; preserve its custody history' using errcode='23514';\n    end if;\n")
+          change(sql,"    if v_cash.custody_status not in ('removed','in_storage') or v_cash.actual_cash_collected is not null or v_cash.voided_at is not null then\n","    -- Older cash records may have no physical box/seal identifier. Never\n    -- manufacture one or enroll them through an unchecked NULL comparison.\n    if coalesce(v_cash.cash_bag_id,'') !~ '[^[:space:]]' then\n      raise exception 'This record has no physical box reference; review the existing cash record without creating a replacement collection' using errcode='23514';\n    end if;\n    if v_cash.custody_status not in ('removed','in_storage') or v_cash.actual_cash_collected is not null or v_cash.voided_at is not null then\n")
+          change(sql,"if upper(trim(p->>'confirm_bag_id'))<>upper(trim(v_cash.cash_bag_id)) then","if upper(trim(p->>'confirm_bag_id')) is distinct from upper(trim(v_cash.cash_bag_id)) then")
+          change(sql,"    'id',c.id,'bag',c.cash_bag_id,'revision',coalesce(c.revision,0),'collected_at',c.collected_at,\n","    'id',c.id,'bag',c.cash_bag_id,'revision',coalesce(c.revision,0),'collected_at',c.collected_at,\n    'reference_missing',coalesce(c.cash_bag_id,'') !~ '[^[:space:]]',\n")
+          change(sql,"when c.actual_cash_collected is not null then 'counted' when c.stage='picked_up' then 'picked_up'","when c.actual_cash_collected is not null then 'counted'\n      when coalesce(c.cash_bag_id,'') !~ '[^[:space:]]' then 'reference_review'\n      when c.stage='picked_up' then 'picked_up'")
+          change(sql,"case when c.pending and ","case when c.pending and coalesce(c.cash_bag_id,'') ~ '[^[:space:]]' and ",6)
+          types='src/lib/cash-handover.ts'
+          change(types,'id: string; bag: string; revision: number; state: string;', 'id: string; bag: string | null; reference_missing: boolean; revision: number; state: string;')
+          change(types,'export type CashWorkspace =', '''/** Older records remain reviewable, never actionable without a physical reference. */
+          export function cashReferenceMissing(box: Pick<CashBox, 'bag'> & { reference_missing?: boolean }): boolean {
+            return box.reference_missing === true || typeof box.bag !== 'string' || box.bag.trim().length === 0;
+          }
+          export type CashWorkspace =''')
+          change(types,'export const cashStateLabels: Record<string, [string, string]> = {', '''export const cashStateLabels: Record<string, [string, string]> = {
+            reference_review: ['Earlier record · reference missing', 'سجل سابق · رقم العلبة غير مسجل'],''')
+          ui='src/components/CashHandlingWorkspace.tsx'
+          change(ui,'cashActionLabels, cashStateLabels, cashError, cashReceiptMatches, validateCashCommand,', 'cashActionLabels, cashStateLabels, cashError, cashReceiptMatches, validateCashCommand, cashReferenceMissing,')
+          change(ui,'event.preventDefault(); if (!action || pending || busy) return;', 'event.preventDefault(); if (!action || pending || busy || cashReferenceMissing(box)) return;')
+          change(ui,'<bdi>{row.bag}</bdi>', "<bdi>{cashReferenceMissing(row) ? text('Not recorded', 'غير مسجل') : row.bag}</bdi>")
+          change(ui,'<bdi>{box.bag}</bdi>', "<bdi>{cashReferenceMissing(box) ? text('Not recorded', 'غير مسجل') : box.bag}</bdi>")
+          change(ui,"{text('Open box', 'فتح العلبة')}", "{cashReferenceMissing(row) ? text('Review existing record', 'مراجعة السجل السابق') : text('Open box', 'فتح العلبة')}")
+          change(ui,'          {box.amount !== null ? <p', '''          {cashReferenceMissing(box) ? <div className={styles.notice} role="note" data-testid="cash-reference-review">
+                      <strong>{text('Physical box reference not recorded', 'رقم العلبة الفعلي غير مسجل')}</strong>
+                      <p>{text('This earlier record is not evidence of a newly collected box. Assignment, handover and counting are unavailable here. Ask the owner to review the existing cash record; do not invent a box number or create another collection.', 'هذا السجل السابق لا يثبت وجود علبة جُمعت الآن. لا يمكن إسناده أو تسليمه أو عده من هذه الصفحة. اطلب من المالك مراجعة سجل النقد الأصلي؛ لا تخترع رقماً للعلبة ولا تنشئ تحصيلاً آخر.')}</p>
+                    </div> : null}
+                    {box.amount !== null ? <p''')
+          change(ui,"{box.custodian ?? box.collector ?? '—'}", "{cashReferenceMissing(box) ? text('Not verified', 'غير مؤكد') : box.custodian ?? box.collector ?? '—'}")
+          change(ui,'{!action ? <div className={styles.buttons}>{box.actions.map', '{!action && !cashReferenceMissing(box) ? <div className={styles.buttons}>{box.actions.map')
+          change(ui,'{action && box.actions.includes(action) && !pending ?', '{action && !cashReferenceMissing(box) && box.actions.includes(action) && !pending ?')
+          change(ui,"<strong>{text('Collected from machine', 'تم السحب من الآلة')}</strong>","<strong>{cashReferenceMissing(box) ? text('Earlier collection record', 'سجل تحصيل سابق') : text('Collected from machine', 'تم السحب من الآلة')}</strong>")
+          unit='scripts/test-cash-handover.mjs'
+          change(unit,'validateCashCommand, cashReceiptMatches, cashCents, cashSameOrigin }','validateCashCommand, cashReceiptMatches, cashCents, cashSameOrigin, cashReferenceMissing }')
+          p=Path(unit); p.write_text(p.read_text()+'''
+
+          test('missing physical references fail closed in both current and older projections', () => {
+            for (const bag of [null, '', '   ', '\\t\\r\\n']) assert.equal(cashReferenceMissing({ bag }), true);
+            assert.equal(cashReferenceMissing({ bag: 'REAL-123' }), false);
+            assert.equal(cashReferenceMissing({ bag: 'REAL-123', reference_missing: true }), true);
+            const commandSection = sql.slice(sql.indexOf('create function snacky_private.cash_handover_command_v1_impl'));
+            const guard = commandSection.indexOf("if coalesce(v_cash.cash_bag_id,'') !~ '[^[:space:]]'");
+            assert.ok(guard > 0 && guard < commandSection.indexOf('insert into snacky_private.cash_handover_requests'));
+            assert.match(commandSection, /confirm_bag_id.*is distinct from upper\\(trim\\(v_cash\\.cash_bag_id\\)\\)/);
+            assert.equal((sql.match(/case when c\\.pending and coalesce\\(c\\.cash_bag_id,''\\) ~ '\\[\\^\\[:space:\\]\\]'/g) ?? []).length, 6);
+            assert.match(sql, /new\\.cash_bag_id is distinct from old\\.cash_bag_id/);
+          });
+          test('unidentified records stay visible and never substitute a generated ID for a physical label', () => {
+            const ui = read('src/components/CashHandlingWorkspace.tsx');
+            assert.match(ui, /cash-reference-review/);
+            assert.match(ui, /!cashReferenceMissing\\(box\\) && box\\.actions\\.includes/);
+            assert.match(ui, /Earlier collection record/);
+            assert.match(ui, /do not invent a box number or create another collection/);
+            assert.match(sql, /'reference_missing',coalesce\\(c\\.cash_bag_id,''\\)/);
+          });
+          ''')
+          e2e='scripts/cash-handover-e2e.mjs'
+          change(e2e,"await enabled(true); await grant('warehouse'); await grant('purchasing');", '''await enabled(true); await grant('warehouse'); await grant('purchasing');
+          const unidentified = [];
+          for (const [description, value] of [['NULL', null], ['empty', ''], ['whitespace', '   ']]) {
+            await check(`unidentified ${description} records remain visible but cannot enter handover`, async () => {
+              const legacy = await removal('owner');
+              sql(`update public.cash_collections set cash_bag_id=${value === null ? 'null' : "'" + value + "'"} where id='${legacy.id}'`);
+              unidentified.push(legacy);
+              const before = sql(`select row_to_json(c)::text from public.cash_collections c where id='${legacy.id}'`);
+              const view = await workspace('owner', legacy.id);
+              assert.equal(view.rows[0].reference_missing, true); assert.equal(view.rows[0].bag, value);
+              assert.equal(view.rows[0].state, 'reference_review'); assert.deepEqual(view.rows[0].actions, []);
+              for (const c of [
+                command('assign', legacy.id, 0, { assigned_to: accounts.warehouse.id }),
+                command('dropoff', legacy.id, 0, { assigned_to: accounts.warehouse.id, storage_location: 'Safe A', seal_condition: 'intact', notes: '' }),
+                command('direct_pickup', legacy.id, 0, { confirm_bag_id: 'MADE-UP-REF', seal_condition: 'intact', notes: '' }),
+                command('pickup', legacy.id, 0, { confirm_bag_id: 'MADE-UP-REF', seal_condition: 'intact', notes: '' }),
+                command('takeover', legacy.id, 0, { confirm_bag_id: 'MADE-UP-REF', seal_condition: 'intact', notes: 'Unverified earlier record' }),
+                command('count', legacy.id, 0, { amount: '125', cash_location: 'Safe A' }),
+              ]) {
+                await failed('owner', c, '23514');
+                assert.equal(sql(`select count(*) from snacky_private.cash_handover_requests where request_id='${c.request_id}'`), '0');
+              }
+              assert.equal(sql(`select row_to_json(c)::text from public.cash_collections c where id='${legacy.id}'`), before);
+              assert.equal(sql(`select count(*) from snacky_private.cash_handovers where collection_id='${legacy.id}'`), '0');
+              assert.equal(sql(`select count(*) from snacky_private.cash_handover_events where collection_id='${legacy.id}'`), '0');
+              assert.equal(financeRows(legacy.id).length, 0);
+            });
+          }
+          await check('tab and newline references are also unidentified, not new boxes', async () => {
+            const legacy = await removal('owner');
+            sql(`update public.cash_collections set cash_bag_id=chr(9)||chr(10) where id='${legacy.id}'`);
+            assert.equal((await workspace('owner', legacy.id)).rows[0].reference_missing, true);
+            assert.deepEqual((await workspace('owner', legacy.id)).rows[0].actions, []);
+            await failed('owner', command('direct_pickup', legacy.id, 0, { confirm_bag_id: 'GUESS', seal_condition: 'intact', notes: '' }), '23514');
+            assert.equal(financeRows(legacy.id).length, 0);
+          });
+          await check('unidentified legacy records retain their original owner review and counting path', async () => {
+            const legacy = await removal('owner');
+            sql(`update public.cash_collections set cash_bag_id=null where id='${legacy.id}'`);
+            await rpc('owner', 'receive_cash_into_storage', { p_collection_id: legacy.id, p_received_at: new Date().toISOString(), p_storage_location: 'Legacy review safe', p_seal_condition: 'intact', p_evidence_path: legacy.path, p_evidence_file_name: 'qa.png', p_notes: 'Local fixture only; existing owner review', p_client_submission_id: randomUUID() });
+            await rpc('owner', 'confirm_cash_count_auto_period_v1', { p_collection_id: legacy.id, p_total_amount_lyd: 17, p_client_submission_id: randomUUID() });
+            assert.equal(financeRows(legacy.id).length, 1); assert.equal(financeRows(legacy.id)[0].amount, '17.00');
+            assert.equal(sql(`select count(*) from snacky_private.cash_handovers where collection_id='${legacy.id}'`), '0');
+          });''')
+          change(e2e,"await assign(first);",'''await assign(first);
+          await check('an enrolled box keeps its original physical reference and rejects a mismatched pickup', async () => {
+            const r = spawnSync('psql', ['-X', '-At', '-v', 'ON_ERROR_STOP=1', '-c', `update public.cash_collections set cash_bag_id=null where id='${first.id}'`], { env: pg, encoding: 'utf8' });
+            assert.notEqual(r.status, 0); assert.match(r.stderr, /enrolled box reference cannot be changed/);
+            assert.equal((await workspace('owner', first.id)).rows[0].bag, first.bag);
+            await failed('warehouse', command('pickup', first.id, 1, { confirm_bag_id: 'WRONG-BOX', seal_condition: 'intact', notes: '' }), '22023');
+            assert.equal(financeRows(first.id).length, 0);
+          });''')
+          change(e2e,"  const owner = await session('owner', 'en', 1440), operator = await session('operator'), counter = await session('warehouse', 'ar');",'''  const owner = await session('owner', 'en', 1440), operator = await session('operator'), counter = await session('warehouse', 'ar');
+            await check('English and Arabic legacy review screens do not offer handover or invented references', async () => {
+              for (const locale of ['en', 'ar']) {
+                const s = await session('owner', locale, 390);
+                try {
+                  await s.page.goto(app + `/cash-handling?id=${unidentified[0].id}`);
+                  const notice = s.page.getByTestId('cash-reference-review'); await notice.waitFor();
+                  assert.match(await notice.innerText(), locale === 'en' ? /Physical box reference not recorded/ : /رقم العلبة الفعلي غير مسجل/);
+                  const labels = locale === 'en' ? ['Assign coordinator','Left in storage','I will count my collected box','Count and record'] : ['إسناد المسؤول','وضعتها في المخزن','سأعد العلبة التي جمعتها','عد النقد وتسجيله'];
+                  for (const name of labels) assert.equal(await s.page.getByRole('button', { name, exact: true }).count(), 0);
+                  assert.equal(await s.page.locator('form').count(), 0);
+                  assert.equal(await s.page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
+                  await s.page.getByRole('link', { name: locale === 'en' ? 'Open owner reconciliation' : 'فتح مطابقة النقد للمالك', exact: true }).waitFor();
+                  await s.page.screenshot({ path: `${out}/legacy-reference-review-${locale}.png`, fullPage: true });
+                } finally { await s.context.close(); }
+              }
+            });''')
+          p=Path('docs/cash-handover-release-1.md');p.write_text(p.read_text()+'''
+
+          ## Production preflight: unidentified older records
+
+          A read-only preflight on 2026-09-23 found 33 uncounted records, of which 32 had
+          no recorded physical box/seal reference. These are **records**, not proof of 32
+          physical boxes or a confirmed shortage. No amounts, labels, roles, or ownership
+          were inferred or changed.
+
+          Unidentified records remain visible as **Earlier record · reference missing**.
+          The database rejects all new handover actions on null, empty, or whitespace-only
+          references, even for owner/admin accounts or direct RPC calls. The UI provides
+          an English/Arabic review notice rather than inventing a label. Existing owner
+          reconciliation/count/void workflows remain the review path. Do not create a new
+          collection to replace an old record: that could duplicate the accounting.
+
+          After a referenced box is enrolled, its physical reference is immutable. Pickup
+          uses a null-safe comparison. Receipt recovery still occurs before new action
+          validation so a committed retry does not duplicate work.
+
+          The migration is still unmerged/unapplied; these guards were added to the same
+          reviewed release migration, not as a rewrite of production historical data.
+          Local-only regressions cover null, empty, spaces, tabs/newlines, forced commands,
+          no ledger side effects, legacy owner count, immutable references, and bilingual
+          phone review screens. Passing test results must be verified for the new head;
+          earlier acceptance results alone do not cover this change.
+          ''')
+          PY
+          git diff --check
+          npm ci
+          npm run typecheck
+          npx eslint src/lib/cash-handover.ts src/components/CashHandlingWorkspace.tsx
+          node --experimental-strip-types --test scripts/test-cash-handover.mjs scripts/test-authz-permissions.mjs
+          node --check scripts/cash-handover-e2e.mjs
+      - name: Commit only the reviewed correction back to the feature branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          rm .github/workflows/cash-reference-hardening.yml
+          git add supabase/migrations/20260923120059_cash_handover_coordinator_v1.sql src/lib/cash-handover.ts src/components/CashHandlingWorkspace.tsx scripts/test-cash-handover.mjs scripts/cash-handover-e2e.mjs docs/cash-handover-release-1.md .github/workflows/cash-reference-hardening.yml
+          git commit -m 'fix(cash): exclude unidentified legacy records from delegated handover'
+          git push origin HEAD:refs/heads/feat/cash-handover-coordinator-v1
