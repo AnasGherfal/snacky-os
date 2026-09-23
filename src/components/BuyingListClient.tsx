@@ -4,6 +4,8 @@ import {useEffect,useRef,useState,type FormEvent} from 'react';
 import {useRouter} from 'next/navigation';
 import {useLanguage} from '@/components/I18nProvider';
 import {buyingError,buyingReceiptMatches,validateBuyingCommand,buyingOutcomeLabels,type BuyingCommand,type BuyingItem,type BuyingList,type BuyingWorkspace} from '@/lib/buying-lists';
+import {buyingStoreGroups,type BuyingSources,type BuyingSource} from '@/lib/buying-sources';
+import {BuyingSourceDetails,BuyingSourceEditor} from './BuyingSourceEditor';
 import type {RestockShoppingListItem} from '@/lib/restock-shopping-list';
 import styles from './BuyingLists.module.css';
 
@@ -49,24 +51,30 @@ export function ShareBuyingList({items,blocked,userId}:{items:RestockShoppingLis
   </form>:<p>{ar?'أضف منتجات للقائمة المحلية أولاً.':'Add products to the local planning list first.'}</p>}
  </section>;
 }
-export function BuyingProgress({list,userId,planner,people}:{list:BuyingList;userId:string;planner:boolean;people:BuyingWorkspace['people']}){
+export function BuyingProgress({list,userId,planner,people,sources=null}:{list:BuyingList;userId:string;planner:boolean;people:BuyingWorkspace['people'];sources?:BuyingSources|null}){
  const {locale}=useLanguage(),ar=locale==='ar';const command=useBuyingCommand(userId,list.id);const [buyer,setBuyer]=useState(list.assigned_to);
  const make=(action:BuyingCommand['action'],payload:Record<string,unknown>={})=>({request_id:crypto.randomUUID(),list_id:list.id,action,revision:list.revision,payload});
  return <div className={styles.progress}>
   {command.status}
   {list.status==='open'?<>
    <h2>{ar?'تحديث نتائج الشراء':'Record buying progress'}</h2><p className={styles.hint}>{ar?'سجّل الكمية التي اشتريتها فعلياً. الكمية غير المتوفرة تحتاج سبباً. شراء المنتجات لا يعني استلامها في مخزن النظام.':'Record what you actually bought. Explain any missing products. Bought does not mean received into system stock.'}</p>
-   <div className={styles.itemCards}>{list.items.map(item=><BuyingItemForm key={`${item.product_id}:${list.revision}`} item={item} ar={ar} disabled={command.locked} save={p=>command.send(make('item',p))}/>)}</div>
+   <div className={styles.itemCards}>{buyingStoreGroups(list.items,sources).map(group=><section className={styles.storeGroup} key={group.id}>
+    {sources?<h3 className={styles.storeHeading}>{group.name??(ar?'المورد غير محدد':'Store not assigned')} <small>{group.items.length} {ar?'منتج':'products'}</small></h3>:null}
+    {group.items.map(item=><BuyingItemForm key={`${item.product_id}:${list.revision}`} item={item} ar={ar} disabled={command.locked}
+     source={sources?.sources.find(source=>source.product_id===item.product_id)} sources={sources}
+     saveSource={p=>command.send(make('source',p))} save={p=>command.send(make('item',p))}/>)}</section>)}</div>
    <div className={styles.actions}><button className={styles.primary} disabled={command.locked||list.items.some(i=>i.outcome==='pending')} onClick={()=>{if(window.confirm(ar?'إنهاء مراجعة القائمة؟ يبقى تسجيل المشتريات والاستلام والدفع منفصلاً.':'Finish checking this list? Purchase recording, receiving and payment remain separate.'))void command.send(make('complete'));}}>{ar?'إنهاء قائمة الشراء':'Finish buying list'}</button><span className={styles.hint}>{ar?'راجع كل منتج أولاً، بما فيه غير المتوفر.':'Check every product first, including unavailable items.'}</span></div>
    {planner?<details className={styles.admin}><summary>{ar?'الإسناد وإلغاء القائمة':'Assignment and cancellation'}</summary><div className={styles.actions}><label>{ar?'تغيير المشتري':'Change buyer'}<select value={buyer} onChange={e=>setBuyer(e.target.value)} disabled={command.locked}>{people.map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</select></label><button className={styles.secondary} disabled={command.locked||buyer===list.assigned_to} onClick={()=>void command.send(make('assign',{assigned_to:buyer}))}>{ar?'حفظ الإسناد':'Save assignment'}</button><button className={styles.secondary} disabled={command.locked} onClick={()=>{const reason=window.prompt(ar?'سبب إلغاء القائمة:':'Reason for cancellation:');if(reason?.trim())void command.send(make('cancel',{reason}));}}>{ar?'إلغاء القائمة':'Cancel list'}</button></div></details>:null}
   </>:<div className={styles.notice}><h2>{list.status==='completed'?(ar?'انتهت مراجعة القائمة':'Buying list checked'):(ar?'قائمة ملغاة':'Cancelled list')}</h2><p>{ar?'هذه نتيجة قائمة شراء فقط، وليست إيصالاً أو قيداً مالياً.':'This is a buying checklist result, not a receipt or accounting entry.'}</p>{planner&&list.status==='completed'?<button className={styles.secondary} disabled={command.locked} onClick={()=>void command.send(make('reopen'))}>{ar?'إعادة فتح للتصحيح':'Reopen for correction'}</button>:null}</div>}
  </div>;
 }
-function BuyingItemForm({item,ar,disabled,save}:{item:BuyingItem;ar:boolean;disabled:boolean;save:(payload:Record<string,unknown>)=>Promise<void>}){
+function BuyingItemForm({item,ar,disabled,save,source,sources,saveSource}:{item:BuyingItem;ar:boolean;disabled:boolean;save:(payload:Record<string,unknown>)=>Promise<void>;source?:BuyingSource;sources:BuyingSources|null;saveSource:(payload:Record<string,unknown>)=>Promise<void>}){
  const [outcome,setOutcome]=useState(item.outcome),[boxes,setBoxes]=useState(String(item.bought_boxes)),[note,setNote]=useState(item.note);
  async function submit(event:FormEvent){event.preventDefault();await save({product_id:item.product_id,outcome,bought_boxes:outcome==='bought'?item.planned_boxes:outcome==='partial'?Number(boxes):0,note});}
  return <details className={styles.itemCard}>
   <summary><span><strong>{item.name}</strong><small>{item.planned_boxes} {ar?'صندوق ×':'boxes ×'} {item.units_per_box} {ar?'وحدة':'units'}</small></span><span className={styles[`outcome_${item.outcome}`]}>{buyingOutcomeLabels[item.outcome][ar?1:0]}{item.bought_boxes?` · ${item.bought_boxes}`:''}</span></summary>
+  {source?<BuyingSourceDetails source={source} item={item} ar={ar}/>:sources?<p className={styles.hint}>{ar?'المورد غير محدد لهذا المنتج. تأكد من الإدارة قبل الشراء.':'No store chosen for this item. Confirm with management before buying.'}</p>:null}
+  {sources?.can_edit&&item.outcome==='pending'?<BuyingSourceEditor item={item} source={source} sources={sources} ar={ar} disabled={disabled} save={saveSource}/>:null}
   <form onSubmit={submit}><fieldset disabled={disabled} className={styles.fields}>
    <label>{ar?'نتيجة المنتج':'Item result'}<select value={outcome} onChange={e=>setOutcome(e.target.value as BuyingItem['outcome'])}>{Object.entries(buyingOutcomeLabels).map(([value,labels])=><option key={value} value={value}>{labels[ar?1:0]}</option>)}</select></label>
    {outcome==='partial'?<label>{ar?'صناديق اشتريتها':'Boxes actually bought'}<input type="number" min={1} max={item.planned_boxes-1} step={1} inputMode="numeric" required value={boxes} onChange={e=>setBoxes(e.target.value)}/></label>:null}

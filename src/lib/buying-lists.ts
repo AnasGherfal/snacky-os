@@ -5,7 +5,7 @@ export type BuyingOutcome = 'pending'|'bought'|'partial'|'unavailable';
 export type BuyingItem = {product_id:string;name:string;supplier:string|null;units_per_box:number;planned_boxes:number;unit_cost:number|null;outcome:BuyingOutcome;bought_boxes:number;note:string};
 export type BuyingList = {id:string;title:string;instructions:string;assigned_to:string;created_by:string;buyer_name:string;creator_name:string;due_on:string;status:'open'|'completed'|'cancelled';revision:number;created_at:string;updated_at:string;items:BuyingItem[]};
 export type BuyingWorkspace = {me:string;planner:boolean;today:string;record:BuyingList|null;people:{id:string;name:string}[];rows:(Omit<BuyingList,'items'> & {item_count:number;checked_count:number})[];total:number;offset:number};
-export type BuyingCommand = {request_id:string;list_id:string;action:'create'|'item'|'complete'|'cancel'|'reopen'|'assign';revision:number;payload:Record<string,unknown>};
+export type BuyingCommand = {request_id:string;list_id:string;action:'create'|'item'|'complete'|'cancel'|'reopen'|'assign'|'source';revision:number;payload:Record<string,unknown>};
 export const buyingOutcomeLabels:Record<BuyingOutcome,[string,string]> = {pending:['Not checked','لم يُراجع'],bought:['Bought','تم الشراء'],partial:['Partly bought','تم شراء جزء'],unavailable:['Unavailable','غير متوفر']};
 export function buyingDate(value:unknown):value is string {
  if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(value))return false;
@@ -26,6 +26,10 @@ export function validateBuyingCommand(value:unknown):BuyingCommand {
   break;
  }
  case 'item':id(p.product_id);integer(p.bought_boxes,0,10000);text(p.note,0,1000);if(!Object.hasOwn(buyingOutcomeLabels,String(p.outcome)))throw Error('invalid');if(['partial','unavailable'].includes(String(p.outcome))&&!String(p.note).trim())throw Error('reason');break;
+ case 'source':
+  if(Object.keys(p).length!==4||Object.keys(p).some(k=>!['product_id','primary_supplier_id','alternative_supplier_id','note'].includes(k)))throw Error('invalid');
+  id(p.product_id);id(p.primary_supplier_id);if(p.alternative_supplier_id!==null)id(p.alternative_supplier_id);
+  if(String(p.primary_supplier_id).toLowerCase()===String(p.alternative_supplier_id).toLowerCase()||c.revision===0)throw Error('invalid');text(p.note,0,1000);break;
  case 'cancel':text(p.reason,1,1000);break;
  case 'assign':id(p.assigned_to);break;
  case 'complete':case 'reopen':break;
