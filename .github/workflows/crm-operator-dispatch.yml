@@ -12,7 +12,7 @@ on:
       - 'src/app/api/crm/dispatch/**'
       - 'supabase/migrations/*crm_operator_dispatch*'
       - 'scripts/test-crm-operator-dispatch.mjs'
-      - 'scripts/crm-operator-dispatch-e2e.mjs'
+      - 'scripts/crm-operator-dispatch-db-acceptance.sql'
       - '.github/workflows/crm-operator-dispatch.yml'
 permissions:
   contents: read
@@ -23,7 +23,28 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated-dispatch-only
+          POSTGRES_DB: crm_tests
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: isolated-dispatch-only
+      PGDATABASE: crm_tests
+
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -42,56 +63,22 @@ jobs:
           npm run typecheck
           npx eslint src/lib/crm-dispatch.ts src/lib/crm-workspace.ts src/components/CrmDispatchPanel.tsx src/components/CrmWorkspace.tsx src/components/CrmRecordForms.tsx src/app/api/crm/dispatch/route.ts
 
-      - uses: supabase/setup-cli@v1
-        with:
-          version: 2.117.0
-
-      - name: Disposable backend only
+      - name: Build isolated CRM schema plus dispatch migration
         run: |
-          mkdir -p .qa/full/supabase diagnostics
           python3 - <<'PY'
           from pathlib import Path
-          text=Path('supabase/config.toml').read_text().replace('project_id = "snacky-os"','project_id = "snacky-company-isolated"')
-          for section in ['db.migrations','db.seed','studio','inbucket','realtime','edge_runtime']:
-            start=text.index('['+section+']'); end=text.find('\n[',start+1)
-            if end<0:end=len(text)
-            text=text[:start]+text[start:end].replace('enabled = true','enabled = false')+text[end:]
-          Path('.qa/full/supabase/config.toml').write_text(text)
+          source=Path('scripts/test-connected-relations-db.sql').read_text()
+          marker='\\ir ../supabase/migrations/20260915200400_connected_relations_api_boundary.sql'
+          start=source.index(marker)
+          end=source.index('\n',start)+1
+          Path('scripts/.crm-dispatch-isolated.sql').write_text(
+            source[:end] + '\n\\ir crm-operator-dispatch-db-acceptance.sql\n'
+          )
           PY
-          started=0
-          for attempt in 1 2 3; do
-            if supabase start --workdir .qa/full > diagnostics/local-start.log 2>&1; then
-              started=1
-              break
-            fi
-            supabase stop --workdir .qa/full --no-backup >/dev/null 2>&1 || true
-            sleep 20
-          done
-          if [ "$started" -ne 1 ]; then tail -n 100 diagnostics/local-start.log; exit 1; fi
-          supabase status --workdir .qa/full -o env > .qa/local-status.env
-          python3 scripts/company-e2e/migrate.py
-
-      - name: Real CRM to operator dispatch lifecycle
-        run: |
-          set -a
-          source .qa/local-status.env
-          set +a
-          node scripts/crm-operator-dispatch-e2e.mjs
-
-      - name: Database security boundary checks
-        run: |
-          export PGHOST=127.0.0.1 PGPORT=54322 PGUSER=postgres PGPASSWORD=postgres PGDATABASE=postgres
-          test "$(psql -X -At -c "select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='crm_dispatch_private' and c.relname='requests' and c.relrowsecurity")" = "1"
-          test "$(psql -X -At -c "select has_table_privilege('authenticated','crm_dispatch_private.requests','SELECT')")" = "f"
-          test "$(psql -X -At -c "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='snacky_issue_dispatch_command_v1' and not p.prosecdef")" = "1"
-          test "$(psql -X -At -c "select count(*) from pg_trigger where tgrelid='public.crm_tasks'::regclass and tgname='crm_dispatch_guard_v1' and tgenabled='O'")" = "1"
+          psql -X -v ON_ERROR_STOP=1 -f scripts/.crm-dispatch-isolated.sql
 
       - name: Existing critical workflow safety
         run: npm run test:critical-workflows
 
       - name: Production build
         run: npm run build
-
-      - name: Destroy disposable backend
-        if: always()
-        run: supabase stop --workdir .qa/full --no-backup || true
