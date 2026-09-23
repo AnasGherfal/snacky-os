@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
 import { useI18n } from '@/components/I18nProvider';
 import {
   cashActionLabels, cashStateLabels, cashError, cashReceiptMatches, validateCashCommand,
@@ -10,38 +10,52 @@ import {
 import styles from './CashHandlingWorkspace.module.css';
 import { prepareCashPhoto } from '@/lib/cash-photo';
 
+const subscribeHydration = () => () => {};
+const clientSnapshot = () => true;
+const serverSnapshot = () => false;
+
+function browserState(storageKey: string) {
+  const selected = new URL(window.location.href).searchParams.get('id');
+  try {
+    const saved = sessionStorage.getItem(storageKey);
+    const pending = saved ? validateCashCommand(JSON.parse(saved)) : null;
+    return { selected: pending ? pending.collection_id : selected, pending, memoryOnly: false };
+  } catch { return { selected, pending: null, memoryOnly: true }; }
+}
+
 export function CashHandlingWorkspace({ userId }: { userId: string }) {
+  const hydrated = useSyncExternalStore(subscribeHydration, clientSnapshot, serverSnapshot);
+  const { locale } = useI18n();
+  return hydrated ? <CashHandlingClient key={userId} userId={userId} />
+    : <p role="status">{locale === 'ar' ? 'جارٍ تحميل سجلات النقد…' : 'Loading cash records…'}</p>;
+}
+
+function CashHandlingClient({ userId }: { userId: string }) {
+  const storageKey = `snacky.cash-handover.pending.v1.${userId}`;
+  const [initial] = useState(() => browserState(storageKey));
   const { locale } = useI18n(), ar = locale === 'ar';
   const text = (en: string, arabic: string) => ar ? arabic : en;
   const [view, setView] = useState<CashWorkspace | null>(null);
   const [status, setStatus] = useState('open'), [offset, setOffset] = useState(0);
-  const [selected, setSelected] = useState<string | null>(null), [action, setAction] = useState<CashAction | null>(null);
-  const [pending, setPending] = useState<CashCommand | null>(null), [receipt, setReceipt] = useState<CashReceipt | null>(null);
-  const [error, setError] = useState(''), [loading, setLoading] = useState(true), [busy, setBusy] = useState(false);
-  const [ready, setReady] = useState(false), [memoryOnly, setMemoryOnly] = useState(false);
+  const [selected, setSelected] = useState<string | null>(initial.selected), [action, setAction] = useState<CashAction | null>(null);
+  const [pending, setPending] = useState<CashCommand | null>(initial.pending), [receipt, setReceipt] = useState<CashReceipt | null>(null);
+  const [error, setError] = useState(initial.pending ? 'uncertain' : ''), [loading, setLoading] = useState(true), [busy, setBusy] = useState(false);
+  const [memoryOnly, setMemoryOnly] = useState(initial.memoryOnly);
   const photo = useRef<File | null>(null), sequence = useRef(0), saving = useRef(false);
-  const storageKey = `snacky.cash-handover.pending.v1.${userId}`;
-  const load = useCallback(async () => {
-    const seq = ++sequence.current; setLoading(true);
-    try {
-      const params = new URLSearchParams({ status, offset: String(offset) }); if (selected) params.set('id', selected);
-      const response = await fetch(`/api/cash-handling?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(20000) });
-      const body = await response.json();
-      if (!response.ok || !body.ok || body.data?.me !== userId) throw Error(body.code ?? 'unavailable');
-      if (seq === sequence.current) setView(body.data as CashWorkspace);
-    } catch (e) { if (seq === sequence.current) { setView(null); setError(e instanceof Error && ['denied', 'invalid'].includes(e.message) ? e.message : 'unavailable'); } }
-    finally { if (seq === sequence.current) setLoading(false); }
+  const load = useCallback(() => {
+    const seq = ++sequence.current;
+    const params = new URLSearchParams({ status, offset: String(offset) }); if (selected) params.set('id', selected);
+    return fetch(`/api/cash-handling?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(20000) })
+      .then(async response => {
+        const body = await response.json();
+        if (!response.ok || !body.ok || body.data?.me !== userId) throw Error(body.code ?? 'unavailable');
+        return body.data as CashWorkspace;
+      })
+      .then(data => { if (seq === sequence.current) setView(data); })
+      .catch(e => { if (seq === sequence.current) { setView(null); setError(e instanceof Error && ['denied', 'invalid'].includes(e.message) ? e.message : 'unavailable'); } })
+      .finally(() => { if (seq === sequence.current) setLoading(false); });
   }, [selected, status, offset, userId]);
-  useEffect(() => {
-    const id = new URL(window.location.href).searchParams.get('id');
-    if (id) setSelected(id);
-    try {
-      const saved = sessionStorage.getItem(storageKey);
-      if (saved) { const command = validateCashCommand(JSON.parse(saved)); setPending(command); setSelected(command.collection_id); setError('uncertain'); }
-    } catch { setMemoryOnly(true); }
-    setReady(true);
-  }, [storageKey]);
-  useEffect(() => { if (ready) void load(); }, [ready, load]);
+  useEffect(() => { void load(); return () => { sequence.current += 1; }; }, [load]);
   function keep(command: CashCommand | null) {
     setPending(command);
     try { if (command) sessionStorage.setItem(storageKey, JSON.stringify(command)); else sessionStorage.removeItem(storageKey); }
@@ -80,7 +94,7 @@ export function CashHandlingWorkspace({ userId }: { userId: string }) {
   }
   function open(id: string | null) {
     if (pending || busy) return;
-    setSelected(id); setAction(null); setError(''); setReceipt(null);
+    setLoading(true); setSelected(id); setAction(null); setError(''); setReceipt(null);
     window.history.replaceState(null, '', id ? `/cash-handling?id=${encodeURIComponent(id)}` : '/cash-handling');
   }
   function submit(event: FormEvent<HTMLFormElement>, box: CashBox) {
@@ -106,7 +120,7 @@ export function CashHandlingWorkspace({ userId }: { userId: string }) {
         <h1>{text('Cash handling', 'تسليم وعد النقد')}</h1>
         <p>{text('One box. One history. A named person at every handover.', 'كل علبة لها سجل واحد، ومسؤول واضح في كل مرحلة.')}</p></div>
       <div className={styles.buttons}>{view?.can_remove ? <Link className={styles.secondary} href="/cash-collections/new">{text('Record machine collection', 'تسجيل سحب من آلة')}</Link> : null}
-        <button className={styles.secondary} disabled={busy} onClick={() => { setError(''); void load(); }}>{text('Refresh', 'تحديث')}</button></div>
+        <button className={styles.secondary} disabled={busy} onClick={() => { setError(''); setLoading(true); void load(); }}>{text('Refresh', 'تحديث')}</button></div>
     </header>
     <p className={styles.privacy}>{text('Cash handling does not grant access to company balances or the Finance dashboard.', 'تسليم وعد النقد لا يمنح الوصول إلى أرصدة الشركة أو لوحة المالية.')}</p>
     {error ? <div role="alert" className={styles.error}>{cashError(error, ar)}</div> : null}
@@ -135,7 +149,7 @@ export function CashHandlingWorkspace({ userId }: { userId: string }) {
       </details> : null}
       {!selected ? <>
         <nav className={styles.tabs} aria-label={text('Cash queue', 'قائمة النقد')}>{[['open', 'Needs action', 'تحتاج إجراء'], ['counted', 'Counted', 'تم العد'], ['all', 'History', 'السجل']].map(([value, en, arabic]) =>
-          <button key={value} disabled={locked} aria-current={status === value ? 'page' : undefined} onClick={() => { setStatus(value); setOffset(0); setError(''); }}>{text(en, arabic)}</button>)}</nav>
+          <button key={value} disabled={locked} aria-current={status === value ? 'page' : undefined} onClick={() => { setLoading(true); setStatus(value); setOffset(0); setError(''); }}>{text(en, arabic)}</button>)}</nav>
         <div className={styles.queueHeader}><h2>{view.owner ? text('Team cash boxes', 'علب نقد الفريق') : text('My cash boxes', 'علب النقد الخاصة بي')}</h2><span>{view.total} {text('records', 'سجلاً')}</span></div>
         {!view.rows.length && !loading ? <div className={styles.empty}><h3>{text('No boxes in this view', 'لا توجد علب في هذا العرض')}</h3><p>{text('Collected boxes and boxes assigned to you will appear here. No money is added by assigning or moving a box.', 'تظهر هنا العلب التي جمعتها أو أُسندت إليك. الإسناد أو نقل العلبة لا يضيف أي مبلغ.')}</p></div> : null}
         <div className={styles.grid}>{view.rows.map(row => <article key={row.id} className={styles.card}>
