@@ -69,17 +69,32 @@ export function BuyingProgress({list,userId,planner,people,sources=null}:{list:B
  </div>;
 }
 function BuyingItemForm({item,ar,disabled,save,source,sources,saveSource}:{item:BuyingItem;ar:boolean;disabled:boolean;save:(payload:Record<string,unknown>)=>Promise<void>;source?:BuyingSource;sources:BuyingSources|null;saveSource:(payload:Record<string,unknown>)=>Promise<void>}){
- const [outcome,setOutcome]=useState(item.outcome),[boxes,setBoxes]=useState(String(item.bought_boxes)),[note,setNote]=useState(item.note);
- async function submit(event:FormEvent){event.preventDefault();await save({product_id:item.product_id,outcome,bought_boxes:outcome==='bought'?item.planned_boxes:outcome==='partial'?Number(boxes):0,note});}
+ const defaultSupplier=item.actual_supplier_id??source?.primary.supplier_id??'';
+ const [outcome,setOutcome]=useState(item.outcome),[boxes,setBoxes]=useState(String(item.bought_boxes)),[note,setNote]=useState(item.note),[actualSupplier,setActualSupplier]=useState(defaultSupplier);
+ const bought=outcome==='bought'||outcome==='partial';
+ const supplierOptions=source?[source.primary,...(source.alternative?[source.alternative]:[])]:[];
+ const actualStore=supplierOptions.find(option=>option.supplier_id===item.actual_supplier_id)?.name??null;
+ async function submit(event:FormEvent){
+  event.preventDefault();
+  if(bought&&!source)return;
+  await save({
+   product_id:item.product_id,
+   outcome,
+   bought_boxes:outcome==='bought'?item.planned_boxes:outcome==='partial'?Number(boxes):0,
+   note,
+   actual_supplier_id:bought?actualSupplier:null,
+  });
+ }
  return <details className={styles.itemCard}>
-  <summary><span><strong>{item.name}</strong><small>{item.planned_boxes} {ar?'صندوق ×':'boxes ×'} {item.units_per_box} {ar?'وحدة':'units'}</small></span><span className={styles[`outcome_${item.outcome}`]}>{buyingOutcomeLabels[item.outcome][ar?1:0]}{item.bought_boxes?` · ${item.bought_boxes}`:''}</span></summary>
-  {source?<BuyingSourceDetails source={source} item={item} ar={ar}/>:sources?<p className={styles.hint}>{ar?'المورد غير محدد لهذا المنتج. تأكد من الإدارة قبل الشراء.':'No store chosen for this item. Confirm with management before buying.'}</p>:null}
+  <summary><span><strong>{item.name}</strong><small>{item.planned_boxes} {ar?'صندوق ×':'boxes ×'} {item.units_per_box} {ar?'وحدة':'units'}{actualStore?` · ${ar?'اشتري من':'bought at'} ${actualStore}`:''}</small></span><span className={styles[`outcome_${item.outcome}`]}>{buyingOutcomeLabels[item.outcome][ar?1:0]}{item.bought_boxes?` · ${item.bought_boxes}`:''}</span></summary>
+  {source?<BuyingSourceDetails source={source} item={item} ar={ar}/>:sources?<p className={styles.hint}>{ar?'المورد غير محدد لهذا المنتج. لا تسجل المنتج كمشترى حتى تحدد الإدارة المورد.':'No store chosen for this item. Do not mark it bought until management sets the store.'}</p>:null}
   {sources?.can_edit&&item.outcome==='pending'?<BuyingSourceEditor item={item} source={source} sources={sources} ar={ar} disabled={disabled} save={saveSource}/>:null}
   <form onSubmit={submit}><fieldset disabled={disabled} className={styles.fields}>
-   <label>{ar?'نتيجة المنتج':'Item result'}<select value={outcome} onChange={e=>setOutcome(e.target.value as BuyingItem['outcome'])}>{Object.entries(buyingOutcomeLabels).map(([value,labels])=><option key={value} value={value}>{labels[ar?1:0]}</option>)}</select></label>
+   <label>{ar?'نتيجة المنتج':'Item result'}<select value={outcome} onChange={e=>{const next=e.target.value as BuyingItem['outcome'];setOutcome(next);if((next==='bought'||next==='partial')&&!actualSupplier&&source)setActualSupplier(source.primary.supplier_id);}}>{Object.entries(buyingOutcomeLabels).map(([value,labels])=><option key={value} value={value}>{labels[ar?1:0]}</option>)}</select></label>
    {outcome==='partial'?<label>{ar?'صناديق اشتريتها':'Boxes actually bought'}<input type="number" min={1} max={item.planned_boxes-1} step={1} inputMode="numeric" required value={boxes} onChange={e=>setBoxes(e.target.value)}/></label>:null}
+   {bought&&source?<label>{ar?'المتجر الذي اشتريت منه فعلياً':'Store actually used'}<select value={actualSupplier} onChange={e=>setActualSupplier(e.target.value)} required><option value="">{ar?'اختر المتجر':'Choose store'}</option>{supplierOptions.map(store=><option key={store.supplier_id} value={store.supplier_id}>{store.name}{store.supplier_id===source.primary.supplier_id?(ar?' · المطلوب':' · required'):(ar?' · البديل':' · alternative')}</option>)}</select></label>:null}
    <label className={styles.wide}>{ar?'ملاحظة أو سبب النقص':'Note or shortage reason'}<textarea maxLength={1000} rows={2} required={outcome==='partial'||outcome==='unavailable'} value={note} onChange={e=>setNote(e.target.value)}/></label>
-  </fieldset><button className={styles.primary} disabled={disabled} type="submit">{ar?'حفظ نتيجة المنتج':'Save item result'}</button></form>
+  </fieldset><button className={styles.primary} disabled={disabled||(bought&&(!source||!actualSupplier))} type="submit">{ar?'حفظ نتيجة المنتج':'Save item result'}</button></form>
  </details>;
 }
 export function BuyingPrintButton({ar}:{ar:boolean}){return <button type="button" className={styles.primary} onClick={()=>window.print()}>{ar?'طباعة / حفظ PDF':'Print / Save PDF'}</button>;}
