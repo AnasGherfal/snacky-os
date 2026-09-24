@@ -205,7 +205,7 @@ async function applySavedProductCostMemory(supabase: SupabaseServer, lines: Purc
       .select("id, name, cost_price, current_cost_price_lyd, last_purchase_cost_lyd, average_cost_lyd")
       .in("id", productIds);
     if (error) throw error;
-    for (const product of data ?? []) productsById.set(String((product as any).id), product as ProductCostMemory);
+    for (const product of data ?? []) productsById.set(String((product as { id?: unknown }).id), product as ProductCostMemory);
   }
 
   return lines.map((line) => {
