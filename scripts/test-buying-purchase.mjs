@@ -66,3 +66,8 @@ test('screen separates buying, actual storage, and payment; protects uncertain r
  for(const text of ['No second employee is required.','Save purchase — not yet stored','Confirm placement in storage','Payments remain in the existing payment workflow','Retry same request','localStorage.setItem'])assert.ok(ui.includes(text),text);
  assert.match(ui,/dir=\{ar\?'rtl':'ltr'\}/);assert.match(ui,/receiptCents\(d\.total\)/);
 });
+
+test('store and storage controls expose distinct accessible names without option text',()=>{
+ assert.ok(ui.includes('aria-label={ar?\'المتجر الفعلي\':\'Actual store\'}'));
+ assert.ok(ui.includes('aria-label={ar?\'أين وضعت المنتجات؟\':\'Where did you place the goods?\'}'));
+});
