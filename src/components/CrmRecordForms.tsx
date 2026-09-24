@@ -56,7 +56,7 @@ export function CrmRecordForm({kind,row,context,userId,ar}:{kind:CrmKind;row?:an
  return <CrmForm key={`${kind}:${row?.id??'new'}:${d.version??''}`} action={kind==='obligation'?'obligation.create':`${kind}.save`} recordId={row?.id} userId={userId} hidden={hidden} fields={fields} submitLabel={row?tr('Save changes','حفظ التغييرات'):kind==='issue'?tr('Create customer issue','تسجيل بلاغ العميل'):tr('Add record','إضافة السجل')}/>;
 }
 
-export function CrmFollowupForm({kind,id,context,userId,ar}:{kind:CrmKind;id:string;context:Context;userId:string;ar:boolean}){
+export function CrmFollowupForm({kind,id,context,userId,ar,priority='normal'}:{kind:CrmKind;id:string;context:Context;userId:string;ar:boolean;priority?:string}){
  const tr=(en:string,arabic:string)=>ar?arabic:en;
  return <CrmForm action="task.save" userId={userId} hidden={{kind,related_id:id}} fields={[
   {name:'title',label:tr('Next action','الخطوة القادمة'),required:true},
@@ -64,6 +64,7 @@ export function CrmFollowupForm({kind,id,context,userId,ar}:{kind:CrmKind;id:str
   {name:'assigned_to',label:tr('Assigned to','المسؤول'),type:'select',required:true,value:context.me,options:context.directory.filter(p=>kind==='issue'||p.role!=='operator').map(p=>({value:p.id,label:p.name}))},
   {name:'due_date',label:tr('Due date','تاريخ الاستحقاق'),type:'date',required:true,value:context.today},
   {name:'due_time',label:tr('Time (optional)','الوقت (اختياري)'),type:'time'},
+  ...(kind==='issue'?[{name:'priority',label:tr('Urgency','درجة الاستعجال'),type:'select' as const,value:priority==='critical'?'urgent':priority,options:crmOptionRows([['low','Low','منخفضة'],['normal','Normal','عادية'],['high','High','عالية'],['urgent','Urgent','عاجلة']],ar)}]:[]),
   {name:'notes',label:tr('Instructions / context','التعليمات والسياق'),type:'textarea'},
  ]} submitLabel={tr('Assign follow-up','تعيين المتابعة')} stay/>;
 }
