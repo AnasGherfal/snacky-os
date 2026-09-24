@@ -1,0 +1,29 @@
+name: Buying receipt migration scaffold
+on:
+  push:
+    branches: [feat/buying-list-purchase-receipt-v1]
+    paths: [.github/workflows/buying-receipt-scaffold.yml]
+permissions:
+  contents: write
+jobs:
+  scaffold:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/buying-list-purchase-receipt-v1
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.117.0
+      - name: Generate migration file
+        run: |
+          supabase --version
+          supabase migration new --help
+          supabase migration new buying_purchase_link_v1
+          rm .github/workflows/buying-receipt-scaffold.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add supabase/migrations/*buying_purchase_link_v1.sql .github/workflows/buying-receipt-scaffold.yml
+          git commit -m 'chore(buying): add CLI-generated receipt migration scaffold'
+          git push origin HEAD:refs/heads/feat/buying-list-purchase-receipt-v1
