@@ -1,7 +1,7 @@
 "use client";
 
 import { PurchaseReceiptPicker } from "@/components/PurchaseReceiptPicker";
-import { useState } from "react";
+import { useState, type ComponentProps } from "react";
 import { LocalDraftForm } from "@/components/LocalDraft";
 import { BoxAwarePurchaseForm as PurchaseForm } from "@/components/BoxAwarePurchaseForm";
 import { FormSection } from "@/components/ui";
@@ -59,6 +59,9 @@ export function NewPurchaseWithReceiptScan({
   storageLocations,
   canAddProducts = false,
   prefillSource,
+  initialPurchase,
+  initialLines,
+  prefillNotice,
 }: {
   action: (formData: FormData) => Promise<PurchaseSubmitResult>;
   suppliers: SupplierOption[];
@@ -66,6 +69,9 @@ export function NewPurchaseWithReceiptScan({
   storageLocations: StorageLocationOption[];
   canAddProducts?: boolean;
   prefillSource?: string | null;
+  initialPurchase?: ComponentProps<typeof PurchaseForm>['initialPurchase'];
+  initialLines?: ComponentProps<typeof PurchaseForm>['initialLines'];
+  prefillNotice?: string | null;
 }) {
   const [pendingScan, setPendingScan] = useState<ReceiptScanDraft | null>(null);
   const [appliedScan, setAppliedScan] = useState<ReceiptScanDraft | null>(null);
@@ -105,6 +111,7 @@ export function NewPurchaseWithReceiptScan({
 
   return (
     <div className="space-y-5">
+      {prefillNotice ? <div className="rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950">{prefillNotice}</div> : null}
       <PurchaseForm
         action={action}
         suppliers={suppliers}
@@ -114,6 +121,8 @@ export function NewPurchaseWithReceiptScan({
         appliedScanKey={appliedScanKey}
         canAddProducts={canAddProducts}
         prefillSource={prefillSource}
+        initialPurchase={initialPurchase}
+        initialLines={initialLines}
       />
 
       <FormSection title="Scan receipt with AI" description="Optional helper. It previews extracted fields first, then you choose whether to apply them to the manual form.">
