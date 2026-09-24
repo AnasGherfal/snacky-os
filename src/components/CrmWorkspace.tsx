@@ -2,6 +2,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getAuthenticatedSupabaseServerClient,getCurrentProfile } from '@/lib/auth';
+import { getSupabaseAdminClient } from '@/lib/supabase-server';
 import { hasAnyRole } from '@/lib/authz';
 import { getServerI18n } from '@/lib/i18n/server';
 import { ErrorState,PageHeader,EmptyState } from '@/components/ui';
@@ -18,6 +19,20 @@ export type CrmSearchParams=Record<string,string|string[]|undefined>;
 const scalar=(params:CrmSearchParams,key:string)=>typeof params[key]==='string'?params[key] as string:'';
 function formattedDate(value:any,ar:boolean){if(!value)return ar?'غير مسجّل':'Not recorded';const date=new Date(String(value));return Number.isNaN(date.getTime())?String(value):new Intl.DateTimeFormat(ar?'ar-LY':'en-GB',{dateStyle:'medium',timeStyle:'short',timeZone:'Africa/Tripoli'}).format(date);}
 function money(value:unknown){return value===null||value===undefined?'—':`${Number(value).toLocaleString('en-US',{maximumFractionDigits:2})} LYD`;}
+async function dispatchNotificationDevices(tasks:any[]){
+ const members=[...new Set(tasks.map((task:any)=>String(task.assigned_to??'')).filter(Boolean))];
+ if(!members.length)return new Map<string,number>();
+ const admin=getSupabaseAdminClient();if(!admin)return null;
+ const profiles=await admin.from('profiles').select('id,team_member_id').in('team_member_id',members).eq('active_status','active');
+ if(profiles.error)return null;
+ const byUser=new Map<string,string>(),counts=new Map<string,number>(members.map(id=>[id,0]));
+ for(const row of profiles.data??[])if(row.id&&row.team_member_id)byUser.set(String(row.id),String(row.team_member_id));
+ if(!byUser.size)return counts;
+ const subs=await admin.from('push_subscriptions').select('user_id').in('user_id',[...byUser.keys()]).eq('is_active',true);
+ if(subs.error)return null;
+ for(const row of subs.data??[]){const member=byUser.get(String(row.user_id));if(member)counts.set(member,(counts.get(member)??0)+1);}
+ return counts;
+}
 function Badge({status,ar,overdue}:{status:string;ar:boolean;overdue?:boolean}){return <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${overdue?'border-rose-200 bg-rose-50 text-rose-900':status==='resolved'||status==='completed'?'border-emerald-200 bg-emerald-50 text-emerald-900':'border-slate-200 bg-slate-50 text-slate-700'}`}>{overdue?(ar?'متأخر':'Overdue'):crmStatus(status,ar)}</span>;}
 function ContactButtons({row,ar}:{row:any;ar:boolean}){
  const data=row?.data??row??{},phone=data.customer_phone??data.phone??data.contact_phone,whatsapp=data.customer_whatsapp??data.whatsapp??data.contact_whatsapp??phone,email=data.email??data.contact_email;
@@ -69,7 +84,9 @@ export async function CrmWorkspace({section,id,searchParams={},create=false}:{se
  const listHref=crmPaths[section];
  const canCreate=context.staff&&['lead','issue','contact','task'].includes(section)||context.manager&&section==='obligation';
  const detailEdit=row?.can_edit&&!(row.kind==='task'&&d.status==='completed')&&!row.archived;
- const dispatchTasks=(context.tasks??[]).filter((task:any)=>task.task_type==='field_action'&&task.dispatch_state&&task.archived_at===null).map((task:any)=>({...task,assigned_name:name(task.assigned_to)}));
+ const rawDispatchTasks=(context.tasks??[]).filter((task:any)=>task.task_type==='field_action'&&task.dispatch_state&&task.archived_at===null);
+ const notificationDevices=section==='issue'&&rawDispatchTasks.length?await dispatchNotificationDevices(rawDispatchTasks):new Map<string,number>();
+ const dispatchTasks=rawDispatchTasks.map((task:any)=>({...task,assigned_name:name(task.assigned_to),notification_readiness_known:notificationDevices!==null,active_notification_devices:notificationDevices?.get(String(task.assigned_to))??null}));
  const taskDispatch=section==='task'&&d.task_type==='field_action'&&d.dispatch_state?{...d,id:row.id,title:row.title,updated_at:d.updated_at??d.version??row.updated_at}:null;
  const taskProofImages=section==='task'?(context.documents??[]).filter((doc:any)=>String(doc.mime_type??'').toLowerCase().startsWith('image/')).length:0;
  const fieldWorkReadyForCrm=section==='issue'&&dispatchTasks.length>0&&dispatchTasks.every((task:any)=>task.dispatch_state==='fixed');
