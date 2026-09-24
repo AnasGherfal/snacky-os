@@ -172,7 +172,12 @@ try{
   await card.getByRole('checkbox').check();const before=qty(products[0]);await card.getByRole('button',{name:'Confirm placement in storage',exact:true}).click();await page.getByText('Placed in storage',{exact:true}).waitFor();assert.equal(qty(products[0]),before+12);
  });
  await check('Arabic 390px and 320px screens remain usable with no serious accessibility defects',async()=>{
-  await context.addCookies([{name:'snacky_os_language',value:'ar',url:app}]);await page.reload();await page.getByText('نفس الشخص يشتري ويضع المنتجات في المخزن',{exact:true}).waitFor();
+  // Exercise the staff-facing switch: changing only the cookie leaves the
+  // browser's stored English locale inconsistent with the server's Arabic HTML.
+  await page.getByRole('button',{name:'Switch language: العربية',exact:true}).click();
+  await page.waitForFunction(()=>document.documentElement.lang==='ar'&&document.documentElement.dir==='rtl'&&localStorage.getItem('snacky_os_language')==='ar'&&document.cookie.split(';').some(value=>value.trim()==='snacky_os_language=ar'));
+  await page.reload();await page.getByText('نفس الشخص يشتري ويضع المنتجات في المخزن',{exact:true}).waitFor();
+  assert.equal(await page.locator('html').getAttribute('lang'),'ar');assert.equal(await page.locator('html').getAttribute('dir'),'rtl');
   for(const width of [390,320]){await page.setViewportSize({width,height:900});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));const scan=await new AxeBuilder({page}).include('main').analyze();writeFileSync(out+'/axe-'+width+'.json',JSON.stringify(scan.violations,null,2));assert.equal(scan.violations.filter(v=>['serious','critical'].includes(v.impact)).length,0);await page.screenshot({path:out+'/buyer-ar-'+width+'.png',fullPage:true});}
  });
  await check('cross-site submission and Finance page access remain denied',async()=>{
