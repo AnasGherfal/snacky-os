@@ -1,4 +1,5 @@
 import {sourceAwareItems} from '@/lib/buying-sources';
+import {buyingPurchaseSource} from '@/lib/buying-purchase';
 import {unstable_rethrow} from 'next/navigation';
 import Link from 'next/link';
 import {notFound} from 'next/navigation';
@@ -23,6 +24,14 @@ export default async function Page({params}:{params:Promise<{id:string}>}){
   <p className={styles.hint}>{view.sources?.sources.length?(ar?'التقدير من أسعار الشراء السابقة للموردين المحددين، وليس عرض سعر حالي.':'Estimate uses previous purchases from the selected stores, not current quotes.'):(ar?'الموردون والأسعار تقديرات من آخر بيانات المنتج وليست عروض أسعار.':'Suppliers and prices are estimates from the latest product records, not quotations.')} {totals.missing?(ar?'بعض التكاليف ناقصة؛ الإجمالي غير مكتمل.':'Some costs are missing; the total is incomplete.'):''}</p>
   <details className={styles.admin}><summary>{ar?'عرض جدول الكميات والتكاليف':'Show quantities and estimated costs'}</summary><div className={styles.tableWrap}><BuyingListTable items={items} sources={view.sources} ar={ar}/></div></details>
   <BuyingProgress list={list} userId={view.profile.id} planner={view.data.planner} people={view.data.people} sources={view.sources}/>
+  {list.status==='completed'&&view.purchaseFlow?<section className={styles.admin}>
+   <h2>{ar?'سجّل الشراء وأدخله للمخزن':'Record purchase & put in storage'}</h2>
+   <p className={styles.hint}>{ar?'نفس المشتري يسجّل السعر والإيصال ثم يختار المخزن ويضغط «حفظ واستلام». كل متجر فعلي يصبح عملية شراء مستقلة.':'The same buyer records actual prices and receipt, chooses storage, then uses Save and receive. Each actual store becomes one purchase.'}</p>
+   {!view.purchaseFlow.groups.length?<p>{ar?'لم يتم شراء أي منتجات من هذه القائمة، لذلك لا توجد عملية شراء لتسجيلها.':'No products were bought from this list, so there is no purchase to record.'}</p>:<div className={styles.itemCards}>{view.purchaseFlow.groups.map(group=><div className={styles.itemCard} key={group.supplier_id}>
+    <div><strong>{group.store_name}</strong><p className={styles.hint}>{group.item_count} {ar?'منتج':'products'} · {group.bought_boxes} {ar?'صندوق':'boxes'}</p></div>
+    {group.linked_purchase?.purchase_id?<Link className={styles.secondary} href={`/purchases/${group.linked_purchase.purchase_id}`}>{ar?'فتح عملية الشراء المسجلة':'Open recorded purchase'} · {group.linked_purchase.status}</Link>:view.purchaseFlow.can_record?<Link className={styles.primary} href={`/purchases/new?source=${encodeURIComponent(buyingPurchaseSource(id,group.supplier_id))}`}>{ar?`سجّل واستلم من ${group.store_name}`:`Record & receive from ${group.store_name}`}</Link>:<p className={styles.hint}>{ar?'يجب أن يكون المشتري المسند لديه صلاحية المشتريات والاستلام.':'The assigned buyer needs purchase and receiving access.'}</p>}
+   </div>)}</div>}
+  </section>:list.status==='completed'&&view.purchaseFlowStatus==='not_installed'?<p className={styles.notice}>{ar?'ربط القائمة بالمشتريات غير مفعّل بعد. القائمة نفسها محفوظة ولم تتغير.':'Buying-to-storage linking is not installed yet. The checklist remains unchanged.'}</p>:null}
   <p className={styles.hint}>{ar?'أعد تحميل الصفحة للتحقق من آخر تقدم على جهاز آخر. تبقى الكميات المطلوبة ثابتة بعد مشاركة القائمة.':'Reload to check the latest progress from another device. Requested quantities remain fixed after sharing the list.'}</p>
  </section>;
 }
