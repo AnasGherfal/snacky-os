@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { buyingPurchaseGroup, parseBuyingPurchaseSource, type BuyingPurchaseWorkspace } from "@/lib/buying-purchase";
 import { NewPurchaseWithReceiptScan } from "@/components/NewPurchaseWithReceiptScan";
+import type { ComponentProps } from "react";
 import { ErrorState, FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
 import { canAddProducts, canManagePurchases } from "@/lib/authz";
@@ -142,8 +143,9 @@ export default async function NewPurchasePage({ searchParams }: { searchParams: 
     vmsNames: vmsNamesByProduct.get(product.id) ?? [],
   }));
 
-  let buyingInitialPurchase: any = undefined;
-  let buyingInitialLines: any[] | undefined;
+  type NewPurchaseProps = ComponentProps<typeof NewPurchaseWithReceiptScan>;
+  let buyingInitialPurchase: NewPurchaseProps["initialPurchase"];
+  let buyingInitialLines: NewPurchaseProps["initialLines"];
   let buyingPrefillNotice: string | null = null;
   if (buyingSource) {
     const { data: buyingData, error: buyingError } = await supabase.rpc("snacky_buying_purchase_workspace_v1", { p_id: buyingSource.listId });
