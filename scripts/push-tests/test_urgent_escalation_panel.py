@@ -12,10 +12,14 @@ with sync_playwright() as p:
     page.on("pageerror",lambda error: errors.append(str(error)))
     page.goto(URL,wait_until="networkidle")
     page.get_by_text("No active notification device — contact the operator directly.",exact=True).wait_for()
-    page.get_by_text("Urgent acceptance is overdue — contact or reassign the operator now.",exact=True).wait_for()
+    english_overdue=page.get_by_text("Urgent acceptance is overdue — contact or reassign the operator now.",exact=True)
+    assert english_overdue.count()==2, f"expected two English overdue task banners, got {english_overdue.count()}"
+    english_overdue.first.wait_for()
     page.get_by_text("Push is ready on 2 registered device(s). Provider acceptance does not mean the operator saw it.",exact=True).wait_for()
     page.get_by_text("لا يوجد جهاز مسجل للإشعارات لدى المشغّل — تواصل معه مباشرة.",exact=True).wait_for()
-    page.get_by_text("تأخر قبول المهمة العاجلة — تواصل مع المشغّل أو أعد إسنادها الآن.",exact=True).wait_for()
+    arabic_overdue=page.get_by_text("تأخر قبول المهمة العاجلة — تواصل مع المشغّل أو أعد إسنادها الآن.",exact=True)
+    assert arabic_overdue.count()==2, f"expected two Arabic overdue task banners, got {arabic_overdue.count()}"
+    arabic_overdue.first.wait_for()
     page.get_by_text("إشعارات الهاتف مفعلة على 2 جهاز. قبول خدمة الإشعار لا يعني أن المشغّل شاهد الرسالة.",exact=True).wait_for()
     for width in (390,320):
         page.set_viewport_size({"width":width,"height":900})
