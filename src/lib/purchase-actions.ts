@@ -9,6 +9,7 @@ import { financeAccountId } from "@/lib/finance-balance";
 import { resolvePurchaseUnitCost, type ProductCostMemory } from "@/lib/purchase-cost-memory";
 import { resolvePurchaseReceiptUrl } from "@/lib/purchase-receipts";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { buyingPurchaseGroup, parseBuyingPurchaseSource, type BuyingPurchaseWorkspace } from "@/lib/buying-purchase";
 
 type PurchaseLineInput = {
   productId: string;
@@ -161,6 +162,38 @@ function buildLineRows(lines: PurchaseLineInput[]) {
 
 function totalUnitsForLine(line: PurchaseLineInput) {
   return Math.max(0, Math.floor(line.boxesQty)) * Math.max(1, Math.floor(line.unitsPerBox)) + Math.max(0, Math.floor(line.looseUnitsQty));
+}
+
+async function verifyBuyingPurchaseSource(
+  supabase: SupabaseServer,
+  rawSource: FormDataEntryValue | null,
+  supplierId: string | null,
+  lines: PurchaseLineInput[],
+) {
+  const source = parseBuyingPurchaseSource(rawSource);
+  if (!source) return null;
+  if (!supplierId || supplierId !== source.supplierId) {
+    formError("The supplier does not match the store used on the buying list. No purchase was created.");
+  }
+  const { data, error } = await supabase.rpc("snacky_buying_purchase_workspace_v1", { p_id: source.listId });
+  if (error || !data || !Array.isArray(data.groups)) {
+    formError("Could not verify the shared buying list. No purchase was created.");
+  }
+  const workspace = data as BuyingPurchaseWorkspace;
+  const group = buyingPurchaseGroup(workspace, source.supplierId);
+  if (!workspace.can_record || workspace.status !== "completed" || !group) {
+    formError("This buying list is not ready for purchase recording.");
+  }
+  if (group.linked_purchase?.purchase_id) {
+    formError("This store group already has a recorded purchase. Open the linked purchase instead of creating another.");
+  }
+  const expected = new Map(group.items.map((item) => [item.product_id, item.bought_boxes * item.units_per_box]));
+  const actual = new Map<string, number>();
+  for (const line of lines) actual.set(line.productId, (actual.get(line.productId) ?? 0) + totalUnitsForLine(line));
+  if (expected.size !== actual.size || [...expected].some(([productId, quantity]) => actual.get(productId) !== quantity)) {
+    formError("Purchase quantities changed from the checked buying list. Correct the buying list first; no purchase was created.");
+  }
+  return { source, group };
 }
 
 async function applySavedProductCostMemory(supabase: SupabaseServer, lines: PurchaseLineInput[]) {
@@ -427,6 +460,7 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
     lines = await applySavedProductCostMemory(supabase, lines);
     linesForLog = lines;
     if (!lines.length) formError("Add at least one purchased item.");
+    const buyingPurchase = await verifyBuyingPurchaseSource(supabase, fd.get("purchase_source"), supplierId, lines);
 
     const { receiptUrl, receiptFileName, receiptContentType, receiptStoragePath, uploadUnavailable, uploadError } = await resolvePurchaseReceiptUrl(supabase, fd);
     receiptStatusForLog = {
@@ -480,6 +514,25 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
         payloadKeys: Object.keys(rpcPayload),
       });
       formError(PURCHASE_SAVE_ADMIN_MESSAGE);
+    }
+
+    if (buyingPurchase) {
+      const { error: buyingLinkError } = await supabase.rpc("snacky_buying_purchase_link_v1", {
+        p_command: {
+          request_id: clientSubmissionId,
+          list_id: buyingPurchase.source.listId,
+          supplier_id: buyingPurchase.source.supplierId,
+          purchase_id: purchase.id,
+        },
+      });
+      if (buyingLinkError) {
+        return {
+          ok: false,
+          message: "Purchase was saved, but the buying-list link could not be confirmed. Retry this same saved form; do not create another purchase.",
+          debugMessage: process.env.NODE_ENV !== "production" ? buyingLinkError.message : undefined,
+        };
+      }
+      revalidatePath(`/buying-lists/${buyingPurchase.source.listId}`);
     }
 
     await saveApprovedReceiptAliases(supabase, profile, lines);
