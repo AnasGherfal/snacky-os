@@ -12,6 +12,7 @@ on:
       - 'src/app/api/crm/dispatch/**'
       - 'supabase/migrations/*crm_operator_dispatch*'
       - 'scripts/test-crm-operator-dispatch.mjs'
+      - 'scripts/test-crm-dispatch-version.mjs'
       - 'scripts/crm-operator-dispatch-db-acceptance.sql'
       - '.github/workflows/crm-operator-dispatch.yml'
 permissions:
@@ -55,7 +56,7 @@ jobs:
 
       - name: Dispatch contracts and existing CRM/notification regressions
         run: |
-          node --test scripts/test-crm-operator-dispatch.mjs
+          node --experimental-strip-types --test scripts/test-crm-operator-dispatch.mjs scripts/test-crm-dispatch-version.mjs
           node --experimental-strip-types --test scripts/test-connected-relations.mjs scripts/test-assignment-notifications.mjs scripts/test-authz-permissions.mjs
 
       - name: TypeScript and focused lint
