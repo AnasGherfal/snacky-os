@@ -146,8 +146,27 @@ begin
  return answer;
 end $$;
 
+create function buying_private.legacy_item_retry(p_command jsonb)
+returns jsonb language plpgsql security definer set search_path='' as $
+declare old buying_private.commands; requestid uuid; listid uuid;
+begin
+ if auth.uid() is null or buying_private.member() is null then raise exception 'Active staff access required' using errcode='42501';end if;
+ if jsonb_typeof(p_command) is distinct from 'object'
+   or p_command->>'action'<>'item'
+   or (p_command->'payload') ? 'actual_supplier_id'
+ then raise exception 'Legacy retry payload required' using errcode='22023';end if;
+ requestid:=(p_command->>'request_id')::uuid;listid:=(p_command->>'list_id')::uuid;
+ select * into old from buying_private.commands where id=requestid for share;
+ if not found then raise exception 'This old request was never saved. Reload the list and record the store used.' using errcode='40001';end if;
+ if old.actor<>auth.uid() or old.list_id<>listid or old.request is distinct from p_command then
+  raise exception 'Request identity conflict' using errcode='23505';
+ end if;
+ if not buying_private.visible(old.list_id) then raise exception 'Access changed' using errcode='42501';end if;
+ return old.response;
+end $;
+
 create function buying_private.purchase_workspace(p_id uuid)
-returns jsonb language plpgsql stable security definer set search_path='' as $$
+returns jsonb language plpgsql stable security definer set search_path='' as $
 declare
  me uuid:=buying_private.member(); parent buying_private.lists; groups jsonb:='[]'; can_record boolean:=false;
 begin
@@ -273,17 +292,19 @@ begin
  return answer;
 end $$;
 
+create function public.snacky_buying_legacy_item_retry_v1(p_command jsonb)
+returns jsonb language sql security invoker set search_path='' as $select buying_private.legacy_item_retry(p_command);$;
 create function public.snacky_buying_item_result_v2(p_command jsonb)
-returns jsonb language sql security invoker set search_path='' as $$select buying_private.item_result(p_command);$$;
+returns jsonb language sql security invoker set search_path='' as $select buying_private.item_result(p_command);$;
 create function public.snacky_buying_purchase_workspace_v1(p_id uuid)
 returns jsonb language sql stable security invoker set search_path='' as $$select buying_private.purchase_workspace(p_id);$$;
 create function public.snacky_buying_purchase_link_v1(p_command jsonb)
 returns jsonb language sql security invoker set search_path='' as $$select buying_private.link_purchase(p_command);$$;
 
-revoke all on function buying_private.purchase_actor(uuid),buying_private.item_result(jsonb),buying_private.purchase_workspace(uuid),buying_private.link_purchase(jsonb) from public,anon,authenticated;
-revoke all on function public.snacky_buying_item_result_v2(jsonb),public.snacky_buying_purchase_workspace_v1(uuid),public.snacky_buying_purchase_link_v1(jsonb) from public,anon;
-grant execute on function buying_private.purchase_actor(uuid),buying_private.item_result(jsonb),buying_private.purchase_workspace(uuid),buying_private.link_purchase(jsonb) to authenticated;
-grant execute on function public.snacky_buying_item_result_v2(jsonb),public.snacky_buying_purchase_workspace_v1(uuid),public.snacky_buying_purchase_link_v1(jsonb) to authenticated;
+revoke all on function buying_private.purchase_actor(uuid),buying_private.item_result(jsonb),buying_private.legacy_item_retry(jsonb),buying_private.purchase_workspace(uuid),buying_private.link_purchase(jsonb) from public,anon,authenticated;
+revoke all on function public.snacky_buying_legacy_item_retry_v1(jsonb),public.snacky_buying_item_result_v2(jsonb),public.snacky_buying_purchase_workspace_v1(uuid),public.snacky_buying_purchase_link_v1(jsonb) from public,anon;
+grant execute on function buying_private.purchase_actor(uuid),buying_private.item_result(jsonb),buying_private.legacy_item_retry(jsonb),buying_private.purchase_workspace(uuid),buying_private.link_purchase(jsonb) to authenticated;
+grant execute on function public.snacky_buying_legacy_item_retry_v1(jsonb),public.snacky_buying_item_result_v2(jsonb),public.snacky_buying_purchase_workspace_v1(uuid),public.snacky_buying_purchase_link_v1(jsonb) to authenticated;
 
 -- Keep CRM-only accounts on the scoped checklist API. They may record buying
 -- outcomes when assigned, but they still cannot create/receive purchase records.
@@ -291,7 +312,7 @@ do $$declare definition text:=pg_get_functiondef('public.snacky_crm_api_request_
  anchor text:='if not public.snacky_crm_is_limited() then return;end if;';
 begin
  if position(anchor in definition)=0 then raise exception 'Review current CRM API guard before installing buying-to-storage';end if;
- execute replace(definition,anchor,anchor||E'\n if path in (''/rpc/snacky_buying_item_result_v2'',''/rest/v1/rpc/snacky_buying_item_result_v2'') and buying_private.member() is not null then return;end if;');
+ execute replace(definition,anchor,anchor||E'\n if path in (''/rpc/snacky_buying_item_result_v2'',''/rest/v1/rpc/snacky_buying_item_result_v2'',''/rpc/snacky_buying_legacy_item_retry_v1'',''/rest/v1/rpc/snacky_buying_legacy_item_retry_v1'') and buying_private.member() is not null then return;end if;');
 end $$;
 
 select pg_notify('pgrst','reload schema');
