@@ -75,11 +75,11 @@ await check('changed request replay and the same physical receipt cannot create 
 });
 await check('checklist corrections cannot erase quantities already invoiced',async()=>{
  const c={request_id:randomUUID(),list_id:list,revision:(await view()).revision,action:'item',payload:{product_id:products[0].id,outcome:'unavailable',bought_boxes:0,note:'Invalid correction'}};
- const r=await accounts.buyer.client.rpc('snacky_buying_command_v1',{p_command:c});assert.equal(r.error?.code,'23514');assert.equal((await view()).items[0].remaining_units,12);
+ const r=await accounts.buyer.client.rpc('snacky_buying_command_v1',{p_command:c});assert.equal(r.error?.code,'23514',JSON.stringify(r.error));assert.equal((await view()).items[0].remaining_units,12);
 });
 await check('linked receipt lines reject silent editing but remain receivable',async()=>{
- const r=await accounts.buyer.client.rpc('snacky_update_draft_purchase_v1',{p_purchase_id:draft,p_client_submission_id:randomUUID(),p_expected_updated_at:(await view()).receipts[0].version,p_supplier_id:stores[0].id,p_order_date:today,p_receiving_storage_location_id:null,p_receipt_number:draftCommand.payload.receipt_number,p_payment_method:'cash',p_receipt_url:'/api/storage/receipt-images/'+draftCommand.payload.receipt_path,p_receipt_file_name:'test-receipt.png',p_receipt_content_type:'image/png',p_receipt_storage_path:draftCommand.payload.receipt_path,p_notes:'Changing imported quantities',p_manual_total_lyd:24,p_lines:[{product_id:products[0].id,line_position:0,boxes_qty:2,units_per_box:12,loose_units_qty:0,line_total:24}]});
- assert.equal(r.error?.code,'23514');
+ const r=await accounts.buyer.client.rpc('snacky_update_draft_purchase_v1',{p_purchase_id:draft,p_client_submission_id:randomUUID(),p_expected_updated_at:(await view()).receipts[0].version,p_supplier_id:stores[0].id,p_order_date:today,p_receiving_storage_location_id:null,p_receipt_number:draftCommand.payload.receipt_number,p_payment_method:'cash',p_receipt_url:'/api/storage/receipt-images/'+draftCommand.payload.receipt_path,p_receipt_file_name:'test-receipt.png',p_receipt_content_type:'image/png',p_receipt_storage_path:draftCommand.payload.receipt_path,p_notes:'Changing imported quantities',p_manual_total_lyd:24,p_lines:[{product_id:products[0].id,line_position:0,boxes_qty:2,units_per_box:12,loose_units_qty:0,total_units:24,ordered_qty:24,received_qty:0,line_total:24}]});
+ assert.equal(r.error?.code,'23514',JSON.stringify(r.error));
 });
 await check('link/audit failure rolls back purchase, inventory, product costs and list revision',async()=>{
  const c=await createCommand({product:1,boxes:2,placed:true,cents:2400}),before=fingerprint(),rev=(await view()).revision;
@@ -99,6 +99,17 @@ await check('approved alternative store can supply remaining units without dupli
 });
 await check('Finance, routes and plain purchase entry retain existing behavior',async()=>{
  assert.equal(finance(),financeBefore);assert.equal(sql('select count(*) from public.routes'),routeCount);await ordinary(products[2]);assert.equal(qty(products[2]),12);assert.equal(finance(),financeBefore);
+});
+await check('cancelled draft retains history and permits one corrected copy of the same store receipt',async()=>{
+ const id=await seedList('Receipt correction acceptance'),c=await createCommand({id}),before=qty(products[0]);
+ const original=await run(c);assert.ifError(original.error);
+ const cancelled=await accounts.buyer.client.rpc('snacky_cancel_draft_purchase_v1',{p_purchase_id:original.data.purchase_id,p_reason:'Correcting input before stock receipt',p_client_submission_id:randomUUID()});assert.ifError(cancelled.error);
+ assert.equal((await view(id)).items[0].remaining_units,24);assert.equal(qty(products[0]),before);
+ const corrected={...c,request_id:randomUUID(),revision:(await view(id)).revision,payload:{...c.payload,note:'Corrected entry with preserved original receipt history'}};
+ const saved=await run(corrected);assert.ifError(saved.error);assert.notEqual(saved.data.purchase_id,original.data.purchase_id);
+ const history=await view(id);assert.equal(history.receipts.length,2);assert.equal(history.receipts.filter(r=>r.status==='cancelled').length,1);assert.equal(history.items[0].remaining_units,12);assert.equal(qty(products[0]),before);
+ assert.equal(sql(`select count(*) from buying_private.purchase_links where list_id='${id}' and retired_at is not null`),'1');
+ assert.equal((await run({...corrected,request_id:randomUUID(),revision:history.revision})).error?.code,'23505');
 });
 await check('private receipt tables and public invoker boundaries stay restricted',async()=>{
  assert.equal(sql("select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='buying_private' and c.relname in ('purchase_links','purchase_requests') and c.relrowsecurity"),'2');
