@@ -125,7 +125,7 @@ try{
  await check('real phone receipt save survives a lost response and retries without duplicate stock',async()=>{
   await page.getByLabel('Actual store',{exact:true}).selectOption(stores[0].id);
   const row=page.locator('div.rounded-xl').filter({has:page.getByText(products[0].name,{exact:true})}).last();await row.getByRole('checkbox').check();await row.getByLabel('Boxes bought',{exact:true}).fill('1');await row.getByLabel('Total for this product (LYD)',{exact:true}).fill('12.00');
-  await page.getByLabel('Receipt image or PDF',{exact:true}).setInputFiles({name:'phone-receipt.png',mimeType:'image/png',buffer:png});
+  await page.locator('input[type=file]').setInputFiles({name:'phone-receipt.png',mimeType:'image/png',buffer:png});
   let recorded;await page.route('**/api/buying-lists/purchases',async route=>{const response=await route.fetch();recorded=await response.json();if(recorded.ok)await route.abort('failed');else await route.fulfill({response});},{times:1});
   await page.getByRole('button',{name:'Save purchase — not yet stored',exact:true}).click();await page.getByRole('button',{name:'Retry same request',exact:true}).waitFor();assert.equal(recorded.ok,true);assert.equal((await view(uiList)).receipts.length,1);
   const current=qty(products[0]);await page.reload();await page.getByRole('button',{name:'Retry same request',exact:true}).click();await page.getByText('Bought — not yet stored',{exact:true}).waitFor();assert.equal((await view(uiList)).receipts.length,1);assert.equal(qty(products[0]),current);

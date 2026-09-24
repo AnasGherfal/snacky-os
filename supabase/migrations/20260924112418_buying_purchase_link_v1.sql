@@ -13,9 +13,10 @@ create table buying_private.purchase_links (
  receipt_number text,
  snapshot jsonb not null,
  created_at timestamptz not null default now(),
- unique(list_id,supplier_id,receipt_sha256)
+ retired_at timestamptz
 );
-create unique index buying_receipt_number_once on buying_private.purchase_links(list_id,supplier_id,lower(receipt_number)) where receipt_number is not null;
+create unique index buying_receipt_hash_once on buying_private.purchase_links(list_id,supplier_id,receipt_sha256) where retired_at is null;
+create unique index buying_receipt_number_once on buying_private.purchase_links(list_id,supplier_id,lower(receipt_number)) where receipt_number is not null and retired_at is null;
 create index buying_purchase_link_list on buying_private.purchase_links(list_id,created_at);
 create table buying_private.purchase_requests (
  request_id uuid primary key,
@@ -88,6 +89,13 @@ begin
   pid:=old.id;
   if exists(select 1 from buying_private.purchase_links where purchase_id=pid) then
    oldj:=to_jsonb(old);newj:=to_jsonb(new);
+   if (old.status in ('cancelled','voided') or old.voided_at is not null)
+      and new.status not in ('cancelled','voided') and new.voided_at is null then
+    raise exception 'Cancelled linked receipts remain in history. Create a corrected receipt instead.' using errcode='23514';
+   end if;
+   if new.status in ('cancelled','voided') or new.voided_at is not null then
+    update buying_private.purchase_links set retired_at=coalesce(retired_at,clock_timestamp()) where purchase_id=pid;
+   end if;
    if oldj->'supplier_id' is distinct from newj->'supplier_id'
     or oldj->'order_date' is distinct from newj->'order_date'
     or oldj->'total_amount' is distinct from newj->'total_amount'
@@ -134,7 +142,7 @@ declare
  storage_id uuid; placed boolean; path text; sha text; mime text; order_day date; note text; receipt_no text;
 begin
  if auth.uid() is null or me is null then raise exception 'Sign in required' using errcode='42501';end if;
- if jsonb_typeof(p_command) is distinct from 'object' or octet_length(p_command::text)>100000 then raise exception 'Invalid receipt command' using errcode='22023';end if;
+ if jsonb_typeof(p_command) is distinct from 'object' or p_command-array['request_id','list_id','revision','action','payload']<>'{}'::jsonb or octet_length(p_command::text)>100000 then raise exception 'Invalid receipt command' using errcode='22023';end if;
  req:=(p_command->>'request_id')::uuid;lid:=(p_command->>'list_id')::uuid;act:=p_command->>'action';
  rev:=(p_command->>'revision')::integer;p:=p_command->'payload';
  if req is null or lid is null or act is null or act not in ('create','receive') or rev is null or rev<1 or jsonb_typeof(p) is distinct from 'object' then raise exception 'Invalid receipt identity' using errcode='22023';end if;
@@ -195,7 +203,7 @@ begin
      'line_total_cents',cents,'reference_unit_cost',ref_price,'reference_date',chosen->>'purchased_on'));
    pos:=pos+1;
   end loop;
-  if exists(select 1 from buying_private.purchase_links b where b.list_id=lid and b.supplier_id=sid
+  if exists(select 1 from buying_private.purchase_links b where b.list_id=lid and b.supplier_id=sid and b.retired_at is null
     and (b.receipt_sha256=sha or (receipt_no is not null and lower(b.receipt_number)=lower(receipt_no)))) then
    raise exception 'This store receipt is already linked. Open its existing purchase instead.' using errcode='23505';end if;
   select * into created from public.snacky_create_purchase_with_lines_v2(

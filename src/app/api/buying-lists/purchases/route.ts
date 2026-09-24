@@ -17,7 +17,7 @@ export async function POST(request:Request){
  let fd:FormData;let command:BuyingReceiptCommand;
  try{
   const bytes=await readCompanyBody(request,6*1024*1024);
-  fd=await new Request(request.url,{method:'POST',headers:{'Content-Type':request.headers.get('content-type')??''},body:bytes}).formData();
+  fd=await new Request(request.url,{method:'POST',headers:{'Content-Type':request.headers.get('content-type')??''},body:new Uint8Array(bytes).buffer}).formData();
   command=validateBuyingReceiptCommand(JSON.parse(String(fd.get('command')??'')));
  }catch(error){return failure('invalid',error instanceof CompanyRequestTooLarge?413:400);}
  // Always use authenticated scope checks before any privileged Storage operation.
