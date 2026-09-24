@@ -1209,6 +1209,7 @@ export function PurchaseForm({
       {initialPurchase?.id ? <input type="hidden" name="id" value={initialPurchase.id} /> : null}
       {initialPurchase?.id ? <input type="hidden" name="expected_updated_at" value={initialPurchase.updatedAt ?? ""} /> : null}
       <input type="hidden" name="client_submission_id" value={clientSubmissionId} />
+      <input type="hidden" name="purchase_source" value={prefillSource ?? ""} />
       <input type="hidden" name="receipt_scan_result_id" value={receiptScan?.scanResultId ?? ""} />
       <input type="hidden" name="current_receipt_url" value={initialPurchase?.receiptUrl ?? ""} />
       <input type="hidden" name="current_receipt_file_name" value={initialPurchase?.receiptFileName ?? ""} />
