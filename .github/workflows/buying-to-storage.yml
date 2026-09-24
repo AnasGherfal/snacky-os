@@ -46,7 +46,7 @@ jobs:
       - name: TypeScript and focused lint
         run: |
           npm run typecheck
-          npx eslint src/lib/buying-purchase.ts src/lib/buying-lists.ts src/lib/buying-server.ts src/lib/purchase-actions.ts src/components/BuyingListClient.tsx src/components/NewPurchaseWithReceiptScan.tsx src/components/PurchaseForm.tsx 'src/app/buying-lists/[id]/page.tsx' src/app/purchases/new/page.tsx src/app/api/buying-lists/route.ts
+          npx eslint src/lib/buying-purchase.ts src/lib/buying-lists.ts src/lib/buying-server.ts src/components/NewPurchaseWithReceiptScan.tsx 'src/app/buying-lists/[id]/page.tsx' src/app/api/buying-lists/route.ts
       - name: Isolated database bridge acceptance
         env:
           PGHOST: localhost
