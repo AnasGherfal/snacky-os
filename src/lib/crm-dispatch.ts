@@ -26,7 +26,15 @@ export type CrmDispatchTask={
   dispatch_note:string|null;
   result:string|null;
   updated_at:string;
+  /** Exact opaque timestamp token from the authenticated CRM workspace. */
+  version?:string;
 };
+/** Preserve PostgreSQL microseconds and formatting; never regenerate a concurrency token with Date. */
+export function crmDispatchVersion(task:Pick<CrmDispatchTask,'version'>):string{
+ const version=task.version;
+ if(typeof version!=='string'||!version.trim()||version.length>100)throw Error('invalid');
+ return version;
+}
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function object(value:unknown):Record<string,unknown>{if(!value||typeof value!=='object'||Array.isArray(value))throw Error('invalid');return value as Record<string,unknown>;}
 export function validateCrmDispatchCommand(value:unknown):CrmDispatchCommand{
