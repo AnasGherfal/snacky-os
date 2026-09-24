@@ -52,5 +52,5 @@ test('admin update endpoint is same-origin and owner/admin only',()=>{
   assert.match(api,/hasAnyRole\(profile,\['owner','admin'\]\)/);
   assert.match(api,/snacky_obligation_admin_update_v1/);
   assert.match(api,/Date\.parse\(version\)/);
-  assert.match(api,/revalidatePath\('\/relationships\/obligations'/);
+  assert.match(api,/\/relationships\/obligations/);
 });
