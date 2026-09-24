@@ -97,10 +97,13 @@ test('completed list exposes purchase action without adding second-person handof
  assert.match(migration,/parent\.assigned_to<>me/i);
 });
 
-test('item API uses v2 actual-store command while all other checklist commands stay canonical',()=>{
+test('item API uses v2 actual-store command and old payloads are retry-only',()=>{
  assert.match(api,/c\.action==='item'/);
  assert.match(api,/snacky_buying_item_result_v2/);
+ assert.match(api,/snacky_buying_legacy_item_retry_v1/);
  assert.match(api,/snacky_buying_command_v1/);
+ assert.match(migration,/This old request was never saved\. Reload the list and record the store used\./);
+ assert.match(migration,/old\.request is distinct from p_command/);
 });
 
 test('new private tables are RLS protected with no direct authenticated grants',()=>{
