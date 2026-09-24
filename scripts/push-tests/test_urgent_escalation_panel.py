@@ -3,7 +3,7 @@ from playwright.sync_api import sync_playwright
 
 OUT=Path(".qa/urgent-escalation")
 OUT.mkdir(parents=True,exist_ok=True)
-URL="http://127.0.0.1:3000/login/_qa/urgent-escalation"
+URL="http://127.0.0.1:3000/login/qa-urgent-escalation"
 
 with sync_playwright() as p:
     browser=p.chromium.launch(headless=True)
