@@ -439,6 +439,10 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
 
     const supplierId = String(fd.get("supplier_id") || "") || null;
     supplierIdForLog = supplierId;
+    const buyingSourceInput = parseBuyingPurchaseSource(fd.get("purchase_source"));
+    if (buyingSourceInput && lines.some((line) => (line.unitCostBlank || line.unitCost <= 0) && !(line.pricingMode === "total" && line.lineTotal > 0))) {
+      formError("Enter the actual price paid for every item from the buying list before saving or receiving stock.");
+    }
     purchaseDateForLog = String(fd.get("purchase_date") || new Date().toISOString().slice(0, 10));
     const submitAction = String(fd.get("submit_action") || "draft");
     const receivingStorageLocationId = clean(fd.get("receiving_storage_location_id"));
