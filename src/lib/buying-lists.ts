@@ -29,8 +29,10 @@ export function validateBuyingCommand(value:unknown):BuyingCommand {
   id(p.product_id);integer(p.bought_boxes,0,10000);text(p.note,0,1000);
   if(!Object.hasOwn(buyingOutcomeLabels,String(p.outcome)))throw Error('invalid');
   if(['partial','unavailable'].includes(String(p.outcome))&&!String(p.note).trim())throw Error('reason');
-  if(['bought','partial'].includes(String(p.outcome)))id(p.actual_supplier_id);
-  else if(p.actual_supplier_id!==null)throw Error('invalid');
+  if(Object.hasOwn(p,'actual_supplier_id')){
+   if(['bought','partial'].includes(String(p.outcome)))id(p.actual_supplier_id);
+   else if(p.actual_supplier_id!==null)throw Error('invalid');
+  }
   break;
  case 'source':
   if(Object.keys(p).length!==4||Object.keys(p).some(k=>!['product_id','primary_supplier_id','alternative_supplier_id','note'].includes(k)))throw Error('invalid');
