@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { buyingPurchaseGroup, parseBuyingPurchaseSource, type BuyingPurchaseWorkspace } from "@/lib/buying-purchase";
 import { NewPurchaseWithReceiptScan } from "@/components/NewPurchaseWithReceiptScan";
 import { ErrorState, FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
 import { getAuthAccessToken, getCurrentProfile } from "@/lib/auth";
@@ -10,6 +11,7 @@ export const dynamic = "force-dynamic";
 
 export default async function NewPurchasePage({ searchParams }: { searchParams: Promise<{ error?: string; module?: string; source?: string }> }) {
   const { error = "", module = "", source = "" } = await searchParams;
+  const buyingSource = parseBuyingPurchaseSource(source);
   const moduleQuery = module === "finance" ? "?module=finance" : "";
   const profile = await getCurrentProfile();
   if (!profile || !canManagePurchases(profile)) redirect("/unauthorized");
@@ -140,6 +142,38 @@ export default async function NewPurchasePage({ searchParams }: { searchParams: 
     vmsNames: vmsNamesByProduct.get(product.id) ?? [],
   }));
 
+  let buyingInitialPurchase: any = undefined;
+  let buyingInitialLines: any[] | undefined;
+  let buyingPrefillNotice: string | null = null;
+  if (buyingSource) {
+    const { data: buyingData, error: buyingError } = await supabase.rpc("snacky_buying_purchase_workspace_v1", { p_id: buyingSource.listId });
+    if (buyingError || !buyingData || !Array.isArray(buyingData.groups)) {
+      return <ErrorState title="Buying list purchase unavailable" body="Snacky OS could not verify the checked buying list. No purchase or inventory was changed." />;
+    }
+    const buyingWorkspace = buyingData as BuyingPurchaseWorkspace;
+    const group = buyingPurchaseGroup(buyingWorkspace, buyingSource.supplierId);
+    if (!buyingWorkspace.can_record || buyingWorkspace.status !== "completed" || !group) redirect("/unauthorized");
+    if (group.linked_purchase?.purchase_id) redirect(`/purchases/${group.linked_purchase.purchase_id}`);
+    buyingInitialPurchase = {
+      supplierId: group.supplier_id,
+      notes: `Shared buying list ${buyingSource.listId.slice(0, 8).toUpperCase()} · verify actual receipt prices before receiving`,
+    };
+    buyingInitialLines = group.items.map((item) => ({
+      productId: item.product_id,
+      boxesQty: item.bought_boxes,
+      unitsPerBox: item.units_per_box,
+      looseUnitsQty: 0,
+      unitCost: Number(item.reference_unit_cost_lyd ?? 0),
+      unitCostBlank: !(Number(item.reference_unit_cost_lyd ?? 0) > 0),
+      unitCostZeroConfirmed: false,
+      unitCostSource: Number(item.reference_unit_cost_lyd ?? 0) > 0 ? "product_memory" : "blank",
+      lineTotal: Number(item.reference_unit_cost_lyd ?? 0) * item.bought_boxes * item.units_per_box,
+      pricingMode: "unit",
+      matchAction: "change",
+    }));
+    buyingPrefillNotice = "Loaded the exact quantities checked on the shared buying list. Enter the actual receipt prices, attach the receipt, choose the storage location, then use Save and receive. If the physical quantity is different, correct the buying list first.";
+  }
+
   return (
     <>
       <FormPageLayout>
@@ -180,6 +214,9 @@ export default async function NewPurchasePage({ searchParams }: { searchParams: 
           }))}
           canAddProducts={canAddProducts(profile)}
           prefillSource={source || null}
+          initialPurchase={buyingInitialPurchase}
+          initialLines={buyingInitialLines}
+          prefillNotice={buyingPrefillNotice}
         />
       </FormPageLayout>
     </>
