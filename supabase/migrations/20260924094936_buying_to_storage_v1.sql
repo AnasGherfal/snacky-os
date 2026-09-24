@@ -157,8 +157,7 @@ begin
  can_record:=buying_private.purchase_actor(p_id)
    and (parent.assigned_to=me or public.snacky_current_profile_has_any_role(array['owner','admin']));
 
- select coalesce(jsonb_agg(group_row order by store_name,supplier_id),'[]'::jsonb) into groups
- from (
+ with grouped as (
   select i.actual_supplier_id supplier_id,s.name store_name,s.phone store_phone,
     count(*)::integer item_count,sum(i.bought_boxes)::integer bought_boxes,
     jsonb_agg(jsonb_build_object(
@@ -173,15 +172,7 @@ begin
         else null end,
       'note',i.note
     ) order by i.position) items,
-    jsonb_build_object(
-      'purchase_id',link.purchase_id,
-      'status',po.status,
-      'total_amount',po.total_amount,
-      'received_at',po.received_at,
-      'receiving_storage_location_id',po.receiving_storage_location_id,
-      'receipt_number',po.receipt_number,
-      'voided_at',po.voided_at
-    ) linked_purchase
+    link.purchase_id,po.status purchase_status,po.total_amount,po.received_at,po.receiving_storage_location_id,po.receipt_number,po.voided_at
   from buying_private.items i
   join public.suppliers s on s.id=i.actual_supplier_id
   left join buying_private.sources src on src.list_id=i.list_id and src.product_id=i.product_id
@@ -189,7 +180,17 @@ begin
   left join public.purchase_orders po on po.id=link.purchase_id
   where i.list_id=p_id and i.outcome in ('bought','partial') and i.bought_boxes>0 and i.actual_supplier_id is not null
   group by i.actual_supplier_id,s.name,s.phone,link.purchase_id,po.status,po.total_amount,po.received_at,po.receiving_storage_location_id,po.receipt_number,po.voided_at
- ) x(group_row,supplier_id,store_name);
+ )
+ select coalesce(jsonb_agg(jsonb_build_object(
+   'supplier_id',supplier_id,'store_name',store_name,'store_phone',store_phone,
+   'item_count',item_count,'bought_boxes',bought_boxes,'items',items,
+   'linked_purchase',jsonb_build_object(
+     'purchase_id',purchase_id,'status',purchase_status,'total_amount',total_amount,
+     'received_at',received_at,'receiving_storage_location_id',receiving_storage_location_id,
+     'receipt_number',receipt_number,'voided_at',voided_at
+   )
+ ) order by store_name,supplier_id),'[]'::jsonb)
+ into groups from grouped;
 
  return jsonb_build_object(
   'list_id',p_id,'revision',parent.revision,'status',parent.status,'assigned_to',parent.assigned_to,
