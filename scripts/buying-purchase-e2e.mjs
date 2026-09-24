@@ -158,7 +158,7 @@ try{
   try{
    const [recorded]=await Promise.all([intercepted,page.getByRole('button',{name:'Save purchase — not yet stored',exact:true}).click()]);
    assert.ifError(recorded.error);assert.equal(recorded.status,200);assert.equal(recorded.body.ok,true);
-   await page.getByRole('alert').waitFor();await page.getByRole('button',{name:'Retry same request',exact:true}).waitFor();
+   await page.locator('main').getByRole('alert').filter({hasText:'The save result is unknown.'}).waitFor();await page.getByRole('button',{name:'Retry same request',exact:true}).waitFor();
    assert.equal((await view(uiList)).receipts.length,1);assert.equal(qty(products[0]),beforeSave);
    await page.reload();await page.getByRole('button',{name:'Retry same request',exact:true}).click();await page.getByText('Bought — not yet stored',{exact:true}).waitFor();
    assert.equal((await view(uiList)).receipts.length,1);assert.equal(qty(products[0]),beforeSave);
