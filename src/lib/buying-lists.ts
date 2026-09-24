@@ -2,7 +2,7 @@ export const buyingRoles = ['owner','admin','supervisor','crm','operator','wareh
 export const buyingPlannerRoles = ['owner','admin','supervisor','warehouse','purchasing'] as const;
 export const buyingUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export type BuyingOutcome = 'pending'|'bought'|'partial'|'unavailable';
-export type BuyingItem = {product_id:string;name:string;supplier:string|null;units_per_box:number;planned_boxes:number;unit_cost:number|null;outcome:BuyingOutcome;bought_boxes:number;note:string};
+export type BuyingItem = {product_id:string;name:string;supplier:string|null;units_per_box:number;planned_boxes:number;unit_cost:number|null;outcome:BuyingOutcome;bought_boxes:number;note:string;actual_supplier_id:string|null};
 export type BuyingList = {id:string;title:string;instructions:string;assigned_to:string;created_by:string;buyer_name:string;creator_name:string;due_on:string;status:'open'|'completed'|'cancelled';revision:number;created_at:string;updated_at:string;items:BuyingItem[]};
 export type BuyingWorkspace = {me:string;planner:boolean;today:string;record:BuyingList|null;people:{id:string;name:string}[];rows:(Omit<BuyingList,'items'> & {item_count:number;checked_count:number})[];total:number;offset:number};
 export type BuyingCommand = {request_id:string;list_id:string;action:'create'|'item'|'complete'|'cancel'|'reopen'|'assign'|'source';revision:number;payload:Record<string,unknown>};
@@ -25,7 +25,13 @@ export function validateBuyingCommand(value:unknown):BuyingCommand {
   for(const value of p.items){const item=record(value);const product=id(item.product_id);if(seen.has(product))throw Error('invalid');seen.add(product);integer(item.boxes,1,10000);integer(item.units_per_box,2,10000);}
   break;
  }
- case 'item':id(p.product_id);integer(p.bought_boxes,0,10000);text(p.note,0,1000);if(!Object.hasOwn(buyingOutcomeLabels,String(p.outcome)))throw Error('invalid');if(['partial','unavailable'].includes(String(p.outcome))&&!String(p.note).trim())throw Error('reason');break;
+ case 'item':
+  id(p.product_id);integer(p.bought_boxes,0,10000);text(p.note,0,1000);
+  if(!Object.hasOwn(buyingOutcomeLabels,String(p.outcome)))throw Error('invalid');
+  if(['partial','unavailable'].includes(String(p.outcome))&&!String(p.note).trim())throw Error('reason');
+  if(['bought','partial'].includes(String(p.outcome)))id(p.actual_supplier_id);
+  else if(p.actual_supplier_id!==null)throw Error('invalid');
+  break;
  case 'source':
   if(Object.keys(p).length!==4||Object.keys(p).some(k=>!['product_id','primary_supplier_id','alternative_supplier_id','note'].includes(k)))throw Error('invalid');
   id(p.product_id);id(p.primary_supplier_id);if(p.alternative_supplier_id!==null)id(p.alternative_supplier_id);
