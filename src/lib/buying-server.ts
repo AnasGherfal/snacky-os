@@ -1,8 +1,9 @@
 import type {BuyingSources} from '@/lib/buying-sources';
 import {getCurrentProfile,getAuthenticatedSupabaseServerClient} from '@/lib/auth';
-import {hasAnyRole} from '@/lib/authz';
+import {canManagePurchases,hasAnyRole} from '@/lib/authz';
 import {redirect} from 'next/navigation';
 import {buyingRoles,type BuyingWorkspace} from '@/lib/buying-lists';
+import type {BuyingPurchaseWorkspace} from '@/lib/buying-purchase';
 export async function buyingWorkspace(id:string|null=null,filters:Record<string,string>={}) {
  const profile=await getCurrentProfile();if(!profile||profile.active_status!=='active'||!hasAnyRole(profile,buyingRoles))redirect('/unauthorized');
  const db=await getAuthenticatedSupabaseServerClient();if(!db)throw Error('unavailable');
@@ -10,11 +11,20 @@ export async function buyingWorkspace(id:string|null=null,filters:Record<string,
  if(error||!data||!Array.isArray(data.rows)||!Array.isArray(data.people))throw Error(error?.code==='42501'?'denied':'unavailable');
  let sources:BuyingSources|null=null;
  let sourcesStatus:'available'|'not_installed'|'unavailable'='available';
+ let purchaseFlow:BuyingPurchaseWorkspace|null=null;
+ let purchaseFlowStatus:'available'|'not_installed'|'unavailable'='available';
  if(id){
   const result=await db.rpc('snacky_buying_sources_v1',{p_id:id});
   if(result.error){sourcesStatus=result.error.code==='PGRST202'?'not_installed':'unavailable';}
   else if(!result.data||result.data.list_id!==id||result.data.revision!==data.record?.revision||!Array.isArray(result.data.sources)||!Array.isArray(result.data.stores)||!Array.isArray(result.data.options))sourcesStatus='unavailable';
   else sources=result.data as BuyingSources;
+
+  if(canManagePurchases(profile)){
+   const purchaseResult=await db.rpc('snacky_buying_purchase_workspace_v1',{p_id:id});
+   if(purchaseResult.error)purchaseFlowStatus=purchaseResult.error.code==='PGRST202'?'not_installed':'unavailable';
+   else if(!purchaseResult.data||purchaseResult.data.list_id!==id||!Array.isArray(purchaseResult.data.groups))purchaseFlowStatus='unavailable';
+   else purchaseFlow=purchaseResult.data as BuyingPurchaseWorkspace;
+  }
  }
- return {profile,data:data as BuyingWorkspace,sources,sourcesStatus};
+ return {profile,data:data as BuyingWorkspace,sources,sourcesStatus,purchaseFlow,purchaseFlowStatus};
 }
