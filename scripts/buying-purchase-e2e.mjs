@@ -137,9 +137,35 @@ try{
   await page.getByLabel('Actual store',{exact:true}).selectOption(stores[0].id);
   const row=page.locator('div.rounded-xl').filter({has:page.getByText(products[0].name,{exact:true})}).last();await row.getByRole('checkbox').check();await row.getByLabel('Boxes bought',{exact:true}).fill('1');await row.getByLabel('Total for this product (LYD)',{exact:true}).fill('12.00');
   await page.locator('input[type=file]').setInputFiles({name:'phone-receipt.png',mimeType:'image/png',buffer:png});
-  let recorded;await page.route('**/api/buying-lists/purchases',async route=>{const response=await route.fetch();recorded=await response.json();if(recorded.ok)await route.abort('failed');else await route.fulfill({response});},{times:1});
-  await page.getByRole('button',{name:'Save purchase — not yet stored',exact:true}).click();await page.getByRole('button',{name:'Retry same request',exact:true}).waitFor();assert.equal(recorded.ok,true);assert.equal((await view(uiList)).receipts.length,1);
-  const current=qty(products[0]);await page.reload();await page.getByRole('button',{name:'Retry same request',exact:true}).click();await page.getByText('Bought — not yet stored',{exact:true}).waitFor();assert.equal((await view(uiList)).receipts.length,1);assert.equal(qty(products[0]),current);
+  // Retry is visible as soon as the request is persisted, before server commit.
+  // Await the intercepted response before asserting or closing the browser.
+  let settleIntercept;
+  const intercepted=new Promise(resolve=>{settleIntercept=resolve;});
+  const interceptTimeout=setTimeout(()=>settleIntercept({error:Error('Receipt interception did not finish')}),25000);
+  const beforeSave=qty(products[0]);
+  await page.route('**/api/buying-lists/purchases',async route=>{
+   try{
+    const response=await route.fetch({timeout:20000});
+    const body=await response.json();
+    if(body.ok)await route.abort('failed');else await route.fulfill({response});
+    settleIntercept({body,status:response.status()});
+   }catch(error){
+    // Surface handler errors in the test, not as unhandled teardown rejections.
+    try{await route.abort('failed');}catch{/* The request may already be closed. */}
+    settleIntercept({error});
+   }
+  },{times:1});
+  try{
+   const [recorded]=await Promise.all([intercepted,page.getByRole('button',{name:'Save purchase — not yet stored',exact:true}).click()]);
+   assert.ifError(recorded.error);assert.equal(recorded.status,200);assert.equal(recorded.body.ok,true);
+   await page.getByRole('alert').waitFor();await page.getByRole('button',{name:'Retry same request',exact:true}).waitFor();
+   assert.equal((await view(uiList)).receipts.length,1);assert.equal(qty(products[0]),beforeSave);
+   await page.reload();await page.getByRole('button',{name:'Retry same request',exact:true}).click();await page.getByText('Bought — not yet stored',{exact:true}).waitFor();
+   assert.equal((await view(uiList)).receipts.length,1);assert.equal(qty(products[0]),beforeSave);
+  }finally{
+   clearTimeout(interceptTimeout);
+   await page.unrouteAll({behavior:'wait'});
+  }
  });
  await check('same person confirms storage through the actual mobile page',async()=>{
   await page.reload();const card=page.locator('article').first();await card.getByLabel('Where did you place the goods?',{exact:true}).selectOption(storage.id);
