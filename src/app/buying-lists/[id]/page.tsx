@@ -3,6 +3,8 @@ import {unstable_rethrow} from 'next/navigation';
 import Link from 'next/link';
 import {notFound} from 'next/navigation';
 import {buyingWorkspace} from '@/lib/buying-server';
+import {hasAnyRole} from '@/lib/authz';
+import {buyingPurchaseRoles} from '@/lib/buying-purchase';
 import {buyingUuid,buyingTotals,buyingError} from '@/lib/buying-lists';
 import {getServerI18n} from '@/lib/i18n/server';
 import {BuyingProgress,BuyingCopyLink} from '@/components/BuyingListClient';
@@ -15,7 +17,7 @@ export default async function Page({params}:{params:Promise<{id:string}>}){
  const list=view.data.record;if(!list)notFound();const items=sourceAwareItems(list.items,view.sources);const totals=buyingTotals(items);
  return <section className={styles.workspace} dir={ar?'rtl':'ltr'} id="buying-list-detail">
   <header className={styles.header}><div><p>{ar?'قائمة مشتركة':'Shared checklist'} · {id.slice(0,8).toUpperCase()} · v{list.revision}</p><h1>{list.title}</h1><p>{ar?'المشتري:':'Buyer:'} <b>{list.buyer_name}</b> · {ar?'الموعد:':'Due:'} <bdi>{list.due_on}</bdi></p></div><Link className={styles.secondary} href="/buying-lists">{ar?'العودة للقوائم':'Back to lists'}</Link></header>
-  <div className={styles.actions}><Link className={styles.primary} href={`/buying-lists/${id}/print`}>{ar?'عرض للطباعة / PDF':'Print / PDF view'}</Link><BuyingCopyLink ar={ar}/></div>
+  <div className={styles.actions}><Link className={styles.primary} href={`/buying-lists/${id}/print`}>{ar?'عرض للطباعة / PDF':'Print / PDF view'}</Link><BuyingCopyLink ar={ar}/>{hasAnyRole(view.profile,buyingPurchaseRoles)?<Link className={styles.secondary} href={`/buying-lists/${id}/purchases`}>{ar?'فواتير الشراء / وضع المنتجات في المخزن':'Purchase receipts / place goods in storage'}</Link>:null}</div>
   {list.instructions?<p className={styles.notice} style={{whiteSpace:'pre-wrap'}}>{list.instructions}</p>:null}
   <dl className={styles.metrics}><div><dt>{ar?'الصناديق المطلوبة':'Planned boxes'}</dt><dd>{totals.boxes}</dd></div><div><dt>{ar?'الوحدات داخلها':'Units inside'}</dt><dd>{totals.units}</dd></div><div><dt>{ar?'تمت مراجعتها':'Products checked'}</dt><dd>{totals.checked}/{list.items.length}</dd></div><div><dt>{ar?'التكلفة التقديرية':'Estimated total'}</dt><dd>{totals.missing===list.items.length?'—':totals.estimate.toFixed(2)} <small>LYD</small></dd></div></dl>
   {view.sourcesStatus==='unavailable'?<p className={styles.error} role="alert">{ar?'تعذر التحقق من تعليمات الموردين. حدّث الصفحة أو تأكد من الإدارة قبل الشراء.':'Store instructions could not be verified. Reload or confirm with management before buying.'}</p>:view.sourcesStatus==='not_installed'&&view.data.planner?<p className={styles.notice}>{ar?'ترقية تعليمات الموردين غير مفعلة بعد. تبقى القائمة الحالية متاحة.':'Store-guidance upgrade is not installed yet. The existing checklist remains available.'}</p>:null}
