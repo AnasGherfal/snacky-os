@@ -16,7 +16,7 @@ export async function POST(request:Request){
  let body:any;
  try{body=await request.json();}catch{return fail('invalid',400);}
  const obligationId=String(body?.obligation_id??''),assignedTo=String(body?.assigned_to??''),start=String(body?.period_start??''),end=String(body?.period_end??''),version=String(body?.version??'');
- if(!uuidPattern.test(obligationId)||!uuidPattern.test(assignedTo)||!month.test(start)||!month.test(end)||!/^\d{4}-\d{2}-\d{2}T/.test(version))return fail('invalid',400);
+ if(!uuidPattern.test(obligationId)||!uuidPattern.test(assignedTo)||!month.test(start)||!month.test(end)||!version||Number.isNaN(Date.parse(version)))return fail('invalid',400);
  if(end<start)return fail('invalid',400,'End month cannot be before start month.');
  const db=await getAuthenticatedSupabaseServerClient();if(!db)return fail('unavailable',503);
  const {data,error}=await db.rpc('snacky_obligation_admin_update_v1',{
