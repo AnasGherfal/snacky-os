@@ -71,7 +71,7 @@ test('server and dispatch errors are retryable failures, not success responses',
  for(const options of [{db:false},{rpcError:true},{dispatchError:true}]){const f=endpoint(options);assert.equal((await f.POST(req('Bearer '+('a'.repeat(64))))).status,503);}
 });
 test('an escalation scan failure does not block already queued work notifications',async()=>{
- const f=endpoint({escalationError:true});const response=await f.POST(req('Bearer '+('a'.repeat(64)));
+ const f=endpoint({escalationError:true});const response=await f.POST(req('Bearer '+('a'.repeat(64))));
  assert.equal(response.status,200);assert.equal(response.body.accepted,1);assert.equal(response.body.escalation.unavailable,true);assert.equal(f.counts().sends,1);
 });
 test('legacy route sender does not duplicate active outbox alerts or fall back on transient mode errors',async()=>{
