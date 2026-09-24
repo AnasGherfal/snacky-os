@@ -14,6 +14,7 @@ const cashTabs: ModuleTab[] = [
 const stockTabs: ModuleTab[] = [
   { label: "Shared Buying Lists", href: "/buying-lists", labelAr: "قوائم الشراء المشتركة" },
   { label: "Storage", href: "/inventory", labelAr: "المخزون", exact: true },
+  { label: "Storage Count", href: "/inventory/stocktake", labelAr: "جرد المخزن" },
   { label: "Stock Check", href: "/inventory/stock-check", labelAr: "جرد المخزون" },
   { label: "Purchase List", href: "/restock-priority/purchase-list", labelAr: "قائمة الشراء" },
   { label: "Restock Priority", href: "/restock-priority", labelAr: "أولوية التزويد" },
