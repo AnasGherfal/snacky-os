@@ -13,7 +13,7 @@ export const dynamic='force-dynamic';
 export default async function Page({params}:{params:Promise<{id:string}>}){
  const {id}=await params;if(!buyingUuid.test(id))notFound();const {locale}=await getServerI18n(),ar=locale==='ar';
  let view;try{view=await buyingWorkspace(id);}catch(error){unstable_rethrow(error);return <section className={styles.workspace}><h1>{ar?'تعذر فتح القائمة':'List unavailable'}</h1><p role="alert">{buyingError('denied',ar)}</p><Link href="/buying-lists">{ar?'العودة للقوائم':'Back to lists'}</Link></section>;}
- const list=view.data.record;if(!list)notFound();const items=sourceAwareItems(list.items,view.sources);const totals=buyingTotals(items);const purchaseFlow=purchaseFlow;
+ const list=view.data.record;if(!list)notFound();const items=sourceAwareItems(list.items,view.sources);const totals=buyingTotals(items);const purchaseFlow=view.purchaseFlow;
  return <section className={styles.workspace} dir={ar?'rtl':'ltr'} id="buying-list-detail">
   <header className={styles.header}><div><p>{ar?'قائمة مشتركة':'Shared checklist'} · {id.slice(0,8).toUpperCase()} · v{list.revision}</p><h1>{list.title}</h1><p>{ar?'المشتري:':'Buyer:'} <b>{list.buyer_name}</b> · {ar?'الموعد:':'Due:'} <bdi>{list.due_on}</bdi></p></div><Link className={styles.secondary} href="/buying-lists">{ar?'العودة للقوائم':'Back to lists'}</Link></header>
   <div className={styles.actions}><Link className={styles.primary} href={`/buying-lists/${id}/print`}>{ar?'عرض للطباعة / PDF':'Print / PDF view'}</Link><BuyingCopyLink ar={ar}/></div>
