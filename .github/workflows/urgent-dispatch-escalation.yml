@@ -11,6 +11,7 @@ on:
       - 'scripts/test-urgent-dispatch-escalation.mjs'
       - 'scripts/test-assignment-notifications.mjs'
       - 'scripts/push-tests/urgent-dispatch-escalation.sql'
+      - 'scripts/push-tests/test_urgent_escalation_panel.py'
       - '.github/workflows/urgent-dispatch-escalation.yml'
 permissions:
   contents: read
@@ -68,8 +69,8 @@ jobs:
           python3 -m venv .qa/escalation-browser
           .qa/escalation-browser/bin/pip install playwright==1.55.0
           .qa/escalation-browser/bin/playwright install --with-deps chromium
-          mkdir -p src/app/_qa/urgent-escalation
-          cat > src/app/_qa/urgent-escalation/page.tsx <<'EOF'
+          mkdir -p src/app/login/_qa/urgent-escalation
+          cat > src/app/login/_qa/urgent-escalation/page.tsx <<'EOF'
           import {CrmIssueDispatchSummary} from '@/components/CrmDispatchPanel';
           const base={
             issue_id:'11111111-1111-4111-8111-111111111111',
@@ -95,14 +96,14 @@ jobs:
           server_pid=$!
           trap 'kill "$server_pid" >/dev/null 2>&1 || true' EXIT
           for attempt in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:3000/_qa/urgent-escalation >/dev/null; then break; fi
+            if curl -fsS http://127.0.0.1:3000/login/_qa/urgent-escalation >/dev/null; then break; fi
             if [ "$attempt" -eq 60 ]; then cat .qa/escalation-browser/server.log; exit 1; fi
             sleep 0.5
           done
           .qa/escalation-browser/bin/python scripts/push-tests/test_urgent_escalation_panel.py
           kill "$server_pid" >/dev/null 2>&1 || true
           trap - EXIT
-          rm -rf src/app/_qa .next
+          rm -rf src/app/login/_qa .next
 
       - name: Existing critical workflow safety
         run: npm run test:critical-workflows
