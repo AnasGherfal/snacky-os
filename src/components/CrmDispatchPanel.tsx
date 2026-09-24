@@ -6,7 +6,7 @@ const subscribe=()=>()=>{};
 const clientSnapshot=()=>true;
 const serverSnapshot=()=>false;
 import {
- crmDispatchAckOverdue,crmDispatchError,crmDispatchLabel,crmDispatchReceiptMatches,
+ crmDispatchAckOverdue,crmDispatchError,crmDispatchLabel,crmDispatchReceiptMatches,crmDispatchVersion,
  validateCrmDispatchCommand,type CrmDispatchCommand,type CrmDispatchTask
 } from '@/lib/crm-dispatch';
 
@@ -40,7 +40,7 @@ function CrmDispatchTaskPanelClient({task,userId,ar,canAct,proofImages}:{task:Cr
   let command=pending;
   try{
    if(!command){
-    command=validateCrmDispatchCommand({request_id:crypto.randomUUID(),task_id:task.id,action,version:task.updated_at,note:text});
+    command=validateCrmDispatchCommand({request_id:crypto.randomUUID(),task_id:task.id,action,version:crmDispatchVersion(task),note:text});
     sessionStorage.setItem(key,JSON.stringify(command));setPending(command);
    }
    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),25000);
