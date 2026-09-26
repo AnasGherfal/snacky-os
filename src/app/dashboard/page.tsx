@@ -33,6 +33,7 @@ import {
   batchDateRangeLabel,
   batchImportedRows,
   formatVmsDateTime,
+  isActiveImportedVmsBatch,
   queryVmsDashboardBatches,
   sourceFileName,
   type VmsDashboardBatch,
@@ -40,9 +41,10 @@ import {
 
 export const dynamic = "force-dynamic";
 
-type RevenueDailyRow = {
-  sale_date: string | null;
-  net_sales_amount: number | string | null;
+type MonthlyRevenueSummaryRow = {
+  revenue_amount: number | string | null;
+  successful_sales_count: number | string | null;
+  rows_used: number | string | null;
 };
 
 type RefillRow = {
@@ -109,7 +111,8 @@ type DashboardData = {
   today: string;
   weekStart: string;
   monthStart: string;
-  revenueRows: RevenueDailyRow[];
+  monthlyRevenueSummary: MonthlyRevenueSummaryRow | null;
+  monthlyRevenueReportEnd: string | null;
   cashWaitingCount: number;
   varianceReviewCount: number;
   draftPurchaseCount: number;
@@ -224,12 +227,6 @@ function weekStartUtc(date: Date) {
   const copy = new Date(date);
   copy.setUTCDate(copy.getUTCDate() + offset);
   return dateOnlyUtc(copy);
-}
-
-function sumRevenue(rows: RevenueDailyRow[], start: string, end: string) {
-  return rows
-    .filter((row) => row.sale_date && row.sale_date >= start && row.sale_date <= end)
-    .reduce((sum, row) => sum + numberValue(row.net_sales_amount), 0);
 }
 
 function machineNeedsRefill(row: RefillRow) {
@@ -543,12 +540,11 @@ async function getDashboardData() {
   const today = dateOnlyUtc(new Date());
   const weekStart = weekStartUtc(new Date());
   const monthStart = monthStartUtc(today);
-  const revenueStart = weekStart < monthStart ? weekStart : monthStart;
   const forecastClock = refillForecastClock();
   const errors: DashboardErrors = {};
 
   const [
-    revenueRows,
+    monthlyRevenueSummary,
     cashWaitingCount,
     varianceReviewCount,
     draftPurchaseCount,
@@ -568,14 +564,13 @@ async function getDashboardData() {
     routeInventoryDiscrepancyCount,
     pendingMachineQuantityUpdateCount,
   ] = await Promise.all([
-    safeDashboardQuery<RevenueDailyRow[]>({
+    safeDashboardQuery<MonthlyRevenueSummaryRow[]>({
       key: "revenue",
-      label: "kpi_machine_daily recent revenue",
-      promise: supabase
-        .from("kpi_machine_daily")
-        .select("sale_date, net_sales_amount")
-        .gte("sale_date", revenueStart)
-        .order("sale_date", { ascending: false }),
+      label: "sales_dashboard_monthly_summary current month",
+      promise: supabase.rpc("sales_dashboard_monthly_summary", {
+        p_date_from: monthStart,
+        p_date_to: today,
+      }),
       fallback: [],
       errors,
     }),
@@ -712,7 +707,7 @@ async function getDashboardData() {
       key: "vmsBatches",
       label: "vms_import_batches dashboard sources",
       promise: queryVmsDashboardBatches(supabase, {
-        reportTypes: ["vms_order_details_weekly", "sales", "stock", "machine_stock_snapshot", "planogram"],
+        reportTypes: ["vms_order_details_weekly", "monthly_product_profit", "sales", "stock", "machine_stock_snapshot", "planogram"],
       }),
       fallback: [],
       errors,
@@ -740,6 +735,18 @@ async function getDashboardData() {
         })
       : Promise.resolve(0),
   ]);
+
+  const currentMonthlyRevenueBatch = vmsBatchRows.data
+    .filter((batch) => batch.report_type === "monthly_product_profit" && isActiveImportedVmsBatch(batch))
+    .filter((batch) => {
+      const start = batch.report_start_date ?? "";
+      const end = batch.report_end_date ?? "";
+      return (!start || start <= today) && (!end || end >= monthStart);
+    })
+    .sort((a, b) => String(b.report_end_date ?? b.detected_max_datetime ?? b.imported_at ?? "").localeCompare(String(a.report_end_date ?? a.detected_max_datetime ?? a.imported_at ?? "")))[0] ?? null;
+  const monthlyRevenueReportEnd = currentMonthlyRevenueBatch?.report_end_date
+    ?? currentMonthlyRevenueBatch?.detected_max_datetime?.slice(0, 10)
+    ?? null;
 
   const latestXyBatchIds = new Set(
     forecastLatestStock.data.map((row) => textValue(row.import_batch_id)).filter((id): id is string => Boolean(id)),
@@ -770,7 +777,8 @@ async function getDashboardData() {
       today,
       weekStart,
       monthStart,
-      revenueRows: revenueRows.data,
+      monthlyRevenueSummary: monthlyRevenueSummary.data[0] ?? null,
+      monthlyRevenueReportEnd,
       cashWaitingCount,
       varianceReviewCount,
       draftPurchaseCount,
@@ -816,7 +824,6 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
   const isArabic = locale === "ar";
   const localize = (en: string, ar: string) => (isArabic ? ar : en);
   const errors = data.errors;
-  const revenueRows = data.revenueRows;
   const restockItems = data.restockItems;
   const restockSummary = restockCounts(restockItems);
   const restockWarnings = data.restockWarnings;
@@ -832,14 +839,12 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
       .map((row) => textValue(row.machine_id) ?? textValue(row.machine_name) ?? ""),
   ).size;
   const purchasesWaitingCount = data.draftPurchaseCount + data.unpaidPurchaseCount;
-  const todayRevenue = sumRevenue(revenueRows, data.today, data.today);
-  const weekRevenue = sumRevenue(revenueRows, data.weekStart, data.today);
-  const monthRevenue = sumRevenue(revenueRows, data.monthStart, data.today);
-  const latestSaleDate = [...revenueRows]
-    .map((row) => row.sale_date ?? "")
-    .filter(Boolean)
-    .sort()
-    .at(-1) ?? null;
+  const monthRevenue = numberValue(data.monthlyRevenueSummary?.revenue_amount);
+  const monthSalesCount = Math.max(0, Math.floor(numberValue(data.monthlyRevenueSummary?.successful_sales_count)));
+  const monthRevenueRows = Math.max(0, Math.floor(numberValue(data.monthlyRevenueSummary?.rows_used)));
+  const monthlyRevenueAvailable = !errors.revenue
+    && Boolean(data.monthlyRevenueReportEnd)
+    && monthRevenueRows > 0;
   const missingCostProducts = errors.missingCost
     ? 0
     : new Set(data.missingCostRows.map((row) => textValue(row.product_id) ?? textValue(row.product_name) ?? "")).size;
@@ -886,7 +891,7 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
     actionItems.push({
       key: "missing-detailed-sales",
       title: t("Import a detailed VMS sales file"),
-      detail: t("Revenue cards stay flat until at least one active Order Details file is feeding the dashboard."),
+      detail: localize("Today/week sales detail is unavailable until an active Order Details file is imported. Month-to-date revenue still comes from the Monthly Profit Report.", "تفاصيل مبيعات اليوم والأسبوع غير متاحة حتى يتم استيراد ملف Order Details نشط. تظل مبيعات الشهر حتى الآن مأخوذة من تقرير الأرباح الشهري."),
       href: "/vms-import",
       cta: t("Open VMS import"),
     });
@@ -985,7 +990,6 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
     });
   }
 
-  const revenueUnavailable = Boolean(errors.revenue);
   const criticalProductsUnavailable = Boolean(errors.restockPriority);
   const routesUnavailable = Boolean(errors.routes);
 
@@ -1046,12 +1050,17 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
             note={localize(`Draft ${data.draftPurchaseCount} · unpaid received ${data.unpaidPurchaseCount}`, `مسودات ${data.draftPurchaseCount} · مستلمة غير مسددة ${data.unpaidPurchaseCount}`)}
           />
           <StatCard
-            label={t("Sales today")}
-            value={revenueUnavailable ? "-" : lyd(todayRevenue)}
-            note={revenueUnavailable ? t("Waiting for detailed XY sales") : localize(`${lyd(weekRevenue)} this week · ${lyd(monthRevenue)} this month`, `${lyd(weekRevenue)} هذا الأسبوع · ${lyd(monthRevenue)} هذا الشهر`)}
+            label={localize("Sales MTD", "مبيعات الشهر حتى الآن")}
+            value={monthlyRevenueAvailable ? lyd(monthRevenue) : "-"}
+            note={monthlyRevenueAvailable
+              ? localize(
+                  `Through ${data.monthlyRevenueReportEnd} · ${monthSalesCount.toLocaleString("en-US")} sales`,
+                  `حتى ${data.monthlyRevenueReportEnd} · ${monthSalesCount.toLocaleString("en-US")} عملية بيع`,
+                )
+              : localize("Waiting for the active Monthly Profit Report", "بانتظار تقرير الأرباح الشهري النشط")}
           />
         </div>
-        <div className="mt-3 text-xs text-slate-500">{t("Latest detailed sales date")}: {latestSaleDate ?? t("Not available")} · {t("Active stock snapshot files")}: {activeStockCount}</div>
+        <div className="mt-3 text-xs text-slate-500">{localize("Revenue report through", "تقرير الإيرادات حتى")}: {data.monthlyRevenueReportEnd ?? t("Not available")} · {t("Active stock snapshot files")}: {activeStockCount}</div>
       </section>
 
       {partialSections.length ? (
