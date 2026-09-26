@@ -246,6 +246,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string; stopId: string }> }
 ) {
   const { id: routeId, stopId } = await params;
+  const catalogOnly = new URL(request.url).searchParams.get("catalog") === "all";
   if (!isUuid(routeId) || !isUuid(stopId)) {
     return NextResponse.json({ success: false, code: "INVALID_ROUTE_SCOPE", error: "Invalid route or stop id." }, { status: 400, headers: jsonHeaders() });
   }
@@ -362,6 +363,98 @@ export async function GET(
           { status: 409 },
         );
       }
+    }
+
+    if (catalogOnly) {
+      const [
+        { data: routeBagBalances, error: routeBagBalancesError },
+        { data: fillMovements, error: fillMovementsError },
+        { data: products, error: productsError },
+        manualMachineSalesResult,
+      ] = await Promise.all([
+        supabase.rpc("snacky_route_bag_balances", { p_route_id: routeId }),
+        supabase
+          .from("inventory_movements")
+          .select("product_id, quantity, related_route_stop_id, reason, from_entity_type, to_entity_type")
+          .eq("related_route_id", routeId)
+          .in("reason", ["operator_bag_to_machine", "manual_correction"]),
+        supabase
+          .from("products")
+          .select("id, sku, barcode, name, category, brand, image_url, selling_price, current_selling_price_lyd, vms_selling_price_lyd")
+          .eq("active", true)
+          .order("name"),
+        supabase
+          .from("route_manual_sales")
+          .select("product_id, unit_sale_price_lyd, sale_time, status")
+          .eq("machine_id", stop.machine_id)
+          .eq("status", "confirmed")
+          .order("sale_time", { ascending: false })
+          .limit(200),
+      ]);
+
+      if (routeBagBalancesError) {
+        throw new Error(`Could not load the authoritative route inventory balance: ${errorMessage(routeBagBalancesError)}`);
+      }
+
+      let productRows = productsError ? [] : (products ?? []) as ProductOptionRow[];
+      if (productsError) {
+        if (isMissingColumn(productsError, ["sku", "barcode", "category", "brand", "image_url", "selling_price", "current_selling_price_lyd", "vms_selling_price_lyd"])) {
+          const fallbackProducts = await supabase.from("products").select("id, name").eq("active", true).order("name");
+          if (fallbackProducts.error) throw fallbackProducts.error;
+          productRows = (fallbackProducts.data ?? []) as ProductOptionRow[];
+        } else {
+          throw productsError;
+        }
+      }
+
+      const bagBalanceByProduct = new Map<string, number>();
+      ((routeBagBalances ?? []) as RouteBagBalanceRow[]).forEach((balance) => {
+        const productId = String(balance.product_id ?? "");
+        const signedQuantity = Number(balance.signed_quantity ?? 0);
+        if (!productId || !Number.isFinite(signedQuantity)) return;
+        bagBalanceByProduct.set(productId, (bagBalanceByProduct.get(productId) ?? 0) + signedQuantity);
+      });
+
+      const currentStopFilledByProduct = new Map<string, number>();
+      const fillMovementRows = fillMovementsError ? [] : (fillMovements ?? []) as MovementRow[];
+      fillMovementRows.forEach((movement) => {
+        if (movement.related_route_stop_id !== stopId) return;
+        const productId = String(movement.product_id ?? "");
+        if (!productId) return;
+        currentStopFilledByProduct.set(productId, (currentStopFilledByProduct.get(productId) ?? 0) + machineFillDelta(movement));
+      });
+
+      const availableByProduct = new Map<string, number>();
+      new Set([...bagBalanceByProduct.keys(), ...currentStopFilledByProduct.keys()]).forEach((productId) => {
+        availableByProduct.set(productId, Math.max(0, (bagBalanceByProduct.get(productId) ?? 0) + (currentStopFilledByProduct.get(productId) ?? 0)));
+      });
+
+      const lastKnownSalePriceByProduct = new Map<string, number>();
+      const manualMachineSaleRows = manualMachineSalesResult.error ? [] : (manualMachineSalesResult.data ?? []) as Array<{ product_id?: string | null; unit_sale_price_lyd?: number | string | null }>;
+      manualMachineSaleRows.forEach((row) => {
+        const productId = String(row.product_id ?? "");
+        const price = Number(row.unit_sale_price_lyd ?? 0);
+        if (!productId || !Number.isFinite(price) || price <= 0 || lastKnownSalePriceByProduct.has(productId)) return;
+        lastKnownSalePriceByProduct.set(productId, price);
+      });
+
+      const productOptions = productRows.map((product) => ({
+        id: product.id,
+        sku: product.sku,
+        barcode: product.barcode,
+        name: product.name,
+        category: product.category,
+        brand: product.brand,
+        imageUrl: product.image_url,
+        availableQty: availableByProduct.get(String(product.id)) ?? 0,
+        sourceLabel: null,
+        currentSellingPriceLyd: product.current_selling_price_lyd ?? null,
+        sellingPrice: product.selling_price ?? null,
+        vmsSellingPriceLyd: product.vms_selling_price_lyd ?? null,
+        lastKnownSalePriceLyd: lastKnownSalePriceByProduct.get(String(product.id)) ?? null,
+      }));
+
+      return NextResponse.json({ productOptions });
     }
 
     const { data: machine, error: machineError } = await supabase
@@ -749,6 +842,14 @@ export async function GET(
       .sort((a, b) => a[1].rank - b[1].rank || (productOptionById.get(a[0])?.name ?? "").localeCompare(productOptionById.get(b[0])?.name ?? ""))
       .map(([productId]) => productOptionById.get(productId))
       .filter((product): product is (typeof productOptions)[number] => Boolean(product));
+
+    const initialProductIds = new Set<string>([
+      ...productPriority.keys(),
+      ...manualSaleProductPriority.keys(),
+      ...machineStorageProductPriority.keys(),
+      ...existingExtraItems.map((item) => String(item.productId ?? "")).filter(Boolean),
+    ]);
+    const initialProductOptions = productOptions.filter((product) => initialProductIds.has(String(product.id)));
     const manualSales = (manualSalesResult.error ? [] : ((manualSalesResult.data ?? []) as RouteManualSaleRow[])).map((sale) => normalizeRouteManualSale(sale));
     const adjustmentRows = adjustmentsResult.error ? [] : (adjustmentsResult.data ?? []) as AdjustmentRow[];
     const adjustments = adjustmentRows.map((adjustment) => {
@@ -778,7 +879,8 @@ export async function GET(
       routeStatus: route.status,
       refillItems,
       extraItems: existingExtraItems,
-      productOptions,
+      productOptions: initialProductOptions,
+      productCatalogDeferred: initialProductOptions.length < productOptions.length,
       machineProductOptions,
       machineStorageProductOptions,
       manualSaleProductOptions,
