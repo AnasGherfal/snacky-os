@@ -287,7 +287,7 @@ export async function CompanyHub({
                 </p>
               </div>
               <Link className="btn-secondary shrink-0" href="/company/profile">
-                {tr('Open company profile', 'فتح الملف التعريفي')}
+                {tr('Snacky Company Profile', 'الملف التعريفي بسناكي')}
               </Link>
             </div>
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
