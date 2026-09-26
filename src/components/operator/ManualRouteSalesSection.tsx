@@ -44,6 +44,8 @@ type ManualRouteSalesSectionProps = {
   routeStatus: string;
   preferredProducts: ManualRouteSaleProductOption[];
   allProducts: ManualRouteSaleProductOption[];
+  onRequestAllProducts?: () => Promise<ManualRouteSaleProductOption[]>;
+  allProductsLoading?: boolean;
   sales: NormalizedRouteManualSale[];
   onSaved: (sale: NormalizedRouteManualSale, options: { inventoryMovementCreated: boolean; warning: string | null }) => void;
   onCancelled: (sale: NormalizedRouteManualSale, options: { inventoryReversed: boolean; warning: string | null }) => void;
@@ -108,6 +110,8 @@ export function ManualRouteSalesSection({
   routeStatus,
   preferredProducts,
   allProducts,
+  onRequestAllProducts,
+  allProductsLoading = false,
   sales,
   onSaved,
   onCancelled,
@@ -132,19 +136,29 @@ export function ManualRouteSalesSection({
   const operationStorageKey = `snacky:route-manual-sale:${routeId}:${stopId}`;
   const routeLocked = isRouteLocked(routeStatus);
 
+  async function ensureFullProductCatalog() {
+    if (allProducts.length || !onRequestAllProducts) return;
+    try {
+      await onRequestAllProducts();
+    } catch (catalogError) {
+      setError(catalogError instanceof Error ? catalogError.message : tr("Could not load the full product catalog.", "تعذر تحميل قائمة المنتجات الكاملة."));
+    }
+  }
+
   useEffect(() => {
     const openManualSale = () => {
       setExpanded(true);
       setShowForm(true);
+      void ensureFullProductCatalog();
     };
     window.addEventListener("snacky:open-manual-sale", openManualSale);
     return () => window.removeEventListener("snacky:open-manual-sale", openManualSale);
-  }, []);
+  }, [allProducts.length, onRequestAllProducts]);
 
-  const productChoices = allProducts;
+  const productChoices = allProducts.length ? allProducts : preferredProducts;
   const selectedProduct = useMemo(
-    () => allProducts.find((product) => product.id === productId) ?? preferredProducts.find((product) => product.id === productId) ?? null,
-    [allProducts, preferredProducts, productId],
+    () => productChoices.find((product) => product.id === productId) ?? preferredProducts.find((product) => product.id === productId) ?? null,
+    [preferredProducts, productChoices, productId],
   );
 
   const confirmedSales = useMemo(() => sales.filter((sale) => cleanText(sale.status).toLowerCase() === "confirmed"), [sales]);
@@ -169,7 +183,7 @@ export function ManualRouteSalesSection({
 
   function handleSelectProduct(nextProductId: string) {
     setProductId(nextProductId);
-    const nextProduct = allProducts.find((product) => product.id === nextProductId) ?? preferredProducts.find((product) => product.id === nextProductId) ?? null;
+    const nextProduct = productChoices.find((product) => product.id === nextProductId) ?? preferredProducts.find((product) => product.id === nextProductId) ?? null;
     const suggestion = nextProduct ? resolveManualRouteSaleSuggestedPrice(nextProduct as ManualRouteSalePriceCandidate) : null;
     if (suggestion) {
       setUnitSalePriceLyd(suggestion.price);
@@ -339,8 +353,17 @@ export function ManualRouteSalesSection({
 
           {!routeLocked ? (
             <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={() => setShowForm((current) => !current)} className={showForm ? "btn-primary" : "btn-secondary"}>
-                {showForm ? tr("Hide form", "إخفاء النموذج") : tr("Add manual sale", "إضافة بيع يدوي")}
+              <button
+                type="button"
+                onClick={() => {
+                  const opening = !showForm;
+                  setShowForm(opening);
+                  if (opening) void ensureFullProductCatalog();
+                }}
+                disabled={allProductsLoading}
+                className={showForm ? "btn-primary" : "btn-secondary"}
+              >
+                {allProductsLoading ? tr("Loading products", "جارٍ تحميل المنتجات") : showForm ? tr("Hide form", "إخفاء النموذج") : tr("Add manual sale", "إضافة بيع يدوي")}
               </button>
             </div>
           ) : null}
@@ -348,7 +371,9 @@ export function ManualRouteSalesSection({
           {showForm && !routeLocked ? (
             <div className="space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
               <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
-                {tr("Search the full active product catalog. Machine and route products are still shown first when relevant.", "ابحث في جميع المنتجات النشطة. منتجات الماكينة والجولة تبقى ظاهرة كخيارات مفضلة عند ارتباطها بالموقع.")}
+                {allProducts.length
+                  ? tr("Search the full active product catalog. Machine and route products are still shown first when relevant.", "ابحث في جميع المنتجات النشطة. منتجات الماكينة والجولة تبقى ظاهرة كخيارات مفضلة عند ارتباطها بالموقع.")
+                  : tr("Priority products are ready. The full catalog loads only when you open this form.", "المنتجات ذات الأولوية جاهزة. يتم تحميل القائمة الكاملة فقط عند فتح هذا النموذج.")}
               </div>
 
               <ManualSaleProductPicker
