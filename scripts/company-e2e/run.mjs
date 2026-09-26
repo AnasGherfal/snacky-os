@@ -231,6 +231,7 @@ try {
       uploaded_by: accounts.operator.member,
     });
     assert.equal(proof.error, null, proof.error?.message);
+    field = await taskRow();
     await dispatch(field, 'fix', 'QA field action complete');
     w = await read('crm', 'issue', issue.id); assert.notEqual(w.record.status, 'resolved'); assert.ok(w.record.data.field_completed_at);
     const excessiveCompensation = await accounts.crm.client.rpc('snacky_crm_command_v1', { p_command_id: randomUUID(), p_action: 'issue.save', p_id: issue.id, p_payload: { version: w.record.data.version, refund_amount_lyd: 11 } });
