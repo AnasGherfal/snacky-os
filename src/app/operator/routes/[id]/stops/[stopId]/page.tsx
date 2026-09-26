@@ -181,6 +181,7 @@ interface StopData {
   refillItems: StopRefillItem[];
   extraItems?: ExtraProductLine[];
   productOptions: ProductOption[];
+  productCatalogDeferred?: boolean;
   machineProductOptions?: ProductOption[];
   machineStorageProductOptions?: ProductOption[];
   manualSaleProductOptions?: ManualRouteSaleProductOption[];
@@ -556,6 +557,8 @@ export default function MachineStopPage() {
   const routeHref = routeId ? `/operator/routes/${routeId}` : "/operator";
 
   const [stopData, setStopData] = useState<StopData | null>(null);
+  const [fullProductCatalog, setFullProductCatalog] = useState<ProductOption[] | null>(null);
+  const [productCatalogLoading, setProductCatalogLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -645,7 +648,7 @@ export default function MachineStopPage() {
     },
   });
 
-  const productById = useMemo(() => new Map((stopData?.productOptions ?? []).map((product) => [product.id, product])), [stopData]);
+  const productById = useMemo(() => new Map((fullProductCatalog ?? stopData?.productOptions ?? []).map((product) => [product.id, product])), [fullProductCatalog, stopData]);
   const machineStorageStockRows = stopData?.machineStorageStock ?? [];
   const machineStorageProducts = stopData?.machineStorageProductOptions ?? stopData?.productOptions ?? [];
   const machineStorageStockUnits = machineStorageStockRows.reduce((sum, row) => sum + Number(row.quantity ?? 0), 0);
@@ -665,6 +668,33 @@ export default function MachineStopPage() {
     });
     return hasShortage || missingReports.some((item) => item.productName.trim()) ? "partial" : "full";
   }, [filledQtys, missingReports, stopData, unavailableProducts]);
+  const loadFullProductCatalog = useCallback(async () => {
+    if (fullProductCatalog) return fullProductCatalog;
+    if (!routeId || !stopId) return [] as ProductOption[];
+
+    setProductCatalogLoading(true);
+    try {
+      const response = await fetchWithTimeout(`/api/operator/routes/${routeId}/stops/${stopId}?catalog=all`, {
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      });
+      const parsed = await readServerResponse(response, {
+        operation: "operator_stop_product_catalog",
+        route_id: routeId,
+        route_stop_id: stopId,
+      });
+      const payload = parsed.payload;
+      if (!response.ok || !payload) {
+        throw new Error(responseMessage(payload) || "Could not load the full product catalog.");
+      }
+      const products = Array.isArray(payload.productOptions) ? payload.productOptions as ProductOption[] : [];
+      setFullProductCatalog(products);
+      return products;
+    } finally {
+      setProductCatalogLoading(false);
+    }
+  }, [fullProductCatalog, routeId, stopId]);
+
   const machineQuantityItems = useMemo(() => (stopData?.refillItems ?? []).map((item) => ({
     productId: item.productId,
     productName: item.productName,
@@ -758,6 +788,7 @@ export default function MachineStopPage() {
 
         const stopPayload = data as unknown as StopData;
         setStopData(stopPayload);
+        setFullProductCatalog(stopPayload.productCatalogDeferred === false ? stopPayload.productOptions : null);
         if (stopPayload.stopStatus === ROUTE_STOP_PICKED_STATUS) {
           markStopInProgress(routeId, stopId).then((result) => {
             if (result.success) setStopData((current) => current ? { ...current, stopStatus: ROUTE_STOP_IN_PROGRESS_STATUS } : current);
@@ -1224,10 +1255,15 @@ export default function MachineStopPage() {
           locationName={stopData.location}
           routeStatus={stopData.routeStatus}
           preferredProducts={stopData.manualSaleProductOptions ?? stopData.machineProductOptions ?? stopData.productOptions}
-          allProducts={stopData.productOptions}
+          allProducts={fullProductCatalog ?? []}
+          onRequestAllProducts={loadFullProductCatalog}
+          allProductsLoading={productCatalogLoading}
           sales={stopData.manualSales ?? []}
           loadError={Boolean(stopData.manualSalesLoadError)}
           onSaved={(sale, options) => {
+            if (options.inventoryMovementCreated) {
+              setFullProductCatalog((current) => updateProductAvailability(current ?? undefined, sale.productId, -sale.quantity) ?? current);
+            }
             setStopData((current) => current ? {
               ...current,
               manualSales: mergeManualSale(current.manualSales, sale),
@@ -1237,6 +1273,9 @@ export default function MachineStopPage() {
             } : current);
           }}
           onCancelled={(sale, options) => {
+            if (options.inventoryReversed) {
+              setFullProductCatalog((current) => updateProductAvailability(current ?? undefined, sale.productId, sale.quantity) ?? current);
+            }
             setStopData((current) => current ? {
               ...current,
               manualSales: mergeManualSale(current.manualSales, sale),
@@ -1321,14 +1360,16 @@ export default function MachineStopPage() {
 
               <div className="space-y-3">
                 {extraProducts.map((line) => {
-                  const selected = machineStorageProducts.find((product) => product.id === line.productId) ?? stopData.productOptions.find((product) => product.id === line.productId);
+                  const selected = machineStorageProducts.find((product) => product.id === line.productId)
+                    ?? fullProductCatalog?.find((product) => product.id === line.productId)
+                    ?? stopData.productOptions.find((product) => product.id === line.productId);
                   const maxQty = line.productId ? remainingBagQty(line.productId, line.quantity) : 0;
                   const bagAvailable = line.productId ? remainingBagQty(line.productId) : 0;
                   const notInBag = Boolean(line.productId) && bagAvailable <= 0;
                   return (
                     <div key={line.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                       <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_160px_1fr]">
-                        <ProductPicker products={machineStorageProducts} allProducts={stopData.productOptions} value={line.productId} onChange={(productId) => updateExtra(line.id, { productId, quantity: 0 })} label={t("Machine storage product")} />
+                        <ProductPicker products={machineStorageProducts} allProducts={fullProductCatalog ?? undefined} onLoadAllProducts={loadFullProductCatalog} allProductsLoading={productCatalogLoading} value={line.productId} onChange={(productId) => updateExtra(line.id, { productId, quantity: 0 })} label={t("Machine storage product")} />
                         <QuantityInput value={line.quantity} max={maxQty} onChange={(quantity) => updateExtra(line.id, { quantity })} availabilityLabel={t("Operator bag available")} />
                         <ReasonSelect value={line.reason} onChange={(reason) => updateExtra(line.id, { reason })} options={[...machineStorageReasonOptions]} />
                       </div>
@@ -1386,7 +1427,9 @@ export default function MachineStopPage() {
           machineName={stopData.machineName}
           machineCode={stopData.machineCode}
           machineProducts={stopData.machineProductOptions ?? stopData.productOptions}
-          allProducts={stopData.productOptions}
+          allProducts={fullProductCatalog ?? []}
+          onRequestAllProducts={loadFullProductCatalog}
+          allProductsLoading={productCatalogLoading}
           adjustments={stopData.adjustments ?? []}
           onSaved={(adjustment) => {
             setStopData((current) => current
@@ -1511,12 +1554,12 @@ function Metric({ label, value, tone = "neutral" }: { label: string; value: numb
   );
 }
 
-function ProductPicker({ products, allProducts, value, onChange, label = "Existing product" }: { products: ProductOption[]; allProducts?: ProductOption[]; value: string; onChange: (productId: string) => void; label?: string }) {
+function ProductPicker({ products, allProducts, onLoadAllProducts, allProductsLoading = false, value, onChange, label = "Existing product" }: { products: ProductOption[]; allProducts?: ProductOption[]; onLoadAllProducts?: () => Promise<ProductOption[]>; allProductsLoading?: boolean; value: string; onChange: (productId: string) => void; label?: string }) {
   const { t } = useLanguage();
   const [query, setQuery] = useState("");
   const [sourceMode, setSourceMode] = useState<"priority" | "all">("priority");
   const priorityProducts = products;
-  const showAllToggle = Boolean(allProducts?.length);
+  const showAllToggle = Boolean(allProducts?.length || onLoadAllProducts);
   const selected = (allProducts ?? priorityProducts).find((product) => product.id === value) ?? priorityProducts.find((product) => product.id === value);
   const activeProducts = showAllToggle && sourceMode === "all" ? (allProducts ?? []) : priorityProducts;
   const filtered = useMemo(() => {
@@ -1544,13 +1587,21 @@ function ProductPicker({ products, allProducts, value, onChange, label = "Existi
         {showAllToggle ? (
           <button
             type="button"
-            onClick={() => {
+            onClick={async () => {
+              if (sourceMode === "priority" && !allProducts?.length && onLoadAllProducts) {
+                try {
+                  await onLoadAllProducts();
+                } catch {
+                  return;
+                }
+              }
               setSourceMode((current) => current === "priority" ? "all" : "priority");
               setQuery("");
             }}
-            className="text-xs font-semibold uppercase tracking-wide text-slate-500 transition hover:text-slate-900"
+            disabled={allProductsLoading}
+            className="text-xs font-semibold uppercase tracking-wide text-slate-500 transition hover:text-slate-900 disabled:cursor-wait disabled:opacity-60"
           >
-            {sourceMode === "priority" ? t("Search all products") : t("Priority products")}
+            {allProductsLoading ? t("Loading products") : sourceMode === "priority" ? t("Search all products") : t("Priority products")}
           </button>
         ) : null}
       </div>
@@ -1711,6 +1762,8 @@ function InventoryAdjustmentsSection({
   machineCode,
   machineProducts,
   allProducts,
+  onRequestAllProducts,
+  allProductsLoading,
   adjustments,
   onSaved,
 }: {
@@ -1721,6 +1774,8 @@ function InventoryAdjustmentsSection({
   machineCode: string;
   machineProducts: ProductOption[];
   allProducts: ProductOption[];
+  onRequestAllProducts?: () => Promise<ProductOption[]>;
+  allProductsLoading?: boolean;
   adjustments: InventoryAdjustmentRow[];
   onSaved: (adjustment: InventoryAdjustmentRow) => void;
 }) {
@@ -1778,6 +1833,8 @@ function InventoryAdjustmentsSection({
             machineId={machineId}
             machineProducts={machineProducts}
             allProducts={allProducts}
+            onRequestAllProducts={onRequestAllProducts}
+            allProductsLoading={allProductsLoading}
             reasonOptions={activeAdjustmentType === "damaged" ? damagedReasonOptions : returnedReasonOptions}
             submitLabel={activeAdjustmentType === "damaged" ? t("Save damaged product") : t("Save returned product")}
             onSaved={(adjustment) => {
@@ -1841,6 +1898,8 @@ function InventoryAdjustmentForm({
   machineId,
   machineProducts,
   allProducts,
+  onRequestAllProducts,
+  allProductsLoading = false,
   reasonOptions,
   submitLabel,
   onSaved,
@@ -2015,9 +2074,19 @@ function InventoryAdjustmentForm({
         >{tr("Machine products", "منتجات الجهاز")}</button>
         <button
           type="button"
-          onClick={() => setSourceMode("all")}
+          onClick={async () => {
+            if (!allProducts.length && onRequestAllProducts) {
+              try {
+                await onRequestAllProducts();
+              } catch {
+                return;
+              }
+            }
+            setSourceMode("all");
+          }}
+          disabled={allProductsLoading}
           className={sourceMode === "all" ? "btn-primary" : "btn-secondary"}
-        >{tr("Search all products", "البحث في كل المنتجات")}</button>
+        >{allProductsLoading ? tr("Loading products", "جارٍ تحميل المنتجات") : tr("Search all products", "البحث في كل المنتجات")}</button>
       </div>
 
       <div className="mt-4">
