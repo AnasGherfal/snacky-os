@@ -1,0 +1,64 @@
+name: Escalation handoff regression checks
+on:
+  push:
+    branches: ['fix/escalation-assignment-generation-v1']
+  pull_request:
+    paths:
+      - 'supabase/migrations/*escalation_assignment_generation*'
+      - 'scripts/push-tests/escalation-generation.sql'
+      - '.github/workflows/escalation-generation-check.yml'
+permissions:
+  contents: read
+concurrency:
+  group: escalation-handoff-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: escalation_test
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/escalation_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Reproduce stale reminder before repair
+        run: |
+          set -euo pipefail
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/push-tests/bootstrap.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260919170000_push_notification_activation.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/push-tests/assignments-bootstrap.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260919220000_assignment_notifications.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c 'alter table public.crm_tasks add column dispatch_state text, add column ack_due_at timestamptz;'
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260924154410_urgent_dispatch_escalation_v1.sql
+          if psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/push-tests/escalation-generation.sql > baseline.log 2>&1; then
+            echo 'Regression did not reproduce'; exit 1
+          fi
+          grep -F 'Old generation resurrected after new deadline' baseline.log
+      - name: Verify repaired generation, pause, batch and existing behavior
+        run: |
+          set -euo pipefail
+          migration=$(find supabase/migrations -name '*_escalation_assignment_generation_v1.sql')
+          test -n "$migration"
+          test "$(printf '%s\n' "$migration" | wc -l)" -eq 1
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$migration"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/push-tests/urgent-dispatch-escalation.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/push-tests/escalation-generation.sql
+          node --test scripts/test-assignment-notifications.mjs scripts/test-urgent-dispatch-escalation.mjs
+      - run: npm run typecheck
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: escalation-handoff-regression
+          path: baseline.log
