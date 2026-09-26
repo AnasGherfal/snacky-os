@@ -5,6 +5,9 @@ import {
   companyFileLimit,
   companyRoles,
   companyRoleLabels,
+  companyDocumentCategories,
+  companyDocumentCategory,
+  companyDocumentCategoryLabels,
   companyWorkPaths,
   companyWorkLabel,
   validateCompanyContent,
@@ -433,6 +436,27 @@ export function CompanyEditor({
               ))}
             </select>
           </label>
+          {content.section === 'documents' ? (
+            <label className="text-sm">
+              {tr('Library category', 'تصنيف المكتبة')}
+              <select
+                className="field-input mt-1"
+                value={companyDocumentCategory(content)}
+                onChange={(e) =>
+                  set(
+                    'document_category',
+                    e.target.value as CompanyContent['document_category'],
+                  )
+                }
+              >
+                {companyDocumentCategories.map((category) => (
+                  <option key={category} value={category}>
+                    {companyDocumentCategoryLabels[category][ar ? 1 : 0]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <label className="text-sm">
             {tr('Content owner', 'مسؤول المحتوى')}
             <select
