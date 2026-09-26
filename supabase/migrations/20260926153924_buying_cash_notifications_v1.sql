@@ -151,6 +151,18 @@ returns trigger language plpgsql security definer set search_path=''
 as $$
 declare k text:=tg_argv[0];i uuid;
 begin
+ -- Ignore UPDATE statements that mention columns without changing their values.
+ -- This also prevents a first no-op save of an old, pre-install record emitting.
+ if tg_op='UPDATE' then
+  if k='buying_list' then
+   if (new.assigned_to,new.status) is not distinct from (old.assigned_to,old.status) then return new;end if;
+  elsif tg_table_schema='snacky_private' then
+   if (new.assigned_to,new.stage,new.deposited_at) is not distinct from (old.assigned_to,old.stage,old.deposited_at) then return new;end if;
+  else
+   if (new.custody_status,new.storage_received_at,new.actual_cash_collected,new.voided_at,new.cash_bag_id)
+     is not distinct from (old.custody_status,old.storage_received_at,old.actual_cash_collected,old.voided_at,old.cash_bag_id) then return new;end if;
+  end if;
+ end if;
  if k='buying_list' then i:=new.id;
  elsif tg_table_schema='snacky_private' then i:=new.collection_id;
  else i:=new.id;
