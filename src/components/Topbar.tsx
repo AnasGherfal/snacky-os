@@ -67,7 +67,9 @@ export function Topbar({ profile, onMenuClick }: { profile: TopbarProfile; onMen
   const titleKey = titleKeys[pathname];
   const moduleKey = getAppModuleKey(pathname);
   const moduleTitle = moduleKey ? appModuleLabels[moduleKey][locale] : null;
-  const directTitle = pathname === "/investor" || pathname.startsWith("/investor/")
+  const directTitle = pathname === "/my-day"
+    ? locale === "ar" ? "مهامي اليوم" : "My Work Today"
+    : pathname === "/investor" || pathname.startsWith("/investor/")
     ? locale === "ar" ? "بوابة المستثمر" : "Investor Portal"
     : pathname === "/finance/growth-decisions"
       ? locale === "ar" ? "قرارات النمو" : "Growth Decisions"
