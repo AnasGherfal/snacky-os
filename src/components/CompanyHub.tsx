@@ -24,14 +24,49 @@ import {
   companyLabels,
   companySections,
   companyRoleLabels,
+  companyDocumentCategories,
+  companyDocumentCategory,
+  companyDocumentCategoryLabels,
   companyUuid,
   companyText,
   emptyCompanyContent,
   type CompanySection,
   type CompanyWorkspaceData,
   type CompanyContent,
+  type CompanyDocumentCategory,
 } from '@/lib/company-hub';
 import { companyTemplates, companyTemplate } from '@/lib/company-templates';
+const documentCategoryDescriptions: Record<
+  CompanyDocumentCategory,
+  [string, string]
+> = {
+  brand: [
+    'Logos, colors, typography, QR codes and approved visual assets.',
+    'الشعارات والألوان والخطوط ورموز QR ومواد الهوية المعتمدة.',
+  ],
+  company: [
+    'Company profile, presentations and reusable corporate references.',
+    'الملف التعريفي والعروض والمراجع المؤسسية القابلة لإعادة الاستخدام.',
+  ],
+  sales: [
+    'Reusable proposal masters and approved sales material.',
+    'قوالب العروض والمواد التجارية المعتمدة القابلة لإعادة الاستخدام.',
+  ],
+  templates: [
+    'Blank agreements, receipts and approved reusable forms.',
+    'الاتفاقيات والإيصالات والنماذج الفارغة المعتمدة.',
+  ],
+  machines: [
+    'Machine media, manuals and approved technical references.',
+    'صور الماكينات والأدلة والمراجع الفنية المعتمدة.',
+  ],
+  marketing: [
+    'Brochures, print assets and reusable marketing material.',
+    'البروشورات ومواد الطباعة والتسويق القابلة لإعادة الاستخدام.',
+  ],
+  other: ['Other approved reusable material.', 'مواد أخرى معتمدة وقابلة لإعادة الاستخدام.'],
+};
+
 type Params = Record<string, string | string[] | undefined>;
 const value = (params: Params, key: string) =>
   typeof params[key] === 'string' ? String(params[key]) : '';
@@ -91,7 +126,7 @@ export async function CompanyHub({
   if (isNew && !companyUuid.test(newId)) {
     newId = randomUUID();
     const q = new URLSearchParams({ draft_id: newId });
-    for (const key of ['template', 'section']) {
+    for (const key of ['template', 'section', 'category']) {
       const v = value(searchParams, key);
       if (v) q.set(key, v);
     }
@@ -172,6 +207,15 @@ export async function CompanyHub({
           : 'guides',
       ))
     : (data.draft ?? record?.data ?? emptyCompanyContent());
+  const requestedCategory = value(searchParams, 'category');
+  if (
+    isNew &&
+    initial.section === 'documents' &&
+    companyDocumentCategories.includes(
+      requestedCategory as CompanyDocumentCategory,
+    )
+  )
+    initial.document_category = requestedCategory as CompanyDocumentCategory;
   if (isNew && !initial.owner_id)
     initial.owner_id = profile.team_member_id ?? '';
   const pageHref = (offset: number) => {
@@ -225,14 +269,62 @@ export async function CompanyHub({
         }
       />
       {section === 'documents' && !record && !isNew ? (
-        <section className="surface-card flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">{tr('Approved profile','ملف معتمد')}</p>
-            <h2 className="mt-1 text-lg font-semibold">{tr('Snacky Company Profile','الملف التعريفي بسناكي')}</h2>
-            <p className="mt-1 text-sm text-slate-600">{tr('Open the approved presentation reference used with prospective locations.','افتح المرجع التعريفي المعتمد المستخدم مع الجهات المحتملة.')}</p>
-          </div>
-          <Link className="btn-primary shrink-0" href="/company/profile">{tr('Open company profile','فتح الملف التعريفي')}</Link>
-        </section>
+        <>
+          <section className="surface-card space-y-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+                  {tr('Snacky library', 'مكتبة سناكي')}
+                </p>
+                <h2 className="mt-1 text-lg font-semibold">
+                  {tr('Approved reusable company materials', 'مواد الشركة المعتمدة والقابلة لإعادة الاستخدام')}
+                </h2>
+                <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
+                  {tr(
+                    'Use this library for current masters and approved assets. Actual signed agreements, sent proposals and payment evidence stay on their original business records.',
+                    'استخدم هذه المكتبة للأصول الحالية والمواد المعتمدة. تبقى الاتفاقيات الموقعة والعروض المرسلة وإثباتات الدفع في سجلات العمل الأصلية الخاصة بها.',
+                  )}
+                </p>
+              </div>
+              <Link className="btn-secondary shrink-0" href="/company/profile">
+                {tr('Snacky Company Profile', 'الملف التعريفي بسناكي')}
+              </Link>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {companyDocumentCategories
+                .filter((category) => category !== 'other')
+                .map((category) => (
+                  <article
+                    key={category}
+                    className="rounded-xl border border-slate-200 bg-slate-50 p-4"
+                  >
+                    <h3 className="font-semibold">
+                      {companyDocumentCategoryLabels[category][ar ? 1 : 0]}
+                    </h3>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">
+                      {documentCategoryDescriptions[category][ar ? 1 : 0]}
+                    </p>
+                    {manager ? (
+                      <Link
+                        className="mt-3 inline-block text-sm font-semibold underline"
+                        href={`/company/new?section=documents&category=${category}`}
+                      >
+                        {tr('Add material here', 'إضافة مادة هنا')}
+                      </Link>
+                    ) : null}
+                  </article>
+                ))}
+            </div>
+            <div className="flex flex-wrap gap-3 border-t border-slate-200 pt-4 text-sm">
+              <Link className="font-semibold underline" href="/company/guides">
+                {tr('Operational SOPs & guides', 'إجراءات وأدلة التشغيل')}
+              </Link>
+              <Link className="font-semibold underline" href="/company/people">
+                {tr('Roles & responsibilities', 'الأدوار والمسؤوليات')}
+              </Link>
+            </div>
+          </section>
+        </>
       ) : null}
       {section === 'start' && !record && !isNew ? (
         <>
@@ -782,6 +874,15 @@ html, body { background: white !important; height: auto !important; overflow: vi
                         ? tr('Shareable', 'للمشاركة الخارجية')
                         : tr('Internal', 'داخلي')}
                     </span>
+                    {section === 'documents' ? (
+                      <span className="rounded-full border border-slate-200 px-2 py-0.5 text-slate-700">
+                        {
+                          companyDocumentCategoryLabels[
+                            companyDocumentCategory(row.data)
+                          ][ar ? 1 : 0]
+                        }
+                      </span>
+                    ) : null}
                     {manager && row.has_unpublished_changes ? (
                       <span className="font-semibold text-amber-800">
                         {tr('Unpublished changes', 'تعديلات غير منشورة')}
