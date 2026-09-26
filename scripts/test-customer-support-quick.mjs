@@ -38,14 +38,20 @@ test('quick intake defaults to WhatsApp but preserves other channels in optional
 });
 
 
-test('Company Documents surfaces the approved Snacky profile inside the OS',()=>{
-  const hub=fs.readFileSync('src/components/CompanyHub.tsx','utf8');
+test('Company Documents provides approved files separately from the internal service overview',()=>{
+  const library=fs.readFileSync('src/components/CompanyDocuments.tsx','utf8');
   const profile=fs.readFileSync('src/app/company/profile/page.tsx','utf8');
-  assert.ok(hub.includes('href="/company/profile"'));
-  assert.match(hub,/Snacky Company Profile/);
-  assert.match(profile,/خدمة أقرب\. ويوم أسهل\./);
+  const notice=fs.readFileSync('src/components/CompanyReferenceNotice.tsx','utf8');
+  assert.match(fs.readFileSync('src/app/company/documents/page.tsx','utf8'),/CompanyDocuments/);
+  assert.match(library,/companyDocumentReady/);
+  assert.match(library,/Download published file/);
+  assert.match(library,/Approved for external sharing/);
+  assert.ok(library.includes('href="/company/profile"'));
   assert.match(profile,/requireCurrentProfileForPath\('\/company\/profile'\)/);
-  assert.match(profile,/snacky\.ly/);
+  assert.match(profile,/CompanyReferenceNotice/);
+  assert.match(profile,/href="\/company\/documents"/);
+  assert.match(notice,/not a published, approved document/);
+  assert.doesNotMatch(notice,/print:hidden/);
 });
 
 
