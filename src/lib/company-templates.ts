@@ -2,6 +2,7 @@ import {
   emptyCompanyContent,
   type CompanyContent,
   type CompanyRole,
+  type CompanyDocumentCategory,
 } from './company-hub';
 /** Proposed starter wording, not published policies or employee contracts. No real salaries, contacts or agreements. */
 type Template = {
@@ -13,6 +14,7 @@ type Template = {
   path: string;
   body_en: string;
   body_ar: string;
+  category?: CompanyDocumentCategory;
 };
 const staff: CompanyRole[] = [
   'owner',
@@ -109,6 +111,84 @@ export const companyTemplates: Template[] = [
     body_ar:
       'ابحث عن العروض والقوالب والشعارات القابلة لإعادة الاستخدام في الوثائق والهوية. استخدم النسخ المعتمدة والواضحة بدلاً من مرفقات المحادثات القديمة. لا ترسل خارج سناكي إلا المواد المعتمدة صراحةً للمشاركة الخارجية.\n\nيمكن إبقاء الملفات الأصلية القابلة للتعديل في مساحة Drive تسيطر عليها الشركة. تحقق من صلاحية الوصول في المصدر. أنشئ نسخة نهائية مستقلة لكل عرض أو اتفاقية وأرفقها بسجلها. لا تستبدل عرضاً سبق إرساله أو مستنداً موقعاً.\n\nأبلغ مسؤول المحتوى عن المواد القديمة أو الناقصة. محتوى الشركة العام ليس مكاناً للمرتبات أو عقود الموظفين أو البيانات الشخصية المقيدة.',
   },
+  {
+    key: 'asset-brand',
+    en: 'Brand asset — logo, colors, fonts or QR',
+    ar: 'مادة هوية — شعار أو ألوان أو خطوط أو QR',
+    section: 'documents',
+    roles: staff,
+    path: '',
+    category: 'brand',
+    body_en:
+      'Attach the approved source file. Use the summary to state exactly what this asset is for and whether it may be shared externally. Archive superseded versions rather than leaving several files that look current.',
+    body_ar:
+      'أرفق الملف الأصلي المعتمد. استخدم الملخص لتوضيح استخدام المادة وهل يسمح بمشاركتها خارج الشركة. أرشف النسخ القديمة بدلاً من ترك عدة ملفات تبدو كلها حالية.',
+  },
+  {
+    key: 'asset-company',
+    en: 'Company profile or presentation',
+    ar: 'ملف تعريفي أو عرض للشركة',
+    section: 'documents',
+    roles: ['owner', 'admin', 'supervisor', 'crm'],
+    path: '/locations-pipeline',
+    category: 'company',
+    body_en:
+      'Attach the exact approved company profile or presentation. Keep editable masters in company-controlled Drive when needed, and publish only the reviewed outward-facing edition.',
+    body_ar:
+      'أرفق النسخة المعتمدة نفسها من الملف التعريفي أو العرض. احتفظ بالأصل القابل للتعديل في Drive الخاضع للشركة عند الحاجة، وانشر فقط النسخة الخارجية التي تمت مراجعتها.',
+  },
+  {
+    key: 'asset-proposal',
+    en: 'Reusable proposal master',
+    ar: 'قالب عرض قابل لإعادة الاستخدام',
+    section: 'documents',
+    roles: ['owner', 'admin', 'supervisor', 'crm'],
+    path: '/locations-pipeline',
+    category: 'sales',
+    body_en:
+      'Store only the blank reusable master here. The proposal actually sent to a customer or location must remain on that lead/location record so the historical offer cannot change later.',
+    body_ar:
+      'احتفظ هنا بالقالب الفارغ القابل لإعادة الاستخدام فقط. أما العرض الذي أُرسل فعلياً للعميل أو الموقع فيبقى في سجل الجهة/الموقع حتى لا تتغير النسخة التاريخية لاحقاً.',
+  },
+  {
+    key: 'asset-template',
+    en: 'Agreement, receipt or reusable form',
+    ar: 'اتفاقية أو إيصال أو نموذج قابل لإعادة الاستخدام',
+    section: 'documents',
+    roles: ['owner', 'admin', 'supervisor', 'crm', 'finance'],
+    path: '',
+    category: 'templates',
+    body_en:
+      'Attach an approved blank master only. Signed agreements, completed receipts and payment evidence belong on the relevant business or Finance record, not in this reusable library.',
+    body_ar:
+      'أرفق نموذجاً فارغاً معتمداً فقط. الاتفاقيات الموقعة والإيصالات المكتملة وإثباتات الدفع توضع في سجل العمل أو المالية المرتبط، وليس في هذه المكتبة القابلة لإعادة الاستخدام.',
+  },
+  {
+    key: 'asset-machine',
+    en: 'Machine media or technical reference',
+    ar: 'صور ماكينة أو مرجع فني',
+    section: 'documents',
+    roles: ['owner', 'admin', 'supervisor', 'crm', 'operator', 'warehouse', 'purchasing'],
+    path: '',
+    category: 'machines',
+    body_en:
+      'Attach current approved machine photos, manuals or technical references. State the exact model or use in the title/summary so staff do not apply instructions to the wrong machine.',
+    body_ar:
+      'أرفق صور الماكينات أو الأدلة أو المراجع الفنية الحالية والمعتمدة. اذكر الموديل أو الاستخدام بوضوح في العنوان/الملخص حتى لا تُطبق تعليمات على ماكينة غير صحيحة.',
+  },
+  {
+    key: 'asset-marketing',
+    en: 'Brochure or reusable marketing asset',
+    ar: 'بروشور أو مادة تسويقية قابلة لإعادة الاستخدام',
+    section: 'documents',
+    roles: ['owner', 'admin', 'supervisor', 'crm'],
+    path: '',
+    category: 'marketing',
+    body_en:
+      'Attach the final approved print/digital file. Editable artwork may be linked from company-controlled Drive. Mark external sharing only when this exact version is approved for use outside Snacky.',
+    body_ar:
+      'أرفق النسخة النهائية المعتمدة للطباعة أو الاستخدام الرقمي. يمكن ربط ملف التصميم القابل للتعديل من Drive الخاضع للشركة. فعّل المشاركة الخارجية فقط عندما تكون هذه النسخة نفسها معتمدة للاستخدام خارج سناكي.',
+  },
 ];
 export function companyTemplate(key: string): CompanyContent | undefined {
   const t = companyTemplates.find((x) => x.key === key);
@@ -123,5 +203,6 @@ export function companyTemplate(key: string): CompanyContent | undefined {
     body_ar: t.body_ar,
     audience: t.roles,
     work_path: t.path,
+    document_category: t.category ?? 'other',
   };
 }
