@@ -1,0 +1,103 @@
+name: Stocktake notification release checks
+on:
+  pull_request:
+    paths:
+      - 'supabase/migrations/*stocktake_notifications_v1.sql'
+      - 'scripts/test-stocktake-notifications.mjs'
+      - 'scripts/prepare-stocktake-notice-db.py'
+      - 'scripts/push-tests/stocktake-notifications.sql'
+      - '.github/workflows/stocktake-notifications-check.yml'
+permissions:
+  contents: read
+concurrency:
+  group: stocktake-notices-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Stocktake event contracts and existing module regressions
+        run: |
+          node --test scripts/test-stocktake-notifications.mjs scripts/test-assigned-storage-stocktake.mjs scripts/test-stock-reconciliation.mjs
+          node --experimental-strip-types --test scripts/test-assignment-notifications.mjs scripts/test-urgent-dispatch-escalation.mjs
+      - run: npm run typecheck
+      - run: npm run test:critical-workflows
+      - run: npm run build
+  database:
+    name: Database (${{ matrix.order }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        order: [stocktake_first, buying_first]
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: stocktake_notice_test
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/stocktake_notice_test
+    steps:
+      - uses: actions/checkout@v4
+      # Compatibility evidence for the exact reviewed #231 implementation.
+      # This checkout never deploys that PR or changes its branch.
+      - uses: actions/checkout@v4
+        with:
+          ref: 550bf5b91530fd151d6fd57469a4211914bb7716
+          path: .qa/buying-compat
+      - name: Original notification and stocktake migration fixtures
+        run: |
+          set -euo pipefail
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/push-tests/bootstrap.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260919170000_push_notification_activation.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/push-tests/rls.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/push-tests/assignments-bootstrap.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260919220000_assignment_notifications.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c 'alter table public.crm_tasks add column dispatch_state text, add column ack_due_at timestamptz;'
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260924154410_urgent_dispatch_escalation_v1.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260926104649_escalation_assignment_generation_v1.sql
+          python3 scripts/prepare-stocktake-notice-db.py
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/.stocktake-notice-fixture.sql
+      - name: Verify actual commands, events, privacy and compatible install order
+        env:
+          INSTALL_ORDER: ${{ matrix.order }}
+        run: |
+          set -euo pipefail
+          ours=supabase/migrations/20260926161303_stocktake_notifications_v1.sql
+          buying=.qa/buying-compat
+          install_buying() {
+            python3 "$buying/scripts/prepare-buying-cash-notice-db.py"
+            # Same minimal role helper already exists in the combined fixture.
+            sed -i 's/create function public.snacky_profile_has_any_role/create or replace function public.snacky_profile_has_any_role/' "$buying/scripts/.buying-cash-notice-fixture.sql"
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$buying/scripts/.buying-cash-notice-fixture.sql"
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$buying/supabase/migrations/20260926153924_buying_cash_notifications_v1.sql"
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$buying/scripts/push-tests/buying-cash-notifications.sql"
+          }
+          if [ "$INSTALL_ORDER" = stocktake_first ]; then
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$ours"
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/push-tests/stocktake-notifications.sql
+            install_buying
+          else
+            install_buying
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$ours"
+          fi
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/push-tests/stocktake-notifications.sql 2>&1 | tee stocktake-notice-test.log
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/push-tests/assignments.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/push-tests/urgent-dispatch-escalation.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/push-tests/escalation-generation.sql
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stocktake-notices-${{ matrix.order }}
+          path: stocktake-notice-test.log
