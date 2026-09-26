@@ -15,3 +15,62 @@
 .company-hub .field-input {
   min-width: 0;
 }
+
+/* The library is intentionally read-first. Draft creation stays secondary. */
+.company-document-library { --doc-green: #285c41; --doc-line: #dce4df; color: #20342b; display: grid; gap: 24px; min-width: 0; }
+.company-document-library h2 { font-size: 18px; font-weight: 650; margin: 0; }
+.company-document-library h3 { font-size: 17px; font-weight: 650; margin: 9px 0 6px; line-height: 1.6; }
+.company-document-library .doc-search { padding: 20px; border: 1px solid var(--doc-line); border-radius: 14px; background: white; }
+.company-document-library .doc-search > label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 9px; }
+.company-document-library .doc-search-controls { display: flex; align-items: center; gap: 10px; }
+.company-document-library .doc-search-controls input { flex: 1; width: 100%; min-width: 0; }
+.company-document-library .doc-workspace { display: grid; grid-template-columns: minmax(0, 1fr) 255px; gap: 24px; align-items: start; }
+.company-document-library .doc-results, .company-document-library .doc-sidebar { min-width: 0; }
+.company-document-library .doc-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.company-document-library .doc-section-heading > span, .company-document-library .doc-section-description { color: #56675e; font-size: 12px; line-height: 1.8; }
+.company-document-library .doc-section-description { margin: 6px 0 14px; }
+.company-document-library .doc-material-list { display: grid; gap: 12px; }
+.company-document-library .doc-material { background: white; border: 1px solid var(--doc-line); border-radius: 14px; padding: 20px; min-width: 0; }
+.company-document-library .doc-material-top { display: flex; gap: 14px; }
+.company-document-library .doc-file-symbol { display: flex; align-items: center; justify-content: center; flex: 0 0 40px; height: 46px; background: #eef5ef; border-radius: 8px; color: var(--doc-green); font-size: 22px; }
+.company-document-library .doc-material-main { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.company-document-library .doc-material h3 a:hover { text-decoration: underline; text-underline-offset: 4px; }
+.company-document-library .doc-status-line { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; font-size: 11px; }
+.company-document-library .doc-badge { border-radius: 5px; padding: 3px 7px; font-weight: 600; }
+.company-document-library .doc-badge-published { background: #e8f2e9; color: #285c41; }
+.company-document-library .doc-badge-draft { background: #fff1db; color: #805118; }
+.company-document-library .doc-sharing { color: #475b4e; }
+.company-document-library .doc-summary { color: #4e6257; font-size: 13px; line-height: 1.8; margin: 0; }
+.company-document-library .doc-metadata { display: flex; flex-wrap: wrap; gap: 9px 22px; margin: 14px 0 0; font-size: 11px; line-height: 1.6; }
+.company-document-library .doc-metadata dt { color: #637269; }
+.company-document-library .doc-metadata dd { margin: 2px 0 0; color: #30483a; }
+.company-document-library .doc-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.company-document-library .doc-actions .btn-primary, .company-document-library .doc-actions .btn-secondary, .company-document-library .doc-search button, .company-document-library .doc-search a { min-height: 44px; }
+.company-document-library .doc-actions .btn-primary, .company-document-library .doc-actions .btn-secondary { font-size: 12px; text-align: center; }
+.company-document-library .doc-text-link { color: #285c41; font-size: 12px; font-weight: 600; text-decoration: underline; text-underline-offset: 4px; }
+.company-document-library .doc-fine-print { font-size: 11px; color: #586a5f; margin: 12px 0 0; line-height: 1.7; }
+.company-document-library .doc-pending { margin-top: 30px; }
+.company-document-library .doc-material-draft { border-inline-start: 3px solid #d79038; }
+.company-document-library .doc-draft-reason { font-size: 12px; line-height: 1.8; color: #82520f; margin: 9px 0 0; }
+.company-document-library .doc-help { background: #f0f5ef; border-radius: 14px; padding: 22px; border-top: 3px solid #e18b24; }
+.company-document-library .doc-help .doc-eyebrow { margin: 0 0 10px; font-size: 11px; font-weight: 700; color: #566e57; }
+.company-document-library .doc-help p, .company-document-library .doc-reference p { font-size: 12px; line-height: 1.9; color: #53695a; margin: 10px 0 14px; }
+.company-document-library .doc-reference { border-bottom: 1px solid var(--doc-line); padding: 18px 0; }
+.company-document-library .doc-reference summary { cursor: pointer; font-size: 13px; font-weight: 600; line-height: 1.7; }
+.company-document-library .doc-reference > a { display: block; padding: 9px 0; font-size: 12px; color: #285c41; text-decoration: underline; text-underline-offset: 3px; }
+.company-document-library .doc-pagination { margin-top: 20px; display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 12px; font-size: 12px; color: #56675e; }
+.company-document-library .doc-pagination > div { display: flex; gap: 8px; }
+.company-document-library .doc-empty { padding: 24px; border: 1px dashed #b7c7bb; border-radius: 14px; }
+.company-document-library .doc-empty p { font-size: 13px; color: #53695a; line-height: 1.8; }
+@media (max-width: 1050px) { .company-document-library .doc-workspace { grid-template-columns: minmax(0, 1fr); } .company-document-library .doc-sidebar { display: grid; gap: 12px; } }
+@media (max-width: 480px) { .company-document-library { gap: 18px; } .company-document-library .doc-search, .company-document-library .doc-material { padding: 16px; } .company-document-library .doc-search-controls { flex-wrap: wrap; } .company-document-library .doc-search-controls input { flex-basis: 100%; } .company-document-library .doc-material-top { gap: 10px; } .company-document-library .doc-file-symbol { display: none; } .company-document-library .doc-actions > a { flex: 1 1 140px; } }
+@media print {
+  body:has(.company-reference-page) .app-shell > aside,
+  body:has(.company-reference-page) .app-shell > div > header,
+  .company-reference-page button { display: none !important; }
+  body:has(.company-reference-page), body:has(.company-reference-page) .app-shell,
+  body:has(.company-reference-page) .app-shell > div,
+  body:has(.company-reference-page) .app-shell main { height: auto !important; max-height: none !important; overflow: visible !important; display: block !important; background: white !important; }
+  .company-reference-page .surface-card { break-inside: avoid; box-shadow: none; }
+  .company-reference-page [role="note"] { display: block !important; border: 2px solid #805118; }
+}
