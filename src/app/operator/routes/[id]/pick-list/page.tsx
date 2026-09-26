@@ -24,6 +24,10 @@ type PickStopItem = {
   caseQuantity: number;
   requestedQty: number;
   availableStorageQty: number;
+  expiryTrackingReady: boolean;
+  expiredStorageQty: number;
+  unknownExpiryQty: number;
+  earliestSafeExpiry: string | null;
   confirmedQty: number;
   reason: string;
   notes: string;
@@ -47,6 +51,10 @@ type ProductOption = {
   imageUrl: string | null;
   caseQuantity: number;
   availableStorageQty: number;
+  expiryTrackingReady: boolean;
+  expiredStorageQty: number;
+  unknownExpiryQty: number;
+  earliestSafeExpiry: string | null;
 };
 
 type ExtraPickItem = {
@@ -151,6 +159,9 @@ export default function PickListPage() {
             alreadyConfirmed: "تم تأكيد استلام هذا المسار مسبقًا.",
             noItems: "لا توجد منتجات مطلوبة للاستلام.",
             stockWarning: "الكمية المختارة أعلى من المخزون الظاهر. سيقوم النظام بالتحقق من المخزون الفعلي مرة أخرى عند التأكيد.",
+            expiryUnknown: "تاريخ الصلاحية غير مسجل لهذا المخزون — تحقق من التاريخ المطبوع قبل الاستلام.",
+            expiredExcluded: "يوجد مخزون منتهي الصلاحية وتم استبعاده من الكمية المتاحة. لا تستلمه.",
+            expirySoon: "أقرب صلاحية مسجلة",
             directNote: "يجب وضع علامة الصح على كل منتج محدد قبل تأكيد الاستلام. المنتجات الإضافية تُحفظ فعليًا على المحطة وتظهر للإدارة في ملخص الجولة بعد التأكيد.",
             extraNote: "المنتج الإضافي ليس مجرد ملاحظة: عند التأكيد يُضاف للمحطة المختارة ويُخصم من المخزن ويظهر في ملخص الإدارة.",
             startFailed: "تعذر بدء المسار.",
@@ -190,6 +201,9 @@ export default function PickListPage() {
             alreadyConfirmed: "Pickup for this route has already been confirmed.",
             noItems: "There are no products to pick up.",
             stockWarning: "Selected quantity is above visible stock. The system will validate physical stock again on confirmation.",
+            expiryUnknown: "Expiry is not recorded for this stock — check the printed date before pickup.",
+            expiredExcluded: "Expired stock exists and is excluded from available quantity. Do not pick it.",
+            expirySoon: "Earliest tracked expiry",
             directNote: "Every selected pickup item must be checked before confirmation. Extra products are saved to the selected stop and appear in the admin route summary after confirmation.",
             extraNote: "An extra product is a real route item: confirmation assigns it to the selected stop, deducts stock, and exposes it in the admin summary.",
             startFailed: "Could not start route.",
@@ -269,6 +283,10 @@ export default function PickListPage() {
                 caseQuantity: Math.max(1, Number(item.case_quantity ?? 1)),
                 requestedQty,
                 availableStorageQty,
+                expiryTrackingReady: Boolean(item.expiry_tracking_ready),
+                expiredStorageQty: unitQuantity(item.expired_storage_qty),
+                unknownExpiryQty: unitQuantity(item.unknown_expiry_qty),
+                earliestSafeExpiry: optionalText(item.earliest_safe_expiry),
                 confirmedQty: hasSavedPickQty ? unitQuantity(item.picked_qty) : Math.min(requestedQty, availableStorageQty),
                 reason: textOrFallback(item.reason, "Product not available in storage"),
                 notes: optionalText(item.notes) ?? "",
@@ -299,6 +317,10 @@ export default function PickListPage() {
           imageUrl: optionalText(product.imageUrl ?? product.image_url),
           caseQuantity: normalizedCaseQuantity(product.caseQuantity ?? product.case_quantity),
           availableStorageQty: unitQuantity(product.availableStorageQty ?? product.available_storage_qty),
+          expiryTrackingReady: Boolean(product.expiryTrackingReady ?? product.expiry_tracking_ready),
+          expiredStorageQty: unitQuantity(product.expiredStorageQty ?? product.expired_storage_qty),
+          unknownExpiryQty: unitQuantity(product.unknownExpiryQty ?? product.unknown_expiry_qty),
+          earliestSafeExpiry: optionalText(product.earliestSafeExpiry ?? product.earliest_safe_expiry),
         }))
         .filter((product) => Boolean(product.id));
 
@@ -564,6 +586,23 @@ export default function PickListPage() {
                           <div>{copy.available}: <b>{formatProductQuantity(item.availableStorageQty, packaging, { compact: true })}</b></div>
                           {item.sku ? <div>SKU: {item.sku}</div> : null}
                         </div>
+                        {item.expiredStorageQty > 0 ? (
+                          <div className="mt-2 rounded-lg border border-rose-300 bg-rose-50 px-2 py-1.5 text-xs font-semibold leading-5 text-rose-800">
+                            {copy.expiredExcluded} ({formatProductQuantity(item.expiredStorageQty, packaging, { compact: true })})
+                          </div>
+                        ) : null}
+                        {item.unknownExpiryQty > 0 ? (
+                          <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs font-semibold leading-5 text-amber-900">
+                            {copy.expiryUnknown}
+                          </div>
+                        ) : item.earliestSafeExpiry ? (
+                          <div className="mt-2 text-xs font-medium text-slate-600">{copy.expirySoon}: {item.earliestSafeExpiry}</div>
+                        ) : null}
+                        {!item.expiryTrackingReady ? (
+                          <div className="mt-2 text-xs font-semibold text-amber-800">
+                            {isArabic ? "تعذر التحقق من بيانات الصلاحية؛ تحقق من العبوة فعلياً." : "Expiry tracking could not be verified; physically check the package."}
+                          </div>
+                        ) : null}
                       </div>
                       <div className="w-40 max-w-[42%]">
                         <div className="mb-1 text-xs font-semibold text-slate-700">{copy.pickup}</div>
@@ -620,6 +659,9 @@ export default function PickListPage() {
                       {productOptions.map((product) => <option key={product.id} value={product.id}>{product.name}{product.sku ? ` · ${product.sku}` : ""}</option>)}
                     </select>
                     {selected ? <span className="mt-1 block text-xs text-slate-500">{copy.available}: {formatProductQuantity(selected.availableStorageQty, { caseQuantity: selected.caseQuantity, productName: selected.name, category: selected.category }, { compact: true })}</span> : null}
+                    {selected?.expiredStorageQty ? <span className="mt-1 block text-xs font-semibold text-rose-700">{copy.expiredExcluded}</span> : null}
+                    {selected?.unknownExpiryQty ? <span className="mt-1 block text-xs font-semibold text-amber-800">{copy.expiryUnknown}</span> : null}
+                    {selected?.earliestSafeExpiry && !selected.unknownExpiryQty ? <span className="mt-1 block text-xs text-slate-500">{copy.expirySoon}: {selected.earliestSafeExpiry}</span> : null}
                   </label>
 
                   <label>

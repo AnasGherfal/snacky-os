@@ -53,6 +53,9 @@ type PurchaseLine = {
   unitCostSource: "blank" | "manual" | "product_memory" | "receipt";
   lineTotal: number;
   pricingMode: "unit" | "total";
+  expiryDate: string;
+  supplierLotCode: string;
+  shortExpiryConfirmed: boolean;
   receiptLineName: string | null;
   suggestedProductId: string | null;
   suggestedProductName: string | null;
@@ -141,6 +144,9 @@ function newLine(line?: Partial<PurchaseLine>): PurchaseLine {
     looseUnitsQty: 0,
     lineTotal: 0,
     pricingMode: "unit",
+    expiryDate: "",
+    supplierLotCode: "",
+    shortExpiryConfirmed: false,
     receiptLineName,
     suggestedProductId: null,
     suggestedProductName: null,
@@ -380,6 +386,8 @@ function lineHasManualInput(line: PurchaseLine & { totalUnits?: number }) {
       line.looseUnitsQty > 0 ||
       line.unitCost > 0 ||
       line.lineTotal > 0 ||
+      line.expiryDate.trim() ||
+      line.supplierLotCode.trim() ||
       (line.totalUnits ?? 0) > 0,
   );
 }
@@ -828,6 +836,9 @@ export function PurchaseForm({
     unitCostSource: line.unitCostSource,
     lineTotal: line.lineTotal,
     pricingMode: line.pricingMode,
+    expiryDate: line.expiryDate,
+    supplierLotCode: line.supplierLotCode,
+    shortExpiryConfirmed: line.shortExpiryConfirmed,
     receiptLineName: line.receiptLineName,
     matchAction: line.matchAction,
     matchConfidence: line.confidenceScore,
@@ -1068,6 +1079,58 @@ export function PurchaseForm({
     </>
   );
 
+  const renderExpiryFields = (line: PurchaseLine & { product?: ProductOption; totalUnits: number }) => {
+    const today = todayDate();
+    const expiryMs = line.expiryDate ? Date.parse(`${line.expiryDate}T00:00:00Z`) : Number.NaN;
+    const todayMs = Date.parse(`${today}T00:00:00Z`);
+    const daysLeft = Number.isFinite(expiryMs) ? Math.floor((expiryMs - todayMs) / 86400000) : null;
+    const shortDated = daysLeft !== null && daysLeft > 0 && daysLeft <= 30;
+    const expired = daysLeft !== null && daysLeft <= 0;
+    return (
+      <div className="mt-3 grid gap-3 rounded-lg border border-amber-200 bg-amber-50/60 p-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1.4fr]">
+        <FormField label="Expiry date / تاريخ الصلاحية" required>
+          <input
+            type="date"
+            value={line.expiryDate}
+            onChange={(event) => updateLine(line.id, { expiryDate: event.target.value, shortExpiryConfirmed: false })}
+            className="field-input"
+            disabled={line.matchAction === "ignore"}
+          />
+          <p className={`mt-1 text-xs ${expired ? "font-semibold text-rose-700" : shortDated ? "font-semibold text-amber-800" : "text-slate-500"}`}>
+            {!line.expiryDate ? "Required when receiving stock." : expired ? "EXPIRED — cannot be received." : daysLeft !== null ? `${daysLeft} days remaining` : "Check the printed date."}
+          </p>
+        </FormField>
+        <FormField label="Supplier lot / batch (optional)">
+          <input
+            type="text"
+            value={line.supplierLotCode}
+            onChange={(event) => updateLine(line.id, { supplierLotCode: event.target.value })}
+            className="field-input"
+            placeholder="Lot / batch code"
+            maxLength={120}
+            disabled={line.matchAction === "ignore"}
+          />
+        </FormField>
+        <div className="flex items-center">
+          {shortDated ? (
+            <label className="flex items-start gap-2 rounded-lg border border-amber-300 bg-white p-3 text-sm font-medium text-amber-950">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={line.shortExpiryConfirmed}
+                onChange={(event) => updateLine(line.id, { shortExpiryConfirmed: event.target.checked })}
+                disabled={line.matchAction === "ignore"}
+              />
+              <span>Accept short-dated batch ({daysLeft} days left). Snacky OS will prioritize and alert on it.</span>
+            </label>
+          ) : (
+            <p className="text-sm leading-6 text-slate-600">Each line is one expiry batch. If the same product has another expiry date, add another batch line.</p>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const validateBeforeSubmit = (intent: "draft" | "received") => {
     const nextDetailsErrors: typeof detailsErrors = {};
     const nextLineErrors: Record<string, string> = {};
@@ -1101,6 +1164,21 @@ export function PurchaseForm({
       }
       if (line.productId && line.totalUnits <= 0) {
         setLineError(line.id, "Quantity must be greater than zero.");
+      }
+      if (intent === "received" && line.productId && line.totalUnits > 0) {
+        if (!line.expiryDate) {
+          setLineError(line.id, "Expiry date is required before receiving this batch.");
+        } else {
+          const today = todayDate();
+          const expiryMs = Date.parse(`${line.expiryDate}T00:00:00Z`);
+          const todayMs = Date.parse(`${today}T00:00:00Z`);
+          const daysLeft = Number.isFinite(expiryMs) ? Math.floor((expiryMs - todayMs) / 86400000) : -1;
+          if (daysLeft <= 0) {
+            setLineError(line.id, "Expired stock cannot be received.");
+          } else if (daysLeft <= 30 && !line.shortExpiryConfirmed) {
+            setLineError(line.id, `This batch expires in ${daysLeft} day${daysLeft === 1 ? "" : "s"}. Confirm short-dated stock before receiving.`);
+          }
+        }
       }
       if (line.productId && line.totalUnits > 0) {
         const costDecision = resolvePurchaseUnitCost({
@@ -1147,6 +1225,22 @@ export function PurchaseForm({
       return "message" in costDecision;
     });
     if (invalidCost) return "Fix the highlighted unit cost before saving.";
+    if (intent === "received") {
+      const missingExpiry = included.find((line) => !line.expiryDate);
+      if (missingExpiry) return "Enter an expiry date for every received batch.";
+      const todayMs = Date.parse(`${todayDate()}T00:00:00Z`);
+      const expired = included.find((line) => {
+        const expiryMs = Date.parse(`${line.expiryDate}T00:00:00Z`);
+        return !Number.isFinite(expiryMs) || expiryMs <= todayMs;
+      });
+      if (expired) return "Expired stock cannot be received.";
+      const unconfirmedShort = included.find((line) => {
+        const expiryMs = Date.parse(`${line.expiryDate}T00:00:00Z`);
+        const daysLeft = Math.floor((expiryMs - todayMs) / 86400000);
+        return daysLeft <= 30 && !line.shortExpiryConfirmed;
+      });
+      if (unconfirmedShort) return "Confirm every batch with 30 days or less remaining before receiving.";
+    }
     return "";
   };
 
@@ -1433,6 +1527,28 @@ export function PurchaseForm({
                   <div className="min-w-0 md:col-span-2 xl:col-span-4 2xl:col-span-1">{renderProductPicker(line)}</div>
                   {renderLineMathFields(line)}
                 </div>
+                {renderExpiryFields(line)}
+                {line.productId ? (
+                  <button
+                    type="button"
+                    className="mt-3 text-sm font-semibold text-amber-800 underline underline-offset-2"
+                    onClick={() => {
+                      const next = newLine({
+                        productId: line.productId,
+                        unitsPerBox: line.unitsPerBox,
+                        unitCost: line.unitCost,
+                        unitCostBlank: line.unitCostBlank,
+                        unitCostZeroConfirmed: line.unitCostZeroConfirmed,
+                        unitCostSource: line.unitCostSource,
+                        pricingMode: line.pricingMode,
+                      });
+                      setLines((current) => [...current, next]);
+                      setSearchByLine((current) => ({ ...current, [next.id]: line.product?.name ?? current[line.id] ?? "" }));
+                    }}
+                  >
+                    + Add another expiry batch for this product
+                  </button>
+                ) : null}
               </div>
             ))}
           </div>
