@@ -1912,6 +1912,8 @@ function InventoryAdjustmentForm({
   machineId: string;
   machineProducts: ProductOption[];
   allProducts: ProductOption[];
+  onRequestAllProducts?: () => Promise<ProductOption[]>;
+  allProductsLoading?: boolean;
   reasonOptions: string[];
   submitLabel: string;
   onSaved: (adjustment: InventoryAdjustmentRow) => void;
