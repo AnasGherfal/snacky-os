@@ -42,6 +42,30 @@ export const companyRoleLabels: Record<CompanyRole, [string, string]> = {
   purchasing: ['Purchasing', 'المشتريات'],
   finance: ['Finance', 'المالية'],
 };
+
+export const companyDocumentCategories = [
+  'brand',
+  'company',
+  'sales',
+  'templates',
+  'machines',
+  'marketing',
+  'other',
+] as const;
+export type CompanyDocumentCategory =
+  (typeof companyDocumentCategories)[number];
+export const companyDocumentCategoryLabels: Record<
+  CompanyDocumentCategory,
+  [string, string]
+> = {
+  brand: ['Brand Kit', 'الهوية'],
+  company: ['Company', 'الشركة'],
+  sales: ['Sales & Proposals', 'العروض والمبيعات'],
+  templates: ['Templates & Agreements', 'القوالب والاتفاقيات'],
+  machines: ['Machines & Technical', 'الماكينات والفني'],
+  marketing: ['Marketing', 'التسويق'],
+  other: ['Other', 'أخرى'],
+};
 export const companyWorkPaths = [
   '/my-work',
   '/my-work/team',
@@ -80,6 +104,8 @@ export type CompanyContent = {
   external_shareable: boolean;
   requires_ack: boolean;
   notify: boolean;
+  /** Optional for legacy records. New document drafts always persist a category. */
+  document_category?: CompanyDocumentCategory;
 };
 export type CompanyItem = {
   has_unpublished_changes?: boolean;
@@ -154,8 +180,37 @@ export function emptyCompanyContent(
     external_shareable: false,
     requires_ack: false,
     notify: false,
+    document_category: 'other',
   };
 }
+export function companyDocumentCategory(
+  data: Pick<
+    CompanyContent,
+    'section' | 'title_en' | 'title_ar' | 'document_category'
+  >,
+): CompanyDocumentCategory {
+  if (data.section !== 'documents') return 'other';
+  if (
+    data.document_category &&
+    companyDocumentCategories.includes(data.document_category)
+  )
+    return data.document_category;
+
+  // Keep legacy documents useful without mutating immutable published versions.
+  const title = `${data.title_en} ${data.title_ar}`.toLowerCase();
+  if (/logo|brand|identity|شعار|هوية|font|color|qr/.test(title)) return 'brand';
+  if (/company profile|company presentation|about snacky|ملف تعريفي|عرض الشركة/.test(title))
+    return 'company';
+  if (/proposal|commercial offer|مقترح|عرض تجاري/.test(title)) return 'sales';
+  if (/agreement|contract|template|اتفاق|عقد|قالب/.test(title))
+    return 'templates';
+  if (/machine|technical|manual|ماكينة|آلات|فني|دليل فني/.test(title))
+    return 'machines';
+  if (/brochure|marketing|social|بروشور|تسويق|سوشيال/.test(title))
+    return 'marketing';
+  return 'other';
+}
+
 export function companyMasterUrl(raw: string): string {
   const text = raw.trim();
   if (!text) return '';
@@ -204,6 +259,21 @@ export function validateCompanyContent(input: unknown): CompanyContent {
   if (!['start', 'guides', 'documents', 'people'].includes(String(raw.section)))
     throw new Error('Choose a section.');
   out.section = raw.section as CompanyContent['section'];
+  const requestedCategory =
+    typeof raw.document_category === 'string' ? raw.document_category : '';
+  if (
+    requestedCategory &&
+    !companyDocumentCategories.includes(
+      requestedCategory as CompanyDocumentCategory,
+    )
+  )
+    throw new Error('Choose a valid document category.');
+  out.document_category =
+    out.section === 'documents'
+      ? requestedCategory
+        ? (requestedCategory as CompanyDocumentCategory)
+        : companyDocumentCategory(out)
+      : 'other';
   if (
     !Array.isArray(raw.audience) ||
     !raw.audience.length ||
