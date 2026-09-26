@@ -14,14 +14,23 @@ test("saving the final machine photo updates persisted state without reloading t
   assert.doesNotMatch(source, /window\.location\.reload\(\)/);
 });
 
-test("manual sales use the full supplied product catalog", () => {
+test("manual sales keep full-catalog access without forcing it into every stop payload", () => {
   const source = read("src/components/operator/ManualRouteSalesSection.tsx");
   const api = read("src/app/api/operator/routes/[id]/stops/[stopId]/route.ts");
-  assert.match(source, /const productChoices = allProducts;/);
+  const page = read("src/app/operator/routes/[id]/stops/[stopId]/page.tsx");
+
+  assert.match(source, /const productChoices = allProducts\.length \? allProducts : preferredProducts/);
+  assert.match(source, /onRequestAllProducts/);
+  assert.match(source, /void ensureFullProductCatalog\(\)/);
   assert.doesNotMatch(source, /\.slice\(0,\s*24\)/);
-  assert.match(api, /from\("products"\)/);
-  assert.match(api, /\.eq\("active", true\)/);
+
+  assert.match(api, /const catalogOnly = new URL\(request\.url\)\.searchParams\.get\("catalog"\) === "all"/);
+  assert.match(api, /if \(catalogOnly\) \{[\s\S]*\.from\("products"\)[\s\S]*\.eq\("active", true\)/);
+  assert.match(api, /productOptions: initialProductOptions/);
   assert.match(api, /manualSaleProductOptions/);
+
+  assert.match(page, /\?catalog=all/);
+  assert.match(page, /onRequestAllProducts=\{loadFullProductCatalog\}/);
 });
 
 test("stop inventory is committed once and an explicit zero stays in route custody", () => {
