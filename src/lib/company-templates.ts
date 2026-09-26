@@ -235,7 +235,7 @@ export const companyTemplates: Template[] = [
     ar: 'جمع صندوق النقد وتسليمه وعدّه',
     section: 'guides',
     roles: ['owner', 'admin', 'supervisor', 'operator', 'warehouse', 'purchasing', 'finance'],
-    path: '/cash-handling',
+    path: '',
     body_en:
       'Purpose\nKeep physical custody of machine cash traceable from removal through counting without creating a second Finance ledger.\n\nRemoval\nRecord the sealed cash removal through the existing cash collection screen. Use the real box/seal reference. Each removal is a new collection record even if the physical box is reused later.\n\nUnattended storage drop-off\nIf the collector leaves the sealed box in secure storage, record the exact secure location and required photo. This means the box was deposited; it does not mean another employee received it.\n\nPickup\nThe assigned cash coordinator verifies the physical box reference and seal, then records pickup. Pickup changes custody only. It does not post money to Finance.\n\nCounting\nThe authorized coordinator records one physical total and where the counted money is kept. Zero is valid for an empty box. Never subtract purchases, expenses or personal advances from the physical cash total. The supported count flow creates the Finance link; VMS reconciliation can happen separately.\n\nDirect custody\nIf the authorized coordinator personally collected the box, use the direct-custody path. Do not invent a storage drop-off or witness.\n\nImportant\nPosted to Finance does not mean banked and does not prove the owner physically received the money. Seal/reference problems remain visible for owner review.',
     body_ar:
