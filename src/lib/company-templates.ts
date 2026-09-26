@@ -98,6 +98,126 @@ export const companyTemplates: Template[] = [
       'استخدم إجراءات المسارات والاستلام المسندة إليك. سجّل المخزون والكميات والنقد والإثباتات المطلوبة في الشاشات الحالية؛ هذا الدليل لا يستبدل فحوصاتها.\n\nعند إسناد إجراء يخص عميلاً، سجّل ما وجدته وما فعلته والنتيجة. صعّد المشاكل غير المحلولة ووثّق نتيجة أي مكالمة عاجلة. لا تغلق شكوى العميل نيابة عن موظف العلاقات.\n\nيجب ألا تمنع قراءة دليل معلقة أو مكتبة غير متاحة تنفيذ العمل التشغيلي العاجل.',
   },
   {
+    key: 'brand-guidelines',
+    en: 'Snacky brand guidelines',
+    ar: 'دليل هوية سناكي',
+    section: 'documents',
+    roles: staff,
+    path: '',
+    body_en:
+      'Library category: Brand\n\nAttach the current approved Snacky brand-guidelines file. Use this entry as the single reference for logo use, colors, typography, spacing, backgrounds and approved brand applications.\n\nBefore publication\nConfirm that the attached file matches the current Snacky identity. Do not publish draft logo experiments or obsolete artwork. Mark external sharing only if management approves sharing the file outside Snacky.',
+    body_ar:
+      'تصنيف المكتبة: الهوية\n\nأرفق ملف دليل هوية سناكي المعتمد حالياً. يكون هذا السجل المرجع الواحد لاستخدام الشعار والألوان والخطوط والمسافات والخلفيات وتطبيقات الهوية المعتمدة.\n\nقبل النشر\nتأكد أن الملف المرفق يطابق هوية سناكي الحالية. لا تنشر تجارب شعارات أو ملفات قديمة. فعّل المشاركة الخارجية فقط إذا اعتمدت الإدارة مشاركة الملف خارج سناكي.',
+  },
+  {
+    key: 'logo-pack',
+    en: 'Snacky logo pack',
+    ar: 'حزمة شعارات سناكي',
+    section: 'documents',
+    roles: staff,
+    path: '',
+    body_en:
+      'Library category: Brand\n\nAttach the approved logo asset for this entry and name the exact variant in the title, for example primary, white or transparent. Create separate entries when the files have different approved uses.\n\nUse only the current published version. Do not copy logos from old proposals, chats or screenshots.',
+    body_ar:
+      'تصنيف المكتبة: الهوية\n\nأرفق ملف الشعار المعتمد لهذا السجل واذكر النسخة بوضوح في العنوان مثل الأساسي أو الأبيض أو الشفاف. أنشئ سجلاً منفصلاً إذا كان لكل ملف استخدام معتمد مختلف.\n\nاستخدم النسخة المنشورة الحالية فقط. لا تنسخ الشعارات من عروض قديمة أو محادثات أو لقطات شاشة.',
+  },
+  {
+    key: 'company-profile',
+    en: 'Snacky company profile',
+    ar: 'الملف التعريفي بسناكي',
+    section: 'documents',
+    roles: ['owner', 'admin', 'supervisor', 'crm'],
+    path: '/locations-pipeline',
+    body_en:
+      'Library category: Company\n\nAttach the current approved company profile used with prospective locations and partners. This entry is the reusable master reference; the exact file actually sent to a lead should still be attached to that lead or business record when required.\n\nReview contact details, current services, location examples and branding before publication.',
+    body_ar:
+      'تصنيف المكتبة: الشركة\n\nأرفق الملف التعريفي الحالي المعتمد للاستخدام مع المواقع المحتملة والشركاء. هذا السجل هو المرجع القابل لإعادة الاستخدام؛ أما النسخة التي أُرسلت فعلياً لجهة معينة فتبقى مرفقة بسجل تلك الجهة عند الحاجة.\n\nراجع بيانات التواصل والخدمات الحالية وأمثلة المواقع والهوية قبل النشر.',
+  },
+  {
+    key: 'brochure',
+    en: 'Snacky brochure — approved print version',
+    ar: 'بروشور سناكي — النسخة المعتمدة للطباعة',
+    section: 'documents',
+    roles: ['owner', 'admin', 'supervisor', 'crm'],
+    path: '/locations-pipeline',
+    body_en:
+      'Library category: Marketing\n\nAttach the current print-ready Snacky brochure. The approved file should use sharp real/vector text and separate high-resolution logos and QR assets rather than baked-in low-quality image text.\n\nOnly mark external sharing when this exact version is approved for customers and locations.',
+    body_ar:
+      'تصنيف المكتبة: التسويق\n\nأرفق بروشور سناكي الحالي الجاهز للطباعة. يجب أن تستخدم النسخة المعتمدة نصوصاً حقيقية/متجهية واضحة وشعارات ورموز QR عالية الدقة كعناصر مستقلة، لا نصوصاً ضعيفة مدمجة داخل صورة.\n\nفعّل المشاركة الخارجية فقط عندما تكون هذه النسخة نفسها معتمدة للإرسال للعملاء والمواقع.',
+  },
+  {
+    key: 'machine-catalog',
+    en: 'Snacky machine catalog',
+    ar: 'كتالوج ماكينات سناكي',
+    section: 'documents',
+    roles: ['owner', 'admin', 'supervisor', 'crm'],
+    path: '/locations-pipeline',
+    body_en:
+      'Library category: Marketing\n\nAttach the current approved machine catalog. Keep customer-facing machine options, visuals and feature descriptions current. Do not expose supplier costs, private sourcing details or obsolete pricing in a file intended for external sharing.',
+    body_ar:
+      'تصنيف المكتبة: التسويق\n\nأرفق كتالوج الماكينات الحالي المعتمد. حافظ على خيارات الماكينات والصور ووصف المزايا الموجهة للعملاء محدثة. لا تعرض تكاليف المورد أو تفاصيل التوريد الخاصة أو أسعاراً قديمة داخل ملف مخصص للمشاركة الخارجية.',
+  },
+  {
+    key: 'proposal-template',
+    en: 'General location proposal template',
+    ar: 'قالب عرض عام للمواقع',
+    section: 'documents',
+    roles: ['owner', 'admin', 'supervisor', 'crm'],
+    path: '/locations-pipeline',
+    body_en:
+      'Library category: Templates\n\nAttach the approved reusable proposal master. Commercial terms must be reviewed for the specific location before sending. Save the exact final proposal sent to a customer on that customer or lead record; do not rely only on this changing master.',
+    body_ar:
+      'تصنيف المكتبة: القوالب\n\nأرفق أصل العرض العام المعتمد والقابل لإعادة الاستخدام. يجب مراجعة الشروط التجارية لكل موقع قبل الإرسال. احفظ النسخة النهائية التي أُرسلت فعلياً للعميل في سجل العميل أو الجهة؛ لا تعتمد فقط على هذا الأصل المتغير.',
+  },
+  {
+    key: 'agreement-template',
+    en: 'Location agreement template',
+    ar: 'قالب اتفاقية موقع',
+    section: 'documents',
+    roles: ['owner', 'admin', 'supervisor', 'crm'],
+    path: '/relationships',
+    body_en:
+      'Library category: Templates\n\nAttach the approved blank location-agreement template. This general library entry is for the reusable master only. Signed agreements belong on the specific location record and should not be stored as general company-library material.',
+    body_ar:
+      'تصنيف المكتبة: القوالب\n\nأرفق قالب اتفاقية الموقع الفارغ المعتمد. هذا السجل العام مخصص للأصل القابل لإعادة الاستخدام فقط. الاتفاقيات الموقعة تُحفظ في سجل الموقع المحدد ولا توضع كمادة عامة في مكتبة الشركة.',
+  },
+  {
+    key: 'receipt-delivery-templates',
+    en: 'Receipt and delivery form templates',
+    ar: 'قوالب الإيصالات ونماذج التسليم',
+    section: 'documents',
+    roles: ['owner', 'admin', 'finance', 'supervisor'],
+    path: '/finance',
+    body_en:
+      'Library category: Templates\n\nAttach the approved blank receipt or delivery-form master and identify the exact document type in the title. Issued receipts and completed delivery forms belong to the relevant transaction or business record.',
+    body_ar:
+      'تصنيف المكتبة: القوالب\n\nأرفق الأصل الفارغ المعتمد للإيصال أو نموذج التسليم وحدد نوع المستند بوضوح في العنوان. الإيصالات الصادرة ونماذج التسليم المكتملة تُحفظ في سجل العملية أو المعاملة ذات الصلة.',
+  },
+  {
+    key: 'machine-technical',
+    en: 'Machine manuals and technical references',
+    ar: 'أدلة الماكينات والمراجع الفنية',
+    section: 'documents',
+    roles: ['owner', 'admin', 'supervisor', 'operator', 'warehouse'],
+    path: '/operator/routes',
+    body_en:
+      'Library category: Technical\n\nAttach one approved machine manual or technical reference per entry and name the machine or component clearly. Keep troubleshooting references separate from operational records; actual incidents and repairs remain on their issue or machine records.',
+    body_ar:
+      'تصنيف المكتبة: الفني\n\nأرفق دليلاً واحداً معتمداً للماكينة أو مرجعاً فنياً في كل سجل واذكر الماكينة أو القطعة بوضوح. افصل مراجع استكشاف الأعطال عن السجلات التشغيلية؛ الأعطال والإصلاحات الفعلية تبقى في سجلات المشكلة أو الماكينة.',
+  },
+  {
+    key: 'marketing-assets',
+    en: 'Approved marketing assets',
+    ar: 'مواد التسويق المعتمدة',
+    section: 'documents',
+    roles: ['owner', 'admin', 'supervisor', 'crm'],
+    path: '',
+    body_en:
+      'Library category: Marketing\n\nUse this type of entry for approved reusable social assets, banners, posters, instruction stickers and other customer-facing brand material. Use a clear title for each asset instead of uploading a mixed unnamed bundle.',
+    body_ar:
+      'تصنيف المكتبة: التسويق\n\nاستخدم هذا النوع من السجلات للمواد الاجتماعية واللافتات والملصقات وملصقات التعليمات وغيرها من مواد الهوية الموجهة للعملاء بعد اعتمادها. استخدم عنواناً واضحاً لكل مادة بدلاً من رفع حزمة مختلطة غير مسماة.',
+  },
+  {
     key: 'materials',
     en: 'Use approved documents and brand assets',
     ar: 'استخدام الوثائق ومواد الهوية المعتمدة',
