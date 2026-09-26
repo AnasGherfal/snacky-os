@@ -274,24 +274,50 @@ export async function CompanyHub({
       />
       {section === 'documents' && !record && !isNew ? (
         <>
-          <section className="surface-card flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <section className="surface-card space-y-4">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
-                {tr('Approved profile', 'ملف معتمد')}
+              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                {tr('Ready to use', 'جاهز للاستخدام')}
               </p>
               <h2 className="mt-1 text-lg font-semibold">
-                {tr('Snacky Company Profile', 'الملف التعريفي بسناكي')}
+                {tr('Current Snacky brand resources', 'مواد هوية سناكي الحالية')}
               </h2>
               <p className="mt-1 text-sm text-slate-600">
                 {tr(
-                  'Open the approved presentation reference used with prospective locations.',
-                  'افتح المرجع التعريفي المعتمد المستخدم مع الجهات المحتملة.',
+                  'Use these current resources first. The versioned library below remains the place for controlled documents and future replacements.',
+                  'استخدم هذه المواد الحالية أولاً. تبقى المكتبة ذات النسخ أدناه مكان المستندات الخاضعة للتحكم والاستبدالات القادمة.',
                 )}
               </p>
             </div>
-            <Link className="btn-primary shrink-0" href="/company/profile">
-              {tr('Open company profile', 'فتح الملف التعريفي')}
-            </Link>
+            <div className="grid gap-3 md:grid-cols-3">
+              <article className="rounded-xl border border-slate-200 p-4">
+                <div className="flex h-24 items-center justify-center rounded-lg bg-[#fff8f2] p-3">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/brand/snacky-logo.png" alt="Snacky" className="max-h-20 max-w-full object-contain" />
+                </div>
+                <h3 className="mt-3 font-semibold">{tr('Official Snacky Logo', 'شعار سناكي الرسمي')}</h3>
+                <p className="mt-1 text-sm text-slate-600">{tr('Current logo artwork used by Snacky OS.','ملف الشعار الحالي المستخدم في نظام سناكي.')}</p>
+                <a className="btn-secondary mt-3 inline-flex" href="/brand/snacky-logo.png" download>{tr('Download logo','تنزيل الشعار')}</a>
+              </article>
+              <article className="rounded-xl border border-slate-200 p-4">
+                <div className="rounded-lg bg-slate-950 p-4 text-white">
+                  <span className="text-xs font-semibold text-orange-300">SNACKY</span>
+                  <p className="mt-2 text-lg font-semibold">{tr('Company Profile','الملف التعريفي')}</p>
+                </div>
+                <h3 className="mt-3 font-semibold">{tr('Snacky Company Profile', 'الملف التعريفي بسناكي')}</h3>
+                <p className="mt-1 text-sm text-slate-600">{tr('Approved internal reference for prospective locations. Open it and print or save as PDF.','المرجع الداخلي المعتمد للجهات المحتملة. افتحه ويمكن طباعته أو حفظه PDF.')}</p>
+                <Link className="btn-primary mt-3 inline-flex" href="/company/profile">{tr('Open profile','فتح الملف')}</Link>
+              </article>
+              <article className="rounded-xl border border-slate-200 p-4">
+                <div className="rounded-lg border border-orange-100 bg-orange-50 p-4">
+                  <span className="text-xs font-semibold text-[#3f6f3f]">{tr('BRAND USE','استخدام الهوية')}</span>
+                  <p className="mt-2 text-lg font-semibold text-slate-950">{tr('Quick Brand Guide','دليل الهوية السريع')}</p>
+                </div>
+                <h3 className="mt-3 font-semibold">{tr('Snacky Quick Brand Guide', 'دليل سناكي السريع للهوية')}</h3>
+                <p className="mt-1 text-sm text-slate-600">{tr('Logo, colors, RTL/LTR and production rules. Open it and print or save as PDF.','الشعار والألوان وقواعد RTL/LTR والإنتاج. افتحه ويمكن طباعته أو حفظه PDF.')}</p>
+                <Link className="btn-secondary mt-3 inline-flex" href="/company/brand-guide">{tr('Open guide','فتح الدليل')}</Link>
+              </article>
+            </div>
           </section>
 
           <section className="surface-card space-y-4">
