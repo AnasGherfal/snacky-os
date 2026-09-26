@@ -35,6 +35,54 @@ import { companyTemplates, companyTemplate } from '@/lib/company-templates';
 type Params = Record<string, string | string[] | undefined>;
 const value = (params: Params, key: string) =>
   typeof params[key] === 'string' ? String(params[key]) : '';
+
+const documentLibraryCategories = [
+  {
+    key: 'brand',
+    en: 'Brand',
+    ar: 'الهوية',
+    descriptionEn: 'Logos, brand guidelines and approved visual assets.',
+    descriptionAr: 'الشعارات ودليل الهوية والمواد البصرية المعتمدة.',
+    query: 'Library category: Brand',
+    template: 'brand-guidelines',
+  },
+  {
+    key: 'company',
+    en: 'Company',
+    ar: 'الشركة',
+    descriptionEn: 'Company profile and reusable corporate materials.',
+    descriptionAr: 'الملف التعريفي والمواد المؤسسية القابلة لإعادة الاستخدام.',
+    query: 'Library category: Company',
+    template: 'company-profile',
+  },
+  {
+    key: 'marketing',
+    en: 'Marketing & Sales',
+    ar: 'التسويق والمبيعات',
+    descriptionEn: 'Brochures, catalogs and approved customer-facing assets.',
+    descriptionAr: 'البروشورات والكتالوجات والمواد المعتمدة الموجهة للعملاء.',
+    query: 'Library category: Marketing',
+    template: 'brochure',
+  },
+  {
+    key: 'templates',
+    en: 'Templates & Forms',
+    ar: 'القوالب والنماذج',
+    descriptionEn: 'Reusable proposals, agreements, receipts and delivery forms.',
+    descriptionAr: 'قوالب العروض والاتفاقيات والإيصالات ونماذج التسليم.',
+    query: 'Library category: Templates',
+    template: 'proposal-template',
+  },
+  {
+    key: 'technical',
+    en: 'Machines & Technical',
+    ar: 'الماكينات والفني',
+    descriptionEn: 'Machine manuals and approved technical references.',
+    descriptionAr: 'أدلة الماكينات والمراجع الفنية المعتمدة.',
+    query: 'Library category: Technical',
+    template: 'machine-technical',
+  },
+] as const;
 export async function CompanyHub({
   parts = [],
   searchParams = {},
@@ -225,14 +273,108 @@ export async function CompanyHub({
         }
       />
       {section === 'documents' && !record && !isNew ? (
-        <section className="surface-card flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">{tr('Approved profile','ملف معتمد')}</p>
-            <h2 className="mt-1 text-lg font-semibold">{tr('Snacky Company Profile','الملف التعريفي بسناكي')}</h2>
-            <p className="mt-1 text-sm text-slate-600">{tr('Open the approved presentation reference used with prospective locations.','افتح المرجع التعريفي المعتمد المستخدم مع الجهات المحتملة.')}</p>
-          </div>
-          <Link className="btn-primary shrink-0" href="/company/profile">{tr('Open company profile','فتح الملف التعريفي')}</Link>
-        </section>
+        <>
+          <section className="surface-card flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+                {tr('Approved profile', 'ملف معتمد')}
+              </p>
+              <h2 className="mt-1 text-lg font-semibold">
+                {tr('Snacky Company Profile', 'الملف التعريفي بسناكي')}
+              </h2>
+              <p className="mt-1 text-sm text-slate-600">
+                {tr(
+                  'Open the approved presentation reference used with prospective locations.',
+                  'افتح المرجع التعريفي المعتمد المستخدم مع الجهات المحتملة.',
+                )}
+              </p>
+            </div>
+            <Link className="btn-primary shrink-0" href="/company/profile">
+              {tr('Open company profile', 'فتح الملف التعريفي')}
+            </Link>
+          </section>
+
+          <section className="surface-card space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold">
+                {tr('Library categories', 'تصنيفات المكتبة')}
+              </h2>
+              <p className="mt-1 text-sm text-slate-600">
+                {tr(
+                  'Use the published library instead of old chat attachments. Each item keeps its owner, audience and version history.',
+                  'استخدم المكتبة المنشورة بدلاً من مرفقات المحادثات القديمة. يحتفظ كل عنصر بمسؤوله وصلاحياته وسجل نسخه.',
+                )}
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {documentLibraryCategories.map((category) => (
+                <article
+                  key={category.key}
+                  className="rounded-xl border border-slate-200 p-4"
+                >
+                  <h3 className="font-semibold">
+                    {ar ? category.ar : category.en}
+                  </h3>
+                  <p className="mt-1 min-h-10 text-sm text-slate-600">
+                    {ar ? category.descriptionAr : category.descriptionEn}
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Link
+                      className="btn-secondary"
+                      href={`/company/documents?q=${encodeURIComponent(category.query)}`}
+                    >
+                      {tr('Browse', 'عرض')}
+                    </Link>
+                    {manager ? (
+                      <Link
+                        className="btn-secondary"
+                        href={`/company/new?template=${category.template}`}
+                      >
+                        + {tr('Add starter', 'إضافة قالب')}
+                      </Link>
+                    ) : null}
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          {manager ? (
+            <section className="rounded-xl border border-sky-200 bg-sky-50 p-4">
+              <h2 className="font-semibold">
+                {tr('Recommended first library set', 'المجموعة الأولى المقترحة للمكتبة')}
+              </h2>
+              <p className="mt-1 text-sm text-slate-700">
+                {tr(
+                  'Create only the materials you actually use, attach the real approved files, then publish after checking the owner, audience and review date.',
+                  'أنشئ فقط المواد المستخدمة فعلياً، وأرفق الملفات الحقيقية المعتمدة، ثم انشر بعد مراجعة المسؤول والأدوار وتاريخ المراجعة.',
+                )}
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {[
+                  ['brand-guidelines', 'Brand guide', 'دليل الهوية'],
+                  ['logo-pack', 'Logo pack', 'حزمة الشعارات'],
+                  ['company-profile', 'Company profile', 'الملف التعريفي'],
+                  ['brochure', 'Brochure', 'البروشور'],
+                  ['machine-catalog', 'Machine catalog', 'كتالوج الماكينات'],
+                  ['proposal-template', 'Proposal template', 'قالب عرض'],
+                  ['agreement-template', 'Agreement template', 'قالب اتفاقية'],
+                  ['receipt-delivery-templates', 'Receipt / delivery forms', 'الإيصالات / التسليم'],
+                  ['machine-technical', 'Technical manuals', 'الأدلة الفنية'],
+                  ['marketing-assets', 'Marketing assets', 'مواد التسويق'],
+                ].map(([template, en, arabic]) => (
+                  <Link
+                    key={template}
+                    className="rounded-full border border-sky-300 bg-white px-3 py-2 text-sm font-medium hover:bg-sky-100"
+                    href={`/company/new?template=${template}`}
+                  >
+                    + {tr(en, arabic)}
+                  </Link>
+                ))}
+              </div>
+            </section>
+          ) : null}
+        </>
       ) : null}
       {section === 'start' && !record && !isNew ? (
         <>
