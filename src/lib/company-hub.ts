@@ -272,7 +272,7 @@ export function validateCompanyContent(input: unknown): CompanyContent {
     out.section === 'documents'
       ? requestedCategory
         ? (requestedCategory as CompanyDocumentCategory)
-        : companyDocumentCategory(out)
+        : companyDocumentCategory({ ...out, document_category: undefined })
       : 'other';
   if (
     !Array.isArray(raw.audience) ||
