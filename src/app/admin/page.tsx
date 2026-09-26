@@ -6,6 +6,11 @@ import { isOwnerAdminRole } from "@/lib/authz";
 
 const adminLinks = [
   {
+    title: "Owner Operations / متابعة العمليات",
+    href: "/admin/operations",
+    description: "Read-only follow-up for cash handovers, buying, storage counts, customer issues and team notification readiness.",
+  },
+  {
     title: "Admin Tools",
     href: "/admin/tools",
     description:

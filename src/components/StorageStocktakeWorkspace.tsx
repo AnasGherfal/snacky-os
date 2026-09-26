@@ -21,17 +21,17 @@ function statusLabel(status:string,ar:boolean){
 }
 function signed(value:number|null|undefined){const n=Number(value??0);return n>0?'+'+n:String(n);}
 
-export function StorageStocktakeWorkspace({userId}:{userId:string}){
+export function StorageStocktakeWorkspace({userId,initialId=null}:{userId:string;initialId?:string|null}){
  const hydrated=useSyncExternalStore(subscribe,clientSnapshot,serverSnapshot);
  const {locale}=useLanguage();
  if(!hydrated)return <p role="status">{locale==='ar'?'جارٍ تحميل جرد المخزن…':'Loading storage count…'}</p>;
- return <StorageStocktakeClient userId={userId}/>;
+ return <StorageStocktakeClient key={initialId??'list'} userId={userId} initialId={initialId}/>;
 }
 
-function StorageStocktakeClient({userId}:{userId:string}){
+function StorageStocktakeClient({userId,initialId}:{userId:string;initialId:string|null}){
  const {locale}=useLanguage(),ar=locale==='ar';
  const [workspace,setWorkspace]=useState<StocktakeWorkspace|null>(null);
- const [selected,setSelected]=useState<string|null>(null);
+ const [selected,setSelected]=useState<string|null>(initialId);
  const [loading,setLoading]=useState(true);
  const [error,setError]=useState('');
  const key='snacky:stocktake:pending:'+userId;
