@@ -57,6 +57,8 @@ const sectionTitles = {
   account: { en: "Account", ar: "الحساب" },
 } satisfies Record<string, LocalizedText>;
 
+const personalWorkItem: NavItem = { label: { en: "My Work Today", ar: "مهامي اليوم" }, href: "/my-day", icon: ClipboardList, exact: true };
+
 const dashboardItem: NavItem = {
   labelKey: "dashboard",
   href: "/dashboard",
@@ -174,14 +176,14 @@ const buyingListsItem: NavItem = { label: {en:"My buying lists", ar:"قوائم 
 const companyItem: NavItem = { label: { en: "Company", ar: "الشركة" }, href: "/company", icon: ClipboardList, moduleKey: "company" };
 
 const ownerAdminNav: NavSection[] = [
-  { items: [dashboardItem] },
+  { items: [dashboardItem, personalWorkItem] },
   { title: sectionTitles.work, items: [operationsItem, cashCustodyItem, cashHandlingItem, stockItem, machinesItem, crmItem, ...(companyHubEnabled ? [companyItem] : [])] },
   { title: sectionTitles.business, items: [financeItem, reportsItem] },
   { title: sectionTitles.system, items: [adminItem] },
 ];
 
 const supervisorNav: NavSection[] = [
-  { items: [dashboardItem] },
+  { items: [dashboardItem, personalWorkItem] },
   { title: sectionTitles.work, items: [operationsItem, cashCustodyItem, cashHandlingItem, stockItem, machinesItem, crmItem, ...(companyHubEnabled ? [companyItem] : [])] },
   { title: sectionTitles.business, items: [financeItem] },
 ];
@@ -223,7 +225,7 @@ function sectionsForRoles(role: AppRole, roles?: AppRole[] | null): NavSection[]
   const effectiveRoles = roles?.length ? roles : [role];
   if (effectiveRoles.length === 1 && effectiveRoles[0] === "investor") return investorNav;
 
-  const primary: NavItem[] = [];
+  const primary: NavItem[] = hasAnyRole(context, ["operator", "warehouse", "purchasing"]) ? [personalWorkItem] : [];
   const work: NavItem[] = [];
   const business: NavItem[] = [];
 
