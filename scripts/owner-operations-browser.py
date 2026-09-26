@@ -45,8 +45,17 @@ def main():
                 expect(page.locator('#ops-cash a[href="/cash-collections/'+uid(3)+'"]')).to_have_count(1)
                 for width in (390,320):
                     page.set_viewport_size({'width':width,'height':844})
+                    root.locator('header').scroll_into_view_if_needed()
                     assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+2'),f'Overflow {ar=} {width=}'
-                    root.screenshot(path=str(OUT/f'overview-{("ar" if ar else "en")}-{width}.png'))
+                    page.screenshot(path=str(OUT/f'overview-{("ar" if ar else "en")}-{width}.png'))
+                    # The app uses a scrolling body/shell. A tall element capture
+                    # clips beyond that ancestor; inspect actual scrolled views.
+                    for section in ('cash','buying','stocktakes','issues','notifications'):
+                        panel=page.locator('#ops-'+section)
+                        panel.locator('h2').scroll_into_view_if_needed()
+                        expect(panel.locator('h2')).to_be_in_viewport()
+                        assert panel.evaluate('(el)=>Array.from(el.querySelectorAll("li,a,button,p")).every(x=>{const r=x.getBoundingClientRect();return r.left>=-2&&r.right<=innerWidth+2})'),f'Clipped row: {section} {ar=} {width=}'
+                        page.screenshot(path=str(OUT/f'{section}-{("ar" if ar else "en")}-{width}.png'))
                 assert page.locator('button').filter(has_text='اعتماد وتسجيل الفرق').count()==0
             page.goto(BASE+'?failure=1',wait_until='networkidle')
             page.get_by_role('button',name='Refresh overview',exact=True).click()
@@ -70,7 +79,7 @@ def main():
             expect(page.locator('#ops-cash li')).to_have_count(25)
             assert not errors,errors
             assert not writes,writes
-            (OUT/'result.json').write_text(json.dumps({'status':'passed','scenarios':['English/Arabic 390/320','unknown vs zero','legacy cash separate','stocktake link','partial refresh failure','retry recovery','25-row pagination','no browser writes'],'browser_errors':errors,'write_requests':writes},indent=2))
+            (OUT/'result.json').write_text(json.dumps({'status':'passed','scenarios':['English/Arabic 390/320','unknown vs zero','legacy cash separate','stocktake link','partial refresh failure','retry recovery','25-row pagination','no browser writes','all five sections visible while scrolling'],'browser_errors':errors,'write_requests':writes},indent=2))
         except Exception:
             page.screenshot(path=str(OUT/'failure.png'),full_page=True)
             (OUT/'failure.html').write_text(page.content())
