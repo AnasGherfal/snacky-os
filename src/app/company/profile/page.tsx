@@ -2,6 +2,7 @@ import Link from 'next/link';
 import {requireCurrentProfileForPath} from '@/lib/auth';
 import {getServerI18n} from '@/lib/i18n/server';
 import {PageHeader} from '@/components/ui';
+import {CompanyPrint} from '@/components/CompanyEditor';
 
 export const dynamic='force-dynamic';
 
@@ -14,11 +15,17 @@ export default async function SnackyCompanyProfilePage(){
  const ar=locale==='ar';
  const tr=(en:string,arabic:string)=>ar?arabic:en;
  const locations=ar?currentLocationsAr:currentLocationsEn;
- return <div className="mx-auto max-w-5xl space-y-6" dir={ar?'rtl':'ltr'}>
+ return <div className="company-resource mx-auto max-w-5xl space-y-6" dir={ar?'rtl':'ltr'}>
+  <style>{`@media print {
+    .app-shell > aside, .app-shell > div > header, .print\\:hidden { display:none !important; }
+    .app-shell, .app-shell > div, .app-shell main, .company-resource { display:block !important; height:auto !important; max-height:none !important; overflow:visible !important; }
+    .company-resource { max-width:none !important; margin:0 !important; }
+    @page { margin: 1.4cm; }
+  }`}</style>
   <PageHeader
    title={tr('Snacky Company Profile','الملف التعريفي بسناكي')}
    subtitle={tr('Approved internal reference for presenting Snacky to prospective locations.','المرجع الداخلي المعتمد لتقديم سناكي للجهات المحتملة.')}
-   action={<Link className="btn-secondary" href="/company/documents">{tr('Back to Documents & Brand','العودة إلى المستندات والهوية')}</Link>}
+   action={<div className="flex flex-wrap gap-2 print:hidden"><CompanyPrint ar={ar}/><Link className="btn-secondary" href="/company/documents">{tr('Back to Documents & Brand','العودة إلى المستندات والهوية')}</Link></div>}
   />
   <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
    <div className="grid gap-6 p-6 sm:p-8 lg:grid-cols-[1.15fr_.85fr] lg:items-center">
