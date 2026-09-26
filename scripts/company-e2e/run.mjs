@@ -207,7 +207,31 @@ try {
     const location = await c('crm', 'lead.convert', lead.id, {}); assert.equal((await c('crm', 'lead.convert', lead.id, {})).id, location.id);
     const issue = await c('crm', 'issue.save', null, { customer_phone: '0000000000', location_id: location.id, description: 'QA vending issue', issue_type: 'product_stuck', status: 'waiting', waiting_on: 'Operator inspection', next_action_date: today });
     const task = await c('crm', 'task.save', null, { kind: 'issue', related_id: issue.id, title: 'QA inspect machine', task_type: 'field_action', assigned_to: accounts.operator.member, due_date: today });
-    w = await read('operator', 'task', task.id); await c('operator', 'task.save', task.id, { version: w.record.data.version, status: 'completed', result: 'QA field action complete' });
+    const dispatch = async (taskRow, action, note) => {
+      const command = { request_id: randomUUID(), task_id: taskRow.id, action, version: taskRow.updated_at, ...(note === undefined ? {} : { note }) };
+      return rpc(accounts.operator.client, 'snacky_issue_dispatch_command_v1', { p_command: command });
+    };
+    const taskRow = async () => {
+      const row = await admin.from('crm_tasks').select('*').eq('id', task.id).single();
+      assert.equal(row.error, null, row.error?.message);
+      return row.data;
+    };
+    let field = await taskRow();
+    await dispatch(field, 'accept');
+    field = await taskRow();
+    await dispatch(field, 'en_route');
+    field = await taskRow();
+    await dispatch(field, 'start');
+    field = await taskRow();
+    const proof = await admin.from('crm_documents').insert({
+      task_id: task.id,
+      object_path: `qa-company-e2e/${randomUUID()}.jpg`,
+      original_name: 'company-e2e-field-proof.jpg',
+      mime_type: 'image/jpeg',
+      uploaded_by: accounts.operator.member,
+    });
+    assert.equal(proof.error, null, proof.error?.message);
+    await dispatch(field, 'fix', 'QA field action complete');
     w = await read('crm', 'issue', issue.id); assert.notEqual(w.record.status, 'resolved'); assert.ok(w.record.data.field_completed_at);
     const excessiveCompensation = await accounts.crm.client.rpc('snacky_crm_command_v1', { p_command_id: randomUUID(), p_action: 'issue.save', p_id: issue.id, p_payload: { version: w.record.data.version, refund_amount_lyd: 11 } });
     assert.ok(excessiveCompensation.error, 'Customer Relations must not approve more than 10 LYD');
