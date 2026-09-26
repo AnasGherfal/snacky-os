@@ -1,0 +1,27 @@
+name: Stocktake notice migration scaffold
+on:
+  push:
+    branches: ['feat/stocktake-notifications-v1']
+    paths: ['.github/workflows/stocktake-notices-scaffold.yml']
+permissions:
+  contents: write
+jobs:
+  scaffold:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.117.0
+      - name: Generate migration identity only
+        run: |
+          supabase --version
+          supabase migration new --help
+          supabase migration new stocktake_notifications_v1
+          rm .github/workflows/stocktake-notices-scaffold.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add supabase/migrations/*stocktake_notifications_v1.sql .github/workflows/stocktake-notices-scaffold.yml
+          git commit -m 'chore(notifications): add CLI-generated stocktake scaffold'
+          git push origin HEAD:refs/heads/feat/stocktake-notifications-v1
