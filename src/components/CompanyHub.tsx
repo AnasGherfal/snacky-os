@@ -376,6 +376,39 @@ export async function CompanyHub({
           ) : null}
         </>
       ) : null}
+      {section === 'guides' && !record && !isNew && manager ? (
+        <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+          <h2 className="font-semibold">
+            {tr('Core operating procedures', 'إجراءات التشغيل الأساسية')}
+          </h2>
+          <p className="mt-1 text-sm text-slate-700">
+            {tr(
+              'Start with the procedures tied to real Snacky workflows. Review the wording, assign the content owner and publish only when it matches current operations.',
+              'ابدأ بالإجراءات المرتبطة بمسارات العمل الفعلية في سناكي. راجع النص وحدد مسؤول المحتوى وانشر فقط عندما يطابق التشغيل الحالي.',
+            )}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {[
+              ['operator-refill-xy', 'Refill & XY quantities', 'التعبئة وكميات XY'],
+              ['cash-handover', 'Cash box handover', 'تسليم صندوق النقد'],
+              ['storage-purchasing', 'Buying & storage receipt', 'الشراء واستلام المخزن'],
+              ['storage-stocktake', 'Storage stocktake', 'جرد المخزن'],
+              ['relations-role', 'Customer Relations role', 'دور علاقات العملاء'],
+              ['visits', 'Location visit', 'زيارة موقع'],
+              ['issues', 'Customer issue', 'مشكلة عميل'],
+              ['rent', 'Rent & obligations', 'الإيجار والالتزامات'],
+            ].map(([template, en, arabic]) => (
+              <Link
+                key={template}
+                className="rounded-full border border-emerald-300 bg-white px-3 py-2 text-sm font-medium hover:bg-emerald-100"
+                href={`/company/new?template=${template}`}
+              >
+                + {tr(en, arabic)}
+              </Link>
+            ))}
+          </div>
+        </section>
+      ) : null}
       {section === 'start' && !record && !isNew ? (
         <>
           <section className="surface-card space-y-3">
