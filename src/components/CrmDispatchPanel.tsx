@@ -95,7 +95,7 @@ function CrmDispatchTaskPanelClient({task,userId,ar,canAct,proofImages}:{task:Cr
  </section>;
 }
 
-export function CrmIssueDispatchSummary({tasks,ar}:{tasks:Array<CrmDispatchTask&{assigned_name?:string|null}>;ar:boolean}){
+export function CrmIssueDispatchSummary({tasks,ar}:{tasks:Array<CrmDispatchTask&{assigned_name?:string|null;notification_readiness_known?:boolean;active_notification_devices?:number|null}>;ar:boolean}){
  const hydrated=useSyncExternalStore(subscribe,clientSnapshot,serverSnapshot);
  if(!tasks.length)return null;
  if(!hydrated)return <section className="surface-card"><p role="status">{ar?'جارٍ تحميل حالة الإجراءات الميدانية…':'Loading field dispatch status…'}</p></section>;
@@ -104,6 +104,8 @@ export function CrmIssueDispatchSummary({tasks,ar}:{tasks:Array<CrmDispatchTask&
   {tasks.map(task=>{const overdue=crmDispatchAckOverdue(task);return <div key={task.id} className="rounded-xl border border-slate-200 p-3">
    <div className="flex flex-wrap items-start justify-between gap-2"><div><strong>{task.title}</strong><p className="text-xs text-slate-500">{task.assigned_name??(ar?'غير معيّن':'Unassigned')}</p></div><span className={'rounded-full border px-2.5 py-1 text-xs font-semibold '+tone(task.dispatch_state)}>{crmDispatchLabel(task.dispatch_state,ar)}</span></div>
    <div className="mt-2 grid gap-2 text-xs text-slate-600 sm:grid-cols-3"><p>{ar?'موعد القبول: ':'Accept by: '}{fmt(task.ack_due_at,ar)}{overdue?' · '+(ar?'متأخر':'overdue'):''}</p><p>{ar?'بدأ العمل: ':'Started: '}{fmt(task.work_started_at,ar)}</p><p>{ar?'الإصلاح: ':'Fixed: '}{fmt(task.fixed_at,ar)}</p></div>
+   {task.dispatch_state!=='fixed'?task.notification_readiness_known===false?<p className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700">{ar?'تعذر التحقق من جاهزية إشعارات هاتف المشغّل. تواصل معه مباشرة إذا كانت المهمة عاجلة.':'Could not verify the operator phone notification status. Contact them directly if the task is urgent.'}</p>:Number(task.active_notification_devices??0)>0?<p className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-900">{ar?`إشعارات الهاتف مفعلة على ${task.active_notification_devices} جهاز. قبول خدمة الإشعار لا يعني أن المشغّل شاهد الرسالة.`:`Push is ready on ${task.active_notification_devices} registered device(s). Provider acceptance does not mean the operator saw it.`}</p>:<p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs font-medium text-amber-900">{ar?'لا يوجد جهاز مسجل للإشعارات لدى المشغّل — تواصل معه مباشرة.':'No active notification device — contact the operator directly.'}</p>:null}
+   {overdue&&task.priority==='urgent'?<p className="mt-2 rounded-lg border border-rose-200 bg-rose-50 p-2 text-sm font-semibold text-rose-900">{ar?'تأخر قبول المهمة العاجلة — تواصل مع المشغّل أو أعد إسنادها الآن.':'Urgent acceptance is overdue — contact or reassign the operator now.'}</p>:null}
    {task.dispatch_state==='blocked'&&task.blocked_reason?<p className="mt-2 rounded-lg bg-rose-50 p-2 text-sm">{task.blocked_reason}</p>:null}
    {task.dispatch_state==='fixed'&&task.result?<p className="mt-2 rounded-lg bg-emerald-50 p-2 text-sm">{task.result}</p>:null}
   </div>})}

@@ -46,13 +46,17 @@ test('source-load errors remain retryable and cannot turn into success',async()=
  const f=fixture(['accepted']);const rpc=f.db.rpc;f.db.rpc=async(name,args)=>name==='snacky_notification_delivery_payload_v1'?{error:{},data:null}:rpc(name,args);
  const result=await f.run();assert.equal(result.accepted,0);assert.equal(f.sent.length,0);assert.equal(f.finishes[0].p_result,'retry');
 });
-function endpoint({db=true,authorized=true,enabled=true,rpcError=false,dispatchError=false}={}){
- let sends=0,checks=0;
+function endpoint({db=true,authorized=true,enabled=true,rpcError=false,dispatchError=false,escalationError=false}={}){
+ let sends=0,checks=0,scans=0;
  const api=load('src/app/api/notifications/dispatch/route.ts',{
   'next/server':{NextResponse:{json:(body,init={})=>({body,status:init.status??200})}},
-  '@/lib/supabase-server':{getSupabaseAdminClient:()=>db?{async rpc(name,args){checks++;assert.equal(name,'snacky_notification_worker_start_v1');assert.match(args.p_token,/^[a-f0-9]{64}$/);return {data:{authorized,enabled},error:rpcError?{}:null};}}:null},
+  '@/lib/supabase-server':{getSupabaseAdminClient:()=>db?{async rpc(name,args){
+   if(name==='snacky_notification_worker_start_v1'){checks++;assert.match(args.p_token,/^[a-f0-9]{64}$/);return {data:{authorized,enabled},error:rpcError?{}:null};}
+   if(name==='snacky_process_dispatch_escalations_v1'){scans++;assert.equal(args.p_now,null);return {data:{generated:1},error:escalationError?{}:null};}
+   throw Error('Unexpected RPC '+name);
+  }}:null},
   '@/lib/work-notification-dispatch':{dispatchWorkNotifications:async()=>{sends++;if(dispatchError)throw Error();return {accepted:1};}},
- });return {...api,counts:()=>({sends,checks})};
+ });return {...api,counts:()=>({sends,checks,scans})};
 }
 const req=(authorization)=>new Request('https://snacky-os.vercel.app/api/notifications/dispatch',{method:'POST',headers:authorization?{authorization}:{},body:'{"user_id":"attacker","message":"ignored"}'});
 test('dispatcher is not an anonymous or user-session mass-notification endpoint',async()=>{
@@ -61,10 +65,14 @@ test('dispatcher is not an anonymous or user-session mass-notification endpoint'
 });
 test('private scheduler handshake activates only through a verified token and honors pause',async()=>{
  const paused=endpoint({enabled:false});assert.equal((await paused.POST(req('Bearer '+('a'.repeat(64))))).body.paused,true);assert.equal(paused.counts().sends,0);
- const f=endpoint();assert.equal((await f.POST(req('Bearer '+('a'.repeat(64))))).body.accepted,1);assert.equal(f.counts().sends,1);assert.equal(f.maxDuration,60);
+ const f=endpoint();const response=await f.POST(req('Bearer '+('a'.repeat(64))));assert.equal(response.body.accepted,1);assert.equal(response.body.escalation.generated,1);assert.equal(f.counts().sends,1);assert.equal(f.counts().scans,1);assert.equal(f.maxDuration,60);
 });
 test('server and dispatch errors are retryable failures, not success responses',async()=>{
  for(const options of [{db:false},{rpcError:true},{dispatchError:true}]){const f=endpoint(options);assert.equal((await f.POST(req('Bearer '+('a'.repeat(64))))).status,503);}
+});
+test('an escalation scan failure does not block already queued work notifications',async()=>{
+ const f=endpoint({escalationError:true});const response=await f.POST(req('Bearer '+('a'.repeat(64))));
+ assert.equal(response.status,200);assert.equal(response.body.accepted,1);assert.equal(response.body.escalation.unavailable,true);assert.equal(f.counts().sends,1);
 });
 test('legacy route sender does not duplicate active outbox alerts or fall back on transient mode errors',async()=>{
  for(const mode of [{data:true,error:null},{data:null,error:{code:'PGRST000'}}]){

@@ -37,8 +37,16 @@ The scheduler targets the production origin intentionally; deploying a feature p
 
 Set `snacky_notice_private.settings.enabled=false` as database administrator to stop new work alerts and dispatch. The activated flag remains set so the legacy route sender cannot duplicate alerts. Disable the `snacky-assignment-notifications` cron job when retiring the endpoint. Do not drop source records or rewrite inventory, cash or Finance to repair notifications. A rollback to app code predating this worker requires pausing its database feature first. Reapplying the core migration preserves the installed networking function; scheduler retries reuse the existing Vault token.
 
+## Timed urgent field-action escalation
+
+A later release adds one narrowly scoped timed reminder: an **urgent CRM field action** that remains Assigned after its stored acknowledgement deadline can notify the current CRM owner of the parent issue to contact or reassign the operator. It reuses this same minute worker and persisted outbox. The feature has separate settings and starts disabled.
+
+Delivery eligibility is rechecked against the live task and issue, so acknowledgement, reassignment, cancellation/completion, archive, practice status or issue closure suppresses stale queued reminders. One receipt is kept per assignment generation and CRM recipient.
+
+CRM can also see whether the assigned operator has any active registered push devices. Zero devices is shown as a direct-contact fallback; provider acceptance is never described as proof the operator saw/read the notification. See `docs/urgent-dispatch-escalation-v1.md`.
+
 ## Limits and verification
 
-This release covers assignment/change/completion events, not every possible business alert. It does not add timed overdue/SLA reminders, sales/stock alerts, supplier-payment alerts, SMS or WhatsApp. A recurring task emits an assignment notification when the existing routine system creates that task. Queue diagnostics appear on Account. Workers do not require an open browser, but OS permission, Focus mode, connectivity and push-provider acceptance still affect phone display.
+Outside that narrow urgent-acknowledgement reminder, this notification system still does not add general SLA reminders, blocked-work reminders, customer-verification reminders, sales/stock alerts, supplier-payment alerts, SMS or WhatsApp. A recurring task emits an assignment notification when the existing routine system creates that task. Queue diagnostics appear on Account. Workers do not require an open browser, but OS permission, Focus mode, connectivity and push-provider acceptance still affect phone display.
 
 CI executes actual PostgreSQL trigger/outbox/lease/access functions on synthetic records, plus scheduler function bodies with simulated network/Vault/cron services. Node tests execute actual HTTP handlers, sender integration and service-worker click/display code with external boundaries stubbed. Existing mobile dialog viewport tests, TypeScript, production build, ledger and role tests remain enabled. No production fixture users, assignments, purchases or money movements are created by these tests.

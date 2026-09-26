@@ -1,0 +1,119 @@
+name: Urgent dispatch escalation checks
+on:
+  push:
+    branches: ['feat/urgent-dispatch-escalation-v1']
+  pull_request:
+    paths:
+      - 'supabase/migrations/*urgent_dispatch_escalation*'
+      - 'src/app/api/notifications/dispatch/**'
+      - 'src/components/CrmWorkspace.tsx'
+      - 'src/components/CrmDispatchPanel.tsx'
+      - 'scripts/test-urgent-dispatch-escalation.mjs'
+      - 'scripts/test-assignment-notifications.mjs'
+      - 'scripts/push-tests/urgent-dispatch-escalation.sql'
+      - 'scripts/push-tests/test_urgent_escalation_panel.py'
+      - '.github/workflows/urgent-dispatch-escalation.yml'
+permissions:
+  contents: read
+concurrency:
+  group: urgent-dispatch-escalation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: escalation_test
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/escalation_test
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Escalation and existing notification contracts
+        run: |
+          node --test scripts/test-urgent-dispatch-escalation.mjs scripts/test-assignment-notifications.mjs
+          node --experimental-strip-types --test scripts/test-crm-operator-dispatch.mjs scripts/test-authz-permissions.mjs
+
+      - name: TypeScript and focused lint
+        run: |
+          npm run typecheck
+          npx eslint src/app/api/notifications/dispatch/route.ts src/components/CrmWorkspace.tsx src/components/CrmDispatchPanel.tsx
+
+      - name: Isolated notification database
+        run: |
+          set -euo pipefail
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/push-tests/bootstrap.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260919170000_push_notification_activation.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/push-tests/rls.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/push-tests/assignments-bootstrap.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260919220000_assignment_notifications.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "alter table public.crm_tasks add column dispatch_state text, add column ack_due_at timestamptz;"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260924154410_urgent_dispatch_escalation_v1.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/push-tests/urgent-dispatch-escalation.sql
+
+      - name: Prepare real CRM readiness browser fixture
+        run: |
+          python3 -m venv .qa/escalation-browser
+          .qa/escalation-browser/bin/pip install playwright==1.55.0
+          .qa/escalation-browser/bin/playwright install --with-deps chromium
+          mkdir -p src/app/login/qa-urgent-escalation
+          cat > src/app/login/qa-urgent-escalation/page.tsx <<'EOF'
+          import {CrmIssueDispatchSummary} from '@/components/CrmDispatchPanel';
+          const base={
+            issue_id:'11111111-1111-4111-8111-111111111111',
+            assigned_to:'22222222-2222-4222-8222-222222222222',
+            priority:'urgent',status:'open',dispatch_state:'assigned' as const,
+            ack_due_at:'2026-01-01T00:00:00Z',acknowledged_at:null,en_route_at:null,
+            work_started_at:null,blocked_at:null,fixed_at:null,blocked_reason:null,
+            dispatch_note:null,result:null,updated_at:'2026-01-01T00:00:00Z'
+          };
+          export default function Page(){
+            const tasks=[
+              {...base,id:'33333333-3333-4333-8333-333333333333',title:'Urgent machine power visit',assigned_name:'Operator without push',notification_readiness_known:true,active_notification_devices:0},
+              {...base,id:'44444444-4444-4444-8444-444444444444',title:'Urgent screen visit',assigned_name:'Operator with push',notification_readiness_known:true,active_notification_devices:2}
+            ];
+            return <main className="mx-auto max-w-3xl space-y-8 p-4"><div dir="ltr"><CrmIssueDispatchSummary tasks={tasks} ar={false}/></div><div dir="rtl"><CrmIssueDispatchSummary tasks={tasks} ar={true}/></div></main>;
+          }
+          EOF
+          node scripts/next-build.mjs
+
+      - name: Browser-check real English and Arabic CRM readiness
+        run: |
+          node node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port 3000 > .qa/escalation-browser/server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3000/login/qa-urgent-escalation >/dev/null; then break; fi
+            if [ "$attempt" -eq 60 ]; then cat .qa/escalation-browser/server.log; exit 1; fi
+            sleep 0.5
+          done
+          .qa/escalation-browser/bin/python scripts/push-tests/test_urgent_escalation_panel.py
+          kill "$server_pid" >/dev/null 2>&1 || true
+          trap - EXIT
+          rm -rf src/app/login/qa-urgent-escalation .next
+
+      - name: Existing critical workflow safety
+        run: npm run test:critical-workflows
+
+      - name: Production build without the test-only route
+        run: npm run build
+
+      - name: Save CRM readiness browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: urgent-dispatch-escalation-browser
+          path: .qa/urgent-escalation/**
