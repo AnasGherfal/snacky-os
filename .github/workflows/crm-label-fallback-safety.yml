@@ -1,0 +1,49 @@
+name: CRM label filter safety integration
+on:
+  push:
+    branches: ['feat/crm-notes-labels-v1']
+    paths: ['.github/workflows/crm-label-fallback-safety.yml']
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Keep missing-label reads explicit
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('src/components/CrmLeadsWorkspace.tsx')
+          s=p.read_text()
+          edits=[
+            ("if(!leadFocusEnabled&&(filters.focus||", "if(filters.label&&!usableLeadId(filters.label))throw Error('invalid_label_filter');\n  if(!leadFocusEnabled&&(filters.label||filters.focus||"),
+            ("missingLeadFocus(result.error)&&!filters.focus&&", "missingLeadFocus(result.error)&&!filters.label&&!filters.focus&&"),
+            ("if(data?.focus_ready&&", "if(filters.label&&!Array.isArray(data?.label_options))throw Error('label_filter_unavailable');\n  if(data?.label_options!==undefined&&(!Array.isArray(data.label_options)||data.label_options.some(l=>!usableLeadId(l.id)||typeof l.name!=='string'||typeof l.owner_name!=='string')))throw Error('invalid_labels');\n  if(data?.focus_ready&&"),
+            ("const labelsEnabled=hasAnyRole(profile,['owner','admin','crm']);", "const labelsEnabled=hasAnyRole(profile,['owner','admin','crm'])&&Array.isArray(context.label_options);")
+          ]
+          for old,new in edits:
+            if s.count(old)!=1:raise RuntimeError('Unexpected label reader anchor: '+old)
+            s=s.replace(old,new)
+          p.write_text(s)
+          p=Path('scripts/test-crm-lead-focus.mjs');s=p.read_text()
+          s+='''
+          test('label filters cannot silently fall back to an unfiltered legacy result',async()=>{
+           const missing=workspace({firstMissing:true});assert.match(await missing.render({label:id}),/Leads unavailable/);assert.equal(missing.calls.length,1);
+           const uninstalled=workspace();assert.match(await uninstalled.render({label:id}),/Leads unavailable/);assert.equal(uninstalled.calls.length,1);
+           const disabled=workspace({enabled:false});assert.match(await disabled.render({label:id}),/Leads unavailable/);assert.equal(disabled.calls.length,0);
+           const malformed=workspace();assert.match(await malformed.render({label:'not-a-uuid'}),/Leads unavailable/);assert.equal(malformed.calls.length,0);
+           const available=workspace({result:{me:person,staff:true,manager:true,today:'2026-09-19',focus_ready:true,focus_assignees:[],rows:[row],directory:[],total:1,offset:0,page_size:40,label_options:[{id,name:'This week',color:'blue',owner_id:person,owner_name:'Employee'}]}});
+           assert.doesNotMatch(await available.render({label:id}),/Leads unavailable/);assert.equal(available.calls[0][1].p_filters.label,id);
+          });
+          '''
+          p.write_text(s)
+          PY
+          rm .github/workflows/crm-label-fallback-safety.yml
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/components/CrmLeadsWorkspace.tsx scripts/test-crm-lead-focus.mjs .github/workflows/crm-label-fallback-safety.yml
+          git commit -m 'fix(crm): reject ignored label filters and verify fallback boundaries'
+          git push origin HEAD:refs/heads/feat/crm-notes-labels-v1
