@@ -13,7 +13,7 @@ const id='11111111-1111-4111-8111-111111111111',person='22222222-2222-4222-8222-
 const command=()=>({request_id:id,action:'set',items:[{id,version:'2026-09-19 10:00:00+00',focus_revision:0}],assigned_to:person,until:'2026-09-25',next_action:'Find the decision-maker'});
 const row={id,kind:'lead',title:'Research example',status:'want_to_contact',focused:true,focus_revision:1,focus_until:'2026-09-25',needs_research:true,assigned_to:person,assigned_name:'Fixture employee',data:{version:'2026-09-19 10:00:00+00'}};
 const styles=new Proxy({},{get:(_t,k)=>String(k)}),Link=({children,...p})=>React.createElement('a',p,children);
-const table=load('src/components/CrmLeadTable.tsx',{'react/jsx-runtime':jsx,'next/link':{__esModule:true,default:Link},'@/components/CrmLeadQuickLink':{CrmLeadQuickLink:()=>null},'@/lib/crm-workspace':domain,'@/lib/crm-lead-list':helpers,'./CrmLeads.module.css':{__esModule:true,default:styles}});
+const table=load('src/components/CrmLeadTable.tsx',{'react/jsx-runtime':jsx,'next/link':{__esModule:true,default:Link},'@/components/CrmLeadLabels':{CrmLeadLabels:()=>null},'@/components/CrmLeadQuickLink':{CrmLeadQuickLink:()=>null},'@/lib/crm-workspace':domain,'@/lib/crm-lead-list':helpers,'./CrmLeads.module.css':{__esModule:true,default:styles}});
 test('focus is date-based, inclusive seven-day default, and can be switched off',()=>{
  assert.equal(focus.focusDefaultEnd('2026-09-19'),'2026-09-25');assert.equal(focus.focusDefaultEnd('2026-12-28'),'2027-01-03');assert.equal(focus.focusDate('2026-02-30'),false);
  assert.equal(load('src/lib/crm-lead-focus.ts',{'./crm-workspace':domain},{process:{env:{NEXT_PUBLIC_SNACKY_LEAD_FOCUS_ENABLED:'false'}}}).leadFocusEnabled,false);
@@ -41,7 +41,7 @@ test('real table distinguishes employee assignment, focus, missing details and c
 });
 function workspace({enabled=true,error=null,result,firstMissing=false}={}){
  const calls=[],data=result??{me:person,staff:true,manager:true,today:'2026-09-19',focus_ready:true,focus_assignees:[{id:person,name:'Employee'}],rows:[row],directory:[{id:person,name:'Employee'}],total:1,offset:0,page_size:40};
- const c=load('src/components/CrmLeadsWorkspace.tsx',{'react/jsx-runtime':jsx,'next/link':{__esModule:true,default:Link},'next/navigation':{redirect:()=>{throw Error('denied');}},'@/lib/auth':{getCurrentProfile:async()=>({id:person,roles:['owner'],active_status:'active'}),getAuthenticatedSupabaseServerClient:async()=>({rpc:async(...args)=>{calls.push(args);return firstMissing&&calls.length===1?{error:{code:'PGRST202',message:'snacky_crm_lead_desk_v1'}}:{data,error};}})},'@/lib/authz':{hasAnyRole:()=>true},'@/lib/i18n/server':{getServerI18n:async()=>({locale:'en'})},'@/components/CrmLeadQuickPanel':{CrmLeadQuickPanel:()=>null},'@/components/CrmClientTools':{CrmRefresh:()=>null},'@/components/CrmLeadTable':table,'@/components/CrmLeadFocusList':{CrmLeadFocusList:()=>React.createElement('p',null,'focus-selection')},'@/components/CrmLeadQuickLink':{CrmLeadQuickLink:()=>null},'@/lib/crm-workspace':domain,'@/lib/crm-lead-list':helpers,'@/lib/crm-lead-focus':{...focus,leadFocusEnabled:enabled},'./CrmLeads.module.css':{__esModule:true,default:styles}});
+ const c=load('src/components/CrmLeadsWorkspace.tsx',{'react/jsx-runtime':jsx,'next/link':{__esModule:true,default:Link},'next/navigation':{redirect:()=>{throw Error('denied');}},'@/lib/auth':{getCurrentProfile:async()=>({id:person,roles:['owner'],active_status:'active'}),getAuthenticatedSupabaseServerClient:async()=>({rpc:async(...args)=>{calls.push(args);return firstMissing&&calls.length===1?{error:{code:'PGRST202',message:'snacky_crm_lead_desk_v1'}}:{data,error};}})},'@/lib/authz':{hasAnyRole:()=>true},'@/lib/i18n/server':{getServerI18n:async()=>({locale:'en'})},'@/components/CrmLeadLabels':{CrmLeadLabels:()=>null},'@/components/CrmLeadQuickPanel':{CrmLeadQuickPanel:()=>null},'@/components/CrmClientTools':{CrmRefresh:()=>null},'@/components/CrmLeadTable':table,'@/components/CrmLeadFocusList':{CrmLeadFocusList:()=>React.createElement('p',null,'focus-selection')},'@/components/CrmLeadLabels':{CrmLeadLabels:()=>null},'@/components/CrmLeadQuickLink':{CrmLeadQuickLink:()=>null},'@/lib/crm-workspace':domain,'@/lib/crm-lead-list':helpers,'@/lib/crm-lead-focus':{...focus,leadFocusEnabled:enabled},'./CrmLeads.module.css':{__esModule:true,default:styles}});
  return {calls,render:async(params={})=>renderToStaticMarkup(await c.CrmLeadsWorkspace({searchParams:params}))};
 }
 test('enabled workspace asks the server for focus/global ordering and shows explicit outcome tabs',async()=>{
@@ -86,4 +86,13 @@ test('installed and declined records preserve history links without false prospe
  assert.match(html,/Open location record/);assert.ok(html.includes('/relationships/'+person));
  assert.match(html,/Prospecting closed/);assert.match(html,/No prospecting due/);
  assert.doesNotMatch(html,/Set a next action|No date set|Contact details needed/);
+});
+
+test('label filters cannot silently fall back to an unfiltered legacy result',async()=>{
+ const missing=workspace({firstMissing:true});assert.match(await missing.render({label:id}),/Leads unavailable/);assert.equal(missing.calls.length,1);
+ const uninstalled=workspace();assert.match(await uninstalled.render({label:id}),/Leads unavailable/);assert.equal(uninstalled.calls.length,1);
+ const disabled=workspace({enabled:false});assert.match(await disabled.render({label:id}),/Leads unavailable/);assert.equal(disabled.calls.length,0);
+ const malformed=workspace();assert.match(await malformed.render({label:'not-a-uuid'}),/Leads unavailable/);assert.equal(malformed.calls.length,0);
+ const available=workspace({result:{me:person,staff:true,manager:true,today:'2026-09-19',focus_ready:true,focus_assignees:[],rows:[row],directory:[],total:1,offset:0,page_size:40,label_options:[{id,name:'This week',color:'blue',owner_id:person,owner_name:'Employee'}]}});
+ assert.doesNotMatch(await available.render({label:id}),/Leads unavailable/);assert.equal(available.calls[0][1].p_filters.label,id);
 });

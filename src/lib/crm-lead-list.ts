@@ -1,7 +1,7 @@
 import {uuidPattern} from './crm-workspace';
 export type LeadFilters=Record<string,string>;
 export type LeadSearchParams=Record<string,string|string[]|undefined>;
-const allowed=['q','scope','window','status','type','area','assigned_to','archived','practice','created_from','created_to','offset','group','focus'] as const;
+const allowed=['q','scope','window','status','type','area','assigned_to','archived','practice','created_from','created_to','offset','group','focus','label'] as const;
 /** Keep visible lifecycle and stage filters consistent; filtering remains server-side. */
 export function leadFilters(params:LeadSearchParams):LeadFilters{
  const out:LeadFilters={};
@@ -27,6 +27,7 @@ export function leadDate(value:string|null|undefined,ar:boolean):string{
 }
 export function usableLeadId(value:unknown):value is string{return typeof value==='string'&&uuidPattern.test(value);}
 export type LeadRow={
+ labels?:import('./crm-collaboration').CrmLabel[];
  id:string;kind:string;title:string;status:string;priority?:string|null;
  assigned_to?:string|null;assigned_name?:string|null;next_action?:string|null;
  due_date?:string|null;due_time?:string|null;overdue?:boolean;archived?:boolean;is_practice?:boolean;
@@ -34,6 +35,7 @@ export type LeadRow={
  data?:{version?:string;converted_location_id?:string|null;area?:string|null;city?:string|null;place_type?:string|null;contact_person_name?:string|null;contact_phone?:string|null;contact_whatsapp?:string|null;contact_email?:string|null};
 };
 export type LeadWorkspaceData={
+ label_options?:import('./crm-collaboration').CrmLabel[];
  me:string;staff:boolean;manager:boolean;rows:LeadRow[];today?:string;focus_ready?:boolean;focus_assignees?:{id:string;name:string}[];
  total:number;offset:number;page_size:number;directory:{id:string;name:string;role?:string}[];
 };

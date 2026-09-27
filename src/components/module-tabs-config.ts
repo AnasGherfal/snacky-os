@@ -33,6 +33,7 @@ const machinesTabs: ModuleTab[] = [
   { label: "Maintenance", href: "/machines/maintenance", labelAr: "الصيانة" },
 ];
 const crmTabs: ModuleTab[] = [
+  { label: "Management notes", href: "/my-work/notes", labelAr: "ملاحظات الإدارة", exact: true },
   { label: "My Work", href: "/my-work", labelAr: "عملي اليوم", exact: true },
   { label: "Leads & Visits", href: "/locations-pipeline", labelAr: "الجهات والزيارات" },
   { label: "Customer Issues", href: "/issues", labelAr: "مشاكل العملاء" },

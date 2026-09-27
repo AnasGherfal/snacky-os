@@ -2,10 +2,11 @@ import {redirect} from 'next/navigation';
 import {OwnerOperationsWorkspace} from '@/components/OwnerOperationsOverview';
 import {ownerOperationsContext} from '@/lib/owner-operations-server';
 import {loadOperations} from '@/lib/owner-operations';
+import {CrmNotesSummary} from '@/components/CrmNotesSummary';
 export const dynamic='force-dynamic';
 export const revalidate=0;
 export default async function OwnerOperationsPage(){
  const context=await ownerOperationsContext();
  if(!context.authorized)redirect('/unauthorized');
- return <OwnerOperationsWorkspace initial={await loadOperations(context.read)}/>;
+ return <><CrmNotesSummary/><OwnerOperationsWorkspace initial={await loadOperations(context.read)}/></>;
 }

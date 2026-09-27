@@ -16,7 +16,7 @@
 .quickActive { background:#172033; border-color:#172033; color:white; }
 .quickLink:hover { background:#f8fafc; }
 .filters { padding:16px; border:1px solid #dce2e9; border-radius:12px; background:white; }
-.toolbar { display:grid; grid-template-columns:minmax(200px,2fr) minmax(135px,1fr) minmax(155px,1fr) auto; gap:14px; align-items:end; }
+.toolbar { display:grid; grid-template-columns:minmax(130px,1fr) minmax(180px,2fr) minmax(130px,1fr) minmax(145px,1fr) auto; gap:14px; align-items:end; }
 .filters label { display:flex; flex-direction:column; gap:6px; min-width:0; font-size:12px; font-weight:650; }
 .filters :is(input:not([type=checkbox]),select) { width:100%; min-width:0; min-height:42px; padding:8px 10px; border:1px solid #cbd5e1; border-radius:8px; color:#172033; font:inherit; font-size:14px; background:white; }
 .filters input::placeholder { color:#66758a; }

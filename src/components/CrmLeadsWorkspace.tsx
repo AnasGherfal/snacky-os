@@ -5,6 +5,7 @@ import {hasAnyRole} from '@/lib/authz';
 import {getServerI18n} from '@/lib/i18n/server';
 import {CrmRefresh} from '@/components/CrmClientTools';
 import {CrmLeadTable} from '@/components/CrmLeadTable';
+import {CrmLeadLabels} from '@/components/CrmLeadLabels';
 import {CrmLeadFocusList} from '@/components/CrmLeadFocusList';
 import {CrmLeadQuickPanel} from '@/components/CrmLeadQuickPanel';
 import {leadFocusEnabled,missingLeadFocus} from '@/lib/crm-lead-focus';
@@ -19,10 +20,13 @@ export async function CrmLeadsWorkspace({searchParams={}}:{searchParams?:LeadSea
  let context:LeadWorkspaceData;
  try{
   const db=await getAuthenticatedSupabaseServerClient();if(!db)throw Error('session_unavailable');
-  if(!leadFocusEnabled&&(filters.focus||(filters.group&&filters.group!=='all')))throw Error('focus_disabled');
+  if(filters.label&&!usableLeadId(filters.label))throw Error('invalid_label_filter');
+  if(!leadFocusEnabled&&(filters.label||filters.focus||(filters.group&&filters.group!=='all')))throw Error('focus_disabled');
   let result=leadFocusEnabled?await db.rpc('snacky_crm_lead_desk_v1',{p_filters:deskFilters}):await db.rpc('snacky_crm_workspace_v1',{p_section:'lead',p_id:null,p_filters:filters});
-  if(leadFocusEnabled&&missingLeadFocus(result.error)&&!filters.focus&&(!filters.group||filters.group==='all'))result=await db.rpc('snacky_crm_workspace_v1',{p_section:'lead',p_id:null,p_filters:filters});
+  if(leadFocusEnabled&&missingLeadFocus(result.error)&&!filters.label&&!filters.focus&&(!filters.group||filters.group==='all'))result=await db.rpc('snacky_crm_workspace_v1',{p_section:'lead',p_id:null,p_filters:filters});
   if(result.error)throw result.error;const data=result.data as LeadWorkspaceData|null;
+  if(filters.label&&!Array.isArray(data?.label_options))throw Error('label_filter_unavailable');
+  if(data?.label_options!==undefined&&(!Array.isArray(data.label_options)||data.label_options.some(l=>!usableLeadId(l.id)||typeof l.name!=='string'||typeof l.owner_name!=='string')))throw Error('invalid_labels');
   if(data?.focus_ready&&(!data.today||!Array.isArray(data.focus_assignees)))throw Error('invalid_focus_workspace');
   if(!data||!Array.isArray(data.rows)||!Array.isArray(data.directory)||!Number.isSafeInteger(data.total)||!Number.isSafeInteger(data.offset)||!Number.isSafeInteger(data.page_size)||data.page_size<1||data.page_size>100||data.total<0||data.offset<0||data.rows.some(row=>row.kind!=='lead'||!usableLeadId(row.id)||typeof row.title!=='string'))throw Error('invalid_workspace');
   context=data;if(context.focus_ready&&useOpenDefault)filters.group='active';
@@ -30,6 +34,7 @@ export async function CrmLeadsWorkspace({searchParams={}}:{searchParams?:LeadSea
   const code=error&&typeof error==='object'&&'code' in error?String(error.code):'unavailable';console.error('[crm-leads] Could not verify lead list',{code});
   return <section className={styles.workspace} dir={ar?'rtl':'ltr'} id="crm-leads"><div className={styles.error} role="alert"><h1>{tr('Leads unavailable','الجهات غير متاحة')}</h1><p>{tr('Could not verify the records or your access. This is not an empty lead list. Retry without creating duplicate records.','تعذر التحقق من السجلات أو صلاحياتك. هذا لا يعني أن قائمة الجهات فارغة. أعد المحاولة دون إنشاء سجلات مكررة.')}</p><a className={styles.primary} href={leadListHref(filters,{offset:filters.offset??'0'})}>{tr('Retry','إعادة المحاولة')}</a> <Link className={styles.secondary} href="/locations-pipeline">{tr('Standard lead list','قائمة الجهات المعتادة')}</Link></div></section>;
  }
+ const labelsEnabled=hasAnyRole(profile,['owner','admin','crm'])&&Array.isArray(context.label_options);
  const currentOwner=filters.scope==='mine'?context.me:filters.assigned_to??'',knownOwner=context.directory.some(p=>p.id===currentOwner);
  const advanced=Boolean(filters.area||filters.type||filters.window&&filters.window!=='all'||filters.archived||filters.practice||filters.created_from||filters.created_to);
  const quick=[['all',tr('All permitted leads','كل الجهات المسموح بها'),{scope:'all',assigned_to:'',window:'all',focus:'',group:'all'}],['mine',tr('Assigned to me','المسند إليّ'),{scope:'mine',assigned_to:'',window:'all',focus:''}],['overdue',tr('Overdue follow-ups','المتابعات المتأخرة'),{window:'overdue',focus:''}]] as const;
@@ -42,6 +47,7 @@ export async function CrmLeadsWorkspace({searchParams={}}:{searchParams?:LeadSea
   <form key={JSON.stringify(filters)} method="get" action="/locations-pipeline" className={styles.filters} aria-label={tr('Filter leads','تصفية الجهات')}>
    <input type="hidden" name="scope" value="all"/>{filters.group?<input type="hidden" name="group" value={filters.group}/>:null}{filters.focus?<input type="hidden" name="focus" value={filters.focus}/>:null}
    <div className={styles.toolbar}>
+    {labelsEnabled?<label>{tr('Label','التصنيف')}<select name="label" defaultValue={filters.label??''}><option value="">{tr('All labels','كل التصنيفات')}</option>{(context.label_options??[]).map(l=><option key={l.id} value={l.id}>{l.name}{context.manager?' · '+l.owner_name:''}</option>)}</select></label>:null}
     <label className={styles.search}>{tr('Search','بحث')}<input name="q" type="search" defaultValue={filters.q??''} maxLength={200} placeholder={tr('Place, contact, phone or notes…','الجهة أو المسؤول أو الهاتف أو الملاحظات…')}/></label>
     <label>{tr('Stage','المرحلة')}<select name="status" defaultValue={filters.status??''}><option value="">{tr('All stages','كل المراحل')}</option>{leadStatuses.map(([value,en,arabic])=><option key={value} value={value}>{tr(en,arabic)}</option>)}{filters.status&&!leadStatuses.some(s=>s[0]===filters.status)?<option value={filters.status}>{crmStatus(filters.status,ar)}</option>:null}</select></label>
     <label>{tr('Assigned to','الموظف المسؤول')}<select name="assigned_to" defaultValue={currentOwner}><option value="">{tr('All permitted employees','كل المسؤولين المسموحين')}</option>{context.directory.map(p=><option key={p.id} value={p.id}>{p.name}{p.id===context.me?tr(' (me)',' (أنا)'):''}</option>)}{currentOwner&&!knownOwner?<option value={currentOwner}>{tr('Current selection','الاختيار الحالي')}</option>:null}</select></label>
@@ -54,9 +60,10 @@ export async function CrmLeadsWorkspace({searchParams={}}:{searchParams?:LeadSea
     <div className={styles.checks}><label><input type="checkbox" name="archived" value="true" defaultChecked={filters.archived==='true'}/>{tr('Include archived','إظهار المؤرشف')}</label><label><input type="checkbox" name="practice" value="true" defaultChecked={filters.practice==='true'}/>{tr('Include practice','إظهار التدريب')}</label></div>
    </div></details>
   </form>
+  {labelsEnabled?<CrmLeadLabels ar={ar}/>:null}
   <div className={styles.listSummary}><h2>{tr('Lead list','قائمة الجهات')}</h2><span aria-live="polite"><span className={styles.srOnly}>{tr('Showing','عرض')} </span><bdi dir="ltr">{summary}</bdi> {tr('leads','جهة')}</span></div>
   {context.focus_ready?<p className={styles.focusHint}>{tr('Focus first, then overdue, agreed and other open opportunities. Installed and declined records remain available below or in their tabs.','التركيز أولاً ثم المتأخر والمتفق عليه وبقية الفرص المفتوحة. تبقى الجهات المركّبة والرافضة في آخر القائمة أو في تبويباتها.')}</p>:<p className={styles.focusHint}>{tr('Showing the standard list. Focus tools are not installed or are switched off.','تُعرض القائمة المعتادة. أدوات التركيز غير مثبتة أو متوقفة.')}</p>}
-  {context.focus_ready?<CrmLeadFocusList key={JSON.stringify(filters)+context.rows.map(r=>`${r.id}:${r.data?.version}:${r.focus_revision}`).join('|')} rows={context.rows} ar={ar} userId={profile.id} today={context.today!} manager={context.manager} assignees={context.focus_assignees??[]}/>:context.rows.length?<CrmLeadTable rows={context.rows} ar={ar}/>:null}
+  {context.focus_ready?<CrmLeadFocusList key={JSON.stringify(filters)+context.rows.map(r=>`${r.id}:${r.data?.version}:${r.focus_revision}`).join('|')} rows={context.rows} ar={ar} userId={profile.id} today={context.today!} manager={context.manager} labelsEnabled={labelsEnabled} assignees={context.focus_assignees??[]}/>:context.rows.length?<CrmLeadTable rows={context.rows} ar={ar} labelsEnabled={labelsEnabled}/>:null}
   {!context.rows.length?<div className={styles.empty}><h2>{tr('No matching leads','لا توجد جهات مطابقة')}</h2><p>{currentOwner===context.me?tr('No assigned leads match these filters. Review your assignments with your manager, or switch to all permitted leads.','لا توجد جهات مسندة إليك تطابق هذه المرشحات. راجع المهام مع المسؤول أو اعرض كل الجهات المسموح بها.'):tr('Try another search or reset the filters. Existing records have not been removed.','جرّب بحثاً آخر أو أعد ضبط المرشحات. لم تُحذف السجلات الموجودة.')}</p><Link className={styles.secondary} href="/locations-pipeline">{tr('Reset filters','إعادة ضبط المرشحات')}</Link></div>:null}
   <nav className={styles.pagination} aria-label={tr('Lead pages','صفحات الجهات')}><span>{tr('Filters apply to all permitted leads, not just this page.','تُطبّق المرشحات على جميع الجهات المسموح بها، وليس هذه الصفحة فقط.')}</span><div>{context.offset>0?<Link className={styles.secondary} rel="prev" href={leadListHref(filters,{offset:String(Math.max(0,context.offset-context.page_size))})}>{tr('Previous','السابق')}</Link>:null}{context.offset+context.page_size<context.total?<Link className={styles.secondary} rel="next" href={leadListHref(filters,{offset:String(context.offset+context.page_size)})}>{tr('Next','التالي')}</Link>:null}</div></nav>
   {usableLeadId(searchParams.quick)?<CrmLeadQuickPanel id={searchParams.quick} ar={ar} returnHref={leadListHref(filters,{offset:filters.offset??'0'})}/>:null}

@@ -48,7 +48,7 @@ const ledger=()=>sql("select jsonb_build_object('routes',(select count(*) from p
 const baseline=ledger(),results=[],pageErrors=[];let browser,server;
 async function check(name,fn){
  try{await fn();results.push({name,status:'passed'});console.log('PASS '+name);}
- catch(e){results.push({name,status:'failed',message:String(e.message).slice(0,1600)});let i=0;for(const c of browser?.contexts()??[])for(const p of c.pages())try{await p.screenshot({path:`${out}/failure-${results.length}-${++i}.png`,fullPage:true});}catch{}console.error('FAIL '+name+': '+String(e.message).slice(0,1600));}
+ catch(e){results.push({name,status:'failed',message:String(e.message).slice(0,1600),stack:String(e.stack??'').slice(0,4000)});let i=0;for(const c of browser?.contexts()??[])for(const p of c.pages())try{await p.screenshot({path:`${out}/failure-${results.length}-${++i}.png`,fullPage:true});}catch{}console.error('FAIL '+name+': '+String(e.message).slice(0,1600));}
  finally{writeFileSync(out+'/results.json',JSON.stringify({results,pageErrors},null,2));}
 }
 const build=spawnSync('npm',['run','build'],{env,encoding:'utf8',maxBuffer:30e6});
@@ -148,10 +148,15 @@ try{
    const response=await route.fetch();actualReply=await response.json();
    if(actualReply.ok===true)await route.abort('failed');else await route.fulfill({response});
   },{times:1});
+  const lostResponse=owner.waitForEvent('requestfailed',{predicate:r=>r.url().endsWith('/api/crm/lead-focus')&&r.method()==='POST'});
   owner.once('dialog',d=>d.accept());
   await owner.getByRole('button',{name:'Assign & set focus',exact:true}).click();
-  await owner.getByText('Save not confirmed. Retry the same saved request; do not create another selection.',{exact:true}).waitFor();
+  assert.deepEqual((await lostResponse).postDataJSON(),focusRequest);
   assert.equal(actualReply.ok,true);assert.equal(actualReply.count,3);
+  await owner.getByText('A save is awaiting confirmation. Retry the same request before changing the selection.',{exact:true}).waitFor();
+  await owner.getByRole('button',{name:'Retry saved request',exact:true}).waitFor();
+  const stored=await owner.evaluate(key=>sessionStorage.getItem(key),'snacky:lead-focus:v1:'+accounts.owner.id);
+  assert.deepEqual(JSON.parse(stored),focusRequest);
   const before=sql("select jsonb_build_object('focus',(select count(*) from crm_lead_private.focus),'receipts',(select count(*) from crm_lead_private.receipts),'tasks',(select count(*) from public.crm_tasks))::text");
   await owner.reload();await owner.getByRole('button',{name:'Retry saved request',exact:true}).waitFor();
   const response=owner.waitForResponse(r=>r.url().endsWith('/api/crm/lead-focus'));
@@ -172,18 +177,31 @@ try{
    request=route.request().postDataJSON();const response=await route.fetch();reply=await response.json();
    if(reply.ok)await route.abort('failed');else await route.fulfill({response});
   },{times:1});
-  owner.once('dialog',d=>d.accept());await owner.getByRole('button',{name:'Assign & set focus',exact:true}).click();
-  await owner.getByText('Save not confirmed. Retry the same saved request; do not create another selection.',{exact:true}).waitFor();
-  assert.equal(reply.ok,true);assert.equal((await rpc('owner','lead',{q:'Training place 43',scope:'mine'})).total,0);
-  const count=sql("select count(*) from crm_lead_private.receipts");
-  await owner.reload();await owner.getByRole('heading',{name:'No matching leads',exact:true}).waitFor();
-  const response=owner.waitForResponse(r=>r.url().endsWith('/api/crm/lead-focus'));
-  await owner.getByRole('button',{name:'Retry saved request',exact:true}).click();const saved=await response;
-  assert.deepEqual(saved.request().postDataJSON(),request);assert.equal((await saved.json()).ok,true);
-  assert.equal(sql("select count(*) from crm_lead_private.receipts"),count);
-  // Clear only this extra test's focus to retain the original three-record expiry checks.
-  const focused=(await rpc('owner','lead',{q:'Training place 43'})).rows[0];
-  const cleared=await accounts.owner.client.rpc('snacky_crm_lead_focus_command_v1',{p_request_id:randomUUID(),p_action:'clear',p_items:[{id:focused.id,version:focused.data.version,focus_revision:focused.focus_revision}]});assert.ifError(cleared.error);
+  try{
+   const lostResponse=owner.waitForEvent('requestfailed',{predicate:r=>r.url().endsWith('/api/crm/lead-focus')&&r.method()==='POST'});
+   owner.once('dialog',d=>d.accept());await owner.getByRole('button',{name:'Assign & set focus',exact:true}).click();
+   assert.deepEqual((await lostResponse).postDataJSON(),request);
+   assert.equal(reply.ok,true);assert.equal((await rpc('owner','lead',{q:'Training place 43',scope:'mine'})).total,0);
+   // A background refresh can remount the now-empty list before the transient
+   // catch message is painted. The persisted command and retry are the contract.
+   await owner.getByText('A save is awaiting confirmation. Retry the same request before changing the selection.',{exact:true}).waitFor();
+   await owner.getByRole('button',{name:'Retry saved request',exact:true}).waitFor();
+   const stored=await owner.evaluate(key=>sessionStorage.getItem(key),'snacky:lead-focus:v1:'+accounts.owner.id);
+   assert.deepEqual(JSON.parse(stored),request);
+   const count=sql("select count(*) from crm_lead_private.receipts");
+   await owner.reload();await owner.getByRole('heading',{name:'No matching leads',exact:true}).waitFor();
+   const response=owner.waitForResponse(r=>r.url().endsWith('/api/crm/lead-focus')&&r.request().method()==='POST');
+   await owner.getByRole('button',{name:'Retry saved request',exact:true}).click();const saved=await response;
+   assert.deepEqual(saved.request().postDataJSON(),request);assert.equal((await saved.json()).ok,true);
+   assert.equal(sql("select count(*) from crm_lead_private.receipts"),count);
+  }finally{
+   // Keep a failed recovery assertion from contaminating the separate expiry
+   // scenario. The original assertion still fails this suite; it is not skipped.
+   const focused=(await rpc('owner','lead',{q:'Training place 43'})).rows[0];
+   if(focused?.focused){
+    const cleared=await accounts.owner.client.rpc('snacky_crm_lead_focus_command_v1',{p_request_id:randomUUID(),p_action:'clear',p_items:[{id:focused.id,version:focused.data.version,focus_revision:focused.focus_revision}]});assert.ifError(cleared.error);
+   }
+  }
  });
  await check('employee fills the assigned research record and logs an introduction in original activity history',async()=>{
   const id=leads[40].id;
@@ -198,9 +216,12 @@ try{
  await check('actual Arabic mobile and English desktop layouts, keyboard focus and scoped accessibility',async()=>{
   for(const [label,p,width] of [['leads-en-1440',owner,1440],['leads-en-1024',owner,1024],['leads-ar-390',arabic,390],['leads-ar-320',arabic,320]]){
    await p.setViewportSize({width,height:950});await go(p);
+   // FocusList replaces the SSR table once during hydration. Wait for its
+   // manager-only controls before testing keyboard focus on the live table.
+   await p.getByRole('region',{name:label.includes('-ar-')?'تحديد تركيز الجهات':'Set lead focus',exact:true}).waitFor();
    assert.ok(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'Page overflow: '+label);
    if(width<768){assert.equal(await table(p).isVisible(),false);assert.equal(await p.locator('#crm-leads ol').isVisible(),true);assert.equal(await p.locator('#crm-leads').getAttribute('dir'),'rtl');}
-   else{assert.equal(await table(p).isVisible(),true);await p.getByRole('region',{name:/Leads and visits table/}).focus();assert.equal(await p.getByRole('region',{name:/Leads and visits table/}).evaluate(el=>el===document.activeElement),true);}
+   else{assert.equal(await table(p).isVisible(),true);await p.getByRole('region',{name:/Leads and visits table/}).focus();assert.equal(await p.getByRole('region',{name:/Leads and visits table/}).evaluate(el=>el===document.activeElement),true,'Hydrated table must retain keyboard focus: '+label);}
    await p.evaluate(()=>{window.scrollTo(0,0);document.querySelector('main')?.scrollTo(0,0);});
    await p.screenshot({path:`${out}/${label}.png`,fullPage:false});
    const scan=await new AxeBuilder({page:p}).include('#crm-leads').analyze();audits.push({label,violations:scan.violations});

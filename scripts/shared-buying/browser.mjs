@@ -98,9 +98,23 @@ try{
  }
  await check('Chromium phone-sized native taps open both purchase receipt choosers without submitting a purchase',async()=>fileTest(browser,'chromium'));
  await check('WebKit touch input opens the manual and scan file choosers; unsupported files fail explicitly',async()=>{tls=await startBuyingTestTLS();safari=await webkit.launch({headless:true});await fileTest(safari,'webkit',tls.origin);});
- await check('reassignment removes old buyer access while CRM can access only its newly assigned list',async()=>{
-  const list=(await record('owner',listId)).record;await command('owner','assign',listId,list.revision,{assigned_to:accounts.crm.member});assert.ok((await accounts.operator.client.rpc('snacky_buying_workspace_v1',{p_id:listId})).error);await crm.goto(app+'/buying-lists/'+listId);await crm.getByRole('heading',{name:'Shared buyer acceptance',exact:true}).waitFor();assert.equal((await record('crm',listId)).planner,false);
+ await check('CRM-only buying assignment is denied without changing the current assignee or revision',async()=>{
+  const before=(await record('owner',listId)).record;
+  const denied=await accounts.owner.client.rpc('snacky_buying_command_v1',{p_command:{request_id:randomUUID(),list_id:listId,revision:before.revision,action:'assign',payload:{assigned_to:accounts.crm.member}}});
+  assert.equal(denied.error?.code,'22023');
+  const unchanged=(await record('owner',listId)).record;assert.equal(unchanged.revision,before.revision);assert.equal(unchanged.assigned_to,before.assigned_to);
+  assert.equal((await accounts.crm.client.rpc('snacky_buying_workspace_v1',{p_id:listId})).error?.code,'42501');
+  assert.equal((await crm.request.get(app+'/api/buying-lists?id='+listId)).status(),403);
+  await crm.goto(app+'/buying-lists/'+listId);await crm.waitForURL(/\/unauthorized/);
   await crm.goto(app+'/purchases/new');await crm.waitForURL(/\/unauthorized/);assert.equal(ledger(),baseline);
+ });
+ await check('reassignment gives the eligible replacement buyer access and removes the previous buyer access',async()=>{
+  const list=(await record('owner',listId)).record;await command('owner','assign',listId,list.revision,{assigned_to:accounts.other.member});
+  assert.equal((await accounts.operator.client.rpc('snacky_buying_workspace_v1',{p_id:listId})).error?.code,'42501');
+  assert.equal((await buyer.request.get(app+'/api/buying-lists?id='+listId)).status(),403);
+  await other.goto(app+'/buying-lists/'+listId);await other.getByRole('heading',{name:'Shared buyer acceptance',exact:true}).waitFor();
+  const actual=await record('other',listId);assert.equal(actual.planner,false);assert.equal(actual.record.assigned_to,accounts.other.member);
+  await other.goto(app+'/purchases/new');await other.waitForURL(/\/unauthorized/);assert.equal(ledger(),baseline);
  });
  assert.deepEqual(pageErrors,[]);assert.equal(results.filter(r=>r.status!=='passed').length,0,'Every scenario must pass');
 }finally{await browser?.close();await safari?.close();await tls?.close();server?.kill('SIGTERM');if(server)await new Promise(r=>{server.once('exit',r);setTimeout(r,1500);});writeFileSync(out+'/results.json',JSON.stringify({results,pageErrors},null,2));}

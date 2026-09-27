@@ -102,8 +102,16 @@ try{
   await legacy('operator','item',{product_id:products[0].id,outcome:'bought',bought_boxes:2,note:'Bought from instructed store'});assert.equal((await save('owner',await sourceCommand())).error?.code,'22023');
   for(const n of [1,2])await legacy('operator','item',{product_id:products[n].id,outcome:'unavailable',bought_boxes:0,note:'Not available'});await legacy('operator','complete');assert.equal((await save('owner',await sourceCommand(1,2,null))).error?.code,'22023');assert.equal((await workspace('operator')).record.status,'completed');assert.equal(ledgers(),baseline);
  });
- await check('reassignment removes old source access and permits only the newly assigned CRM buyer',async()=>{
-  await legacy('owner','reopen');await legacy('owner','assign',{assigned_to:accounts.crm.member});assert.equal((await accounts.operator.client.rpc('snacky_buying_sources_v1',{p_id:listId})).error?.code,'42501');const s=await sources('crm');assert.equal(s.sources.length,3);assert.deepEqual(s.options,[]);assert.deepEqual(s.stores,[]);assert.equal(ledgers(),baseline);
+ await check('CRM-only assignment is rejected; reassignment to warehouse retires the old buyer access',async()=>{
+  await legacy('owner','reopen');
+  const before=(await workspace('owner')).record;
+  const denied=await accounts.owner.client.rpc('snacky_buying_command_v1',{p_command:{request_id:randomUUID(),list_id:listId,revision:before.revision,action:'assign',payload:{assigned_to:accounts.crm.member}}});
+  assert.equal(denied.error?.code,'22023');
+  const unchanged=(await workspace('owner')).record;assert.equal(unchanged.revision,before.revision);assert.equal(unchanged.assigned_to,before.assigned_to);
+  assert.equal((await accounts.crm.client.rpc('snacky_buying_sources_v1',{p_id:listId})).error?.code,'42501');
+  await legacy('owner','assign',{assigned_to:accounts.warehouse.member});
+  assert.equal((await accounts.operator.client.rpc('snacky_buying_sources_v1',{p_id:listId})).error?.code,'42501');
+  const s=await sources('warehouse');assert.equal(s.sources.length,3);assert.deepEqual(s.options,[]);assert.deepEqual(s.stores,[]);assert.equal(ledgers(),baseline);
  });
  await check('new source tables have RLS, no raw grants, and definer helpers are private',async()=>{
   assert.equal(sql("select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='buying_private' and c.relname in ('sources','source_commands') and c.relrowsecurity"),'2');
