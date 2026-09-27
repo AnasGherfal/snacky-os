@@ -19,6 +19,8 @@ The label filter is applied by the database before pagination, so it searches th
 
 Management-assigned focus, lead stage, responsible employee and follow-up date remain separate and unchanged. Archived labels stop appearing without deleting any lead or audit history.
 
+When a label filter is selected, an absent/disabled label-capable reader is an explicit unavailable result, never a fallback to the unfiltered legacy list. Standard lists still retain their existing no-label fallback. Label controls appear only after the reader has returned label metadata.
+
 ## UX and reliability
 - Compact cards, inline lead labels, narrow-phone layouts and Arabic RTL.
 - Notes use ten records per page; lead lists retain their existing bounded paging.
