@@ -1,0 +1,22 @@
+name: CRM collaboration review preparation
+on:
+  push:
+    branches: ['feat/crm-notes-labels-v1']
+    paths: ['.github/workflows/crm-collab-polish.yml']
+permissions:
+  contents: write
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          python3 scripts/prepare-crm-collab-review.py
+          rm scripts/prepare-crm-collab-review.py .github/workflows/crm-collab-polish.yml
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/components/CrmLeadLabels.tsx scripts .github/workflows/crm-collab-polish.yml
+          git commit -m 'fix(crm): persist label drafts and preserve legacy component test boundaries'
+          git push origin HEAD:refs/heads/feat/crm-notes-labels-v1
