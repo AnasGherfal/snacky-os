@@ -172,18 +172,31 @@ try{
    request=route.request().postDataJSON();const response=await route.fetch();reply=await response.json();
    if(reply.ok)await route.abort('failed');else await route.fulfill({response});
   },{times:1});
-  owner.once('dialog',d=>d.accept());await owner.getByRole('button',{name:'Assign & set focus',exact:true}).click();
-  await owner.getByText('Save not confirmed. Retry the same saved request; do not create another selection.',{exact:true}).waitFor();
-  assert.equal(reply.ok,true);assert.equal((await rpc('owner','lead',{q:'Training place 43',scope:'mine'})).total,0);
-  const count=sql("select count(*) from crm_lead_private.receipts");
-  await owner.reload();await owner.getByRole('heading',{name:'No matching leads',exact:true}).waitFor();
-  const response=owner.waitForResponse(r=>r.url().endsWith('/api/crm/lead-focus'));
-  await owner.getByRole('button',{name:'Retry saved request',exact:true}).click();const saved=await response;
-  assert.deepEqual(saved.request().postDataJSON(),request);assert.equal((await saved.json()).ok,true);
-  assert.equal(sql("select count(*) from crm_lead_private.receipts"),count);
-  // Clear only this extra test's focus to retain the original three-record expiry checks.
-  const focused=(await rpc('owner','lead',{q:'Training place 43'})).rows[0];
-  const cleared=await accounts.owner.client.rpc('snacky_crm_lead_focus_command_v1',{p_request_id:randomUUID(),p_action:'clear',p_items:[{id:focused.id,version:focused.data.version,focus_revision:focused.focus_revision}]});assert.ifError(cleared.error);
+  try{
+   const lostResponse=owner.waitForEvent('requestfailed',{predicate:r=>r.url().endsWith('/api/crm/lead-focus')&&r.method()==='POST'});
+   owner.once('dialog',d=>d.accept());await owner.getByRole('button',{name:'Assign & set focus',exact:true}).click();
+   assert.deepEqual((await lostResponse).postDataJSON(),request);
+   assert.equal(reply.ok,true);assert.equal((await rpc('owner','lead',{q:'Training place 43',scope:'mine'})).total,0);
+   // A background refresh can remount the now-empty list before the transient
+   // catch message is painted. The persisted command and retry are the contract.
+   await owner.getByText('A save is awaiting confirmation. Retry the same request before changing the selection.',{exact:true}).waitFor();
+   await owner.getByRole('button',{name:'Retry saved request',exact:true}).waitFor();
+   const stored=await owner.evaluate(key=>sessionStorage.getItem(key),'snacky:lead-focus:v1:'+accounts.owner.id);
+   assert.deepEqual(JSON.parse(stored),request);
+   const count=sql("select count(*) from crm_lead_private.receipts");
+   await owner.reload();await owner.getByRole('heading',{name:'No matching leads',exact:true}).waitFor();
+   const response=owner.waitForResponse(r=>r.url().endsWith('/api/crm/lead-focus')&&r.request().method()==='POST');
+   await owner.getByRole('button',{name:'Retry saved request',exact:true}).click();const saved=await response;
+   assert.deepEqual(saved.request().postDataJSON(),request);assert.equal((await saved.json()).ok,true);
+   assert.equal(sql("select count(*) from crm_lead_private.receipts"),count);
+  }finally{
+   // Keep a failed recovery assertion from contaminating the separate expiry
+   // scenario. The original assertion still fails this suite; it is not skipped.
+   const focused=(await rpc('owner','lead',{q:'Training place 43'})).rows[0];
+   if(focused?.focused){
+    const cleared=await accounts.owner.client.rpc('snacky_crm_lead_focus_command_v1',{p_request_id:randomUUID(),p_action:'clear',p_items:[{id:focused.id,version:focused.data.version,focus_revision:focused.focus_revision}]});assert.ifError(cleared.error);
+   }
+  }
  });
  await check('employee fills the assigned research record and logs an introduction in original activity history',async()=>{
   const id=leads[40].id;
