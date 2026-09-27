@@ -6,7 +6,7 @@ const AxeBuilder=require('../.qa/crm-browser/node_modules/@axe-core/playwright')
 const out='.qa/crm-evidence';fs.mkdirSync(out,{recursive:true});
 const crm='22222222-2222-4222-8222-222222222222',owner='11111111-1111-4111-8111-111111111111',lead='60000000-0000-4000-8000-000000000041';
 const browser=await chromium.launch({headless:true}),results=[];let page;
-async function run(name,fn){try{await fn();results.push({name,passed:true});console.log('PASS '+name);}catch(e){results.push({name,passed:false,error:e.message});throw e;}finally{fs.writeFileSync(out+'/results.json',JSON.stringify(results,null,2));}}
+async function run(name,fn){try{await fn();results.push({name,passed:true});console.log('PASS '+name);}catch(e){results.push({name,passed:false,error:e.message});if(page)await page.screenshot({path:out+'/failure.png',fullPage:true}).catch(()=>{});throw e;}finally{fs.writeFileSync(out+'/results.json',JSON.stringify(results,null,2));}}
 try{
  for(const ar of [false,true]){
   const context=await browser.newContext({viewport:{width:390,height:900}});page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));page.setDefaultTimeout(15000);
@@ -14,7 +14,7 @@ try{
   const tr=(en,arabic)=>ar?arabic:en,me=()=>role==='owner'?owner:crm;
   function stamp(){return new Date(Date.now()+(++clock)).toISOString();}
   await page.route('**/api/crm/collaboration*',async route=>{
-   const request=route.request(),url=new URL(request.url);
+   const request=route.request(),url=new URL(request.url());
    if(request.method()==='GET'){
     if(failRead){await route.fulfill({status:503,json:{ok:false,code:'unavailable'}});return;}
     if(url.searchParams.get('kind')==='labels'){
@@ -36,28 +36,31 @@ try{
    await route.fulfill({json:receipt});
   });
   const goto=()=>page.goto('http://127.0.0.1:3000/login/qa-crm-collaboration?lang='+(ar?'ar':'en')+'&role='+role);
+  const savedNote=()=>page.locator('article p').filter({hasText:tr('Please approve the location visit','يرجى اعتماد زيارة الجهة')});
+  const savedReply=()=>page.locator('article p').filter({hasText:tr('Please arrange it tomorrow','حددي الزيارة غداً')});
   await run((ar?'AR':'EN')+' note draft survives reload and lost response retries exact request',async()=>{
    await goto();await page.getByLabel(tr('New note','ملاحظة جديدة'),{exact:true}).fill(tr('Please approve the location visit','يرجى اعتماد زيارة الجهة'));
    await page.reload();await expect(page.getByLabel(tr('New note','ملاحظة جديدة'),{exact:true})).toHaveValue(tr('Please approve the location visit','يرجى اعتماد زيارة الجهة'));
    lose=true;await page.getByRole('button',{name:tr('Send to management','إرسال للإدارة'),exact:true}).click();
    const retry=page.getByRole('button',{name:tr('Retry saved request','إعادة الطلب المحفوظ'),exact:true});await expect(retry).toBeEnabled();await retry.click();
-   await expect(page.getByText(tr('Please approve the location visit','يرجى اعتماد زيارة الجهة'),{exact:true})).toBeVisible();assert.equal(notes.length,1);assert.deepEqual(posted[0],posted[1]);
+   await expect(savedNote()).toBeVisible();assert.equal(notes.length,1);assert.deepEqual(posted[0],posted[1]);
   });
   await run((ar?'AR':'EN')+' unavailable read is not zero; retry recovers notes',async()=>{
-   failRead=true;await page.getByRole('button',{name:tr('Refresh','تحديث'),exact:true}).click();await expect(page.getByRole('alert')).toBeVisible();
+   failRead=true;await page.getByRole('button',{name:tr('Refresh','تحديث'),exact:true}).click();await expect(page.locator('#crm-collab-fixture').getByRole('alert')).toBeVisible();
    assert.equal(await page.getByText(tr('No notes in this view.','لا توجد ملاحظات في هذا العرض.'),{exact:true}).count(),0);
-   failRead=false;await page.getByRole('button',{name:tr('Retry','إعادة المحاولة'),exact:true}).click();await expect(page.getByText(tr('Please approve the location visit','يرجى اعتماد زيارة الجهة'),{exact:true})).toBeVisible();
+   failRead=false;await page.getByRole('button',{name:tr('Retry','إعادة المحاولة'),exact:true}).click();await expect(savedNote()).toBeVisible();
   });
   await run((ar?'AR':'EN')+' personal label definition survives reload and applies to lead',async()=>{
    await page.getByRole('button',{name:tr('Labels','تصنيفات'),exact:true}).click();await page.getByLabel(tr('Label name','اسم التصنيف'),{exact:true}).fill(tr('This week','هذا الأسبوع'));
    await page.reload();await page.getByRole('button',{name:tr('Labels','تصنيفات'),exact:true}).click();await expect(page.getByLabel(tr('Label name','اسم التصنيف'),{exact:true})).toHaveValue(tr('This week','هذا الأسبوع'));
    await page.getByRole('button',{name:tr('Create label','إنشاء التصنيف'),exact:true}).click();await page.getByRole('checkbox',{name:tr('This week','هذا الأسبوع'),exact:true}).check();
-   await page.getByRole('button',{name:tr('Save lead labels','حفظ تصنيفات الجهة'),exact:true}).click();await expect(page.getByRole('checkbox',{name:tr('This week','هذا الأسبوع'),exact:true})).toBeChecked();assert.equal(selected.length,1);
+   const saved=page.waitForResponse(r=>r.url().includes('/api/crm/collaboration')&&r.request().method()==='POST'&&r.request().postDataJSON().action==='labels.set');
+   await page.getByRole('button',{name:tr('Save lead labels','حفظ تصنيفات الجهة'),exact:true}).click();await saved;await expect(page.getByRole('checkbox',{name:tr('This week','هذا الأسبوع'),exact:true})).toBeChecked();assert.equal(selected.length,1);
   });
   await run((ar?'AR':'EN')+' owner sees note, replies and marks reviewed; CRM sees response',async()=>{
    role='owner';await goto();await page.getByText(tr('Reply / update status','رد الإدارة / تحديث الحالة'),{exact:true}).click();await page.getByLabel(tr('Reply','الرد'),{exact:true}).fill(tr('Please arrange it tomorrow','حددي الزيارة غداً'));
    await page.getByLabel(tr('Status','الحالة'),{exact:true}).selectOption('seen');await page.getByRole('button',{name:tr('Save reply and status','حفظ الرد والحالة'),exact:true}).click();
-   await expect(page.getByText(tr('Please arrange it tomorrow','حددي الزيارة غداً'),{exact:true})).toBeVisible();role='crm';await goto();await expect(page.getByText(tr('Please arrange it tomorrow','حددي الزيارة غداً'),{exact:true})).toBeVisible();
+   await expect(savedReply()).toBeVisible();role='crm';await goto();await expect(savedReply()).toBeVisible();
    assert.equal(await page.getByRole('button',{name:tr('Save reply and status','حفظ الرد والحالة'),exact:true}).count(),0);
   });
   await run((ar?'AR':'EN')+' mobile layout and accessibility at 390 and 320',async()=>{
