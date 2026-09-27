@@ -87,3 +87,12 @@ test('installed and declined records preserve history links without false prospe
  assert.match(html,/Prospecting closed/);assert.match(html,/No prospecting due/);
  assert.doesNotMatch(html,/Set a next action|No date set|Contact details needed/);
 });
+
+test('label filters cannot silently fall back to an unfiltered legacy result',async()=>{
+ const missing=workspace({firstMissing:true});assert.match(await missing.render({label:id}),/Leads unavailable/);assert.equal(missing.calls.length,1);
+ const uninstalled=workspace();assert.match(await uninstalled.render({label:id}),/Leads unavailable/);assert.equal(uninstalled.calls.length,1);
+ const disabled=workspace({enabled:false});assert.match(await disabled.render({label:id}),/Leads unavailable/);assert.equal(disabled.calls.length,0);
+ const malformed=workspace();assert.match(await malformed.render({label:'not-a-uuid'}),/Leads unavailable/);assert.equal(malformed.calls.length,0);
+ const available=workspace({result:{me:person,staff:true,manager:true,today:'2026-09-19',focus_ready:true,focus_assignees:[],rows:[row],directory:[],total:1,offset:0,page_size:40,label_options:[{id,name:'This week',color:'blue',owner_id:person,owner_name:'Employee'}]}});
+ assert.doesNotMatch(await available.render({label:id}),/Leads unavailable/);assert.equal(available.calls[0][1].p_filters.label,id);
+});

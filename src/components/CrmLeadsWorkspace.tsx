@@ -20,10 +20,13 @@ export async function CrmLeadsWorkspace({searchParams={}}:{searchParams?:LeadSea
  let context:LeadWorkspaceData;
  try{
   const db=await getAuthenticatedSupabaseServerClient();if(!db)throw Error('session_unavailable');
-  if(!leadFocusEnabled&&(filters.focus||(filters.group&&filters.group!=='all')))throw Error('focus_disabled');
+  if(filters.label&&!usableLeadId(filters.label))throw Error('invalid_label_filter');
+  if(!leadFocusEnabled&&(filters.label||filters.focus||(filters.group&&filters.group!=='all')))throw Error('focus_disabled');
   let result=leadFocusEnabled?await db.rpc('snacky_crm_lead_desk_v1',{p_filters:deskFilters}):await db.rpc('snacky_crm_workspace_v1',{p_section:'lead',p_id:null,p_filters:filters});
-  if(leadFocusEnabled&&missingLeadFocus(result.error)&&!filters.focus&&(!filters.group||filters.group==='all'))result=await db.rpc('snacky_crm_workspace_v1',{p_section:'lead',p_id:null,p_filters:filters});
+  if(leadFocusEnabled&&missingLeadFocus(result.error)&&!filters.label&&!filters.focus&&(!filters.group||filters.group==='all'))result=await db.rpc('snacky_crm_workspace_v1',{p_section:'lead',p_id:null,p_filters:filters});
   if(result.error)throw result.error;const data=result.data as LeadWorkspaceData|null;
+  if(filters.label&&!Array.isArray(data?.label_options))throw Error('label_filter_unavailable');
+  if(data?.label_options!==undefined&&(!Array.isArray(data.label_options)||data.label_options.some(l=>!usableLeadId(l.id)||typeof l.name!=='string'||typeof l.owner_name!=='string')))throw Error('invalid_labels');
   if(data?.focus_ready&&(!data.today||!Array.isArray(data.focus_assignees)))throw Error('invalid_focus_workspace');
   if(!data||!Array.isArray(data.rows)||!Array.isArray(data.directory)||!Number.isSafeInteger(data.total)||!Number.isSafeInteger(data.offset)||!Number.isSafeInteger(data.page_size)||data.page_size<1||data.page_size>100||data.total<0||data.offset<0||data.rows.some(row=>row.kind!=='lead'||!usableLeadId(row.id)||typeof row.title!=='string'))throw Error('invalid_workspace');
   context=data;if(context.focus_ready&&useOpenDefault)filters.group='active';
@@ -31,7 +34,7 @@ export async function CrmLeadsWorkspace({searchParams={}}:{searchParams?:LeadSea
   const code=error&&typeof error==='object'&&'code' in error?String(error.code):'unavailable';console.error('[crm-leads] Could not verify lead list',{code});
   return <section className={styles.workspace} dir={ar?'rtl':'ltr'} id="crm-leads"><div className={styles.error} role="alert"><h1>{tr('Leads unavailable','الجهات غير متاحة')}</h1><p>{tr('Could not verify the records or your access. This is not an empty lead list. Retry without creating duplicate records.','تعذر التحقق من السجلات أو صلاحياتك. هذا لا يعني أن قائمة الجهات فارغة. أعد المحاولة دون إنشاء سجلات مكررة.')}</p><a className={styles.primary} href={leadListHref(filters,{offset:filters.offset??'0'})}>{tr('Retry','إعادة المحاولة')}</a> <Link className={styles.secondary} href="/locations-pipeline">{tr('Standard lead list','قائمة الجهات المعتادة')}</Link></div></section>;
  }
- const labelsEnabled=hasAnyRole(profile,['owner','admin','crm']);
+ const labelsEnabled=hasAnyRole(profile,['owner','admin','crm'])&&Array.isArray(context.label_options);
  const currentOwner=filters.scope==='mine'?context.me:filters.assigned_to??'',knownOwner=context.directory.some(p=>p.id===currentOwner);
  const advanced=Boolean(filters.area||filters.type||filters.window&&filters.window!=='all'||filters.archived||filters.practice||filters.created_from||filters.created_to);
  const quick=[['all',tr('All permitted leads','كل الجهات المسموح بها'),{scope:'all',assigned_to:'',window:'all',focus:'',group:'all'}],['mine',tr('Assigned to me','المسند إليّ'),{scope:'mine',assigned_to:'',window:'all',focus:''}],['overdue',tr('Overdue follow-ups','المتابعات المتأخرة'),{window:'overdue',focus:''}]] as const;
