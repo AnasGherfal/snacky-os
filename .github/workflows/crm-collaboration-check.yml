@@ -1,0 +1,65 @@
+name: CRM collaboration release checks
+on:
+  push:
+    branches: ['feat/crm-notes-labels-v1']
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'supabase/migrations/*crm_notes_labels*'
+      - 'scripts/*crm-collab*'
+      - 'scripts/test-crm-collaboration-db.sql'
+      - '.github/workflows/crm-collaboration-check.yml'
+permissions:
+  contents: read
+concurrency:
+  group: crm-collaboration-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  database:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated-crm-only
+          POSTGRES_DB: crm_tests
+        ports: ['5432:5432']
+        options: --health-cmd 'pg_isready -U postgres' --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: isolated-crm-only
+      PGDATABASE: crm_tests
+    steps:
+      - uses: actions/checkout@v4
+      - name: Native CRM, notes, labels and buying boundary
+        run: |
+          set -o pipefail
+          psql -X -v ON_ERROR_STOP=1 -f scripts/test-crm-collaboration-db.sql 2>&1 | tee crm-collaboration-db.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: crm-collaboration-db
+          path: crm-collaboration-db.log
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: New API and existing CRM/buying/access contracts
+        run: node --experimental-strip-types --test scripts/test-crm-collaboration.mjs scripts/test-crm-lead-focus.mjs scripts/test-crm-lead-table.mjs scripts/test-shared-buying.mjs scripts/test-authz-permissions.mjs scripts/test-connected-relations.mjs
+      - name: TypeScript and lint
+        run: |
+          npm run typecheck
+          npx eslint src/lib/crm-collaboration.ts src/app/api/crm/collaboration/route.ts src/app/my-work/notes/page.tsx src/components/useCrmCollaborationCommand.ts src/components/CrmManagementNotes.tsx src/components/CrmLeadLabels.tsx src/components/CrmNotesSummary.tsx src/components/CrmLeadsWorkspace.tsx src/components/CrmLeadTable.tsx src/components/CrmLeadFocusList.tsx
+      - run: npm run test:critical-workflows
+      - name: Final production build
+        run: npm run build
