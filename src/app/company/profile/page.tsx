@@ -1,82 +1,22 @@
 import Link from 'next/link';
-import {requireCurrentProfileForPath} from '@/lib/auth';
-import {getServerI18n} from '@/lib/i18n/server';
-import {PageHeader} from '@/components/ui';
-import {CompanyPrint} from '@/components/CompanyEditor';
+import { requireCurrentProfileForPath } from '@/lib/auth';
+import { getServerI18n } from '@/lib/i18n/server';
+import { PageHeader } from '@/components/ui';
+import { CompanyPrint } from '@/components/CompanyEditor';
+import { CompanyReferenceNotice } from '@/components/CompanyReferenceNotice';
+export const dynamic = 'force-dynamic';
 
-export const dynamic='force-dynamic';
-
-const currentLocationsAr=['HT Mall / HT Land','الدبلوماسي مول','جامعة التحدي','جامعة طرابلس الأهلية','مستشفى المواصفات','مصحة الاستقلال'];
-const currentLocationsEn=['HT Mall / HT Land','Diplomacy Mall','Attahadi University','Tripoli Private University','Al-Muwasafat Hospital','Al-Istiqlal Clinic'];
-
-export default async function SnackyCompanyProfilePage(){
- await requireCurrentProfileForPath('/company/profile');
- const {locale}=await getServerI18n();
- const ar=locale==='ar';
- const tr=(en:string,arabic:string)=>ar?arabic:en;
- const locations=ar?currentLocationsAr:currentLocationsEn;
- return <div className="company-resource mx-auto max-w-5xl space-y-6" dir={ar?'rtl':'ltr'}>
-  <style>{`@media print {
-    .app-shell > aside, .app-shell > div > header, .print\\:hidden { display:none !important; }
-    .app-shell, .app-shell > div, .app-shell main, .company-resource { display:block !important; height:auto !important; max-height:none !important; overflow:visible !important; }
-    .company-resource { max-width:none !important; margin:0 !important; }
-    @page { margin: 1.4cm; }
-  }`}</style>
-  <PageHeader
-   title={tr('Snacky Company Profile','الملف التعريفي بسناكي')}
-   subtitle={tr('Approved internal reference for presenting Snacky to prospective locations.','المرجع الداخلي المعتمد لتقديم سناكي للجهات المحتملة.')}
-   action={<div className="flex flex-wrap gap-2 print:hidden"><CompanyPrint ar={ar}/><Link className="btn-secondary" href="/company/documents">{tr('Back to Documents & Brand','العودة إلى المستندات والهوية')}</Link></div>}
-  />
-  <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-   <div className="grid gap-6 p-6 sm:p-8 lg:grid-cols-[1.15fr_.85fr] lg:items-center">
-    <div>
-     <p className="text-sm font-semibold text-slate-700">{tr('SELF-SERVICE VENDING','خدمة بيع ذاتي')}</p>
-     <h2 className="mt-3 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">{tr('A closer service. An easier day.','خدمة أقرب. ويوم أسهل.')}</h2>
-     <p className="mt-4 max-w-2xl text-base leading-8 text-slate-600">{tr('Snacky operates self-service vending machines for snacks and drinks in high-traffic locations. We handle setup, products, refilling, follow-up and day-to-day operation so the host location receives a simple, managed service.','تدير سناكي ماكينات بيع ذاتي للوجبات الخفيفة والمشروبات في الأماكن ذات الحركة المرتفعة. نتولى التجهيز والمنتجات والتعبئة والمتابعة والتشغيل اليومي لتصل للموقع خدمة بسيطة ومدارة بالكامل.')}</p>
-    </div>
-    <div className="flex justify-center rounded-2xl bg-[#fff8f2] p-8">
-     {/* eslint-disable-next-line @next/next/no-img-element */}
-     <img src="/brand/snacky-logo.png" alt="Snacky" className="max-h-48 w-full object-contain"/>
-    </div>
-   </div>
-  </section>
-
-  <section className="grid gap-4 md:grid-cols-2">
-   <article className="surface-card">
-    <h2 className="text-xl font-semibold">{tr('What Snacky handles','ما الذي تتولاه سناكي؟')}</h2>
-    <ul className="mt-4 space-y-3 text-sm leading-7 text-slate-700">
-     <li>• {tr('Site assessment and suitable machine placement.','تقييم الموقع واختيار مكان مناسب للماكينة.')}</li>
-     <li>• {tr('Product selection, stocking and regular refilling.','اختيار المنتجات وتوفيرها والتعبئة الدورية.')}</li>
-     <li>• {tr('Routine follow-up, cleaning and operational support.','المتابعة الدورية والنظافة والدعم التشغيلي.')}</li>
-     <li>• {tr('Customer support and issue follow-up when needed.','خدمة العملاء ومتابعة أي مشكلة عند الحاجة.')}</li>
-    </ul>
-   </article>
-   <article className="surface-card">
-    <h2 className="text-xl font-semibold">{tr('Where the service fits','أين تناسب الخدمة؟')}</h2>
-    <p className="mt-4 text-sm leading-7 text-slate-700">{tr('Snacky focuses on locations where people spend time and benefit from quick access to snacks and drinks: universities, hospitals and clinics, schools, malls, offices and similar high-traffic environments.','تركز سناكي على الأماكن التي يقضي فيها الناس وقتاً ويستفيدون من وصول سريع للوجبات الخفيفة والمشروبات: الجامعات، المستشفيات والمصحات، المدارس، المولات، المكاتب والأماكن المشابهة ذات الحركة المرتفعة.')}</p>
-   </article>
-  </section>
-
-  <section className="surface-card">
-   <h2 className="text-xl font-semibold">{tr('Selected current locations','نماذج من مواقع سناكي الحالية')}</h2>
-   <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-    {locations.map(location=><div key={location} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium">{location}</div>)}
-   </div>
-  </section>
-
-  <section className="grid gap-4 md:grid-cols-3">
-   {[['1',tr('Tell us about the location','عرّفنا بالموقع')],['2',tr('Snacky reviews suitability','تقيّم سناكي ملاءمة الموقع')],['3',tr('Agree the setup and next step','نتفق على التجهيز والخطوة التالية')]].map(([n,label])=><article key={n} className="surface-card"><span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">{n}</span><p className="mt-3 font-semibold">{label}</p></article>)}
-  </section>
-
-  <section className="rounded-2xl bg-slate-950 p-6 text-white sm:p-8">
-   <p className="text-sm font-semibold text-orange-300">{tr('CONTACT','تواصل معنا')}</p>
-   <h2 className="mt-2 text-2xl font-semibold">{tr('Interested in Snacky at your location?','مهتم بوجود سناكي في موقعك؟')}</h2>
-   <div className="mt-5 flex flex-wrap gap-3 text-sm">
-    <a className="rounded-xl bg-white px-4 py-3 font-semibold text-slate-950" href="tel:+218917669886">091 766 9886</a>
-    <a className="rounded-xl border border-white/30 px-4 py-3 font-semibold" href="https://snacky.ly" target="_blank" rel="noopener noreferrer">snacky.ly</a>
-   </div>
-  </section>
-
-  <p className="text-xs leading-6 text-slate-500">{tr('Internal approved reference. Commercial terms, rent, discounts and installation commitments require the normal Snacky approval process.','مرجع داخلي معتمد. الشروط التجارية والإيجار والخصومات والالتزام بالتركيب تخضع لآلية الاعتماد المعتادة في سناكي.')}</p>
- </div>;
+export default async function SnackyCompanyProfilePage() {
+  await requireCurrentProfileForPath('/company/profile');
+  const { locale } = await getServerI18n();
+  const ar = locale === 'ar';
+  const tr = (en: string, arabic: string) => ar ? arabic : en;
+  return <div className="company-hub company-reference-page mx-auto max-w-4xl space-y-6" dir={ar ? 'rtl' : 'ltr'}>
+    <PageHeader title={tr('Snacky service overview', 'نبذة عن خدمة سناكي')} subtitle={tr('Internal background for presenting the service.', 'مرجع داخلي للتعريف بالخدمة.')} action={<CompanyPrint ar={ar}/>} />
+    <CompanyReferenceNotice ar={ar}/>
+    <section className="surface-card space-y-3"><h2 className="text-xl font-semibold">{tr('Snacky in 30 seconds', 'سناكي في 30 ثانية')}</h2><p className="text-base leading-8">{tr('Snacky operates vending machines for snacks and drinks in suitable high-traffic locations. We handle products, refilling, cleaning and operational follow-up, giving visitors and staff a convenient service without requiring the host to run it.', 'تدير سناكي ماكينات بيع ذاتي للوجبات الخفيفة والمشروبات في المواقع المناسبة ذات الحركة المرتفعة. نتولى المنتجات والتعبئة والنظافة والمتابعة التشغيلية، لتقديم خدمة سهلة للزوار والموظفين دون أن يضطر الموقع إلى تشغيلها بنفسه.')}</p></section>
+    <section className="surface-card space-y-3"><h2 className="text-xl font-semibold">{tr('Start with the value to the location', 'ابدأ بالقيمة التي يحصل عليها الموقع')}</h2><p className="leading-8">{tr('Explain who will use the machine, where it will be visible and accessible, and how Snacky will manage the service. Present Snacky primarily as an operator—not as a machine sale. Do not lead with an unapproved rent, commission or installation promise.', 'وضّح من سيستخدم الماكينة، وأين ستكون واضحة وسهلة الوصول، وكيف ستتولى سناكي إدارة الخدمة. قدّم سناكي أساساً كمشغّل للخدمة، لا كعملية بيع ماكينة. لا تبدأ بوعد غير معتمد بشأن الإيجار أو النسبة أو موعد التركيب.')}</p></section>
+    <section className="surface-card space-y-3"><h2 className="text-xl font-semibold">{tr('Qualify before committing', 'قيّم الموقع قبل الالتزام')}</h2><p className="leading-8">{tr('Collect the place name, location, decision-maker, daily activity and opening hours. Check placement, power, access for refilling and product restrictions. Record the visit, outcome and next follow-up in the existing lead. Commercial terms and installation timing need management confirmation.', 'اجمع اسم الجهة وموقعها وصاحب القرار والحركة اليومية وساعات العمل. راجع مكان الماكينة والكهرباء وإمكانية الوصول للتعبئة وقيود المنتجات. سجّل الزيارة ونتيجتها والمتابعة القادمة في سجل الجهة الموجود. تحتاج الشروط التجارية وموعد التركيب إلى تأكيد الإدارة.')}</p></section>
+    <section className="surface-card space-y-3"><h2 className="text-xl font-semibold">{tr('Send the real approved profile', 'أرسل الملف التعريفي المعتمد الفعلي')}</h2><p className="leading-8">{tr('Use the published profile attachment from the library. Check its date, contact details and sharing status, then keep the exact sent copy on the lead record. This reference deliberately does not reproduce changing location counts, prices or contact information.', 'استخدم مرفق الملف التعريفي المنشور في المكتبة. راجع تاريخه وبيانات التواصل وصلاحية المشاركة، ثم احفظ النسخة المرسلة فعلياً في سجل الجهة. لا يكرر هذا المرجع أعداد المواقع أو الأسعار أو بيانات التواصل المتغيرة.')}</p><Link className="btn-primary inline-flex" href="/company/documents">{tr('Open the document library', 'فتح مكتبة الوثائق')}</Link></section>
+  </div>;
 }
