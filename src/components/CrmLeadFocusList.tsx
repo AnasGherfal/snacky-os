@@ -1,25 +1,24 @@
 'use client';
-import {useEffect,useRef,useState} from 'react';
+import {useRef,useState,useSyncExternalStore} from 'react';
 import {useRouter} from 'next/navigation';
 import {CrmLeadTable} from '@/components/CrmLeadTable';
 import {focusDefaultEnd,focusMessage,validateLeadFocusCommand,confirmedFocusReceipt,type LeadFocusCommand,type FocusSelection} from '@/lib/crm-lead-focus';
 import type {LeadRow} from '@/lib/crm-lead-list';
 import styles from './CrmLeads.module.css';
-
-export function CrmLeadFocusList({rows,ar,userId,today,assignees,manager,labelsEnabled=false}:{labelsEnabled?:boolean;rows:LeadRow[];ar:boolean;userId:string;today:string;assignees:{id:string;name:string}[];manager:boolean}){
- const [items,setItems]=useState<FocusSelection[]>([]),[employee,setEmployee]=useState(''),[until,setUntil]=useState(()=>focusDefaultEnd(today)),[nextAction,setNextAction]=useState('');
- const [pending,setPending]=useState<LeadFocusCommand|null>(null),[ready,setReady]=useState(false),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[stale,setStale]=useState(false),[done,setDone]=useState(false);
- const lock=useRef(false),router=useRouter(),tr=(en:string,arabic:string)=>ar?arabic:en,key=`snacky:lead-focus:v1:${userId}`;
- useEffect(()=>{
-  if(!manager){setReady(true);return;}
-  try{
-   const raw=sessionStorage.getItem(key);
-   if(raw){const saved=validateLeadFocusCommand(JSON.parse(raw));setPending(saved);setItems(saved.items);setEmployee(saved.assigned_to??'');setUntil(saved.until??focusDefaultEnd(today));setNextAction(saved.next_action??'');}
-   setReady(true);
-  }catch{setMessage(tr('Browser storage or a saved request needs review. Reload before changing focus. Existing lead editing remains available.','يحتاج تخزين المتصفح أو الطلب المحفوظ إلى مراجعة. أعد التحميل قبل تعديل التركيز. يبقى تعديل الجهة المعتاد متاحاً.'));setStale(true);}
-  // Pending command recovery is tied to the signed-in person, not changing page data.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
- },[key,manager]);
+type Props={labelsEnabled?:boolean;rows:LeadRow[];ar:boolean;userId:string;today:string;assignees:{id:string;name:string}[];manager:boolean};
+const subscribe=()=>()=>{},clientSnapshot=()=>true,serverSnapshot=()=>false;
+export function CrmLeadFocusList(props:Props){
+ const hydrated=useSyncExternalStore(subscribe,clientSnapshot,serverSnapshot);
+ if(!hydrated)return <CrmLeadTable rows={props.rows} ar={props.ar} labelsEnabled={props.labelsEnabled} selection={props.manager?{items:[],locked:true,toggle(){}}:undefined}/>;
+ return <FocusListClient key={props.userId+':'+props.manager} {...props}/>;
+}
+function FocusListClient({rows,ar,userId,today,assignees,manager,labelsEnabled=false}:Props){
+ const key=`snacky:lead-focus:v1:${userId}`,tr=(en:string,arabic:string)=>ar?arabic:en;
+ const [restored]=useState(()=>{if(!manager)return {saved:null,error:false};try{const raw=sessionStorage.getItem(key);return {saved:raw?validateLeadFocusCommand(JSON.parse(raw)):null,error:false};}catch{return {saved:null,error:true};}});
+ const [items,setItems]=useState<FocusSelection[]>(restored.saved?.items??[]),[employee,setEmployee]=useState(restored.saved?.assigned_to??''),[until,setUntil]=useState(restored.saved?.until??focusDefaultEnd(today)),[nextAction,setNextAction]=useState(restored.saved?.next_action??'');
+ const [pending,setPending]=useState<LeadFocusCommand|null>(restored.saved),[busy,setBusy]=useState(false),[message,setMessage]=useState(restored.error?tr('Browser storage or a saved request needs review. Reload before changing focus. Existing lead editing remains available.','يحتاج تخزين المتصفح أو الطلب المحفوظ إلى مراجعة. أعد التحميل قبل تعديل التركيز. يبقى تعديل الجهة المعتاد متاحاً.'):'');
+ const [stale,setStale]=useState(restored.error),[done,setDone]=useState(false),ready=!restored.error;
+ const lock=useRef(false),router=useRouter();
  function toggle(row:LeadRow){
   if(!ready||pending||busy||stale||done||!row.data?.version)return;
   setItems(current=>current.some(x=>x.id===row.id)?current.filter(x=>x.id!==row.id):current.length<20?[...current,{id:row.id,version:row.data!.version!,focus_revision:row.focus_revision??0}]:current);
