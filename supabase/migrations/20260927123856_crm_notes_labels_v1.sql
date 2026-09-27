@@ -124,7 +124,7 @@ begin
 end $$;
 
 create function crm_collab_private.command(p_command jsonb) returns jsonb language plpgsql security definer set search_path='' as $$
-declare actor uuid:=auth.uid();rid uuid;id uuid;act text;payload jsonb;answer jsonb;saved crm_collab_private.receipts;
+declare actor uuid:=auth.uid();rid uuid;v_id uuid;act text;payload jsonb;answer jsonb;saved crm_collab_private.receipts;
  n crm_collab_private.notes;l crm_collab_private.labels;lead uuid;rev integer;ids uuid[];txt text;col text;
 begin
  if not crm_collab_private.active() then raise exception 'CRM or owner/admin access required' using errcode='42501';end if;
@@ -132,8 +132,8 @@ begin
    or p_command-array['request_id','id','action','revision','payload']<>'{}'
    or jsonb_typeof(p_command->'payload') is distinct from 'object'
    or jsonb_typeof(p_command->'revision') is distinct from 'number' or p_command->>'revision' !~ '^\d+$' then raise exception 'Invalid command' using errcode='22023';end if;
- rid:=(p_command->>'request_id')::uuid;id:=(p_command->>'id')::uuid;act:=p_command->>'action';payload:=p_command->'payload';
- if rid is null or id is null or act is null or act not in ('note.create','note.review','label.create','label.update','labels.set') then raise exception 'Invalid command identity' using errcode='22023';end if;
+ rid:=(p_command->>'request_id')::uuid;v_id:=(p_command->>'id')::uuid;act:=p_command->>'action';payload:=p_command->'payload';
+ if rid is null or v_id is null or act is null or act not in ('note.create','note.review','label.create','label.update','labels.set') then raise exception 'Invalid command identity' using errcode='22023';end if;
  perform pg_advisory_xact_lock(hashtextextended('crm-collab:'||rid::text,0));
  select * into saved from crm_collab_private.receipts where receipts.id=rid;
  if found then
@@ -145,15 +145,15 @@ begin
   txt:=btrim(payload->>'body');lead:=nullif(payload->>'lead_id','')::uuid;
   if txt is null or length(txt) not between 1 and 4000 then raise exception 'Write a note' using errcode='22023';end if;
   if lead is not null and not public.snacky_crm_allowed('lead',lead) then raise exception 'Lead access denied' using errcode='42501';end if;
-  insert into crm_collab_private.notes(id,author_id,lead_id,body) values(id,actor,lead,txt);rev:=1;
+  insert into crm_collab_private.notes(id,author_id,lead_id,body) values(v_id,actor,lead,txt);rev:=1;
  elsif act='note.review' then
   if not crm_collab_private.manager() then raise exception 'Owner/admin review required' using errcode='42501';end if;
-  select * into n from crm_collab_private.notes where notes.id=id for update;
+  select * into n from crm_collab_private.notes where notes.id=v_id for update;
   if not found then raise exception 'Note unavailable' using errcode='42501';end if;
   if n.revision<>(p_command->>'revision')::integer then raise exception 'Note changed; reload' using errcode='40001';end if;
   if payload->>'status' is null or payload->>'status' not in ('open','seen','done') or length(coalesce(payload->>'response',''))>4000 then raise exception 'Invalid review' using errcode='22023';end if;
   update crm_collab_private.notes set status=payload->>'status',response=coalesce(payload->>'response',''),reviewed_by=actor,revision=revision+1,updated_at=now()
-   where notes.id=id returning revision into rev;
+   where notes.id=v_id returning revision into rev;
  elsif act in ('label.create','label.update') then
   perform pg_advisory_xact_lock(hashtextextended('crm-label-owner:'||actor::text,0));
   txt:=btrim(payload->>'name');col:=payload->>'color';
@@ -161,15 +161,15 @@ begin
   if act='label.create' then
    if (p_command->>'revision')::integer<>0 then raise exception 'New label version required' using errcode='40001';end if;
    if (select count(*) from crm_collab_private.labels where owner_id=actor and not archived)>=50 then raise exception 'Maximum 50 active personal labels' using errcode='22023';end if;
-   insert into crm_collab_private.labels(id,owner_id,name,color) values(id,actor,txt,col);rev:=1;
+   insert into crm_collab_private.labels(id,owner_id,name,color) values(v_id,actor,txt,col);rev:=1;
   else
-   select * into l from crm_collab_private.labels where labels.id=id for update;
+   select * into l from crm_collab_private.labels where labels.id=v_id for update;
    if not found or l.owner_id<>actor then raise exception 'Only edit your own labels' using errcode='42501';end if;
    if l.revision<>(p_command->>'revision')::integer then raise exception 'Label changed; reload' using errcode='40001';end if;
-   update crm_collab_private.labels set name=txt,color=col,archived=coalesce((payload->>'archived')::boolean,false),revision=revision+1,updated_at=now() where labels.id=id returning revision into rev;
+   update crm_collab_private.labels set name=txt,color=col,archived=coalesce((payload->>'archived')::boolean,false),revision=revision+1,updated_at=now() where labels.id=v_id returning revision into rev;
   end if;
  else
-  lead:=id;
+  lead:=v_id;
   perform 1 from public.location_pipeline_leads where location_pipeline_leads.id=lead for update;
   if not found or not public.snacky_crm_allowed('lead',lead,true) then raise exception 'Only organize leads you may edit' using errcode='42501';end if;
   if jsonb_typeof(payload->'label_ids') is distinct from 'array' or jsonb_array_length(payload->'label_ids')>10 then raise exception 'Choose up to 10 personal labels' using errcode='22023';end if;
@@ -182,8 +182,8 @@ begin
   insert into crm_collab_private.lead_labels(lead_id,label_id) select lead,x from unnest(ids) x;
   update crm_collab_private.label_sets set revision=revision+1 where lead_id=lead and owner_id=actor returning revision into rev;
  end if;
- answer:=jsonb_build_object('ok',true,'request_id',rid,'id',id,'action',act,'revision',rev);
- insert into crm_collab_private.events(actor,action,record_id,detail) values(actor,act,id,jsonb_build_object('payload',payload,'previous',case when act='note.review' then to_jsonb(n) else null end));
+ answer:=jsonb_build_object('ok',true,'request_id',rid,'id',v_id,'action',act,'revision',rev);
+ insert into crm_collab_private.events(actor,action,record_id,detail) values(actor,act,v_id,jsonb_build_object('payload',payload,'previous',case when act='note.review' then to_jsonb(n) else null end));
  insert into crm_collab_private.receipts(id,actor,request,response) values(rid,actor,p_command,answer);
  return answer;
 end $$;

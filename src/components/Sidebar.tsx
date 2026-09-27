@@ -173,13 +173,15 @@ const cashHandlingItem: NavItem = { label: { en: "Cash handling", ar: "تسلي�
 
 const buyingListsItem: NavItem = { label: {en:"My buying lists", ar:"قوائم الشراء المسندة"}, href:"/buying-lists", icon:ClipboardList, activePrefixes:["/buying-lists"] };
 
+const managementNotesItem: NavItem = { label: { en: "Management notes", ar: "ملاحظات الإدارة" }, href: "/my-work/notes", icon: ClipboardList };
+
 const companyItem: NavItem = { label: { en: "Company", ar: "الشركة" }, href: "/company", icon: ClipboardList, moduleKey: "company" };
 
 const ownerAdminNav: NavSection[] = [
   { items: [dashboardItem, personalWorkItem] },
   { title: sectionTitles.work, items: [operationsItem, cashCustodyItem, cashHandlingItem, stockItem, machinesItem, crmItem, ...(companyHubEnabled ? [companyItem] : [])] },
   { title: sectionTitles.business, items: [financeItem, reportsItem] },
-  { title: sectionTitles.system, items: [adminItem] },
+  { title: sectionTitles.system, items: [adminItem, managementNotesItem] },
 ];
 
 const supervisorNav: NavSection[] = [
@@ -236,6 +238,7 @@ function sectionsForRoles(role: AppRole, roles?: AppRole[] | null): NavSection[]
   if (hasPermission(context, "locations.pipeline.manage") || hasPermission(context, "issues.view")) {
     work.push(crmItem);
   }
+  if (hasAnyRole(context, ["owner", "admin", "crm"])) work.push(managementNotesItem);
   if (hasPermission(context, "machines.view")) work.push(machinesItem);
 
   if (hasPermission(context, "inventory.view") || hasPermission(context, "storage.view")) {
@@ -259,7 +262,7 @@ function sectionsForRoles(role: AppRole, roles?: AppRole[] | null): NavSection[]
     business.push(financeItem);
     work.push(cashCustodyItem);
   }
-  if (hasAnyRole(context, ["crm", "operator", "finance"]) && !hasAnyRole(context, ["warehouse", "purchasing"])) work.push(buyingListsItem);
+  if (hasAnyRole(context, ["operator", "finance"]) && !hasAnyRole(context, ["warehouse", "purchasing"])) work.push(buyingListsItem);
   if (hasAnyRole(context, ["operator", "warehouse", "purchasing", "finance"])) work.push(cashHandlingItem);
   if (companyHubEnabled && hasAnyRole(context, companyRoles)) work.push(companyItem);
   if (hasPermission(context, "reports.view")) business.push(reportsItem);

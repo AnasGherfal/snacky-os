@@ -6,7 +6,7 @@ import {focusDefaultEnd,focusMessage,validateLeadFocusCommand,confirmedFocusRece
 import type {LeadRow} from '@/lib/crm-lead-list';
 import styles from './CrmLeads.module.css';
 
-export function CrmLeadFocusList({rows,ar,userId,today,assignees,manager}:{rows:LeadRow[];ar:boolean;userId:string;today:string;assignees:{id:string;name:string}[];manager:boolean}){
+export function CrmLeadFocusList({rows,ar,userId,today,assignees,manager,labelsEnabled=false}:{labelsEnabled?:boolean;rows:LeadRow[];ar:boolean;userId:string;today:string;assignees:{id:string;name:string}[];manager:boolean}){
  const [items,setItems]=useState<FocusSelection[]>([]),[employee,setEmployee]=useState(''),[until,setUntil]=useState(()=>focusDefaultEnd(today)),[nextAction,setNextAction]=useState('');
  const [pending,setPending]=useState<LeadFocusCommand|null>(null),[ready,setReady]=useState(false),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[stale,setStale]=useState(false),[done,setDone]=useState(false);
  const lock=useRef(false),router=useRouter(),tr=(en:string,arabic:string)=>ar?arabic:en,key=`snacky:lead-focus:v1:${userId}`;
@@ -69,6 +69,6 @@ export function CrmLeadFocusList({rows,ar,userId,today,assignees,manager}:{rows:
    </form>:null}
    {message?<p role="status" className={styles.focusHint}>{message}</p>:null}{stale?<button className={styles.secondary} onClick={()=>window.location.reload()}>{tr('Reload records','تحديث السجلات')}</button>:null}
   </section>:null}
-  {rows.length?<CrmLeadTable rows={rows} ar={ar} selection={manager?{items,locked,toggle}:undefined}/>:null}
+  {rows.length?<CrmLeadTable rows={rows} ar={ar} labelsEnabled={labelsEnabled} selection={manager?{items,locked,toggle}:undefined}/>:null}
  </>;
 }
