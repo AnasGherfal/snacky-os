@@ -38,9 +38,15 @@ try{
   const goto=()=>page.goto('http://127.0.0.1:3000/login/qa-crm-collaboration?lang='+(ar?'ar':'en')+'&role='+role);
   const savedNote=()=>page.locator('article p').filter({hasText:tr('Please approve the location visit','يرجى اعتماد زيارة الجهة')});
   const savedReply=()=>page.locator('article p').filter({hasText:tr('Please arrange it tomorrow','حددي الزيارة غداً')});
+  // A restored textarea contributes text nodes to its wrapping label, and a
+  // select contributes option text. Locate their stable accessible names,
+  // without weakening exact matching or the saved-value assertions.
+  const noteInput=()=>page.getByRole('textbox',{name:tr('New note','ملاحظة جديدة'),exact:true});
+  const replyInput=()=>page.getByRole('textbox',{name:tr('Reply','الرد'),exact:true});
+  const reviewStatus=()=>page.getByRole('combobox',{name:tr('Status','الحالة'),exact:true});
   await run((ar?'AR':'EN')+' note draft survives reload and lost response retries exact request',async()=>{
-   await goto();await page.getByLabel(tr('New note','ملاحظة جديدة'),{exact:true}).fill(tr('Please approve the location visit','يرجى اعتماد زيارة الجهة'));
-   await page.reload();await expect(page.getByLabel(tr('New note','ملاحظة جديدة'),{exact:true})).toHaveValue(tr('Please approve the location visit','يرجى اعتماد زيارة الجهة'));
+   await goto();await noteInput().fill(tr('Please approve the location visit','يرجى اعتماد زيارة الجهة'));
+   await page.reload();await expect(noteInput()).toHaveValue(tr('Please approve the location visit','يرجى اعتماد زيارة الجهة'));
    lose=true;await page.getByRole('button',{name:tr('Send to management','إرسال للإدارة'),exact:true}).click();
    const retry=page.getByRole('button',{name:tr('Retry saved request','إعادة الطلب المحفوظ'),exact:true});await expect(retry).toBeEnabled();await retry.click();
    await expect(savedNote()).toBeVisible();assert.equal(notes.length,1);assert.deepEqual(posted[0],posted[1]);
@@ -58,8 +64,8 @@ try{
    await page.getByRole('button',{name:tr('Save lead labels','حفظ تصنيفات الجهة'),exact:true}).click();await saved;await expect(page.getByRole('checkbox',{name:tr('This week','هذا الأسبوع'),exact:true})).toBeChecked();assert.equal(selected.length,1);
   });
   await run((ar?'AR':'EN')+' owner sees note, replies and marks reviewed; CRM sees response',async()=>{
-   role='owner';await goto();await page.getByText(tr('Reply / update status','رد الإدارة / تحديث الحالة'),{exact:true}).click();await page.getByLabel(tr('Reply','الرد'),{exact:true}).fill(tr('Please arrange it tomorrow','حددي الزيارة غداً'));
-   await page.getByLabel(tr('Status','الحالة'),{exact:true}).selectOption('seen');await page.getByRole('button',{name:tr('Save reply and status','حفظ الرد والحالة'),exact:true}).click();
+   role='owner';await goto();await page.getByText(tr('Reply / update status','رد الإدارة / تحديث الحالة'),{exact:true}).click();await replyInput().fill(tr('Please arrange it tomorrow','حددي الزيارة غداً'));
+   await reviewStatus().selectOption('seen');await page.getByRole('button',{name:tr('Save reply and status','حفظ الرد والحالة'),exact:true}).click();
    await expect(savedReply()).toBeVisible();role='crm';await goto();await expect(savedReply()).toBeVisible();
    assert.equal(await page.getByRole('button',{name:tr('Save reply and status','حفظ الرد والحالة'),exact:true}).count(),0);
   });
