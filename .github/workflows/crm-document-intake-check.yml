@@ -1,0 +1,39 @@
+name: CRM quick issue and document import
+on:
+  pull_request:
+    paths:
+      - 'src/components/CrmQuickIssueAction.tsx'
+      - 'src/app/my-work/page.tsx'
+      - 'src/components/module-tabs-config.ts'
+      - 'src/components/CompanyProposalImport.tsx'
+      - 'src/components/CompanyKitImportAction.tsx'
+      - 'src/app/company/documents/page.tsx'
+      - 'src/lib/company-proposal-*'
+      - 'src/app/company/import/**'
+      - 'src/app/api/company/proposal-kit/**'
+      - 'scripts/test-crm-quick-issue-entry.mjs'
+      - 'scripts/test-company-proposal-import.mjs'
+      - '.github/workflows/crm-document-intake-check.yml'
+permissions:
+  contents: read
+concurrency:
+  group: crm-document-intake-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Existing and new role, file-integrity and client-handler contracts
+        run: node --experimental-strip-types --test scripts/test-crm-quick-issue-entry.mjs scripts/test-company-proposal-import.mjs scripts/test-customer-support-quick.mjs scripts/test-company-documents.mjs
+      - run: npm run typecheck
+      - name: Lint changed application files
+        run: npx eslint src/components/CrmQuickIssueAction.tsx src/app/my-work/page.tsx src/components/module-tabs-config.ts src/components/CompanyProposalImport.tsx src/components/CompanyKitImportAction.tsx src/app/company/documents/page.tsx src/lib/company-proposal-import.ts src/app/company/import/page.tsx src/app/api/company/proposal-kit/route.ts
+      - name: Production build
+        run: npm run build
