@@ -90,7 +90,8 @@ function PurchaseOverviewPanel({ personId, locale, selfServiceOnly, refreshVersi
 
   useEffect(() => {
     const state = requestState.current;
-    void load();
+    // Schedule the initial network refresh as a callback, with Strict Mode cleanup.
+    const initialLoad = setTimeout(() => { setLoading(true); void load(); }, 0);
     const whenVisible = () => {
       if (document.visibilityState === "visible") { setLoading(true); void load(); }
     };
@@ -100,6 +101,7 @@ function PurchaseOverviewPanel({ personId, locale, selfServiceOnly, refreshVersi
     return () => {
       ++state.id;
       state.controller?.abort();
+      clearTimeout(initialLoad);
       clearInterval(timer);
       window.removeEventListener("focus", whenVisible);
       document.removeEventListener("visibilitychange", whenVisible);
