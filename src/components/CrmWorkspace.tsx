@@ -70,7 +70,12 @@ export async function CrmWorkspace({section,id,searchParams={},create=false}:{se
   if(!db)throw new Error('Session unavailable');
   const result=await db.rpc('snacky_crm_workspace_v1',{p_section:section,p_id:id??null,p_filters:filters});
   if(result.error)throw result.error;if(!result.data||typeof result.data!=='object')throw new Error('Invalid workspace data');context=result.data;
- }catch(error){console.error('[crm-workspace] Could not verify records',{section,error});return <ErrorState title={tr('Customer relations unavailable','علاقات العملاء غير متاحة')} body={tr('Could not verify these records or your access. This is not an empty task list. Reload after the database update or connection is restored.','تعذر التحقق من السجلات أو صلاحياتك. هذا لا يعني عدم وجود مهام. أعد التحميل بعد تحديث قاعدة البيانات أو استعادة الاتصال.')}/>;}
+ }catch(error){
+  const code=error&&typeof error==='object'&&'code' in error?String((error as {code?:unknown}).code??''):'';
+  console.error('[crm-workspace] Could not load records',{section,id:id??null,code:code||'unavailable',error});
+  if(code==='42501')return <ErrorState title={tr('Customer relations access unavailable','صلاحية علاقات العملاء غير متاحة')} body={tr('Your account does not have access to this record or section. No changes were made.','حسابك لا يملك صلاحية الوصول إلى هذا السجل أو القسم. لم يتم تغيير أي بيانات.')} action={<Link className="btn-secondary" href={crmPaths[section]}>{tr('Back','رجوع')}</Link>}/>;
+  return <ErrorState title={tr('Customer relations temporarily unavailable','تعذر تحميل علاقات العملاء مؤقتاً')} body={tr('Snacky OS could not load these records right now. This is a temporary loading error, not an access decision.','تعذر على سناكي OS تحميل هذه السجلات حالياً. هذا خطأ تحميل مؤقت وليس قرار صلاحيات.')} action={<><a className="btn-primary" href={id?crmHref(section,id):crmPaths[section]}>{tr('Retry','إعادة المحاولة')}</a>{id?<Link className="btn-secondary" href={crmPaths[section]}>{tr('Back','رجوع')}</Link>:null}</>}/>;
+ }
  let support:any=null;
  if(section==='work'&&context.staff&&db){
   const supportResult=await db.rpc('snacky_customer_support_dashboard_v1',{});
