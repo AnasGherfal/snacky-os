@@ -26,6 +26,10 @@ const receivePrerequisitesRepair = fs.readFileSync(
   path.join(root, "supabase/migrations/20260907113000_purchase_receive_prerequisites_repair.sql"),
   "utf8",
 );
+const expiryBatchMigration = fs.readFileSync(
+  path.join(root, "supabase/migrations/20260920101500_expiry_batch_safety.sql"),
+  "utf8",
+);
 
 function functionDeclaration(name) {
   return sourceFile.statements.find(
@@ -132,7 +136,10 @@ test("purchase creation uses a caller-stable submission UUID", () => {
   assert.ok(createPurchase?.body, "createPurchase must exist");
   const createText = createPurchase.getText(sourceFile);
 
-  assert.match(source, /const PURCHASE_CREATE_RPC = "snacky_create_purchase_with_lines_v2"/);
+  assert.match(source, /const PURCHASE_CREATE_RPC = "snacky_create_purchase_with_lines_v3"/);
+  assert.match(expiryBatchMigration, /create or replace function public\.snacky_create_purchase_with_lines_v3\(/i);
+  assert.match(expiryBatchMigration, /public\.snacky_create_purchase_with_lines_v2\(/i);
+  assert.match(expiryBatchMigration, /Expiry date is required for every received product batch/i);
   assert.match(createText, /fd\.get\("client_submission_id"\)/);
   assert.match(createText, /p_client_submission_id:\s*clientSubmissionId/);
   assert.doesNotMatch(
@@ -225,7 +232,9 @@ test("draft update and cancellation are atomic RPC-only commands with no hard de
   const updateText = updatePurchase.getText(sourceFile);
   const cancelText = cancelPurchase.getText(sourceFile);
   const receiveText = receivePurchase.getText(sourceFile);
-  assert.match(updateText, /supabase\.rpc\("snacky_update_draft_purchase_v1"/);
+  assert.match(updateText, /supabase\.rpc\("snacky_update_draft_purchase_v2"/);
+  assert.match(expiryBatchMigration, /create or replace function public\.snacky_update_draft_purchase_v2\(/i);
+  assert.match(expiryBatchMigration, /public\.snacky_update_draft_purchase_v1\(/i);
   assert.match(updateText, /p_client_submission_id:\s*clientSubmissionId/);
   assert.match(updateText, /p_receiving_storage_location_id:\s*receivingStorageLocationId \|\| null/);
   assert.doesNotMatch(updateText, /p_payment_status|p_payment_account_id|payment_status\s*:|payment_account_id\s*:/);

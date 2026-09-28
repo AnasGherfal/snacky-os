@@ -743,6 +743,14 @@ export async function GET(
     ].filter(Boolean)));
     const storageByProduct = new Map<string, number>();
     let storageAvailabilityLoaded = false;
+    const expirySafetyByProduct = new Map<string, {
+      trackedStorageQty: number;
+      safeOrUnknownQty: number;
+      expiredQty: number;
+      unknownExpiryQty: number;
+      earliestSafeExpiry: string | null;
+    }>();
+    let expirySafetyLoaded = false;
 
     if (storageProductIds.length) {
       failingStep = "load_storage_availability";
@@ -764,10 +772,42 @@ export async function GET(
       }
     }
 
+    if (storageProductIds.length) {
+      failingStep = "load_expiry_safe_storage";
+      failingResource = "snacky_safe_storage_expiry_by_product";
+      const expirySafetyResult = await readClient
+        .from("snacky_safe_storage_expiry_by_product")
+        .select("product_id, tracked_storage_qty, safe_or_unknown_qty, expired_qty, unknown_expiry_qty, earliest_safe_expiry")
+        .in("product_id", storageProductIds);
+      if (expirySafetyResult.error) {
+        logOptionalFailure({ step: "load_expiry_safe_storage", resource: "snacky_safe_storage_expiry_by_product", error: expirySafetyResult.error });
+      } else {
+        expirySafetyLoaded = true;
+        (expirySafetyResult.data ?? []).forEach((row: any) => {
+          const productId = String(row.product_id ?? "").trim();
+          if (!productId) return;
+          expirySafetyByProduct.set(productId, {
+            trackedStorageQty: unitQuantity(row.tracked_storage_qty),
+            safeOrUnknownQty: unitQuantity(row.safe_or_unknown_qty),
+            expiredQty: unitQuantity(row.expired_qty),
+            unknownExpiryQty: unitQuantity(row.unknown_expiry_qty),
+            earliestSafeExpiry: stringOrNull(row.earliest_safe_expiry),
+          });
+        });
+      }
+    }
+
+    const expirySafetyForProduct = (productId: string) => expirySafetyByProduct.get(productId) ?? null;
+
     const availableStorageQtyForProduct = (productId: string, fallbackQty = 0) => {
       const alreadyPicked = pickedByProduct.get(productId) ?? 0;
-      if (storageAvailabilityLoaded) return (storageByProduct.get(productId) ?? 0) + alreadyPicked;
-      return Math.max(fallbackQty, alreadyPicked);
+      const coreAvailable = storageAvailabilityLoaded ? (storageByProduct.get(productId) ?? 0) + alreadyPicked : Math.max(fallbackQty, alreadyPicked);
+      if (!expirySafetyLoaded) return coreAvailable;
+      const safety = expirySafetyForProduct(productId);
+      // Once the expiry ledger is available, an untracked positive core balance
+      // is not treated as verified sellable stock.
+      if (!safety) return coreAvailable > alreadyPicked ? alreadyPicked : coreAvailable;
+      return Math.min(coreAvailable, safety.safeOrUnknownQty + alreadyPicked);
     };
 
     const stopGroupsById = new Map<string, any>();
@@ -833,6 +873,10 @@ export async function GET(
         reason: savedPick?.reason ?? null,
         notes: savedPick?.notes ?? null,
         source: line.source ?? "manual_admin_assignment",
+        expiry_tracking_ready: expirySafetyLoaded,
+        expired_storage_qty: expirySafetyForProduct(productId)?.expiredQty ?? 0,
+        unknown_expiry_qty: expirySafetyForProduct(productId)?.unknownExpiryQty ?? 0,
+        earliest_safe_expiry: expirySafetyForProduct(productId)?.earliestSafeExpiry ?? null,
       });
       stopGroupsById.set(groupId, group);
 
@@ -865,6 +909,10 @@ export async function GET(
         checked_at: line.checked_at ?? null,
         checked_by: line.checked_by ?? null,
         source: line.source ?? "manual_admin_assignment",
+        expiry_tracking_ready: expirySafetyLoaded,
+        expired_storage_qty: expirySafetyForProduct(productId)?.expiredQty ?? 0,
+        unknown_expiry_qty: expirySafetyForProduct(productId)?.unknownExpiryQty ?? 0,
+        earliest_safe_expiry: expirySafetyForProduct(productId)?.earliestSafeExpiry ?? null,
       });
       plannedByProduct.set(productId, current);
     });
@@ -909,6 +957,10 @@ export async function GET(
       planned_qty: unitQuantity(line.planned_qty),
       picked_qty: line.has_picked_qty ? unitQuantity(line.picked_qty) : null,
       available_storage_qty: availableStorageQtyForProduct(String(line.product_id), unitQuantity(line.planned_qty)),
+      expiry_tracking_ready: expirySafetyLoaded,
+      expired_storage_qty: expirySafetyForProduct(String(line.product_id))?.expiredQty ?? 0,
+      unknown_expiry_qty: expirySafetyForProduct(String(line.product_id))?.unknownExpiryQty ?? 0,
+      earliest_safe_expiry: expirySafetyForProduct(String(line.product_id))?.earliestSafeExpiry ?? null,
       machine_items: Array.isArray(line.machine_items) ? line.machine_items : [],
     }));
 
@@ -922,6 +974,10 @@ export async function GET(
       imageUrl: product.image_url ?? null,
       caseQuantity: Math.max(1, unitQuantity(product.case_quantity ?? 1)),
       availableStorageQty: availableStorageQtyForProduct(String(product.id ?? ""), 0),
+      expiryTrackingReady: expirySafetyLoaded,
+      expiredStorageQty: expirySafetyForProduct(String(product.id ?? ""))?.expiredQty ?? 0,
+      unknownExpiryQty: expirySafetyForProduct(String(product.id ?? ""))?.unknownExpiryQty ?? 0,
+      earliestSafeExpiry: expirySafetyForProduct(String(product.id ?? ""))?.earliestSafeExpiry ?? null,
     }));
 
     return NextResponse.json({
@@ -951,6 +1007,7 @@ export async function GET(
             pendingStopCount,
             itemSource,
             productOptionsCount: productOptions.length,
+            expirySafetyLoaded,
             operatorTeamMemberId: profile?.team_member_id ?? null,
           }
         : undefined,

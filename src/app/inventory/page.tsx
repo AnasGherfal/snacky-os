@@ -399,6 +399,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
           <div className="flex flex-wrap gap-2">
             <SecondaryButton href="/product-planning">Product Planning</SecondaryButton>
             <SecondaryButton href="/restock-priority">Restock Priority</SecondaryButton>
+            <SecondaryButton href="/inventory/expiry">Expiry Control</SecondaryButton>
             <SecondaryButton href="/inventory/machine-storage">Machine Storage</SecondaryButton>
             <SecondaryButton href="/inventory/movements">Movement Log</SecondaryButton>
             {isOwnerAdminRole(profile) ? <PrimaryButton href="/inventory/movements/new">Storage count adjustment</PrimaryButton> : null}

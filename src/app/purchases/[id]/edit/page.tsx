@@ -42,7 +42,7 @@ export default async function EditPurchasePage({
       .single(),
     supabase
       .from("purchase_order_lines")
-      .select("id, line_position, product_id, boxes_qty, units_per_box, loose_units_qty, unit_cost, line_total, unit_cost_lyd, line_total_lyd")
+      .select("id, line_position, product_id, boxes_qty, units_per_box, loose_units_qty, unit_cost, line_total, unit_cost_lyd, line_total_lyd, expiry_date, supplier_lot_code, short_expiry_confirmed")
       .eq("purchase_order_id", id)
       .order("line_position")
       .order("created_at"),
@@ -129,6 +129,9 @@ export default async function EditPurchasePage({
     unitCostSource: "manual" as const,
     lineTotal: Number(line.line_total_lyd ?? line.line_total ?? 0),
     pricingMode: "total" as const,
+    expiryDate: line.expiry_date ?? "",
+    supplierLotCode: line.supplier_lot_code ?? "",
+    shortExpiryConfirmed: Boolean(line.short_expiry_confirmed),
   }));
   const initialReceiptUrl = String((purchase as any).receipt_url ?? "").trim() || privateStorageObjectUrl(RECEIPT_IMAGE_BUCKET, (purchase as any).receipt_storage_path) || "";
 

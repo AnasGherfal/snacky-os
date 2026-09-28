@@ -20,6 +20,9 @@ type PurchaseLineInput = {
   unitCostZeroConfirmed: boolean;
   lineTotal: number;
   pricingMode: "unit" | "total";
+  expiryDate: string | null;
+  supplierLotCode: string | null;
+  shortExpiryConfirmed: boolean;
   receiptLineName: string | null;
   matchAction: "accept" | "change" | "create" | "ignore";
   matchConfidence: number | null;
@@ -48,7 +51,7 @@ type PurchaseReceiveResult = {
 
 class PurchaseFormError extends Error {}
 
-const PURCHASE_CREATE_RPC = "snacky_create_purchase_with_lines_v2";
+const PURCHASE_CREATE_RPC = "snacky_create_purchase_with_lines_v3";
 const PURCHASE_SAVE_ADMIN_MESSAGE = "Could not save purchase. Please contact admin.";
 const PURCHASE_SUBMISSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -125,6 +128,9 @@ function parseLines(raw: FormDataEntryValue | null): PurchaseLineInput[] {
           unitCostZeroConfirmed,
           lineTotal: Math.max(0, Number(row.lineTotal || row.line_total || row.line_total_lyd || 0)),
           pricingMode,
+          expiryDate: cleanOptionalString(row.expiryDate ?? row.expiry_date),
+          supplierLotCode: cleanOptionalString(row.supplierLotCode ?? row.supplier_lot_code),
+          shortExpiryConfirmed: Boolean(row.shortExpiryConfirmed ?? row.short_expiry_confirmed),
           receiptLineName: cleanOptionalString(row.receiptLineName ?? row.receipt_line_name),
           matchAction,
           matchConfidence: row.matchConfidence === null || row.matchConfidence === undefined ? null : Math.max(0, Math.min(1, Number(row.matchConfidence || 0))),
@@ -155,6 +161,9 @@ function buildLineRows(lines: PurchaseLineInput[]) {
       unit_cost_lyd: unitCost,
       line_total: lineTotal,
       line_total_lyd: lineTotal,
+      expiry_date: line.expiryDate,
+      supplier_lot_code: line.supplierLotCode,
+      short_expiry_confirmed: line.shortExpiryConfirmed,
     };
   });
 }
@@ -438,6 +447,17 @@ export async function createPurchase(fd: FormData): Promise<PurchaseSubmitResult
       upload_unavailable: uploadUnavailable,
       upload_error: uploadError ?? null,
     };
+    if (submitAction === "received") {
+      const today = new Date().toISOString().slice(0, 10);
+      for (const line of lines) {
+        if (!line.expiryDate) formError("Expiry date is required for every received product batch.");
+        if (line.expiryDate <= today) formError("Expired stock cannot be received.");
+        const daysLeft = Math.floor((Date.parse(`${line.expiryDate}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86400000);
+        if (daysLeft <= 30 && !line.shortExpiryConfirmed) {
+          formError(`A purchase batch expires in ${daysLeft} days. Confirm short-dated stock before receiving.`);
+        }
+      }
+    }
     const lineRows = buildLineRows(lines);
     const totals = buildTotals(fd, lineRows.reduce((sum, line) => sum + Number(line.line_total), 0));
 
@@ -584,6 +604,17 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
     const nextReceiptFileName = removeReceipt ? null : hasNewStoredReceipt ? receiptFileName : hasNewManualReceiptUrl ? null : existingReceiptFileName;
     const nextReceiptContentType = removeReceipt ? null : hasNewStoredReceipt ? receiptContentType : hasNewManualReceiptUrl ? null : existingReceiptContentType;
     const nextReceiptStoragePath = removeReceipt ? null : hasNewStoredReceipt ? receiptStoragePath : hasNewManualReceiptUrl ? null : existingReceiptStoragePath;
+    if (submitAction === "received") {
+      const today = new Date().toISOString().slice(0, 10);
+      for (const line of lines) {
+        if (!line.expiryDate) formError("Expiry date is required for every received product batch.");
+        if (line.expiryDate <= today) formError("Expired stock cannot be received.");
+        const daysLeft = Math.floor((Date.parse(`${line.expiryDate}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86400000);
+        if (daysLeft <= 30 && !line.shortExpiryConfirmed) {
+          formError(`A purchase batch expires in ${daysLeft} days. Confirm short-dated stock before receiving.`);
+        }
+      }
+    }
     const lineRows = buildLineRows(lines);
     const totals = buildTotals(fd, lineRows.reduce((sum, line) => sum + Number(line.line_total), 0));
     const nextOrderDate = String(fd.get("purchase_date") || new Date().toISOString().slice(0, 10));
@@ -591,7 +622,7 @@ export async function updatePurchase(fd: FormData): Promise<PurchaseSubmitResult
     const nextPaymentMethod = String(fd.get("payment_method") || "cash");
     const nextNotes = String(fd.get("notes") || "").trim() || null;
 
-    const { data: updateData, error: updateError } = await supabase.rpc("snacky_update_draft_purchase_v1", {
+    const { data: updateData, error: updateError } = await supabase.rpc("snacky_update_draft_purchase_v2", {
       p_purchase_id: id,
       p_client_submission_id: clientSubmissionId,
       p_expected_updated_at: expectedUpdatedAt,

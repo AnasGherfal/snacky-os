@@ -1,0 +1,36 @@
+name: Expiry batch safety checks
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "src/components/PurchaseForm.tsx"
+      - "src/lib/purchase-actions.ts"
+      - "src/app/purchases/**"
+      - "src/app/inventory/expiry/**"
+      - "src/app/inventory/page.tsx"
+      - "src/components/module-tabs-config.ts"
+      - "public/sw.js"
+      - "supabase/migrations/*expiry*.sql"
+      - "scripts/test-expiry-batch-safety.mjs"
+      - ".github/workflows/expiry-batch-safety-check.yml"
+permissions:
+  contents: read
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Expiry safety contracts
+        run: node --test scripts/test-expiry-batch-safety.mjs
+      - name: Purchase and inventory regressions
+        run: npm run test:critical-workflows
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Production build
+        run: npm run build

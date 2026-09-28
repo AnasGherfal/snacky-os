@@ -109,7 +109,7 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
       .maybeSingle(),
     supabase
       .from("purchase_order_lines")
-      .select("id, line_position, boxes_qty, units_per_box, loose_units_qty, total_units, ordered_qty, received_qty, unit_cost, line_total, unit_cost_lyd, line_total_lyd, product:products(id, sku, name)")
+      .select("id, line_position, boxes_qty, units_per_box, loose_units_qty, total_units, ordered_qty, received_qty, unit_cost, line_total, unit_cost_lyd, line_total_lyd, expiry_date, supplier_lot_code, short_expiry_confirmed, product:products(id, sku, name)")
       .eq("purchase_order_id", id)
       .order("line_position")
       .order("created_at"),
@@ -582,7 +582,9 @@ export default async function PurchaseDetailPage({ params, searchParams }: { par
           <DataTable headers={["Product", "Boxes", "Units / Box", "Loose", "Total Units", "Unit Cost", "Line Total", "Received"]}>
             {lineRows.map((line: any) => (
               <tr key={line.id}>
-                <td><div className="font-medium text-slate-900">{line.product?.name ?? "Unknown product"}</div><div className="text-xs text-slate-500">{line.product?.sku ?? "No SKU"}</div></td>
+                <td><div className="font-medium text-slate-900">{line.product?.name ?? "Unknown product"}</div><div className="text-xs text-slate-500">{line.product?.sku ?? "No SKU"}</div>
+                      <div className="mt-1 text-xs font-medium text-amber-800">{line.expiry_date ? `Expires ${line.expiry_date}` : "Expiry not recorded"}</div>
+                      {line.supplier_lot_code ? <div className="mt-1 text-xs text-slate-500">Lot {line.supplier_lot_code}</div> : null}</td>
                 <td>{line.boxes_qty}</td>
                 <td>{line.units_per_box}</td>
                 <td>{line.loose_units_qty}</td>

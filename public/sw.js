@@ -9,7 +9,7 @@ function getNotificationTargetUrl(data) {
     : typeof data.routeId === "string" && data.routeId.trim() ? `/operator/routes/${encodeURIComponent(data.routeId.trim())}` : fallback;
   try {
     const target = new URL(value, self.location.origin);
-    if (target.origin !== self.location.origin || target.username || target.password || !/^\/(account|operator\/routes|routes|company|issues|follow-ups|my-work|locations-pipeline|relationships)(\/|$)/.test(target.pathname)) return fallback;
+    if (target.origin !== self.location.origin || target.username || target.password || !/^\/(account|operator\/routes|routes|company|issues|follow-ups|my-work|locations-pipeline|relationships|inventory)(\/|$)/.test(target.pathname)) return fallback;
     return target.pathname + target.search + target.hash;
   } catch { return fallback; }
 }
