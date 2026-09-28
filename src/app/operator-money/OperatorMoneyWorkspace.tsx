@@ -43,8 +43,7 @@ function PurchaseOverviewPanel({ personId, locale, selfServiceOnly, refreshVersi
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
-  const requestId = useRef(0);
-  const activeRequest = useRef<AbortController | null>(null);
+  const requestState = useRef<{ id: number; controller: AbortController | null }>({ id: 0, controller: null });
   const ar = activeLocale === "ar";
   const t = (en: string, arabic: string) => ar ? arabic : en;
 
@@ -60,12 +59,12 @@ function PurchaseOverviewPanel({ personId, locale, selfServiceOnly, refreshVersi
   }, [locale]);
 
   const load = useCallback(async () => {
-    const current = ++requestId.current;
-    activeRequest.current?.abort();
+    const state = requestState.current;
+    const current = ++state.id;
+    state.controller?.abort();
     const controller = new AbortController();
-    activeRequest.current = controller;
+    state.controller = controller;
     const timeout = setTimeout(() => controller.abort(), 20_000);
-    setLoading(true);
     try {
       const params = new URLSearchParams({ personId, page: String(page) });
       if (selfServiceOnly) params.set("selfOnly", "1");
@@ -76,28 +75,31 @@ function PurchaseOverviewPanel({ personId, locale, selfServiceOnly, refreshVersi
       if (!response.ok || body.success !== true || body.personId !== personId || !body.selected || !Array.isArray(body.history)) {
         throw new Error("Overview unavailable");
       }
-      if (current !== requestId.current) return;
+      if (current !== state.id) return;
       setData(body as PurchaseOverview);
       setError(false);
     } catch {
-      if (current !== requestId.current) return;
+      if (current !== state.id) return;
       setData(null); // Unverified balances must never turn into zero or look current.
       setError(true);
     } finally {
       clearTimeout(timeout);
-      if (current === requestId.current) setLoading(false);
+      if (current === state.id) setLoading(false);
     }
   }, [personId, page, selfServiceOnly]);
 
   useEffect(() => {
+    const state = requestState.current;
     void load();
-    const whenVisible = () => { if (document.visibilityState === "visible") void load(); };
+    const whenVisible = () => {
+      if (document.visibilityState === "visible") { setLoading(true); void load(); }
+    };
     const timer = setInterval(whenVisible, 30_000);
     window.addEventListener("focus", whenVisible);
     document.addEventListener("visibilitychange", whenVisible);
     return () => {
-      ++requestId.current;
-      activeRequest.current?.abort();
+      ++state.id;
+      state.controller?.abort();
       clearInterval(timer);
       window.removeEventListener("focus", whenVisible);
       document.removeEventListener("visibilitychange", whenVisible);
@@ -113,7 +115,7 @@ function PurchaseOverviewPanel({ personId, locale, selfServiceOnly, refreshVersi
             {t("Older unpaid purchases stay visible when you change the period below.", "تبقى المشتريات القديمة غير المسددة ظاهرة عند تغيير الفترة في الأسفل.")}
           </p>
         </div>
-        <button type="button" className="btn-secondary" disabled={loading} onClick={() => void load()}>
+        <button type="button" className="btn-secondary" disabled={loading} onClick={() => { setLoading(true); void load(); }}>
           {loading ? t("Checking…", "جارٍ التحقق…") : t("Refresh", "تحديث")}
         </button>
       </div>
@@ -151,9 +153,9 @@ function PurchaseOverviewPanel({ personId, locale, selfServiceOnly, refreshVersi
             {!data.history.length ? <p className="text-sm">{t("No personal purchases recorded.", "لا توجد مشتريات شخصية مسجلة.")}</p> : null}
             {data.history.map((row) => <PurchaseEvidence key={row.id} row={row} ar={ar} />)}
             {data.pages > 1 ? <div className="flex items-center justify-between gap-3 text-sm">
-              <button type="button" className="btn-secondary" disabled={loading || data.page <= 1} onClick={() => setPage(data.page - 1)}>{t("Previous", "السابق")}</button>
+              <button type="button" className="btn-secondary" disabled={loading || data.page <= 1} onClick={() => { setLoading(true); setPage(data.page - 1); }}>{t("Previous", "السابق")}</button>
               <span>{data.page} / {data.pages}</span>
-              <button type="button" className="btn-secondary" disabled={loading || data.page >= data.pages} onClick={() => setPage(data.page + 1)}>{t("Next", "التالي")}</button>
+              <button type="button" className="btn-secondary" disabled={loading || data.page >= data.pages} onClick={() => { setLoading(true); setPage(data.page + 1); }}>{t("Next", "التالي")}</button>
             </div> : null}
           </div>
         </details>
