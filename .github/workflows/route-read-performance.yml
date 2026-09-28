@@ -1,0 +1,27 @@
+name: Route read performance
+on:
+  pull_request:
+    paths:
+      - 'src/app/routes/**'
+      - 'src/lib/route-list-support.ts'
+      - 'scripts/test-route-list-support.mjs'
+      - 'supabase/migrations/*route_read_policy*'
+      - '.github/workflows/route-read-performance.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'src/app/routes/**'
+      - 'src/lib/route-list-support.ts'
+      - 'scripts/test-route-list-support.mjs'
+      - '.github/workflows/route-read-performance.yml'
+permissions:
+  contents: read
+jobs:
+  route-read-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --experimental-strip-types --test scripts/test-route-list-support.mjs
