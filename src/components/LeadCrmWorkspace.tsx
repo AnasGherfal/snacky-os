@@ -23,7 +23,12 @@ export async function LeadCrmWorkspace({id,searchParams={}}:{id:string;searchPar
   if(!uuidPattern.test(id))throw Error('invalid_id');const db=await getAuthenticatedSupabaseServerClient();if(!db)throw Error('session');
   const result=await db.rpc('snacky_crm_workspace_v1',{p_section:'lead',p_id:id,p_filters:value('history_offset')?{history_offset:value('history_offset')}:{}});
   if(result.error||!result.data?.record||result.data.record.id!==id)throw result.error??Error('record');context=result.data;
- }catch{return <ErrorState title={tr('Lead unavailable','الجهة غير متاحة')} body={tr('Could not verify this record or your access. No changes were made.','تعذر التحقق من السجل أو صلاحياتك. لم يتم تغيير أي بيانات.')}/>;}
+ }catch(error){
+  const code=error&&typeof error==='object'&&'code' in error?String((error as {code?:unknown}).code??''):'';
+  console.error('[crm-lead] Could not load lead',{id,code:code||'unavailable'});
+  if(code==='42501')return <ErrorState title={tr('Lead unavailable','الجهة غير متاحة')} body={tr('Your account does not have access to this lead. No changes were made.','حسابك لا يملك صلاحية الوصول إلى هذه الجهة. لم يتم تغيير أي بيانات.')} action={<Link className="btn-secondary" href="/locations-pipeline">{tr('Back to leads','العودة للجهات')}</Link>}/>;
+  return <ErrorState title={tr('Lead temporarily unavailable','تعذر تحميل الجهة مؤقتاً')} body={tr('Snacky OS could not load this lead right now. This is a temporary loading error, not an access decision, and no changes were made.','تعذر على سناكي OS تحميل هذه الجهة حالياً. هذا خطأ تحميل مؤقت وليس قرار صلاحيات، ولم يتم تغيير أي بيانات.')} action={<><a className="btn-primary" href={crmHref('lead',id)}>{tr('Retry','إعادة المحاولة')}</a><Link className="btn-secondary" href="/locations-pipeline">{tr('Back to leads','العودة للجهات')}</Link></>}/>;
+ }
  const row=context.record,d=row.data??{},canEdit=Boolean(row.can_edit&&!row.archived),name=(m:string)=>context.directory?.find((p:any)=>p.id===m)?.name??tr('Unassigned','غير مسند');
  return <div className="min-w-0 space-y-5" dir={ar?'rtl':'ltr'} data-lead-detail>
   <CrmRefresh/>
