@@ -6,7 +6,6 @@ import ts from 'typescript';
 import React from 'react';
 import * as jsx from 'react/jsx-runtime';
 import {renderToStaticMarkup} from 'react-dom/server';
-
 const read=p=>fs.readFileSync(p,'utf8');
 function load(file,imports){
   const exports={};
@@ -64,7 +63,13 @@ test('only authorized list roles can query; denied users do not touch the databa
 });
 test('read failure, missing session and malformed data are never shown as no matching leads',async()=>{
   for(const options of [{error:{code:'42501'}},{session:false},{result:null},{result:{...workspace(),rows:null}},{result:{...workspace(),rows:[{...row,id:'invalid'}]}},{result:{...workspace(),rows:[{...row,kind:'issue'}]}}]){
-    const html=await harness(options).render({q:'Keep this',offset:'40'});assert.match(html,/Leads unavailable/);assert.match(html,/Retry/);assert.doesNotMatch(html,/<table|No matching leads|Add lead/);assert.match(html,/Keep\+this/);assert.match(html,/offset=40/);
+    const html=await harness(options).render({q:'Keep this',offset:'40'});
+    assert.match(html,/role="alert"/);assert.doesNotMatch(html,/<table|No matching leads|Add lead/);
+    if(options.error?.code==='42501'){
+      assert.match(html,/Leads access unavailable/);assert.match(html,/does not have access/);assert.doesNotMatch(html,/>Retry</);
+    }else{
+      assert.match(html,/Leads temporarily unavailable/);assert.match(html,/Retry/);assert.match(html,/Keep\+this/);assert.match(html,/offset=40/);
+    }
   }
 });
 test('empty assigned work gives the employee an honest actionable empty state',async()=>{

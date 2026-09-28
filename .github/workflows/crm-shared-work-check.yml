@@ -1,0 +1,30 @@
+name: CRM shared work
+on:
+  pull_request:
+    paths:
+      - 'src/components/CrmSharedWorkShortcuts.tsx'
+      - 'src/app/my-work/page.tsx'
+      - 'scripts/test-crm-shared-work.mjs'
+      - '.github/workflows/crm-shared-work-check.yml'
+permissions:
+  contents: read
+concurrency:
+  group: crm-shared-work-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Shared-role and existing quick-issue contracts
+        run: node --experimental-strip-types --test scripts/test-crm-shared-work.mjs scripts/test-crm-quick-issue-entry.mjs
+      - run: npm run typecheck
+      - name: Lint shared-work entry
+        run: npx eslint src/components/CrmSharedWorkShortcuts.tsx src/app/my-work/page.tsx
+      - run: npm run build
