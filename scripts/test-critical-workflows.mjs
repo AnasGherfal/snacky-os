@@ -354,7 +354,7 @@ test("warehouse purchase flow creates ledger inventory and viewer is denied", { 
 
     const { data: additiveMovements, error: additiveMovementsError } = await operatorWarehouse.client
       .from("inventory_movements")
-      .select("id, product_id, quantity, from_entity_type, to_entity_type, reason, related_purchase_id")
+      .select("id, product_id, quantity, from_entity_type, to_entity_type, to_entity_id, reason, related_purchase_id")
       .eq("related_purchase_id", additivePurchase.id);
     assert.ifError(additiveMovementsError);
     assert.equal(additiveMovements.length, 1);
@@ -448,7 +448,10 @@ test("machine storage and history use explicit storage records and schema-safe r
   }
 
   assert.doesNotMatch(routesPage, /machine_display_name/);
-  assert.match(routesPage, /location:locations\(id, name\)/);
+  const routeListSupport = readFileSync("src/lib/route-list-support.ts", "utf8");
+  assert.match(routesPage, /loadRouteListSupport\(supportClient, routeIds, operatorIds\)/);
+  assert.match(routeListSupport, /location:locations\(id, name\)/);
+  assert.doesNotMatch(routeListSupport, /machine_display_name/);
   assert.match(machinePage, /route_stop_items/);
   assert.match(machinePage, /refill_orders/);
   assert.equal(machinePage.includes('.from("route_stops").select("id, route_id, stop_order, status").eq("machine_id", id).order("created_at"'), false);
