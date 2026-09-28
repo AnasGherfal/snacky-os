@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import OperatorMoneyLedgerClient from "@/app/operator-money/OperatorMoneyLedgerClient";
+import OperatorMoneyLedgerClient from "@/app/operator-money/OperatorMoneyWorkspace";
 import { getCurrentProfile } from "@/lib/auth";
 import { getServerI18n } from "@/lib/i18n/server";
 
