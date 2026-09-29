@@ -51,6 +51,27 @@ const OFFICIAL_READ_ONLY_CANDIDATES = [
   "queryMachineBill",
 ] as const;
 
+const DISCOVERED_READ_PATHS: Array<{ path: string; machineScoped?: boolean }> = [
+  { path: "/api/selectUserOrder" },
+  { path: "/api/queryDdxx" },
+  { path: "/api/queryDdmx" },
+  { path: "/api/queryBhjl", machineScoped: true },
+  { path: "/api/queryJqkcxx", machineScoped: true },
+  { path: "/api/queryJqjyzt", machineScoped: true },
+  { path: "/api/getCargoWayInfo", machineScoped: true },
+  { path: "/api/getMachineQuantityStock", machineScoped: true },
+  { path: "/v2/queryDdxx" },
+  { path: "/v2/queryMachineDealStatistics", machineScoped: true },
+  { path: "/v2/querySpjytj" },
+  { path: "/v2/queryBhjl", machineScoped: true },
+  { path: "/v2/jyjsQuery" },
+  { path: "/v2/zfjsmxQuery" },
+  { path: "/v2/queryRefund" },
+  { path: "/v2/queryThirdQhm", machineScoped: true },
+  { path: "/v2/inventoryOfMachineCargo", machineScoped: true },
+  { path: "/v2/inventoryOfMachineGoods", machineScoped: true },
+];
+
 function arrayify(value: unknown): JsonRecord[] {
   if (Array.isArray(value)) return value.filter((item) => item && typeof item === "object") as JsonRecord[];
   if (value && typeof value === "object") {
@@ -156,6 +177,66 @@ async function callOfficialQuery(endpoint: string, params: Record<string, string
   }
 }
 
+async function callSignedPath(path: string, params: Record<string, string | number>) {
+  const config = getXyVmsConfig();
+  const timestamp = Date.now().toString().padStart(13, "0");
+  const cleanParams = Object.fromEntries(
+    Object.entries(params).filter(([, value]) => String(value ?? "").trim() !== ""),
+  ) as Record<string, string | number>;
+  const body = config.includeAuthFields
+    ? {
+        key: config.key,
+        timestamp,
+        sign: buildXySign(config.secret, timestamp, cleanParams),
+        ...cleanParams,
+      }
+    : cleanParams;
+  const serviceRoot = config.baseUrl.replace(/\/api\/?$/, "");
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), Math.min(config.timeoutMs, 12_000));
+  try {
+    const response = await fetch(`${serviceRoot}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    const responseText = await response.text();
+    let parsed: JsonRecord = {};
+    try {
+      parsed = responseText ? normalizeXyApiResponse(JSON.parse(responseText) as JsonRecord) as JsonRecord : {};
+    } catch {
+      parsed = { message: responseText.slice(0, 240) };
+    }
+    const rows = arrayify(parsed.data ?? parsed.rows ?? parsed.records ?? parsed.list ?? parsed.items);
+    return {
+      path,
+      httpStatus: response.status,
+      httpOk: response.ok,
+      code: responseCode(parsed),
+      message: responseMessage(parsed),
+      responseKeys: Object.keys(parsed).filter((key) => key !== "rawEnvelope").slice(0, 20),
+      rowCount: rows.length || rowsFromResponse(parsed),
+      sampleRowKeys: rows[0] ? Object.keys(rows[0]).slice(0, 30) : [],
+    };
+  } catch (error) {
+    return {
+      path,
+      httpStatus: 0,
+      httpOk: false,
+      code: null,
+      message: error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240),
+      responseKeys: [] as string[],
+      rowCount: null,
+      sampleRowKeys: [] as string[],
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
   if (requestUrl.searchParams.get("probe") !== "xyprobe-20260929-9f7d2a81c3b64e5a") {
@@ -227,6 +308,22 @@ export async function GET(request: Request) {
         rowCount: result.rowCount,
       });
     }
+
+    const discoveredResults: Array<Record<string, unknown>> = [];
+    for (const candidate of DISCOVERED_READ_PATHS) {
+      const params: Record<string, string | number> = {
+        shbh: vmsConfig.merchantId,
+        pageNum: 1,
+        pageSize: 1,
+      };
+      if (candidate.machineScoped && firstMachineId) params.jqbh = firstMachineId;
+      const result = await callSignedPath(candidate.path, params);
+      discoveredResults.push(result);
+    }
+    officialResults.push({
+      endpoint: "__discovered_read_paths__",
+      results: discoveredResults,
+    });
   }
 
   return NextResponse.json({
