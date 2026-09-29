@@ -1,6 +1,5 @@
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, SectionCard, StatusBadge } from "@/components/ui";
-import { RouteCompletionImages, type RouteCompletionStop } from "@/components/RouteCompletionImages";
 import {
   AdminMissedPickupRecorder,
   type MissedPickupProductOption,
@@ -11,7 +10,6 @@ import { canAccessPath, canExecuteRoutes, isAdminRole, isOwnerAdminRole } from "
 import { lyd } from "@/lib/format";
 import { moneyLabel } from "@/lib/payroll";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
-import { privateStorageObjectUrl, REFILL_PHOTO_BUCKET } from "@/lib/storage-buckets";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { ROUTE_CANCELED_STATUS, isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isPickupConfirmedStatus, isRouteInventoryFinalizableStatus, isRouteItemsEditableStatus, isRouteStopDoneStatus, isTerminalRouteStatus, nextOperatorRouteHref, routeDisplayStatus } from "@/lib/route-workflow";
 import { RouteCreatedToast } from "@/app/routes/[id]/RouteCreatedToast";
@@ -25,6 +23,8 @@ import {
   type RouteInventoryDiscrepancyRow,
 } from "@/lib/route-inventory-discrepancies";
 import Link from "next/link";
+import { Suspense } from "react";
+import { RouteActivitySection, RouteCompletionImagesSection, RouteDeferredSectionSkeleton } from "@/app/routes/[id]/RouteDeferredSections";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -97,16 +97,14 @@ function routeReviewLabel(locale: "ar" | "en", status: string) {
   return value.replaceAll("_", " ");
 }
 
-function routeEntityLabel(locale: "ar" | "en", entity: string) {
-  const value = String(entity ?? "").toLowerCase();
-  if (value === "storage") return tr(locale, "Storage", "المخزن");
-  if (value === "operator_bag") return tr(locale, "Operator bag", "حقيبة المشغل");
-  if (value === "machine") return tr(locale, "Machine", "الجهاز");
-  if (value === "supplier") return tr(locale, "Supplier", "المورد");
-  if (value === "waste") return tr(locale, "Waste", "هالك");
-  if (value === "cash_collection") return tr(locale, "Cash collection", "تحصيل كاش");
-  if (value === "route_stop") return tr(locale, "Route stop", "موقع الجولة");
-  if (value === "route") return tr(locale, "Route", "الجولة");
+function routeRoleLabel(locale: "ar" | "en", role: string | null | undefined) {
+  const value = String(role ?? "").toLowerCase();
+  if (value === "owner") return tr(locale, "Owner", "المالك");
+  if (value === "admin") return tr(locale, "Admin", "الإدارة");
+  if (value === "supervisor") return tr(locale, "Supervisor", "مشرف");
+  if (value === "operator") return tr(locale, "Operator", "مشغل");
+  if (value === "finance") return tr(locale, "Finance", "المالية");
+  if (value === "warehouse") return tr(locale, "Warehouse", "المخزن");
   return value.replaceAll("_", " ");
 }
 
@@ -121,31 +119,6 @@ function routeIssueTypeLabel(locale: "ar" | "en", issueType: string | null | und
   if (value === "cash_variance") return tr(locale, "Cash variance", "فارق الكاش");
   if (value === "damaged_item") return tr(locale, "Damaged item", "منتج تالف");
   if (value === "expired_item") return tr(locale, "Expired item", "منتج منتهي الصلاحية");
-  return value.replaceAll("_", " ");
-}
-
-function routeRoleLabel(locale: "ar" | "en", role: string | null | undefined) {
-  const value = String(role ?? "").toLowerCase();
-  if (value === "owner") return tr(locale, "Owner", "المالك");
-  if (value === "admin") return tr(locale, "Admin", "الإدارة");
-  if (value === "supervisor") return tr(locale, "Supervisor", "مشرف");
-  if (value === "operator") return tr(locale, "Operator", "مشغل");
-  if (value === "finance") return tr(locale, "Finance", "المالية");
-  if (value === "warehouse") return tr(locale, "Warehouse", "المخزن");
-  return value.replaceAll("_", " ");
-}
-
-function routeActivityActionLabel(locale: "ar" | "en", action: string | null | undefined) {
-  const value = String(action ?? "").toLowerCase();
-  if (value === "created") return tr(locale, "Created", "تم الإنشاء");
-  if (value === "updated") return tr(locale, "Updated", "تم التحديث");
-  if (value === "assigned") return tr(locale, "Assigned", "تم التعيين");
-  if (value === "started") return tr(locale, "Started", "بدأ");
-  if (value === "completed") return tr(locale, "Completed", "مكتمل");
-  if (value === "cancelled" || value === "canceled") return tr(locale, "Cancelled", "ملغاة");
-  if (value === "reviewed") return tr(locale, "Reviewed", "تمت المراجعة");
-  if (value === "cash_collected") return tr(locale, "Cash collected", "تم تحصيل الكاش");
-  if (value === "inventory_moved") return tr(locale, "Inventory moved", "تم نقل المخزون");
   return value.replaceAll("_", " ");
 }
 
@@ -347,7 +320,6 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     pendingStopInventoryCommitResult,
     manualSalesResult,
     adjustmentsResult,
-    initialCompletionProofResult,
   ] = await Promise.all([
     machineIds.length ? supabase.from("machines").select("id, name, machine_code, location:locations(id, name)").in("id", machineIds) : Promise.resolve({ data: [] }),
     productIds.length ? supabase.from("products").select("id, name").in("id", productIds) : Promise.resolve({ data: [] }),
@@ -393,13 +365,6 @@ export default async function RouteDetailPage({ params, searchParams }: { params
       .eq("route_id", id)
       .neq("status", "cancelled")
       .order("created_at", { ascending: true }),
-    stopIds.length
-      ? supabase
-          .from("machine_refill_history")
-          .select("id, legacy_refill_id, route_stop_id, refill_at, machine_id, machine_name, operator_email, machine_photo_url, machine_photo_path, raw_record, operator:team_members(full_name)")
-          .eq("route_id", id)
-          .order("refill_at", { ascending: false })
-      : Promise.resolve({ data: [], error: null }),
   ]);
   if (routePayError) console.error("[routes:detail] Failed to load route pay breakdown", { id, error: routePayError });
   if (terminalReconciliationResult.error && !isMissingRouteInventoryReviewSchema(terminalReconciliationResult.error)) {
@@ -416,50 +381,10 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   if (adjustmentsResult.error && !isMissingTable(adjustmentsResult.error, "inventory_adjustments")) console.warn("[routes:detail] Inventory adjustments unavailable", { id, error: adjustmentsResult.error });
   const manualSales = manualSalesResult.error ? [] : (manualSalesResult.data ?? []);
   const routeAdjustments = adjustmentsResult.error ? [] : (adjustmentsResult.data ?? []);
-  let completionProofResult: any = initialCompletionProofResult;
-  if (completionProofResult.error && stopIds.length && isMissingColumn(completionProofResult.error, ["route_id", "route_stop_id"])) {
-    completionProofResult = await supabase
-      .from("machine_refill_history")
-      .select("id, legacy_refill_id, refill_at, machine_id, machine_name, operator_email, machine_photo_url, machine_photo_path, raw_record, operator:team_members(full_name)")
-      .in("legacy_refill_id", stopIds.map((stopId: string) => `route_stop:${stopId}`))
-      .order("refill_at", { ascending: false });
-  }
-  let completionProofRows: any[] = [];
-  if (completionProofResult.error) {
-    if (!isMissingTable(completionProofResult.error, "machine_refill_history")) {
-      console.error("[routes:detail] Failed to load route completion images", { id, error: completionProofResult.error });
-    }
-  } else {
-    completionProofRows = completionProofResult.data ?? [];
-  }
-  const completionProofsByStopId = new Map<string, RouteCompletionStop["images"]>();
-  completionProofRows.forEach((row: any) => {
-    const legacyRefillId = String(row.legacy_refill_id ?? "");
-    const rowStopId = row.route_stop_id ? String(row.route_stop_id) : legacyRefillId.startsWith("route_stop:") ? legacyRefillId.replace("route_stop:", "") : "";
-    if (!rowStopId) return;
-    const savedUrl = String(row.machine_photo_url ?? "").trim();
-    const savedPath = String(row.machine_photo_path ?? "").trim();
-    const photoUrl = savedUrl && (savedUrl.startsWith("/") || savedUrl.startsWith("http://") || savedUrl.startsWith("https://"))
-      ? savedUrl
-      : privateStorageObjectUrl(REFILL_PHOTO_BUCKET, savedPath || savedUrl);
-    const operator = firstRelation(row.operator);
-    const rawRecord = row.raw_record && typeof row.raw_record === "object" ? row.raw_record : {};
-    const images = completionProofsByStopId.get(rowStopId) ?? [];
-    images.push({
-      id: String(row.id ?? `${rowStopId}-${images.length}`),
-      url: photoUrl,
-      storagePath: savedPath || null,
-      uploadedAt: row.refill_at ?? null,
-      uploadedBy: (operator as any)?.full_name ?? row.operator_email ?? (rawRecord as any).operator_name ?? null,
-      label: tr(locale, `${row.machine_name ?? "Machine"} completion image`, `صورة إكمال ${row.machine_name ?? "الجهاز"}`),
-    });
-    completionProofsByStopId.set(rowStopId, images);
-  });
-  const completionImageStops: RouteCompletionStop[] = routeStops.map((stop: any) => ({
+  const completionImageStopDescriptors = routeStops.map((stop: any) => ({
     id: String(stop.id),
     title: formatMachineDisplayName(machineById.get(stop.machine_id) ?? null, { includeArea: true }),
     subtitle: tr(locale, `Stop ${stop.stop_order || "-"} - ${machineById.get(stop.machine_id)?.machine_code ?? "-"}`, `الموقع ${stop.stop_order || "-"} - ${machineById.get(stop.machine_id)?.machine_code ?? "-"}`),
-    images: completionProofsByStopId.get(String(stop.id)) ?? [],
   }));
   const canManageRouteAssignment = isAdminRole(profile);
   const canEditRouteItems = isOwnerAdminRole(profile) && isRouteItemsEditableStatus(routeRow.status);
@@ -483,48 +408,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     ? []
     : (pendingStopInventoryCommitResult.data ?? []) as Array<{ id: string; route_stop_id: string }>;
   const firstPendingStopInventoryCommit = pendingStopInventoryCommits[0] ?? null;
-  const routeActivityQueries: PromiseLike<any>[] = [
-    supabase
-      .from("system_activity_logs")
-      .select("id, action, entity_type, entity_label, actor_name, actor_role, summary, created_at")
-      .eq("entity_type", "route")
-      .eq("entity_id", id)
-      .order("created_at", { ascending: false })
-      .limit(100),
-  ];
   const cashIds = (cashCollections ?? []).map((cash: any) => cash.id).filter(Boolean);
-  if (stopIds.length) {
-    routeActivityQueries.push(
-      supabase
-        .from("system_activity_logs")
-        .select("id, action, entity_type, entity_label, actor_name, actor_role, summary, created_at")
-        .eq("entity_type", "route_stop")
-        .in("entity_id", stopIds)
-        .order("created_at", { ascending: false })
-        .limit(100),
-    );
-  }
-  if (cashIds.length) {
-    routeActivityQueries.push(
-      supabase
-        .from("system_activity_logs")
-        .select("id, action, entity_type, entity_label, actor_name, actor_role, summary, created_at")
-        .eq("entity_type", "cash_collection")
-        .in("entity_id", cashIds)
-        .order("created_at", { ascending: false })
-        .limit(100),
-    );
-  }
-  routeActivityQueries.push(
-    supabase
-      .from("system_activity_logs")
-      .select("id, action, entity_type, entity_label, actor_name, actor_role, summary, created_at")
-      .contains("metadata", { route_id: id })
-      .order("created_at", { ascending: false })
-      .limit(100),
-  );
-  const routeActivityPromise = Promise.all(routeActivityQueries);
-
   const canRecordMissedPickup = isOwnerAdminRole(profile)
     && Boolean(profile.team_member_id)
     && Boolean(routeRow.operator_id)
@@ -644,15 +528,6 @@ export default async function RouteDetailPage({ params, searchParams }: { params
       salesTotal: sales.reduce((sum: number, sale: any) => sum + Number(sale.total_amount_lyd ?? 0), 0),
     };
   });
-  const activityResults = await routeActivityPromise;
-  activityResults.forEach((result: any) => {
-    if (result.error) console.error("[routes:detail] Failed to load route activity", { id, error: result.error });
-  });
-  const routeActivityRows = activityResults
-    .flatMap((result: any) => result.data ?? [])
-    .filter((activity: any, index: number, rows: any[]) => rows.findIndex((row: any) => row.id === activity.id) === index)
-    .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-    .slice(0, 100);
   const completedStopCount = routeStops.filter((stop: any) => isRouteStopDoneStatus(stop.status)).length;
   const routeAllowsInventoryCompletion = isRouteInventoryFinalizableStatus(routeRow.status);
   const canCountAndFinishRoute = canManageRouteAssignment
@@ -909,13 +784,9 @@ export default async function RouteDetailPage({ params, searchParams }: { params
         ) : null}
 
         {routeStops.length ? (
-          <section className="surface-card p-4">
-            <div className="mb-4">
-              <h2 className="text-lg font-semibold">{tr(locale, "Completion images", "صور الإكمال")}</h2>
-              <p className="mt-1 text-sm text-slate-500">{tr(locale, "Final machine photos uploaded when the operator completes each stop.", "صور الجهاز النهائية المرفوعة عندما يكمل المشغل كل موقع.")}</p>
-            </div>
-            <RouteCompletionImages stops={completionImageStops} />
-          </section>
+          <Suspense fallback={<RouteDeferredSectionSkeleton label={tr(locale, "Completion images", "صور الإكمال")} />}>
+            <RouteCompletionImagesSection routeId={id} locale={locale} stops={completionImageStopDescriptors} />
+          </Suspense>
         ) : null}
 
         <section className="surface-card p-4">
@@ -1144,29 +1015,9 @@ export default async function RouteDetailPage({ params, searchParams }: { params
           </div>
         </section>
 
-        <section className="surface-card p-4">
-          <h2 className="text-lg font-semibold">{tr(locale, "Route activity", "نشاط الجولة")}</h2>
-          <p className="mt-1 text-sm text-slate-500">{tr(locale, "Audit trail for route creation, picking, stop completion, cash review, issues, and leftover return.", "سجل تدقيق لإنشاء الجولة، والتحميل، وإكمال المواقع، ومراجعة الكاش، والأعطال، وإرجاع المتبقي.")}</p>
-          {!routeActivityRows.length ? (
-            <div className="mt-4">
-              <EmptyState title={tr(locale, "No route activity yet", "لا يوجد نشاط للجولة بعد")} body={tr(locale, "Route actions will appear here as operators and admins work through the route.", "ستظهر إجراءات الجولة هنا أثناء تنفيذ المشغلين والإداريين للجولة.")} />
-            </div>
-          ) : (
-            <div className="mt-4">
-              <DataTable headers={[tr(locale, "Created", "الإنشاء"), tr(locale, "Action", "الإجراء"), tr(locale, "Entity", "العنصر"), tr(locale, "User", "المستخدم"), tr(locale, "Summary", "الملخص")]}>
-                {routeActivityRows.map((activity: any) => (
-                  <tr key={activity.id}>
-                    <td>{new Date(activity.created_at).toLocaleString(locale === "ar" ? "ar-LY" : "en-US")}</td>
-                    <td><StatusBadge status={activity.action} label={routeActivityActionLabel(locale, activity.action)} /></td>
-                    <td>{routeEntityLabel(locale, activity.entity_type)}</td>
-                    <td>{activity.actor_name ?? routeRoleLabel(locale, activity.actor_role) ?? "-"}</td>
-                    <td>{activity.summary ?? activity.entity_label ?? "-"}</td>
-                  </tr>
-                ))}
-              </DataTable>
-            </div>
-          )}
-        </section>
+        <Suspense fallback={<RouteDeferredSectionSkeleton label={tr(locale, "Route activity", "نشاط الجولة")} />}>
+          <RouteActivitySection routeId={id} locale={locale} stopIds={stopIds} cashIds={cashIds} />
+        </Suspense>
       </div>
     </>
   );

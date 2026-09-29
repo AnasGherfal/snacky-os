@@ -13,6 +13,10 @@ const routePageSource = fs.readFileSync(
   path.join(repoRoot, "src/app/routes/[id]/page.tsx"),
   "utf8",
 );
+const deferredSource = fs.readFileSync(
+  path.join(repoRoot, "src/app/routes/[id]/RouteDeferredSections.tsx"),
+  "utf8",
+);
 
 test("route activity metadata lookup has a matching GIN index migration", () => {
   assert.match(
@@ -24,7 +28,15 @@ test("route activity metadata lookup has a matching GIN index migration", () => 
     /using gin\s*\(metadata jsonb_path_ops\)/i,
   );
   assert.match(
+    deferredSource,
+    /\.contains\("metadata", \{ route_id: routeId \}\)/,
+  );
+  assert.match(
     routePageSource,
-    /\.contains\("metadata", \{ route_id: id \}\)/,
+    /<RouteActivitySection routeId=\{id\}/,
+  );
+  assert.match(
+    routePageSource,
+    /<Suspense fallback=\{<RouteDeferredSectionSkeleton/,
   );
 });
