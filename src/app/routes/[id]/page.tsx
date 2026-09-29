@@ -327,6 +327,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
 
   const routeStops = stops ?? [];
   routePickListItems = routePickListItems.filter((item: any) => item.is_active !== false);
+  const stopIds = routeStops.map((stop: any) => stop.id).filter(Boolean);
   const machineIds = Array.from(new Set([...routeStops.map((stop: any) => stop.machine_id), ...(stopItems ?? []).map((item: any) => item.machine_id)].filter(Boolean)));
   const productIds = Array.from(new Set([
     ...routeStopItems.map((line: any) => line.product_id),
@@ -344,6 +345,9 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     terminalReconciliationResult,
     canonicalRouteBagSnapshotResult,
     pendingStopInventoryCommitResult,
+    manualSalesResult,
+    adjustmentsResult,
+    initialCompletionProofResult,
   ] = await Promise.all([
     machineIds.length ? supabase.from("machines").select("id, name, machine_code, location:locations(id, name)").in("id", machineIds) : Promise.resolve({ data: [] }),
     productIds.length ? supabase.from("products").select("id, name").in("id", productIds) : Promise.resolve({ data: [] }),
@@ -378,6 +382,24 @@ export default async function RouteDetailPage({ params, searchParams }: { params
       .is("workflow_completed_at", null)
       .order("created_at", { ascending: true })
       .limit(20),
+    supportClient
+      .from("route_manual_sales")
+      .select("id, route_id, route_stop_id, machine_id, product_id, product_name, quantity, unit_sale_price_lyd, total_amount_lyd, payment_method, sale_time, status")
+      .eq("route_id", id)
+      .order("sale_time", { ascending: true }),
+    supportClient
+      .from("inventory_adjustments")
+      .select("id, route_id, route_stop_id, machine_id, adjustment_type, product_id, product_name, quantity, reason, notes, status, created_at")
+      .eq("route_id", id)
+      .neq("status", "cancelled")
+      .order("created_at", { ascending: true }),
+    stopIds.length
+      ? supabase
+          .from("machine_refill_history")
+          .select("id, legacy_refill_id, route_stop_id, refill_at, machine_id, machine_name, operator_email, machine_photo_url, machine_photo_path, raw_record, operator:team_members(full_name)")
+          .eq("route_id", id)
+          .order("refill_at", { ascending: false })
+      : Promise.resolve({ data: [], error: null }),
   ]);
   if (routePayError) console.error("[routes:detail] Failed to load route pay breakdown", { id, error: routePayError });
   if (terminalReconciliationResult.error && !isMissingRouteInventoryReviewSchema(terminalReconciliationResult.error)) {
@@ -390,47 +412,25 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     console.error("[routes:detail] Failed to check pending stop inventory commits", { id, error: pendingStopInventoryCommitResult.error });
   }
   const machineById = new Map((machines ?? []).map((machine: any) => [machine.id, machine]));
-  const [manualSalesResult, adjustmentsResult] = await Promise.all([
-    supportClient
-      .from("route_manual_sales")
-      .select("id, route_id, route_stop_id, machine_id, product_id, product_name, quantity, unit_sale_price_lyd, total_amount_lyd, payment_method, sale_time, status")
-      .eq("route_id", id)
-      .order("sale_time", { ascending: true }),
-    supportClient
-      .from("inventory_adjustments")
-      .select("id, route_id, route_stop_id, machine_id, adjustment_type, product_id, product_name, quantity, reason, notes, status, created_at")
-      .eq("route_id", id)
-      .neq("status", "cancelled")
-      .order("created_at", { ascending: true }),
-  ]);
   if (manualSalesResult.error && !isMissingTable(manualSalesResult.error, "route_manual_sales")) console.warn("[routes:detail] Manual sales unavailable", { id, error: manualSalesResult.error });
   if (adjustmentsResult.error && !isMissingTable(adjustmentsResult.error, "inventory_adjustments")) console.warn("[routes:detail] Inventory adjustments unavailable", { id, error: adjustmentsResult.error });
   const manualSales = manualSalesResult.error ? [] : (manualSalesResult.data ?? []);
   const routeAdjustments = adjustmentsResult.error ? [] : (adjustmentsResult.data ?? []);
-  const stopIds = routeStops.map((stop: any) => stop.id).filter(Boolean);
-  let completionProofRows: any[] = [];
-  if (stopIds.length) {
-    let completionProofResult: any = await supabase
+  let completionProofResult: any = initialCompletionProofResult;
+  if (completionProofResult.error && stopIds.length && isMissingColumn(completionProofResult.error, ["route_id", "route_stop_id"])) {
+    completionProofResult = await supabase
       .from("machine_refill_history")
-      .select("id, legacy_refill_id, route_stop_id, refill_at, machine_id, machine_name, operator_email, machine_photo_url, machine_photo_path, raw_record, operator:team_members(full_name)")
-      .eq("route_id", id)
+      .select("id, legacy_refill_id, refill_at, machine_id, machine_name, operator_email, machine_photo_url, machine_photo_path, raw_record, operator:team_members(full_name)")
+      .in("legacy_refill_id", stopIds.map((stopId: string) => `route_stop:${stopId}`))
       .order("refill_at", { ascending: false });
-
-    if (completionProofResult.error && isMissingColumn(completionProofResult.error, ["route_id", "route_stop_id"])) {
-      completionProofResult = await supabase
-        .from("machine_refill_history")
-        .select("id, legacy_refill_id, refill_at, machine_id, machine_name, operator_email, machine_photo_url, machine_photo_path, raw_record, operator:team_members(full_name)")
-        .in("legacy_refill_id", stopIds.map((stopId: string) => `route_stop:${stopId}`))
-        .order("refill_at", { ascending: false });
+  }
+  let completionProofRows: any[] = [];
+  if (completionProofResult.error) {
+    if (!isMissingTable(completionProofResult.error, "machine_refill_history")) {
+      console.error("[routes:detail] Failed to load route completion images", { id, error: completionProofResult.error });
     }
-
-    if (completionProofResult.error) {
-      if (!isMissingTable(completionProofResult.error, "machine_refill_history")) {
-        console.error("[routes:detail] Failed to load route completion images", { id, error: completionProofResult.error });
-      }
-    } else {
-      completionProofRows = completionProofResult.data ?? [];
-    }
+  } else {
+    completionProofRows = completionProofResult.data ?? [];
   }
   const completionProofsByStopId = new Map<string, RouteCompletionStop["images"]>();
   completionProofRows.forEach((row: any) => {
