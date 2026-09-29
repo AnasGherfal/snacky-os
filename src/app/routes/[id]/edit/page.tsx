@@ -59,7 +59,7 @@ export default async function RouteEditPage({ params, searchParams }: { params: 
 
   const { data: stops, error: stopsError } = await supabase
     .from("route_stops")
-    .select("id, stop_order, machine_id")
+    .select("id, stop_order, machine_id, status")
     .eq("route_id", id)
     .order("stop_order", { ascending: true });
   if (stopsError) {
@@ -77,7 +77,7 @@ export default async function RouteEditPage({ params, searchParams }: { params: 
 
   const { data: stopItems, error: stopItemsError } = await supabase
     .from("route_stop_items")
-    .select("id, route_stop_id, machine_id, product_id, planned_quantity, source, notes, created_at, checked_at, is_checked")
+    .select("id, route_stop_id, machine_id, product_id, planned_quantity, picked_quantity, source, notes, created_at, checked_at, is_checked")
     .eq("route_id", id)
     .order("created_at", { ascending: true });
   if (stopItemsError) {
@@ -106,6 +106,7 @@ export default async function RouteEditPage({ params, searchParams }: { params: 
     machineId: String(stop.machine_id ?? ""),
     label: formatMachineDisplayName(machineById.get(String(stop.machine_id ?? "")) ?? null, { includeArea: true }),
     stopOrder: Number(stop.stop_order ?? 0),
+    status: String(stop.status ?? "pending"),
   }));
   const initialRows = (stopItems ?? []).map((item: any) => ({
     clientKey: String(item.id ?? `${item.route_stop_id ?? "row"}-${item.product_id ?? "product"}`),
@@ -113,6 +114,7 @@ export default async function RouteEditPage({ params, searchParams }: { params: 
     routeStopId: String(item.route_stop_id ?? ""),
     productId: String(item.product_id ?? ""),
     quantity: Number(item.planned_quantity ?? 0),
+    pickedQuantity: Number(item.picked_quantity ?? 0),
     notes: String(item.notes ?? ""),
     source: String(item.source ?? "manual_admin_assignment"),
     createdAt: item.created_at ?? null,
@@ -123,9 +125,13 @@ export default async function RouteEditPage({ params, searchParams }: { params: 
   const preparationMode = initialRows.every((row) => Number(row.quantity ?? 0) <= 0);
 
   const warningMessage = isPickupConfirmedStatus(route.status)
-    ? "تم تأكيد التحميل. هذه التعديلات تؤثر على خطة الجولة، لكنها قد لا تغيّر ما تم تحميله بالفعل من المخزن."
+    ? (locale === "ar"
+      ? "تم الاستلام سابقًا. إذا زدت كمية لمنتج في محطة تم استلامها، سيظهر للمشغّل الفرق فقط كاستلام إضافي؛ الكمية السابقة لن تتكرر وحالة الجولة لن ترجع للخلف."
+      : "Pickup was already confirmed. If you increase a product on an already-picked stop, the operator will see only the difference as an additional pickup; the earlier pickup will not repeat and the route state will not roll back.")
     : isActiveRouteStatus(route.status) || ["started", "filling", "machine_filling"].includes(String(route.status ?? ""))
-      ? "الجولة بدأت بالفعل. هذه التعديلات تؤثر على الخطة المتبقية فقط."
+      ? (locale === "ar"
+        ? "الجولة بدأت بالفعل. زيادات الكميات على المحطات التي تم استلامها ستظهر كاستلام إضافي فقط."
+        : "The route has already started. Quantity increases on already-picked stops will appear only as an additional pickup.")
       : null;
 
   const readOnly = !isRouteItemsEditableStatus(route.status);
