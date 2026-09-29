@@ -8,10 +8,7 @@ import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } fr
 import { isAdminRole, isOwnerAdminRole } from "@/lib/authz";
 import { isMissingRouteInventoryReviewSchema } from "@/lib/route-inventory-discrepancies";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
-import {
-  loadFinanceHealthDiagnostics,
-  type FinanceHealthDiagnostics,
-} from "@/lib/finance-health";
+import { loadFinanceHealthDiagnostics } from "@/lib/finance-health";
 import { lyd } from "@/lib/format";
 import {
   buildMachineRefillForecasts,
@@ -87,6 +84,15 @@ type MissingCostRow = {
   product_name: string | null;
 };
 
+type DashboardFinanceHealthSummary = {
+  purchasesMissingFinance: number;
+  cashCollectionsMissingFinance: number;
+  brokenLinks: number;
+  balanceInconsistencies: number;
+  missingCategories: number;
+  ignoredSourceRows: number;
+};
+
 type DashboardSection =
   | "revenue"
   | "cashWaiting"
@@ -126,7 +132,7 @@ type DashboardData = {
   vmsBatchRows: VmsDashboardBatch[];
   restockItems: RestockPriorityItem[];
   restockWarnings: string[];
-  financeDiagnostics: FinanceHealthDiagnostics;
+  financeDiagnostics: DashboardFinanceHealthSummary;
   canReviewRouteInventory: boolean;
   routeInventoryDiscrepancyCount: number;
   canManageMachineQuantityUpdates: boolean;
@@ -434,25 +440,51 @@ async function safeRestockPriorityForDashboard(
 async function safeFinanceHealthForDashboard(
   supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>,
   errors: DashboardErrors,
-): Promise<FinanceHealthDiagnostics> {
+): Promise<DashboardFinanceHealthSummary> {
   try {
+    const result = await supabase
+      .rpc("finance_health_report")
+      .abortSignal(AbortSignal.timeout(1000));
+
+    if (!result.error && result.data && typeof result.data === "object") {
+      const report = result.data as Record<string, unknown>;
+      return {
+        purchasesMissingFinance: Math.max(0, numberValue(report.purchases_missing_finance_transaction)),
+        cashCollectionsMissingFinance: Math.max(0, numberValue(report.cash_collections_missing_finance_transaction)),
+        brokenLinks: Math.max(0, numberValue(report.broken_link_count)),
+        balanceInconsistencies: Math.max(0, numberValue(report.balance_inconsistency_count)),
+        missingCategories: Math.max(0, numberValue(report.missing_category_count)),
+        ignoredSourceRows: Math.max(0, numberValue(report.ignored_source_count)),
+      };
+    }
+
+    if (result.error) {
+      console.warn("[dashboard] finance_health_report unavailable; using detailed fallback", { error: result.error });
+    }
+
     const diagnostics = await loadFinanceHealthDiagnostics(supabase);
     if (diagnostics.errors.length) {
       errors.financeHealth = diagnostics.errors.join(" | ");
     }
-    return diagnostics;
+    return {
+      purchasesMissingFinance: diagnostics.purchasesMissingFinance.length,
+      cashCollectionsMissingFinance: diagnostics.cashCollectionsMissingFinance.length,
+      brokenLinks: diagnostics.brokenLinks.length,
+      balanceInconsistencies: diagnostics.balanceInconsistencies.length,
+      missingCategories: diagnostics.missingCategories.length,
+      ignoredSourceRows: diagnostics.ignoredSourceRows.length,
+    };
   } catch (error) {
     const message = errorMessage(error);
     console.error("[dashboard] Finance health failed", { section: "financeHealth", error });
     errors.financeHealth = message;
     return {
-      purchasesMissingFinance: [],
-      cashCollectionsMissingFinance: [],
-      brokenLinks: [],
-      balanceInconsistencies: [],
-      missingCategories: [],
-      ignoredSourceRows: [],
-      errors: [message],
+      purchasesMissingFinance: 0,
+      cashCollectionsMissingFinance: 0,
+      brokenLinks: 0,
+      balanceInconsistencies: 0,
+      missingCategories: 0,
+      ignoredSourceRows: 0,
     };
   }
 }
@@ -850,13 +882,13 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
     ? 0
     : new Set(data.missingCostRows.map((row) => textValue(row.product_id) ?? textValue(row.product_name) ?? "")).size;
   const financeGapCount =
-    data.financeDiagnostics.purchasesMissingFinance.length
-    + data.financeDiagnostics.cashCollectionsMissingFinance.length
-    + data.financeDiagnostics.brokenLinks.length;
+    data.financeDiagnostics.purchasesMissingFinance
+    + data.financeDiagnostics.cashCollectionsMissingFinance
+    + data.financeDiagnostics.brokenLinks;
   const financeWarningCount =
-    data.financeDiagnostics.balanceInconsistencies.length
-    + data.financeDiagnostics.missingCategories.length
-    + data.financeDiagnostics.ignoredSourceRows.length;
+    data.financeDiagnostics.balanceInconsistencies
+    + data.financeDiagnostics.missingCategories
+    + data.financeDiagnostics.ignoredSourceRows;
   const failedImportCount = data.vmsBatchRows.filter(importNeedsAttention).length;
   const warningImportCount = data.vmsBatchRows.filter(importHasWarnings).length;
   const activeDetailedCount = activeDetailedBatches(data.vmsBatchRows).length;
