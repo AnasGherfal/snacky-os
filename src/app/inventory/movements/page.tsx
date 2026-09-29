@@ -263,14 +263,8 @@ export default async function InventoryMovementsPage({
     );
   }
 
-  const [
-    { data: products, error: productsError },
-    { data: users, error: usersError },
-    { data: routes, error: routesError },
-    { data: purchases, error: purchasesError },
-    { data: machines, error: machinesError },
-    { data: storages, error: storagesError },
-  ] = await Promise.all([
+  const search = String(params.q ?? "").trim();
+  const filterDataPromise = Promise.all([
     supabase.from("products").select("id, sku, name").order("name").limit(500),
     supabase.from("team_members").select("id, full_name").order("full_name").limit(500),
     supabase.from("routes").select("id, route_date").order("route_date", { ascending: false }).limit(200),
@@ -278,6 +272,53 @@ export default async function InventoryMovementsPage({
     supabase.from("machines").select("id, name, machine_code, location:locations(id, name)").order("name").limit(500),
     supabase.from("storage_locations").select("id, name").order("name").limit(500),
   ]);
+
+  const matchingProductIdsPromise = search
+    ? (async () => {
+        const { data } = await supabase
+          .from("products")
+          .select("id")
+          .or(["sku", "name"].map((column) => `${column}.ilike.${supabaseLikePattern(search.replaceAll(",", " "))}`).join(","))
+          .limit(100);
+        return (data ?? []).map((product: any) => product.id);
+      })()
+    : Promise.resolve([] as string[]);
+
+  const movementResultPromise = (async () => {
+    const matchingProductIds = await matchingProductIdsPromise;
+    let movementQuery = supabase
+      .from("inventory_movements")
+      .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, movement_type, source_type, source_id, related_route_id, related_route_stop_id, related_purchase_id, related_purchase_line_id, related_machine_id, related_refill_order_id, related_pickup_batch_id, import_batch_id, historical_route_deduction_line_id, reversed_movement_id, correction_reason, notes, created_by, created_at, product:products(id, sku, name), created_by_member:team_members(id, full_name)", { count: "exact" })
+      .order("created_at", { ascending: false });
+
+    if (params.product_id) movementQuery = movementQuery.eq("product_id", params.product_id);
+    if (params.reason && movementReasons.includes(params.reason as any)) movementQuery = movementQuery.eq("reason", params.reason);
+    if (params.user_id) movementQuery = movementQuery.eq("created_by", params.user_id);
+    if (params.route_id) movementQuery = movementQuery.eq("related_route_id", params.route_id);
+    if (params.purchase_id) movementQuery = movementQuery.eq("related_purchase_id", params.purchase_id);
+    if (params.machine_id) movementQuery = movementQuery.or(`related_machine_id.eq.${params.machine_id},to_entity_id.eq.${params.machine_id},from_entity_id.eq.${params.machine_id}`);
+    if (params.date_from) movementQuery = movementQuery.gte("created_at", `${params.date_from}T00:00:00`);
+    if (params.date_to) movementQuery = movementQuery.lte("created_at", `${params.date_to}T23:59:59`);
+    if (search) {
+      const pattern = supabaseLikePattern(search.replaceAll(",", " "));
+      const clauses = [`notes.ilike.${pattern}`, `correction_reason.ilike.${pattern}`, `movement_type.ilike.${pattern}`];
+      if (matchingProductIds.length) clauses.push(`product_id.in.(${matchingProductIds.join(",")})`);
+      movementQuery = movementQuery.or(clauses.join(","));
+    }
+    return movementQuery.range(from, to);
+  })();
+
+  const [
+    [
+      { data: products, error: productsError },
+      { data: users, error: usersError },
+      { data: routes, error: routesError },
+      { data: purchases, error: purchasesError },
+      { data: machines, error: machinesError },
+      { data: storages, error: storagesError },
+    ],
+    { data: movements, count, error: movementError },
+  ] = await Promise.all([filterDataPromise, movementResultPromise]);
 
   const setupError = productsError ?? usersError ?? routesError ?? purchasesError ?? machinesError ?? storagesError;
   if (setupError) {
@@ -293,36 +334,6 @@ export default async function InventoryMovementsPage({
     );
   }
 
-  const search = String(params.q ?? "").trim();
-  const matchingProductIds = search
-    ? ((await supabase
-        .from("products")
-        .select("id")
-        .or(["sku", "name"].map((column) => `${column}.ilike.${supabaseLikePattern(search.replaceAll(",", " "))}`).join(","))
-        .limit(100)).data ?? []).map((product: any) => product.id)
-    : [];
-
-  let movementQuery = supabase
-    ?.from("inventory_movements")
-    .select("id, product_id, quantity, from_entity_type, from_entity_id, to_entity_type, to_entity_id, reason, movement_type, source_type, source_id, related_route_id, related_route_stop_id, related_purchase_id, related_purchase_line_id, related_machine_id, related_refill_order_id, related_pickup_batch_id, import_batch_id, historical_route_deduction_line_id, reversed_movement_id, correction_reason, notes, created_by, created_at, product:products(id, sku, name), created_by_member:team_members(id, full_name)", { count: "exact" })
-    .order("created_at", { ascending: false });
-
-  if (movementQuery && params.product_id) movementQuery = movementQuery.eq("product_id", params.product_id);
-  if (movementQuery && params.reason && movementReasons.includes(params.reason as any)) movementQuery = movementQuery.eq("reason", params.reason);
-  if (movementQuery && params.user_id) movementQuery = movementQuery.eq("created_by", params.user_id);
-  if (movementQuery && params.route_id) movementQuery = movementQuery.eq("related_route_id", params.route_id);
-  if (movementQuery && params.purchase_id) movementQuery = movementQuery.eq("related_purchase_id", params.purchase_id);
-  if (movementQuery && params.machine_id) movementQuery = movementQuery.or(`related_machine_id.eq.${params.machine_id},to_entity_id.eq.${params.machine_id},from_entity_id.eq.${params.machine_id}`);
-  if (movementQuery && params.date_from) movementQuery = movementQuery.gte("created_at", `${params.date_from}T00:00:00`);
-  if (movementQuery && params.date_to) movementQuery = movementQuery.lte("created_at", `${params.date_to}T23:59:59`);
-  if (movementQuery && search) {
-    const pattern = supabaseLikePattern(search.replaceAll(",", " "));
-    const clauses = [`notes.ilike.${pattern}`, `correction_reason.ilike.${pattern}`, `movement_type.ilike.${pattern}`];
-    if (matchingProductIds.length) clauses.push(`product_id.in.(${matchingProductIds.join(",")})`);
-    movementQuery = movementQuery.or(clauses.join(","));
-  }
-
-  const { data: movements, count, error: movementError } = movementQuery ? await movementQuery.range(from, to) : { data: [], count: 0, error: null };
   if (movementError) {
     console.error("[inventory:movements] Failed to load inventory_movements", movementError);
     return (
