@@ -451,6 +451,73 @@ async function upsertXyProductMapping({
   return { action: "created" as const, mapping: data };
 }
 
+const XY_PRODUCT_IMAGE_HOST = "wc.xyvend.cn";
+const XY_PRODUCT_IMAGE_PORT = "8086";
+const XY_PRODUCT_IMAGE_PREFIX = "/spImg/";
+const XY_PRODUCT_IMAGE_BUCKET = "product-images";
+const XY_PRODUCT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+
+function isAllowedXyProductImageUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:"
+      && url.hostname === XY_PRODUCT_IMAGE_HOST
+      && url.port === XY_PRODUCT_IMAGE_PORT
+      && url.pathname.startsWith(XY_PRODUCT_IMAGE_PREFIX);
+  } catch {
+    return false;
+  }
+}
+
+function xyProductImageExtension(contentType: string, sourceUrl: string) {
+  const normalizedType = contentType.toLowerCase().split(";")[0]?.trim() ?? "";
+  if (normalizedType === "image/png") return "png";
+  if (normalizedType === "image/webp") return "webp";
+  if (normalizedType === "image/avif") return "avif";
+  if (normalizedType === "image/jpeg" || normalizedType === "image/jpg") return "jpg";
+  const match = new URL(sourceUrl).pathname.match(/\.([a-z0-9]{2,5})$/i);
+  return match?.[1]?.toLowerCase() || "img";
+}
+
+async function cacheXyProductImage(supabase: SupabaseServer, productId: string, sourceUrl: string) {
+  if (!isAllowedXyProductImageUrl(sourceUrl)) {
+    throw new Error("XY product image URL is not on the approved XY image host.");
+  }
+
+  const response = await fetch(sourceUrl, {
+    redirect: "follow",
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (!response.ok) {
+    throw new Error(`XY product image returned HTTP ${response.status}.`);
+  }
+
+  const contentType = response.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
+  if (!contentType.startsWith("image/")) {
+    throw new Error(`XY product image returned unsupported content type ${contentType || "unknown"}.`);
+  }
+
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (!bytes.byteLength || bytes.byteLength > XY_PRODUCT_IMAGE_MAX_BYTES) {
+    throw new Error(`XY product image size ${bytes.byteLength} bytes is invalid.`);
+  }
+
+  const extension = xyProductImageExtension(contentType, sourceUrl);
+  const path = `xy/${productId}.${extension}`;
+  const { error: uploadError } = await supabase.storage
+    .from(XY_PRODUCT_IMAGE_BUCKET)
+    .upload(path, bytes, {
+      contentType,
+      cacheControl: "31536000",
+      upsert: true,
+    });
+  if (uploadError) {
+    throw new Error(`Could not cache XY product image: ${uploadError.message}`);
+  }
+
+  return supabase.storage.from(XY_PRODUCT_IMAGE_BUCKET).getPublicUrl(path).data.publicUrl;
+}
+
 async function updateMatchedProductFromXy(supabase: SupabaseServer, productId: string, row: JsonRecord, capturedAt: string) {
   const identity = xyProductIdentity(row);
   const payload: Record<string, unknown> = {
@@ -458,7 +525,18 @@ async function updateMatchedProductFromXy(supabase: SupabaseServer, productId: s
     updated_at: new Date().toISOString(),
   };
   if (identity.barcode) payload.barcode = identity.barcode;
-  if (identity.imageUrl) payload.image_url = identity.imageUrl;
+  if (identity.imageUrl) {
+    try {
+      payload.image_url = await cacheXyProductImage(supabase, productId, identity.imageUrl);
+    } catch (error) {
+      console.warn("[xy-vms] Could not cache XY product image; keeping the last stored Snacky image", {
+        product_id: productId,
+        vms_product_id: identity.vmsProductId || null,
+        image_url: identity.imageUrl,
+        error: safeErrorMessage(error),
+      });
+    }
+  }
   if (identity.productName) payload.name = identity.productName;
   if (identity.sellingPrice !== null && identity.sellingPrice > 0) {
     Object.assign(payload, {
