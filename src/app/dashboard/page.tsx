@@ -1,8 +1,6 @@
 import Link from "next/link";
-import { Suspense } from "react";
-import { DashboardForecastSkeleton, DashboardRefillForecastSection } from "@/app/dashboard/DashboardRefillForecastSection";
-import { DashboardRestockAction, DashboardRestockStat, DashboardRestockStatSkeleton, DashboardRestockWarning } from "@/app/dashboard/DashboardRestockSection";
 import { KpiSection } from "@/components/KpiDashboard";
+import { RefillForecastDashboard } from "@/components/RefillForecastDashboard";
 import { StatCard } from "@/components/StatCard";
 import { VmsDataSourceCard } from "@/components/VmsDataSourceCard";
 import { EmptyState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
@@ -15,6 +13,18 @@ import {
   type FinanceHealthDiagnostics,
 } from "@/lib/finance-health";
 import { lyd } from "@/lib/format";
+import {
+  buildMachineRefillForecasts,
+  type MachineRefillForecast,
+  type RefillFillLine,
+  type RefillMachine,
+  type RefillStockHistory,
+} from "@/lib/refill-forecast";
+import { restockCounts, type RestockPriorityItem } from "@/lib/restock-priority";
+import {
+  loadRestockPriorityData,
+  type RestockPriorityLoadResult,
+} from "@/lib/restock-priority-data";
 import { getServerI18n } from "@/lib/i18n/server";
 import { ROUTE_RESERVATION_STATUSES } from "@/lib/route-workflow";
 import {
@@ -90,6 +100,7 @@ type DashboardSection =
   | "refillForecast"
   | "missingCost"
   | "vmsBatches"
+  | "restockPriority"
   | "financeHealth"
   | "routeInventoryReview"
   | "machineQuantityUpdates";
@@ -110,8 +121,11 @@ type DashboardData = {
   recentIssues: IssueRow[];
   criticalIssueCount: number;
   refillRows: RefillRow[];
+  refillForecasts: MachineRefillForecast[];
   missingCostRows: MissingCostRow[];
   vmsBatchRows: VmsDashboardBatch[];
+  restockItems: RestockPriorityItem[];
+  restockWarnings: string[];
   financeDiagnostics: FinanceHealthDiagnostics;
   canReviewRouteInventory: boolean;
   routeInventoryDiscrepancyCount: number;
@@ -148,6 +162,7 @@ const dashboardSectionLabels: Record<DashboardSection, { en: string; ar: string 
   refillForecast: { en: "Machine refill forecast", ar: "توقعات تعبئة الأجهزة" },
   missingCost: { en: "Missing product cost", ar: "تكلفة المنتج المفقودة" },
   vmsBatches: { en: "VMS imports", ar: "استيرادات VMS" },
+  restockPriority: { en: "Restock priority", ar: "أولوية إعادة التخزين" },
   financeHealth: { en: "Finance health", ar: "صحة المالية" },
   routeInventoryReview: { en: "Route inventory review", ar: "مراجعة مخزون الجولات" },
   machineQuantityUpdates: { en: "Machine quantity updates", ar: "تحديثات كميات الأجهزة" },
@@ -402,6 +417,20 @@ async function safeRouteInventoryReviewCount({
   }
 }
 
+async function safeRestockPriorityForDashboard(
+  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>,
+  errors: DashboardErrors,
+): Promise<RestockPriorityLoadResult> {
+  try {
+    return await loadRestockPriorityData(supabase);
+  } catch (error) {
+    const message = errorMessage(error);
+    console.error("[dashboard] Restock priority failed", { section: "restockPriority", error });
+    errors.restockPriority = message;
+    return { items: [], errors: {}, productCount: 0, storageLoaded: false, usedProductFallback: false };
+  }
+}
+
 async function safeFinanceHealthForDashboard(
   supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>,
   errors: DashboardErrors,
@@ -468,6 +497,39 @@ async function loadIssueRows(
     .limit(6);
 }
 
+async function loadForecastMachines(
+  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>,
+) {
+  const enriched = await supabase
+    .from("machines")
+    .select("id, name, machine_code, status, refill_open_days, refill_critical_percent, refill_today_percent, refill_target_percent, refill_minimum_units, refill_manual_daily_units")
+    .eq("status", "active")
+    .order("name");
+
+  if (!enriched.error || !isMissingColumn(enriched.error, [
+    "refill_open_days",
+    "refill_critical_percent",
+    "refill_today_percent",
+    "refill_target_percent",
+    "refill_minimum_units",
+    "refill_manual_daily_units",
+  ])) return enriched;
+
+  return supabase
+    .from("machines")
+    .select("id, name, machine_code, status")
+    .eq("status", "active")
+    .order("name");
+}
+
+function refillForecastClock() {
+  const now = new Date();
+  return {
+    now,
+    since: new Date(now.getTime() - 28 * 24 * 60 * 60 * 1000).toISOString(),
+  };
+}
+
 async function getDashboardData() {
   const profile = await requireCurrentProfileForPath("/dashboard");
   const canReviewRouteInventory = isAdminRole(profile);
@@ -478,6 +540,7 @@ async function getDashboardData() {
   const today = dateOnlyUtc(new Date());
   const weekStart = weekStartUtc(new Date());
   const monthStart = monthStartUtc(today);
+  const forecastClock = refillForecastClock();
   const errors: DashboardErrors = {};
 
   const [
@@ -490,8 +553,13 @@ async function getDashboardData() {
     recentIssues,
     criticalIssueCount,
     refillRows,
+    forecastMachines,
+    forecastLatestStock,
+    forecastStockHistory,
+    forecastFillLines,
     missingCostRows,
     vmsBatchRows,
+    restockPriority,
     financeDiagnostics,
     routeInventoryDiscrepancyCount,
     pendingMachineQuantityUpdateCount,
@@ -579,6 +647,51 @@ async function getDashboardData() {
       fallback: [],
       errors,
     }),
+    safeDashboardQuery<RefillMachine[]>({
+      key: "refillForecast",
+      label: "machines refill forecast policies",
+      promise: loadForecastMachines(supabase),
+      fallback: [],
+      errors,
+    }),
+    safeDashboardQuery<RefillStockHistory[]>({
+      key: "refillForecast",
+      label: "latest_vms_stock_by_slot refill forecast",
+      promise: supabase
+        .from("latest_vms_stock_by_slot")
+        .select("machine_id, product_id, slot_code, current_qty, capacity, captured_at, import_batch_id")
+        .eq("source_provider", "xy"),
+      fallback: [],
+      errors,
+    }),
+    safeDashboardQuery<RefillStockHistory[]>({
+      key: "refillForecast",
+      label: "vms_stock_snapshots refill trend",
+      promise: supabase
+        .from("vms_stock_snapshots")
+        .select("machine_id, product_id, slot_code, current_qty, capacity, captured_at, import_batch_id, sync_run_id, batch:vms_import_batches!inner(status, deleted_at)")
+        .eq("source_provider", "xy")
+        .eq("import_row_status", "imported")
+        .in("batch.status", ["imported", "imported_with_warnings"])
+        .is("batch.deleted_at", null)
+        .gte("captured_at", forecastClock.since)
+        .order("captured_at", { ascending: true })
+        .limit(10000),
+      fallback: [],
+      errors,
+    }),
+    safeDashboardQuery<RefillFillLine[]>({
+      key: "refillForecast",
+      label: "route_stop_fill_lines refill trend",
+      promise: supabase
+        .from("route_stop_fill_lines")
+        .select("machine_id, product_id, actual_qty, created_at")
+        .gte("created_at", forecastClock.since)
+        .order("created_at", { ascending: true })
+        .limit(5000),
+      fallback: [],
+      errors,
+    }),
     safeDashboardQuery<MissingCostRow[]>({
       key: "missingCost",
       label: "vms_sales_dashboard_clean missing cost products",
@@ -599,6 +712,7 @@ async function getDashboardData() {
       fallback: [],
       errors,
     }),
+    safeRestockPriorityForDashboard(supabase, errors),
     safeFinanceHealthForDashboard(supabase, errors),
     canReviewRouteInventory
       ? safeRouteInventoryReviewCount({
@@ -634,14 +748,29 @@ async function getDashboardData() {
     ?? currentMonthlyRevenueBatch?.detected_max_datetime?.slice(0, 10)
     ?? null;
 
-  const activeXyStockBatchIds = new Set(
-    activeStockBatches(vmsBatchRows.data)
-      .map((batch) => textValue(batch.id))
-      .filter((id): id is string => Boolean(id)),
+  const latestXyBatchIds = new Set(
+    forecastLatestStock.data.map((row) => textValue(row.import_batch_id)).filter((id): id is string => Boolean(id)),
   );
-  const xyRefillRows = activeXyStockBatchIds.size > 0
-    ? refillRows.data.filter((row) => row.import_batch_id && activeXyStockBatchIds.has(row.import_batch_id))
-    : refillRows.data;
+  const xyRefillRows = latestXyBatchIds.size > 0
+    ? refillRows.data.filter((row) => row.import_batch_id && latestXyBatchIds.has(row.import_batch_id))
+    : [];
+  const storageCoverageByMachine = new Map<string, { machineId: string; requestedUnits: number; fillableUnits: number }>();
+  xyRefillRows.forEach((row) => {
+    const machineId = textValue(row.machine_id);
+    if (!machineId) return;
+    const current = storageCoverageByMachine.get(machineId) ?? { machineId, requestedUnits: 0, fillableUnits: 0 };
+    current.requestedUnits += Math.max(0, numberValue(row.suggested_qty));
+    current.fillableUnits += Math.max(0, numberValue(row.final_qty_to_take));
+    storageCoverageByMachine.set(machineId, current);
+  });
+  const refillForecasts = buildMachineRefillForecasts({
+    machines: forecastMachines.data,
+    latestStock: forecastLatestStock.data,
+    stockHistory: forecastStockHistory.data,
+    fills: forecastFillLines.data,
+    storageCoverage: Array.from(storageCoverageByMachine.values()),
+    now: forecastClock.now,
+  });
 
   return {
     data: {
@@ -658,8 +787,11 @@ async function getDashboardData() {
       recentIssues: recentIssues.data,
       criticalIssueCount,
       refillRows: xyRefillRows,
+      refillForecasts,
       missingCostRows: missingCostRows.data,
       vmsBatchRows: vmsBatchRows.data,
+      restockItems: restockPriority.items,
+      restockWarnings: Object.values(restockPriority.errors ?? {}).filter(Boolean),
       financeDiagnostics,
       canReviewRouteInventory,
       routeInventoryDiscrepancyCount,
@@ -692,6 +824,9 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
   const isArabic = locale === "ar";
   const localize = (en: string, ar: string) => (isArabic ? ar : en);
   const errors = data.errors;
+  const restockItems = data.restockItems;
+  const restockSummary = restockCounts(restockItems);
+  const restockWarnings = data.restockWarnings;
   const recentIssues = data.recentIssues;
   const routeRows = data.routeRows;
   const pendingRoutes = routeRows.filter(routeIsPending);
@@ -806,6 +941,18 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
       cta: t("Open cash queue"),
     });
   }
+  if (restockSummary.critical > 0) {
+    actionItems.push({
+      key: "critical-restock",
+      title: t("Buy critical products"),
+      detail: localize(
+        `${restockSummary.critical} product${restockSummary.critical === 1 ? "" : "s"} are already at critical restock level.`,
+        `${restockSummary.critical} منتج${restockSummary.critical === 1 ? "" : "ات"} وصلت إلى مستوى تعبئة حرج.`,
+      ),
+      href: "/restock-priority?filter=critical",
+      cta: t("Open restock priority"),
+    });
+  }
   if (machinesNeedingRefillCount > 0) {
     actionItems.push({
       key: "refill-routes",
@@ -843,6 +990,7 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
     });
   }
 
+  const criticalProductsUnavailable = Boolean(errors.restockPriority);
   const routesUnavailable = Boolean(errors.routes);
 
   return (
@@ -866,9 +1014,7 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
             <div className="mt-4 flex flex-wrap gap-2"><SecondaryButton href="/refills">{localize("Open refill dashboard", "فتح لوحة التعبئة")}</SecondaryButton><SecondaryButton href="/vms-import/sources">{localize("Check XY data", "فحص بيانات XY")}</SecondaryButton></div>
           </section>
         ) : (
-          <Suspense fallback={<DashboardForecastSkeleton locale={locale} />}>
-            <DashboardRefillForecastSection locale={locale} refillRows={data.refillRows} />
-          </Suspense>
+          <RefillForecastDashboard forecasts={data.refillForecasts} variant="overview" locale={locale} />
         )}
       </div>
 
@@ -878,9 +1024,11 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
           <p className="mt-1 text-sm text-slate-500">{t("Only the queues that can change today's work, purchasing, cash, or machine availability.")}</p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          <Suspense fallback={<DashboardRestockStatSkeleton locale={locale} />}>
-            <DashboardRestockStat locale={locale} />
-          </Suspense>
+          <StatCard
+            label={t("Critical products")}
+            value={criticalProductsUnavailable ? "-" : restockSummary.critical.toLocaleString("en-US")}
+            note={criticalProductsUnavailable ? t("Restock engine unavailable") : localize(`${restockSummary.low} more products are low`, `${restockSummary.low} منتجات منخفضة إضافية`)}
+          />
           <StatCard
             label={t("Routes still open")}
             value={routesUnavailable ? "-" : pendingRoutes.length.toLocaleString("en-US")}
@@ -926,9 +1074,11 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
         </div>
       ) : null}
 
-      <Suspense fallback={null}>
-        <DashboardRestockWarning locale={locale} />
-      </Suspense>
+      {!errors.restockPriority && restockWarnings.length ? (
+        <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          {t("Some restock inputs are still partial, so critical product counts are based on the signals that are currently healthy.")}
+        </div>
+      ) : null}
 
       <div className="mb-4">
         <h2 className="text-lg font-semibold text-slate-900">{t("What Needs Attention")}</h2>
@@ -1015,24 +1165,23 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
 
         <div className="space-y-4">
           <KpiSection title={t("What should I do next?")} subtitle={t("A short operating queue based on the current dashboard signals.")}>
-            <div className="space-y-3">
-              <Suspense fallback={null}>
-                <DashboardRestockAction locale={locale} />
-              </Suspense>
-              {!actionItems.length ? (
-                <SectionEmpty title={t("No urgent core queue")} body={t("Core operating queues are clear. Restock priority loads independently above when needed.")} />
-              ) : actionItems.map((item) => (
-                <div key={item.key} className="rounded-xl border border-slate-200 bg-white p-4">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold text-slate-900">{item.title}</div>
-                      <p className="mt-1 text-sm leading-6 text-slate-600">{item.detail}</p>
+            {!actionItems.length ? (
+              <SectionEmpty title={t("No urgent queue")} body={t("The highest-priority queues are clear. Review routes or restock priority when you want the next task.")} />
+            ) : (
+              <div className="space-y-3">
+                {actionItems.map((item) => (
+                  <div key={item.key} className="rounded-xl border border-slate-200 bg-white p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-slate-900">{item.title}</div>
+                        <p className="mt-1 text-sm leading-6 text-slate-600">{item.detail}</p>
+                      </div>
+                      <Link href={item.href} className="btn-secondary shrink-0">{item.cta}</Link>
                     </div>
-                    <Link href={item.href} className="btn-secondary shrink-0">{item.cta}</Link>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </KpiSection>
 
           <KpiSection title={t("System health summary")} subtitle={t("Counts that usually send teams into repair mode.")}>
