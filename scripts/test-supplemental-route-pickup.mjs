@@ -19,12 +19,13 @@ function sqlCode(value) {
 
 test("supplemental pickup is append-only and does not roll route workflow state backward", () => {
   const source = sqlCode(migration);
+  const raw = compact(migration);
   assert.match(source, /create or replace function public\.snacky_confirm_supplemental_route_pickup_v1/i);
   assert.match(source, /insert into public\.route_pickup_batches/i);
   assert.match(source, /insert into public\.route_pick_list_items/i);
   assert.match(source, /insert into public\.inventory_movements/i);
   assert.match(source, /action_type[^;]*'extra_product'/i);
-  assert.match(source, /Additional pickup is a stock\/custody event, not a route-state transition/i);
+  assert.match(raw, /Additional pickup is a stock\/custody event, not a route-state transition/i);
   assert.doesNotMatch(source, /update public\.routes\b/i);
   assert.doesNotMatch(source, /update public\.route_stops\b/i);
   assert.doesNotMatch(source, /delete from public\.route_pick_list_items/i);
