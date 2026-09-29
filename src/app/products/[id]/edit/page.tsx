@@ -43,7 +43,7 @@ async function updateProduct(fd: FormData) {
     const resolved = await resolveProductImageUrl(s, fd);
     imageUrl = resolved.imageUrl;
     uploadUnavailable = resolved.uploadUnavailable;
-    uploadError = resolved.uploadError;
+    uploadError = resolved.uploadError ?? null;
   }
   const nextName = String(fd.get("name") || "").trim();
   const nextCost = Number(fd.get("current_cost_price_lyd") || 0);
