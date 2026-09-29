@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import { DashboardForecastSkeleton, DashboardRefillForecastSection } from "@/app/dashboard/DashboardRefillForecastSection";
+import { DashboardRestockAction, DashboardRestockStat, DashboardRestockStatSkeleton, DashboardRestockWarning } from "@/app/dashboard/DashboardRestockSection";
 import { KpiSection } from "@/components/KpiDashboard";
 import { StatCard } from "@/components/StatCard";
 import { VmsDataSourceCard } from "@/components/VmsDataSourceCard";
@@ -14,11 +15,6 @@ import {
   type FinanceHealthDiagnostics,
 } from "@/lib/finance-health";
 import { lyd } from "@/lib/format";
-import { restockCounts, type RestockPriorityItem } from "@/lib/restock-priority";
-import {
-  loadRestockPriorityData,
-  type RestockPriorityLoadResult,
-} from "@/lib/restock-priority-data";
 import { getServerI18n } from "@/lib/i18n/server";
 import { ROUTE_RESERVATION_STATUSES } from "@/lib/route-workflow";
 import {
@@ -94,7 +90,6 @@ type DashboardSection =
   | "refillForecast"
   | "missingCost"
   | "vmsBatches"
-  | "restockPriority"
   | "financeHealth"
   | "routeInventoryReview"
   | "machineQuantityUpdates";
@@ -117,8 +112,6 @@ type DashboardData = {
   refillRows: RefillRow[];
   missingCostRows: MissingCostRow[];
   vmsBatchRows: VmsDashboardBatch[];
-  restockItems: RestockPriorityItem[];
-  restockWarnings: string[];
   financeDiagnostics: FinanceHealthDiagnostics;
   canReviewRouteInventory: boolean;
   routeInventoryDiscrepancyCount: number;
@@ -410,20 +403,6 @@ async function safeRouteInventoryReviewCount({
   }
 }
 
-async function safeRestockPriorityForDashboard(
-  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>,
-  errors: DashboardErrors,
-): Promise<RestockPriorityLoadResult> {
-  try {
-    return await loadRestockPriorityData(supabase);
-  } catch (error) {
-    const message = errorMessage(error);
-    console.error("[dashboard] Restock priority failed", { section: "restockPriority", error });
-    errors.restockPriority = message;
-    return { items: [], errors: {}, productCount: 0, storageLoaded: false, usedProductFallback: false };
-  }
-}
-
 async function safeFinanceHealthForDashboard(
   supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>,
   errors: DashboardErrors,
@@ -514,7 +493,6 @@ async function getDashboardData() {
     refillRows,
     missingCostRows,
     vmsBatchRows,
-    restockPriority,
     financeDiagnostics,
     routeInventoryDiscrepancyCount,
     pendingMachineQuantityUpdateCount,
@@ -622,7 +600,6 @@ async function getDashboardData() {
       fallback: [],
       errors,
     }),
-    safeRestockPriorityForDashboard(supabase, errors),
     safeFinanceHealthForDashboard(supabase, errors),
     canReviewRouteInventory
       ? safeRouteInventoryReviewCount({
@@ -684,8 +661,6 @@ async function getDashboardData() {
       refillRows: xyRefillRows,
       missingCostRows: missingCostRows.data,
       vmsBatchRows: vmsBatchRows.data,
-      restockItems: restockPriority.items,
-      restockWarnings: Object.values(restockPriority.errors ?? {}).filter(Boolean),
       financeDiagnostics,
       canReviewRouteInventory,
       routeInventoryDiscrepancyCount,
@@ -718,9 +693,6 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
   const isArabic = locale === "ar";
   const localize = (en: string, ar: string) => (isArabic ? ar : en);
   const errors = data.errors;
-  const restockItems = data.restockItems;
-  const restockSummary = restockCounts(restockItems);
-  const restockWarnings = data.restockWarnings;
   const recentIssues = data.recentIssues;
   const routeRows = data.routeRows;
   const pendingRoutes = routeRows.filter(routeIsPending);
@@ -835,18 +807,6 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
       cta: t("Open cash queue"),
     });
   }
-  if (restockSummary.critical > 0) {
-    actionItems.push({
-      key: "critical-restock",
-      title: t("Buy critical products"),
-      detail: localize(
-        `${restockSummary.critical} product${restockSummary.critical === 1 ? "" : "s"} are already at critical restock level.`,
-        `${restockSummary.critical} منتج${restockSummary.critical === 1 ? "" : "ات"} وصلت إلى مستوى تعبئة حرج.`,
-      ),
-      href: "/restock-priority?filter=critical",
-      cta: t("Open restock priority"),
-    });
-  }
   if (machinesNeedingRefillCount > 0) {
     actionItems.push({
       key: "refill-routes",
@@ -884,7 +844,6 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
     });
   }
 
-  const criticalProductsUnavailable = Boolean(errors.restockPriority);
   const routesUnavailable = Boolean(errors.routes);
 
   return (
@@ -920,11 +879,9 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
           <p className="mt-1 text-sm text-slate-500">{t("Only the queues that can change today's work, purchasing, cash, or machine availability.")}</p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          <StatCard
-            label={t("Critical products")}
-            value={criticalProductsUnavailable ? "-" : restockSummary.critical.toLocaleString("en-US")}
-            note={criticalProductsUnavailable ? t("Restock engine unavailable") : localize(`${restockSummary.low} more products are low`, `${restockSummary.low} منتجات منخفضة إضافية`)}
-          />
+          <Suspense fallback={<DashboardRestockStatSkeleton locale={locale} />}>
+            <DashboardRestockStat locale={locale} />
+          </Suspense>
           <StatCard
             label={t("Routes still open")}
             value={routesUnavailable ? "-" : pendingRoutes.length.toLocaleString("en-US")}
@@ -970,11 +927,9 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
         </div>
       ) : null}
 
-      {!errors.restockPriority && restockWarnings.length ? (
-        <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-          {t("Some restock inputs are still partial, so critical product counts are based on the signals that are currently healthy.")}
-        </div>
-      ) : null}
+      <Suspense fallback={null}>
+        <DashboardRestockWarning locale={locale} />
+      </Suspense>
 
       <div className="mb-4">
         <h2 className="text-lg font-semibold text-slate-900">{t("What Needs Attention")}</h2>
@@ -1061,23 +1016,24 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
 
         <div className="space-y-4">
           <KpiSection title={t("What should I do next?")} subtitle={t("A short operating queue based on the current dashboard signals.")}>
-            {!actionItems.length ? (
-              <SectionEmpty title={t("No urgent queue")} body={t("The highest-priority queues are clear. Review routes or restock priority when you want the next task.")} />
-            ) : (
-              <div className="space-y-3">
-                {actionItems.map((item) => (
-                  <div key={item.key} className="rounded-xl border border-slate-200 bg-white p-4">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-slate-900">{item.title}</div>
-                        <p className="mt-1 text-sm leading-6 text-slate-600">{item.detail}</p>
-                      </div>
-                      <Link href={item.href} className="btn-secondary shrink-0">{item.cta}</Link>
+            <div className="space-y-3">
+              <Suspense fallback={null}>
+                <DashboardRestockAction locale={locale} />
+              </Suspense>
+              {!actionItems.length ? (
+                <SectionEmpty title={t("No urgent core queue")} body={t("Core operating queues are clear. Restock priority loads independently above when needed.")} />
+              ) : actionItems.map((item) => (
+                <div key={item.key} className="rounded-xl border border-slate-200 bg-white p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-slate-900">{item.title}</div>
+                      <p className="mt-1 text-sm leading-6 text-slate-600">{item.detail}</p>
                     </div>
+                    <Link href={item.href} className="btn-secondary shrink-0">{item.cta}</Link>
                   </div>
-                ))}
-              </div>
-            )}
+                </div>
+              ))}
+            </div>
           </KpiSection>
 
           <KpiSection title={t("System health summary")} subtitle={t("Counts that usually send teams into repair mode.")}>
