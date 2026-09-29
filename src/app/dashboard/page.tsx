@@ -8,7 +8,6 @@ import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } fr
 import { isAdminRole, isOwnerAdminRole } from "@/lib/authz";
 import { isMissingRouteInventoryReviewSchema } from "@/lib/route-inventory-discrepancies";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
-import { loadFinanceHealthDiagnostics } from "@/lib/finance-health";
 import { lyd } from "@/lib/format";
 import {
   buildMachineRefillForecasts,
@@ -458,21 +457,16 @@ async function safeFinanceHealthForDashboard(
       };
     }
 
-    if (result.error) {
-      console.warn("[dashboard] finance_health_report unavailable; using detailed fallback", { error: result.error });
-    }
-
-    const diagnostics = await loadFinanceHealthDiagnostics(supabase);
-    if (diagnostics.errors.length) {
-      errors.financeHealth = diagnostics.errors.join(" | ");
-    }
+    const message = result.error ? errorMessage(result.error) : "Finance health summary returned no data.";
+    console.warn("[dashboard] finance_health_report unavailable", { error: result.error ?? null });
+    errors.financeHealth = message;
     return {
-      purchasesMissingFinance: diagnostics.purchasesMissingFinance.length,
-      cashCollectionsMissingFinance: diagnostics.cashCollectionsMissingFinance.length,
-      brokenLinks: diagnostics.brokenLinks.length,
-      balanceInconsistencies: diagnostics.balanceInconsistencies.length,
-      missingCategories: diagnostics.missingCategories.length,
-      ignoredSourceRows: diagnostics.ignoredSourceRows.length,
+      purchasesMissingFinance: 0,
+      cashCollectionsMissingFinance: 0,
+      brokenLinks: 0,
+      balanceInconsistencies: 0,
+      missingCategories: 0,
+      ignoredSourceRows: 0,
     };
   } catch (error) {
     const message = errorMessage(error);
