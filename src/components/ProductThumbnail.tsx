@@ -4,15 +4,37 @@ type ProductThumbnailProps = {
   size?: "sm" | "md";
 };
 
+function displayImageUrl(imageUrl?: string | null) {
+  const value = imageUrl?.trim();
+  if (!value) return null;
+
+  try {
+    const parsed = new URL(value);
+    if (
+      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      parsed.hostname === "wc.xyvend.cn" &&
+      parsed.port === "8086" &&
+      parsed.pathname.startsWith("/spImg/")
+    ) {
+      return `/api/product-image?url=${encodeURIComponent(value)}`;
+    }
+  } catch {
+    return null;
+  }
+
+  return value;
+}
+
 export function ProductThumbnail({ imageUrl, name, size = "sm" }: ProductThumbnailProps) {
   const dimensions = size === "md" ? "h-12 w-12" : "h-10 w-10";
   const pixelSize = size === "md" ? 48 : 40;
   const initials = String(name || "?").trim().slice(0, 2).toUpperCase() || "?";
+  const displayUrl = displayImageUrl(imageUrl);
 
-  if (imageUrl) {
+  if (displayUrl) {
     return (
       <img
-        src={imageUrl}
+        src={displayUrl}
         alt={name ? `${name} product image` : "Product image"}
         width={pixelSize}
         height={pixelSize}
