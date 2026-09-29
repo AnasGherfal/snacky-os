@@ -197,58 +197,17 @@ export default async function RouteDetailPage({ params, searchParams }: { params
 
   const routeRow: any = route;
   const canReviewRouteInventory = isAdminRole(profile);
-  const routeDiscrepancyResult = canReviewRouteInventory
-    ? await supabase
-        .from("route_inventory_discrepancies")
-        .select("id, route_id, route_stop_id, machine_id, operator_id, product_id, discrepancy_type, recorded_quantity, actual_quantity, difference_quantity, absolute_quantity, status, source_type, source_id, details, detected_at, resolution_type, resolution_notes, resolved_at, correcting_movement_id, updated_at, product:products(name, sku)", { count: "exact" })
-        .eq("route_id", id)
-        .in("status", [...ROUTE_INVENTORY_OPEN_STATUSES])
-        .order("detected_at", { ascending: false })
-        .limit(100)
-    : { data: [], error: null, count: 0 };
-  const routeDiscrepancySchemaMissing = Boolean(
-    routeDiscrepancyResult.error && isMissingRouteInventoryReviewSchema(routeDiscrepancyResult.error),
-  );
-  const routeDiscrepancyLoadError = routeDiscrepancyResult.error && !routeDiscrepancySchemaMissing
-    ? routeDiscrepancyResult.error
-    : null;
-  if (routeDiscrepancyLoadError) {
-    console.error("[routes:detail] Failed to load route inventory discrepancies", { id, error: routeDiscrepancyLoadError });
-  }
-  const routeDiscrepancies = (routeDiscrepancyResult.data ?? []) as Array<RouteInventoryDiscrepancyRow & { product?: { name?: string | null; sku?: string | null } | Array<{ name?: string | null; sku?: string | null }> | null }>;
-  const openRouteDiscrepancies = routeDiscrepancies;
-  const openRouteDiscrepancyCount = routeDiscrepancyResult.count ?? openRouteDiscrepancies.length;
-  let openRouteDiscrepancyUnits: number | null = canReviewRouteInventory && !routeDiscrepancyResult.error ? 0 : null;
-  if (openRouteDiscrepancyUnits !== null && openRouteDiscrepancyCount > 0) {
-    const pageSize = 1_000;
-    let offset = 0;
-    let totalUnits = 0;
-    while (true) {
-      const discrepancyUnitsPage = await supabase
-        .from("route_inventory_discrepancies")
-        .select("id, absolute_quantity")
-        .eq("route_id", id)
-        .in("status", [...ROUTE_INVENTORY_OPEN_STATUSES])
-        .order("id", { ascending: true })
-        .range(offset, offset + pageSize - 1);
-
-      if (discrepancyUnitsPage.error) {
-        console.error("[routes:detail] Failed to load complete route discrepancy unit total", { id, error: discrepancyUnitsPage.error });
-        openRouteDiscrepancyUnits = null;
-        break;
-      }
-
-      const rows = discrepancyUnitsPage.data ?? [];
-      totalUnits += rows.reduce((sum, row) => sum + Math.max(0, Number(row.absolute_quantity ?? 0)), 0);
-      if (rows.length < pageSize) {
-        openRouteDiscrepancyUnits = totalUnits;
-        break;
-      }
-      offset += pageSize;
-    }
-  }
   const supportClient = getSupabaseAdminClient() ?? supabase;
-  const [{ data: operator }, { data: performers }, { data: stops, error: stopsError }, { data: stopItems, error: stopItemsError }, { data: routeStock, error: routeStockError }, { data: fillLines, error: fillLinesError }, { data: pickListItems, error: pickListItemsError }] = await Promise.all([
+  const [routeDiscrepancyResult, { data: operator }, { data: performers }, { data: stops, error: stopsError }, { data: stopItems, error: stopItemsError }, { data: routeStock, error: routeStockError }, { data: fillLines, error: fillLinesError }, { data: pickListItems, error: pickListItemsError }] = await Promise.all([
+    canReviewRouteInventory
+      ? supabase
+          .from("route_inventory_discrepancies")
+          .select("id, route_id, route_stop_id, machine_id, operator_id, product_id, discrepancy_type, recorded_quantity, actual_quantity, difference_quantity, absolute_quantity, status, source_type, source_id, details, detected_at, resolution_type, resolution_notes, resolved_at, correcting_movement_id, updated_at, product:products(name, sku)", { count: "exact" })
+          .eq("route_id", id)
+          .in("status", [...ROUTE_INVENTORY_OPEN_STATUSES])
+          .order("detected_at", { ascending: false })
+          .limit(100)
+      : Promise.resolve({ data: [], error: null, count: 0 }),
     routeRow.operator_id
       ? supabase.from("team_members").select("id, full_name").eq("id", routeRow.operator_id).maybeSingle()
       : Promise.resolve({ data: null }),
@@ -279,6 +238,46 @@ export default async function RouteDetailPage({ params, searchParams }: { params
       .eq("route_id", id)
       .order("created_at", { ascending: true }),
   ]);
+
+  const routeDiscrepancySchemaMissing = Boolean(
+    routeDiscrepancyResult.error && isMissingRouteInventoryReviewSchema(routeDiscrepancyResult.error),
+  );
+  const routeDiscrepancyLoadError = routeDiscrepancyResult.error && !routeDiscrepancySchemaMissing
+    ? routeDiscrepancyResult.error
+    : null;
+  if (routeDiscrepancyLoadError) {
+    console.error("[routes:detail] Failed to load route inventory discrepancies", { id, error: routeDiscrepancyLoadError });
+  }
+  const routeDiscrepancies = (routeDiscrepancyResult.data ?? []) as Array<RouteInventoryDiscrepancyRow & { product?: { name?: string | null; sku?: string | null } | Array<{ name?: string | null; sku?: string | null }> | null }>;
+  const openRouteDiscrepancies = routeDiscrepancies;
+  const openRouteDiscrepancyCount = routeDiscrepancyResult.count ?? openRouteDiscrepancies.length;
+  let openRouteDiscrepancyUnits: number | null = canReviewRouteInventory && !routeDiscrepancyResult.error
+    ? routeDiscrepancies.reduce((sum, row) => sum + Math.max(0, Number(row.absolute_quantity ?? 0)), 0)
+    : null;
+  // The detail query already carries the first 100 discrepancy quantities.
+  // Only fetch extra pages for the exceptional route with more than 100 open rows.
+  if (openRouteDiscrepancyUnits !== null && openRouteDiscrepancyCount > routeDiscrepancies.length) {
+    const pageSize = 1_000;
+    let offset = routeDiscrepancies.length;
+    while (offset < openRouteDiscrepancyCount) {
+      const discrepancyUnitsPage = await supabase
+        .from("route_inventory_discrepancies")
+        .select("id, absolute_quantity")
+        .eq("route_id", id)
+        .in("status", [...ROUTE_INVENTORY_OPEN_STATUSES])
+        .order("detected_at", { ascending: false })
+        .range(offset, offset + pageSize - 1);
+      if (discrepancyUnitsPage.error) {
+        console.error("[routes:detail] Failed to load remaining route discrepancy unit total", { id, error: discrepancyUnitsPage.error });
+        openRouteDiscrepancyUnits = null;
+        break;
+      }
+      const rows = discrepancyUnitsPage.data ?? [];
+      openRouteDiscrepancyUnits += rows.reduce((sum, row) => sum + Math.max(0, Number(row.absolute_quantity ?? 0)), 0);
+      if (rows.length < pageSize) break;
+      offset += rows.length;
+    }
+  }
 
   if (stopsError) console.error("[routes:detail] Failed to load route stops", { id, error: stopsError });
   let routeStopItems = stopItems ?? [];
@@ -328,6 +327,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
 
   const routeStops = stops ?? [];
   routePickListItems = routePickListItems.filter((item: any) => item.is_active !== false);
+  const stopIds = routeStops.map((stop: any) => stop.id).filter(Boolean);
   const machineIds = Array.from(new Set([...routeStops.map((stop: any) => stop.machine_id), ...(stopItems ?? []).map((item: any) => item.machine_id)].filter(Boolean)));
   const productIds = Array.from(new Set([
     ...routeStopItems.map((line: any) => line.product_id),
@@ -345,6 +345,9 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     terminalReconciliationResult,
     canonicalRouteBagSnapshotResult,
     pendingStopInventoryCommitResult,
+    manualSalesResult,
+    adjustmentsResult,
+    initialCompletionProofResult,
   ] = await Promise.all([
     machineIds.length ? supabase.from("machines").select("id, name, machine_code, location:locations(id, name)").in("id", machineIds) : Promise.resolve({ data: [] }),
     productIds.length ? supabase.from("products").select("id, name").in("id", productIds) : Promise.resolve({ data: [] }),
@@ -379,6 +382,24 @@ export default async function RouteDetailPage({ params, searchParams }: { params
       .is("workflow_completed_at", null)
       .order("created_at", { ascending: true })
       .limit(20),
+    supportClient
+      .from("route_manual_sales")
+      .select("id, route_id, route_stop_id, machine_id, product_id, product_name, quantity, unit_sale_price_lyd, total_amount_lyd, payment_method, sale_time, status")
+      .eq("route_id", id)
+      .order("sale_time", { ascending: true }),
+    supportClient
+      .from("inventory_adjustments")
+      .select("id, route_id, route_stop_id, machine_id, adjustment_type, product_id, product_name, quantity, reason, notes, status, created_at")
+      .eq("route_id", id)
+      .neq("status", "cancelled")
+      .order("created_at", { ascending: true }),
+    stopIds.length
+      ? supabase
+          .from("machine_refill_history")
+          .select("id, legacy_refill_id, route_stop_id, refill_at, machine_id, machine_name, operator_email, machine_photo_url, machine_photo_path, raw_record, operator:team_members(full_name)")
+          .eq("route_id", id)
+          .order("refill_at", { ascending: false })
+      : Promise.resolve({ data: [], error: null }),
   ]);
   if (routePayError) console.error("[routes:detail] Failed to load route pay breakdown", { id, error: routePayError });
   if (terminalReconciliationResult.error && !isMissingRouteInventoryReviewSchema(terminalReconciliationResult.error)) {
@@ -391,47 +412,25 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     console.error("[routes:detail] Failed to check pending stop inventory commits", { id, error: pendingStopInventoryCommitResult.error });
   }
   const machineById = new Map((machines ?? []).map((machine: any) => [machine.id, machine]));
-  const [manualSalesResult, adjustmentsResult] = await Promise.all([
-    supportClient
-      .from("route_manual_sales")
-      .select("id, route_id, route_stop_id, machine_id, product_id, product_name, quantity, unit_sale_price_lyd, total_amount_lyd, payment_method, sale_time, status")
-      .eq("route_id", id)
-      .order("sale_time", { ascending: true }),
-    supportClient
-      .from("inventory_adjustments")
-      .select("id, route_id, route_stop_id, machine_id, adjustment_type, product_id, product_name, quantity, reason, notes, status, created_at")
-      .eq("route_id", id)
-      .neq("status", "cancelled")
-      .order("created_at", { ascending: true }),
-  ]);
   if (manualSalesResult.error && !isMissingTable(manualSalesResult.error, "route_manual_sales")) console.warn("[routes:detail] Manual sales unavailable", { id, error: manualSalesResult.error });
   if (adjustmentsResult.error && !isMissingTable(adjustmentsResult.error, "inventory_adjustments")) console.warn("[routes:detail] Inventory adjustments unavailable", { id, error: adjustmentsResult.error });
   const manualSales = manualSalesResult.error ? [] : (manualSalesResult.data ?? []);
   const routeAdjustments = adjustmentsResult.error ? [] : (adjustmentsResult.data ?? []);
-  const stopIds = routeStops.map((stop: any) => stop.id).filter(Boolean);
-  let completionProofRows: any[] = [];
-  if (stopIds.length) {
-    let completionProofResult: any = await supabase
+  let completionProofResult: any = initialCompletionProofResult;
+  if (completionProofResult.error && stopIds.length && isMissingColumn(completionProofResult.error, ["route_id", "route_stop_id"])) {
+    completionProofResult = await supabase
       .from("machine_refill_history")
-      .select("id, legacy_refill_id, route_stop_id, refill_at, machine_id, machine_name, operator_email, machine_photo_url, machine_photo_path, raw_record, operator:team_members(full_name)")
-      .eq("route_id", id)
+      .select("id, legacy_refill_id, refill_at, machine_id, machine_name, operator_email, machine_photo_url, machine_photo_path, raw_record, operator:team_members(full_name)")
+      .in("legacy_refill_id", stopIds.map((stopId: string) => `route_stop:${stopId}`))
       .order("refill_at", { ascending: false });
-
-    if (completionProofResult.error && isMissingColumn(completionProofResult.error, ["route_id", "route_stop_id"])) {
-      completionProofResult = await supabase
-        .from("machine_refill_history")
-        .select("id, legacy_refill_id, refill_at, machine_id, machine_name, operator_email, machine_photo_url, machine_photo_path, raw_record, operator:team_members(full_name)")
-        .in("legacy_refill_id", stopIds.map((stopId: string) => `route_stop:${stopId}`))
-        .order("refill_at", { ascending: false });
+  }
+  let completionProofRows: any[] = [];
+  if (completionProofResult.error) {
+    if (!isMissingTable(completionProofResult.error, "machine_refill_history")) {
+      console.error("[routes:detail] Failed to load route completion images", { id, error: completionProofResult.error });
     }
-
-    if (completionProofResult.error) {
-      if (!isMissingTable(completionProofResult.error, "machine_refill_history")) {
-        console.error("[routes:detail] Failed to load route completion images", { id, error: completionProofResult.error });
-      }
-    } else {
-      completionProofRows = completionProofResult.data ?? [];
-    }
+  } else {
+    completionProofRows = completionProofResult.data ?? [];
   }
   const completionProofsByStopId = new Map<string, RouteCompletionStop["images"]>();
   completionProofRows.forEach((row: any) => {
@@ -484,6 +483,48 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     ? []
     : (pendingStopInventoryCommitResult.data ?? []) as Array<{ id: string; route_stop_id: string }>;
   const firstPendingStopInventoryCommit = pendingStopInventoryCommits[0] ?? null;
+  const routeActivityQueries: PromiseLike<any>[] = [
+    supabase
+      .from("system_activity_logs")
+      .select("id, action, entity_type, entity_label, actor_name, actor_role, summary, created_at")
+      .eq("entity_type", "route")
+      .eq("entity_id", id)
+      .order("created_at", { ascending: false })
+      .limit(100),
+  ];
+  const cashIds = (cashCollections ?? []).map((cash: any) => cash.id).filter(Boolean);
+  if (stopIds.length) {
+    routeActivityQueries.push(
+      supabase
+        .from("system_activity_logs")
+        .select("id, action, entity_type, entity_label, actor_name, actor_role, summary, created_at")
+        .eq("entity_type", "route_stop")
+        .in("entity_id", stopIds)
+        .order("created_at", { ascending: false })
+        .limit(100),
+    );
+  }
+  if (cashIds.length) {
+    routeActivityQueries.push(
+      supabase
+        .from("system_activity_logs")
+        .select("id, action, entity_type, entity_label, actor_name, actor_role, summary, created_at")
+        .eq("entity_type", "cash_collection")
+        .in("entity_id", cashIds)
+        .order("created_at", { ascending: false })
+        .limit(100),
+    );
+  }
+  routeActivityQueries.push(
+    supabase
+      .from("system_activity_logs")
+      .select("id, action, entity_type, entity_label, actor_name, actor_role, summary, created_at")
+      .contains("metadata", { route_id: id })
+      .order("created_at", { ascending: false })
+      .limit(100),
+  );
+  const routeActivityPromise = Promise.all(routeActivityQueries);
+
   const canRecordMissedPickup = isOwnerAdminRole(profile)
     && Boolean(profile.team_member_id)
     && Boolean(routeRow.operator_id)
@@ -493,29 +534,29 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   let missedPickupProducts: MissedPickupProductOption[] = [];
   let missedPickupDataError = "";
   if (canRecordMissedPickup) {
-    const storageResult = await supabase
-      .from("storage_locations")
-      .select("id, name, location_type")
-      .eq("active", true)
-      .in("location_type", ["main_storage", "vehicle", "temporary", "other"])
-      .order("location_type")
-      .order("name");
+    const [storageResult, catalogResult] = await Promise.all([
+      supabase
+        .from("storage_locations")
+        .select("id, name, location_type")
+        .eq("active", true)
+        .in("location_type", ["main_storage", "vehicle", "temporary", "other"])
+        .order("location_type")
+        .order("name"),
+      supabase.from("products").select("id, name, sku, barcode, category, brand, image_url").eq("active", true).order("name"),
+    ]);
     if (storageResult.error) {
       console.error("[routes:detail] Failed to load storage locations for missed pickup recorder", { id, error: storageResult.error });
       missedPickupDataError = tr(locale, "Storage locations could not be loaded for this correction.", "تعذر تحميل مواقع التخزين لهذا التصحيح.");
     } else {
       missedPickupStorages = (storageResult.data ?? []).map((storage: { id: string; name: string | null }) => ({ id: String(storage.id), name: String(storage.name ?? tr(locale, "Storage", "المخزن")) }));
       const activeStorageIds = missedPickupStorages.map((storage) => storage.id);
-      const [catalogResult, inventoryResult] = await Promise.all([
-        supabase.from("products").select("id, name, sku, barcode, category, brand, image_url").eq("active", true).order("name"),
-        activeStorageIds.length
-          ? supabase
-              .from("current_inventory_by_location")
-              .select("product_id, location_id, quantity_on_hand")
-              .eq("location_type", "storage")
-              .in("location_id", activeStorageIds)
-          : Promise.resolve({ data: [], error: null }),
-      ]);
+      const inventoryResult = activeStorageIds.length
+        ? await supabase
+            .from("current_inventory_by_location")
+            .select("product_id, location_id, quantity_on_hand")
+            .eq("location_type", "storage")
+            .in("location_id", activeStorageIds)
+        : { data: [], error: null };
       if (catalogResult.error || inventoryResult.error) {
         console.error("[routes:detail] Failed to load products for missed pickup recorder", { id, catalogError: catalogResult.error, inventoryError: inventoryResult.error });
         missedPickupDataError = tr(locale, "The active product catalog or storage balance could not be loaded.", "تعذر تحميل المنتجات النشطة أو رصيد المخزون.");
@@ -603,47 +644,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
       salesTotal: sales.reduce((sum: number, sale: any) => sum + Number(sale.total_amount_lyd ?? 0), 0),
     };
   });
-  const routeActivityQueries: PromiseLike<any>[] = [
-    supabase
-      .from("system_activity_logs")
-      .select("id, action, entity_type, entity_label, actor_name, actor_role, summary, created_at")
-      .eq("entity_type", "route")
-      .eq("entity_id", id)
-      .order("created_at", { ascending: false })
-      .limit(100),
-  ];
-  const cashIds = (cashCollections ?? []).map((cash: any) => cash.id).filter(Boolean);
-  if (stopIds.length) {
-    routeActivityQueries.push(
-      supabase
-        .from("system_activity_logs")
-        .select("id, action, entity_type, entity_label, actor_name, actor_role, summary, created_at")
-        .eq("entity_type", "route_stop")
-        .in("entity_id", stopIds)
-        .order("created_at", { ascending: false })
-        .limit(100),
-    );
-  }
-  if (cashIds.length) {
-    routeActivityQueries.push(
-      supabase
-        .from("system_activity_logs")
-        .select("id, action, entity_type, entity_label, actor_name, actor_role, summary, created_at")
-        .eq("entity_type", "cash_collection")
-        .in("entity_id", cashIds)
-        .order("created_at", { ascending: false })
-        .limit(100),
-    );
-  }
-  routeActivityQueries.push(
-    supabase
-      .from("system_activity_logs")
-      .select("id, action, entity_type, entity_label, actor_name, actor_role, summary, created_at")
-      .contains("metadata", { route_id: id })
-      .order("created_at", { ascending: false })
-      .limit(100),
-  );
-  const activityResults = await Promise.all(routeActivityQueries);
+  const activityResults = await routeActivityPromise;
   activityResults.forEach((result: any) => {
     if (result.error) console.error("[routes:detail] Failed to load route activity", { id, error: result.error });
   });
