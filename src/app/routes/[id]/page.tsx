@@ -97,6 +97,17 @@ function routeReviewLabel(locale: "ar" | "en", status: string) {
   return value.replaceAll("_", " ");
 }
 
+function routeRoleLabel(locale: "ar" | "en", role: string | null | undefined) {
+  const value = String(role ?? "").toLowerCase();
+  if (value === "owner") return tr(locale, "Owner", "المالك");
+  if (value === "admin") return tr(locale, "Admin", "الإدارة");
+  if (value === "supervisor") return tr(locale, "Supervisor", "مشرف");
+  if (value === "operator") return tr(locale, "Operator", "مشغل");
+  if (value === "finance") return tr(locale, "Finance", "المالية");
+  if (value === "warehouse") return tr(locale, "Warehouse", "المخزن");
+  return value.replaceAll("_", " ");
+}
+
 function routeIssueTypeLabel(locale: "ar" | "en", issueType: string | null | undefined) {
   const value = String(issueType ?? "").toLowerCase();
   if (value === "critical") return tr(locale, "Critical", "حرج");
