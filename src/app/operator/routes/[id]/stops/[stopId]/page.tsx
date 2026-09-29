@@ -126,6 +126,8 @@ interface StopRefillItem {
   reason?: string | null;
   notes?: string | null;
   sourceLabel?: string | null;
+  vmsSalePriceLyd?: number | null;
+  vmsSlotPrices?: Array<{ slotCode: string; priceLyd: number }>;
 }
 
 interface ProductOption {
@@ -1175,6 +1177,11 @@ export default function MachineStopPage() {
             <div className="divide-y divide-slate-200">
               {stopData.refillItems.map((item) => {
                 const product = productById.get(item.productId);
+                const machineSalePrice = Number(item.vmsSalePriceLyd ?? 0) > 0 ? Number(item.vmsSalePriceLyd) : null;
+                const productLevelXyPrice = Number(product?.vmsSellingPriceLyd ?? 0) > 0 ? Number(product?.vmsSellingPriceLyd) : null;
+                const slotPrices = (item.vmsSlotPrices ?? []).filter((entry) => Number(entry.priceLyd) > 0);
+                const distinctSlotPrices = Array.from(new Set(slotPrices.map((entry) => Number(entry.priceLyd))));
+                const displayedSalePrice = machineSalePrice ?? (distinctSlotPrices.length === 0 ? productLevelXyPrice : null);
                 const assignedQty = Number(item.assignedQty ?? item.parQty ?? 0);
                 const actualQty = filledQtys[item.productId] ?? 0;
                 const difference = actualQty - assignedQty;
@@ -1188,6 +1195,29 @@ export default function MachineStopPage() {
                           <p className="text-xs text-slate-500">{tr("Product", "المنتج")}</p>
                           <p className="break-words font-semibold text-slate-900">{item.productName}</p>
                           <p className="text-sm text-slate-500">{tr("Slot", "الخانة")} {item.slotCode}</p>
+                          <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+                            <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
+                              {tr("XY sale price", "سعر البيع من XY")}
+                            </div>
+                            {distinctSlotPrices.length > 1 ? (
+                              <div className="mt-1 space-y-1">
+                                {slotPrices.map((entry) => (
+                                  <div key={`${entry.slotCode}-${entry.priceLyd}`} className="flex items-center justify-between gap-3 text-sm">
+                                    <span className="text-emerald-800">{tr("Slot", "الخانة")} {entry.slotCode}</span>
+                                    <strong className="text-base text-emerald-950">{Number(entry.priceLyd).toFixed(2)} {tr("LYD", "د.ل")}</strong>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : displayedSalePrice ? (
+                              <div className="mt-0.5 text-lg font-black text-emerald-950">
+                                {displayedSalePrice.toFixed(2)} {tr("LYD", "د.ل")}
+                              </div>
+                            ) : (
+                              <div className="mt-0.5 text-sm font-semibold text-amber-800">
+                                {tr("XY price unavailable", "سعر XY غير متوفر")}
+                              </div>
+                            )}
+                          </div>
                           {item.sourceLabel ? (
                             <span className="mt-1 inline-flex rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800">
                               {item.sourceLabel}

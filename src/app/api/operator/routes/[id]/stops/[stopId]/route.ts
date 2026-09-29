@@ -68,7 +68,8 @@ type FillLineRow = { product_id?: string | null; action_type?: string | null; ac
 type MovementRow = { product_id?: string | null; quantity?: unknown; related_route_stop_id?: string | null; reason?: string | null; from_entity_type?: string | null; to_entity_type?: string | null };
 type RouteBagBalanceRow = { product_id?: string | null; signed_quantity?: unknown };
 type ProductOptionRow = { id: string; sku?: string | null; barcode?: string | null; name: string; category?: string | null; brand?: string | null; image_url?: string | null; selling_price?: number | null; current_selling_price_lyd?: number | null; vms_selling_price_lyd?: number | null };
-type MachineProductSignalRow = { product_id?: string | null };
+type MachineProductSignalRow = { product_id?: string | null; import_batch_id?: string | null };
+type MachineVmsPriceRow = { product_id?: string | null; slot_code?: string | null; vms_selling_price_lyd?: number | string | null };
 type AdjustmentRow = {
   id: string;
   adjustment_type?: string | null;
@@ -121,6 +122,8 @@ type RefillLineItem = {
   sourceLabel?: string | null;
   createdAt?: string | null;
   availableQty?: number;
+  vmsSalePriceLyd?: number | null;
+  vmsSlotPrices?: Array<{ slotCode: string; priceLyd: number }>;
 };
 
 function firstRelation<T>(value: T | T[] | null | undefined): T | null {
@@ -657,7 +660,7 @@ export async function GET(
         .maybeSingle(),
       operationalReadClient
         .from("latest_vms_stock_by_slot")
-        .select("product_id")
+        .select("product_id, import_batch_id")
         .eq("machine_id", stop.machine_id)
         .not("product_id", "is", null)
         .limit(500),
@@ -757,8 +760,63 @@ export async function GET(
     });
 
     const activeLineItems = lineItems.filter((item) => item.assignedQty > 0);
+    const latestMachineStockRows = latestStockResult.error ? [] : (latestStockResult.data ?? []) as MachineProductSignalRow[];
+    const activeImportBatchId = latestMachineStockRows
+      .map((row) => String(row.import_batch_id ?? "").trim())
+      .find(Boolean) ?? "";
+    let latestMachinePriceRows: MachineVmsPriceRow[] = [];
+    if (activeImportBatchId) {
+      const { data: machinePriceRows, error: machinePriceError } = await operationalReadClient
+        .from("vms_stock_snapshots")
+        .select("product_id, slot_code, vms_selling_price_lyd")
+        .eq("import_batch_id", activeImportBatchId)
+        .eq("machine_id", stop.machine_id)
+        .eq("source_provider", "xy")
+        .not("product_id", "is", null)
+        .limit(500);
+      if (machinePriceError && !isMissingTable(machinePriceError, "vms_stock_snapshots")) {
+        console.warn("[operator:stop-data] Could not load machine-specific XY prices", { routeId, stopId, error: machinePriceError });
+      } else {
+        latestMachinePriceRows = (machinePriceRows ?? []) as MachineVmsPriceRow[];
+      }
+    }
+
+    const latestMachineRowsByProduct = new Map<string, MachineVmsPriceRow[]>();
+    latestMachinePriceRows.forEach((row) => {
+      const productId = String(row.product_id ?? "").trim();
+      if (!productId) return;
+      const current = latestMachineRowsByProduct.get(productId) ?? [];
+      current.push(row);
+      latestMachineRowsByProduct.set(productId, current);
+    });
+
     activeLineItems.forEach((item) => {
       item.availableQty = availableByProduct.get(String(item.productId)) ?? 0;
+
+      const machineRows = latestMachineRowsByProduct.get(String(item.productId)) ?? [];
+      const requestedSlotCodes = new Set(
+        [
+          ...item.slotAllocations.map((allocation) => String(allocation.slot_code ?? "").trim()),
+          ...String(item.slotCode ?? "").split(",").map((slotCode) => slotCode.trim()),
+        ].filter((slotCode) => slotCode && slotCode !== "VMS item"),
+      );
+      const exactRows = requestedSlotCodes.size
+        ? machineRows.filter((row) => requestedSlotCodes.has(String(row.slot_code ?? "").trim()))
+        : machineRows;
+      const priceRows = exactRows.length ? exactRows : machineRows;
+      const slotPrices = priceRows
+        .map((row) => ({
+          slotCode: String(row.slot_code ?? "").trim() || item.slotCode,
+          priceLyd: Number(row.vms_selling_price_lyd ?? 0),
+        }))
+        .filter((row) => Number.isFinite(row.priceLyd) && row.priceLyd > 0);
+      const uniqueSlotPrices = Array.from(
+        new Map(slotPrices.map((row) => [`${row.slotCode}:${row.priceLyd}`, row])).values(),
+      );
+      const distinctPrices = Array.from(new Set(uniqueSlotPrices.map((row) => row.priceLyd)));
+
+      item.vmsSlotPrices = uniqueSlotPrices;
+      item.vmsSalePriceLyd = distinctPrices.length === 1 ? distinctPrices[0] : null;
     });
 
     const manualMachineSaleRows = manualMachineSalesResult.error ? [] : (manualMachineSalesResult.data ?? []) as Array<{ product_id?: string | null; unit_sale_price_lyd?: number | string | null; sale_time?: string | null; status?: string | null }>;
@@ -780,7 +838,7 @@ export async function GET(
 
     slotRows.forEach((slot) => markProductPriority(slot.product_id, 1, "Machine products"));
     activeLineItems.forEach((item) => markProductPriority(item.productId, 2, "Route pickup list"));
-    ((latestStockResult.data ?? []) as MachineProductSignalRow[]).forEach((row) => markProductPriority(row.product_id, 3, "Latest VMS stock"));
+    latestMachineStockRows.forEach((row) => markProductPriority(row.product_id, 3, "Latest VMS stock"));
     ((recentSalesResult.data ?? []) as MachineProductSignalRow[]).forEach((row) => markProductPriority(row.product_id, 4, "Known machine product"));
 
     const manualSaleProductPriority = new Map<string, { rank: number; label: string }>();
@@ -796,7 +854,7 @@ export async function GET(
     });
     activeLineItems.forEach((item) => markManualSalePriority(item.productId, 2, "Assigned to this machine"));
     slotRows.forEach((slot) => markManualSalePriority(slot.product_id, 2, "Assigned to this machine"));
-    ((latestStockResult.data ?? []) as MachineProductSignalRow[]).forEach((row) => markManualSalePriority(row.product_id, 3, "Latest VMS stock"));
+    latestMachineStockRows.forEach((row) => markManualSalePriority(row.product_id, 3, "Latest VMS stock"));
     ((recentSalesResult.data ?? []) as MachineProductSignalRow[]).forEach((row) => markManualSalePriority(row.product_id, 4, "Known machine product"));
 
     const refillItems = activeLineItems;
