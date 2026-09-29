@@ -44,6 +44,7 @@ type MonthlyRevenueSummaryRow = {
 };
 
 type RefillRow = {
+  product_id: string | null;
   machine_id: string | null;
   machine_name: string | null;
   import_batch_id?: string | null;
@@ -425,9 +426,14 @@ async function safeRouteInventoryReviewCount({
 async function safeRestockPriorityForDashboard(
   supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>,
   errors: DashboardErrors,
+  recommendationsPromise: PromiseLike<RefillRow[]>,
 ): Promise<RestockPriorityLoadResult> {
   try {
-    return await loadRestockPriorityData(supabase, { salesQueryTimeoutMs: 1000, repairMissingRouteStockLines: false });
+    return await loadRestockPriorityData(supabase, {
+      salesQueryTimeoutMs: 1000,
+      repairMissingRouteStockLines: false,
+      recommendationsPromise,
+    });
   } catch (error) {
     const message = errorMessage(error);
     console.error("[dashboard] Restock priority failed", { section: "restockPriority", error });
@@ -568,6 +574,16 @@ async function getDashboardData() {
   const monthStart = monthStartUtc(today);
   const forecastClock = refillForecastClock();
   const errors: DashboardErrors = {};
+  const refillRowsPromise = safeDashboardQuery<RefillRow[]>({
+    key: "refill",
+    label: "refill_recommendations current",
+    promise: supabase
+      .from("refill_recommendations")
+      .select("product_id, machine_id, machine_name, import_batch_id, product_name, current_qty, capacity, available_storage_qty, suggested_qty, final_qty_to_take, priority")
+      .limit(4000),
+    fallback: [],
+    errors,
+  });
 
   const [
     monthlyRevenueSummary,
@@ -663,16 +679,7 @@ async function getDashboardData() {
         .neq("status", "closed"),
       errors,
     }),
-    safeDashboardQuery<RefillRow[]>({
-      key: "refill",
-      label: "refill_recommendations current",
-      promise: supabase
-        .from("refill_recommendations")
-        .select("machine_id, machine_name, import_batch_id, product_name, current_qty, capacity, available_storage_qty, suggested_qty, final_qty_to_take, priority")
-        .limit(4000),
-      fallback: [],
-      errors,
-    }),
+    refillRowsPromise,
     safeDashboardQuery<RefillMachine[]>({
       key: "refillForecast",
       label: "machines refill forecast policies",
@@ -739,7 +746,7 @@ async function getDashboardData() {
       fallback: [],
       errors,
     }),
-    safeRestockPriorityForDashboard(supabase, errors),
+    safeRestockPriorityForDashboard(supabase, errors, refillRowsPromise.then((result) => result.data)),
     safeFinanceHealthForDashboard(supabase, errors),
     canReviewRouteInventory
       ? safeRouteInventoryReviewCount({
