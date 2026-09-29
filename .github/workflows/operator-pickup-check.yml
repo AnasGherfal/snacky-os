@@ -4,9 +4,15 @@ on:
   pull_request:
     paths:
       - 'src/app/operator/routes/[id]/pick-list/page.tsx'
+      - 'src/app/api/operator/routes/[id]/pick-list/route.ts'
       - 'src/app/operator/routes/[id]/page.tsx'
+      - 'src/app/routes/[id]/edit/page.tsx'
+      - 'src/app/routes/[id]/edit/RouteItemEditor.tsx'
       - 'src/lib/direct-pickup-actions.ts'
+      - 'src/lib/supplemental-route-pickup-actions.ts'
+      - 'supabase/migrations/20260929190000_supplemental_route_pickup.sql'
       - 'scripts/test-operator-pickup-checklist.mjs'
+      - 'scripts/test-supplemental-route-pickup.mjs'
       - '.github/workflows/operator-pickup-check.yml'
 
 permissions:
@@ -24,7 +30,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Pickup checklist regression
-        run: node --experimental-strip-types --test scripts/test-operator-pickup-checklist.mjs
+        run: node --experimental-strip-types --test scripts/test-operator-pickup-checklist.mjs scripts/test-supplemental-route-pickup.mjs
       - name: Typecheck
         run: npm run typecheck
       - name: Production build
