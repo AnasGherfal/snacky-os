@@ -1,7 +1,7 @@
 import { ErrorState, FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
-import { ROUTE_RESERVATION_STATUSES, isRouteReservationStatus } from "@/lib/route-workflow";
+import { ROUTE_RESERVATION_STATUSES } from "@/lib/route-workflow";
 import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
 import { activeStockBatches, queryVmsDashboardBatches, sourceFileName, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
 import { RouteCreateForm } from "@/app/routes/new/RouteCreateForm";
@@ -31,7 +31,7 @@ function unitQuantity(value: unknown) {
 }
 
 const ROUTE_RECOMMENDATION_BASE_SELECT = "recommendation_key, machine_slot_id, machine_id, machine_name, machine_code, slot_code, product_id, product_name, current_qty, capacity, par_qty, suggested_qty, available_storage_qty, final_qty_to_take, priority";
-const ROUTE_RECOMMENDATION_SELECT = `${ROUTE_RECOMMENDATION_BASE_SELECT}, import_batch_id`;
+const ROUTE_RECOMMENDATION_SELECT = `${ROUTE_RECOMMENDATION_BASE_SELECT}, import_batch_id, source_file_name, source_uploaded_at`;
 
 type ProductRow = {
   id: string;
@@ -149,53 +149,26 @@ function isStaleStockSnapshot(value: string | null | undefined, now = Date.now()
   return Number.isFinite(timestamp) && now - timestamp > STOCK_SNAPSHOT_MAX_AGE_MS;
 }
 
-type VmsImportBatchSourceRow = {
-  id: string;
-  file_name: string | null;
-  original_file_name: string | null;
-  uploaded_at: string | null;
-};
-
 async function loadRouteRecommendations(supabase: Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>) {
   if (!supabase) return { data: [], error: null };
 
-  const enrichedRecommendationResult = await supabase
+  const enriched = await supabase
     .from("refill_recommendations")
     .select(ROUTE_RECOMMENDATION_SELECT)
     .order("machine_name");
-  const recommendationResult = enrichedRecommendationResult.error && isMissingRecommendationMetadataError(enrichedRecommendationResult.error)
-    ? await supabase
-        .from("refill_recommendations")
-        .select(ROUTE_RECOMMENDATION_BASE_SELECT)
-        .order("machine_name")
-    : enrichedRecommendationResult;
-  if (recommendationResult.error || !recommendationResult.data?.length) return recommendationResult;
+  if (!enriched.error) return enriched;
+  if (!isMissingRecommendationMetadataError(enriched.error)) return enriched;
 
-  const recommendationRows = recommendationResult.data as RecommendationRow[];
-  const batchIds = Array.from(new Set(recommendationRows.map((row) => row.import_batch_id).filter((id): id is string => Boolean(id))));
-  if (!batchIds.length) return recommendationResult;
+  const withBatch = await supabase
+    .from("refill_recommendations")
+    .select(`${ROUTE_RECOMMENDATION_BASE_SELECT}, import_batch_id`)
+    .order("machine_name");
+  if (!withBatch.error || !isMissingRecommendationMetadataError(withBatch.error)) return withBatch;
 
-  const { data: batches, error: batchError } = await supabase
-    .from("vms_import_batches")
-    .select("id, file_name, original_file_name, uploaded_at")
-    .in("id", batchIds);
-  if (batchError) {
-    console.warn("[routes:new] Could not load VMS import source metadata; route recommendations will use Unknown source fallback.", batchError);
-    return recommendationResult;
-  }
-
-  const batchById = new Map(((batches ?? []) as VmsImportBatchSourceRow[]).map((batch) => [batch.id, batch]));
-  return {
-    ...recommendationResult,
-    data: recommendationRows.map((row) => {
-      const batch = row.import_batch_id ? batchById.get(row.import_batch_id) : null;
-      return {
-        ...row,
-        source_file_name: batch?.original_file_name ?? batch?.file_name ?? null,
-        source_uploaded_at: batch?.uploaded_at ?? null,
-      };
-    }),
-  };
+  return supabase
+    .from("refill_recommendations")
+    .select(ROUTE_RECOMMENDATION_BASE_SELECT)
+    .order("machine_name");
 }
 
 type StorageInventoryRow = {
@@ -303,7 +276,8 @@ export default async function NewRoutePage() {
       .select("product_id, quantity_on_hand"),
     planningReadClient
       .from("route_stock_lines")
-      .select("route_id, product_id, planned_qty, picked_qty"),
+      .select("route_id, product_id, planned_qty, picked_qty, route:routes!inner(status)")
+      .in("route.status", [...ROUTE_RESERVATION_STATUSES]),
     supabase.from("products").select("id, sku, barcode, name, category, brand, image_url, active").eq("active", true).order("name"),
     supabase.from("inventory_movements").select("product_id, created_at").order("created_at", { ascending: false }).limit(80),
     safeSupabaseQuery<VmsDashboardBatch>({
@@ -438,15 +412,6 @@ export default async function NewRoutePage() {
   const machineSlotRows = (machineSlotsResult.data ?? []) as MachineSlotRow[];
   const latestActiveStockBatch = activeStockBatches(stockBatches)[0] ?? null;
   const diagnosticBatch = latestActiveStockBatch ?? stockBatches[0] ?? null;
-  const batchStockRowsResult = diagnosticBatch?.id
-    ? await safeSupabaseQuery<{ id: string }>({
-        label: "routes.new.vms_stock_snapshots",
-        promise: supabase
-          .from("vms_stock_snapshots")
-          .select("id", { count: "exact", head: true })
-          .eq("import_batch_id", diagnosticBatch.id),
-      })
-    : { data: [] as { id: string }[], count: 0, error: null as string | null };
   const batchAuditResult = diagnosticBatch?.id
     ? await safeSupabaseQuery<MachineStockAuditRow>({
         label: "routes.new.vms_machine_stock_snapshots",
@@ -474,29 +439,8 @@ export default async function NewRoutePage() {
     });
   });
   const reservedRows = reservedError ? [] : (reservedStock ?? []) as ReservedStockRow[];
-  const reservedRouteIds = Array.from(new Set(reservedRows.map((row) => String(row.route_id ?? "")).filter(Boolean)));
-  const routeStatusById = new Map<string, string | null>();
-  if (reservedRouteIds.length) {
-    const { data: reservationRoutes, error: reservationRoutesError } = await supabase
-      .from("routes")
-      .select("id, status")
-      .in("id", reservedRouteIds);
-    if (reservationRoutesError) {
-      console.warn("[routes:new] Could not load route statuses for reservation filtering; treating route stock rows as reserved.", {
-        route_ids: reservedRouteIds,
-        supabase_error: supabaseErrorPayload(reservationRoutesError),
-      });
-    } else {
-      (reservationRoutes ?? []).forEach((route: { id?: unknown; status?: unknown }) => routeStatusById.set(String(route.id), String(route.status ?? "")));
-    }
-  }
   const reservedByProduct = new Map<string, number>();
-  reservedRows.filter((row) => {
-    const routeId = String(row.route_id ?? "");
-    if (!routeId) return true;
-    if (!routeStatusById.size) return true;
-    return isRouteReservationStatus(routeStatusById.get(routeId));
-  }).forEach((row) => {
+  reservedRows.forEach((row) => {
     const reserved = Math.max(0, unitQuantity(row.planned_qty) - unitQuantity(row.picked_qty));
     reservedByProduct.set(row.product_id, (reservedByProduct.get(row.product_id) ?? 0) + reserved);
   });
@@ -626,9 +570,9 @@ export default async function NewRoutePage() {
       reasonMessage: reasonMessageByCode[reasonCode],
     };
   });
-  const diagnosticBatchStockRows = Number(batchStockRowsResult.count ?? 0);
+  const diagnosticBatchStockRows = Math.max(0, Number(diagnosticBatch?.rows_imported ?? diagnosticBatch?.rows_found ?? diagnosticBatch?.row_count ?? 0));
   const diagnosticBatchAuditRows = batchAuditRows.length;
-  const diagnosticsWarnings = [latestStockResult.error, machineSlotsResult.error, batchStockRowsResult.error, batchAuditResult.error].filter(Boolean);
+  const diagnosticsWarnings = [latestStockResult.error, machineSlotsResult.error, batchAuditResult.error].filter(Boolean);
   const machineDiagnosticsWithIssues = machineDiagnostics.filter((machine) => machine.reasonCode !== "healthy");
   const summaryReasonCode: RouteRecommendationDiagnosticReasonCode =
     diagnosticsWarnings.length
