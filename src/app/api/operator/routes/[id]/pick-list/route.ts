@@ -343,7 +343,7 @@ export async function GET(
     failingResource = "route_stop_items";
     const stopItemsResponse = await readClient
       .from("route_stop_items")
-      .select("id, route_stop_id, machine_id, product_id, planned_quantity, is_checked, checked_at, checked_by, source")
+      .select("id, route_stop_id, machine_id, product_id, planned_quantity, picked_quantity, is_checked, checked_at, checked_by, source")
       .eq("route_id", routeId);
     stopItems = stopItemsResponse.data ?? [];
     stopItemsError = stopItemsResponse.error;
@@ -351,7 +351,7 @@ export async function GET(
     if (stopItemsError && isMissingColumn(stopItemsError, ["is_checked", "checked_at", "checked_by"])) {
       const fallback = await readClient
         .from("route_stop_items")
-        .select("id, route_stop_id, machine_id, product_id, planned_quantity, source")
+        .select("id, route_stop_id, machine_id, product_id, planned_quantity, picked_quantity, source")
         .eq("route_id", routeId);
       stopItems = (fallback.data ?? []).map((item: any) => ({
         ...item,
@@ -769,6 +769,8 @@ export async function GET(
       if (storageAvailabilityLoaded) return (storageByProduct.get(productId) ?? 0) + alreadyPicked;
       return Math.max(fallbackQty, alreadyPicked);
     };
+    const physicalStorageQtyForProduct = (productId: string) =>
+      storageAvailabilityLoaded ? (storageByProduct.get(productId) ?? 0) : 0;
 
     const stopGroupsById = new Map<string, any>();
     stops.forEach((stop: any) => {
@@ -804,6 +806,15 @@ export async function GET(
         pickedByStopProduct.get(routeStopProductKey(routeStopId, productId)) ??
         (routeStopItemId ? legacyAllocationByStopItem.get(routeStopItemId) : undefined) ??
         null;
+      const alreadyPickedQty = Math.max(unitQuantity(line.picked_quantity), savedPick?.quantity ?? 0);
+      const stopStatus = String(stop?.status ?? "");
+      const additionalPickupQty = Math.max(plannedQty - alreadyPickedQty, 0);
+      const isSupplementalPending = Boolean(
+        stop &&
+        stopStatus !== ROUTE_STOP_PENDING_STATUS &&
+        !isRouteStopDoneStatus(stopStatus) &&
+        additionalPickupQty > 0
+      );
 
       const groupId = routeStopId ?? `machine:${machineId}`;
       const group = stopGroupsById.get(groupId) ?? {
@@ -826,7 +837,11 @@ export async function GET(
         category: product?.category ?? "Other",
         case_quantity: Math.max(1, unitQuantity(product?.case_quantity ?? 1)),
         planned_qty: plannedQty,
-        picked_qty: savedPick ? savedPick.quantity : null,
+        picked_qty: savedPick ? savedPick.quantity : (alreadyPickedQty > 0 ? alreadyPickedQty : null),
+        already_picked_qty: alreadyPickedQty,
+        additional_pickup_qty: additionalPickupQty,
+        is_supplemental_pending: isSupplementalPending,
+        physical_storage_available_qty: physicalStorageQtyForProduct(productId),
         is_checked: Boolean(line.is_checked ?? savedPick?.isChecked ?? false),
         checked_at: line.checked_at ?? null,
         checked_by: line.checked_by ?? null,
@@ -860,7 +875,11 @@ export async function GET(
         machine_code: presentation.machineCode,
         location_name: presentation.locationName,
         planned_qty: plannedQty,
-        picked_qty: savedPick ? savedPick.quantity : null,
+        picked_qty: savedPick ? savedPick.quantity : (alreadyPickedQty > 0 ? alreadyPickedQty : null),
+        already_picked_qty: alreadyPickedQty,
+        additional_pickup_qty: additionalPickupQty,
+        is_supplemental_pending: isSupplementalPending,
+        physical_storage_available_qty: physicalStorageQtyForProduct(productId),
         is_checked: Boolean(line.is_checked ?? savedPick?.isChecked ?? false),
         checked_at: line.checked_at ?? null,
         checked_by: line.checked_by ?? null,
@@ -880,6 +899,14 @@ export async function GET(
       .filter((group: any) => group.items.length > 0)
       .sort((a: any, b: any) => Number(a.stop_order ?? 0) - Number(b.stop_order ?? 0));
 
+    const supplementalPendingItems = stopGroups
+      .flatMap((group: any) => group.items ?? [])
+      .filter((item: any) => Boolean(item.is_supplemental_pending));
+    const supplementalPendingUnitCount = supplementalPendingItems.reduce(
+      (sum: number, item: any) => sum + unitQuantity(item.additional_pickup_qty),
+      0,
+    );
+
     // Pickup confirmation is route-wide only after every stop has left Pending.
     // A previous stop may already have moved stock into the operator bag while
     // later stops are still waiting to be picked. Treating any prior movement as
@@ -898,7 +925,7 @@ export async function GET(
     } else {
       hasAnyConfirmedPickup = Boolean(pickMovementsResult.data?.length);
     }
-    const confirmed = pendingStopCount === 0 && hasAnyConfirmedPickup;
+    const confirmed = pendingStopCount === 0 && hasAnyConfirmedPickup && supplementalPendingUnitCount === 0;
     const isPrepared = Boolean(preparedBatch && !preparedBatch.confirmedAt && !preparedBatch.returnedToAssignedAt);
 
     const items = Array.from(plannedByProduct.values()).map((line: any) => ({
@@ -933,6 +960,9 @@ export async function GET(
       confirmed,
       prepared: isPrepared,
       preparedBatch,
+      supplementalMode: supplementalPendingItems.length > 0,
+      supplementalPendingItemCount: supplementalPendingItems.length,
+      supplementalPendingUnitCount,
       locked: isTerminalRouteStatus(route.status),
       routeStatus: route.status,
       pendingStopCount,
