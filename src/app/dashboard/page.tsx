@@ -148,7 +148,6 @@ const dashboardSectionLabels: Record<DashboardSection, { en: string; ar: string 
   refillForecast: { en: "Machine refill forecast", ar: "توقعات تعبئة الأجهزة" },
   missingCost: { en: "Missing product cost", ar: "تكلفة المنتج المفقودة" },
   vmsBatches: { en: "VMS imports", ar: "استيرادات VMS" },
-  restockPriority: { en: "Restock priority", ar: "أولوية إعادة التخزين" },
   financeHealth: { en: "Finance health", ar: "صحة المالية" },
   routeInventoryReview: { en: "Route inventory review", ar: "مراجعة مخزون الجولات" },
   machineQuantityUpdates: { en: "Machine quantity updates", ar: "تحديثات كميات الأجهزة" },
