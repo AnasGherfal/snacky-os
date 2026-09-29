@@ -1,7 +1,7 @@
 import { ErrorState, FormPageLayout, PageHeader, SecondaryButton } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canAccessPath, isOwnerAdminRole } from "@/lib/authz";
-import { ROUTE_RESERVATION_STATUSES, isRouteReservationStatus } from "@/lib/route-workflow";
+import { ROUTE_RESERVATION_STATUSES } from "@/lib/route-workflow";
 import { safeSupabaseQuery } from "@/lib/safe-supabase-query";
 import { activeStockBatches, queryVmsDashboardBatches, sourceFileName, type VmsDashboardBatch } from "@/lib/vms-dashboard-source";
 import { RouteCreateForm } from "@/app/routes/new/RouteCreateForm";
