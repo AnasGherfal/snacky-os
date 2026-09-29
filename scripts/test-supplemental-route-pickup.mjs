@@ -13,8 +13,12 @@ function compact(value) {
   return value.replace(/\s+/g, " ").trim();
 }
 
+function sqlCode(value) {
+  return compact(value.replace(/--.*$/gm, ""));
+}
+
 test("supplemental pickup is append-only and does not roll route workflow state backward", () => {
-  const source = compact(migration);
+  const source = sqlCode(migration);
   assert.match(source, /create or replace function public\.snacky_confirm_supplemental_route_pickup_v1/i);
   assert.match(source, /insert into public\.route_pickup_batches/i);
   assert.match(source, /insert into public\.route_pick_list_items/i);
