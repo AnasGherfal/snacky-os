@@ -1,7 +1,7 @@
 type ProductThumbnailProps = {
   imageUrl?: string | null;
   name?: string | null;
-  size?: "sm" | "md";
+  size?: "sm" | "md" | "lg";
 };
 
 function displayImageUrl(imageUrl?: string | null) {
@@ -26,8 +26,8 @@ function displayImageUrl(imageUrl?: string | null) {
 }
 
 export function ProductThumbnail({ imageUrl, name, size = "sm" }: ProductThumbnailProps) {
-  const dimensions = size === "md" ? "h-12 w-12" : "h-10 w-10";
-  const pixelSize = size === "md" ? 48 : 40;
+  const dimensions = size === "lg" ? "h-24 w-24" : size === "md" ? "h-12 w-12" : "h-10 w-10";
+  const pixelSize = size === "lg" ? 96 : size === "md" ? 48 : 40;
   const initials = String(name || "?").trim().slice(0, 2).toUpperCase() || "?";
   const displayUrl = displayImageUrl(imageUrl);
 
