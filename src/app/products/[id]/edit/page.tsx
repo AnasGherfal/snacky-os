@@ -25,8 +25,26 @@ async function updateProduct(fd: FormData) {
   if (!s) return;
 
   const { data: beforeProduct } = await s.from("products").select("*").eq("id", id).maybeSingle();
+  const { data: xyImageMapping } = await s
+    .from("vms_product_mappings")
+    .select("vms_product_id, vms_product_name, vms_image_url, last_seen_at")
+    .eq("product_id", id)
+    .eq("match_status", "confirmed")
+    .not("vms_image_url", "is", null)
+    .order("last_seen_at", { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle();
+  const xyImageUrl = String(xyImageMapping?.vms_image_url ?? "").trim();
   const currentImageUrl = String(fd.get("current_image_url") || "").trim();
-  const { imageUrl, uploadUnavailable, uploadError } = await resolveProductImageUrl(s, fd);
+  let imageUrl: string | null = null;
+  let uploadUnavailable = false;
+  let uploadError: string | null = null;
+  if (!xyImageUrl) {
+    const resolved = await resolveProductImageUrl(s, fd);
+    imageUrl = resolved.imageUrl;
+    uploadUnavailable = resolved.uploadUnavailable;
+    uploadError = resolved.uploadError;
+  }
   const nextName = String(fd.get("name") || "").trim();
   const nextCost = Number(fd.get("current_cost_price_lyd") || 0);
   const nextSelling = Number(fd.get("current_selling_price_lyd") || 0);
@@ -42,7 +60,7 @@ async function updateProduct(fd: FormData) {
     brand: String(fd.get("brand") || "") || null,
     supplier_id: String(fd.get("supplier_id") || "") || null,
     case_quantity: Math.max(1, Math.floor(Number(fd.get("case_quantity") || 1) || 1)),
-    image_url: (imageUrl ?? currentImageUrl) || null,
+    image_url: xyImageUrl || (imageUrl ?? currentImageUrl) || null,
     active: String(fd.get("active") || String(beforeProduct?.active ?? true)) === "true",
   };
   if (costChanged) {
@@ -90,7 +108,7 @@ export default async function EditProductPage({ params, searchParams }: { params
   const s = await getAuthenticatedSupabaseServerClient();
   if (!s) notFound();
 
-  const [{ data: product }, { data: suppliers }, { data: inventory }, { data: movements }, { data: purchaseLines }, { data: sales }] = await Promise.all([
+  const [{ data: product }, { data: suppliers }, { data: inventory }, { data: movements }, { data: purchaseLines }, { data: sales }, { data: xyImageMapping }] = await Promise.all([
     s.from("products").select("*, last_supplier:suppliers!products_last_supplier_id_fkey(name)").eq("id", id).single(),
     s.from("suppliers").select("id,name").order("name"),
     s.from("current_inventory_by_location").select("location_type, location_name, quantity_on_hand").eq("product_id", id).order("location_type"),
@@ -113,8 +131,19 @@ export default async function EditProductPage({ params, searchParams }: { params
       .eq("import_row_status", "imported")
       .order("period_end", { ascending: false })
       .limit(100),
+    s
+      .from("vms_product_mappings")
+      .select("vms_product_id, vms_product_name, vms_image_url, last_seen_at")
+      .eq("product_id", id)
+      .eq("match_status", "confirmed")
+      .not("vms_image_url", "is", null)
+      .order("last_seen_at", { ascending: false, nullsFirst: false })
+      .limit(1)
+      .maybeSingle(),
   ]);
   if (!product) notFound();
+  const xyImageUrl = String(xyImageMapping?.vms_image_url ?? "").trim();
+  const displayedImageUrl = xyImageUrl || product.image_url || null;
   const inventoryRows = (inventory ?? []) as any[];
   const quantityFor = (type: string) => inventoryRows.filter((row) => row.location_type === type).reduce((sum, row) => sum + Number(row.quantity_on_hand ?? 0), 0);
 
@@ -122,6 +151,17 @@ export default async function EditProductPage({ params, searchParams }: { params
     <>
       <div className="space-y-6">
         <PageHeader title={product.name} subtitle="Product profile, pricing, inventory, movement history, sales, and purchases." action={<SecondaryButton href={`/products/${id}/history`}>Movement History</SecondaryButton>} />
+        <section className="surface-card flex flex-col gap-4 sm:flex-row sm:items-center">
+          <ProductThumbnail imageUrl={displayedImageUrl} name={product.name} size="lg" />
+          <div className="min-w-0">
+            <div className="text-lg font-semibold text-slate-900">{product.name}</div>
+            <div className="mt-1 text-sm text-slate-600">
+              {xyImageUrl
+                ? `Image synced from XY product ${xyImageMapping?.vms_product_id ?? ""}${xyImageMapping?.vms_product_name ? ` · ${xyImageMapping.vms_product_name}` : ""}`
+                : "No XY image is available for this product. Snacky fallback image can be used."}
+            </div>
+          </div>
+        </section>
         {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{error}</div> : null}
 
         <nav className="flex flex-wrap gap-2">
@@ -172,7 +212,7 @@ export default async function EditProductPage({ params, searchParams }: { params
         <FormPageLayout>
         <LocalDraftForm action={updateProduct} formType="product" draftKeyParts={[id]} className="space-y-5">
           <input type="hidden" name="id" value={id} />
-          <input type="hidden" name="current_image_url" value={product.image_url || ""} />
+          <input type="hidden" name="current_image_url" value={displayedImageUrl || ""} />
           <FormSection title="Product details">
             <div className="grid gap-4 md:grid-cols-2">
               <FormField label="SKU" required hint="SKU is the internal/VMS product code used for matching and reports. Owner/admin can override it when needed."><input required name="sku" defaultValue={product.sku} className="field-input" /></FormField>
@@ -197,18 +237,33 @@ export default async function EditProductPage({ params, searchParams }: { params
           </FormSection>
 
           <FormSection title="Product image">
-            <div className="grid gap-4 md:grid-cols-[auto_1fr_1fr]">
-              <div>
-                <span className="mb-1 block text-sm font-medium text-slate-800">Current</span>
-                <ProductThumbnail imageUrl={product.image_url} name={product.name} size="md" />
+            {xyImageUrl ? (
+              <div className="flex flex-col gap-4 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 sm:flex-row sm:items-center">
+                <ProductThumbnail imageUrl={xyImageUrl} name={product.name} size="lg" />
+                <div>
+                  <div className="font-semibold text-slate-900">Managed by XY</div>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Snacky OS uses the same image as XY for this confirmed product mapping. The image refreshes from XY sync and cannot be manually replaced here.
+                  </p>
+                  <p className="mt-2 text-xs text-slate-500">
+                    XY {xyImageMapping?.vms_product_id ?? "-"} · {xyImageMapping?.vms_product_name ?? product.name}
+                  </p>
+                </div>
               </div>
-              <FormField label="Upload replacement" hint="Stored in product-images when Supabase Storage is configured. PNG, JPG, and WEBP are supported. Maximum 5MB.">
-                <input name="image_file" type="file" accept="image/png,image/jpeg,image/webp" className="field-input" />
-              </FormField>
-              <FormField label="Image URL fallback" hint="Optional public URL if you do not upload a file.">
-                <input name="image_url" type="url" defaultValue={product.image_url || ""} placeholder="https://example.com/product.jpg" className="field-input" />
-              </FormField>
-            </div>
+            ) : (
+              <div className="grid gap-4 md:grid-cols-[auto_1fr_1fr]">
+                <div>
+                  <span className="mb-1 block text-sm font-medium text-slate-800">Current fallback</span>
+                  <ProductThumbnail imageUrl={product.image_url} name={product.name} size="md" />
+                </div>
+                <FormField label="Upload fallback" hint="Used only when XY has no product image. PNG, JPG, and WEBP are supported. Maximum 5MB.">
+                  <input name="image_file" type="file" accept="image/png,image/jpeg,image/webp" className="field-input" />
+                </FormField>
+                <FormField label="Fallback image URL" hint="Optional public URL used only when this product has no XY image.">
+                  <input name="image_url" type="url" defaultValue={product.image_url || ""} placeholder="https://example.com/product.jpg" className="field-input" />
+                </FormField>
+              </div>
+            )}
           </FormSection>
 
           <div className="flex gap-3"><PrimaryButton>Save changes</PrimaryButton><SecondaryButton href="/products">Cancel</SecondaryButton></div>
