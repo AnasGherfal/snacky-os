@@ -173,8 +173,7 @@ export async function loadRestockPriorityData(
       }))
     : safeSupabaseQuery<RestockRecommendationRow>({
         label: "restock-priority.refill_recommendations",
-        promise: inventoryReadClient
-          .from("refill_recommendations")
+        promise: inventoryReadClient.from("refill_recommendations")
           .select("product_id, product_name, machine_id, machine_name, current_qty, suggested_qty, final_qty_to_take, priority")
           .limit(10000),
       });
