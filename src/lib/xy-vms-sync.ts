@@ -1080,7 +1080,7 @@ async function syncMachineGoodsWork(context: SyncContext) {
   }
 
   if (snapshots.length) {
-    await insertChunks(context.supabase, "vms_stock_snapshots", snapshots);
+    await insertChunks(context.supabase, "vms_stock_snapshots", snapshots, 500);
     stats.rowsImported += snapshots.length;
   }
   if (activationEligible && machineSlotUpserts.length) {
