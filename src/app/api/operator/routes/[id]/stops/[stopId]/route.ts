@@ -104,8 +104,6 @@ type PlannedProductLine = {
   source?: string | null;
   createdAt?: string | null;
   availableQty?: number;
-  vmsSalePriceLyd?: number | null;
-  vmsSlotPrices?: Array<{ slotCode: string; priceLyd: number }>;
 };
 type RefillLineItem = {
   refillOrderLineId: string | null;
@@ -124,6 +122,8 @@ type RefillLineItem = {
   sourceLabel?: string | null;
   createdAt?: string | null;
   availableQty?: number;
+  vmsSalePriceLyd?: number | null;
+  vmsSlotPrices?: Array<{ slotCode: string; priceLyd: number }>;
 };
 
 function firstRelation<T>(value: T | T[] | null | undefined): T | null {
