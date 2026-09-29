@@ -422,7 +422,7 @@ async function safeRestockPriorityForDashboard(
   errors: DashboardErrors,
 ): Promise<RestockPriorityLoadResult> {
   try {
-    return await loadRestockPriorityData(supabase);
+    return await loadRestockPriorityData(supabase, { salesQueryTimeoutMs: 1000 });
   } catch (error) {
     const message = errorMessage(error);
     console.error("[dashboard] Restock priority failed", { section: "restockPriority", error });
