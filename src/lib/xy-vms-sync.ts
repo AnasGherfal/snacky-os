@@ -84,6 +84,13 @@ type XyMachineReference = {
   vms_machine_id: string;
 };
 
+type PendingProductMappingWrite = {
+  order: number;
+  row: JsonRecord;
+  productId: string | null;
+  machine: XyMachineReference;
+};
+
 type MachineSlotReference = {
   id: string;
   machine_id: string;
@@ -289,6 +296,16 @@ function productKey(vmsProductId: string, vmsProductName: string) {
   return `${normalizeKey(vmsProductId)}::${normalizeKey(vmsProductName)}`;
 }
 
+function mappingProductName(row: JsonRecord) {
+  const identity = xyProductIdentity(row);
+  return identity.productName || identity.vmsProductId || identity.thirdPartyProductId || identity.barcode || "Unknown XY product";
+}
+
+function mappingWriteKey(row: JsonRecord) {
+  const identity = xyProductIdentity(row);
+  return productKey(identity.vmsProductId, mappingProductName(row));
+}
+
 function addMappingReference(resolver: ProductResolver, mapping: MappingReference) {
   const vmsProductId = String(mapping.vms_product_id ?? "");
   const vmsProductName = String(mapping.vms_product_name ?? "");
@@ -389,7 +406,7 @@ async function upsertXyProductMapping({
   syncRunId: string;
 }) {
   const identity = xyProductIdentity(row);
-  const vmsProductName = identity.productName || identity.vmsProductId || identity.thirdPartyProductId || identity.barcode || "Unknown XY product";
+  const vmsProductName = mappingProductName(row);
   const existing = findMapping(resolver, identity.vmsProductId, vmsProductName);
   const matchStatus = productId ? "confirmed" : existing?.match_status === "ignored" ? "ignored" : "needs_review";
   const payload = {
@@ -919,6 +936,7 @@ async function syncMachineGoodsWork(context: SyncContext) {
   const batchId = await createStockImportBatch(context);
   const snapshots: JsonRecord[] = [];
   const machineSlotUpserts: JsonRecord[] = [];
+  const pendingMappingWrites = new Map<string, PendingProductMappingWrite>();
   const snapshotMachineIds = new Set<string>();
   let rowNumber = 0;
   let placeholderRows = 0;
@@ -967,19 +985,12 @@ async function syncMachineGoodsWork(context: SyncContext) {
         const currentQty = lane.currentQty;
         const capacity = lane.capacity;
 
-        try {
-          await upsertXyProductMapping({
-            supabase: context.supabase,
-            resolver,
-            row,
-            productId,
-            machine,
-            capturedAt: context.capturedAt,
-            syncRunId: context.syncRunId,
-          });
-        } catch (error) {
-          stats.errors.push(safeErrorMessage(error));
-        }
+        pendingMappingWrites.set(mappingWriteKey(row), {
+          order: rowNumber,
+          row,
+          productId,
+          machine,
+        });
 
         snapshots.push({
           import_batch_id: batchId,
@@ -1032,6 +1043,23 @@ async function syncMachineGoodsWork(context: SyncContext) {
     }
   }
 
+  const mappingWrites = Array.from(pendingMappingWrites.values()).sort((left, right) => left.order - right.order);
+  for (const pending of mappingWrites) {
+    try {
+      await upsertXyProductMapping({
+        supabase: context.supabase,
+        resolver,
+        row: pending.row,
+        productId: pending.productId,
+        machine: pending.machine,
+        capturedAt: context.capturedAt,
+        syncRunId: context.syncRunId,
+      });
+    } catch (error) {
+      stats.errors.push(safeErrorMessage(error));
+    }
+  }
+
   const activation = assessXyLaneSnapshot({
     configuredMachineCount: machines.length,
     successfulMachineFetches,
@@ -1078,6 +1106,9 @@ async function syncMachineGoodsWork(context: SyncContext) {
     missing_previously_displayed_machines: missingPreviouslyDisplayedMachines,
     activation_blockers: activation.blockers,
     activation_eligible: activationEligible,
+    mapping_rows_seen: snapshots.length,
+    mapping_writes_attempted: mappingWrites.length,
+    mapping_writes_deduplicated: Math.max(0, snapshots.length - mappingWrites.length),
   };
 
   await finishStockImportBatch(context, batchId, stats, activationEligible);
