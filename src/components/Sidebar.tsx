@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link, { useLinkStatus } from "next/link";
 import type { ComponentType } from "react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   AlertCircle,
   Banknote,
@@ -17,7 +17,7 @@ import {
   Warehouse,
   X,
 } from "lucide-react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useLanguage } from "@/components/I18nProvider";
 import { getAppModuleKey, type AppModuleKey } from "@/components/app-navigation";
 import {
@@ -316,7 +316,6 @@ function NavPendingIndicator() {
 
 function SidebarContent({ role, roles, onNavigate }: { role: AppRole; roles?: AppRole[] | null; onNavigate?: () => void }) {
   const pathname = usePathname();
-  const router = useRouter();
   const searchParams = useSearchParams();
   const currentSearch = searchParams.toString();
   const { dictionary, locale } = useLanguage();
@@ -328,12 +327,6 @@ function SidebarContent({ role, roles, onNavigate }: { role: AppRole; roles?: Ap
   const activePathname = useOptimisticHref && optimisticHref ? pathWithoutQuery(optimisticHref) : pathname;
   const activeSearchParams = new URLSearchParams(useOptimisticHref && optimisticHref ? searchFromHref(optimisticHref) : currentSearch);
   const activeModule = getAppModuleKey(activePathname);
-
-  useEffect(() => {
-    sections.forEach((section) => {
-      section.items.forEach((item) => router.prefetch(item.href));
-    });
-  }, [router, sections]);
 
   return (
     <>
@@ -378,7 +371,7 @@ function SidebarContent({ role, roles, onNavigate }: { role: AppRole; roles?: Ap
                     <Link
                       key={itemIdentity(item)}
                       href={item.href}
-                      prefetch={true}
+                      prefetch={false}
                       onClick={(event) => {
                         if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
                         setOptimisticOriginHref(currentHref);
