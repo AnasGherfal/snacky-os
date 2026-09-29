@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge, SectionCard } from "@/components/ui";
 import { lyd } from "@/lib/format";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
@@ -33,7 +34,7 @@ type OperatorRouteStockLineRow = {
   planned_qty?: number | string | null;
   picked_qty?: number | string | null;
   returned_qty?: number | string | null;
-  product?: { name?: string | null; category?: string | null } | null;
+  product?: { name?: string | null; category?: string | null; image_url?: string | null } | null;
 };
 
 type OperatorRouteManualSaleRow = {
@@ -272,7 +273,7 @@ export default async function OperatorRouteDetailPage({
       .order("stop_order", { ascending: true }),
     routeReadClient
       .from("route_stock_lines")
-      .select("id, product_id, planned_qty, picked_qty, returned_qty, product:products(name, category)")
+      .select("id, product_id, planned_qty, picked_qty, returned_qty, product:products(name, category, image_url)")
       .eq("route_id", routeId),
     routeReadClient
       .from("inventory_adjustments")
@@ -293,7 +294,7 @@ export default async function OperatorRouteDetailPage({
   if (routeStockError && isMissingColumn(routeStockError, ["category"])) {
     const fallbackRouteStock = await routeReadClient
       .from("route_stock_lines")
-      .select("id, product_id, planned_qty, picked_qty, returned_qty, product:products(name)")
+      .select("id, product_id, planned_qty, picked_qty, returned_qty, product:products(name, image_url)")
       .eq("route_id", routeId);
     if (fallbackRouteStock.error) {
       logRouteLoaderIssue({ step: 'load_route_stock_lines_fallback', query: 'route_stock_lines', error: fallbackRouteStock.error, context: loaderContext, optional: true });
@@ -598,8 +599,11 @@ export default async function OperatorRouteDetailPage({
                   ? routeBagRemainingByProduct.get(productId) ?? 0
                   : null;
                 return (
-                  <div key={item.id} className="flex flex-col gap-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-                    <span className="min-w-0 break-words font-medium text-slate-900">{item.product?.name ?? t("Unknown product")}</span>
+                  <div key={item.id} className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <ProductThumbnail imageUrl={item.product?.image_url} name={item.product?.name ?? t("Unknown product")} size="md" />
+                      <span className="min-w-0 break-words font-medium text-slate-900">{item.product?.name ?? t("Unknown product")}</span>
+                    </div>
                     <span className="shrink-0 text-slate-600">
                       {Number(item.picked_qty ?? item.planned_qty ?? 0)} / {Number(item.planned_qty ?? 0)} {t("picked")} · {Number(item.returned_qty ?? 0)} {t("returned")} · {verifiedRemaining === null
                         ? t("verified remaining unavailable")
