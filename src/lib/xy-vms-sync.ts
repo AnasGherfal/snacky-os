@@ -469,14 +469,29 @@ function isAllowedXyProductImageUrl(value: string) {
   }
 }
 
+function xyProductImageSourceExtension(sourceUrl: string) {
+  const match = new URL(sourceUrl).pathname.match(/\.([a-z0-9]{2,5})$/i);
+  return match?.[1]?.toLowerCase() || "";
+}
+
+function xyProductImageContentType(contentType: string, sourceUrl: string) {
+  const normalizedType = contentType.toLowerCase().split(";")[0]?.trim() ?? "";
+  if (normalizedType.startsWith("image/")) return normalizedType;
+  const extension = xyProductImageSourceExtension(sourceUrl);
+  if (extension === "avif") return "image/avif";
+  if (extension === "webp") return "image/webp";
+  if (extension === "png") return "image/png";
+  if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
+  return "";
+}
+
 function xyProductImageExtension(contentType: string, sourceUrl: string) {
   const normalizedType = contentType.toLowerCase().split(";")[0]?.trim() ?? "";
   if (normalizedType === "image/png") return "png";
   if (normalizedType === "image/webp") return "webp";
   if (normalizedType === "image/avif") return "avif";
   if (normalizedType === "image/jpeg" || normalizedType === "image/jpg") return "jpg";
-  const match = new URL(sourceUrl).pathname.match(/\.([a-z0-9]{2,5})$/i);
-  return match?.[1]?.toLowerCase() || "img";
+  return xyProductImageSourceExtension(sourceUrl) || "img";
 }
 
 async function cacheXyProductImage(supabase: SupabaseServer, productId: string, sourceUrl: string) {
@@ -492,9 +507,10 @@ async function cacheXyProductImage(supabase: SupabaseServer, productId: string, 
     throw new Error(`XY product image returned HTTP ${response.status}.`);
   }
 
-  const contentType = response.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
-  if (!contentType.startsWith("image/")) {
-    throw new Error(`XY product image returned unsupported content type ${contentType || "unknown"}.`);
+  const rawContentType = response.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
+  const contentType = xyProductImageContentType(rawContentType, sourceUrl);
+  if (!contentType) {
+    throw new Error(`XY product image returned unsupported content type ${rawContentType || "unknown"}.`);
   }
 
   const bytes = new Uint8Array(await response.arrayBuffer());
