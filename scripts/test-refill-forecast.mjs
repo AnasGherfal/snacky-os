@@ -92,21 +92,26 @@ test("next operating date skips configured closure days", () => {
   assert.equal(nextOperatingDate("2026-08-27", [1, 2, 3, 4, 6, 7], false), "2026-08-29");
 });
 
-test("the main dashboard leads with the live refill forecast", async () => {
+test("the main dashboard leads with the streamed live refill forecast", async () => {
   const dashboard = await readFile(new URL("../src/app/dashboard/page.tsx", import.meta.url), "utf8");
-  const forecastPosition = dashboard.indexOf('<RefillForecastDashboard forecasts={data.refillForecasts} variant="overview" locale={locale} />');
+  const deferred = await readFile(new URL("../src/app/dashboard/DashboardRefillForecastSection.tsx", import.meta.url), "utf8");
+  const forecastPosition = dashboard.indexOf("<DashboardRefillForecastSection");
   const prioritiesPosition = dashboard.indexOf('{t("Other priorities today")}');
-  assert.ok(forecastPosition >= 0, "main dashboard must render the refill forecast overview");
+  assert.ok(forecastPosition >= 0, "main dashboard must mount the refill forecast overview");
   assert.ok(prioritiesPosition > forecastPosition, "refill decisions must appear before secondary dashboard priorities");
+  assert.match(dashboard, /<Suspense fallback=\{<DashboardForecastSkeleton/);
+  assert.match(deferred, /<RefillForecastDashboard forecasts=\{forecasts\} variant="overview" locale=\{locale\}/);
 });
 
 test("dashboard and refill page pass Arabic locale into the forecast UI", async () => {
-  const [dashboard, refills, component] = await Promise.all([
+  const [dashboard, deferred, refills, component] = await Promise.all([
     readFile(new URL("../src/app/dashboard/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/dashboard/DashboardRefillForecastSection.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/app/refills/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/components/RefillForecastDashboard.tsx", import.meta.url), "utf8"),
   ]);
-  assert.match(dashboard, /variant="overview" locale=\{locale\}/);
+  assert.match(dashboard, /<DashboardRefillForecastSection locale=\{locale\}/);
+  assert.match(deferred, /variant="overview" locale=\{locale\}/);
   assert.match(refills, /forecasts=\{forecasts\} locale=\{locale\}/);
   assert.match(component, /"عبّئ الآن"/);
   assert.match(component, /"ما الماكينات التي يجب تعبئتها؟"/);

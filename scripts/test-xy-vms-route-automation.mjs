@@ -8,6 +8,7 @@ const cronSource = fs.readFileSync(new URL("../src/app/api/cron/xy-vms/route.ts"
 const backgroundSyncSource = fs.readFileSync(new URL("../src/components/XyBackgroundSync.tsx", import.meta.url), "utf8");
 const shellSource = fs.readFileSync(new URL("../src/components/ShellChrome.tsx", import.meta.url), "utf8");
 const dashboardSource = fs.readFileSync(new URL("../src/app/dashboard/page.tsx", import.meta.url), "utf8");
+const dashboardForecastSource = fs.readFileSync(new URL("../src/app/dashboard/DashboardRefillForecastSection.tsx", import.meta.url), "utf8");
 const refillsSource = fs.readFileSync(new URL("../src/app/refills/page.tsx", import.meta.url), "utf8");
 const schedulerMigration = fs.readFileSync(new URL("../supabase/migrations/20260902150000_xy_vms_durable_scheduler.sql", import.meta.url), "utf8");
 const vercelConfig = JSON.parse(fs.readFileSync(new URL("../vercel.json", import.meta.url), "utf8"));
@@ -70,8 +71,8 @@ test("authorized planners refresh XY in the background without pressing sync", (
   assert.doesNotMatch(syncSource, /const latestStock = latestCompleted\(\["machine_goods", "all"\]\)/);
   assert.match(syncSource, /activationEligible/);
   assert.match(syncSource, /"partially_imported"/);
-  assert.match(dashboardSource, /\.eq\("source_provider", "xy"\)/);
+  assert.match(dashboardForecastSource, /\.eq\("source_provider", "xy"\)/);
   assert.match(refillsSource, /\.eq\("source_provider", "xy"\)/);
-  assert.match(dashboardSource, /vms_import_batches!inner/);
+  assert.match(dashboardForecastSource, /vms_import_batches!inner/);
   assert.match(refillsSource, /vms_import_batches!inner/);
 });
