@@ -151,7 +151,11 @@ async function repairMissingRouteStockLines({
 
 export async function loadRestockPriorityData(
   supabase: SupabaseLike,
-  options: { salesQueryTimeoutMs?: number; repairMissingRouteStockLines?: boolean } = {},
+  options: {
+    salesQueryTimeoutMs?: number;
+    repairMissingRouteStockLines?: boolean;
+    recommendationsPromise?: PromiseLike<RestockRecommendationRow[]>;
+  } = {},
 ): Promise<RestockPriorityLoadResult> {
   const errors: Record<string, string> = {};
   // Every caller authorizes its page before reaching this server-only helper.
@@ -161,16 +165,25 @@ export async function loadRestockPriorityData(
   // unavailable, the caller-scoped client and its RLS policies remain valid.
   const inventoryReadClient = getSupabaseAdminClient() ?? supabase;
   const { products, usedFallback } = await loadProducts(inventoryReadClient, errors);
+  const recommendationsPromise = options.recommendationsPromise
+    ? Promise.resolve(options.recommendationsPromise).then((data) => ({
+        data,
+        count: data.length,
+        error: null as string | null,
+      }))
+    : safeSupabaseQuery<RestockRecommendationRow>({
+        label: "restock-priority.refill_recommendations",
+        promise: inventoryReadClient.from("refill_recommendations")
+          .select("product_id, product_name, machine_id, machine_name, current_qty, suggested_qty, final_qty_to_take, priority")
+          .limit(10000),
+      });
 
   const [storage, recommendations, routeNeeds, routeStopNeeds, machineSlots, vmsStock, sales] = await Promise.all([
     safeSupabaseQuery<RestockStorageRow>({
       label: "restock-priority.route_storage_stock_by_product",
       promise: inventoryReadClient.from("route_storage_stock_by_product").select("product_id, quantity_on_hand").limit(5000),
     }),
-    safeSupabaseQuery<any>({
-      label: "restock-priority.refill_recommendations",
-      promise: inventoryReadClient.from("refill_recommendations").select("product_id, product_name, machine_id, machine_name, current_qty, suggested_qty, final_qty_to_take, priority").limit(10000),
-    }),
+    recommendationsPromise,
     safeSupabaseQuery<any>({
       label: "restock-priority.route_stock_lines.active",
       promise: inventoryReadClient.from("route_stock_lines").select("route_id, product_id, planned_qty, picked_qty, routes!inner(status, route_date)").limit(10000),
