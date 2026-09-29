@@ -148,7 +148,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
               <tr key={product.id}>
                 <td><ProductThumbnail imageUrl={product.image_url} name={product.name} /></td>
                 <td>{product.sku}</td>
-                <td className="font-medium">{product.name}</td>
+                <td className="font-medium"><Link href={`/products/${product.id}`} className="link-secondary">{product.name}</Link></td>
                 <td>{product.category}</td>
                 <td>{product.case_quantity ?? 1}</td>
                 <td>{product.supplier?.name ?? "-"}</td>
