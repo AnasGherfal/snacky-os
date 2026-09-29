@@ -6,6 +6,7 @@ import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { QuantityStepper } from "@/components/QuantityStepper";
 import { useLanguage } from "@/components/I18nProvider";
 import { confirmPickupDirect } from "@/lib/direct-pickup-actions";
+import { confirmSupplementalRoutePickup } from "@/lib/supplemental-route-pickup-actions";
 import { startRoute } from "@/lib/operator-actions";
 import { formatProductQuantity } from "@/lib/product-quantity";
 import { comparePickupProductRows } from "@/lib/route-pickup-checklist";
@@ -23,8 +24,11 @@ type PickStopItem = {
   sku: string | null;
   caseQuantity: number;
   requestedQty: number;
+  totalPlannedQty: number;
+  alreadyPickedQty: number;
   availableStorageQty: number;
   confirmedQty: number;
+  isSupplemental: boolean;
   reason: string;
   notes: string;
 };
@@ -110,6 +114,7 @@ export default function PickListPage() {
   const [submitting, setSubmitting] = useState(false);
   const [locked, setLocked] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
+  const [supplementalMode, setSupplementalMode] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -117,17 +122,21 @@ export default function PickListPage() {
     () =>
       isArabic
         ? {
-            title: "استلام منتجات المسار",
-            subtitle: "راجع الكميات، علّم ما تم أخذه، ثم أكّد الاستلام مرة واحدة.",
+            title: supplementalMode ? "استلام إضافي للمسار" : "استلام منتجات المسار",
+            subtitle: supplementalMode
+              ? "هذه فقط الكميات التي أضيفت بعد الاستلام السابق. الكميات التي أخذتها سابقًا لن تتكرر."
+              : "راجع الكميات، علّم ما تم أخذه، ثم أكّد الاستلام مرة واحدة.",
             back: "العودة للمسار",
             retry: "إعادة المحاولة",
             loading: "جارٍ تحميل قائمة الاستلام…",
             stops: "المحطات",
             selectAll: "تحديد الكل",
             clearAll: "إلغاء الكل",
-            planned: "المطلوب",
+            planned: supplementalMode ? "الكمية الإضافية" : "المطلوب",
+            alreadyPicked: "تم استلامه سابقًا",
+            newTotal: "الإجمالي الجديد",
             available: "المتوفر بالمخزن",
-            pickup: "الاستلام",
+            pickup: supplementalMode ? "استلام إضافي" : "الاستلام",
             reason: "السبب",
             notes: "ملاحظات",
             extras: "منتجات إضافية",
@@ -139,8 +148,8 @@ export default function PickListPage() {
             remove: "حذف",
             summary: "ملخص الاستلام",
             units: "وحدة",
-            confirm: "تأكيد الاستلام",
-            confirming: "جارٍ التأكيد…",
+            confirm: supplementalMode ? "تأكيد الاستلام الإضافي" : "تأكيد الاستلام",
+            confirming: supplementalMode ? "جارٍ تأكيد الإضافة…" : "جارٍ التأكيد…",
             picked: "تم أخذه",
             progress: "تم أخذ",
             chooseStop: "اختر محطة واحدة على الأقل.",
@@ -148,25 +157,31 @@ export default function PickListPage() {
             chooseExtraDestination: "كل منتج إضافي يجب ربطه بمحطة / ماكينة حتى يُضاف فعليًا للجولة.",
             checkAll: "علّم كل منتجات الاستلام المحددة قبل تأكيد الاستلام.",
             locked: "هذا المسار مقفل ولا يمكن تعديل الاستلام.",
-            alreadyConfirmed: "تم تأكيد استلام هذا المسار مسبقًا.",
-            noItems: "لا توجد منتجات مطلوبة للاستلام.",
+            alreadyConfirmed: supplementalMode ? "لا توجد كميات إضافية معلقة." : "تم تأكيد استلام هذا المسار مسبقًا.",
+            noItems: supplementalMode ? "لا توجد كميات إضافية مطلوبة." : "لا توجد منتجات مطلوبة للاستلام.",
             stockWarning: "الكمية المختارة أعلى من المخزون الظاهر. سيقوم النظام بالتحقق من المخزون الفعلي مرة أخرى عند التأكيد.",
-            directNote: "يجب وضع علامة الصح على كل منتج محدد قبل تأكيد الاستلام. المنتجات الإضافية تُحفظ فعليًا على المحطة وتظهر للإدارة في ملخص الجولة بعد التأكيد.",
+            directNote: supplementalMode
+              ? "سيتم خصم الكمية الإضافية فقط من المخزن وإضافتها لحقيبتك. الاستلام السابق وحالة الجولة لن يتغيرا."
+              : "يجب وضع علامة الصح على كل منتج محدد قبل تأكيد الاستلام. المنتجات الإضافية تُحفظ فعليًا على المحطة وتظهر للإدارة في ملخص الجولة بعد التأكيد.",
             extraNote: "المنتج الإضافي ليس مجرد ملاحظة: عند التأكيد يُضاف للمحطة المختارة ويُخصم من المخزن ويظهر في ملخص الإدارة.",
             startFailed: "تعذر بدء المسار.",
           }
         : {
-            title: "Route pickup",
-            subtitle: "Review quantities, mark what you physically picked, then confirm once.",
+            title: supplementalMode ? "Additional route pickup" : "Route pickup",
+            subtitle: supplementalMode
+              ? "These are only the quantities added after your earlier pickup. Previously picked stock will not be duplicated."
+              : "Review quantities, mark what you physically picked, then confirm once.",
             back: "Back to route",
             retry: "Retry",
             loading: "Loading pickup list…",
             stops: "Stops",
             selectAll: "Select all",
             clearAll: "Clear all",
-            planned: "Planned",
+            planned: supplementalMode ? "Additional required" : "Planned",
+            alreadyPicked: "Already picked",
+            newTotal: "New total",
             available: "Storage available",
-            pickup: "Pickup",
+            pickup: supplementalMode ? "Additional pickup" : "Pickup",
             reason: "Reason",
             notes: "Notes",
             extras: "Extra products",
@@ -178,8 +193,8 @@ export default function PickListPage() {
             remove: "Remove",
             summary: "Pickup summary",
             units: "units",
-            confirm: "Confirm pickup",
-            confirming: "Confirming…",
+            confirm: supplementalMode ? "Confirm additional pickup" : "Confirm pickup",
+            confirming: supplementalMode ? "Confirming additional pickup…" : "Confirming…",
             picked: "Picked",
             progress: "Picked",
             chooseStop: "Select at least one stop.",
@@ -187,14 +202,16 @@ export default function PickListPage() {
             chooseExtraDestination: "Every extra product must be assigned to a stop / machine so it becomes part of the route.",
             checkAll: "Check every selected pickup item before confirming pickup.",
             locked: "This route is locked and pickup cannot be edited.",
-            alreadyConfirmed: "Pickup for this route has already been confirmed.",
-            noItems: "There are no products to pick up.",
+            alreadyConfirmed: supplementalMode ? "There is no additional pickup pending." : "Pickup for this route has already been confirmed.",
+            noItems: supplementalMode ? "There are no additional quantities to pick up." : "There are no products to pick up.",
             stockWarning: "Selected quantity is above visible stock. The system will validate physical stock again on confirmation.",
-            directNote: "Every selected pickup item must be checked before confirmation. Extra products are saved to the selected stop and appear in the admin route summary after confirmation.",
+            directNote: supplementalMode
+              ? "Only the added quantity will leave storage and enter your operator bag. The earlier pickup and route state stay unchanged."
+              : "Every selected pickup item must be checked before confirmation. Extra products are saved to the selected stop and appear in the admin route summary after confirmation.",
             extraNote: "An extra product is a real route item: confirmation assigns it to the selected stop, deducts stock, and exposes it in the admin summary.",
             startFailed: "Could not start route.",
           },
-    [isArabic],
+    [isArabic, supplementalMode],
   );
 
   const selectedStopSet = useMemo(() => new Set(selectedStopIds), [selectedStopIds]);
@@ -245,6 +262,7 @@ export default function PickListPage() {
       const payload = data && typeof data === "object" && !Array.isArray(data) ? (data as ApiRow) : {};
       if (!response.ok) throw new Error(textOrFallback(payload.error, "Could not load pickup list."));
 
+      const nextSupplementalMode = Boolean(payload.supplementalMode);
       const groups: PickStopGroup[] = asRows(payload.stopGroups)
         .map((group): PickStopGroup | null => {
           const routeStopId = optionalText(group.route_stop_id);
@@ -255,8 +273,16 @@ export default function PickListPage() {
               const routeStopItemId = optionalText(item.route_stop_item_id);
               const productId = optionalText(item.product_id);
               if (!routeStopItemId || !productId) return null;
-              const requestedQty = unitQuantity(item.planned_qty);
-              const availableStorageQty = unitQuantity(item.available_storage_qty);
+              const totalPlannedQty = unitQuantity(item.planned_qty);
+              const alreadyPickedQty = unitQuantity(item.already_picked_qty ?? item.picked_qty);
+              const isSupplemental = Boolean(item.is_supplemental_pending);
+              if (nextSupplementalMode && !isSupplemental) return null;
+              const requestedQty = nextSupplementalMode
+                ? unitQuantity(item.additional_pickup_qty)
+                : totalPlannedQty;
+              const availableStorageQty = nextSupplementalMode
+                ? unitQuantity(item.physical_storage_available_qty)
+                : unitQuantity(item.available_storage_qty);
               const hasSavedPickQty = item.picked_qty !== null && item.picked_qty !== undefined;
               return {
                 routeStopItemId,
@@ -268,8 +294,13 @@ export default function PickListPage() {
                 sku: optionalText(item.sku),
                 caseQuantity: Math.max(1, Number(item.case_quantity ?? 1)),
                 requestedQty,
+                totalPlannedQty,
+                alreadyPickedQty,
                 availableStorageQty,
-                confirmedQty: hasSavedPickQty ? unitQuantity(item.picked_qty) : Math.min(requestedQty, availableStorageQty),
+                confirmedQty: nextSupplementalMode
+                  ? Math.min(requestedQty, availableStorageQty)
+                  : (hasSavedPickQty ? unitQuantity(item.picked_qty) : Math.min(requestedQty, availableStorageQty)),
+                isSupplemental,
                 reason: textOrFallback(item.reason, "Product not available in storage"),
                 notes: optionalText(item.notes) ?? "",
               };
@@ -317,7 +348,8 @@ export default function PickListPage() {
       const requestedGroup = requestedStopId ? groups.find((group) => group.routeStopId === requestedStopId) : null;
       setSelectedStopIds(requestedGroup ? [requestedGroup.routeStopId] : groups.map((group) => group.routeStopId));
       setProductOptions(products);
-      setExtras(loadedExtras);
+      setExtras(nextSupplementalMode ? [] : loadedExtras);
+      setSupplementalMode(nextSupplementalMode);
       setLocked(Boolean(payload.locked));
       setConfirmed(Boolean(payload.confirmed));
     } catch (cause) {
@@ -411,6 +443,42 @@ export default function PickListPage() {
     }
     if (extras.some((item) => item.productId && item.quantity > 0 && !item.targetStopId)) {
       setError(copy.chooseExtraDestination);
+      return;
+    }
+
+    if (supplementalMode) {
+      const supplementalItems = selectedGroups
+        .flatMap((group) => group.items)
+        .filter((item) => item.confirmedQty > 0)
+        .map((item) => ({
+          routeStopItemId: item.routeStopItemId,
+          quantity: item.confirmedQty,
+        }));
+      if (!supplementalItems.length) {
+        setError(isArabic ? "اختر كمية إضافية واحدة على الأقل للاستلام." : "Choose at least one additional unit to pick up.");
+        return;
+      }
+
+      setSubmitting(true);
+      try {
+        const result = await confirmSupplementalRoutePickup(routeId, supplementalItems, submissionIdRef.current);
+        if (!result.success) throw new Error(result.error || "Could not confirm the additional pickup.");
+        submissionIdRef.current = crypto.randomUUID();
+        if (typeof window !== "undefined") {
+          try {
+            window.localStorage.removeItem(`${PICKUP_PROGRESS_STORAGE_PREFIX}:${routeId}`);
+          } catch {
+            // Non-critical visual state.
+          }
+        }
+        setCheckedPickupItemIds([]);
+        router.push(`/operator/routes/${routeId}`);
+        router.refresh();
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "Could not confirm the additional pickup.");
+      } finally {
+        setSubmitting(false);
+      }
       return;
     }
 
@@ -560,7 +628,15 @@ export default function PickListPage() {
                           {isPicked ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800">{copy.picked}</span> : null}
                         </div>
                         <div className="mt-1 space-y-1 text-xs text-slate-600">
-                          <div>{copy.planned}: <b>{formatProductQuantity(item.requestedQty, packaging, { compact: true })}</b></div>
+                          {supplementalMode ? (
+                            <>
+                              <div>{copy.alreadyPicked}: <b>{formatProductQuantity(item.alreadyPickedQty, packaging, { compact: true })}</b></div>
+                              <div>{copy.newTotal}: <b>{formatProductQuantity(item.totalPlannedQty, packaging, { compact: true })}</b></div>
+                              <div>{copy.planned}: <b>+{formatProductQuantity(item.requestedQty, packaging, { compact: true })}</b></div>
+                            </>
+                          ) : (
+                            <div>{copy.planned}: <b>{formatProductQuantity(item.requestedQty, packaging, { compact: true })}</b></div>
+                          )}
                           <div>{copy.available}: <b>{formatProductQuantity(item.availableStorageQty, packaging, { compact: true })}</b></div>
                           {item.sku ? <div>SKU: {item.sku}</div> : null}
                         </div>
@@ -598,6 +674,7 @@ export default function PickListPage() {
         );
       })}
 
+      {!supplementalMode ? (
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex items-center justify-between gap-3">
           <div>
@@ -659,12 +736,13 @@ export default function PickListPage() {
           })}
         </div>
       </section>
+      ) : null}
 
       <section className="rounded-2xl bg-slate-950 p-4 text-white shadow-sm">
         <h2 className="font-bold">{copy.summary}</h2>
         <p className="mt-1 text-sm text-slate-300">{selectedStopIds.length} {copy.stops} · {totalUnits} {copy.units}</p>
         <p className="mt-1 text-sm text-slate-300">{copy.progress} {pickedProgressCount}/{selectedPickupItemIds.length}</p>
-        {extras.filter((item) => item.productId && item.quantity > 0).length ? (
+        {!supplementalMode && extras.filter((item) => item.productId && item.quantity > 0).length ? (
           <div className="mt-3 rounded-xl bg-white/10 p-3">
             <div className="text-xs font-bold uppercase tracking-wide text-slate-300">{copy.extras}</div>
             <div className="mt-2 space-y-1 text-sm">
