@@ -24,6 +24,7 @@ type RouteStopOption = {
   machineId: string;
   label: string;
   stopOrder: number;
+  status: string;
 };
 
 type ProductOption = {
@@ -39,6 +40,7 @@ type RouteItemRow = {
   routeStopId: string;
   productId: string;
   quantity: number;
+  pickedQuantity: number;
   notes: string;
   source: string;
   createdAt: string | null;
@@ -312,6 +314,7 @@ export function RouteItemEditor({
           routeStopId,
           productId,
           quantity: 1,
+          pickedQuantity: 0,
           notes: "",
           source: "manual_admin_assignment",
           createdAt: null,
@@ -415,6 +418,9 @@ export function RouteItemEditor({
                   activeRows.map((row) => {
                     const currentProduct = productById.get(row.productId);
                     const isNewAfterStart = Boolean(row.source === "manual_admin_assignment" && routeStartedAt && row.createdAt && new Date(row.createdAt).getTime() > new Date(routeStartedAt).getTime());
+                    const stopAlreadyPicked = stop.status !== "pending";
+                    const additionalPickupQty = stopAlreadyPicked ? Math.max(row.quantity - row.pickedQuantity, 0) : 0;
+                    const carriedSurplusQty = stopAlreadyPicked ? Math.max(row.pickedQuantity - row.quantity, 0) : 0;
                     return (
                       <article key={row.clientKey} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                         <div className="grid gap-3 lg:grid-cols-[minmax(240px,1.4fr)_minmax(230px,1fr)_auto] lg:items-end">
@@ -474,6 +480,26 @@ export function RouteItemEditor({
                             </button>
                           ) : null}
                         </div>
+
+                        {stopAlreadyPicked ? (
+                          <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-950">
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                              <span>{tr(locale, "Already picked:", "تم استلامه سابقًا:")} <b>{row.pickedQuantity}</b></span>
+                              <span>{tr(locale, "New planned total:", "الإجمالي الجديد:")} <b>{row.quantity}</b></span>
+                              {additionalPickupQty > 0 ? (
+                                <span className="font-semibold text-emerald-800">
+                                  {tr(locale, "Operator will pick only:", "سيستلم المشغّل فقط:")} +{additionalPickupQty}
+                                </span>
+                              ) : carriedSurplusQty > 0 ? (
+                                <span className="font-semibold text-amber-800">
+                                  {tr(locale, "Already carrying surplus:", "زيادة موجودة مع المشغّل:")} {carriedSurplusQty}
+                                </span>
+                              ) : (
+                                <span className="font-semibold text-slate-700">{tr(locale, "No additional pickup", "لا يوجد استلام إضافي")}</span>
+                              )}
+                            </div>
+                          </div>
+                        ) : null}
 
                         <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(220px,0.55fr)]">
                           <label className="block">
