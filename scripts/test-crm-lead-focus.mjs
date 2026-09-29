@@ -50,9 +50,9 @@ test('enabled workspace asks the server for focus/global ordering and shows expl
 test('absent migration retains standard list, but cannot silently ignore a focus filter',async()=>{
  const data={me:person,staff:true,manager:true,rows:[row],directory:[],total:1,offset:0,page_size:40};
  const h=workspace({firstMissing:true,result:data});const html=await h.render();assert.equal(h.calls.length,2);assert.equal(h.calls[1][0],'snacky_crm_workspace_v1');assert.match(html,/standard list/);
- const explicit=workspace({firstMissing:true});assert.match(await explicit.render({focus:'active'}),/Leads unavailable/);assert.equal(explicit.calls.length,1);
- const denied=workspace({error:{code:'42501'}});assert.match(await denied.render(),/Leads unavailable/);assert.equal(denied.calls.length,1);
- const disabled=workspace({enabled:false});assert.match(await disabled.render({focus:'active'}),/Leads unavailable/);assert.equal(disabled.calls.length,0);
+ const explicit=workspace({firstMissing:true});assert.match(await explicit.render({focus:'active'}),/Leads temporarily unavailable/);assert.equal(explicit.calls.length,1);
+ const denied=workspace({error:{code:'42501'}});assert.match(await denied.render(),/Leads access unavailable/);assert.equal(denied.calls.length,1);
+ const disabled=workspace({enabled:false});assert.match(await disabled.render({focus:'active'}),/Leads temporarily unavailable/);assert.equal(disabled.calls.length,0);
 });
 const body=load('src/lib/company-request.ts',{});
 function api({role='owner',dbError=null,badReceipt=false}={}){
@@ -89,10 +89,10 @@ test('installed and declined records preserve history links without false prospe
 });
 
 test('label filters cannot silently fall back to an unfiltered legacy result',async()=>{
- const missing=workspace({firstMissing:true});assert.match(await missing.render({label:id}),/Leads unavailable/);assert.equal(missing.calls.length,1);
- const uninstalled=workspace();assert.match(await uninstalled.render({label:id}),/Leads unavailable/);assert.equal(uninstalled.calls.length,1);
- const disabled=workspace({enabled:false});assert.match(await disabled.render({label:id}),/Leads unavailable/);assert.equal(disabled.calls.length,0);
- const malformed=workspace();assert.match(await malformed.render({label:'not-a-uuid'}),/Leads unavailable/);assert.equal(malformed.calls.length,0);
+ const missing=workspace({firstMissing:true});assert.match(await missing.render({label:id}),/Leads temporarily unavailable/);assert.equal(missing.calls.length,1);
+ const uninstalled=workspace();assert.match(await uninstalled.render({label:id}),/Leads temporarily unavailable/);assert.equal(uninstalled.calls.length,1);
+ const disabled=workspace({enabled:false});assert.match(await disabled.render({label:id}),/Leads temporarily unavailable/);assert.equal(disabled.calls.length,0);
+ const malformed=workspace();assert.match(await malformed.render({label:'not-a-uuid'}),/Leads temporarily unavailable/);assert.equal(malformed.calls.length,0);
  const available=workspace({result:{me:person,staff:true,manager:true,today:'2026-09-19',focus_ready:true,focus_assignees:[],rows:[row],directory:[],total:1,offset:0,page_size:40,label_options:[{id,name:'This week',color:'blue',owner_id:person,owner_name:'Employee'}]}});
- assert.doesNotMatch(await available.render({label:id}),/Leads unavailable/);assert.equal(available.calls[0][1].p_filters.label,id);
+ assert.doesNotMatch(await available.render({label:id}),/Leads (?:temporarily |access )?unavailable/);assert.equal(available.calls[0][1].p_filters.label,id);
 });
