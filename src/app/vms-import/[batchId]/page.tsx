@@ -288,11 +288,13 @@ async function loadVmsImportBatch({
   batchId,
   currentUserId,
   effectivePermissions,
+  includeTechnicalRows,
 }: {
   supabase: SupabaseServerClient;
   batchId: string;
   currentUserId: string | null;
   effectivePermissions: string[];
+  includeTechnicalRows: boolean;
 }): Promise<VmsImportBatchLoadResult> {
   const fallback: VmsImportBatchLoadResult = { batches: [], selectedBatch: null, rows: [], errors: [], schemaNotice: "" };
 
@@ -326,16 +328,26 @@ async function loadVmsImportBatch({
   }
   if (!batch) return fallback;
 
+  if (!includeTechnicalRows) {
+    return { batches: [], selectedBatch: batch, rows: [], errors: [], schemaNotice };
+  }
+
   try {
-    const rowsResult = await supabase.from("vms_import_rows").select(importedRowsSelect).eq("import_batch_id", batchId).order("row_number", { ascending: true });
+    const rowsResult = await supabase
+      .from("vms_import_rows")
+      .select(importedRowsSelect)
+      .eq("import_batch_id", batchId)
+      .or("validation_status.in.(needs_mapping,unknown_machine,invalid_row,skipped),product_match_status.eq.needs_mapping,machine_match_status.eq.unknown")
+      .order("row_number", { ascending: true })
+      .limit(300);
     if (rowsResult.error) {
-      logPostImportLoaderFailure({ queryName: "vms_import_rows.for_batch", selectedColumns: importedRowsSelect, error: rowsResult.error, batchId, batch, currentUserId, effectivePermissions });
-      return { batches: [], selectedBatch: batch, rows: [], errors: [{ loader: "vms_import_rows.for_batch", message: userFacingLoadError(rowsResult.error, "vms_import_rows.for_batch"), error: rowsResult.error }], schemaNotice };
+      logPostImportLoaderFailure({ queryName: "vms_import_rows.issue_sample", selectedColumns: importedRowsSelect, error: rowsResult.error, batchId, batch, currentUserId, effectivePermissions });
+      return { batches: [], selectedBatch: batch, rows: [], errors: [{ loader: "vms_import_rows.issue_sample", message: userFacingLoadError(rowsResult.error, "vms_import_rows.issue_sample"), error: rowsResult.error }], schemaNotice };
     }
     return { batches: [], selectedBatch: batch, rows: rowsResult.data ?? [], errors: [], schemaNotice };
   } catch (error) {
-    logPostImportLoaderFailure({ queryName: "vms_import_rows.for_batch", selectedColumns: importedRowsSelect, error, batchId, batch, currentUserId, effectivePermissions });
-    return { batches: [], selectedBatch: batch, rows: [], errors: [{ loader: "vms_import_rows.for_batch", message: userFacingLoadError(error, "vms_import_rows.for_batch"), error }], schemaNotice };
+    logPostImportLoaderFailure({ queryName: "vms_import_rows.issue_sample", selectedColumns: importedRowsSelect, error, batchId, batch, currentUserId, effectivePermissions });
+    return { batches: [], selectedBatch: batch, rows: [], errors: [{ loader: "vms_import_rows.issue_sample", message: userFacingLoadError(error, "vms_import_rows.issue_sample"), error }], schemaNotice };
   }
 }
 
@@ -465,6 +477,7 @@ async function VmsImportBatchDetailPageContent({
     batchId,
     currentUserId: profile?.id ?? null,
     effectivePermissions,
+    includeTechnicalRows: isOwnerAdminRole(profile),
   });
   const batch = loadedImport.selectedBatch;
   const batchSchemaNotice = loadedImport.schemaNotice;
@@ -486,7 +499,7 @@ async function VmsImportBatchDetailPageContent({
   }
 
   const rows = loadedImport.rows;
-  const rowsLoadError = loadedImport.errors.find((issue) => issue.loader === "vms_import_rows.for_batch")?.error ?? null;
+  const rowsLoadError = loadedImport.errors.find((issue) => issue.loader === "vms_import_rows.issue_sample")?.error ?? null;
   let duplicateSiblingRows: VmsImportBatchRow[] = [];
   if (stringValue(batch.file_hash)) {
     try {
@@ -561,7 +574,7 @@ async function VmsImportBatchDetailPageContent({
   // Latest batch snapshot for quick inspection
   const latestBatch = await loadLatestVmsImportBatch(supabase, batch.id, profile?.id ?? null, effectivePermissions);
   const latestDiagnosticError = rowsLoadError
-    ? userFacingLoadError(rowsLoadError, "vms_import_rows.for_batch")
+    ? userFacingLoadError(rowsLoadError, "vms_import_rows.issue_sample")
     : (stringValue(batch.latest_error) || stringValue(batch.last_error) || batchSchemaNotice || null);
 
   const rowList = rows ?? [];
@@ -574,6 +587,10 @@ async function VmsImportBatchDetailPageContent({
   const unknownMachineRows = rowList.filter((row) => row.validation_status === "unknown_machine" || row.machine_match_status === "unknown");
   const invalidRows = rowList.filter((row) => row.validation_status === "invalid_row");
   const importedRows = rowList.filter((row) => row.validation_status === "imported");
+  const needsMappingCount = Number(summary?.needsProductMappingRows ?? batch.rows_needing_review ?? needsMappingRows.length);
+  const unknownMachineCount = Number(summary?.unknownMachineRows ?? unknownMachineRows.length);
+  const invalidRowCount = Number(summary?.invalidRows ?? invalidRows.length);
+  const importedRowCount = Number(summary?.importedRows ?? batch.rows_imported ?? importedRowsCount.count ?? importedRows.length);
   const detailedTransactionLabel = reportType === "monthly_transaction_details" ? "Monthly Transaction Report" : "Detailed Order Details";
   const dashboardUsageNote = isTransactionDetailsReportType(reportType)
     ? `${detailedTransactionLabel} files feed transaction-level dashboards. Only successful_sale rows count as normal sales revenue.`
@@ -621,7 +638,7 @@ async function VmsImportBatchDetailPageContent({
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge status={statusInfo.label} />
             <span className="text-sm text-slate-500">{statusInfo.actionLabel ?? "No action needed"}</span>
-            {needsMappingRows.length ? <Link href="/vms-mappings?status=needs_review" className="btn-secondary">Review product mappings</Link> : null}
+            {needsMappingCount > 0 ? <Link href="/vms-mappings?status=needs_review" className="btn-secondary">Review product mappings</Link> : null}
             {canFinalizePreviewStockBatch || canFinalizeOrderDetailsBatch ? (
               <form action={updateVmsImportBatchState}>
                 <input type="hidden" name="batch_id" value={String(batch.id)} />
@@ -631,7 +648,7 @@ async function VmsImportBatchDetailPageContent({
                 </FormSubmitButton>
               </form>
             ) : null}
-            {rowList.length && canConfirmVmsImports(profile) ? (
+            {Number(importedRowsCount.count ?? batch.row_count ?? 0) > 0 && canConfirmVmsImports(profile) ? (
               <form action={reprocessVmsImportBatch}>
                 <input type="hidden" name="batch_id" value={String(batch.id)} />
                 <FormSubmitButton pendingLabel="Reprocessing file...">Reprocess file</FormSubmitButton>
@@ -641,12 +658,12 @@ async function VmsImportBatchDetailPageContent({
         </div>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
           <StatCard label="Total rows" value={summary?.totalRows ?? numberValue(batch.row_count, rowList.length)} />
-          <StatCard label="Imported" value={summary?.importedRows ?? numberValue(batch.rows_imported, importedRowsCount.count ?? importedRows.length)} />
+          <StatCard label="Imported" value={importedRowCount} />
           <StatCard label="Active in dashboard" value={isUsableImportStatus(stringValue(batch.status)) && batch.is_active !== false && !batch.deleted_at ? "Yes" : "No"} />
           <StatCard label="Duplicates skipped" value={summary?.rowsSkippedDuplicate ?? numberValue(batch.rows_skipped_duplicate)} />
-          <StatCard label="Needs mapping" value={summary?.needsProductMappingRows ?? needsMappingRows.length} />
-          <StatCard label="Unknown machines" value={summary?.unknownMachineRows ?? unknownMachineRows.length} />
-          <StatCard label="Invalid rows" value={summary?.invalidRows ?? invalidRows.length} />
+          <StatCard label="Needs mapping" value={needsMappingCount} />
+          <StatCard label="Unknown machines" value={unknownMachineCount} />
+          <StatCard label="Invalid rows" value={invalidRowCount} />
           <StatCard label="Saved rows" value={savedRowsValue} />
           <StatCard label="Successful sales" value={isStockReportType(stringValue(batch.report_type)) ? "N/A" : (batch.total_successful_sales ? String(batch.total_successful_sales) : String(summary?.estimatedSuccessfulSales ?? 0))} />
         </div>
@@ -681,7 +698,7 @@ async function VmsImportBatchDetailPageContent({
             <StatCard label="Products updated" value={summary?.productsUpdated ?? 0} />
             <StatCard label="Mappings created" value={summary?.mappingsCreated ?? 0} />
             <StatCard label="Mappings updated" value={summary?.mappingsUpdated ?? 0} />
-            <StatCard label="Mappings needing review" value={summary?.mappingsNeedingReview ?? needsMappingRows.length} />
+            <StatCard label="Mappings needing review" value={summary?.mappingsNeedingReview ?? needsMappingCount} />
             <StatCard label="Rows skipped" value={summary?.skippedRows ?? numberValue(batch.rows_skipped)} />
           </div>
         ) : null}
@@ -954,10 +971,10 @@ async function VmsImportBatchDetailPageContent({
         <section>
           <h2 className="mb-4 text-lg font-semibold text-slate-900">Row status breakdown</h2>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-            <StatCard label="Imported" value={importedRows.length} />
-            <StatCard label="Needs product mapping" value={needsMappingRows.length} />
-            <StatCard label="Unknown machine" value={unknownMachineRows.length} />
-            <StatCard label="Invalid row" value={invalidRows.length} />
+            <StatCard label="Imported" value={importedRowCount} />
+            <StatCard label="Needs product mapping" value={needsMappingCount} />
+            <StatCard label="Unknown machine" value={unknownMachineCount} />
+            <StatCard label="Invalid row" value={invalidRowCount} />
             <StatCard label="Skipped" value={rowList.filter((row) => row.validation_status === "skipped").length} />
           </div>
         </section>
