@@ -810,31 +810,19 @@ export default async function FinanceTransactionsPage({
     normalizeFinanceTransactionRow,
   );
   const count = result.count;
-  const paymentOwnershipResult = baseRows.length
-    ? await supabase
-        .from("purchase_payments")
-        .select("finance_transaction_id")
-        .in("finance_transaction_id", baseRows.map((row) => row.id))
-    : { data: [], error: null };
-  if (paymentOwnershipResult.error) {
-    console.error("[finance] Could not verify supplier-payment ownership for transaction actions", {
-      financial_transaction_ids: baseRows.map((row) => row.id),
-      error: paymentOwnershipResult.error,
-    });
-  }
-  const supplierPaymentFinanceIds = new Set(
-    (paymentOwnershipResult.data ?? [])
-      .map((payment: any) => String(payment.finance_transaction_id ?? ""))
-      .filter(Boolean),
-  );
-
   const maps = {
     purchases: new Map<string, any>(),
     routes: new Map<string, any>(),
     machines: new Map<string, any>(),
     locations: new Map<string, any>(),
   };
-  const [purchases, routes, machines, locations] = await Promise.all([
+  const [paymentOwnershipResult, purchases, routes, machines, locations] = await Promise.all([
+    baseRows.length
+      ? supabase
+          .from("purchase_payments")
+          .select("finance_transaction_id")
+          .in("finance_transaction_id", baseRows.map((row) => row.id))
+      : Promise.resolve({ data: [], error: null }),
     fetchByIds(
       supabase,
       "purchase_orders",
@@ -860,6 +848,17 @@ export default async function FinanceTransactionsPage({
       baseRows.map((row) => row.related_location_id).filter(Boolean),
     ),
   ]);
+  if (paymentOwnershipResult.error) {
+    console.error("[finance] Could not verify supplier-payment ownership for transaction actions", {
+      financial_transaction_ids: baseRows.map((row) => row.id),
+      error: paymentOwnershipResult.error,
+    });
+  }
+  const supplierPaymentFinanceIds = new Set(
+    (paymentOwnershipResult.data ?? [])
+      .map((payment: any) => String(payment.finance_transaction_id ?? ""))
+      .filter(Boolean),
+  );
   purchases.forEach((row: any) => maps.purchases.set(row.id, row));
   routes.forEach((row: any) => maps.routes.set(row.id, row));
   machines.forEach((row: any) => maps.machines.set(row.id, row));
