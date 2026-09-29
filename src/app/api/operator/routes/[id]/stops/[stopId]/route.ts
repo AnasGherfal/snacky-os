@@ -68,7 +68,8 @@ type FillLineRow = { product_id?: string | null; action_type?: string | null; ac
 type MovementRow = { product_id?: string | null; quantity?: unknown; related_route_stop_id?: string | null; reason?: string | null; from_entity_type?: string | null; to_entity_type?: string | null };
 type RouteBagBalanceRow = { product_id?: string | null; signed_quantity?: unknown };
 type ProductOptionRow = { id: string; sku?: string | null; barcode?: string | null; name: string; category?: string | null; brand?: string | null; image_url?: string | null; selling_price?: number | null; current_selling_price_lyd?: number | null; vms_selling_price_lyd?: number | null };
-type MachineProductSignalRow = { product_id?: string | null; slot_code?: string | null; vms_selling_price_lyd?: number | string | null };
+type MachineProductSignalRow = { product_id?: string | null; import_batch_id?: string | null };
+type MachineVmsPriceRow = { product_id?: string | null; slot_code?: string | null; vms_selling_price_lyd?: number | string | null };
 type AdjustmentRow = {
   id: string;
   adjustment_type?: string | null;
@@ -659,7 +660,7 @@ export async function GET(
         .maybeSingle(),
       operationalReadClient
         .from("latest_vms_stock_by_slot")
-        .select("product_id, slot_code, vms_selling_price_lyd")
+        .select("product_id, import_batch_id")
         .eq("machine_id", stop.machine_id)
         .not("product_id", "is", null)
         .limit(500),
@@ -760,8 +761,28 @@ export async function GET(
 
     const activeLineItems = lineItems.filter((item) => item.assignedQty > 0);
     const latestMachineStockRows = latestStockResult.error ? [] : (latestStockResult.data ?? []) as MachineProductSignalRow[];
-    const latestMachineRowsByProduct = new Map<string, MachineProductSignalRow[]>();
-    latestMachineStockRows.forEach((row) => {
+    const activeImportBatchId = latestMachineStockRows
+      .map((row) => String(row.import_batch_id ?? "").trim())
+      .find(Boolean) ?? "";
+    let latestMachinePriceRows: MachineVmsPriceRow[] = [];
+    if (activeImportBatchId) {
+      const { data: machinePriceRows, error: machinePriceError } = await operationalReadClient
+        .from("vms_stock_snapshots")
+        .select("product_id, slot_code, vms_selling_price_lyd")
+        .eq("import_batch_id", activeImportBatchId)
+        .eq("machine_id", stop.machine_id)
+        .eq("source_provider", "xy")
+        .not("product_id", "is", null)
+        .limit(500);
+      if (machinePriceError && !isMissingTable(machinePriceError, "vms_stock_snapshots")) {
+        console.warn("[operator:stop-data] Could not load machine-specific XY prices", { routeId, stopId, error: machinePriceError });
+      } else {
+        latestMachinePriceRows = (machinePriceRows ?? []) as MachineVmsPriceRow[];
+      }
+    }
+
+    const latestMachineRowsByProduct = new Map<string, MachineVmsPriceRow[]>();
+    latestMachinePriceRows.forEach((row) => {
       const productId = String(row.product_id ?? "").trim();
       if (!productId) return;
       const current = latestMachineRowsByProduct.get(productId) ?? [];
