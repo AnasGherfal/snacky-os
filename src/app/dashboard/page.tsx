@@ -699,7 +699,8 @@ async function getDashboardData() {
         .from("vms_sales_dashboard_clean")
         .select("product_id, product_name")
         .eq("cost_missing", true)
-        .limit(1000),
+        .limit(1000)
+        .abortSignal(AbortSignal.timeout(1000)),
       fallback: [],
       errors,
     }),
