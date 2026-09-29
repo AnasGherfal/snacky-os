@@ -9,14 +9,15 @@ const dashboard = fs.readFileSync(path.join(root, "src/app/dashboard/page.tsx"),
 const restockData = fs.readFileSync(path.join(root, "src/lib/restock-priority-data.ts"), "utf8");
 const restockPage = fs.readFileSync(path.join(root, "src/app/restock-priority/page.tsx"), "utf8");
 
-test("dashboard caps only the optional restock sales-velocity query", () => {
-  assert.match(dashboard, /loadRestockPriorityData\(supabase, \{ salesQueryTimeoutMs: 1000, repairMissingRouteStockLines: false \}\)/);
-  assert.match(restockData, /salesQueryTimeoutMs\?: number/);
-  assert.match(restockData, /AbortSignal\.timeout\(options\.salesQueryTimeoutMs\)/);
-  assert.match(restockData, /query\.abortSignal\(/);
+test("dashboard never performs route-stock repair writes while loading restock summary", () => {
+  assert.match(
+    dashboard,
+    /loadRestockPriorityData\(supabase, \{ salesQueryTimeoutMs: 1000, repairMissingRouteStockLines: false \}\)/,
+  );
+  assert.match(restockData, /options\.repairMissingRouteStockLines !== false/);
 });
 
-test("dedicated restock page keeps exact uncapped loading", () => {
+test("dedicated restock page keeps repair behavior by default", () => {
   assert.match(restockPage, /loadRestockPriorityData\(supabase\)/);
-  assert.doesNotMatch(restockPage, /salesQueryTimeoutMs/);
+  assert.doesNotMatch(restockPage, /repairMissingRouteStockLines: false/);
 });

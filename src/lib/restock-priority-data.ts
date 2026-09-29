@@ -151,7 +151,7 @@ async function repairMissingRouteStockLines({
 
 export async function loadRestockPriorityData(
   supabase: SupabaseLike,
-  options: { salesQueryTimeoutMs?: number } = {},
+  options: { salesQueryTimeoutMs?: number; repairMissingRouteStockLines?: boolean } = {},
 ): Promise<RestockPriorityLoadResult> {
   const errors: Record<string, string> = {};
   // Every caller authorizes its page before reaching this server-only helper.
@@ -205,7 +205,7 @@ export async function loadRestockPriorityData(
   Object.entries({ storage: storage.error, recommendations: recommendations.error, routeNeeds: routeNeeds.error, routeStopNeeds: routeStopNeeds.error, machineSlots: machineSlots.error, vmsStock: vmsStock.error, salesVelocity: sales.error })
     .forEach(([key, error]) => { if (error) errors[key] = error; });
 
-  if (!routeNeeds.error && !routeStopNeeds.error) {
+  if (options.repairMissingRouteStockLines !== false && !routeNeeds.error && !routeStopNeeds.error) {
     await repairMissingRouteStockLines({ routeNeeds: routeNeeds.data ?? [], routeStopNeeds: routeStopNeeds.data ?? [], errors });
   }
 
