@@ -60,7 +60,9 @@ async function updateProduct(fd: FormData) {
     brand: String(fd.get("brand") || "") || null,
     supplier_id: String(fd.get("supplier_id") || "") || null,
     case_quantity: Math.max(1, Math.floor(Number(fd.get("case_quantity") || 1) || 1)),
-    image_url: xyImageUrl || (imageUrl ?? currentImageUrl) || null,
+    image_url: xyImageUrl
+      ? (currentImageUrl || String(beforeProduct?.image_url ?? "").trim() || null)
+      : (imageUrl ?? currentImageUrl) || null,
     active: String(fd.get("active") || String(beforeProduct?.active ?? true)) === "true",
   };
   if (costChanged) {
@@ -143,7 +145,7 @@ export default async function EditProductPage({ params, searchParams }: { params
   ]);
   if (!product) notFound();
   const xyImageUrl = String(xyImageMapping?.vms_image_url ?? "").trim();
-  const displayedImageUrl = xyImageUrl || product.image_url || null;
+  const displayedImageUrl = product.image_url || xyImageUrl || null;
   const inventoryRows = (inventory ?? []) as any[];
   const quantityFor = (type: string) => inventoryRows.filter((row) => row.location_type === type).reduce((sum, row) => sum + Number(row.quantity_on_hand ?? 0), 0);
 
@@ -239,7 +241,7 @@ export default async function EditProductPage({ params, searchParams }: { params
           <FormSection title="Product image">
             {xyImageUrl ? (
               <div className="flex flex-col gap-4 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 sm:flex-row sm:items-center">
-                <ProductThumbnail imageUrl={xyImageUrl} name={product.name} size="lg" />
+                <ProductThumbnail imageUrl={displayedImageUrl} name={product.name} size="lg" />
                 <div>
                   <div className="font-semibold text-slate-900">Managed by XY</div>
                   <p className="mt-1 text-sm text-slate-600">
