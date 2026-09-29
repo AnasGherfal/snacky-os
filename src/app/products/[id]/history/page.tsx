@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { ProductThumbnail } from "@/components/ProductThumbnail";
 import { ProductSourceBadge } from "@/components/ProductSourceBadge";
 import { DataTable, EmptyState, ErrorState, PageHeader, SecondaryButton, StatusBadge } from "@/components/ui";
 import { getAuthenticatedSupabaseServerClient, requireCurrentProfileForPath } from "@/lib/auth";
@@ -69,7 +70,7 @@ export default async function ProductHistoryPage({
   const [{ data: product, error: productError }, { data: users }, { data: inventory }, { data: purchaseLines }, { data: salesRows }, { data: priceLogs }, historyCounts] = await Promise.all([
     supabase
       .from("products")
-      .select("id, sku, name, category, case_quantity, active, import_source, last_vms_seen_at, current_selling_price_lyd, selling_price, selling_price_source, current_cost_price_lyd, last_purchase_cost_lyd, average_cost_lyd, last_purchase_date, last_supplier_id, last_supplier:suppliers!products_last_supplier_id_fkey(name), cost_price_source, price_updated_at")
+      .select("id, sku, name, category, case_quantity, active, image_url, import_source, last_vms_seen_at, current_selling_price_lyd, selling_price, selling_price_source, current_cost_price_lyd, last_purchase_cost_lyd, average_cost_lyd, last_purchase_date, last_supplier_id, last_supplier:suppliers!products_last_supplier_id_fkey(name), cost_price_source, price_updated_at")
       .eq("id", id)
       .maybeSingle(),
     supabase.from("team_members").select("id, full_name").order("full_name"),
@@ -259,6 +260,16 @@ export default async function ProductHistoryPage({
           </div>
         }
       />
+
+      <section className="surface-card mb-6 flex flex-col gap-4 sm:flex-row sm:items-center">
+        <ProductThumbnail imageUrl={product.image_url} name={product.name} size="lg" />
+        <div className="min-w-0">
+          <div className="text-lg font-semibold text-slate-900">{product.name}</div>
+          <div className="mt-1 text-sm text-slate-600">{product.sku ?? "No SKU"} · {product.category ?? "Uncategorized"}</div>
+          <div className="mt-2 text-xs font-medium uppercase tracking-wide text-slate-500">Product image</div>
+          <div className="text-sm text-slate-600">Uses the same XY image when a confirmed XY image is available.</div>
+        </div>
+      </section>
 
       {filters.error ? <div className="mb-5 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{filters.error}</div> : null}
 
