@@ -10,7 +10,7 @@ const restockData = fs.readFileSync(path.join(root, "src/lib/restock-priority-da
 const restockPage = fs.readFileSync(path.join(root, "src/app/restock-priority/page.tsx"), "utf8");
 
 test("dashboard caps only the optional restock sales-velocity query", () => {
-  assert.match(dashboard, /loadRestockPriorityData\(supabase, \{ salesQueryTimeoutMs: 1000 \}\)/);
+  assert.match(dashboard, /loadRestockPriorityData\(supabase, \{ salesQueryTimeoutMs: 1000, repairMissingRouteStockLines: false \}\)/);
   assert.match(restockData, /salesQueryTimeoutMs\?: number/);
   assert.match(restockData, /AbortSignal\.timeout\(options\.salesQueryTimeoutMs\)/);
   assert.match(restockData, /query\.abortSignal\(/);
