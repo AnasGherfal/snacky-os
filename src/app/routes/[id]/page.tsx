@@ -197,58 +197,17 @@ export default async function RouteDetailPage({ params, searchParams }: { params
 
   const routeRow: any = route;
   const canReviewRouteInventory = isAdminRole(profile);
-  const routeDiscrepancyResult = canReviewRouteInventory
-    ? await supabase
-        .from("route_inventory_discrepancies")
-        .select("id, route_id, route_stop_id, machine_id, operator_id, product_id, discrepancy_type, recorded_quantity, actual_quantity, difference_quantity, absolute_quantity, status, source_type, source_id, details, detected_at, resolution_type, resolution_notes, resolved_at, correcting_movement_id, updated_at, product:products(name, sku)", { count: "exact" })
-        .eq("route_id", id)
-        .in("status", [...ROUTE_INVENTORY_OPEN_STATUSES])
-        .order("detected_at", { ascending: false })
-        .limit(100)
-    : { data: [], error: null, count: 0 };
-  const routeDiscrepancySchemaMissing = Boolean(
-    routeDiscrepancyResult.error && isMissingRouteInventoryReviewSchema(routeDiscrepancyResult.error),
-  );
-  const routeDiscrepancyLoadError = routeDiscrepancyResult.error && !routeDiscrepancySchemaMissing
-    ? routeDiscrepancyResult.error
-    : null;
-  if (routeDiscrepancyLoadError) {
-    console.error("[routes:detail] Failed to load route inventory discrepancies", { id, error: routeDiscrepancyLoadError });
-  }
-  const routeDiscrepancies = (routeDiscrepancyResult.data ?? []) as Array<RouteInventoryDiscrepancyRow & { product?: { name?: string | null; sku?: string | null } | Array<{ name?: string | null; sku?: string | null }> | null }>;
-  const openRouteDiscrepancies = routeDiscrepancies;
-  const openRouteDiscrepancyCount = routeDiscrepancyResult.count ?? openRouteDiscrepancies.length;
-  let openRouteDiscrepancyUnits: number | null = canReviewRouteInventory && !routeDiscrepancyResult.error ? 0 : null;
-  if (openRouteDiscrepancyUnits !== null && openRouteDiscrepancyCount > 0) {
-    const pageSize = 1_000;
-    let offset = 0;
-    let totalUnits = 0;
-    while (true) {
-      const discrepancyUnitsPage = await supabase
-        .from("route_inventory_discrepancies")
-        .select("id, absolute_quantity")
-        .eq("route_id", id)
-        .in("status", [...ROUTE_INVENTORY_OPEN_STATUSES])
-        .order("id", { ascending: true })
-        .range(offset, offset + pageSize - 1);
-
-      if (discrepancyUnitsPage.error) {
-        console.error("[routes:detail] Failed to load complete route discrepancy unit total", { id, error: discrepancyUnitsPage.error });
-        openRouteDiscrepancyUnits = null;
-        break;
-      }
-
-      const rows = discrepancyUnitsPage.data ?? [];
-      totalUnits += rows.reduce((sum, row) => sum + Math.max(0, Number(row.absolute_quantity ?? 0)), 0);
-      if (rows.length < pageSize) {
-        openRouteDiscrepancyUnits = totalUnits;
-        break;
-      }
-      offset += pageSize;
-    }
-  }
   const supportClient = getSupabaseAdminClient() ?? supabase;
-  const [{ data: operator }, { data: performers }, { data: stops, error: stopsError }, { data: stopItems, error: stopItemsError }, { data: routeStock, error: routeStockError }, { data: fillLines, error: fillLinesError }, { data: pickListItems, error: pickListItemsError }] = await Promise.all([
+  const [routeDiscrepancyResult, { data: operator }, { data: performers }, { data: stops, error: stopsError }, { data: stopItems, error: stopItemsError }, { data: routeStock, error: routeStockError }, { data: fillLines, error: fillLinesError }, { data: pickListItems, error: pickListItemsError }] = await Promise.all([
+    canReviewRouteInventory
+      ? supabase
+          .from("route_inventory_discrepancies")
+          .select("id, route_id, route_stop_id, machine_id, operator_id, product_id, discrepancy_type, recorded_quantity, actual_quantity, difference_quantity, absolute_quantity, status, source_type, source_id, details, detected_at, resolution_type, resolution_notes, resolved_at, correcting_movement_id, updated_at, product:products(name, sku)", { count: "exact" })
+          .eq("route_id", id)
+          .in("status", [...ROUTE_INVENTORY_OPEN_STATUSES])
+          .order("detected_at", { ascending: false })
+          .limit(100)
+      : Promise.resolve({ data: [], error: null, count: 0 }),
     routeRow.operator_id
       ? supabase.from("team_members").select("id, full_name").eq("id", routeRow.operator_id).maybeSingle()
       : Promise.resolve({ data: null }),
@@ -279,6 +238,46 @@ export default async function RouteDetailPage({ params, searchParams }: { params
       .eq("route_id", id)
       .order("created_at", { ascending: true }),
   ]);
+
+  const routeDiscrepancySchemaMissing = Boolean(
+    routeDiscrepancyResult.error && isMissingRouteInventoryReviewSchema(routeDiscrepancyResult.error),
+  );
+  const routeDiscrepancyLoadError = routeDiscrepancyResult.error && !routeDiscrepancySchemaMissing
+    ? routeDiscrepancyResult.error
+    : null;
+  if (routeDiscrepancyLoadError) {
+    console.error("[routes:detail] Failed to load route inventory discrepancies", { id, error: routeDiscrepancyLoadError });
+  }
+  const routeDiscrepancies = (routeDiscrepancyResult.data ?? []) as Array<RouteInventoryDiscrepancyRow & { product?: { name?: string | null; sku?: string | null } | Array<{ name?: string | null; sku?: string | null }> | null }>;
+  const openRouteDiscrepancies = routeDiscrepancies;
+  const openRouteDiscrepancyCount = routeDiscrepancyResult.count ?? openRouteDiscrepancies.length;
+  let openRouteDiscrepancyUnits: number | null = canReviewRouteInventory && !routeDiscrepancyResult.error
+    ? routeDiscrepancies.reduce((sum, row) => sum + Math.max(0, Number(row.absolute_quantity ?? 0)), 0)
+    : null;
+  // The detail query already carries the first 100 discrepancy quantities.
+  // Only fetch extra pages for the exceptional route with more than 100 open rows.
+  if (openRouteDiscrepancyUnits !== null && openRouteDiscrepancyCount > routeDiscrepancies.length) {
+    const pageSize = 1_000;
+    let offset = routeDiscrepancies.length;
+    while (offset < openRouteDiscrepancyCount) {
+      const discrepancyUnitsPage = await supabase
+        .from("route_inventory_discrepancies")
+        .select("id, absolute_quantity")
+        .eq("route_id", id)
+        .in("status", [...ROUTE_INVENTORY_OPEN_STATUSES])
+        .order("detected_at", { ascending: false })
+        .range(offset, offset + pageSize - 1);
+      if (discrepancyUnitsPage.error) {
+        console.error("[routes:detail] Failed to load remaining route discrepancy unit total", { id, error: discrepancyUnitsPage.error });
+        openRouteDiscrepancyUnits = null;
+        break;
+      }
+      const rows = discrepancyUnitsPage.data ?? [];
+      openRouteDiscrepancyUnits += rows.reduce((sum, row) => sum + Math.max(0, Number(row.absolute_quantity ?? 0)), 0);
+      if (rows.length < pageSize) break;
+      offset += rows.length;
+    }
+  }
 
   if (stopsError) console.error("[routes:detail] Failed to load route stops", { id, error: stopsError });
   let routeStopItems = stopItems ?? [];
