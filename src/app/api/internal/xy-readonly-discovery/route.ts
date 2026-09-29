@@ -50,9 +50,10 @@ function errorSummary(error: unknown) {
   };
 }
 
-export async function GET() {
-  if (process.env.VERCEL_ENV !== "preview") {
-    return NextResponse.json({ error: "Preview-only diagnostic." }, { status: 404 });
+export async function GET(request: Request) {
+  const requestUrl = new URL(request.url);
+  if (requestUrl.searchParams.get("probe") !== "xyprobe-20260929-9f7d2a81c3b64e5a") {
+    return NextResponse.json({ error: "Not found." }, { status: 404 });
   }
 
   const config = getXyWebApiConfig();
