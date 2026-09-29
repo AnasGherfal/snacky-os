@@ -1174,6 +1174,7 @@ export default function MachineStopPage() {
           ) : (
             <div className="divide-y divide-slate-200">
               {stopData.refillItems.map((item) => {
+                const product = productById.get(item.productId);
                 const assignedQty = Number(item.assignedQty ?? item.parQty ?? 0);
                 const actualQty = filledQtys[item.productId] ?? 0;
                 const difference = actualQty - assignedQty;
@@ -1181,15 +1182,18 @@ export default function MachineStopPage() {
                 return (
                   <div key={`${item.refillOrderLineId ?? item.productId}-${item.slotCode}`} className="space-y-4 p-4 md:p-6">
                     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-                      <div className="min-w-0 sm:col-span-2 lg:col-span-2">
-                        <p className="text-xs text-slate-500">{tr("Product", "المنتج")}</p>
-                        <p className="break-words font-semibold text-slate-900">{item.productName}</p>
-                        <p className="text-sm text-slate-500">{tr("Slot", "الخانة")} {item.slotCode}</p>
-                        {item.sourceLabel ? (
-                          <span className="mt-1 inline-flex rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800">
-                            {item.sourceLabel}
-                          </span>
-                        ) : null}
+                      <div className="flex min-w-0 items-start gap-3 sm:col-span-2 lg:col-span-2">
+                        <ProductThumbnail imageUrl={product?.imageUrl} name={item.productName} size="md" />
+                        <div className="min-w-0">
+                          <p className="text-xs text-slate-500">{tr("Product", "المنتج")}</p>
+                          <p className="break-words font-semibold text-slate-900">{item.productName}</p>
+                          <p className="text-sm text-slate-500">{tr("Slot", "الخانة")} {item.slotCode}</p>
+                          {item.sourceLabel ? (
+                            <span className="mt-1 inline-flex rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800">
+                              {item.sourceLabel}
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
                       <Metric label={tr("Assigned", "المسند")} value={assignedQty} />
                       <Metric label={tr("Bag available", "المتاح في الحقيبة")} value={item.availableQty ?? 0} />
