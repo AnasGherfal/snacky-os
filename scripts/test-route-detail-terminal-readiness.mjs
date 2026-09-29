@@ -30,11 +30,13 @@ test("leftover timeline completion requires canonical terminal inventory evidenc
   assert.doesNotMatch(leftoversTimelineLine, /isCompletedRouteStatus/);
 });
 
-test("open discrepancy units are summed across every deterministic page", () => {
+test("open discrepancy units reuse the loaded page and fetch every overflow page deterministically", () => {
+  assert.match(compact, /openRouteDiscrepancyUnits[^;]*routeDiscrepancies\.reduce\(\(sum, row\) => sum \+ Math\.max\(0, Number\(row\.absolute_quantity \?\? 0\)\), 0\)/);
+  assert.match(compact, /openRouteDiscrepancyCount > routeDiscrepancies\.length/);
   assert.match(compact, /const pageSize = 1_000/);
-  assert.match(compact, /select\("id, absolute_quantity"\).*?\.order\("id", \{ ascending: true \}\).*?\.range\(offset, offset \+ pageSize - 1\)/);
-  assert.match(compact, /totalUnits \+= rows\.reduce/);
-  assert.match(compact, /if \(rows\.length < pageSize\).*?openRouteDiscrepancyUnits = totalUnits/);
+  assert.match(compact, /let offset = routeDiscrepancies\.length/);
+  assert.match(compact, /select\("id, absolute_quantity"\).*?\.order\("detected_at", \{ ascending: false \}\).*?\.range\(offset, offset \+ pageSize - 1\)/);
+  assert.match(compact, /openRouteDiscrepancyUnits \+= rows\.reduce/);
+  assert.match(compact, /offset \+= rows\.length/);
   assert.match(compact, /openRouteDiscrepancyUnits === null.*?complete unit total could not be loaded/);
-  assert.doesNotMatch(compact, /const openRouteDiscrepancyUnits = openRouteDiscrepancies\.reduce/);
 });
