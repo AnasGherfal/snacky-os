@@ -10,10 +10,9 @@ const restockData = fs.readFileSync(path.join(root, "src/lib/restock-priority-da
 const restockPage = fs.readFileSync(path.join(root, "src/app/restock-priority/page.tsx"), "utf8");
 
 test("dashboard never performs route-stock repair writes while loading restock summary", () => {
-  assert.match(
-    dashboard,
-    /loadRestockPriorityData\(supabase, \{ salesQueryTimeoutMs: 1000, repairMissingRouteStockLines: false \}\)/,
-  );
+  assert.match(dashboard, /salesQueryTimeoutMs: 1000/);
+  assert.match(dashboard, /repairMissingRouteStockLines: false/);
+  assert.match(dashboard, /recommendationsPromise/);
   assert.match(restockData, /options\.repairMissingRouteStockLines !== false/);
 });
 
