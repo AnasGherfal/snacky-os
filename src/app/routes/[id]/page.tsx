@@ -483,6 +483,48 @@ export default async function RouteDetailPage({ params, searchParams }: { params
     ? []
     : (pendingStopInventoryCommitResult.data ?? []) as Array<{ id: string; route_stop_id: string }>;
   const firstPendingStopInventoryCommit = pendingStopInventoryCommits[0] ?? null;
+  const routeActivityQueries: PromiseLike<any>[] = [
+    supabase
+      .from("system_activity_logs")
+      .select("id, action, entity_type, entity_label, actor_name, actor_role, summary, created_at")
+      .eq("entity_type", "route")
+      .eq("entity_id", id)
+      .order("created_at", { ascending: false })
+      .limit(100),
+  ];
+  const cashIds = (cashCollections ?? []).map((cash: any) => cash.id).filter(Boolean);
+  if (stopIds.length) {
+    routeActivityQueries.push(
+      supabase
+        .from("system_activity_logs")
+        .select("id, action, entity_type, entity_label, actor_name, actor_role, summary, created_at")
+        .eq("entity_type", "route_stop")
+        .in("entity_id", stopIds)
+        .order("created_at", { ascending: false })
+        .limit(100),
+    );
+  }
+  if (cashIds.length) {
+    routeActivityQueries.push(
+      supabase
+        .from("system_activity_logs")
+        .select("id, action, entity_type, entity_label, actor_name, actor_role, summary, created_at")
+        .eq("entity_type", "cash_collection")
+        .in("entity_id", cashIds)
+        .order("created_at", { ascending: false })
+        .limit(100),
+    );
+  }
+  routeActivityQueries.push(
+    supabase
+      .from("system_activity_logs")
+      .select("id, action, entity_type, entity_label, actor_name, actor_role, summary, created_at")
+      .contains("metadata", { route_id: id })
+      .order("created_at", { ascending: false })
+      .limit(100),
+  );
+  const routeActivityPromise = Promise.all(routeActivityQueries);
+
   const canRecordMissedPickup = isOwnerAdminRole(profile)
     && Boolean(profile.team_member_id)
     && Boolean(routeRow.operator_id)
@@ -492,29 +534,29 @@ export default async function RouteDetailPage({ params, searchParams }: { params
   let missedPickupProducts: MissedPickupProductOption[] = [];
   let missedPickupDataError = "";
   if (canRecordMissedPickup) {
-    const storageResult = await supabase
-      .from("storage_locations")
-      .select("id, name, location_type")
-      .eq("active", true)
-      .in("location_type", ["main_storage", "vehicle", "temporary", "other"])
-      .order("location_type")
-      .order("name");
+    const [storageResult, catalogResult] = await Promise.all([
+      supabase
+        .from("storage_locations")
+        .select("id, name, location_type")
+        .eq("active", true)
+        .in("location_type", ["main_storage", "vehicle", "temporary", "other"])
+        .order("location_type")
+        .order("name"),
+      supabase.from("products").select("id, name, sku, barcode, category, brand, image_url").eq("active", true).order("name"),
+    ]);
     if (storageResult.error) {
       console.error("[routes:detail] Failed to load storage locations for missed pickup recorder", { id, error: storageResult.error });
       missedPickupDataError = tr(locale, "Storage locations could not be loaded for this correction.", "تعذر تحميل مواقع التخزين لهذا التصحيح.");
     } else {
       missedPickupStorages = (storageResult.data ?? []).map((storage: { id: string; name: string | null }) => ({ id: String(storage.id), name: String(storage.name ?? tr(locale, "Storage", "المخزن")) }));
       const activeStorageIds = missedPickupStorages.map((storage) => storage.id);
-      const [catalogResult, inventoryResult] = await Promise.all([
-        supabase.from("products").select("id, name, sku, barcode, category, brand, image_url").eq("active", true).order("name"),
-        activeStorageIds.length
-          ? supabase
-              .from("current_inventory_by_location")
-              .select("product_id, location_id, quantity_on_hand")
-              .eq("location_type", "storage")
-              .in("location_id", activeStorageIds)
-          : Promise.resolve({ data: [], error: null }),
-      ]);
+      const inventoryResult = activeStorageIds.length
+        ? await supabase
+            .from("current_inventory_by_location")
+            .select("product_id, location_id, quantity_on_hand")
+            .eq("location_type", "storage")
+            .in("location_id", activeStorageIds)
+        : { data: [], error: null };
       if (catalogResult.error || inventoryResult.error) {
         console.error("[routes:detail] Failed to load products for missed pickup recorder", { id, catalogError: catalogResult.error, inventoryError: inventoryResult.error });
         missedPickupDataError = tr(locale, "The active product catalog or storage balance could not be loaded.", "تعذر تحميل المنتجات النشطة أو رصيد المخزون.");
@@ -602,47 +644,7 @@ export default async function RouteDetailPage({ params, searchParams }: { params
       salesTotal: sales.reduce((sum: number, sale: any) => sum + Number(sale.total_amount_lyd ?? 0), 0),
     };
   });
-  const routeActivityQueries: PromiseLike<any>[] = [
-    supabase
-      .from("system_activity_logs")
-      .select("id, action, entity_type, entity_label, actor_name, actor_role, summary, created_at")
-      .eq("entity_type", "route")
-      .eq("entity_id", id)
-      .order("created_at", { ascending: false })
-      .limit(100),
-  ];
-  const cashIds = (cashCollections ?? []).map((cash: any) => cash.id).filter(Boolean);
-  if (stopIds.length) {
-    routeActivityQueries.push(
-      supabase
-        .from("system_activity_logs")
-        .select("id, action, entity_type, entity_label, actor_name, actor_role, summary, created_at")
-        .eq("entity_type", "route_stop")
-        .in("entity_id", stopIds)
-        .order("created_at", { ascending: false })
-        .limit(100),
-    );
-  }
-  if (cashIds.length) {
-    routeActivityQueries.push(
-      supabase
-        .from("system_activity_logs")
-        .select("id, action, entity_type, entity_label, actor_name, actor_role, summary, created_at")
-        .eq("entity_type", "cash_collection")
-        .in("entity_id", cashIds)
-        .order("created_at", { ascending: false })
-        .limit(100),
-    );
-  }
-  routeActivityQueries.push(
-    supabase
-      .from("system_activity_logs")
-      .select("id, action, entity_type, entity_label, actor_name, actor_role, summary, created_at")
-      .contains("metadata", { route_id: id })
-      .order("created_at", { ascending: false })
-      .limit(100),
-  );
-  const activityResults = await Promise.all(routeActivityQueries);
+  const activityResults = await routeActivityPromise;
   activityResults.forEach((result: any) => {
     if (result.error) console.error("[routes:detail] Failed to load route activity", { id, error: result.error });
   });
