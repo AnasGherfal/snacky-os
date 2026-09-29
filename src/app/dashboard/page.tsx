@@ -1,6 +1,7 @@
 import Link from "next/link";
+import { Suspense } from "react";
+import { DashboardForecastSkeleton, DashboardRefillForecastSection } from "@/app/dashboard/DashboardRefillForecastSection";
 import { KpiSection } from "@/components/KpiDashboard";
-import { RefillForecastDashboard } from "@/components/RefillForecastDashboard";
 import { StatCard } from "@/components/StatCard";
 import { VmsDataSourceCard } from "@/components/VmsDataSourceCard";
 import { EmptyState, PageHeader, PrimaryButton, SecondaryButton, StatusBadge } from "@/components/ui";
@@ -13,13 +14,6 @@ import {
   type FinanceHealthDiagnostics,
 } from "@/lib/finance-health";
 import { lyd } from "@/lib/format";
-import {
-  buildMachineRefillForecasts,
-  type MachineRefillForecast,
-  type RefillFillLine,
-  type RefillMachine,
-  type RefillStockHistory,
-} from "@/lib/refill-forecast";
 import { restockCounts, type RestockPriorityItem } from "@/lib/restock-priority";
 import {
   loadRestockPriorityData,
@@ -121,7 +115,6 @@ type DashboardData = {
   recentIssues: IssueRow[];
   criticalIssueCount: number;
   refillRows: RefillRow[];
-  refillForecasts: MachineRefillForecast[];
   missingCostRows: MissingCostRow[];
   vmsBatchRows: VmsDashboardBatch[];
   restockItems: RestockPriorityItem[];
@@ -497,39 +490,6 @@ async function loadIssueRows(
     .limit(6);
 }
 
-async function loadForecastMachines(
-  supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>,
-) {
-  const enriched = await supabase
-    .from("machines")
-    .select("id, name, machine_code, status, refill_open_days, refill_critical_percent, refill_today_percent, refill_target_percent, refill_minimum_units, refill_manual_daily_units")
-    .eq("status", "active")
-    .order("name");
-
-  if (!enriched.error || !isMissingColumn(enriched.error, [
-    "refill_open_days",
-    "refill_critical_percent",
-    "refill_today_percent",
-    "refill_target_percent",
-    "refill_minimum_units",
-    "refill_manual_daily_units",
-  ])) return enriched;
-
-  return supabase
-    .from("machines")
-    .select("id, name, machine_code, status")
-    .eq("status", "active")
-    .order("name");
-}
-
-function refillForecastClock() {
-  const now = new Date();
-  return {
-    now,
-    since: new Date(now.getTime() - 28 * 24 * 60 * 60 * 1000).toISOString(),
-  };
-}
-
 async function getDashboardData() {
   const profile = await requireCurrentProfileForPath("/dashboard");
   const canReviewRouteInventory = isAdminRole(profile);
@@ -540,7 +500,6 @@ async function getDashboardData() {
   const today = dateOnlyUtc(new Date());
   const weekStart = weekStartUtc(new Date());
   const monthStart = monthStartUtc(today);
-  const forecastClock = refillForecastClock();
   const errors: DashboardErrors = {};
 
   const [
@@ -553,10 +512,6 @@ async function getDashboardData() {
     recentIssues,
     criticalIssueCount,
     refillRows,
-    forecastMachines,
-    forecastLatestStock,
-    forecastStockHistory,
-    forecastFillLines,
     missingCostRows,
     vmsBatchRows,
     restockPriority,
@@ -647,51 +602,6 @@ async function getDashboardData() {
       fallback: [],
       errors,
     }),
-    safeDashboardQuery<RefillMachine[]>({
-      key: "refillForecast",
-      label: "machines refill forecast policies",
-      promise: loadForecastMachines(supabase),
-      fallback: [],
-      errors,
-    }),
-    safeDashboardQuery<RefillStockHistory[]>({
-      key: "refillForecast",
-      label: "latest_vms_stock_by_slot refill forecast",
-      promise: supabase
-        .from("latest_vms_stock_by_slot")
-        .select("machine_id, product_id, slot_code, current_qty, capacity, captured_at, import_batch_id")
-        .eq("source_provider", "xy"),
-      fallback: [],
-      errors,
-    }),
-    safeDashboardQuery<RefillStockHistory[]>({
-      key: "refillForecast",
-      label: "vms_stock_snapshots refill trend",
-      promise: supabase
-        .from("vms_stock_snapshots")
-        .select("machine_id, product_id, slot_code, current_qty, capacity, captured_at, import_batch_id, sync_run_id, batch:vms_import_batches!inner(status, deleted_at)")
-        .eq("source_provider", "xy")
-        .eq("import_row_status", "imported")
-        .in("batch.status", ["imported", "imported_with_warnings"])
-        .is("batch.deleted_at", null)
-        .gte("captured_at", forecastClock.since)
-        .order("captured_at", { ascending: true })
-        .limit(10000),
-      fallback: [],
-      errors,
-    }),
-    safeDashboardQuery<RefillFillLine[]>({
-      key: "refillForecast",
-      label: "route_stop_fill_lines refill trend",
-      promise: supabase
-        .from("route_stop_fill_lines")
-        .select("machine_id, product_id, actual_qty, created_at")
-        .gte("created_at", forecastClock.since)
-        .order("created_at", { ascending: true })
-        .limit(5000),
-      fallback: [],
-      errors,
-    }),
     safeDashboardQuery<MissingCostRow[]>({
       key: "missingCost",
       label: "vms_sales_dashboard_clean missing cost products",
@@ -748,29 +658,14 @@ async function getDashboardData() {
     ?? currentMonthlyRevenueBatch?.detected_max_datetime?.slice(0, 10)
     ?? null;
 
-  const latestXyBatchIds = new Set(
-    forecastLatestStock.data.map((row) => textValue(row.import_batch_id)).filter((id): id is string => Boolean(id)),
+  const activeXyStockBatchIds = new Set(
+    activeStockBatches(vmsBatchRows.data)
+      .map((batch) => textValue(batch.id))
+      .filter((id): id is string => Boolean(id)),
   );
-  const xyRefillRows = latestXyBatchIds.size > 0
-    ? refillRows.data.filter((row) => row.import_batch_id && latestXyBatchIds.has(row.import_batch_id))
-    : [];
-  const storageCoverageByMachine = new Map<string, { machineId: string; requestedUnits: number; fillableUnits: number }>();
-  xyRefillRows.forEach((row) => {
-    const machineId = textValue(row.machine_id);
-    if (!machineId) return;
-    const current = storageCoverageByMachine.get(machineId) ?? { machineId, requestedUnits: 0, fillableUnits: 0 };
-    current.requestedUnits += Math.max(0, numberValue(row.suggested_qty));
-    current.fillableUnits += Math.max(0, numberValue(row.final_qty_to_take));
-    storageCoverageByMachine.set(machineId, current);
-  });
-  const refillForecasts = buildMachineRefillForecasts({
-    machines: forecastMachines.data,
-    latestStock: forecastLatestStock.data,
-    stockHistory: forecastStockHistory.data,
-    fills: forecastFillLines.data,
-    storageCoverage: Array.from(storageCoverageByMachine.values()),
-    now: forecastClock.now,
-  });
+  const xyRefillRows = activeXyStockBatchIds.size > 0
+    ? refillRows.data.filter((row) => row.import_batch_id && activeXyStockBatchIds.has(row.import_batch_id))
+    : refillRows.data;
 
   return {
     data: {
@@ -787,7 +682,6 @@ async function getDashboardData() {
       recentIssues: recentIssues.data,
       criticalIssueCount,
       refillRows: xyRefillRows,
-      refillForecasts,
       missingCostRows: missingCostRows.data,
       vmsBatchRows: vmsBatchRows.data,
       restockItems: restockPriority.items,
@@ -1014,7 +908,9 @@ function DashboardPageContent({ data, t, locale }: { data: DashboardData; t: Das
             <div className="mt-4 flex flex-wrap gap-2"><SecondaryButton href="/refills">{localize("Open refill dashboard", "فتح لوحة التعبئة")}</SecondaryButton><SecondaryButton href="/vms-import/sources">{localize("Check XY data", "فحص بيانات XY")}</SecondaryButton></div>
           </section>
         ) : (
-          <RefillForecastDashboard forecasts={data.refillForecasts} variant="overview" locale={locale} />
+          <Suspense fallback={<DashboardForecastSkeleton locale={locale} />}>
+            <DashboardRefillForecastSection locale={locale} refillRows={data.refillRows} />
+          </Suspense>
         )}
       </div>
 
