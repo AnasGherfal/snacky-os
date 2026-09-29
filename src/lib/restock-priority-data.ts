@@ -149,7 +149,10 @@ async function repairMissingRouteStockLines({
   }
 }
 
-export async function loadRestockPriorityData(supabase: SupabaseLike): Promise<RestockPriorityLoadResult> {
+export async function loadRestockPriorityData(
+  supabase: SupabaseLike,
+  options: { salesQueryTimeoutMs?: number } = {},
+): Promise<RestockPriorityLoadResult> {
   const errors: Record<string, string> = {};
   // Every caller authorizes its page before reaching this server-only helper.
   // Use one protected read client for the internal operational aggregates so
@@ -186,7 +189,16 @@ export async function loadRestockPriorityData(supabase: SupabaseLike): Promise<R
     }),
     safeSupabaseQuery<RestockSalesRow>({
       label: "restock-priority.kpi_product_monthly",
-      promise: inventoryReadClient.from("kpi_product_monthly").select("product_id, product_name, sales_month, units_sold, stock_velocity_units_per_day").order("sales_month", { ascending: false }).limit(2000),
+      promise: (() => {
+        const query = inventoryReadClient
+          .from("kpi_product_monthly")
+          .select("product_id, product_name, sales_month, units_sold, stock_velocity_units_per_day")
+          .order("sales_month", { ascending: false })
+          .limit(2000);
+        return options.salesQueryTimeoutMs
+          ? query.abortSignal(AbortSignal.timeout(options.salesQueryTimeoutMs))
+          : query;
+      })(),
     }),
   ]);
 
