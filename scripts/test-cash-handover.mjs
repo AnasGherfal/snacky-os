@@ -105,3 +105,18 @@ test('unidentified records stay visible and never substitute a generated ID for 
   assert.match(ui, /do not invent a box number or create another collection/);
   assert.match(sql, /'reference_missing',coalesce\(c\.cash_bag_id,''\)/);
 });
+
+test('operator sees one Cash workflow instead of duplicate cash menus', () => {
+  const sidebar = read('src/components/Sidebar.tsx');
+  const workspace = read('src/components/CashHandlingWorkspace.tsx');
+  const unifiedPage = read('src/app/cash-handling/page.tsx');
+  const legacyRemoval = read('src/app/cash-collections/new/page.tsx');
+  const actions = read('src/lib/cash-actions.ts');
+  assert.match(sidebar, /operatorCashItem/);
+  assert.doesNotMatch(sidebar, /cashRemovalItem/);
+  assert.match(workspace, /href="\/cash-handling\?collect=1"/);
+  assert.doesNotMatch(workspace, /href="\/cash-collections\/new"/);
+  assert.match(unifiedPage, /<CashRemovalForm/);
+  assert.match(legacyRemoval, /redirect\(\`\/cash-handling\?\$\{params\.toString\(\)\}\`\)/);
+  assert.match(actions, /redirect\(\`\/cash-handling\?id=\$\{collectionId\}/);
+});
