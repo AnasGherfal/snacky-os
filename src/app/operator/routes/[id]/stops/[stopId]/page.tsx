@@ -644,6 +644,11 @@ export default function MachineStopPage() {
   const [xyChangeSaving, setXyChangeSaving] = useState(false);
   const [xyChangeError, setXyChangeError] = useState("");
   const [xyChangeSuccess, setXyChangeSuccess] = useState("");
+  const [xySwapSourceSlotCode, setXySwapSourceSlotCode] = useState<string | null>(null);
+  const [xySwapTargetSlotCode, setXySwapTargetSlotCode] = useState("");
+  const [xySwapSaving, setXySwapSaving] = useState(false);
+  const [xySwapError, setXySwapError] = useState("");
+  const [xySwapSuccess, setXySwapSuccess] = useState("");
 
   useEffect(() => {
     const handlePersistedMachinePhoto = (event: Event) => {
@@ -834,6 +839,77 @@ export default function MachineStopPage() {
       setXyChangeSaving(false);
     }
   }, [fullProductCatalog, routeId, stopData, stopId, xyEditSlotCode, xyReplacementProductId]);
+
+  const applyXySlotSwap = useCallback(async () => {
+    if (!routeId || !stopId || !xySwapSourceSlotCode || !xySwapTargetSlotCode || !stopData) return;
+
+    const sourceSlot = (stopData.machineLayout ?? []).find((slot) => slot.slotCode === xySwapSourceSlotCode) ?? null;
+    const targetSlot = (stopData.machineLayout ?? []).find((slot) => slot.slotCode === xySwapTargetSlotCode) ?? null;
+    if (!sourceSlot?.vmsProductId || !targetSlot?.vmsProductId) {
+      setXySwapError(tr("Step 3 only swaps two occupied XY slots.", "الخطوة 3 تبدّل فقط بين خانتين مشغولتين في XY."));
+      return;
+    }
+
+    setXySwapSaving(true);
+    setXySwapError("");
+    setXySwapSuccess("");
+    try {
+      const response = await fetchWithTimeout(`/api/operator/routes/${routeId}/stops/${stopId}/xy-slot-swap`, {
+        method: "POST",
+        headers: { "content-type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ slotCodeA: xySwapSourceSlotCode, slotCodeB: xySwapTargetSlotCode }),
+      }, 45000);
+      const parsed = await readServerResponse(response, {
+        operation: "operator_xy_slot_swap",
+        route_id: routeId,
+        route_stop_id: stopId,
+        slot_a: xySwapSourceSlotCode,
+        slot_b: xySwapTargetSlotCode,
+      });
+      const payload = parsed.payload as Record<string, unknown> | null;
+      if (!response.ok || payload?.verified !== true) {
+        throw new Error(responseMessage(payload) || tr("XY did not verify this swap.", "لم يؤكد XY عملية التبديل."));
+      }
+
+      setStopData((current) => {
+        if (!current) return current;
+        const sourceBefore = (current.machineLayout ?? []).find((slot) => slot.slotCode === xySwapSourceSlotCode) ?? null;
+        const targetBefore = (current.machineLayout ?? []).find((slot) => slot.slotCode === xySwapTargetSlotCode) ?? null;
+        if (!sourceBefore || !targetBefore) return current;
+
+        const copyProductIdentity = (slot: MachineLayoutSlot, donor: MachineLayoutSlot): MachineLayoutSlot => ({
+          ...slot,
+          productId: donor.productId,
+          productName: donor.productName,
+          vmsProductId: donor.vmsProductId,
+          vmsProductName: donor.vmsProductName,
+          imageUrl: donor.imageUrl,
+          priceLyd: donor.priceLyd,
+          mismatch: Boolean(slot.plannedProductId && slot.plannedProductId !== donor.productId),
+        });
+
+        return {
+          ...current,
+          machineLayout: (current.machineLayout ?? []).map((slot) => {
+            if (slot.slotCode === xySwapSourceSlotCode) return copyProductIdentity(slot, targetBefore);
+            if (slot.slotCode === xySwapTargetSlotCode) return copyProductIdentity(slot, sourceBefore);
+            return slot;
+          }),
+        };
+      });
+
+      setXySwapSuccess(tr(
+        `Slots ${xySwapSourceSlotCode} and ${xySwapTargetSlotCode} were swapped in XY and verified.`,
+        `تم تبديل الخانتين ${xySwapSourceSlotCode} و ${xySwapTargetSlotCode} في XY والتحقق منهما.`,
+      ));
+      setXySwapSourceSlotCode(null);
+      setXySwapTargetSlotCode("");
+    } catch (err) {
+      setXySwapError(err instanceof Error ? err.message : tr("Could not swap these XY slots.", "تعذر تبديل خانات XY."));
+    } finally {
+      setXySwapSaving(false);
+    }
+  }, [routeId, stopData, stopId, xySwapSourceSlotCode, xySwapTargetSlotCode]);
 
   const machineQuantityItems = useMemo(() => (stopData?.refillItems ?? []).map((item) => ({
     productId: item.productId,
@@ -1374,20 +1450,44 @@ export default function MachineStopPage() {
                                 {tr("Stock", "المخزون")} {slot.currentQty}/{slot.capacity || "—"}
                               </div>
 
-                              <button
-                                type="button"
-                                className={`mt-2 w-full rounded-lg border px-2 py-1.5 text-[11px] font-bold transition ${isEmpty
-                                  ? "border-slate-500 bg-slate-700 text-slate-100 hover:bg-slate-600"
-                                  : "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"}`}
-                                onClick={() => {
-                                  setXyEditSlotCode(slot.slotCode);
-                                  setXyReplacementProductId("");
-                                  setXyChangeError("");
-                                  setXyChangeSuccess("");
-                                }}
-                              >
-                                {tr("Change product", "تغيير المنتج")}
-                              </button>
+                              <div className={`mt-2 grid gap-1.5 ${isEmpty ? "grid-cols-1" : "grid-cols-2"}`}>
+                                <button
+                                  type="button"
+                                  className={`rounded-lg border px-2 py-1.5 text-[11px] font-bold transition ${isEmpty
+                                    ? "border-slate-500 bg-slate-700 text-slate-100 hover:bg-slate-600"
+                                    : "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"}`}
+                                  onClick={() => {
+                                    setXySwapSourceSlotCode(null);
+                                    setXySwapTargetSlotCode("");
+                                    setXyEditSlotCode(slot.slotCode);
+                                    setXyReplacementProductId("");
+                                    setXyChangeError("");
+                                    setXyChangeSuccess("");
+                                    setXySwapError("");
+                                    setXySwapSuccess("");
+                                  }}
+                                >
+                                  {tr("Change", "تغيير")}
+                                </button>
+                                {!isEmpty ? (
+                                  <button
+                                    type="button"
+                                    className="rounded-lg border border-slate-300 bg-slate-50 px-2 py-1.5 text-[11px] font-bold text-slate-800 transition hover:bg-slate-100"
+                                    onClick={() => {
+                                      setXyEditSlotCode(null);
+                                      setXyReplacementProductId("");
+                                      setXySwapSourceSlotCode(slot.slotCode);
+                                      setXySwapTargetSlotCode("");
+                                      setXySwapError("");
+                                      setXySwapSuccess("");
+                                      setXyChangeError("");
+                                      setXyChangeSuccess("");
+                                    }}
+                                  >
+                                    {tr("Swap", "تبديل")}
+                                  </button>
+                                ) : null}
+                              </div>
 
                               {slot.mismatch ? (
                                 <div className="mt-2 rounded-lg bg-amber-100 px-2 py-1.5 text-center text-[10px] font-bold leading-4 text-amber-900">
@@ -1410,6 +1510,113 @@ export default function MachineStopPage() {
               {xyChangeSuccess}
             </div>
           ) : null}
+          {xySwapSuccess ? (
+            <div className="border-t border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">
+              {xySwapSuccess}
+            </div>
+          ) : null}
+
+          {xySwapSourceSlotCode ? (() => {
+            const sourceSlot = (stopData.machineLayout ?? []).find((slot) => slot.slotCode === xySwapSourceSlotCode) ?? null;
+            const targetSlot = (stopData.machineLayout ?? []).find((slot) => slot.slotCode === xySwapTargetSlotCode) ?? null;
+            const availableTargets = (stopData.machineLayout ?? []).filter((slot) =>
+              slot.slotCode !== xySwapSourceSlotCode && Boolean(slot.vmsProductId),
+            );
+
+            return (
+              <div className="border-t border-slate-200 bg-slate-50 p-4 md:p-6">
+                <div className="rounded-xl border border-slate-300 bg-white p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-semibold text-slate-900">
+                        {tr(`Swap slot ${xySwapSourceSlotCode}`, `تبديل الخانة ${xySwapSourceSlotCode}`)}
+                      </h3>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {tr("Choose another occupied slot. Product identity and price will swap in XY.", "اختر خانة مشغولة أخرى. سيتم تبديل المنتج والسعر في XY.")}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      disabled={xySwapSaving}
+                      onClick={() => {
+                        setXySwapSourceSlotCode(null);
+                        setXySwapTargetSlotCode("");
+                        setXySwapError("");
+                      }}
+                    >
+                      {tr("Close", "إغلاق")}
+                    </button>
+                  </div>
+
+                  <div className="mt-4">
+                    <label className="block text-sm font-medium text-slate-800">{tr("Swap with slot", "تبديل مع الخانة")}</label>
+                    <select
+                      value={xySwapTargetSlotCode}
+                      onChange={(event) => setXySwapTargetSlotCode(event.target.value)}
+                      className="field-input mt-1"
+                    >
+                      <option value="">{tr("Choose occupied slot", "اختر خانة مشغولة")}</option>
+                      {availableTargets.map((slot) => (
+                        <option key={slot.slotCode} value={slot.slotCode}>
+                          {slot.slotCode} · {slot.productName} · {slot.priceLyd ? Number(slot.priceLyd).toFixed(2) : "—"} {tr("LYD", "د.ل")}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {sourceSlot && targetSlot ? (
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">{tr("Slot", "الخانة")} {sourceSlot.slotCode}</div>
+                        <div className="mt-2 flex items-center gap-3">
+                          <ProductThumbnail imageUrl={sourceSlot.imageUrl} name={sourceSlot.productName} size="md" />
+                          <div className="min-w-0">
+                            <div className="font-semibold text-slate-900">{sourceSlot.productName}</div>
+                            <div className="text-xs text-slate-500">→ {targetSlot.productName}</div>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">{tr("Slot", "الخانة")} {targetSlot.slotCode}</div>
+                        <div className="mt-2 flex items-center gap-3">
+                          <ProductThumbnail imageUrl={targetSlot.imageUrl} name={targetSlot.productName} size="md" />
+                          <div className="min-w-0">
+                            <div className="font-semibold text-slate-900">{targetSlot.productName}</div>
+                            <div className="text-xs text-slate-500">→ {sourceSlot.productName}</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs font-medium leading-5 text-amber-900">
+                    {tr(
+                      "This step swaps product assignment and selling price in XY. Stock counts stay attached to their physical slots, so confirm the actual refill quantities for both lanes.",
+                      "هذه الخطوة تبدّل المنتج وسعر البيع في XY. كميات المخزون تبقى مرتبطة بالخانات الفعلية، لذلك تأكد من كميات التعبئة الفعلية للخانتين.",
+                    )}
+                  </div>
+
+                  {xySwapError ? (
+                    <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">
+                      {xySwapError}
+                    </div>
+                  ) : null}
+
+                  <button
+                    type="button"
+                    className="btn-primary mt-4 w-full"
+                    disabled={xySwapSaving || !xySwapTargetSlotCode}
+                    onClick={() => void applyXySlotSwap()}
+                  >
+                    {xySwapSaving
+                      ? tr("Swapping in XY and verifying both...", "جاري التبديل في XY والتحقق من الخانتين...")
+                      : tr("Swap in XY and verify both", "تبديل في XY والتحقق من الخانتين")}
+                  </button>
+                </div>
+              </div>
+            );
+          })() : null}
 
           {xyEditSlotCode ? (() => {
             const currentSlot = (stopData.machineLayout ?? []).find((slot) => slot.slotCode === xyEditSlotCode) ?? null;
