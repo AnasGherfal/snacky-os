@@ -146,6 +146,22 @@ interface ProductOption {
   lastKnownSalePriceLyd?: number | null;
 }
 
+interface MachineLayoutSlot {
+  slotCode: string;
+  productId: string | null;
+  productName: string;
+  vmsProductId: string | null;
+  vmsProductName: string | null;
+  imageUrl: string | null;
+  currentQty: number;
+  capacity: number;
+  priceLyd: number | null;
+  capturedAt: string | null;
+  plannedProductId: string | null;
+  plannedProductName: string | null;
+  mismatch: boolean;
+}
+
 interface InventoryAdjustmentRow {
   id: string;
   adjustmentType: InventoryAdjustmentType | string;
@@ -181,6 +197,7 @@ interface StopData {
   stopStatus: string;
   routeStatus: string;
   refillItems: StopRefillItem[];
+  machineLayout?: MachineLayoutSlot[];
   extraItems?: ExtraProductLine[];
   productOptions: ProductOption[];
   productCatalogDeferred?: boolean;
@@ -1157,6 +1174,68 @@ export default function MachineStopPage() {
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
 {t("Record what you actually filled, then finish the stop. Leftovers are handled later on the route leftovers screen, so you do not need to invent fake leftover numbers here.")}
         </div>
+
+        <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+          <div className="border-b border-slate-200 bg-slate-50 p-4 md:p-6">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold">{tr("Live machine map", "خريطة الجهاز المباشرة")}</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  {tr("Current XY slot layout, stock, capacity and selling price.", "توزيع الخانات الحالي من XY مع المخزون والسعة وسعر البيع.")}
+                </p>
+              </div>
+              <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">
+                {tr("Source: XY", "المصدر: XY")}
+              </div>
+            </div>
+          </div>
+          {(stopData.machineLayout ?? []).length === 0 ? (
+            <div className="p-4 md:p-6">
+              <EmptyState
+                title={tr("No live XY slot map available", "لا توجد خريطة خانات مباشرة من XY")}
+                body={tr("The refill list still works. Refresh after the next XY stock sync.", "قائمة التعبئة ما زالت تعمل. حدّث بعد مزامنة XY القادمة.")}
+              />
+            </div>
+          ) : (
+            <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 md:p-6">
+              {(stopData.machineLayout ?? []).map((slot) => (
+                <div
+                  key={slot.slotCode}
+                  className={`rounded-xl border p-3 ${slot.mismatch ? "border-amber-300 bg-amber-50/70" : "border-slate-200 bg-white"}`}
+                >
+                  <div className="flex items-start gap-3">
+                    <ProductThumbnail imageUrl={slot.imageUrl} name={slot.productName} size="md" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                          {tr("Slot", "الخانة")} {slot.slotCode}
+                        </span>
+                        <span className="text-sm font-black text-emerald-800">
+                          {slot.priceLyd ? `${Number(slot.priceLyd).toFixed(2)} ${tr("LYD", "د.ل")}` : tr("No XY price", "لا يوجد سعر XY")}
+                        </span>
+                      </div>
+                      <div className="mt-1 truncate font-semibold text-slate-900">{slot.productName}</div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        {tr("Stock", "المخزون")} {slot.currentQty}/{slot.capacity || "—"}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className="h-full rounded-full bg-emerald-600"
+                      style={{ width: `${slot.capacity > 0 ? Math.min(100, Math.max(0, (slot.currentQty / slot.capacity) * 100)) : 0}%` }}
+                    />
+                  </div>
+                  {slot.mismatch ? (
+                    <div className="mt-3 rounded-lg border border-amber-200 bg-amber-100/70 px-3 py-2 text-xs font-semibold text-amber-900">
+                      {tr("Plan mismatch:", "اختلاف عن الخطة:")} {slot.plannedProductName ?? tr("another product", "منتج آخر")}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
 
         <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
           <div className="border-b border-slate-200 bg-slate-50 p-4 md:p-6">

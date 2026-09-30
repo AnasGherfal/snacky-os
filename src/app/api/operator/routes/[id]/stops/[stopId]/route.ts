@@ -68,7 +68,16 @@ type FillLineRow = { product_id?: string | null; action_type?: string | null; ac
 type MovementRow = { product_id?: string | null; quantity?: unknown; related_route_stop_id?: string | null; reason?: string | null; from_entity_type?: string | null; to_entity_type?: string | null };
 type RouteBagBalanceRow = { product_id?: string | null; signed_quantity?: unknown };
 type ProductOptionRow = { id: string; sku?: string | null; barcode?: string | null; name: string; category?: string | null; brand?: string | null; image_url?: string | null; selling_price?: number | null; current_selling_price_lyd?: number | null; vms_selling_price_lyd?: number | null };
-type MachineProductSignalRow = { product_id?: string | null; import_batch_id?: string | null };
+type MachineProductSignalRow = {
+  product_id?: string | null;
+  import_batch_id?: string | null;
+  slot_code?: string | null;
+  vms_product_id?: string | null;
+  vms_product_name?: string | null;
+  current_qty?: number | string | null;
+  capacity?: number | string | null;
+  captured_at?: string | null;
+};
 type MachineVmsPriceRow = { product_id?: string | null; slot_code?: string | null; vms_selling_price_lyd?: number | string | null };
 type AdjustmentRow = {
   id: string;
@@ -660,7 +669,7 @@ export async function GET(
         .maybeSingle(),
       operationalReadClient
         .from("latest_vms_stock_by_slot")
-        .select("product_id, import_batch_id")
+        .select("product_id, import_batch_id, slot_code, vms_product_id, vms_product_name, current_qty, capacity, captured_at")
         .eq("machine_id", stop.machine_id)
         .not("product_id", "is", null)
         .limit(500),
@@ -874,6 +883,55 @@ export async function GET(
       lastKnownSalePriceLyd: lastKnownSalePriceByProduct.get(String(product.id)) ?? null,
     }));
     const productOptionById = new Map(productOptions.map((product) => [product.id, product]));
+    const plannedBySlot = new Map<string, { productId: string; productName: string }>();
+    activeLineItems.forEach((item) => {
+      const allocationCodes = item.slotAllocations
+        .map((allocation) => String(allocation.slot_code ?? "").trim())
+        .filter(Boolean);
+      const fallbackCodes = String(item.slotCode ?? "")
+        .split(",")
+        .map((slotCode) => slotCode.trim())
+        .filter((slotCode) => slotCode && slotCode !== "VMS item");
+      new Set([...allocationCodes, ...fallbackCodes]).forEach((slotCode) => {
+        plannedBySlot.set(slotCode, { productId: String(item.productId), productName: item.productName });
+      });
+    });
+
+    const latestPriceBySlot = new Map<string, number>();
+    latestMachinePriceRows.forEach((row) => {
+      const slotCode = String(row.slot_code ?? "").trim();
+      const price = Number(row.vms_selling_price_lyd ?? 0);
+      if (!slotCode || !Number.isFinite(price) || price <= 0 || latestPriceBySlot.has(slotCode)) return;
+      latestPriceBySlot.set(slotCode, price);
+    });
+
+    const machineLayout = latestMachineStockRows
+      .map((row) => {
+        const slotCode = String(row.slot_code ?? "").trim();
+        const productId = String(row.product_id ?? "").trim();
+        const product = productOptionById.get(productId);
+        const planned = plannedBySlot.get(slotCode) ?? null;
+        const priceLyd = latestPriceBySlot.get(slotCode)
+          ?? (Number(product?.vmsSellingPriceLyd ?? 0) > 0 ? Number(product?.vmsSellingPriceLyd) : null);
+        return {
+          slotCode,
+          productId: productId || null,
+          productName: product?.name ?? (String(row.vms_product_name ?? "").trim() || "Empty"),
+          vmsProductId: String(row.vms_product_id ?? "").trim() || null,
+          vmsProductName: String(row.vms_product_name ?? "").trim() || null,
+          imageUrl: product?.imageUrl ?? null,
+          currentQty: Math.max(0, Number(row.current_qty ?? 0) || 0),
+          capacity: Math.max(0, Number(row.capacity ?? 0) || 0),
+          priceLyd,
+          capturedAt: row.captured_at ?? null,
+          plannedProductId: planned?.productId ?? null,
+          plannedProductName: planned?.productName ?? null,
+          mismatch: Boolean(planned?.productId && productId && planned.productId !== productId),
+        };
+      })
+      .filter((row) => row.slotCode)
+      .sort((a, b) => a.slotCode.localeCompare(b.slotCode, undefined, { numeric: true, sensitivity: "base" }));
+
     const machineProductOptions = Array.from(productPriority.entries())
       .sort((a, b) => a[1].rank - b[1].rank || (productOptionById.get(a[0])?.name ?? "").localeCompare(productOptionById.get(b[0])?.name ?? ""))
       .map(([productId]) => productOptionById.get(productId))
@@ -936,6 +994,7 @@ export async function GET(
       stopStatus: stop.status,
       routeStatus: route.status,
       refillItems,
+      machineLayout,
       extraItems: existingExtraItems,
       productOptions: initialProductOptions,
       productCatalogDeferred: initialProductOptions.length < productOptions.length,
