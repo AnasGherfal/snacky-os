@@ -121,9 +121,41 @@ export async function POST(
     vmsMachineId,
     slotCode: slotCodeA,
     vmsProductId: slotB.vmsProductId,
-    productName: slotB.productName,
     priceLyd: slotB.priceLyd,
   });
+  if (!firstWrite.accepted) {
+    await writeAudit({
+      admin,
+      profile,
+      machine,
+      routeId,
+      stopId,
+      action: "xy_slot_swap_rejected",
+      before: { slotA, slotB },
+      after: { slotA, slotB },
+      metadata: {
+        failed_stage: "first_slot_write",
+        slot_a: slotCodeA,
+        slot_b: slotCodeB,
+        xy_http_status: firstWrite.httpStatus,
+        xy_code: firstWrite.code,
+        xy_message: firstWrite.message,
+        accepted: false,
+      },
+      summary: `XY rejected swap ${slotCodeA} ↔ ${slotCodeB} before the first slot changed`,
+    });
+    return NextResponse.json({
+      success: false,
+      verified: false,
+      writeAccepted: false,
+      code: "XY_WRITE_REJECTED",
+      error: firstWrite.message
+        ? `XY rejected the move: ${firstWrite.message} No slot was changed.`
+        : "XY rejected the move before it reached the machine. No slot was changed.",
+      slots: { slotA, slotB },
+    }, { status: 502 });
+  }
+
   const firstVerification = await verifyXySlot({
     vmsMachineId,
     slotCode: slotCodeA,
@@ -163,27 +195,28 @@ export async function POST(
     vmsMachineId,
     slotCode: slotCodeB,
     vmsProductId: slotA.vmsProductId,
-    productName: slotA.productName,
     priceLyd: slotA.priceLyd,
   });
-  const secondVerification = await verifyXySlot({
-    vmsMachineId,
-    slotCode: slotCodeB,
-    expectedVmsProductId: slotA.vmsProductId,
-    expectedPriceLyd: slotA.priceLyd,
-  });
+  const secondVerification = secondWrite.accepted
+    ? await verifyXySlot({
+        vmsMachineId,
+        slotCode: slotCodeB,
+        expectedVmsProductId: slotA.vmsProductId,
+        expectedPriceLyd: slotA.priceLyd,
+      })
+    : { verified: false, state: slotB };
 
   if (!secondVerification.verified) {
     let rollbackVerified = false;
     let rollbackState: XySlotState | null = null;
     try {
-      await setXySlotProduct({
+      const rollbackWrite = await setXySlotProduct({
         vmsMachineId,
         slotCode: slotCodeA,
         vmsProductId: slotA.vmsProductId,
-        productName: slotA.productName,
         priceLyd: slotA.priceLyd,
       });
+      if (!rollbackWrite.accepted) throw new Error("XY rejected rollback");
       const rollback = await verifyXySlot({
         vmsMachineId,
         slotCode: slotCodeA,
