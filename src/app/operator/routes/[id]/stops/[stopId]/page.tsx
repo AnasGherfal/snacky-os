@@ -649,16 +649,39 @@ export default function MachineStopPage() {
   const [xySwapSaving, setXySwapSaving] = useState(false);
   const [xySwapError, setXySwapError] = useState("");
   const [xySwapSuccess, setXySwapSuccess] = useState("");
-  const xyLayoutEditorRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!xyEditSlotCode && !xySwapSourceSlotCode) return;
-    const frame = window.requestAnimationFrame(() => {
-      xyLayoutEditorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      window.setTimeout(() => xyLayoutEditorRef.current?.focus({ preventScroll: true }), 250);
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [xyEditSlotCode, xySwapSourceSlotCode]);
+    const editorOpen = Boolean(xyEditSlotCode || xySwapSourceSlotCode);
+    if (!editorOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || xyChangeSaving || xySwapSaving) return;
+      setXyEditSlotCode(null);
+      setXyReplacementProductId("");
+      setXyChangeError("");
+      setXySwapSourceSlotCode(null);
+      setXySwapTargetSlotCode("");
+      setXySwapError("");
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [xyChangeSaving, xyEditSlotCode, xySwapSaving, xySwapSourceSlotCode]);
+
+  useEffect(() => {
+    if (!xyChangeSuccess && !xySwapSuccess) return;
+    const timeout = window.setTimeout(() => {
+      setXyChangeSuccess("");
+      setXySwapSuccess("");
+    }, 5000);
+    return () => window.clearTimeout(timeout);
+  }, [xyChangeSuccess, xySwapSuccess]);
 
   useEffect(() => {
     const handlePersistedMachinePhoto = (event: Event) => {
@@ -1519,16 +1542,12 @@ export default function MachineStopPage() {
             </div>
           )}
 
-          <div ref={xyLayoutEditorRef} tabIndex={-1} className="scroll-mt-4 outline-none" />
-
-          {xyChangeSuccess ? (
-            <div className="border-t border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">
-              {xyChangeSuccess}
-            </div>
-          ) : null}
-          {xySwapSuccess ? (
-            <div className="border-t border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">
-              {xySwapSuccess}
+          {xyChangeSuccess || xySwapSuccess ? (
+            <div
+              role="status"
+              className="fixed bottom-4 left-1/2 z-[60] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm font-semibold text-emerald-900 shadow-2xl sm:bottom-6"
+            >
+              {xyChangeSuccess || xySwapSuccess}
             </div>
           ) : null}
 
