@@ -649,6 +649,16 @@ export default function MachineStopPage() {
   const [xySwapSaving, setXySwapSaving] = useState(false);
   const [xySwapError, setXySwapError] = useState("");
   const [xySwapSuccess, setXySwapSuccess] = useState("");
+  const xyLayoutEditorRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!xyEditSlotCode && !xySwapSourceSlotCode) return;
+    const frame = window.requestAnimationFrame(() => {
+      xyLayoutEditorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      window.setTimeout(() => xyLayoutEditorRef.current?.focus({ preventScroll: true }), 250);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [xyEditSlotCode, xySwapSourceSlotCode]);
 
   useEffect(() => {
     const handlePersistedMachinePhoto = (event: Event) => {
@@ -1453,9 +1463,11 @@ export default function MachineStopPage() {
                               <div className={`mt-2 grid gap-1.5 ${isEmpty ? "grid-cols-1" : "grid-cols-2"}`}>
                                 <button
                                   type="button"
-                                  className={`rounded-lg border px-2 py-1.5 text-[11px] font-bold transition ${isEmpty
-                                    ? "border-slate-500 bg-slate-700 text-slate-100 hover:bg-slate-600"
-                                    : "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"}`}
+                                  className={`relative z-10 min-h-11 touch-manipulation select-none rounded-lg border px-2 py-2 text-xs font-bold transition active:scale-[0.98] ${xyEditSlotCode === slot.slotCode
+                                    ? "border-emerald-500 bg-emerald-600 text-white"
+                                    : isEmpty
+                                      ? "border-slate-500 bg-slate-700 text-slate-100 hover:bg-slate-600"
+                                      : "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"}`}
                                   onClick={() => {
                                     setXySwapSourceSlotCode(null);
                                     setXySwapTargetSlotCode("");
@@ -1472,7 +1484,9 @@ export default function MachineStopPage() {
                                 {!isEmpty ? (
                                   <button
                                     type="button"
-                                    className="rounded-lg border border-slate-300 bg-slate-50 px-2 py-1.5 text-[11px] font-bold text-slate-800 transition hover:bg-slate-100"
+                                    className={`relative z-10 min-h-11 touch-manipulation select-none rounded-lg border px-2 py-2 text-xs font-bold transition active:scale-[0.98] ${xySwapSourceSlotCode === slot.slotCode
+                                      ? "border-slate-900 bg-slate-900 text-white"
+                                      : "border-slate-300 bg-slate-50 text-slate-800 hover:bg-slate-100"}`}
                                     onClick={() => {
                                       setXyEditSlotCode(null);
                                       setXyReplacementProductId("");
@@ -1504,6 +1518,8 @@ export default function MachineStopPage() {
               </div>
             </div>
           )}
+
+          <div ref={xyLayoutEditorRef} tabIndex={-1} className="scroll-mt-4 outline-none" />
 
           {xyChangeSuccess ? (
             <div className="border-t border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">
