@@ -154,7 +154,7 @@ function isMissingRecommendationMetadataError(error: SupabaseLikeError | null | 
 async function loadRefillRecommendations(supabase: NonNullable<Awaited<ReturnType<typeof getAuthenticatedSupabaseServerClient>>>) {
   const enrichedResult = await supabase
     .from("refill_recommendations")
-    .select(RECOMMENDATION_ENRICHED_SELECT, { count: "exact" })
+    .select(RECOMMENDATION_ENRICHED_SELECT)
     .limit(1000);
 
   if (!enrichedResult.error || !isMissingRecommendationMetadataError(enrichedResult.error)) return enrichedResult;
@@ -162,7 +162,7 @@ async function loadRefillRecommendations(supabase: NonNullable<Awaited<ReturnTyp
   console.warn("[refills] Refill recommendation metadata columns are missing; retrying with the stable recommendation contract.", enrichedResult.error);
   return supabase
     .from("refill_recommendations")
-    .select(RECOMMENDATION_BASE_SELECT, { count: "exact" })
+    .select(RECOMMENDATION_BASE_SELECT)
     .limit(1000);
 }
 
