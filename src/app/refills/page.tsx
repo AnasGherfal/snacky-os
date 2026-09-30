@@ -213,13 +213,9 @@ async function RefillsPageContent({ searchParams }: { searchParams: Promise<Sear
   const forecastClock = refillForecastClock();
   await requireCurrentProfileForPath("/refills");
   const supabase = getSupabaseAdminClient() ?? await getAuthenticatedSupabaseServerClient();
-  const [recommendationsResult, stockCountResult, historyResult, historyCountResult, historyIssueCountResult, batchResult, forecastMachinesResult, forecastLatestStockResult, forecastHistoryResult, forecastFillResult] = supabase
+  const [recommendationsResult, historyResult, historyCountResult, historyIssueCountResult, batchResult, forecastMachinesResult, forecastLatestStockResult, forecastHistoryResult, forecastFillResult] = supabase
     ? await Promise.all([
         loadRefillRecommendations(supabase),
-        supabase
-          .from("latest_vms_stock_by_slot")
-          .select("id", { count: "exact", head: true })
-          .eq("source_provider", "xy"),
         supabase
           .from("machine_refill_history")
           .select("id, legacy_refill_id, refill_at, machine_name, operator_email, fill_status, issues_found, issue_notes, machine_photo_url, machine_photo_path, linked_issue_id, machine:machines(name, machine_code, location:locations(id, name)), operator:team_members(full_name, email)")
@@ -268,7 +264,7 @@ async function RefillsPageContent({ searchParams }: { searchParams: Promise<Sear
             .limit(5000),
         }),
       ])
-    : [{ data: null, error: null, count: 0 }, { count: 0, error: null }, { data: null, error: null }, { count: 0, error: null }, { count: 0, error: null }, { data: [], error: null, count: 0 }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }];
+    : [{ data: null, error: null, count: 0 }, { data: null, error: null }, { count: 0, error: null }, { count: 0, error: null }, { data: [], error: null, count: 0 }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }, { data: [], error: null }];
   const { data: recommendations, error } = recommendationsResult;
   const latestXyBatchIds = new Set(
     (forecastLatestStockResult.data ?? [])
@@ -284,7 +280,7 @@ async function RefillsPageContent({ searchParams }: { searchParams: Promise<Sear
       : [];
   const recommendationRows = supabase ? await attachRecommendationSources(supabase, rawRecommendationRows) : rawRecommendationRows;
   const productRecommendationRows = groupRecommendationsByProduct(recommendationRows);
-  const hasVmsStock = Boolean((stockCountResult.count ?? 0) > 0);
+  const hasVmsStock = (forecastLatestStockResult.data ?? []).length > 0;
   const latestRecommendationSource = recommendationRows.find((row) => formatSource(row) !== "Unknown" || row.source_uploaded_at);
   const historyUnavailable = historyResult.error?.code === "PGRST205";
   const historyRows = historyUnavailable ? [] : ((historyResult.data ?? []) as MachineRefillHistoryRow[]);
@@ -306,7 +302,7 @@ async function RefillsPageContent({ searchParams }: { searchParams: Promise<Sear
   });
   const forecastError = forecastMachinesResult.error ?? forecastLatestStockResult.error ?? forecastHistoryResult.error ?? forecastFillResult.error;
 
-  if (error ?? stockCountResult.error) console.error("[refills] Failed to load refill recommendations", error ?? stockCountResult.error);
+  if (error) console.error("[refills] Failed to load refill recommendations", error);
   if (historyResult.error && !historyUnavailable) console.error("[refills] Failed to load machine refill history", historyResult.error);
 
   return (
