@@ -916,7 +916,7 @@ export async function GET(
         return {
           slotCode,
           productId: productId || null,
-          productName: product?.name ?? String(row.vms_product_name ?? "").trim() || "Empty",
+          productName: product?.name ?? (String(row.vms_product_name ?? "").trim() || "Empty"),
           vmsProductId: String(row.vms_product_id ?? "").trim() || null,
           vmsProductName: String(row.vms_product_name ?? "").trim() || null,
           imageUrl: product?.imageUrl ?? null,
