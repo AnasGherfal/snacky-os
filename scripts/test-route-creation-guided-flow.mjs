@@ -18,7 +18,7 @@ test("route creation is a resumable details, machines, products, review flow", (
   assert.match(source, /type RouteBuilderStep = "details" \| "machines" \| "products" \| "review"/);
   assert.match(source, /builderStep: RouteBuilderStep/);
   assert.match(source, /Route creation progress/);
-  assert.match(source, /Review route before creating/);
+  assert.match(source, /Final review before creating route/);
   assert.match(source, /builderStep === "review"[\s\S]*type="submit"/);
 });
 
@@ -29,11 +29,14 @@ test("one machine selection controls the scoped product picker without ghost pro
   assert.match(source, /machines\.filter\(\(machine\) => machineIds\.includes\(machine\.id\)\)/);
 });
 
-test("suggested quantities and machine review are available before create", () => {
+test("XY quantities are calculated and reviewed before route creation", () => {
   assert.match(source, /applySuggestedQuantities/);
+  assert.match(source, /Review XY refill calculation/);
+  assert.match(source, /Calculation only — nothing has been assigned or reserved yet/);
+  assert.match(source, /The route and storage reservation are created only after your final confirmation/);
   assert.match(source, /Use suggested quantities/);
-  assert.match(source, /Add suggestions for selected machines/);
   assert.match(source, /This machine has no products\. It will still be included as a planned stop\./);
+  assert.match(source, /useState<"unassigned" \| "assigned">\("assigned"\)/);
 });
 
 test("the existing route API payload and stock validation remain canonical", () => {
