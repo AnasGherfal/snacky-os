@@ -671,7 +671,6 @@ export async function GET(
         .from("latest_vms_stock_by_slot")
         .select("product_id, import_batch_id, slot_code, vms_product_id, vms_product_name, current_qty, capacity, captured_at")
         .eq("machine_id", stop.machine_id)
-        .not("product_id", "is", null)
         .limit(500),
       supabase
         .from("vms_sales_snapshots")
@@ -995,6 +994,7 @@ export async function GET(
       routeStatus: route.status,
       refillItems,
       machineLayout,
+      canEditXyPrice: Boolean(profile && (profile.role === "owner" || profile.role === "admin" || profile.roles?.includes("owner") || profile.roles?.includes("admin"))),
       extraItems: existingExtraItems,
       productOptions: initialProductOptions,
       productCatalogDeferred: initialProductOptions.length < productOptions.length,
