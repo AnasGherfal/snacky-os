@@ -10,6 +10,7 @@ const shellSource = fs.readFileSync(new URL("../src/components/ShellChrome.tsx",
 const dashboardSource = fs.readFileSync(new URL("../src/app/dashboard/page.tsx", import.meta.url), "utf8");
 const refillsSource = fs.readFileSync(new URL("../src/app/refills/page.tsx", import.meta.url), "utf8");
 const refillAutomationSource = fs.readFileSync(new URL("../src/lib/refill-route-automation.ts", import.meta.url), "utf8");
+const operatorPickListSource = fs.readFileSync(new URL("../src/app/operator/routes/[id]/pick-list/page.tsx", import.meta.url), "utf8");
 const schedulerMigration = fs.readFileSync(new URL("../supabase/migrations/20260902150000_xy_vms_durable_scheduler.sql", import.meta.url), "utf8");
 const vercelConfig = JSON.parse(fs.readFileSync(new URL("../vercel.json", import.meta.url), "utf8"));
 
@@ -63,6 +64,12 @@ test("unattended XY sync evaluates refill needs without creating or assigning ro
   assert.match(schedulerMigration, /'7 \* \* \* \*'/);
   assert.match(schedulerMigration, /timeout_milliseconds => 180000/);
   assert.match(schedulerMigration, /idx_vms_sync_runs_one_running_xy_import/);
+});
+
+test("operator pickup uses the admin-reviewed plan without silently recalculating", () => {
+  assert.doesNotMatch(operatorPickListSource, /prepareRouteForPickup/);
+  assert.doesNotMatch(operatorPickListSource, /Pickup quantities updated from the latest XY stock/);
+  assert.match(operatorPickListSource, /Route started\./);
 });
 
 test("authorized planners refresh XY in the background without pressing sync", () => {
