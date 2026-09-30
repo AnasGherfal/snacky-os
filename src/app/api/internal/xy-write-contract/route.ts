@@ -6,7 +6,13 @@ type JsonRecord = Record<string, unknown>;
 async function probe(path: string) {
   const config = getXyVmsConfig();
   const timestamp = Date.now().toString().padStart(13, "0");
-  const businessParams = { shbh: config.merchantId };
+  const businessParams = {
+    shbh: config.merchantId,
+    jqbh: "SNACKY_CONTRACT_PROBE_INVALID_MACHINE",
+    hdbh: "000",
+    spbh: "SNACKY_PROBE_INVALID_PRODUCT",
+    spjg: 1,
+  };
   const body = config.includeAuthFields
     ? {
         key: config.key,
