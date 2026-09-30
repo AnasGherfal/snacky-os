@@ -27,7 +27,7 @@ do $$begin if (select count(*) from buying_private.lists)<>1 or (select count(*)
 select set_config('request.jwt.claim.sub','22222222-2222-4222-8222-222222222222',true);
 set local role authenticated;
 do $$declare r jsonb;c jsonb;blocked boolean;begin
- r:=public.snacky_buying_workspace_v1('66666666-6666-4666-8666-666666666666');if (r->>'planner')::boolean or r#>>'{record,items,0,name}'<>'Water' or (r->>'total')::integer<>1 then raise exception 'Buyer workspace incorrect';end if;
+ r:=public.snacky_buying_workspace_v1('66666666-6666-4666-8666-666666666666');if not (r->>'planner')::boolean or r#>>'{record,items,0,name}'<>'Water' or (r->>'total')::integer<>1 then raise exception 'Warehouse buyer workspace incorrect';end if;
  blocked:=false;begin perform count(*) from buying_private.items;exception when insufficient_privilege then blocked:=true;end;if not blocked then raise exception 'Direct private read grant';end if;
  c:=jsonb_build_object('request_id',gen_random_uuid(),'list_id','66666666-6666-4666-8666-666666666666','action','item','revision',1,'payload',jsonb_build_object('product_id','99999999-9999-4999-8999-999999999999','outcome','bought','bought_boxes',2,'note',''));
  r:=public.snacky_buying_command_v1(c);if r<>public.snacky_buying_command_v1(c) then raise exception 'Progress retry duplicated';end if;
