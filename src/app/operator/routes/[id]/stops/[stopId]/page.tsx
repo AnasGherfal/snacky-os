@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { DraftRestoreBanner, DraftSaveStatus, useDraftKey, useLocalDraft } from "@/components/LocalDraft";
 import { CompressorSafetyProofCard } from "@/components/operator/CompressorSafetyProofCard";
 import { MachineQuantityConfirmationCard } from "@/components/operator/MachineQuantityConfirmationCard";
+import { MachineLayoutEditor, type MachineLayoutSlot } from "@/components/operator/MachineLayoutEditor";
 import { ManualRouteSalesSection, type ManualRouteSaleProductOption } from "@/components/operator/ManualRouteSalesSection";
 import { RouteStopQuickActions } from "@/components/operator/RouteStopQuickActions";
 import { ProductThumbnail } from "@/components/ProductThumbnail";
@@ -144,6 +145,9 @@ interface ProductOption {
   sellingPrice?: number | null;
   vmsSellingPriceLyd?: number | null;
   lastKnownSalePriceLyd?: number | null;
+  vmsProductId?: string | null;
+  vmsProductName?: string | null;
+  xyEligible?: boolean;
 }
 
 interface InventoryAdjustmentRow {
@@ -177,7 +181,9 @@ interface StopData {
   machineId: string;
   machineName: string;
   machineCode: string;
+  vmsMachineId?: string | null;
   location: string;
+  machineLayout?: MachineLayoutSlot[];
   stopStatus: string;
   routeStatus: string;
   refillItems: StopRefillItem[];
@@ -1157,6 +1163,16 @@ export default function MachineStopPage() {
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
 {t("Record what you actually filled, then finish the stop. Leftovers are handled later on the route leftovers screen, so you do not need to invent fake leftover numbers here.")}
         </div>
+
+        <MachineLayoutEditor
+          routeId={routeId}
+          stopId={stopId}
+          machineId={stopData.machineId}
+          slots={stopData.machineLayout ?? []}
+          initialProducts={stopData.productOptions}
+          onApplied={() => void refreshMobileApp()}
+          tr={tr}
+        />
 
         <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
           <div className="border-b border-slate-200 bg-slate-50 p-4 md:p-6">
