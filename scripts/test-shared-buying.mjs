@@ -13,3 +13,10 @@ test('buying lists stay with purchasing-capable roles, not route operators',()=>
 test('writes reject missing and cross-site origins',()=>{const req=headers=>new Request('https://snacky.example/api/buying-lists',{headers});assert.equal(buyingSameOrigin(req({origin:'https://snacky.example'})),true);assert.equal(buyingSameOrigin(req({})),false);assert.equal(buyingSameOrigin(req({origin:'https://evil.example'})),false);});
 test('receipt picker uses a native tappable input, distinct label, and existing upload name in both forms',()=>{const s=fs.readFileSync('src/components/PurchaseReceiptPicker.tsx','utf8');assert.match(s,/htmlFor=\{id\}/);assert.match(s,/name="receipt_file" type="file"/);assert.doesNotMatch(s,/\.click\(|showPicker|display:\s*none|type="hidden"/);for(const p of ['PurchaseForm','NewPurchaseWithReceiptScan'])assert.match(fs.readFileSync(`src/components/${p}.tsx`,'utf8'),/PurchaseReceiptPicker/);});
 test('print is a list snapshot and has no app actions or money postings',()=>{const s=fs.readFileSync('src/app/buying-lists/[id]/print/page.tsx','utf8');assert.match(s,/data-buying-print/);assert.match(s,/Not an invoice/);const sql=fs.readFileSync('supabase/migrations/20260920133731_shared_buying_lists.sql','utf8');assert.doesNotMatch(sql,/insert into public\.(purchases|inventory_movements|financial_transactions|crm_tasks)/i);assert.match(sql,/for update/);assert.match(sql,/enable row level security/);});
+
+test('operator navigation never exposes buying lists',()=>{
+  const sidebar=fs.readFileSync('src/components/Sidebar.tsx','utf8');
+  assert.match(sidebar,/hasAnyRole\(context, \["warehouse", "purchasing", "finance"\]\).*buyingListsItem/);
+  assert.doesNotMatch(sidebar,/\["operator", "finance"\].*buyingListsItem/);
+  assert.match(fs.readFileSync('src/lib/buying-lists.ts','utf8'),/buyingRoles = \['owner','admin','supervisor','warehouse','purchasing','finance'\]/);
+});
