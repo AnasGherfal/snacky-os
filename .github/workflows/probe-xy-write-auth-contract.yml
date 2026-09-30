@@ -1,0 +1,36 @@
+name: Probe XY write auth field contract
+
+on:
+  push:
+    branches:
+      - diagnose-xy-write-swagger
+    paths:
+      - .github/workflows/probe-xy-write-auth-contract.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Compare auth field presence
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://xcx.xynetweb.com/service-api/api/addInstructionByApi"
+          now="$(date +%s%3N)"
+          base='"shbh":"6591","jqbh":"2509000370","hdbh":"SNACKY_NO_SLOT","spbh":"SNACKY_NO_PRODUCT","spjg":1'
+          cases=(
+            "$(printf '{"key":1,"timestamp":%s,"sign":"00000000000000000000000000000000",%s}' "$now" "$base")"
+            "$(printf '{"secret":"DUMMY","timestamp":%s,"sign":"00000000000000000000000000000000",%s}' "$now" "$base")"
+            "$(printf '{"key":1,"secret":"DUMMY","timestamp":%s,"sign":"00000000000000000000000000000000",%s}' "$now" "$base")"
+            "$(printf '{"timestamp":%s,"sign":"00000000000000000000000000000000",%s}' "$now" "$base")"
+            "$(printf '{"key":1,"timestamp":%s,%s}' "$now" "$base")"
+          )
+          labels=("key" "secret" "key+secret" "no-key-secret" "no-sign")
+          for i in "${!cases[@]}"; do
+            echo "=== ${labels[$i]} ==="
+            curl -sS -L --max-time 30 -X POST -H 'content-type: application/json' -d "${cases[$i]}" -w '\nHTTP %{http_code}\n' "$url" || true
+          done
