@@ -13,7 +13,8 @@ test("authorized inventory pages use protected server reads for expensive aggreg
   assert.match(inventoryPage, /inventoryReadClient\s*\.from\("current_inventory_by_location"\)/);
   assert.match(inventoryPage, /inventoryReadClient\s*\.from\("inventory_movements"\)/);
   assert.match(restockLoader, /loadProducts\(inventoryReadClient, errors\)/);
-  assert.match(restockLoader, /inventoryReadClient\.from\("refill_recommendations"\)/);
+  assert.match(restockLoader, /inventoryReadClient\.rpc\("snacky_restock_refill_summary_v1"\)/);
+  assert.doesNotMatch(restockLoader, /inventoryReadClient\.from\("refill_recommendations"\)/);
   assert.match(newMovementPage, /const inventoryReadClient = getSupabaseAdminClient\(\) \?\? supabase/);
   assert.match(newMovementPage, /inventoryReadClient\.from\("current_inventory_by_location"\)/);
   assert.match(newMovementPage, /select\("product_id, location_id, quantity_on_hand"\)/);
