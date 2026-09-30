@@ -222,7 +222,7 @@ function sectionsForRoles(role: AppRole, roles?: AppRole[] | null): NavSection[]
   const effectiveRoles = roles?.length ? roles : [role];
   if (effectiveRoles.length === 1 && effectiveRoles[0] === "investor") return investorNav;
 
-  const primary: NavItem[] = hasAnyRole(context, ["operator", "warehouse", "purchasing"]) ? [personalWorkItem] : [];
+  const primary: NavItem[] = hasAnyRole(context, ["warehouse", "purchasing"]) ? [personalWorkItem] : [];
   const work: NavItem[] = [];
   const business: NavItem[] = [];
 
