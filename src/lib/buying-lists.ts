@@ -1,4 +1,4 @@
-export const buyingRoles = ['owner','admin','supervisor','operator','warehouse','purchasing','finance'] as const;
+export const buyingRoles = ['owner','admin','supervisor','warehouse','purchasing','finance'] as const;
 export const buyingPlannerRoles = ['owner','admin','supervisor','warehouse','purchasing'] as const;
 export const buyingUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export type BuyingOutcome = 'pending'|'bought'|'partial'|'unavailable';
