@@ -899,8 +899,8 @@ export default function MachineStopPage() {
       });
 
       setXySwapSuccess(tr(
-        `Slots ${xySwapSourceSlotCode} and ${xySwapTargetSlotCode} were swapped in XY and verified.`,
-        `تم تبديل الخانتين ${xySwapSourceSlotCode} و ${xySwapTargetSlotCode} في XY والتحقق منهما.`,
+        `Product positions for slots ${xySwapSourceSlotCode} and ${xySwapTargetSlotCode} were rearranged in XY and verified.`,
+        `تم إعادة ترتيب موقعي المنتجين في الخانتين ${xySwapSourceSlotCode} و ${xySwapTargetSlotCode} في XY والتحقق منهما.`,
       ));
       setXySwapSourceSlotCode(null);
       setXySwapTargetSlotCode("");
@@ -1484,7 +1484,7 @@ export default function MachineStopPage() {
                                       setXyChangeSuccess("");
                                     }}
                                   >
-                                    {tr("Swap", "تبديل")}
+                                    {tr("Move", "نقل")}
                                   </button>
                                 ) : null}
                               </div>
@@ -1529,10 +1529,10 @@ export default function MachineStopPage() {
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <h3 className="font-semibold text-slate-900">
-                        {tr(`Swap slot ${xySwapSourceSlotCode}`, `تبديل الخانة ${xySwapSourceSlotCode}`)}
+                        {tr(`Move / rearrange slot ${xySwapSourceSlotCode}`, `نقل / إعادة ترتيب الخانة ${xySwapSourceSlotCode}`)}
                       </h3>
                       <p className="mt-1 text-sm text-slate-500">
-                        {tr("Choose another occupied slot. Product identity and price will swap in XY.", "اختر خانة مشغولة أخرى. سيتم تبديل المنتج والسعر في XY.")}
+                        {tr("Choose where this product should go. If the destination already has a product, Snacky will swap their positions in XY.", "اختر المكان الذي تريد نقل هذا المنتج إليه. إذا كانت الخانة الأخرى تحتوي على منتج، سيقوم Snacky بتبديل موقعي المنتجين في XY.")}
                       </p>
                     </div>
                     <button
@@ -1550,13 +1550,13 @@ export default function MachineStopPage() {
                   </div>
 
                   <div className="mt-4">
-                    <label className="block text-sm font-medium text-slate-800">{tr("Swap with slot", "تبديل مع الخانة")}</label>
+                    <label className="block text-sm font-medium text-slate-800">{tr("Move to slot", "نقل إلى الخانة")}</label>
                     <select
                       value={xySwapTargetSlotCode}
                       onChange={(event) => setXySwapTargetSlotCode(event.target.value)}
                       className="field-input mt-1"
                     >
-                      <option value="">{tr("Choose occupied slot", "اختر خانة مشغولة")}</option>
+                      <option value="">{tr("Choose destination slot", "اختر الخانة الهدف")}</option>
                       {availableTargets.map((slot) => (
                         <option key={slot.slotCode} value={slot.slotCode}>
                           {slot.slotCode} · {slot.productName} · {slot.priceLyd ? Number(slot.priceLyd).toFixed(2) : "—"} {tr("LYD", "د.ل")}
@@ -1592,8 +1592,8 @@ export default function MachineStopPage() {
 
                   <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs font-medium leading-5 text-amber-900">
                     {tr(
-                      "This step swaps product assignment and selling price in XY. Stock counts stay attached to their physical slots, so confirm the actual refill quantities for both lanes.",
-                      "هذه الخطوة تبدّل المنتج وسعر البيع في XY. كميات المخزون تبقى مرتبطة بالخانات الفعلية، لذلك تأكد من كميات التعبئة الفعلية للخانتين.",
+                      "For now, Move supports occupied destinations only. That means the two products exchange positions in XY. Moving into a truly empty slot will be enabled only after XY's clear-source-slot behavior is verified.",
+                      "حالياً يدعم النقل الخانات المشغولة فقط، أي أن المنتجين يتبادلان أماكنهما في XY. سيتم تفعيل النقل إلى خانة فارغة بعد التأكد من طريقة تفريغ الخانة الأصلية في XY.",
                     )}
                   </div>
 
@@ -1610,8 +1610,8 @@ export default function MachineStopPage() {
                     onClick={() => void applyXySlotSwap()}
                   >
                     {xySwapSaving
-                      ? tr("Swapping in XY and verifying both...", "جاري التبديل في XY والتحقق من الخانتين...")
-                      : tr("Swap in XY and verify both", "تبديل في XY والتحقق من الخانتين")}
+                      ? tr("Moving in XY and verifying both...", "جاري النقل في XY والتحقق من الخانتين...")
+                      : tr("Move in XY and verify both", "نقل في XY والتحقق من الخانتين")}
                   </button>
                 </div>
               </div>
