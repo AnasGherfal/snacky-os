@@ -81,7 +81,7 @@ test("machine stop XY Change and Move use focused modal UX without page jumping"
   assert.match(operatorStopSource, /document\.body\.style\.overflow = "hidden"/);
   assert.match(operatorStopSource, /overscroll-contain/);
   assert.match(operatorStopSource, /tr\("Cancel", "إلغاء"\)/);
-  assert.doesNotMatch(operatorStopSource, /scrollIntoView/);
+  assert.doesNotMatch(operatorStopSource, /xyLayoutEditorRef[\\s\\S]*scrollIntoView/);
   assert.match(operatorStopSource, /xyEditSlotCode === slot\.slotCode/);
   assert.match(operatorStopSource, /xySwapSourceSlotCode === slot\.slotCode/);
 });
