@@ -71,7 +71,7 @@ export default async function CashHandlingPage({
         ) : null}
         <CashRemovalForm
           action={createCashRemoval}
-          machines={(machines ?? []).map((machine: any) => ({
+          machines={(machines ?? []).map((machine) => ({
             id: machine.id,
             label: formatMachineDisplayName(machine, { includeArea: true }),
           }))}
