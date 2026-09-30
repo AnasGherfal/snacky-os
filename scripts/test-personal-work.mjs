@@ -48,15 +48,15 @@ test('priority selects actionable overdue work ahead of waiting records',()=>{
  assert.equal(personalOverdue(buy.rows[0],{...buy,view:'history'}),false);
 });
 test('new path does not change existing finance, CRM or route landing permissions',()=>{
- for(const role of ['owner','admin','supervisor','operator','warehouse','purchasing'])assert.equal(canAccessPath({id:uid(1),role},'/my-day'),true);
- for(const role of ['crm','finance','viewer','investor'])assert.equal(canAccessPath({id:uid(1),role},'/my-day'),false);
+ for(const role of ['owner','admin','supervisor','warehouse','purchasing'])assert.equal(canAccessPath({id:uid(1),role},'/my-day'),true);
+ for(const role of ['operator','crm','finance','viewer','investor'])assert.equal(canAccessPath({id:uid(1),role},'/my-day'),false);
  assert.equal(canAccessPath({id:uid(1),role:'warehouse',activeStatus:'inactive'},'/my-day'),false);
  assert.equal(getDefaultPathForRole('operator'),'/operator/routes');assert.equal(getDefaultPathForRole('warehouse'),'/inventory');assert.equal(getDefaultPathForRole('crm'),'/my-work');
  assert.equal(canAccessPath({id:uid(1),role:'operator',roles:['operator','warehouse']},'/finance'),false);
 });
-function context(profile){let calls=0;const mod=load('src/lib/personal-work-server.ts',{'server-only':{},'@/lib/auth':{getCurrentProfile:async()=>profile,getAuthenticatedSupabaseServerClient:async()=>{calls++;return null;}},'@/lib/authz':{hasAnyRole:(p,roles)=>roles.includes(p.role)},'@/lib/personal-work':{personalWorkRoles:['owner','admin','supervisor','operator','warehouse','purchasing']}});return {mod,calls:()=>calls};}
+function context(profile){let calls=0;const mod=load('src/lib/personal-work-server.ts',{'server-only':{},'@/lib/auth':{getCurrentProfile:async()=>profile,getAuthenticatedSupabaseServerClient:async()=>{calls++;return null;}},'@/lib/authz':{hasAnyRole:(p,roles)=>roles.includes(p.role)},'@/lib/personal-work':{personalWorkRoles:['owner','admin','supervisor','warehouse','purchasing']}});return {mod,calls:()=>calls};}
 test('server denies inactive and non-operational sessions before database lookup',async()=>{
- for(const profile of [null,{role:'crm',active_status:'active'},{role:'investor',active_status:'active'},{role:'warehouse',active_status:'inactive'}]){const c=context(profile);assert.equal((await c.mod.personalWorkContext()).authorized,false);assert.equal(c.calls(),0);}
+ for(const profile of [null,{role:'operator',active_status:'active'},{role:'crm',active_status:'active'},{role:'investor',active_status:'active'},{role:'warehouse',active_status:'inactive'}]){const c=context(profile);assert.equal((await c.mod.personalWorkContext()).authorized,false);assert.equal(c.calls(),0);}
 });
 function api(authorized=true){let reads=0;const r=load('src/app/api/personal-work/route.ts',{'next/server':{NextResponse:{json:(body,init={})=>({body,status:init.status??200,headers:init.headers})}},'@/lib/personal-work-server':{personalWorkContext:async()=>({authorized,read:()=>{}})},'@/lib/personal-work':{isPersonalSection:v=>personalSections.includes(v),isPersonalView:v=>['active','upcoming','history'].includes(v),loadPersonalSection:async(_reader,section,view)=>{reads++;return {section,view,status:'unavailable'};}}});return {r,reads:()=>reads};}
 test('GET-only API rejects account selectors, duplicate keys, off-grid offsets and invalid views',async()=>{
