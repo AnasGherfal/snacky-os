@@ -38,8 +38,6 @@ import {
 } from "@/lib/route-workflow";
 import { ISSUE_PHOTO_BUCKET, REFILL_PHOTO_BUCKET } from "@/lib/storage-buckets";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
-import { autoPlanRouteProducts } from "@/lib/route-auto-plan";
-import { ensureFreshXyRoutePlanningData } from "@/lib/xy-vms-sync";
 
 const REFILL_PHOTO_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"];
 const REFILL_PHOTO_MAX_SIZE = 10 * 1024 * 1024;
@@ -1849,105 +1847,6 @@ async function requireOperatorRouteAccess(routeId: string) {
   }
   if (isTerminalRouteStatus(route.status)) throw new Error("Completed or cancelled routes cannot be edited.");
   return { supabase, profile, route };
-}
-
-export async function prepareRouteForPickup(routeId: string) {
-  try {
-    if (!routeId) throw new Error("Route id is required.");
-    const { supabase, profile, route } = await requireOperatorRouteAccess(routeId);
-    if (!isAvailableRouteStatus(route.status)) {
-      return actionSuccess({
-        prepared: false,
-        refreshed: false,
-        skipped: "Route pickup has already started, so the plan is frozen.",
-      });
-    }
-
-    const admin = getSupabaseAdminClient() ?? supabase;
-    const { data: settings } = await admin
-      .from("refill_route_automation_settings")
-      .select("pickup_refresh_enabled, pickup_refresh_max_age_minutes")
-      .eq("id", 1)
-      .maybeSingle();
-
-    if (settings?.pickup_refresh_enabled === false) {
-      return actionSuccess({
-        prepared: false,
-        refreshed: false,
-        skipped: "Automatic pickup refresh is disabled.",
-      });
-    }
-
-    const { data: activeBatch, error: activeBatchError } = await admin
-      .from("route_pickup_batches")
-      .select("id, prepared_at, confirmed_at, returned_to_assigned_at")
-      .eq("route_id", routeId)
-      .is("returned_to_assigned_at", null)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (activeBatchError && !isMissingTable(activeBatchError, "route_pickup_batches")) {
-      throwActionError(activeBatchError, "Could not verify current pickup state.");
-    }
-    if (activeBatch?.prepared_at || activeBatch?.confirmed_at) {
-      return actionSuccess({
-        prepared: false,
-        refreshed: false,
-        skipped: "Pickup has already been prepared, so the plan is frozen.",
-      });
-    }
-
-    const freshnessMinutes = Math.max(1, Number(settings?.pickup_refresh_max_age_minutes ?? 5));
-    const xyRefresh = await ensureFreshXyRoutePlanningData({
-      profile,
-      stockMaxAgeMs: freshnessMinutes * 60 * 1000,
-    });
-    if (xyRefresh.outcome === "failed" || xyRefresh.outcome === "unavailable") {
-      throw new Error("Could not refresh XY before pickup. Retry before taking products from storage.");
-    }
-    if (xyRefresh.outcome === "in_progress") {
-      return actionFailure("XY is refreshing right now. Retry pickup in a moment so quantities do not start from stale stock.");
-    }
-
-    const { data: existingItems, error: existingItemsError } = await admin
-      .from("route_stop_items")
-      .select("id, planned_quantity")
-      .eq("route_id", routeId)
-      .gt("planned_quantity", 0)
-      .limit(1);
-    if (existingItemsError) throwActionError(existingItemsError, "Could not inspect the current pickup plan.");
-
-    let autoPlan: unknown = null;
-    let refresh: unknown = null;
-    if (!(existingItems ?? []).length) {
-      autoPlan = await autoPlanRouteProducts({
-        writeClient: supabase,
-        readClient: admin,
-        routeId,
-      });
-    } else {
-      refresh = await applyPendingStopRecommendationRefresh(routeId);
-      if (!(refresh as any)?.success) {
-        throw new Error((refresh as any)?.error || "Could not refresh pending stop quantities.");
-      }
-    }
-
-    await admin
-      .from("routes")
-      .update({ automation_last_planned_at: new Date().toISOString() })
-      .eq("id", routeId);
-
-    return actionSuccess({
-      prepared: Boolean((autoPlan as any)?.prepared),
-      refreshed: Boolean((refresh as any)?.applied),
-      xyRefresh,
-      autoPlan,
-      refresh,
-    });
-  } catch (error) {
-    console.error("[operator:prepare-route-for-pickup] Failed", { route_id: routeId, error });
-    return actionFailure(getErrorMessage(error, "Could not prepare the latest pickup quantities."));
-  }
 }
 
 export async function previewPendingStopRecommendationRefresh(routeId: string) {
