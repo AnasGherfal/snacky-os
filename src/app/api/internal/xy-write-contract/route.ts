@@ -33,6 +33,11 @@ async function probe(path: string) {
     code: parsed.code ?? parsed.status ?? null,
     message: parsed.message ?? parsed.msg ?? parsed.error ?? null,
     keys: Object.keys(parsed).slice(0, 20),
+    dataSummary: typeof parsed.data === "string"
+      ? parsed.data.slice(0, 500)
+      : parsed.data && typeof parsed.data === "object"
+        ? JSON.stringify(parsed.data).slice(0, 500)
+        : null,
   };
 }
 
