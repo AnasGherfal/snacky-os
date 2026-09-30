@@ -1,0 +1,47 @@
+name: Inspect XY write Swagger
+
+on:
+  push:
+    branches:
+      - diagnose-xy-write-swagger
+    paths:
+      - .github/workflows/inspect-xy-write-swagger.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Discover public XY API docs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p diagnostics
+          base="https://xcx.xynetweb.com/service-api"
+          candidates=(
+            "$base/v3/api-docs"
+            "$base/v2/api-docs"
+            "$base/swagger-resources"
+            "$base/swagger-ui.html"
+            "$base/swagger-ui/index.html"
+            "$base/doc.html"
+          )
+          for url in "${candidates[@]}"; do
+            echo "=== $url ===" | tee -a diagnostics/summary.txt
+            code="$(curl -L -sS --max-time 30 -o diagnostics/body.tmp -w '%{http_code}' "$url" || true)"
+            echo "HTTP $code" | tee -a diagnostics/summary.txt
+            head -c 500 diagnostics/body.tmp | tr '\n' ' ' | tee -a diagnostics/summary.txt || true
+            echo | tee -a diagnostics/summary.txt
+            if grep -Eqi 'addInstruction(ByApi|SpxxByApi)|swagger|openapi' diagnostics/body.tmp; then
+              cp diagnostics/body.tmp "diagnostics/$(echo "$url" | sed 's#[^A-Za-z0-9]#_#g').txt"
+            fi
+          done
+          grep -RniE 'addInstruction(ByApi|SpxxByApi)' diagnostics || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xy-write-swagger
+          path: diagnostics/
+          retention-days: 1
