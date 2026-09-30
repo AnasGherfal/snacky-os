@@ -73,10 +73,15 @@ test("operator pickup uses the admin-reviewed plan without silently recalculatin
   assert.match(operatorPickListSource, /Route started\./);
 });
 
-test("machine stop XY Change and Move controls are mobile-tappable and reveal their editor", () => {
+test("machine stop XY Change and Move use focused modal UX without page jumping", () => {
   assert.match(operatorStopSource, /min-h-11 touch-manipulation select-none/);
-  assert.match(operatorStopSource, /xyLayoutEditorRef\.current\?\.scrollIntoView/);
-  assert.match(operatorStopSource, /\[xyEditSlotCode, xySwapSourceSlotCode\]/);
+  assert.match(operatorStopSource, /fixed inset-0 z-50 flex items-end justify-center/);
+  assert.match(operatorStopSource, /role="dialog"/);
+  assert.match(operatorStopSource, /aria-modal="true"/);
+  assert.match(operatorStopSource, /document\.body\.style\.overflow = "hidden"/);
+  assert.match(operatorStopSource, /overscroll-contain/);
+  assert.match(operatorStopSource, /tr\("Cancel", "إلغاء"\)/);
+  assert.doesNotMatch(operatorStopSource, /xyLayoutEditorRef[\\s\\S]*scrollIntoView/);
   assert.match(operatorStopSource, /xyEditSlotCode === slot\.slotCode/);
   assert.match(operatorStopSource, /xySwapSourceSlotCode === slot\.slotCode/);
 });
