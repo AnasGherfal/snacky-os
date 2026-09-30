@@ -14,14 +14,18 @@ const stopPagePath = "src/app/operator/routes/[id]/stops/[stopId]/page.tsx";
 const operatorActionsPath = "src/lib/operator-actions.ts";
 const durableOperationPath = "src/lib/durable-client-operation.ts";
 
-const migration = readFileSync(migrationPath, "utf8");
-const manualApi = readFileSync(manualApiPath, "utf8");
-const compensationApi = readFileSync(compensationApiPath, "utf8");
-const manualComponent = readFileSync(manualComponentPath, "utf8");
-const quickActions = readFileSync(quickActionsPath, "utf8");
-const stopPage = readFileSync(stopPagePath, "utf8");
-const operatorActions = readFileSync(operatorActionsPath, "utf8");
-const durableOperation = readFileSync(durableOperationPath, "utf8");
+function readSource(path) {
+  return readFileSync(path, "utf8").replace(/\r\n/g, "\n");
+}
+
+const migration = readSource(migrationPath);
+const manualApi = readSource(manualApiPath);
+const compensationApi = readSource(compensationApiPath);
+const manualComponent = readSource(manualComponentPath);
+const quickActions = readSource(quickActionsPath);
+const stopPage = readSource(stopPagePath);
+const operatorActions = readSource(operatorActionsPath);
+const durableOperation = readSource(durableOperationPath);
 
 function between(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);
