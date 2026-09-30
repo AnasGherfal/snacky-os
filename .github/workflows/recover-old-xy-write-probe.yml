@@ -1,0 +1,26 @@
+name: Recover old XY write probe
+
+on:
+  push:
+    branches:
+      - diagnose-xy-write-swagger
+    paths:
+      - .github/workflows/recover-old-xy-write-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Call old fake-machine probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://snacky-os-git-xy-write-schema-probe-anasgherfals-projects.vercel.app/api/internal/xy-write-schema-probe?token=xy-write-schema-probe-20260930"
+          curl -sS -L --max-time 45 -D headers.txt -o body.txt -w 'HTTP %{http_code}\n' "$url" || true
+          cat headers.txt
+          echo "--- body ---"
+          cat body.txt
