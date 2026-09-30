@@ -202,6 +202,74 @@ export async function returnPickupToAssigned(formData: FormData) {
   redirect(`${path}?success=${encodeURIComponent(Array.isArray(rpcRows) && rpcRows[0]?.already_returned ? "Pickup batch was already returned to Assigned." : "Pickup batch returned to Assigned.")}`);
 }
 
+export async function autoPrepareRouteProducts(formData: FormData) {
+  const id = clean(formData.get("id"));
+  if (!id) redirect("/routes");
+  const path = `/routes/${id}`;
+  const { profile, supabase } = await requireRouteAccess(path);
+
+  const [{ data: route, error: routeError }, { data: stops, error: stopsError }] = await Promise.all([
+    supabase.from("routes").select("id, route_date, status, operator_id").eq("id", id).maybeSingle(),
+    supabase.from("route_stops").select("id, machine_id, status").eq("route_id", id).order("stop_order"),
+  ]);
+
+  if (routeError || !route) fail("/routes", "Route not found.");
+  if (stopsError) fail(path, "Could not load route stops.");
+  if (isTerminalRouteStatus(route.status)) fail(path, "Completed, reviewed, or cancelled routes cannot be auto-prepared.");
+  if (!(stops ?? []).length) fail(path, "Add at least one machine stop before preparing products.");
+
+  let result: AutoPlanRouteProductsResult;
+  try {
+    result = await autoPlanRouteProducts({
+      writeClient: supabase,
+      readClient: getSupabaseAdminClient() ?? supabase,
+      routeId: id,
+    });
+  } catch (error) {
+    console.error("[routes] Failed to auto-prepare route products", {
+      route_id: id,
+      error,
+    });
+    fail(path, "Could not automatically prepare products for this route. Retry before the operator starts picking.");
+  }
+
+  await logActivity({
+    profile,
+    action: "auto_prepare_route_products",
+    entityType: "route",
+    entityId: id,
+    entityLabel: `Route ${route.route_date}`,
+    beforeData: null,
+    afterData: result,
+    metadata: {
+      automatic_pickup_plan: result,
+      route_stop_count: (stops ?? []).length,
+      operator_id: route.operator_id,
+    },
+    summary: result.prepared
+      ? `Auto-prepared ${result.plannedUnitCount} pickup units for route ${route.route_date}`
+      : `Automatic product preparation checked route ${route.route_date}: ${result.reason}`,
+  });
+
+  revalidateRoutePaths(id);
+
+  const message = result.prepared
+    ? `Snacky automatically prepared ${result.plannedUnitCount} pickup units across ${result.plannedItemCount} machine-product lines. Review only if you want to override products or quantities.`
+    : result.reason === "already_prepared"
+      ? "This route already has a product plan. Use Edit route only if you want to override it."
+      : result.reason === "route_has_pickup_history"
+        ? "This route already has pickup history, so Snacky did not rebuild the plan."
+        : result.reason === "stale_recommendations"
+          ? "Automatic preparation is paused because the latest XY refill data is older than 72 hours."
+          : result.reason === "no_available_storage"
+            ? "Snacky found refill needs, but no available storage stock can currently be assigned."
+            : result.reason === "no_recommendations"
+              ? "Snacky found no positive refill needs for the machines on this route."
+              : "Snacky could not add any automatic product quantities for this route.";
+
+  redirect(`${path}?success=${encodeURIComponent(message)}`);
+}
+
 export async function assignRoute(formData: FormData) {
   const id = clean(formData.get("id"));
   const operatorId = clean(formData.get("operator_id")) || null;
