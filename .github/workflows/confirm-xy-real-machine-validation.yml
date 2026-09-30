@@ -1,0 +1,24 @@
+name: Confirm XY real-machine validation stage
+
+on:
+  push:
+    branches:
+      - diagnose-xy-write-swagger
+    paths:
+      - .github/workflows/confirm-xy-real-machine-validation.yml
+
+permissions:
+  contents: read
+
+jobs:
+  confirm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Correct merchant and machine, deliberately invalid auth and slot
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://xcx.xynetweb.com/service-api/api/addInstructionByApi"
+          now="$(date +%s%3N)"
+          curl -sS -L --max-time 30 -X POST -H 'content-type: application/json'             -d "$(printf '{"key":1,"timestamp":%s,"sign":"00000000000000000000000000000000","shbh":"6591","jqbh":"2509000370","hdbh":"SNACKY_NO_SLOT","spbh":"SNACKY_NO_PRODUCT","spjg":1}' "$now")"             -w '\nHTTP %{http_code}\n' "$url" || true
