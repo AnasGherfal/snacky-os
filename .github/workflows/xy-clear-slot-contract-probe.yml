@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - verify-xy-clear-slot-contract-v2
+      - master
     paths:
       - .github/workflows/xy-clear-slot-contract-probe.yml
 
@@ -19,16 +20,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          url="https://snacky-os-git-verify-xy-clear-slot-5b7119-anasgherfals-projects.vercel.app/api/internal/xy-clear-slot-contract-v2?token=xy-clear-slot-contract-v2-20260930"
+          if [ "$GITHUB_REF_NAME" = "master" ]; then
+            url="https://snacky-os.vercel.app/api/internal/xy-clear-slot-contract-v2?token=xy-clear-slot-contract-v2-20260930"
+          else
+            url="https://snacky-os-git-verify-xy-clear-slot-5b7119-anasgherfals-projects.vercel.app/api/internal/xy-clear-slot-contract-v2?token=xy-clear-slot-contract-v2-20260930"
+          fi
 
-          for attempt in {1..18}; do
+          for attempt in {1..30}; do
             status="$(curl -sS -L --max-time 30 -o response.json -w '%{http_code}' "$url" || true)"
             if [ "$status" = "200" ]; then
               echo "XY clear-slot probe response (merchant identifier redacted):"
               jq '(.results[]?.request) |= del(.shbh)' response.json
               exit 0
             fi
-            echo "Probe not ready yet (HTTP $status), attempt $attempt/18"
+            echo "Probe not ready yet (HTTP $status), attempt $attempt/30"
             sleep 10
           done
 
