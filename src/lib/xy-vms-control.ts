@@ -59,7 +59,6 @@ export async function setXySlotProduct(args: {
   vmsMachineId: string;
   slotCode: string;
   vmsProductId: string;
-  productName?: string | null;
   priceLyd: number;
 }) {
   const config = getXyVmsConfig();
@@ -70,7 +69,6 @@ export async function setXySlotProduct(args: {
     jqbh: args.vmsMachineId,
     hdbh: args.slotCode,
     spbh: args.vmsProductId,
-    spmc: args.productName ?? undefined,
     spjg: toMinorUnits(args.priceLyd),
   });
   const timestamp = Date.now().toString().padStart(13, "0");
@@ -100,11 +98,14 @@ export async function setXySlotProduct(args: {
   }
 
   const nestedData = parsed.data && typeof parsed.data === "object" && !Array.isArray(parsed.data) ? parsed.data as JsonRecord : {};
+  const code = parsed.code ?? parsed.status ?? parsed.statusCode ?? null;
+  const message = String(parsed.message ?? parsed.msg ?? nestedData.msg ?? "").trim() || null;
   return {
     httpStatus: response.status,
     httpOk: response.ok,
-    code: parsed.code ?? parsed.status ?? parsed.statusCode ?? null,
-    message: String(parsed.message ?? parsed.msg ?? nestedData.msg ?? "").trim() || null,
+    accepted: response.ok && String(code ?? "") === "1",
+    code,
+    message,
   };
 }
 
