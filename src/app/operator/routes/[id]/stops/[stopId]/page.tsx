@@ -162,6 +162,43 @@ interface MachineLayoutSlot {
   mismatch: boolean;
 }
 
+function groupMachineLayoutRows(slots: MachineLayoutSlot[]) {
+  const sorted = [...slots].sort((a, b) => Number(a.slotCode) - Number(b.slotCode));
+  const firstTwenty = sorted.filter((slot) => {
+    const n = Number(slot.slotCode);
+    return Number.isFinite(n) && n >= 1 && n <= 20;
+  });
+  const hasWideTopPattern = firstTwenty.length >= 6
+    && firstTwenty.every((slot) => Number(slot.slotCode) % 2 === 1);
+
+  const rows = new Map<number, MachineLayoutSlot[]>();
+  sorted.forEach((slot) => {
+    const n = Number(slot.slotCode);
+    if (!Number.isFinite(n) || n <= 0) {
+      const fallback = 99;
+      rows.set(fallback, [...(rows.get(fallback) ?? []), slot]);
+      return;
+    }
+
+    let rowIndex: number;
+    if (hasWideTopPattern && n <= 20) {
+      rowIndex = 1;
+    } else if (hasWideTopPattern) {
+      rowIndex = Math.floor((n - 21) / 10) + 2;
+    } else {
+      rowIndex = Math.floor((n - 1) / 10) + 1;
+    }
+    rows.set(rowIndex, [...(rows.get(rowIndex) ?? []), slot]);
+  });
+
+  return Array.from(rows.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([rowIndex, rowSlots]) => ({
+      rowIndex,
+      slots: rowSlots.sort((a, b) => Number(a.slotCode) - Number(b.slotCode)),
+    }));
+}
+
 interface InventoryAdjustmentRow {
   id: string;
   adjustmentType: InventoryAdjustmentType | string;
@@ -668,6 +705,7 @@ export default function MachineStopPage() {
   });
 
   const productById = useMemo(() => new Map((fullProductCatalog ?? stopData?.productOptions ?? []).map((product) => [product.id, product])), [fullProductCatalog, stopData]);
+  const machineLayoutRows = useMemo(() => groupMachineLayoutRows(stopData?.machineLayout ?? []), [stopData?.machineLayout]);
   const machineStorageStockRows = stopData?.machineStorageStock ?? [];
   const machineStorageProducts = stopData?.machineStorageProductOptions ?? stopData?.productOptions ?? [];
   const machineStorageStockUnits = machineStorageStockRows.reduce((sum, row) => sum + Number(row.quantity ?? 0), 0);
@@ -1175,64 +1213,97 @@ export default function MachineStopPage() {
 {t("Record what you actually filled, then finish the stop. Leftovers are handled later on the route leftovers screen, so you do not need to invent fake leftover numbers here.")}
         </div>
 
-        <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <section className="overflow-hidden rounded-2xl border border-slate-300 bg-white">
           <div className="border-b border-slate-200 bg-slate-50 p-4 md:p-6">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h2 className="text-lg font-semibold">{tr("Live machine map", "خريطة الجهاز المباشرة")}</h2>
+                <h2 className="text-lg font-semibold">{tr("Machine layout", "توزيع الجهاز")}</h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  {tr("Current XY slot layout, stock, capacity and selling price.", "توزيع الخانات الحالي من XY مع المخزون والسعة وسعر البيع.")}
+                  {tr("The slots below follow the current XY machine order.", "الخانات أدناه مرتبة حسب توزيع الجهاز الحالي في XY.")}
                 </p>
               </div>
               <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">
-                {tr("Source: XY", "المصدر: XY")}
+                {tr("Live from XY", "مباشر من XY")}
               </div>
             </div>
           </div>
-          {(stopData.machineLayout ?? []).length === 0 ? (
+
+          {machineLayoutRows.length === 0 ? (
             <div className="p-4 md:p-6">
               <EmptyState
-                title={tr("No live XY slot map available", "لا توجد خريطة خانات مباشرة من XY")}
-                body={tr("The refill list still works. Refresh after the next XY stock sync.", "قائمة التعبئة ما زالت تعمل. حدّث بعد مزامنة XY القادمة.")}
+                title={tr("No XY machine layout available", "لا يوجد توزيع جهاز متوفر من XY")}
+                body={tr("The refill list below still works. Refresh after the next XY sync.", "قائمة التعبئة أدناه ما زالت تعمل. حدّث بعد مزامنة XY القادمة.")}
               />
             </div>
           ) : (
-            <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 md:p-6">
-              {(stopData.machineLayout ?? []).map((slot) => (
-                <div
-                  key={slot.slotCode}
-                  className={`rounded-xl border p-3 ${slot.mismatch ? "border-amber-300 bg-amber-50/70" : "border-slate-200 bg-white"}`}
-                >
-                  <div className="flex items-start gap-3">
-                    <ProductThumbnail imageUrl={slot.imageUrl} name={slot.productName} size="md" />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                          {tr("Slot", "الخانة")} {slot.slotCode}
-                        </span>
-                        <span className="text-sm font-black text-emerald-800">
-                          {slot.priceLyd ? `${Number(slot.priceLyd).toFixed(2)} ${tr("LYD", "د.ل")}` : tr("No XY price", "لا يوجد سعر XY")}
-                        </span>
-                      </div>
-                      <div className="mt-1 truncate font-semibold text-slate-900">{slot.productName}</div>
-                      <div className="mt-1 text-xs text-slate-500">
-                        {tr("Stock", "المخزون")} {slot.currentQty}/{slot.capacity || "—"}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
-                    <div
-                      className="h-full rounded-full bg-emerald-600"
-                      style={{ width: `${slot.capacity > 0 ? Math.min(100, Math.max(0, (slot.currentQty / slot.capacity) * 100)) : 0}%` }}
-                    />
-                  </div>
-                  {slot.mismatch ? (
-                    <div className="mt-3 rounded-lg border border-amber-200 bg-amber-100/70 px-3 py-2 text-xs font-semibold text-amber-900">
-                      {tr("Plan mismatch:", "اختلاف عن الخطة:")} {slot.plannedProductName ?? tr("another product", "منتج آخر")}
-                    </div>
-                  ) : null}
+            <div className="bg-slate-900 p-3 sm:p-4 md:p-5">
+              <div className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-slate-100">
+                <div>
+                  <div className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-300">SNACKY · XY</div>
+                  <div className="mt-0.5 text-sm font-semibold">{stopData.machineName}</div>
                 </div>
-              ))}
+                <div className="text-xs text-slate-300">{stopData.machineCode}</div>
+              </div>
+
+              <div className="space-y-3">
+                {machineLayoutRows.map((row) => (
+                  <div key={row.rowIndex} className="rounded-xl border border-slate-700 bg-slate-800/80 p-2.5">
+                    <div className="mb-2 flex items-center justify-between gap-2 px-1">
+                      <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                        {tr("Row", "صف")} {row.rowIndex}
+                      </span>
+                      <span className="text-[11px] text-slate-500">
+                        {row.slots.length} {tr("slots", "خانات")}
+                      </span>
+                    </div>
+
+                    <div className="overflow-x-auto pb-1">
+                      <div className="flex min-w-max gap-2">
+                        {row.slots.map((slot) => {
+                          const isEmpty = !slot.vmsProductId && !slot.productId;
+                          return (
+                            <div
+                              key={slot.slotCode}
+                              className={`w-[116px] shrink-0 rounded-xl border p-2.5 shadow-sm ${slot.mismatch
+                                ? "border-amber-300 bg-amber-50"
+                                : isEmpty
+                                  ? "border-dashed border-slate-500 bg-slate-700/50 text-slate-300"
+                                  : "border-slate-200 bg-white"}`}
+                            >
+                              <div className="mb-2 flex items-center justify-between gap-2">
+                                <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-black ${isEmpty ? "bg-slate-600 text-slate-200" : "bg-slate-900 text-white"}`}>
+                                  {slot.slotCode}
+                                </span>
+                                <span className={`text-[11px] font-black ${isEmpty ? "text-slate-400" : "text-emerald-700"}`}>
+                                  {slot.priceLyd ? `${Number(slot.priceLyd).toFixed(2)}` : "—"}
+                                </span>
+                              </div>
+
+                              <div className="flex justify-center">
+                                <ProductThumbnail imageUrl={slot.imageUrl} name={slot.productName} size="md" />
+                              </div>
+
+                              <div className={`mt-2 line-clamp-2 min-h-10 text-center text-xs font-semibold leading-5 ${isEmpty ? "text-slate-300" : "text-slate-900"}`}>
+                                {isEmpty ? tr("Empty", "فارغ") : slot.productName}
+                              </div>
+
+                              <div className={`mt-2 rounded-lg px-2 py-1.5 text-center text-[11px] font-semibold ${isEmpty ? "bg-slate-600/70 text-slate-300" : "bg-slate-100 text-slate-600"}`}>
+                                {tr("Stock", "المخزون")} {slot.currentQty}/{slot.capacity || "—"}
+                              </div>
+
+                              {slot.mismatch ? (
+                                <div className="mt-2 rounded-lg bg-amber-100 px-2 py-1.5 text-center text-[10px] font-bold leading-4 text-amber-900">
+                                  {tr("Plan:", "الخطة:")} {slot.plannedProductName ?? tr("different product", "منتج مختلف")}
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </section>
