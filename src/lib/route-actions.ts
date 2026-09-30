@@ -327,5 +327,18 @@ export async function assignRoute(formData: FormData) {
   }
 
   revalidateRoutePaths(id);
-  redirect(path);
+  const assignmentMessage = operatorId
+    ? autoPlanResult?.prepared
+      ? `Route assigned. Snacky automatically planned ${autoPlanResult.plannedUnitCount} pickup units across ${autoPlanResult.plannedItemCount} machine-product lines.`
+      : autoPlanResult?.reason === "already_prepared"
+        ? "Route assigned. The existing product plan was kept unchanged."
+        : autoPlanResult?.reason === "stale_recommendations"
+          ? "Route assigned, but automatic products were not added because the XY stock snapshot is older than 72 hours."
+          : autoPlanResult?.reason === "no_available_storage"
+            ? "Route assigned, but automatic products were not added because available storage stock is 0 for the current refill needs."
+            : autoPlanResult?.reason === "no_recommendations"
+              ? "Route assigned. No positive refill quantities are currently recommended for these stops."
+              : "Route assigned."
+    : "Route left unassigned / available.";
+  redirect(`${path}?success=${encodeURIComponent(assignmentMessage)}`);
 }
