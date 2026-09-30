@@ -2,12 +2,7 @@ import "server-only";
 
 import { buildMachineRefillForecasts, type RefillFillLine, type RefillMachine, type RefillStockHistory } from "@/lib/refill-forecast";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
-import { notifyRouteAssigned } from "@/lib/notification-delivery";
-import {
-  ROUTE_ASSIGNED_STATUS,
-  ROUTE_DRAFT_STATUS,
-  ROUTE_RESERVATION_STATUSES,
-} from "@/lib/route-workflow";
+import { ROUTE_RESERVATION_STATUSES } from "@/lib/route-workflow";
 
 type AutomationSettings = {
   enabled: boolean;
@@ -81,23 +76,11 @@ function dateKeyInTripoli(date = new Date()) {
   return `${values.get("year")}-${values.get("month")}-${values.get("day")}`;
 }
 
-function urgencyRank(value: string) {
-  if (value === "fill_now") return 0;
-  if (value === "fill_today") return 1;
-  return 2;
-}
-
 function snapshotIsAfter(value: string | null | undefined, comparison: string | null | undefined) {
   if (!value || !comparison) return false;
   const a = Date.parse(value);
   const b = Date.parse(comparison);
   return Number.isFinite(a) && Number.isFinite(b) && a > b;
-}
-
-function batchKey(now: Date, dateKey: string, operatorId: string | null, windowMinutes: number) {
-  const sizeMs = Math.max(10, windowMinutes || 30) * 60_000;
-  const bucket = Math.floor(now.getTime() / sizeMs);
-  return `refill:${dateKey}:${operatorId ?? "unassigned"}:${bucket}`;
 }
 
 async function loadSettings() {
@@ -307,6 +290,9 @@ export async function runRefillRouteAutomation(now = new Date()) {
     if (error) throw new Error(`Could not resolve stale refill queue rows: ${error.message}`);
   }
 
+  // XY automation ends at the service queue. Admins choose the operator and
+  // exact machine set, review/edit the calculated quantities, then create a route.
+  // Never create, assign, or append route stops from the unattended scheduler.
   const { data: pendingRows, error: pendingError } = await supabase
     .from("refill_service_queue")
     .select("id, machine_id, state, urgency, action_date, first_triggered_at, last_triggered_at, last_evaluated_at, latest_snapshot_at, stock_percent, units_to_target, reason, route_id, route_stop_id, scheduled_at")
@@ -316,214 +302,15 @@ export async function runRefillRouteAutomation(now = new Date()) {
   if (pendingError) throw new Error(`Could not load pending refill queue: ${pendingError.message}`);
 
   const pending = (pendingRows ?? []) as QueueRow[];
-  if (!pending.length) {
-    return {
-      enabled: true,
-      evaluatedMachines: forecasts.length,
-      queuedMachines: 0,
-      routeId: null,
-      stopsAdded: 0,
-      createdRoute: false,
-    };
-  }
-
-  let openRouteQuery = supabase
-    .from("routes")
-    .select("id, route_date, operator_id, status, auto_generated, automation_kind, automation_batch_key, created_at")
-    .eq("route_date", today)
-    .eq("auto_generated", true)
-    .eq("automation_kind", "refill")
-    .in("status", [ROUTE_DRAFT_STATUS, ROUTE_ASSIGNED_STATUS])
-    .order("created_at", { ascending: false })
-    .limit(1);
-
-  openRouteQuery = settings.default_operator_id
-    ? openRouteQuery.eq("operator_id", settings.default_operator_id)
-    : openRouteQuery.is("operator_id", null);
-
-  const { data: openRouteRows, error: openRouteError } = await openRouteQuery;
-  if (openRouteError) throw new Error(`Could not load open automatic refill batch: ${openRouteError.message}`);
-  let route = (openRouteRows ?? [])[0] as any | undefined;
-
-  const oldestPendingMs = Math.min(...pending.map((row) => Date.parse(row.first_triggered_at)).filter(Number.isFinite));
-  const waitMinutes = Number.isFinite(oldestPendingMs) ? (now.getTime() - oldestPendingMs) / 60_000 : 0;
-  const hasCritical = pending.some((row) => row.urgency === "fill_now");
-  const shouldCreate = Boolean(route)
-    || hasCritical
-    || pending.length >= integer(settings.min_batch_stops, 2)
-    || waitMinutes >= integer(settings.max_wait_minutes, 60);
-
-  if (!shouldCreate) {
-    return {
-      enabled: true,
-      evaluatedMachines: forecasts.length,
-      queuedMachines: pending.length,
-      routeId: null,
-      stopsAdded: 0,
-      createdRoute: false,
-      waitingForBatch: true,
-      oldestWaitMinutes: Math.round(waitMinutes),
-    };
-  }
-
-  let createdRoute = false;
-  if (!route) {
-    const automationBatchKey = batchKey(now, today, settings.default_operator_id, settings.batch_window_minutes);
-    const routePayload = {
-      route_date: today,
-      operator_id: settings.default_operator_id,
-      status: settings.default_operator_id ? ROUTE_ASSIGNED_STATUS : ROUTE_DRAFT_STATUS,
-      created_by: null,
-      notes: "Automatically batched from refill service queue.",
-      auto_generated: true,
-      automation_kind: "refill",
-      automation_batch_key: automationBatchKey,
-      automation_last_planned_at: null,
-    };
-    const { data: created, error: createError } = await supabase
-      .from("routes")
-      .insert(routePayload)
-      .select("id, route_date, operator_id, status, auto_generated, automation_kind, automation_batch_key, created_at")
-      .single();
-
-    if (createError) {
-      if (createError.code === "23505") {
-        const { data: existing, error: existingError } = await supabase
-          .from("routes")
-          .select("id, route_date, operator_id, status, auto_generated, automation_kind, automation_batch_key, created_at")
-          .eq("automation_batch_key", automationBatchKey)
-          .maybeSingle();
-        if (existingError || !existing) throw new Error(`Could not recover automatic refill batch: ${existingError?.message ?? createError.message}`);
-        route = existing;
-      } else {
-        throw new Error(`Could not create automatic refill route: ${createError.message}`);
-      }
-    } else {
-      route = created;
-      createdRoute = true;
-    }
-  }
-
-  if (!route?.id || ![ROUTE_DRAFT_STATUS, ROUTE_ASSIGNED_STATUS].includes(String(route.status) as any)) {
-    return {
-      enabled: true,
-      evaluatedMachines: forecasts.length,
-      queuedMachines: pending.length,
-      routeId: route?.id ?? null,
-      stopsAdded: 0,
-      createdRoute,
-      waitingForNextBatch: true,
-    };
-  }
-
-  const { data: currentStops, error: currentStopsError } = await supabase
-    .from("route_stops")
-    .select("id, machine_id, stop_order")
-    .eq("route_id", route.id)
-    .order("stop_order", { ascending: true });
-  if (currentStopsError) throw new Error(`Could not load automatic route stops: ${currentStopsError.message}`);
-
-  const existingMachineIds = new Set((currentStops ?? []).map((row: any) => String(row.machine_id)));
-  const capacityLeft = Math.max(0, integer(settings.max_batch_stops, 6) - (currentStops ?? []).length);
-  if (capacityLeft <= 0) {
-    return {
-      enabled: true,
-      evaluatedMachines: forecasts.length,
-      queuedMachines: pending.length,
-      routeId: route.id,
-      stopsAdded: 0,
-      createdRoute,
-      batchFull: true,
-    };
-  }
-
-  const machineById = new Map((machinesResult.data ?? []).map((machine: any) => [String(machine.id), machine]));
-  const candidates = pending
-    .filter((row) => !existingMachineIds.has(row.machine_id))
-    .sort((a, b) => {
-      const urgency = urgencyRank(a.urgency) - urgencyRank(b.urgency);
-      if (urgency) return urgency;
-      const firstTriggered = Date.parse(a.first_triggered_at) - Date.parse(b.first_triggered_at);
-      if (firstTriggered) return firstTriggered;
-      const aMachine: any = machineById.get(a.machine_id);
-      const bMachine: any = machineById.get(b.machine_id);
-      const aLocation = firstRelation(aMachine?.location);
-      const bLocation = firstRelation(bMachine?.location);
-      const aDistance = Number((aLocation as any)?.distance_from_storage_km ?? Number.POSITIVE_INFINITY);
-      const bDistance = Number((bLocation as any)?.distance_from_storage_km ?? Number.POSITIVE_INFINITY);
-      return aDistance - bDistance;
-    })
-    .slice(0, capacityLeft);
-
-  if (!candidates.length) {
-    return {
-      enabled: true,
-      evaluatedMachines: forecasts.length,
-      queuedMachines: pending.length,
-      routeId: route.id,
-      stopsAdded: 0,
-      createdRoute,
-    };
-  }
-
-  const startOrder = (currentStops ?? []).reduce((max: number, row: any) => Math.max(max, integer(row.stop_order)), 0);
-  const stopRows = candidates.map((row, index) => ({
-    route_id: route.id,
-    machine_id: row.machine_id,
-    stop_order: startOrder + index + 1,
-    status: "pending",
-    notes: `Auto refill trigger: ${row.urgency}`,
-  }));
-
-  const { data: insertedStops, error: insertStopsError } = await supabase
-    .from("route_stops")
-    .insert(stopRows)
-    .select("id, machine_id, stop_order");
-  if (insertStopsError) throw new Error(`Could not add automatic refill stops: ${insertStopsError.message}`);
-
-  const stopByMachine = new Map((insertedStops ?? []).map((stop: any) => [String(stop.machine_id), stop]));
-  for (const candidate of candidates) {
-    const stop = stopByMachine.get(candidate.machine_id);
-    if (!stop) continue;
-    const { error } = await supabase
-      .from("refill_service_queue")
-      .update({
-        state: "scheduled",
-        route_id: route.id,
-        route_stop_id: stop.id,
-        scheduled_at: now.toISOString(),
-        updated_at: now.toISOString(),
-      })
-      .eq("id", candidate.id)
-      .eq("state", "pending");
-    if (error) throw new Error(`Could not link refill queue to route stop: ${error.message}`);
-  }
-
-  if (createdRoute && route.operator_id) {
-    try {
-      await notifyRouteAssigned(supabase, {
-        routeId: String(route.id),
-        routeDate: today,
-        operatorTeamMemberId: String(route.operator_id),
-        assignedBy: "Snacky automation",
-        stopCount: (currentStops ?? []).length + (insertedStops?.length ?? 0),
-      });
-    } catch (error) {
-      console.warn("[refill-route-automation] Could not notify operator about automatic refill route", {
-        route_id: route.id,
-        operator_id: route.operator_id,
-        error,
-      });
-    }
-  }
 
   return {
     enabled: true,
+    mode: "review_only",
     evaluatedMachines: forecasts.length,
     queuedMachines: pending.length,
-    routeId: String(route.id),
-    stopsAdded: insertedStops?.length ?? 0,
-    createdRoute,
-    operatorId: route.operator_id ?? null,
+    routeId: null,
+    stopsAdded: 0,
+    createdRoute: false,
+    awaitingAdminAssignment: pending.length > 0,
   };
 }
