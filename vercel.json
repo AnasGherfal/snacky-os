@@ -3,7 +3,7 @@
   "crons": [
     {
       "path": "/api/cron/xy-vms",
-      "schedule": "0 4 * * *"
+      "schedule": "*/10 * * * *"
     }
   ],
   "regions": [
