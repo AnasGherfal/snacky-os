@@ -9,6 +9,7 @@ const backgroundSyncSource = fs.readFileSync(new URL("../src/components/XyBackgr
 const shellSource = fs.readFileSync(new URL("../src/components/ShellChrome.tsx", import.meta.url), "utf8");
 const dashboardSource = fs.readFileSync(new URL("../src/app/dashboard/page.tsx", import.meta.url), "utf8");
 const refillsSource = fs.readFileSync(new URL("../src/app/refills/page.tsx", import.meta.url), "utf8");
+const refillAutomationSource = fs.readFileSync(new URL("../src/lib/refill-route-automation.ts", import.meta.url), "utf8");
 const schedulerMigration = fs.readFileSync(new URL("../supabase/migrations/20260902150000_xy_vms_durable_scheduler.sql", import.meta.url), "utf8");
 const vercelConfig = JSON.parse(fs.readFileSync(new URL("../vercel.json", import.meta.url), "utf8"));
 
@@ -43,12 +44,17 @@ test("route creation refreshes and allocates XY quantities automatically", () =>
   assert.match(routeSource, /Swap from storage/);
 });
 
-test("unattended XY sync is protected and scheduled outside the browser", () => {
+test("unattended XY sync evaluates refill needs without creating or assigning routes", () => {
   assert.match(cronSource, /process\.env\.CRON_SECRET/);
   assert.match(cronSource, /authorization/);
   assert.match(cronSource, /SUPABASE_SCHEDULER_TOKEN_SHA256/);
   assert.match(cronSource, /ensureFreshXyRoutePlanningData\(\)/);
   assert.match(cronSource, /runRefillRouteAutomation\(\)/);
+  assert.match(refillAutomationSource, /mode: "review_only"/);
+  assert.match(refillAutomationSource, /awaitingAdminAssignment: pending\.length > 0/);
+  assert.match(refillAutomationSource, /Never create, assign, or append route stops from the unattended scheduler/);
+  assert.doesNotMatch(refillAutomationSource, /\.from\("routes"\)[\s\S]{0,400}\.insert\(/);
+  assert.doesNotMatch(refillAutomationSource, /\.from\("route_stops"\)[\s\S]{0,400}\.insert\(/);
   assert.match(cronSource, /export const POST = refreshXy/);
   assert.doesNotMatch(cronSource, /syncXyAll\(\)/);
   assert.deepEqual(vercelConfig.crons, [{ path: "/api/cron/xy-vms", schedule: "0 4 * * *" }]);
