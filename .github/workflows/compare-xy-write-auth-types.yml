@@ -1,0 +1,27 @@
+name: Compare XY write auth field types
+
+on:
+  push:
+    branches:
+      - diagnose-xy-write-swagger
+    paths:
+      - .github/workflows/compare-xy-write-auth-types.yml
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Compare string vs numeric auth types with invalid credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://xcx.xynetweb.com/service-api/api/addInstructionByApi"
+          now="$(date +%s%3N)"
+          echo "=== string key/timestamp ==="
+          curl -sS -L --max-time 30 -X POST -H 'content-type: application/json'             -d "$(printf '{"key":"1","timestamp":"%s","sign":"00000000000000000000000000000000","shbh":"TEST","jqbh":"2509000370","hdbh":"SNACKY_NO_SLOT","spbh":"SNACKY_NO_PRODUCT","spjg":1}' "$now")"             -w '\nHTTP %{http_code}\n' "$url" || true
+          echo "=== numeric key/timestamp ==="
+          curl -sS -L --max-time 30 -X POST -H 'content-type: application/json'             -d "$(printf '{"key":1,"timestamp":%s,"sign":"00000000000000000000000000000000","shbh":"TEST","jqbh":"2509000370","hdbh":"SNACKY_NO_SLOT","spbh":"SNACKY_NO_PRODUCT","spjg":1}' "$now")"             -w '\nHTTP %{http_code}\n' "$url" || true
