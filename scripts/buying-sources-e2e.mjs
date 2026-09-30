@@ -102,7 +102,7 @@ try{
   await legacy('warehouse','item',{product_id:products[0].id,outcome:'bought',bought_boxes:2,note:'Bought from instructed store'});assert.equal((await save('owner',await sourceCommand())).error?.code,'22023');
   for(const n of [1,2])await legacy('warehouse','item',{product_id:products[n].id,outcome:'unavailable',bought_boxes:0,note:'Not available'});await legacy('warehouse','complete');assert.equal((await save('owner',await sourceCommand(1,2,null))).error?.code,'22023');assert.equal((await workspace('warehouse')).record.status,'completed');assert.equal(ledgers(),baseline);
  });
- await check('CRM and operator assignments are rejected; reassignment to purchasing retires the old warehouse access',async()=>{
+ await check('CRM and operator assignments are rejected; purchasing becomes buyer while warehouse keeps planner access',async()=>{
   await legacy('owner','reopen');
   const before=(await workspace('owner')).record;
   for (const target of [accounts.crm.member, accounts.operator.member]) {
@@ -113,7 +113,8 @@ try{
   assert.equal((await accounts.crm.client.rpc('snacky_buying_sources_v1',{p_id:listId})).error?.code,'42501');
   assert.equal((await accounts.operator.client.rpc('snacky_buying_sources_v1',{p_id:listId})).error?.code,'42501');
   await legacy('owner','assign',{assigned_to:accounts.purchasing.member});
-  assert.equal((await accounts.warehouse.client.rpc('snacky_buying_sources_v1',{p_id:listId})).error?.code,'42501');
+  const warehouseView=await workspace('warehouse');assert.equal(warehouseView.planner,true);assert.equal(warehouseView.record.assigned_to,accounts.purchasing.member);
+  assert.equal((await accounts.operator.client.rpc('snacky_buying_sources_v1',{p_id:listId})).error?.code,'42501');
   const s=await sources('purchasing');assert.equal(s.sources.length,3);assert.deepEqual(s.options,[]);assert.deepEqual(s.stores,[]);assert.equal(ledgers(),baseline);
  });
  await check('new source tables have RLS, no raw grants, and definer helpers are private',async()=>{
