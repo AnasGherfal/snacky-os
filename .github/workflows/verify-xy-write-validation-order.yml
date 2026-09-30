@@ -1,0 +1,28 @@
+name: Verify XY write validation order
+
+on:
+  push:
+    branches:
+      - diagnose-xy-write-swagger
+    paths:
+      - .github/workflows/verify-xy-write-validation-order.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Send deliberately invalid signature to impossible machine
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://xcx.xynetweb.com/service-api"
+          now="$(date +%s%3N)"
+          payload="$(printf '{"key":"1","timestamp":"%s","sign":"00000000000000000000000000000000","shbh":"TEST","jqbh":"SNACKY_IMPOSSIBLE_MACHINE","hdbh":"000","spbh":"SNACKY_IMPOSSIBLE_PRODUCT","spjg":1}' "$now")"
+          for endpoint in addInstructionByApi addInstructionSpxxByApi; do
+            echo "=== $endpoint ==="
+            curl -sS -L --max-time 30 -X POST -H 'content-type: application/json' -d "$payload" -w '\nHTTP %{http_code}\n' "$base/api/$endpoint" || true
+          done
