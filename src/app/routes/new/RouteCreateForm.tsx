@@ -256,7 +256,7 @@ export function RouteCreateForm({
   const [builderStep, setBuilderStep] = useState<RouteBuilderStep>("details");
   const [routeDate, setRouteDate] = useState(defaultRouteDate);
   const [creationMode, setCreationMode] = useState<"full" | "stops_only">(fullRouteAvailable ? "full" : "stops_only");
-  const [assignmentMode, setAssignmentMode] = useState<"unassigned" | "assigned">("unassigned");
+  const [assignmentMode, setAssignmentMode] = useState<"unassigned" | "assigned">("assigned");
   const [operatorId, setOperatorId] = useState("");
   const [machineIds, setMachineIds] = useState<string[]>([]);
   const [recommendationKeys, setRecommendationKeys] = useState<string[]>([]);
@@ -386,7 +386,7 @@ export function RouteCreateForm({
       draft.routeDate !== defaultRouteDate ||
         draft.builderStep !== "details" ||
         draft.creationMode !== (fullRouteAvailable ? "full" : "stops_only") ||
-        draft.assignmentMode !== "unassigned" ||
+        draft.assignmentMode !== "assigned" ||
         draft.operatorId ||
         draft.machineIds.length ||
         draft.recommendationKeys.length ||
@@ -1424,8 +1424,12 @@ export function RouteCreateForm({
 
       {builderStep === "products" && creationMode === "full" ? (
       <div>
-      <FormSection title={tr(locale, "Set products for each selected machine", "حدد منتجات كل جهاز مختار")}>
-        <p className="text-sm text-slate-500">{tr(locale, "Focus one selected machine at a time, then add every product and exact unit quantity for that stop. Recommendations and the full storage catalog are in the same picker.", "ركز على جهاز مختار واحد في كل مرة، ثم أضف كل منتج والكمية الدقيقة لذلك الموقع. التوصيات وكامل منتجات المخزن موجودة في نفس المحدد.")}</p>
+      <FormSection title={tr(locale, "Review XY refill calculation", "راجع حساب تعبئة XY")}>
+        <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950">
+          <div className="font-semibold">{tr(locale, "Calculation only — nothing has been assigned or reserved yet", "هذه حسابات فقط — لم يتم إسناد أو حجز أي مخزون بعد")}</div>
+          <p className="mt-1 leading-6">{tr(locale, "Snacky calculated what the selected machines need from the latest XY quantities and verified storage availability. Review or edit every quantity here. The route and storage reservation are created only after your final confirmation.", "حسب Snacky احتياج الأجهزة المحددة من أحدث كميات XY والمخزون المؤكد. راجع أو عدّل كل كمية هنا. لا يتم إنشاء الجولة أو حجز المخزون إلا بعد تأكيدك النهائي.")}</p>
+        </div>
+        <p className="text-sm text-slate-500">{tr(locale, "Review one selected machine at a time. Suggested quantities are already applied when fresh XY data is available, and you can edit them before creating the route.", "راجع جهازًا واحدًا في كل مرة. يتم تطبيق الكميات المقترحة تلقائيًا عندما تكون بيانات XY حديثة، ويمكنك تعديلها قبل إنشاء الجولة.")}</p>
 
         {!products.length ? (
           <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
@@ -2306,7 +2310,7 @@ export function RouteCreateForm({
       ) : null}
 
       {builderStep === "machines" ? (
-        <FormSection title={tr(locale, "Choose route machines", "اختر أجهزة الجولة")} description={creationMode === "stops_only" ? tr(locale, "Select every machine the operator should visit. Exact products can be added later at storage.", "حدد كل جهاز يجب على المشغّل زيارته. يمكن إضافة المنتجات الدقيقة لاحقًا في المخزن.") : tr(locale, "Select the stops first. Product planning in the next step will stay separated by machine.", "حدد المواقع أولًا. سيبقى تخطيط المنتجات في الخطوة التالية منفصلًا حسب الجهاز.")}>
+        <FormSection title={tr(locale, "Choose route machines", "اختر أجهزة الجولة")} description={creationMode === "stops_only" ? tr(locale, "Select only the machines this operator should visit. Exact products can be added later at storage.", "حدد فقط الأجهزة التي يجب على هذا المشغّل زيارتها. يمكن إضافة المنتجات الدقيقة لاحقًا في المخزن.") : tr(locale, "Select only the machines for this operator. Snacky calculates their XY refill quantities now; you will review the calculation before anything is created.", "حدد فقط أجهزة هذا المشغّل. سيحسب Snacky كميات التعبئة من XY الآن، وستراجع الحساب قبل إنشاء أي شيء.")}>
           {!machines.length ? (
             <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
               {tr(locale, "No active machines found. Create a machine first.", "لم يتم العثور على أجهزة نشطة. أنشئ جهازًا أولًا.")}
@@ -2359,7 +2363,7 @@ export function RouteCreateForm({
                       </div>
                       <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                         <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-600">
-                          <span className="block text-slate-500">{tr(locale, "Suggested", "المقترح")}</span>
+                          <span className="block text-slate-500">{tr(locale, "XY calculation", "حساب XY")}</span>
                           <span className="font-semibold text-slate-900">{recommendationsForMachine.length} {tr(locale, "products", "منتجات")} · {recommendedUnits} {tr(locale, "units", "وحدة")}</span>
                         </div>
                         <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-600">
@@ -2383,7 +2387,7 @@ export function RouteCreateForm({
       ) : null}
 
       {builderStep === "review" ? (
-        <FormSection title={tr(locale, "Review route before creating", "راجع الجولة قبل الإنشاء")} description={tr(locale, "Confirm the assignment, machine stops, and exact physical product quantities. Go back to change anything.", "أكد الإسناد ومواقع الأجهزة وكميات المنتجات الفعلية الدقيقة. ارجع لتغيير أي شيء.")}>
+        <FormSection title={tr(locale, "Final review before creating route", "المراجعة النهائية قبل إنشاء الجولة")} description={tr(locale, "Confirm the chosen operator, selected machines, and calculated refill quantities. Until you press Create route, this is only a plan and no stock is reserved.", "أكد المشغّل المختار والأجهزة المحددة وكميات التعبئة المحسوبة. حتى تضغط إنشاء الجولة، تظل هذه مجرد خطة ولا يتم حجز أي مخزون.")}>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr(locale, "Route date", "تاريخ الجولة")}</div>
@@ -2458,7 +2462,7 @@ export function RouteCreateForm({
         </div>
         {builderStep !== "details" ? <button type="button" className="btn-secondary justify-center" onClick={goBackOneStep} disabled={saving}>{tr(locale, "Back", "رجوع")}</button> : null}
         {builderStep === "details" ? <button type="button" className="btn-primary justify-center" onClick={continueFromDetails} disabled={saving}>{tr(locale, "Choose machines", "اختر الأجهزة")}</button> : null}
-        {builderStep === "machines" ? <button type="button" className="btn-primary justify-center" onClick={continueFromMachines} disabled={saving}>{creationMode === "full" ? tr(locale, "Choose products", "اختر المنتجات") : tr(locale, "Review route", "راجع الجولة")}</button> : null}
+        {builderStep === "machines" ? <button type="button" className="btn-primary justify-center" onClick={continueFromMachines} disabled={saving}>{creationMode === "full" ? tr(locale, "Review XY calculation", "راجع حساب XY") : tr(locale, "Review route", "راجع الجولة")}</button> : null}
         {builderStep === "products" ? <button type="button" className="btn-primary justify-center" onClick={continueFromProducts} disabled={saving}>{tr(locale, "Review route", "راجع الجولة")}</button> : null}
         {builderStep === "review" ? (
           <button type="submit" className="btn-primary justify-center disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto" disabled={saving}>
