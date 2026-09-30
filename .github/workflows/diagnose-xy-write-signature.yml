@@ -1,0 +1,26 @@
+name: Diagnose XY write signature
+
+on:
+  push:
+    branches:
+      - diagnose-xy-write-signature
+    paths:
+      - .github/workflows/diagnose-xy-write-signature.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Call existing production fake-machine write-contract probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://snacky-os.vercel.app/api/internal/xy-write-contract?probe=xywrite-contract-20260930"
+          status="$(curl -sS -L --max-time 60 -o response.json -w '%{http_code}' "$url")"
+          echo "HTTP $status"
+          cat response.json | jq .
+          test "$status" = "200"
