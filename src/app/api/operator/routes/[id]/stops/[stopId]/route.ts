@@ -457,46 +457,7 @@ export async function GET(
       });
 
       const lastKnownSalePriceByProduct = new Map<string, number>();
-      const { data: confirmedMappings, error: confirmedMappingsError } = await operationalReadClient
-      .from("vms_product_mappings")
-      .select("product_id, vms_product_id, vms_product_name, vms_selling_price_lyd")
-      .eq("match_status", "confirmed")
-      .not("product_id", "is", null)
-      .limit(1000);
-    if (confirmedMappingsError && !isMissingTable(confirmedMappingsError, "vms_product_mappings")) {
-      console.warn("[operator:stop-data] Could not load confirmed XY product mappings", { routeId, stopId, error: confirmedMappingsError });
-    }
-    const confirmedMappingByProduct = new Map<string, ProductMappingRow>();
-    ((confirmedMappings ?? []) as ProductMappingRow[]).forEach((mapping) => {
-      const productId = String(mapping.product_id ?? "").trim();
-      const vmsProductId = String(mapping.vms_product_id ?? "").trim();
-      if (!productId || !vmsProductId || confirmedMappingByProduct.has(productId)) return;
-      confirmedMappingByProduct.set(productId, mapping);
-    });
-
-    const productRowById = new Map(productRows.map((product) => [String(product.id), product]));
-    const machineLayout = latestMachinePriceRows
-      .filter((row) => String(row.slot_code ?? "").trim())
-      .map((row) => {
-        const productId = String(row.product_id ?? "").trim() || null;
-        const product = productId ? productRowById.get(productId) : null;
-        return {
-          slotCode: String(row.slot_code ?? "").trim(),
-          productId,
-          vmsProductId: String(row.vms_product_id ?? "").trim() || null,
-          productName: product?.name ?? String(row.vms_product_name ?? "").trim() || "Unknown product",
-          vmsProductName: String(row.vms_product_name ?? "").trim() || null,
-          imageUrl: product?.image_url ?? row.product_image_url ?? null,
-          currentQty: Math.max(0, Number(row.current_qty ?? 0) || 0),
-          capacity: Math.max(0, Number(row.capacity ?? 0) || 0),
-          salePriceLyd: Number(row.vms_selling_price_lyd ?? 0) > 0 ? Number(row.vms_selling_price_lyd) : null,
-          aisleStatus: row.aisle_status ?? null,
-          xyMapped: Boolean(productId && confirmedMappingByProduct.get(productId)?.vms_product_id),
-        };
-      })
-      .sort((left, right) => left.slotCode.localeCompare(right.slotCode, undefined, { numeric: true }));
-
-    const manualMachineSaleRows = manualMachineSalesResult.error ? [] : (manualMachineSalesResult.data ?? []) as Array<{ product_id?: string | null; unit_sale_price_lyd?: number | string | null }>;
+      const manualMachineSaleRows = manualMachineSalesResult.error ? [] : (manualMachineSalesResult.data ?? []) as Array<{ product_id?: string | null; unit_sale_price_lyd?: number | string | null }>;
       manualMachineSaleRows.forEach((row) => {
         const productId = String(row.product_id ?? "");
         const price = Number(row.unit_sale_price_lyd ?? 0);
@@ -504,6 +465,9 @@ export async function GET(
         lastKnownSalePriceByProduct.set(productId, price);
       });
 
+      if (confirmedMappingsResult.error && !isMissingTable(confirmedMappingsResult.error, "vms_product_mappings")) {
+        console.warn("[operator:stop-data] Could not load confirmed XY product mappings for catalog", { routeId, stopId, error: confirmedMappingsResult.error });
+      }
       const confirmedMappingByProduct = new Map<string, ProductMappingRow>();
       ((confirmedMappingsResult.data ?? []) as ProductMappingRow[]).forEach((mapping) => {
         const productId = String(mapping.product_id ?? "").trim();
@@ -891,6 +855,46 @@ export async function GET(
       item.vmsSlotPrices = uniqueSlotPrices;
       item.vmsSalePriceLyd = distinctPrices.length === 1 ? distinctPrices[0] : null;
     });
+
+    const { data: confirmedMappings, error: confirmedMappingsError } = await operationalReadClient
+      .from("vms_product_mappings")
+      .select("product_id, vms_product_id, vms_product_name, vms_selling_price_lyd")
+      .eq("match_status", "confirmed")
+      .not("product_id", "is", null)
+      .limit(1000);
+    if (confirmedMappingsError && !isMissingTable(confirmedMappingsError, "vms_product_mappings")) {
+      console.warn("[operator:stop-data] Could not load confirmed XY product mappings", { routeId, stopId, error: confirmedMappingsError });
+    }
+    const confirmedMappingByProduct = new Map<string, ProductMappingRow>();
+    ((confirmedMappings ?? []) as ProductMappingRow[]).forEach((mapping) => {
+      const productId = String(mapping.product_id ?? "").trim();
+      const vmsProductId = String(mapping.vms_product_id ?? "").trim();
+      if (!productId || !vmsProductId || confirmedMappingByProduct.has(productId)) return;
+      confirmedMappingByProduct.set(productId, mapping);
+    });
+
+    const productRowById = new Map(productRows.map((product) => [String(product.id), product]));
+    const machineLayout = latestMachinePriceRows
+      .filter((row) => String(row.slot_code ?? "").trim())
+      .map((row) => {
+        const productId = String(row.product_id ?? "").trim() || null;
+        const product = productId ? productRowById.get(productId) : null;
+        const xyName = String(row.vms_product_name ?? "").trim();
+        return {
+          slotCode: String(row.slot_code ?? "").trim(),
+          productId,
+          vmsProductId: String(row.vms_product_id ?? "").trim() || null,
+          productName: product?.name ?? (xyName || "Unknown product"),
+          vmsProductName: xyName || null,
+          imageUrl: product?.image_url ?? row.product_image_url ?? null,
+          currentQty: Math.max(0, Number(row.current_qty ?? 0) || 0),
+          capacity: Math.max(0, Number(row.capacity ?? 0) || 0),
+          salePriceLyd: Number(row.vms_selling_price_lyd ?? 0) > 0 ? Number(row.vms_selling_price_lyd) : null,
+          aisleStatus: row.aisle_status ?? null,
+          xyMapped: Boolean(productId && confirmedMappingByProduct.get(productId)?.vms_product_id),
+        };
+      })
+      .sort((left, right) => left.slotCode.localeCompare(right.slotCode, undefined, { numeric: true }));
 
     const manualMachineSaleRows = manualMachineSalesResult.error ? [] : (manualMachineSalesResult.data ?? []) as Array<{ product_id?: string | null; unit_sale_price_lyd?: number | string | null; sale_time?: string | null; status?: string | null }>;
     const lastKnownSalePriceByProduct = new Map<string, number>();
