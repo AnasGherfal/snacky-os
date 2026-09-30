@@ -51,7 +51,7 @@ test("unattended XY sync is protected and scheduled outside the browser", () => 
   assert.match(cronSource, /runRefillRouteAutomation\(\)/);
   assert.match(cronSource, /export const POST = refreshXy/);
   assert.doesNotMatch(cronSource, /syncXyAll\(\)/);
-  assert.deepEqual(vercelConfig.crons, [{ path: "/api/cron/xy-vms", schedule: "*/10 * * * *" }]);
+  assert.deepEqual(vercelConfig.crons, [{ path: "/api/cron/xy-vms", schedule: "0 4 * * *" }]);
   assert.match(schedulerMigration, /vault\.decrypted_secrets/);
   assert.match(schedulerMigration, /snacky-xy-vms-hourly/);
   assert.match(schedulerMigration, /'7 \* \* \* \*'/);
