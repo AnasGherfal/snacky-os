@@ -13,6 +13,8 @@ type RecommendationRow = {
   par_qty?: number | string | null;
   available_storage_qty?: number | string | null;
   priority?: string | null;
+  latest_vms_at?: string | null;
+  imported_at?: string | null;
 };
 
 type RouteStopRow = {
@@ -39,6 +41,7 @@ export type AutoPlanRouteProductsResult = {
     | "no_stops"
     | "no_recommendations"
     | "no_available_storage"
+    | "stale_recommendations"
     | "route_has_pickup_history";
   plannedItemCount: number;
   plannedUnitCount: number;
@@ -164,7 +167,7 @@ export async function autoPlanRouteProducts(args: {
   const [{ data: recommendations, error: recommendationsError }, { data: storageRows, error: storageError }, { data: reservedRows, error: reservedError }] = await Promise.all([
     readClient
       .from("refill_recommendations")
-      .select("recommendation_key, machine_id, machine_slot_id, slot_code, product_id, current_qty, capacity, par_qty, available_storage_qty, priority")
+      .select("recommendation_key, machine_id, machine_slot_id, slot_code, product_id, current_qty, capacity, par_qty, available_storage_qty, priority, latest_vms_at, imported_at")
       .in("machine_id", machineIds),
     readClient
       .from("route_storage_stock_by_product")
@@ -179,8 +182,26 @@ export async function autoPlanRouteProducts(args: {
   if (storageError) throw storageError;
   if (reservedError) throw reservedError;
 
-  const recommendationRows = ((recommendations ?? []) as RecommendationRow[])
+  const rawRecommendationRows = ((recommendations ?? []) as RecommendationRow[])
     .filter((row) => row.machine_id && row.product_id && recommended(row) > 0);
+  const maxAgeMs = 72 * 60 * 60 * 1000;
+  const nowMs = Date.now();
+  const staleRows = rawRecommendationRows.filter((row) => {
+    const timestamp = Date.parse(String(row.latest_vms_at ?? row.imported_at ?? ""));
+    return Number.isFinite(timestamp) && nowMs - timestamp > maxAgeMs;
+  });
+  const recommendationRows = rawRecommendationRows.filter((row) => !staleRows.includes(row));
+
+  if (!recommendationRows.length && staleRows.length) {
+    return {
+      prepared: false,
+      reason: "stale_recommendations",
+      plannedItemCount: 0,
+      plannedUnitCount: 0,
+      productCount: 0,
+      shortageProductCount: 0,
+    };
+  }
 
   if (!recommendationRows.length) {
     return {
