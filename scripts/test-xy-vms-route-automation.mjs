@@ -11,6 +11,7 @@ const dashboardSource = fs.readFileSync(new URL("../src/app/dashboard/page.tsx",
 const refillsSource = fs.readFileSync(new URL("../src/app/refills/page.tsx", import.meta.url), "utf8");
 const refillAutomationSource = fs.readFileSync(new URL("../src/lib/refill-route-automation.ts", import.meta.url), "utf8");
 const operatorPickListSource = fs.readFileSync(new URL("../src/app/operator/routes/[id]/pick-list/page.tsx", import.meta.url), "utf8");
+const operatorStopSource = fs.readFileSync(new URL("../src/app/operator/routes/[id]/stops/[stopId]/page.tsx", import.meta.url), "utf8");
 const schedulerMigration = fs.readFileSync(new URL("../supabase/migrations/20260902150000_xy_vms_durable_scheduler.sql", import.meta.url), "utf8");
 const vercelConfig = JSON.parse(fs.readFileSync(new URL("../vercel.json", import.meta.url), "utf8"));
 
@@ -70,6 +71,14 @@ test("operator pickup uses the admin-reviewed plan without silently recalculatin
   assert.doesNotMatch(operatorPickListSource, /prepareRouteForPickup/);
   assert.doesNotMatch(operatorPickListSource, /Pickup quantities updated from the latest XY stock/);
   assert.match(operatorPickListSource, /Route started\./);
+});
+
+test("machine stop XY Change and Move controls are mobile-tappable and reveal their editor", () => {
+  assert.match(operatorStopSource, /min-h-11 touch-manipulation select-none/);
+  assert.match(operatorStopSource, /xyLayoutEditorRef\.current\?\.scrollIntoView/);
+  assert.match(operatorStopSource, /\[xyEditSlotCode, xySwapSourceSlotCode\]/);
+  assert.match(operatorStopSource, /xyEditSlotCode === slot\.slotCode/);
+  assert.match(operatorStopSource, /xySwapSourceSlotCode === slot\.slotCode/);
 });
 
 test("authorized planners refresh XY in the background without pressing sync", () => {
