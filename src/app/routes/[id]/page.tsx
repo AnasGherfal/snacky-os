@@ -13,7 +13,7 @@ import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
 import { ROUTE_CANCELED_STATUS, isActiveRouteStatus, isAvailableRouteStatus, isCompletedRouteStatus, isPickupConfirmedStatus, isRouteInventoryFinalizableStatus, isRouteItemsEditableStatus, isRouteStopDoneStatus, isTerminalRouteStatus, nextOperatorRouteHref, routeDisplayStatus } from "@/lib/route-workflow";
 import { RouteCreatedToast } from "@/app/routes/[id]/RouteCreatedToast";
-import { assignRoute, deleteDraftRoute } from "@/lib/route-actions";
+import { assignRoute, autoPrepareRouteProducts, deleteDraftRoute } from "@/lib/route-actions";
 import { getServerI18n } from "@/lib/i18n/server";
 import {
   ROUTE_INVENTORY_OPEN_STATUSES,
@@ -677,9 +677,23 @@ export default async function RouteDetailPage({ params, searchParams }: { params
         ) : null}
         {productsPendingAtStorage ? (
           <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950">
-            <div className="font-semibold">{tr(locale, "Machine stops planned — products pending at storage", "تم تخطيط مواقع الأجهزة — المنتجات بانتظار التجهيز في المخزن")}</div>
-            <p className="mt-1 leading-6">{tr(locale, "The operator can already see the machines on this route. Add the exact product quantities when you reach storage; Start Route remains locked until then.", "يمكن للمشغل رؤية الأجهزة في هذه الجولة بالفعل. أضف كميات المنتجات الدقيقة عند الوصول إلى المخزن؛ وسيبقى بدء الجولة مقفلاً حتى ذلك الحين.")}</p>
-            {canEditRouteItems ? <Link href={`/routes/${id}/edit`} className="btn-primary mt-3 inline-flex">{tr(locale, "Prepare products now", "تجهيز المنتجات الآن")}</Link> : null}
+            <div className="font-semibold">{tr(locale, "Machine stops planned — let Snacky prepare the pickup", "تم تخطيط مواقع الأجهزة — دع Snacky يجهز قائمة التحميل")}</div>
+            <p className="mt-1 leading-6">
+              {tr(
+                locale,
+                "Snacky can calculate the products and quantities automatically from the latest XY refill needs, available storage stock, and stock already reserved by other routes. Only edit the result when you want an override, such as replacing a slow-selling product.",
+                "يمكن لـ Snacky حساب المنتجات والكميات تلقائياً من أحدث احتياجات التعبئة في XY، والمخزون المتاح، والمخزون المحجوز لجولات أخرى. عدّل النتيجة فقط عندما تريد استثناءً، مثل استبدال منتج بطيء البيع.",
+              )}
+            </p>
+            {canEditRouteItems ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <form action={autoPrepareRouteProducts}>
+                  <input type="hidden" name="id" value={id} />
+                  <button type="submit" className="btn-primary">{tr(locale, "Auto prepare products", "تجهيز المنتجات تلقائياً")}</button>
+                </form>
+                <Link href={`/routes/${id}/edit`} className="btn-secondary inline-flex">{tr(locale, "Manual override", "تعديل يدوي")}</Link>
+              </div>
+            ) : null}
           </div>
         ) : null}
 
