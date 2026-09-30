@@ -7,7 +7,7 @@ import { QuantityStepper } from "@/components/QuantityStepper";
 import { useLanguage } from "@/components/I18nProvider";
 import { confirmPickupDirect } from "@/lib/direct-pickup-actions";
 import { confirmSupplementalRoutePickup } from "@/lib/supplemental-route-pickup-actions";
-import { startRoute } from "@/lib/operator-actions";
+import { prepareRouteForPickup, startRoute } from "@/lib/operator-actions";
 import { formatProductQuantity } from "@/lib/product-quantity";
 import { comparePickupProductRows } from "@/lib/route-pickup-checklist";
 
@@ -103,6 +103,7 @@ export default function PickListPage() {
   const shouldStartRoute = searchParams.get("start") === "1";
   const requestedStopId = searchParams.get("stop")?.trim() ?? "";
   const startAttempted = useRef(false);
+  const pickupRefreshAttempted = useRef(false);
   const submissionIdRef = useRef(crypto.randomUUID());
 
   const [stopGroups, setStopGroups] = useState<PickStopGroup[]>([]);
@@ -250,11 +251,33 @@ export default function PickListPage() {
     setLoading(true);
     setError("");
     try {
+      let hasLocalPickupProgress = false;
+      if (typeof window !== "undefined") {
+        try {
+          const saved = window.localStorage.getItem(`${PICKUP_PROGRESS_STORAGE_PREFIX}:${routeId}`);
+          const parsed = saved ? JSON.parse(saved) : [];
+          hasLocalPickupProgress = Array.isArray(parsed) && parsed.length > 0;
+        } catch {
+          hasLocalPickupProgress = false;
+        }
+      }
+
+      if (!hasLocalPickupProgress && !pickupRefreshAttempted.current) {
+        pickupRefreshAttempted.current = true;
+        const preparation = await prepareRouteForPickup(routeId);
+        if (!preparation.success) {
+          throw new Error(preparation.error || (isArabic ? "تعذر تحديث احتياجات التعبئة قبل الاستلام." : "Could not refresh refill needs before pickup."));
+        }
+        if ((preparation as any).prepared || (preparation as any).refreshed) {
+          setNotice(isArabic ? "تم تحديث كميات الاستلام من أحدث بيانات XY." : "Pickup quantities updated from the latest XY stock.");
+        }
+      }
+
       if (shouldStartRoute && !startAttempted.current) {
         startAttempted.current = true;
         const startResult = await startRoute(routeId);
         if (!startResult.success) throw new Error(copy.startFailed);
-        setNotice(isArabic ? "تم بدء المسار." : "Route started.");
+        setNotice(isArabic ? "تم تحديث الكميات وبدء المسار." : "Quantities refreshed and route started.");
       }
 
       const response = await fetch(`/api/operator/routes/${routeId}/pick-list`, { cache: "no-store" });

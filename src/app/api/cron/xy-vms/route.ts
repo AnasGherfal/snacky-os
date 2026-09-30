@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { ensureFreshXyRoutePlanningData } from "@/lib/xy-vms-sync";
+import { runRefillRouteAutomation } from "@/lib/refill-route-automation";
 
 export const dynamic = "force-dynamic";
 
@@ -45,6 +46,10 @@ async function refreshXy(request: NextRequest) {
 
   try {
     const result = await ensureFreshXyRoutePlanningData();
+    const automation = ["refreshed", "already_fresh"].includes(result.outcome)
+      ? await runRefillRouteAutomation()
+      : { skipped: true, reason: `XY planning data is ${result.outcome}.` };
+
     const status = result.outcome === "in_progress"
       ? 202
       : result.outcome === "failed"
@@ -58,6 +63,7 @@ async function refreshXy(request: NextRequest) {
       refreshed: result.refreshed,
       skipped: result.skipped,
       results: result.results,
+      refillRouteAutomation: automation,
     }, {
       status,
       headers: { "Cache-Control": "no-store" },
