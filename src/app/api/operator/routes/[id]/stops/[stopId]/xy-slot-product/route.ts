@@ -117,7 +117,7 @@ export async function POST(
     }, { status: 409 });
   }
 
-  let priceLyd = machinePrices[0] ?? null;
+  let priceLyd: number | null = machinePrices.length > 0 ? machinePrices[0] : null;
   if (!priceLyd) {
     const { data: catalog } = await admin
       .from("vms_product_catalog_snapshots")
