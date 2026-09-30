@@ -39,30 +39,30 @@ do $$declare r jsonb;c jsonb;blocked boolean;begin
  if public.snacky_buying_workspace_v1('66666666-6666-4666-8666-666666666666')#>>'{record,status}'<>'completed' then raise exception 'Completion not saved';end if;
 end $$;
 select set_config('request.jwt.claim.sub','33333333-3333-4333-8333-333333333333',true);
-do $declare blocked boolean:=false;begin
+do $$declare blocked boolean:=false;begin
  begin perform public.snacky_buying_workspace_v1(null,'{"scope":"all"}');exception when insufficient_privilege then blocked:=true;end;
  if not blocked then raise exception 'Operator buying workspace access';end if;
  blocked:=false;
  begin perform public.snacky_buying_workspace_v1('66666666-6666-4666-8666-666666666666');exception when insufficient_privilege then blocked:=true;end;
  if not blocked then raise exception 'Operator buyer detail access';end if;
-end $;
+end $$;
 select set_config('request.jwt.claim.sub','11111111-1111-4111-8111-111111111111',true);
 select public.snacky_buying_command_v1(jsonb_build_object('request_id',gen_random_uuid(),'list_id','66666666-6666-4666-8666-666666666666','action','reopen','revision',4,'payload','{}'::jsonb));
-do $declare blocked_crm boolean:=false;blocked_operator boolean:=false;begin
+do $$declare blocked_crm boolean:=false;blocked_operator boolean:=false;begin
  begin perform public.snacky_buying_command_v1(jsonb_build_object('request_id',gen_random_uuid(),'list_id','66666666-6666-4666-8666-666666666666','action','assign','revision',5,'payload','{"assigned_to":"dddddddd-dddd-4ddd-8ddd-dddddddddddd"}'::jsonb));exception when invalid_parameter_value then blocked_crm:=true;end;
  begin perform public.snacky_buying_command_v1(jsonb_build_object('request_id',gen_random_uuid(),'list_id','66666666-6666-4666-8666-666666666666','action','assign','revision',5,'payload','{"assigned_to":"cccccccc-cccc-4ccc-8ccc-cccccccccccc"}'::jsonb));exception when invalid_parameter_value then blocked_operator:=true;end;
  if not blocked_crm or not blocked_operator then raise exception 'Non-buying role assignment accepted';end if;
-end $;
+end $$;
 select set_config('request.jwt.claim.sub','44444444-4444-4444-8444-444444444444',true);
-do $declare blocked boolean:=false;begin
+do $$declare blocked boolean:=false;begin
  begin perform public.snacky_buying_workspace_v1('66666666-6666-4666-8666-666666666666');exception when insufficient_privilege then blocked:=true;end;
  if not blocked then raise exception 'CRM buying access';end if;
-end $;
+end $$;
 select set_config('request.jwt.claim.sub','22222222-2222-4222-8222-222222222222',true);
 reset role;
 update public.team_members set active_status='inactive' where id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 set local role authenticated;
-do $declare blocked boolean:=false;begin begin perform public.snacky_buying_workspace_v1('66666666-6666-4666-8666-666666666666');exception when insufficient_privilege then blocked:=true;end;if not blocked then raise exception 'Inactive buyer access';end if;end $;
+do $$declare blocked boolean:=false;begin begin perform public.snacky_buying_workspace_v1('66666666-6666-4666-8666-666666666666');exception when insufficient_privilege then blocked:=true;end;if not blocked then raise exception 'Inactive buyer access';end if;end $$;
 reset role;
 do $$begin
  if has_function_privilege('anon','public.snacky_buying_workspace_v1(uuid,jsonb)','EXECUTE') or has_table_privilege('authenticated','buying_private.lists','UPDATE') then raise exception 'Private permission boundary broken';end if;
