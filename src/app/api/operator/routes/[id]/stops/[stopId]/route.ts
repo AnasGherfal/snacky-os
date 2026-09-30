@@ -37,7 +37,7 @@ function buildDebugDetails({
 type DbErrorLike = { code?: unknown; message?: unknown; details?: unknown; hint?: unknown };
 type LegacyPickupRow = { id?: string | null; route_stop_id?: string | null; route_stop_item_id?: string | null; machine_id?: string | null; picked_qty?: unknown; is_active?: boolean | null };
 type MachineLocationRow = { id?: string | null; name?: string | null };
-type MachineRow = { id?: string | null; name?: string | null; machine_display_name?: string | null; machine_code?: string | null; location?: MachineLocationRow | MachineLocationRow[] | null };
+type MachineRow = { id?: string | null; name?: string | null; machine_display_name?: string | null; machine_code?: string | null; vms_machine_id?: string | null; location?: MachineLocationRow | MachineLocationRow[] | null };
 type ProductRelationRow = { id?: string | null; name?: string | null };
 type StopPlanItemRow = {
   id?: string | null;
@@ -69,7 +69,24 @@ type MovementRow = { product_id?: string | null; quantity?: unknown; related_rou
 type RouteBagBalanceRow = { product_id?: string | null; signed_quantity?: unknown };
 type ProductOptionRow = { id: string; sku?: string | null; barcode?: string | null; name: string; category?: string | null; brand?: string | null; image_url?: string | null; selling_price?: number | null; current_selling_price_lyd?: number | null; vms_selling_price_lyd?: number | null };
 type MachineProductSignalRow = { product_id?: string | null; import_batch_id?: string | null };
-type MachineVmsPriceRow = { product_id?: string | null; slot_code?: string | null; vms_selling_price_lyd?: number | string | null };
+type MachineVmsPriceRow = {
+  product_id?: string | null;
+  slot_code?: string | null;
+  vms_product_id?: string | null;
+  vms_product_name?: string | null;
+  vms_machine_id?: string | null;
+  current_qty?: number | string | null;
+  capacity?: number | string | null;
+  vms_selling_price_lyd?: number | string | null;
+  product_image_url?: string | null;
+  aisle_status?: string | null;
+};
+type ProductMappingRow = {
+  product_id?: string | null;
+  vms_product_id?: string | null;
+  vms_product_name?: string | null;
+  vms_selling_price_lyd?: number | string | null;
+};
 type AdjustmentRow = {
   id: string;
   adjustment_type?: string | null;
@@ -374,6 +391,7 @@ export async function GET(
         { data: fillMovements, error: fillMovementsError },
         { data: products, error: productsError },
         manualMachineSalesResult,
+        confirmedMappingsResult,
       ] = await Promise.all([
         supabase.rpc("snacky_route_bag_balances", { p_route_id: routeId }),
         supabase
@@ -393,6 +411,12 @@ export async function GET(
           .eq("status", "confirmed")
           .order("sale_time", { ascending: false })
           .limit(200),
+        operationalReadClient
+          .from("vms_product_mappings")
+          .select("product_id, vms_product_id, vms_product_name, vms_selling_price_lyd")
+          .eq("match_status", "confirmed")
+          .not("product_id", "is", null)
+          .limit(1000),
       ]);
 
       if (routeBagBalancesError) {
@@ -441,6 +465,17 @@ export async function GET(
         lastKnownSalePriceByProduct.set(productId, price);
       });
 
+      if (confirmedMappingsResult.error && !isMissingTable(confirmedMappingsResult.error, "vms_product_mappings")) {
+        console.warn("[operator:stop-data] Could not load confirmed XY product mappings for catalog", { routeId, stopId, error: confirmedMappingsResult.error });
+      }
+      const confirmedMappingByProduct = new Map<string, ProductMappingRow>();
+      ((confirmedMappingsResult.data ?? []) as ProductMappingRow[]).forEach((mapping) => {
+        const productId = String(mapping.product_id ?? "").trim();
+        const vmsProductId = String(mapping.vms_product_id ?? "").trim();
+        if (!productId || !vmsProductId || confirmedMappingByProduct.has(productId)) return;
+        confirmedMappingByProduct.set(productId, mapping);
+      });
+
       const productOptions = productRows.map((product) => ({
         id: product.id,
         sku: product.sku,
@@ -455,6 +490,9 @@ export async function GET(
         sellingPrice: product.selling_price ?? null,
         vmsSellingPriceLyd: product.vms_selling_price_lyd ?? null,
         lastKnownSalePriceLyd: lastKnownSalePriceByProduct.get(String(product.id)) ?? null,
+        vmsProductId: confirmedMappingByProduct.get(String(product.id))?.vms_product_id ?? null,
+        vmsProductName: confirmedMappingByProduct.get(String(product.id))?.vms_product_name ?? null,
+        xyEligible: Boolean(confirmedMappingByProduct.get(String(product.id))?.vms_product_id),
       }));
 
       return NextResponse.json({ productOptions });
@@ -462,7 +500,7 @@ export async function GET(
 
     const { data: machine, error: machineError } = await supabase
       .from("machines")
-      .select("id, name, machine_code, location:locations(id, name)")
+      .select("id, name, machine_code, vms_machine_id, location:locations(id, name)")
       .eq("id", stop.machine_id)
       .maybeSingle();
 
@@ -768,11 +806,10 @@ export async function GET(
     if (activeImportBatchId) {
       const { data: machinePriceRows, error: machinePriceError } = await operationalReadClient
         .from("vms_stock_snapshots")
-        .select("product_id, slot_code, vms_selling_price_lyd")
+        .select("product_id, slot_code, vms_product_id, vms_product_name, vms_machine_id, current_qty, capacity, vms_selling_price_lyd, product_image_url, aisle_status")
         .eq("import_batch_id", activeImportBatchId)
         .eq("machine_id", stop.machine_id)
         .eq("source_provider", "xy")
-        .not("product_id", "is", null)
         .limit(500);
       if (machinePriceError && !isMissingTable(machinePriceError, "vms_stock_snapshots")) {
         console.warn("[operator:stop-data] Could not load machine-specific XY prices", { routeId, stopId, error: machinePriceError });
@@ -818,6 +855,46 @@ export async function GET(
       item.vmsSlotPrices = uniqueSlotPrices;
       item.vmsSalePriceLyd = distinctPrices.length === 1 ? distinctPrices[0] : null;
     });
+
+    const { data: confirmedMappings, error: confirmedMappingsError } = await operationalReadClient
+      .from("vms_product_mappings")
+      .select("product_id, vms_product_id, vms_product_name, vms_selling_price_lyd")
+      .eq("match_status", "confirmed")
+      .not("product_id", "is", null)
+      .limit(1000);
+    if (confirmedMappingsError && !isMissingTable(confirmedMappingsError, "vms_product_mappings")) {
+      console.warn("[operator:stop-data] Could not load confirmed XY product mappings", { routeId, stopId, error: confirmedMappingsError });
+    }
+    const confirmedMappingByProduct = new Map<string, ProductMappingRow>();
+    ((confirmedMappings ?? []) as ProductMappingRow[]).forEach((mapping) => {
+      const productId = String(mapping.product_id ?? "").trim();
+      const vmsProductId = String(mapping.vms_product_id ?? "").trim();
+      if (!productId || !vmsProductId || confirmedMappingByProduct.has(productId)) return;
+      confirmedMappingByProduct.set(productId, mapping);
+    });
+
+    const productRowById = new Map(productRows.map((product) => [String(product.id), product]));
+    const machineLayout = latestMachinePriceRows
+      .filter((row) => String(row.slot_code ?? "").trim())
+      .map((row) => {
+        const productId = String(row.product_id ?? "").trim() || null;
+        const product = productId ? productRowById.get(productId) : null;
+        const xyName = String(row.vms_product_name ?? "").trim();
+        return {
+          slotCode: String(row.slot_code ?? "").trim(),
+          productId,
+          vmsProductId: String(row.vms_product_id ?? "").trim() || null,
+          productName: product?.name ?? (xyName || "Unknown product"),
+          vmsProductName: xyName || null,
+          imageUrl: product?.image_url ?? row.product_image_url ?? null,
+          currentQty: Math.max(0, Number(row.current_qty ?? 0) || 0),
+          capacity: Math.max(0, Number(row.capacity ?? 0) || 0),
+          salePriceLyd: Number(row.vms_selling_price_lyd ?? 0) > 0 ? Number(row.vms_selling_price_lyd) : null,
+          aisleStatus: row.aisle_status ?? null,
+          xyMapped: Boolean(productId && confirmedMappingByProduct.get(productId)?.vms_product_id),
+        };
+      })
+      .sort((left, right) => left.slotCode.localeCompare(right.slotCode, undefined, { numeric: true }));
 
     const manualMachineSaleRows = manualMachineSalesResult.error ? [] : (manualMachineSalesResult.data ?? []) as Array<{ product_id?: string | null; unit_sale_price_lyd?: number | string | null; sale_time?: string | null; status?: string | null }>;
     const lastKnownSalePriceByProduct = new Map<string, number>();
@@ -872,6 +949,9 @@ export async function GET(
       sellingPrice: product.selling_price ?? null,
       vmsSellingPriceLyd: product.vms_selling_price_lyd ?? null,
       lastKnownSalePriceLyd: lastKnownSalePriceByProduct.get(String(product.id)) ?? null,
+      vmsProductId: confirmedMappingByProduct.get(String(product.id))?.vms_product_id ?? null,
+      vmsProductName: confirmedMappingByProduct.get(String(product.id))?.vms_product_name ?? null,
+      xyEligible: Boolean(confirmedMappingByProduct.get(String(product.id))?.vms_product_id),
     }));
     const productOptionById = new Map(productOptions.map((product) => [product.id, product]));
     const machineProductOptions = Array.from(productPriority.entries())
@@ -932,7 +1012,9 @@ export async function GET(
       machineId: stop.machine_id,
       machineName: formatMachineDisplayName(machineRow ?? null, { includeArea: true }),
       machineCode: machine?.machine_code ?? "-",
+      vmsMachineId: machineRow?.vms_machine_id ?? latestMachinePriceRows.find((row) => row.vms_machine_id)?.vms_machine_id ?? null,
       location: locationName,
+      machineLayout,
       stopStatus: stop.status,
       routeStatus: route.status,
       refillItems,
