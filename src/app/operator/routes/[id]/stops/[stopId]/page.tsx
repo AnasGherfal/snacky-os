@@ -208,6 +208,7 @@ interface StopData {
   manualSales?: NormalizedRouteManualSale[];
   manualSalesLoadError?: boolean;
   adjustments?: InventoryAdjustmentRow[];
+  canEditXyPrice?: boolean;
   hasCompletionPhoto?: boolean;
   debug?: StopDebugDetails;
 }
@@ -602,6 +603,13 @@ export default function MachineStopPage() {
   const [quantityConfirmationInstalled, setQuantityConfirmationInstalled] = useState(false);
   const [quantityConfirmationReady, setQuantityConfirmationReady] = useState(false);
   const [persistedMachinePhotoReady, setPersistedMachinePhotoReady] = useState(false);
+  const [layoutEditor, setLayoutEditor] = useState<{ mode: "change" | "swap" | "price"; slotCode: string } | null>(null);
+  const [layoutProductId, setLayoutProductId] = useState("");
+  const [layoutSwapSlot, setLayoutSwapSlot] = useState("");
+  const [layoutPrice, setLayoutPrice] = useState("");
+  const [layoutSaving, setLayoutSaving] = useState(false);
+  const [layoutError, setLayoutError] = useState("");
+  const [layoutSuccess, setLayoutSuccess] = useState("");
 
   useEffect(() => {
     const handlePersistedMachinePhoto = (event: Event) => {
@@ -713,6 +721,90 @@ export default function MachineStopPage() {
       setProductCatalogLoading(false);
     }
   }, [fullProductCatalog, routeId, stopId]);
+
+  const refreshMachineLayout = useCallback(async () => {
+    if (!routeId || !stopId) return;
+    const response = await fetchWithTimeout(`/api/operator/routes/${routeId}/stops/${stopId}`, {
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    });
+    const parsed = await readServerResponse(response, {
+      operation: "operator_stop_xy_layout_refresh",
+      route_id: routeId,
+      route_stop_id: stopId,
+    });
+    if (!response.ok || !parsed.payload) return;
+    const fresh = parsed.payload as unknown as StopData;
+    setStopData((current) => current ? {
+      ...current,
+      machineLayout: fresh.machineLayout,
+      canEditXyPrice: fresh.canEditXyPrice,
+      machineProductOptions: fresh.machineProductOptions,
+      productOptions: fresh.productOptions,
+    } : fresh);
+  }, [routeId, stopId]);
+
+  const submitLayoutChange = useCallback(async () => {
+    if (!layoutEditor || !routeId || !stopId) return;
+    setLayoutError("");
+    setLayoutSuccess("");
+
+    let payload: Record<string, unknown>;
+    if (layoutEditor.mode === "change") {
+      if (!layoutProductId) {
+        setLayoutError(tr("Choose the replacement product.", "اختر المنتج البديل."));
+        return;
+      }
+      payload = { action: "change_product", slotCode: layoutEditor.slotCode, productId: layoutProductId };
+    } else if (layoutEditor.mode === "swap") {
+      if (!layoutSwapSlot || layoutSwapSlot === layoutEditor.slotCode) {
+        setLayoutError(tr("Choose another slot to swap with.", "اختر خانة أخرى للتبديل."));
+        return;
+      }
+      payload = { action: "swap_slots", slotCodeA: layoutEditor.slotCode, slotCodeB: layoutSwapSlot };
+    } else {
+      const priceLyd = Number(layoutPrice);
+      if (!Number.isFinite(priceLyd) || priceLyd <= 0) {
+        setLayoutError(tr("Enter a valid selling price.", "أدخل سعر بيع صحيح."));
+        return;
+      }
+      payload = { action: "change_price", slotCode: layoutEditor.slotCode, priceLyd };
+    }
+
+    setLayoutSaving(true);
+    try {
+      const response = await fetchWithTimeout(`/api/operator/routes/${routeId}/stops/${stopId}/xy-layout`, {
+        method: "POST",
+        headers: { "content-type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(payload),
+      }, 25000);
+      const parsed = await readServerResponse(response, {
+        operation: "operator_stop_xy_layout_write",
+        route_id: routeId,
+        route_stop_id: stopId,
+        slot_code: layoutEditor.slotCode,
+        action: layoutEditor.mode,
+      });
+      const result = parsed.payload as Record<string, unknown> | null;
+      const message = responseMessage(result) || String(result?.error ?? "");
+      if (!response.ok || result?.verified !== true) {
+        setLayoutError(message || tr("XY did not verify this change. Refresh and inspect the slot before continuing.", "لم يؤكد XY هذا التغيير. حدّث وافحص الخانة قبل المتابعة."));
+        await refreshMachineLayout();
+        return;
+      }
+
+      setLayoutSuccess(tr("XY verified the machine change.", "تم تأكيد تغيير الجهاز من XY."));
+      await refreshMachineLayout();
+      setLayoutEditor(null);
+      setLayoutProductId("");
+      setLayoutSwapSlot("");
+      setLayoutPrice("");
+    } catch (err) {
+      setLayoutError(err instanceof Error ? err.message : tr("Could not update XY.", "تعذر تحديث XY."));
+    } finally {
+      setLayoutSaving(false);
+    }
+  }, [layoutEditor, layoutPrice, layoutProductId, layoutSwapSlot, refreshMachineLayout, routeId, stopId]);
 
   const machineQuantityItems = useMemo(() => (stopData?.refillItems ?? []).map((item) => ({
     productId: item.productId,
@@ -1226,6 +1318,32 @@ export default function MachineStopPage() {
                       style={{ width: `${slot.capacity > 0 ? Math.min(100, Math.max(0, (slot.currentQty / slot.capacity) * 100)) : 0}%` }}
                     />
                   </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs font-semibold text-slate-800"
+                      onClick={() => { setLayoutEditor({ mode: "change", slotCode: slot.slotCode }); setLayoutProductId(""); setLayoutSwapSlot(""); setLayoutPrice(""); setLayoutError(""); setLayoutSuccess(""); }}
+                    >
+                      {tr("Change product", "تغيير المنتج")}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!slot.vmsProductId}
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs font-semibold text-slate-800 disabled:opacity-40"
+                      onClick={() => { setLayoutEditor({ mode: "swap", slotCode: slot.slotCode }); setLayoutSwapSlot(""); setLayoutError(""); setLayoutSuccess(""); }}
+                    >
+                      {tr("Swap", "تبديل")}
+                    </button>
+                  </div>
+                  {stopData.canEditXyPrice && slot.vmsProductId ? (
+                    <button
+                      type="button"
+                      className="mt-2 w-full rounded-lg border border-amber-200 bg-amber-50 px-2 py-2 text-xs font-semibold text-amber-900"
+                      onClick={() => { setLayoutEditor({ mode: "price", slotCode: slot.slotCode }); setLayoutPrice(slot.priceLyd ? String(slot.priceLyd) : ""); setLayoutError(""); setLayoutSuccess(""); }}
+                    >
+                      {tr("Change XY price", "تغيير سعر XY")}
+                    </button>
+                  ) : null}
                   {slot.mismatch ? (
                     <div className="mt-3 rounded-lg border border-amber-200 bg-amber-100/70 px-3 py-2 text-xs font-semibold text-amber-900">
                       {tr("Plan mismatch:", "اختلاف عن الخطة:")} {slot.plannedProductName ?? tr("another product", "منتج آخر")}
@@ -1235,6 +1353,90 @@ export default function MachineStopPage() {
               ))}
             </div>
           )}
+
+          {(stopData.machineLayout ?? []).length > 0 ? (
+            <div className="border-t border-slate-200 bg-slate-50 p-4 md:p-6">
+              {layoutSuccess ? <div className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-800">{layoutSuccess}</div> : null}
+              {layoutError ? <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">{layoutError}</div> : null}
+              {layoutEditor ? (() => {
+                const slot = (stopData.machineLayout ?? []).find((row) => row.slotCode === layoutEditor.slotCode);
+                const selectedProduct = (fullProductCatalog ?? stopData.productOptions).find((product) => product.id === layoutProductId);
+                return (
+                  <div className="rounded-xl border border-slate-300 bg-white p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="font-semibold text-slate-900">
+                          {layoutEditor.mode === "change"
+                            ? tr(`Change slot ${layoutEditor.slotCode} product`, `تغيير منتج الخانة ${layoutEditor.slotCode}`)
+                            : layoutEditor.mode === "swap"
+                              ? tr(`Swap slot ${layoutEditor.slotCode}`, `تبديل الخانة ${layoutEditor.slotCode}`)
+                              : tr(`Change slot ${layoutEditor.slotCode} price`, `تغيير سعر الخانة ${layoutEditor.slotCode}`)}
+                        </h3>
+                        <p className="mt-1 text-sm text-slate-500">
+                          {slot?.productName ?? tr("Empty slot", "خانة فارغة")}
+                          {slot?.priceLyd ? ` · ${Number(slot.priceLyd).toFixed(2)} ${tr("LYD", "د.ل")}` : ""}
+                        </p>
+                      </div>
+                      <button type="button" className="btn-secondary" onClick={() => { setLayoutEditor(null); setLayoutError(""); }}>
+                        {tr("Close", "إغلاق")}
+                      </button>
+                    </div>
+
+                    {layoutEditor.mode === "change" ? (
+                      <div className="mt-4">
+                        <ProductPicker
+                          products={stopData.machineProductOptions ?? stopData.productOptions}
+                          allProducts={fullProductCatalog ?? undefined}
+                          onLoadAllProducts={loadFullProductCatalog}
+                          allProductsLoading={productCatalogLoading}
+                          value={layoutProductId}
+                          onChange={setLayoutProductId}
+                          label={tr("Replacement product", "المنتج البديل")}
+                        />
+                        {selectedProduct ? (
+                          <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm">
+                            <div className="font-semibold text-emerald-950">
+                              {slot?.productName ?? tr("Empty", "فارغ")} → {selectedProduct.name}
+                            </div>
+                            <div className="mt-1 text-emerald-800">
+                              {tr("XY price", "سعر XY")}: {Number(selectedProduct.vmsSellingPriceLyd ?? selectedProduct.currentSellingPriceLyd ?? 0) > 0
+                                ? `${Number(selectedProduct.vmsSellingPriceLyd ?? selectedProduct.currentSellingPriceLyd).toFixed(2)} ${tr("LYD", "د.ل")}`
+                                : tr("will be validated before saving", "سيتم التحقق منه قبل الحفظ")}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : layoutEditor.mode === "swap" ? (
+                      <div className="mt-4">
+                        <label className="text-sm font-medium text-slate-800">{tr("Swap with slot", "تبديل مع الخانة")}</label>
+                        <select value={layoutSwapSlot} onChange={(event) => setLayoutSwapSlot(event.target.value)} className="field-input mt-1">
+                          <option value="">{tr("Choose slot", "اختر الخانة")}</option>
+                          {(stopData.machineLayout ?? []).filter((row) => row.slotCode !== layoutEditor.slotCode && row.vmsProductId).map((row) => (
+                            <option key={row.slotCode} value={row.slotCode}>{row.slotCode} · {row.productName} · {row.priceLyd ? Number(row.priceLyd).toFixed(2) : "—"} {tr("LYD", "د.ل")}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : (
+                      <div className="mt-4">
+                        <label className="text-sm font-medium text-slate-800">{tr("New XY selling price (LYD)", "سعر البيع الجديد في XY (د.ل)")}</label>
+                        <input type="number" min="0.5" max="500" step="0.5" value={layoutPrice} onChange={(event) => setLayoutPrice(event.target.value)} className="field-input mt-1" />
+                        <p className="mt-2 text-xs font-medium text-amber-700">{tr("Owner/admin only. This changes the customer price on the machine.", "للمالك/المشرف فقط. هذا يغيّر سعر البيع للزبون على الجهاز.")}</p>
+                      </div>
+                    )}
+
+                    <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                      <button type="button" className="btn-primary flex-1" disabled={layoutSaving} onClick={() => void submitLayoutChange()}>
+                        {layoutSaving ? tr("Updating XY...", "جاري تحديث XY...") : tr("Apply to XY and verify", "تطبيق على XY والتحقق")}
+                      </button>
+                      <button type="button" className="btn-secondary" disabled={layoutSaving} onClick={() => setLayoutEditor(null)}>{tr("Cancel", "إلغاء")}</button>
+                    </div>
+                  </div>
+                );
+              })() : (
+                <p className="text-sm text-slate-600">{tr("Tap Change or Swap on a slot when the physical machine layout changes during this stop.", "اضغط تغيير أو تبديل على الخانة عندما يتغير توزيع الجهاز فعلياً أثناء هذه الزيارة.")}</p>
+              )}
+            </div>
+          ) : null}
         </section>
 
         <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
