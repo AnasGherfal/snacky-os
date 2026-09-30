@@ -359,7 +359,7 @@ export async function autoPlanRouteProducts(args: {
     .select("id, product_id, picked_qty, returned_qty")
     .eq("route_id", routeId);
   if (stockLinesError) throw stockLinesError;
-  const stockLineByProduct = new Map((existingStockLines ?? []).map((row: any) => [String(row.product_id ?? ""), row]));
+  const stockLineByProduct = new Map<string, any>((existingStockLines ?? []).map((row: any) => [String(row.product_id ?? ""), row]));
   const now = new Date().toISOString();
 
   for (const [productId, plannedQty] of plannedByProduct.entries()) {
