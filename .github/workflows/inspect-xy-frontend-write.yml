@@ -1,0 +1,44 @@
+name: Inspect XY public frontend write call
+
+on:
+  push:
+    branches:
+      - diagnose-xy-write-swagger
+    paths:
+      - .github/workflows/inspect-xy-frontend-write.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Find public frontend bundles referencing write API
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p scan
+          for url in             "https://xcx.xynetweb.com/"             "https://xcx.xynetweb.com/service-api/"             "https://www.xynetweb.com/"             "http://xcx.xynetweb.com/"; do
+            echo "=== $url ==="
+            code="$(curl -k -L -sS --max-time 30 -o scan/index.html -w '%{http_code}' "$url" || true)"
+            echo "HTTP $code size $(wc -c < scan/index.html)"
+            grep -oE '<script[^>]+src="[^"]+"' scan/index.html | head -100 || true
+            base="$(printf '%s' "$url" | sed 's#/$##')"
+            grep -oE 'src="[^"]+\.js[^"]*"' scan/index.html | sed 's/^src="//;s/"$//' | head -80 > scan/scripts.txt || true
+            while read -r src; do
+              [ -z "$src" ] && continue
+              case "$src" in
+                http*) full="$src" ;;
+                /*) full="$(printf '%s' "$url" | sed -E 's#(https?://[^/]+).*#\1#')$src" ;;
+                *) full="$base/$src" ;;
+              esac
+              file="scan/$(echo "$full" | sha256sum | cut -c1-16).js"
+              curl -k -L -sS --max-time 30 -o "$file" "$full" || true
+              if grep -qE 'addInstruction(ByApi|SpxxByApi)|queryMachineHdGoodPlus' "$file"; then
+                echo "--- MATCH $full ---"
+                grep -oE '.{0,500}(addInstructionByApi|addInstructionSpxxByApi|queryMachineHdGoodPlus).{0,900}' "$file" | head -20 || true
+              fi
+            done < scan/scripts.txt
+          done
