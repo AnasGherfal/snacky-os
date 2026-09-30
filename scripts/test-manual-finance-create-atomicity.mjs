@@ -125,7 +125,7 @@ test("only enumerated server workflows use the service finance writer", () => {
 
   for (const absolutePath of sourceFiles(path.join(root, "src"))) {
     const source = fs.readFileSync(absolutePath, "utf8");
-    const relativePath = path.relative(root, absolutePath);
+    const relativePath = path.relative(root, absolutePath).split(path.sep).join("/");
     for (const match of source.matchAll(mutationPattern)) {
       actualFiles.add(relativePath);
       if (match[1] !== "financeWriteSupabase") {
