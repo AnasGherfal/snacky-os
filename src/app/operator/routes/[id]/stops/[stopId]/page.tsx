@@ -639,6 +639,11 @@ export default function MachineStopPage() {
   const [quantityConfirmationInstalled, setQuantityConfirmationInstalled] = useState(false);
   const [quantityConfirmationReady, setQuantityConfirmationReady] = useState(false);
   const [persistedMachinePhotoReady, setPersistedMachinePhotoReady] = useState(false);
+  const [xyEditSlotCode, setXyEditSlotCode] = useState<string | null>(null);
+  const [xyReplacementProductId, setXyReplacementProductId] = useState("");
+  const [xyChangeSaving, setXyChangeSaving] = useState(false);
+  const [xyChangeError, setXyChangeError] = useState("");
+  const [xyChangeSuccess, setXyChangeSuccess] = useState("");
 
   useEffect(() => {
     const handlePersistedMachinePhoto = (event: Event) => {
@@ -751,6 +756,84 @@ export default function MachineStopPage() {
       setProductCatalogLoading(false);
     }
   }, [fullProductCatalog, routeId, stopId]);
+
+  const applyXyProductChange = useCallback(async () => {
+    if (!routeId || !stopId || !xyEditSlotCode || !xyReplacementProductId || !stopData) return;
+
+    const currentSlot = (stopData.machineLayout ?? []).find((slot) => slot.slotCode === xyEditSlotCode) ?? null;
+    const selectedProduct = (fullProductCatalog ?? stopData.productOptions).find((product) => product.id === xyReplacementProductId)
+      ?? stopData.productOptions.find((product) => product.id === xyReplacementProductId)
+      ?? null;
+
+    if (!selectedProduct) {
+      setXyChangeError(tr("Choose a replacement product.", "اختر المنتج البديل."));
+      return;
+    }
+    if (currentSlot?.productId === selectedProduct.id) {
+      setXyChangeError(tr("That product is already in this slot.", "هذا المنتج موجود بالفعل في هذه الخانة."));
+      return;
+    }
+
+    setXyChangeSaving(true);
+    setXyChangeError("");
+    setXyChangeSuccess("");
+    try {
+      const response = await fetchWithTimeout(`/api/operator/routes/${routeId}/stops/${stopId}/xy-slot-product`, {
+        method: "POST",
+        headers: { "content-type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ slotCode: xyEditSlotCode, productId: xyReplacementProductId }),
+      }, 30000);
+      const parsed = await readServerResponse(response, {
+        operation: "operator_xy_slot_product_change",
+        route_id: routeId,
+        route_stop_id: stopId,
+        slot_code: xyEditSlotCode,
+        product_id: xyReplacementProductId,
+      });
+      const payload = parsed.payload as Record<string, unknown> | null;
+      if (!response.ok || payload?.verified !== true) {
+        throw new Error(responseMessage(payload) || tr("XY did not verify this product change.", "لم يؤكد XY تغيير المنتج."));
+      }
+
+      const verifiedSlot = payload.slot as { slotCode?: string; vmsProductId?: string | null; productName?: string | null; priceLyd?: number | null; currentQty?: number | null; capacity?: number | null } | undefined;
+      const returnedProduct = payload.product as { id?: string; name?: string; imageUrl?: string | null; vmsProductId?: string | null; vmsProductName?: string | null; priceLyd?: number | null } | undefined;
+
+      setStopData((current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          machineLayout: (current.machineLayout ?? []).map((slot) => {
+            if (slot.slotCode !== xyEditSlotCode) return slot;
+            const nextProductId = String(returnedProduct?.id ?? selectedProduct.id);
+            const nextName = String(returnedProduct?.name ?? selectedProduct.name);
+            return {
+              ...slot,
+              productId: nextProductId,
+              productName: nextName,
+              vmsProductId: String(verifiedSlot?.vmsProductId ?? returnedProduct?.vmsProductId ?? "") || null,
+              vmsProductName: String(returnedProduct?.vmsProductName ?? verifiedSlot?.productName ?? nextName) || null,
+              imageUrl: returnedProduct?.imageUrl ?? selectedProduct.imageUrl ?? null,
+              priceLyd: Number(verifiedSlot?.priceLyd ?? returnedProduct?.priceLyd ?? 0) || null,
+              currentQty: verifiedSlot?.currentQty === null || verifiedSlot?.currentQty === undefined ? slot.currentQty : Number(verifiedSlot.currentQty),
+              capacity: verifiedSlot?.capacity === null || verifiedSlot?.capacity === undefined ? slot.capacity : Number(verifiedSlot.capacity),
+              mismatch: Boolean(slot.plannedProductId && slot.plannedProductId !== nextProductId),
+            };
+          }),
+        };
+      });
+
+      setXyChangeSuccess(tr(
+        `Slot ${xyEditSlotCode} was changed in XY and verified.`,
+        `تم تغيير الخانة ${xyEditSlotCode} في XY والتحقق منها.`,
+      ));
+      setXyEditSlotCode(null);
+      setXyReplacementProductId("");
+    } catch (err) {
+      setXyChangeError(err instanceof Error ? err.message : tr("Could not change this XY slot.", "تعذر تغيير هذه الخانة في XY."));
+    } finally {
+      setXyChangeSaving(false);
+    }
+  }, [fullProductCatalog, routeId, stopData, stopId, xyEditSlotCode, xyReplacementProductId]);
 
   const machineQuantityItems = useMemo(() => (stopData?.refillItems ?? []).map((item) => ({
     productId: item.productId,
@@ -1291,6 +1374,21 @@ export default function MachineStopPage() {
                                 {tr("Stock", "المخزون")} {slot.currentQty}/{slot.capacity || "—"}
                               </div>
 
+                              <button
+                                type="button"
+                                className={`mt-2 w-full rounded-lg border px-2 py-1.5 text-[11px] font-bold transition ${isEmpty
+                                  ? "border-slate-500 bg-slate-700 text-slate-100 hover:bg-slate-600"
+                                  : "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"}`}
+                                onClick={() => {
+                                  setXyEditSlotCode(slot.slotCode);
+                                  setXyReplacementProductId("");
+                                  setXyChangeError("");
+                                  setXyChangeSuccess("");
+                                }}
+                              >
+                                {tr("Change product", "تغيير المنتج")}
+                              </button>
+
                               {slot.mismatch ? (
                                 <div className="mt-2 rounded-lg bg-amber-100 px-2 py-1.5 text-center text-[10px] font-bold leading-4 text-amber-900">
                                   {tr("Plan:", "الخطة:")} {slot.plannedProductName ?? tr("different product", "منتج مختلف")}
@@ -1306,6 +1404,96 @@ export default function MachineStopPage() {
               </div>
             </div>
           )}
+
+          {xyChangeSuccess ? (
+            <div className="border-t border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">
+              {xyChangeSuccess}
+            </div>
+          ) : null}
+
+          {xyEditSlotCode ? (() => {
+            const currentSlot = (stopData.machineLayout ?? []).find((slot) => slot.slotCode === xyEditSlotCode) ?? null;
+            const selectedProduct = (fullProductCatalog ?? stopData.productOptions).find((product) => product.id === xyReplacementProductId)
+              ?? stopData.productOptions.find((product) => product.id === xyReplacementProductId)
+              ?? null;
+            return (
+              <div className="border-t border-slate-200 bg-slate-50 p-4 md:p-6">
+                <div className="rounded-xl border border-slate-300 bg-white p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-semibold text-slate-900">
+                        {tr(`Change slot ${xyEditSlotCode}`, `تغيير الخانة ${xyEditSlotCode}`)}
+                      </h3>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {tr("Current:", "الحالي:")} {currentSlot?.productName ?? tr("Empty", "فارغ")}
+                        {currentSlot?.priceLyd ? ` · ${Number(currentSlot.priceLyd).toFixed(2)} ${tr("LYD", "د.ل")}` : ""}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      disabled={xyChangeSaving}
+                      onClick={() => {
+                        setXyEditSlotCode(null);
+                        setXyReplacementProductId("");
+                        setXyChangeError("");
+                      }}
+                    >
+                      {tr("Close", "إغلاق")}
+                    </button>
+                  </div>
+
+                  <div className="mt-4">
+                    <ProductPicker
+                      products={stopData.machineProductOptions ?? stopData.productOptions}
+                      allProducts={fullProductCatalog ?? undefined}
+                      onLoadAllProducts={loadFullProductCatalog}
+                      allProductsLoading={productCatalogLoading}
+                      value={xyReplacementProductId}
+                      onChange={setXyReplacementProductId}
+                      label={tr("Replacement product", "المنتج البديل")}
+                    />
+                  </div>
+
+                  {selectedProduct ? (
+                    <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                      <div className="flex items-center gap-3">
+                        <ProductThumbnail imageUrl={selectedProduct.imageUrl} name={selectedProduct.name} size="md" />
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                            {tr("Before → after", "قبل ← بعد")}
+                          </div>
+                          <div className="mt-1 font-semibold text-emerald-950">
+                            {currentSlot?.productName ?? tr("Empty", "فارغ")} → {selectedProduct.name}
+                          </div>
+                          <div className="mt-1 text-xs text-emerald-800">
+                            {tr("Snacky will use the current XY price for this product on this machine when available, then verify the slot from XY.", "سيستخدم Snacky سعر XY الحالي لهذا المنتج على نفس الجهاز إن كان متوفراً، ثم يتحقق من الخانة من XY.")}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {xyChangeError ? (
+                    <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">
+                      {xyChangeError}
+                    </div>
+                  ) : null}
+
+                  <button
+                    type="button"
+                    className="btn-primary mt-4 w-full"
+                    disabled={xyChangeSaving || !xyReplacementProductId}
+                    onClick={() => void applyXyProductChange()}
+                  >
+                    {xyChangeSaving
+                      ? tr("Updating XY and verifying...", "جاري تحديث XY والتحقق...")
+                      : tr("Apply to XY and verify", "تطبيق على XY والتحقق")}
+                  </button>
+                </div>
+              </div>
+            );
+          })() : null}
         </section>
 
         <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
