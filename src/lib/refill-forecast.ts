@@ -214,7 +214,7 @@ function demandRates(
 }
 
 function statusCopy(status: RefillForecastStatus, nextOpenDate: string) {
-  if (status === "fill_now") return { label: "Fill now", reason: "A lane is empty or the machine is at the critical threshold." };
+  if (status === "fill_now") return { label: "Fill now", reason: "The machine has a material stockout risk or is at the critical threshold." };
   if (status === "fill_today") return { label: "Fill today", reason: "Projected demand may exhaust stock before the next safe visit." };
   if (status === "fill_next_open") return { label: "Fill next open day", reason: `The site is closed today; stock can wait until ${nextOpenDate}.` };
   if (status === "monitor") return { label: "Can wait", reason: "Stock is low, but the trend shows it can safely wait for the next planned visit." };
@@ -264,6 +264,8 @@ export function buildMachineRefillForecasts({
     const capacityUnits = rows.reduce((sum, row) => sum + whole(row.capacity), 0);
     const stockPercent = capacityUnits > 0 ? currentUnits / capacityUnits * 100 : 0;
     const emptyLanes = rows.filter((row) => whole(row.current_qty) <= 0).length;
+    const criticalEmptyLaneCount = Math.max(3, Math.ceil(rows.length * 0.15));
+    const materialEmptyLaneRisk = emptyLanes >= criticalEmptyLaneCount;
     const lowLanes = rows.filter((row) => whole(row.current_qty) / Math.max(1, whole(row.capacity)) * 100 <= todayPercent).length;
     const unitsToTarget = rows.reduce((sum, row) => sum + Math.max(0, Math.ceil(whole(row.capacity) * targetPercent / 100) - whole(row.current_qty)), 0);
     const latestSnapshotAt = rows.map((row) => row.captured_at).filter((value): value is string => Boolean(value)).sort().at(-1) ?? null;
@@ -278,7 +280,7 @@ export function buildMachineRefillForecasts({
     const productDays = rows.map((row) => {
       if (!row.product_id) return null;
       const rate = rateByProduct.get(row.product_id) ?? 0;
-      if (whole(row.current_qty) <= 0) return 0;
+      if (whole(row.current_qty) <= 0) return null;
       return rate > 0 ? whole(row.current_qty) / rate : null;
     }).filter((value): value is number => value !== null && Number.isFinite(value));
     const totalDays = averageDailyUnits > 0 ? currentUnits / averageDailyUnits : null;
@@ -293,10 +295,11 @@ export function buildMachineRefillForecasts({
         || (daysToEmpty !== null && daysToEmpty <= 2)
         || (unitsToTarget >= minimumUnits && stockPercent <= 55);
       status = needsVisit ? "fill_next_open" : "healthy";
-    } else if (emptyLanes > 0 || stockPercent <= criticalPercent || (daysToEmpty !== null && daysToEmpty <= 0.5)) {
+    } else if (materialEmptyLaneRisk || stockPercent <= criticalPercent || (daysToEmpty !== null && daysToEmpty <= 0.5)) {
       status = "fill_now";
     } else if (
-      stockPercent <= todayPercent
+      emptyLanes > 0
+      || stockPercent <= todayPercent
       || (daysToEmpty !== null && daysToEmpty <= daysUntilNextOpen)
       || (daysUntilNextOpen > 1 && daysToEmpty !== null && daysToEmpty <= daysUntilNextOpen + 0.5)
     ) {
