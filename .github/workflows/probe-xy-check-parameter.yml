@@ -1,0 +1,38 @@
+name: Probe XY checkParameter shape
+
+on:
+  push:
+    branches:
+      - diagnose-xy-write-swagger
+    paths:
+      - .github/workflows/probe-xy-check-parameter.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Try non-mutating parameter-validator shapes
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://xcx.xynetweb.com/service-api/api/checkParameter"
+          payloads=(
+            '{"param":{}}'
+            '{"param":"x"}'
+            '{"param":{"key":"1"}}'
+            '{"param":{"key":"1","timestamp":"1700000000000","sign":"00000000000000000000000000000000","shbh":"TEST"}}'
+            '{"params":{}}'
+            '{"data":{}}'
+            '{"key":"1","timestamp":"1700000000000","sign":"00000000000000000000000000000000","shbh":"TEST","param":{}}'
+          )
+          n=0
+          for payload in "${payloads[@]}"; do
+            n=$((n+1))
+            echo "=== case $n ==="
+            echo "$payload"
+            curl -sS -L --max-time 30 -X POST -H 'content-type: application/json' -d "$payload" -w '\nHTTP %{http_code}\n' "$url" || true
+          done
