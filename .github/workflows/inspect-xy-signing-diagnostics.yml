@@ -1,0 +1,36 @@
+name: Inspect XY signing diagnostics
+
+on:
+  push:
+    branches:
+      - diagnose-xy-write-swagger
+    paths:
+      - .github/workflows/inspect-xy-signing-diagnostics.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Call non-mutating signing diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://xcx.xynetweb.com/service-api"
+          for method in GET POST; do
+            echo "=== $method /api/getSign ==="
+            if [ "$method" = GET ]; then
+              curl -sS -L --max-time 30 -w '\nHTTP %{http_code}\n' "$base/api/getSign" || true
+            else
+              curl -sS -L --max-time 30 -X POST -H 'content-type: application/json' -d '{}' -w '\nHTTP %{http_code}\n' "$base/api/getSign" || true
+            fi
+          done
+          echo "=== POST /api/checkParameter empty ==="
+          curl -sS -L --max-time 30 -X POST -H 'content-type: application/json' -d '{}' -w '\nHTTP %{http_code}\n' "$base/api/checkParameter" || true
+          echo "=== POST /api/checkParameter dummy auth ==="
+          curl -sS -L --max-time 30 -X POST -H 'content-type: application/json' \
+            -d '{"key":"1","timestamp":"1700000000000","sign":"00000000000000000000000000000000","shbh":"TEST"}' \
+            -w '\nHTTP %{http_code}\n' "$base/api/checkParameter" || true
