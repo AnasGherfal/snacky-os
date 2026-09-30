@@ -13,7 +13,8 @@ import {
   isRouteStatusEnumMismatch,
   isTerminalRouteStatus,
 } from "@/lib/route-workflow";
-import { getSupabaseServerClient } from "@/lib/supabase-server";
+import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
+import { autoPlanRouteProducts, type AutoPlanRouteProductsResult } from "@/lib/route-auto-plan";
 import { notifyRouteAssigned } from "@/lib/notification-delivery";
 
 function clean(value: FormDataEntryValue | null) {
@@ -239,6 +240,29 @@ export async function assignRoute(formData: FormData) {
     }
   }
 
+  let autoPlanResult: AutoPlanRouteProductsResult | null = null;
+  if (operatorId) {
+    try {
+      autoPlanResult = await autoPlanRouteProducts({
+        writeClient: supabase,
+        readClient: getSupabaseAdminClient() ?? supabase,
+        routeId: id,
+      });
+      console.info("[routes] Automatic pickup plan", {
+        route_id: id,
+        operator_id: operatorId,
+        ...autoPlanResult,
+      });
+    } catch (error) {
+      console.error("[routes] Failed to build automatic pickup plan", {
+        route_id: id,
+        operator_id: operatorId,
+        error,
+      });
+      fail(path, "Could not build the automatic pickup plan. The route was not assigned; retry so the operator does not arrive at storage without a verified product list.");
+    }
+  }
+
   let nextStatus = operatorId
     ? (isAvailableRouteStatus(route.status) ? ROUTE_ASSIGNED_STATUS : route.status)
     : route.status === ROUTE_ASSIGNED_STATUS ? ROUTE_DRAFT_STATUS : route.status;
@@ -278,7 +302,14 @@ export async function assignRoute(formData: FormData) {
     entityLabel: `Route ${route.route_date}`,
     beforeData: route,
     afterData: updateResult.data,
-    summary: operatorId ? `Assigned route for ${route.route_date}` : `Marked route for ${route.route_date} as available`,
+    metadata: autoPlanResult ? {
+      automatic_pickup_plan: autoPlanResult,
+    } : undefined,
+    summary: operatorId
+      ? autoPlanResult?.prepared
+        ? `Assigned route for ${route.route_date} and auto-planned ${autoPlanResult.plannedUnitCount} pickup units`
+        : `Assigned route for ${route.route_date}`
+      : `Marked route for ${route.route_date} as available`,
   });
 
   if (operatorId && operatorId !== route.operator_id) {
@@ -296,5 +327,18 @@ export async function assignRoute(formData: FormData) {
   }
 
   revalidateRoutePaths(id);
-  redirect(path);
+  const assignmentMessage = operatorId
+    ? autoPlanResult?.prepared
+      ? `Route assigned. Snacky automatically planned ${autoPlanResult.plannedUnitCount} pickup units across ${autoPlanResult.plannedItemCount} machine-product lines.`
+      : autoPlanResult?.reason === "already_prepared"
+        ? "Route assigned. The existing product plan was kept unchanged."
+        : autoPlanResult?.reason === "stale_recommendations"
+          ? "Route assigned, but automatic products were not added because the XY stock snapshot is older than 72 hours."
+          : autoPlanResult?.reason === "no_available_storage"
+            ? "Route assigned, but automatic products were not added because available storage stock is 0 for the current refill needs."
+            : autoPlanResult?.reason === "no_recommendations"
+              ? "Route assigned. No positive refill quantities are currently recommended for these stops."
+              : "Route assigned."
+    : "Route left unassigned / available.";
+  redirect(`${path}?success=${encodeURIComponent(assignmentMessage)}`);
 }
