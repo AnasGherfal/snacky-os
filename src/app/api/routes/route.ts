@@ -12,6 +12,7 @@ import {
 } from "@/lib/route-workflow";
 import { getSupabaseAdminClient, getSupabaseServerClient } from "@/lib/supabase-server";
 import { notifyRouteAssigned } from "@/lib/notification-delivery";
+import { autoPlanRouteProducts, type AutoPlanRouteProductsResult } from "@/lib/route-auto-plan";
 
 type CreateRoutePayload = {
   routeDate?: string;
@@ -802,6 +803,26 @@ export async function POST(request: Request) {
     }
   }
 
+  let autoPlanResult: AutoPlanRouteProductsResult | null = null;
+  if (operatorId) {
+    try {
+      autoPlanResult = await autoPlanRouteProducts({
+        writeClient: supabase,
+        readClient: planningReadClient,
+        routeId,
+      });
+      console.info("[routes:create] Automatic pickup plan", {
+        route_id: routeId,
+        operator_id: operatorId,
+        ...autoPlanResult,
+      });
+    } catch (error) {
+      console.error("[routes:create] Failed to build automatic pickup plan", { routeId, operatorId, error });
+      await cleanupRoute();
+      return jsonError("Could not build the automatic pickup plan. The route was not created so the operator does not receive an empty storage list.", 500);
+    }
+  }
+
   const verifyRoute = await supabase.from("routes").select("id").eq("id", routeId).single();
 
   if (verifyRoute.error || !verifyRoute.data?.id) {
@@ -834,10 +855,13 @@ export async function POST(request: Request) {
       admin_override: adminOverride,
       assignment_mode: assignmentMode,
       creation_mode: creationMode,
-      products_deferred_until_storage: stopsOnly,
+      products_deferred_until_storage: stopsOnly && !autoPlanResult?.prepared,
+      automatic_pickup_plan: autoPlanResult,
     },
     summary: operatorId
-      ? `Created assigned route for ${routeDate} with ${selectedMachineIds.length} stops`
+      ? autoPlanResult?.prepared
+        ? `Created assigned route for ${routeDate} with ${selectedMachineIds.length} stops and auto-planned ${autoPlanResult.plannedUnitCount} pickup units`
+        : `Created assigned route for ${routeDate} with ${selectedMachineIds.length} stops`
       : `Created available route for ${routeDate} with ${selectedMachineIds.length} stops`,
   });
   if (operatorId) {
