@@ -1,0 +1,33 @@
+name: Probe XY merchant encryption metadata
+
+on:
+  push:
+    branches:
+      - diagnose-xy-write-swagger
+    paths:
+      - .github/workflows/probe-xy-merchant-encryption.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Probe public merchant encryption endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://xcx.xynetweb.com/service-api/code/encrypt"
+          payloads=(
+            '{"shbh":"6591"}'
+            '{"merchantCode":"6591"}'
+            '{"paramid":"6591"}'
+            '{"id":"6591"}'
+            '{"param":"6591"}'
+          )
+          for i in "${!payloads[@]}"; do
+            echo "=== case $((i+1)) ==="
+            curl -sS -L --max-time 30 -X POST -H 'content-type: application/json' -d "${payloads[$i]}" -w '\nHTTP %{http_code}\n' "$url" || true
+          done
