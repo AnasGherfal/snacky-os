@@ -78,7 +78,12 @@ type MachineProductSignalRow = {
   capacity?: number | string | null;
   captured_at?: string | null;
 };
-type MachineVmsPriceRow = { product_id?: string | null; slot_code?: string | null; vms_selling_price_lyd?: number | string | null };
+type MachineVmsPriceRow = {
+  product_id?: string | null;
+  slot_code?: string | null;
+  vms_selling_price_lyd?: number | string | null;
+  product_image_url?: string | null;
+};
 type AdjustmentRow = {
   id: string;
   adjustment_type?: string | null;
@@ -671,7 +676,6 @@ export async function GET(
         .from("latest_vms_stock_by_slot")
         .select("product_id, import_batch_id, slot_code, vms_product_id, vms_product_name, current_qty, capacity, captured_at")
         .eq("machine_id", stop.machine_id)
-        .not("product_id", "is", null)
         .limit(500),
       supabase
         .from("vms_sales_snapshots")
@@ -777,11 +781,10 @@ export async function GET(
     if (activeImportBatchId) {
       const { data: machinePriceRows, error: machinePriceError } = await operationalReadClient
         .from("vms_stock_snapshots")
-        .select("product_id, slot_code, vms_selling_price_lyd")
+        .select("product_id, slot_code, vms_selling_price_lyd, product_image_url")
         .eq("import_batch_id", activeImportBatchId)
         .eq("machine_id", stop.machine_id)
         .eq("source_provider", "xy")
-        .not("product_id", "is", null)
         .limit(500);
       if (machinePriceError && !isMissingTable(machinePriceError, "vms_stock_snapshots")) {
         console.warn("[operator:stop-data] Could not load machine-specific XY prices", { routeId, stopId, error: machinePriceError });
@@ -898,11 +901,13 @@ export async function GET(
     });
 
     const latestPriceBySlot = new Map<string, number>();
+    const latestImageBySlot = new Map<string, string>();
     latestMachinePriceRows.forEach((row) => {
       const slotCode = String(row.slot_code ?? "").trim();
       const price = Number(row.vms_selling_price_lyd ?? 0);
-      if (!slotCode || !Number.isFinite(price) || price <= 0 || latestPriceBySlot.has(slotCode)) return;
-      latestPriceBySlot.set(slotCode, price);
+      const imageUrl = String(row.product_image_url ?? "").trim();
+      if (slotCode && Number.isFinite(price) && price > 0 && !latestPriceBySlot.has(slotCode)) latestPriceBySlot.set(slotCode, price);
+      if (slotCode && imageUrl && !latestImageBySlot.has(slotCode)) latestImageBySlot.set(slotCode, imageUrl);
     });
 
     const machineLayout = latestMachineStockRows
@@ -919,7 +924,7 @@ export async function GET(
           productName: product?.name ?? (String(row.vms_product_name ?? "").trim() || "Empty"),
           vmsProductId: String(row.vms_product_id ?? "").trim() || null,
           vmsProductName: String(row.vms_product_name ?? "").trim() || null,
-          imageUrl: product?.imageUrl ?? null,
+          imageUrl: product?.imageUrl ?? latestImageBySlot.get(slotCode) ?? null,
           currentQty: Math.max(0, Number(row.current_qty ?? 0) || 0),
           capacity: Math.max(0, Number(row.capacity ?? 0) || 0),
           priceLyd,
