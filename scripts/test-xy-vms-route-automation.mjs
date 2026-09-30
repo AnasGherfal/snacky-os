@@ -12,6 +12,9 @@ const refillsSource = fs.readFileSync(new URL("../src/app/refills/page.tsx", imp
 const refillAutomationSource = fs.readFileSync(new URL("../src/lib/refill-route-automation.ts", import.meta.url), "utf8");
 const operatorPickListSource = fs.readFileSync(new URL("../src/app/operator/routes/[id]/pick-list/page.tsx", import.meta.url), "utf8");
 const operatorStopSource = fs.readFileSync(new URL("../src/app/operator/routes/[id]/stops/[stopId]/page.tsx", import.meta.url), "utf8");
+const xyControlSource = fs.readFileSync(new URL("../src/lib/xy-vms-control.ts", import.meta.url), "utf8");
+const xySlotProductRouteSource = fs.readFileSync(new URL("../src/app/api/operator/routes/[id]/stops/[stopId]/xy-slot-product/route.ts", import.meta.url), "utf8");
+const xySlotSwapRouteSource = fs.readFileSync(new URL("../src/app/api/operator/routes/[id]/stops/[stopId]/xy-slot-swap/route.ts", import.meta.url), "utf8");
 const schedulerMigration = fs.readFileSync(new URL("../supabase/migrations/20260902150000_xy_vms_durable_scheduler.sql", import.meta.url), "utf8");
 const vercelConfig = JSON.parse(fs.readFileSync(new URL("../vercel.json", import.meta.url), "utf8"));
 
@@ -84,6 +87,22 @@ test("machine stop XY Change and Move use focused modal UX without page jumping"
   assert.doesNotMatch(operatorStopSource, /xyLayoutEditorRef[\\s\\S]*scrollIntoView/);
   assert.match(operatorStopSource, /xyEditSlotCode === slot\.slotCode/);
   assert.match(operatorStopSource, /xySwapSourceSlotCode === slot\.slotCode/);
+});
+
+test("XY slot writes use the vendor-verified signed fields and fail closed on rejection", () => {
+  assert.match(xyControlSource, /shbh: config\.merchantId/);
+  assert.match(xyControlSource, /jqbh: args\.vmsMachineId/);
+  assert.match(xyControlSource, /hdbh: args\.slotCode/);
+  assert.match(xyControlSource, /spbh: args\.vmsProductId/);
+  assert.match(xyControlSource, /spjg: toMinorUnits\(args\.priceLyd\)/);
+  assert.doesNotMatch(xyControlSource, /spmc:/);
+  assert.match(xyControlSource, /accepted: response\.ok && String\(code \?\? ""\) === "1"/);
+  assert.match(xySlotProductRouteSource, /if \(!write\.accepted\)/);
+  assert.match(xySlotProductRouteSource, /xy_slot_product_change_rejected/);
+  assert.match(xySlotProductRouteSource, /XY_WRITE_REJECTED/);
+  assert.match(xySlotSwapRouteSource, /if \(!firstWrite\.accepted\)/);
+  assert.match(xySlotSwapRouteSource, /secondWrite\.accepted/);
+  assert.match(xySlotSwapRouteSource, /XY rejected rollback/);
 });
 
 test("authorized planners refresh XY in the background without pressing sync", () => {

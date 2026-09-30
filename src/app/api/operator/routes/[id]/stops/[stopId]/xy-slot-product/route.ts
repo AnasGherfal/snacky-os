@@ -144,9 +144,49 @@ export async function POST(
     vmsMachineId: String(machine.vms_machine_id),
     slotCode,
     vmsProductId: targetVmsProductId,
-    productName: String(mapping.vms_product_name ?? product.name),
     priceLyd,
   });
+
+  if (!write.accepted) {
+    await admin.from("system_activity_logs").insert({
+      actor_user_id: profile.id,
+      actor_team_member_id: profile.team_member_id,
+      actor_name: profile.full_name,
+      actor_role: profile.role,
+      action: "xy_slot_product_change_rejected",
+      entity_type: "machine_xy_layout",
+      entity_id: machine.id,
+      entity_label: machine.name ?? machine.machine_code ?? machine.id,
+      before_data: beforeSlot,
+      after_data: beforeSlot,
+      metadata: {
+        route_id: routeId,
+        route_stop_id: stopId,
+        vms_machine_id: machine.vms_machine_id,
+        selected_product_id: product.id,
+        selected_vms_product_id: targetVmsProductId,
+        price_source: machinePrices.length === 1 ? "same_machine_existing_product" : "xy_catalog_or_product",
+        xy_http_status: write.httpStatus,
+        xy_code: write.code,
+        xy_message: write.message,
+        accepted: false,
+      },
+      summary: `XY rejected slot ${slotCode} product change before machine verification`,
+    });
+
+    return NextResponse.json({
+      success: false,
+      verified: false,
+      writeAccepted: false,
+      xyCode: write.code,
+      xyMessage: write.message,
+      code: "XY_WRITE_REJECTED",
+      error: write.message
+        ? `XY rejected this change: ${write.message} No machine change was made.`
+        : "XY rejected this change before it reached the machine. No machine change was made.",
+      slot: beforeSlot,
+    }, { status: 502 });
+  }
 
   const verification = await verifyXySlot({
     vmsMachineId: String(machine.vms_machine_id),
@@ -190,10 +230,10 @@ export async function POST(
     return NextResponse.json({
       success: false,
       verified: false,
-      writeAccepted: write.httpOk,
+      writeAccepted: write.accepted,
       xyCode: write.code,
       xyMessage: write.message,
-      error: "The change was sent to XY but the slot did not verify yet. Snacky will not show it as successful.",
+      error: "XY accepted the change, but the machine has not reported the new slot yet. Do not send it again. Refresh XY after a moment.",
       slot: verification.state,
     }, { status: 409 });
   }
