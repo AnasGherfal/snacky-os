@@ -2,6 +2,7 @@ import "server-only";
 
 import { buildMachineRefillForecasts, type RefillFillLine, type RefillMachine, type RefillStockHistory } from "@/lib/refill-forecast";
 import { getSupabaseAdminClient } from "@/lib/supabase-server";
+import { notifyRouteAssigned } from "@/lib/notification-delivery";
 import {
   ROUTE_ASSIGNED_STATUS,
   ROUTE_DRAFT_STATUS,
@@ -496,6 +497,24 @@ export async function runRefillRouteAutomation(now = new Date()) {
       .eq("id", candidate.id)
       .eq("state", "pending");
     if (error) throw new Error(`Could not link refill queue to route stop: ${error.message}`);
+  }
+
+  if (createdRoute && route.operator_id) {
+    try {
+      await notifyRouteAssigned(supabase, {
+        routeId: String(route.id),
+        routeDate: today,
+        operatorTeamMemberId: String(route.operator_id),
+        assignedBy: "Snacky automation",
+        stopCount: (currentStops ?? []).length + (insertedStops?.length ?? 0),
+      });
+    } catch (error) {
+      console.warn("[refill-route-automation] Could not notify operator about automatic refill route", {
+        route_id: route.id,
+        operator_id: route.operator_id,
+        error,
+      });
+    }
   }
 
   return {
