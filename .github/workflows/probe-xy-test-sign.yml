@@ -1,0 +1,37 @@
+name: Probe XY testSign endpoints
+
+on:
+  push:
+    branches:
+      - diagnose-xy-write-swagger
+    paths:
+      - .github/workflows/probe-xy-test-sign.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Probe public signing test endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://xcx.xynetweb.com/service-api/api"
+          now="$(date +%s%3N)"
+          payloads=(
+            '{}'
+            '{"key":1,"timestamp":1700000000000,"sign":"00000000000000000000000000000000","shbh":"6591"}'
+            '{"key":1,"timestamp":1700000000000,"sign":"00000000000000000000000000000000","shbh":"6591","jqbh":"2509000370","hdbh":"003","spbh":"0192","spjg":500}'
+            '{"secret":"TEST","timestamp":1700000000000,"shbh":"6591","jqbh":"2509000370","hdbh":"003","spbh":"0192","spjg":500}'
+          )
+          for ep in testSign testSign2; do
+            for i in "${!payloads[@]}"; do
+              echo "=== $ep case $((i+1)) ==="
+              curl -sS -L --max-time 30 -X POST -H 'content-type: application/json' -d "${payloads[$i]}" -w '\nHTTP %{http_code}\n' "$base/$ep" || true
+            done
+          done
+          echo "=== /api/test query ==="
+          curl -sS -L --max-time 30 -X POST             "$base/test?key=1&merchantCode=6591&sign=00000000000000000000000000000000&timestamp=$now"             -w '\nHTTP %{http_code}\n' || true
