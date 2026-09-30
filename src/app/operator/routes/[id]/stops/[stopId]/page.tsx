@@ -1558,96 +1558,146 @@ export default function MachineStopPage() {
               slot.slotCode !== xySwapSourceSlotCode && Boolean(slot.vmsProductId),
             );
 
+            const closeMoveEditor = () => {
+              if (xySwapSaving) return;
+              setXySwapSourceSlotCode(null);
+              setXySwapTargetSlotCode("");
+              setXySwapError("");
+            };
+
             return (
-              <div className="border-t border-slate-200 bg-slate-50 p-4 md:p-6">
-                <div className="rounded-xl border border-slate-300 bg-white p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <h3 className="font-semibold text-slate-900">
-                        {tr(`Move / rearrange slot ${xySwapSourceSlotCode}`, `نقل / إعادة ترتيب الخانة ${xySwapSourceSlotCode}`)}
-                      </h3>
-                      <p className="mt-1 text-sm text-slate-500">
-                        {tr("Choose where this product should go. If the destination already has a product, Snacky will swap their positions in XY.", "اختر المكان الذي تريد نقل هذا المنتج إليه. إذا كانت الخانة الأخرى تحتوي على منتج، سيقوم Snacky بتبديل موقعي المنتجين في XY.")}
-                      </p>
+              <div
+                className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 backdrop-blur-[2px] sm:items-center sm:p-4"
+                onClick={(event) => {
+                  if (event.target === event.currentTarget) closeMoveEditor();
+                }}
+              >
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="xy-move-editor-title"
+                  className="flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:max-w-xl sm:rounded-2xl"
+                >
+                  <div className="flex-none border-b border-slate-200 bg-white px-4 pb-4 pt-2 sm:px-5 sm:pt-5">
+                    <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-300 sm:hidden" />
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">
+                          {tr("Machine layout", "توزيع الجهاز")}
+                        </div>
+                        <h3 id="xy-move-editor-title" className="mt-1 text-lg font-bold text-slate-950">
+                          {tr(`Move slot ${xySwapSourceSlotCode}`, `نقل الخانة ${xySwapSourceSlotCode}`)}
+                        </h3>
+                        <p className="mt-1 text-sm leading-5 text-slate-500">
+                          {tr("Choose the destination. Your machine map stays exactly where it is.", "اختر الخانة الهدف. سيبقى موضعك في خريطة الجهاز كما هو.")}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        aria-label={tr("Close", "إغلاق")}
+                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-xl font-medium text-slate-600 transition hover:bg-slate-100"
+                        disabled={xySwapSaving}
+                        onClick={closeMoveEditor}
+                      >
+                        ×
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      className="btn-secondary"
-                      disabled={xySwapSaving}
-                      onClick={() => {
-                        setXySwapSourceSlotCode(null);
-                        setXySwapTargetSlotCode("");
-                        setXySwapError("");
-                      }}
-                    >
-                      {tr("Close", "إغلاق")}
-                    </button>
+
+                    {sourceSlot ? (
+                      <div className="mt-4 flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                        <ProductThumbnail imageUrl={sourceSlot.imageUrl} name={sourceSlot.productName} size="md" />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="rounded-md bg-slate-900 px-2 py-1 text-[11px] font-black text-white">
+                              {sourceSlot.slotCode}
+                            </span>
+                            {sourceSlot.priceLyd ? (
+                              <span className="text-xs font-bold text-emerald-700">
+                                {Number(sourceSlot.priceLyd).toFixed(2)} {tr("LYD", "د.ل")}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="mt-1 truncate font-semibold text-slate-950">{sourceSlot.productName}</div>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
 
-                  <div className="mt-4">
-                    <label className="block text-sm font-medium text-slate-800">{tr("Move to slot", "نقل إلى الخانة")}</label>
+                  <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">
+                    <label className="block text-sm font-semibold text-slate-800">{tr("Destination slot", "الخانة الهدف")}</label>
                     <select
                       value={xySwapTargetSlotCode}
                       onChange={(event) => setXySwapTargetSlotCode(event.target.value)}
-                      className="field-input mt-1"
+                      className="field-input mt-2 min-h-12"
                     >
-                      <option value="">{tr("Choose destination slot", "اختر الخانة الهدف")}</option>
+                      <option value="">{tr("Choose occupied slot", "اختر خانة مشغولة")}</option>
                       {availableTargets.map((slot) => (
                         <option key={slot.slotCode} value={slot.slotCode}>
                           {slot.slotCode} · {slot.productName} · {slot.priceLyd ? Number(slot.priceLyd).toFixed(2) : "—"} {tr("LYD", "د.ل")}
                         </option>
                       ))}
                     </select>
-                  </div>
 
-                  {sourceSlot && targetSlot ? (
-                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">{tr("Slot", "الخانة")} {sourceSlot.slotCode}</div>
-                        <div className="mt-2 flex items-center gap-3">
-                          <ProductThumbnail imageUrl={sourceSlot.imageUrl} name={sourceSlot.productName} size="md" />
-                          <div className="min-w-0">
-                            <div className="font-semibold text-slate-900">{sourceSlot.productName}</div>
-                            <div className="text-xs text-slate-500">→ {targetSlot.productName}</div>
+                    {sourceSlot && targetSlot ? (
+                      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+                        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                          {tr("Preview", "معاينة")}
+                        </div>
+                        <div className="mt-3 grid gap-2">
+                          <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 p-3">
+                            <span className="text-sm font-semibold text-slate-700">
+                              {tr("Slot", "الخانة")} {sourceSlot.slotCode}
+                            </span>
+                            <span className="min-w-0 truncate text-right text-sm font-bold text-slate-950">
+                              {sourceSlot.productName} → {targetSlot.productName}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 p-3">
+                            <span className="text-sm font-semibold text-slate-700">
+                              {tr("Slot", "الخانة")} {targetSlot.slotCode}
+                            </span>
+                            <span className="min-w-0 truncate text-right text-sm font-bold text-slate-950">
+                              {targetSlot.productName} → {sourceSlot.productName}
+                            </span>
                           </div>
                         </div>
                       </div>
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                        <div className="text-xs font-bold uppercase tracking-wide text-slate-500">{tr("Slot", "الخانة")} {targetSlot.slotCode}</div>
-                        <div className="mt-2 flex items-center gap-3">
-                          <ProductThumbnail imageUrl={targetSlot.imageUrl} name={targetSlot.productName} size="md" />
-                          <div className="min-w-0">
-                            <div className="font-semibold text-slate-900">{targetSlot.productName}</div>
-                            <div className="text-xs text-slate-500">→ {sourceSlot.productName}</div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
+                    ) : null}
 
-                  <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs font-medium leading-5 text-amber-900">
-                    {tr(
-                      "For now, Move supports occupied destinations only. That means the two products exchange positions in XY. Moving into a truly empty slot will be enabled only after XY's clear-source-slot behavior is verified.",
-                      "حالياً يدعم النقل الخانات المشغولة فقط، أي أن المنتجين يتبادلان أماكنهما في XY. سيتم تفعيل النقل إلى خانة فارغة بعد التأكد من طريقة تفريغ الخانة الأصلية في XY.",
-                    )}
+                    <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-medium leading-5 text-amber-950">
+                      {tr(
+                        "Move currently supports occupied destinations only, so the two products exchange positions. Empty-slot movement will stay disabled until XY's clear-source behavior is verified.",
+                        "يدعم النقل حالياً الخانات المشغولة فقط، لذلك يتبادل المنتجان موقعيهما. سيبقى النقل إلى خانة فارغة معطلاً حتى يتم التحقق من طريقة تفريغ الخانة الأصلية في XY.",
+                      )}
+                    </div>
+
+                    {xySwapError ? (
+                      <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">
+                        {xySwapError}
+                      </div>
+                    ) : null}
                   </div>
 
-                  {xySwapError ? (
-                    <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">
-                      {xySwapError}
-                    </div>
-                  ) : null}
-
-                  <button
-                    type="button"
-                    className="btn-primary mt-4 w-full"
-                    disabled={xySwapSaving || !xySwapTargetSlotCode}
-                    onClick={() => void applyXySlotSwap()}
-                  >
-                    {xySwapSaving
-                      ? tr("Moving in XY and verifying both...", "جاري النقل في XY والتحقق من الخانتين...")
-                      : tr("Move in XY and verify both", "نقل في XY والتحقق من الخانتين")}
-                  </button>
+                  <div className="grid flex-none grid-cols-2 gap-3 border-t border-slate-200 bg-white p-4 sm:px-5">
+                    <button
+                      type="button"
+                      className="btn-secondary min-h-12"
+                      disabled={xySwapSaving}
+                      onClick={closeMoveEditor}
+                    >
+                      {tr("Cancel", "إلغاء")}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-primary min-h-12"
+                      disabled={xySwapSaving || !xySwapTargetSlotCode}
+                      onClick={() => void applyXySlotSwap()}
+                    >
+                      {xySwapSaving
+                        ? tr("Verifying...", "جاري التحقق...")
+                        : tr("Move & verify", "نقل وتحقق")}
+                    </button>
+                  </div>
                 </div>
               </div>
             );
@@ -1658,34 +1708,75 @@ export default function MachineStopPage() {
             const selectedProduct = (fullProductCatalog ?? stopData.productOptions).find((product) => product.id === xyReplacementProductId)
               ?? stopData.productOptions.find((product) => product.id === xyReplacementProductId)
               ?? null;
+
+            const closeChangeEditor = () => {
+              if (xyChangeSaving) return;
+              setXyEditSlotCode(null);
+              setXyReplacementProductId("");
+              setXyChangeError("");
+            };
+
             return (
-              <div className="border-t border-slate-200 bg-slate-50 p-4 md:p-6">
-                <div className="rounded-xl border border-slate-300 bg-white p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <h3 className="font-semibold text-slate-900">
-                        {tr(`Change slot ${xyEditSlotCode}`, `تغيير الخانة ${xyEditSlotCode}`)}
-                      </h3>
-                      <p className="mt-1 text-sm text-slate-500">
-                        {tr("Current:", "الحالي:")} {currentSlot?.productName ?? tr("Empty", "فارغ")}
-                        {currentSlot?.priceLyd ? ` · ${Number(currentSlot.priceLyd).toFixed(2)} ${tr("LYD", "د.ل")}` : ""}
-                      </p>
+              <div
+                className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 backdrop-blur-[2px] sm:items-center sm:p-4"
+                onClick={(event) => {
+                  if (event.target === event.currentTarget) closeChangeEditor();
+                }}
+              >
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="xy-change-editor-title"
+                  className="flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:max-w-xl sm:rounded-2xl"
+                >
+                  <div className="flex-none border-b border-slate-200 bg-white px-4 pb-4 pt-2 sm:px-5 sm:pt-5">
+                    <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-300 sm:hidden" />
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-700">
+                          {tr("Change product", "تغيير المنتج")}
+                        </div>
+                        <h3 id="xy-change-editor-title" className="mt-1 text-lg font-bold text-slate-950">
+                          {tr(`Slot ${xyEditSlotCode}`, `الخانة ${xyEditSlotCode}`)}
+                        </h3>
+                        <p className="mt-1 text-sm leading-5 text-slate-500">
+                          {tr("Choose the replacement product, review it, then apply it to XY.", "اختر المنتج البديل وراجعه ثم طبّقه في XY.")}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        aria-label={tr("Close", "إغلاق")}
+                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-xl font-medium text-slate-600 transition hover:bg-slate-100"
+                        disabled={xyChangeSaving}
+                        onClick={closeChangeEditor}
+                      >
+                        ×
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      className="btn-secondary"
-                      disabled={xyChangeSaving}
-                      onClick={() => {
-                        setXyEditSlotCode(null);
-                        setXyReplacementProductId("");
-                        setXyChangeError("");
-                      }}
-                    >
-                      {tr("Close", "إغلاق")}
-                    </button>
+
+                    {currentSlot ? (
+                      <div className="mt-4 flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                        <ProductThumbnail imageUrl={currentSlot.imageUrl} name={currentSlot.productName} size="md" />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="rounded-md bg-slate-900 px-2 py-1 text-[11px] font-black text-white">
+                              {currentSlot.slotCode}
+                            </span>
+                            {currentSlot.priceLyd ? (
+                              <span className="text-xs font-bold text-emerald-700">
+                                {Number(currentSlot.priceLyd).toFixed(2)} {tr("LYD", "د.ل")}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="mt-1 truncate font-semibold text-slate-950">
+                            {currentSlot.productName || tr("Empty", "فارغ")}
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
 
-                  <div className="mt-4">
+                  <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">
                     <ProductPicker
                       products={stopData.machineProductOptions ?? stopData.productOptions}
                       allProducts={fullProductCatalog ?? undefined}
@@ -1695,43 +1786,56 @@ export default function MachineStopPage() {
                       onChange={setXyReplacementProductId}
                       label={tr("Replacement product", "المنتج البديل")}
                     />
-                  </div>
 
-                  {selectedProduct ? (
-                    <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-                      <div className="flex items-center gap-3">
-                        <ProductThumbnail imageUrl={selectedProduct.imageUrl} name={selectedProduct.name} size="md" />
-                        <div className="min-w-0">
-                          <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
-                            {tr("Before → after", "قبل ← بعد")}
-                          </div>
-                          <div className="mt-1 font-semibold text-emerald-950">
-                            {currentSlot?.productName ?? tr("Empty", "فارغ")} → {selectedProduct.name}
-                          </div>
-                          <div className="mt-1 text-xs text-emerald-800">
-                            {tr("Snacky will use the current XY price for this product on this machine when available, then verify the slot from XY.", "سيستخدم Snacky سعر XY الحالي لهذا المنتج على نفس الجهاز إن كان متوفراً، ثم يتحقق من الخانة من XY.")}
+                    {selectedProduct ? (
+                      <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-3">
+                        <div className="flex items-center gap-3">
+                          <ProductThumbnail imageUrl={selectedProduct.imageUrl} name={selectedProduct.name} size="md" />
+                          <div className="min-w-0">
+                            <div className="text-xs font-bold uppercase tracking-wide text-emerald-700">
+                              {tr("Review change", "مراجعة التغيير")}
+                            </div>
+                            <div className="mt-1 font-semibold text-emerald-950">
+                              {currentSlot?.productName ?? tr("Empty", "فارغ")} → {selectedProduct.name}
+                            </div>
+                            <div className="mt-1 text-xs leading-5 text-emerald-900">
+                              {tr(
+                                "Snacky uses the current XY price for this product on this machine when available, then re-reads the slot before confirming success.",
+                                "يستخدم Snacky سعر XY الحالي لهذا المنتج على نفس الجهاز إن كان متوفراً، ثم يعيد قراءة الخانة قبل تأكيد النجاح.",
+                              )}
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                  ) : null}
+                    ) : null}
 
-                  {xyChangeError ? (
-                    <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">
-                      {xyChangeError}
-                    </div>
-                  ) : null}
+                    {xyChangeError ? (
+                      <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">
+                        {xyChangeError}
+                      </div>
+                    ) : null}
+                  </div>
 
-                  <button
-                    type="button"
-                    className="btn-primary mt-4 w-full"
-                    disabled={xyChangeSaving || !xyReplacementProductId}
-                    onClick={() => void applyXyProductChange()}
-                  >
-                    {xyChangeSaving
-                      ? tr("Updating XY and verifying...", "جاري تحديث XY والتحقق...")
-                      : tr("Apply to XY and verify", "تطبيق على XY والتحقق")}
-                  </button>
+                  <div className="grid flex-none grid-cols-2 gap-3 border-t border-slate-200 bg-white p-4 sm:px-5">
+                    <button
+                      type="button"
+                      className="btn-secondary min-h-12"
+                      disabled={xyChangeSaving}
+                      onClick={closeChangeEditor}
+                    >
+                      {tr("Cancel", "إلغاء")}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-primary min-h-12"
+                      disabled={xyChangeSaving || !xyReplacementProductId}
+                      onClick={() => void applyXyProductChange()}
+                    >
+                      {xyChangeSaving
+                        ? tr("Updating...", "جاري التحديث...")
+                        : tr("Apply & verify", "تطبيق وتحقق")}
+                    </button>
+                  </div>
                 </div>
               </div>
             );
