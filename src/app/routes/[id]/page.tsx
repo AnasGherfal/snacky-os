@@ -973,6 +973,13 @@ export default async function RouteDetailPage({ params, searchParams }: { params
             <div className="mb-4">
               <h2 className="text-lg font-semibold">{tr(locale, "Route assignment", "تعيين الجولة")}</h2>
               <p className="mt-1 text-sm text-slate-500">{tr(locale, "Assign a route performer now, or leave this route available for an eligible user to claim when starting it.", "عيّن منفذ الجولة الآن، أو اتركها متاحة لمستخدم مؤهل ليستلمها عند البدء.")}</p>
+              <p className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-900">
+                {tr(
+                  locale,
+                  "If this route has stops but no products prepared yet, Snacky will automatically build the pickup plan from refill needs and available storage. You only need to edit it when you want an override.",
+                  "إذا كانت الجولة تحتوي على مواقع ولم يتم تجهيز المنتجات بعد، سيبني Snacky خطة التحميل تلقائياً من احتياجات التعبئة والمخزون المتاح. تحتاج للتعديل فقط إذا أردت استثناءً أو تغييراً.",
+                )}
+              </p>
             </div>
             <form action={assignRoute} className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
               <input type="hidden" name="id" value={id} />
