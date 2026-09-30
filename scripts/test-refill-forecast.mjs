@@ -55,6 +55,46 @@ test("an empty lane on an operating day is fill now", () => {
   assert.equal(forecast.status, "fill_now");
 });
 
+test("a small number of empty lanes batches for today instead of forcing an emergency route", () => {
+  const latestStock = Array.from({ length: 20 }, (_, index) => ({
+    machine_id: "machine-1",
+    product_id: `product-${index}`,
+    slot_code: String(index + 1).padStart(3, "0"),
+    current_qty: index === 0 ? 0 : 10,
+    capacity: 10,
+    captured_at: "2026-08-27T08:00:00.000Z",
+  }));
+  const [forecast] = buildMachineRefillForecasts({
+    machines: [{ ...baseMachine, refill_open_days: [1, 2, 3, 4, 5, 6, 7] }],
+    latestStock,
+    stockHistory: latestStock,
+    fills: [],
+    now: new Date("2026-08-27T10:00:00.000Z"),
+  });
+  assert.equal(forecast.emptyLanes, 1);
+  assert.equal(forecast.status, "fill_today");
+});
+
+test("material empty-lane coverage is still fill now", () => {
+  const latestStock = Array.from({ length: 20 }, (_, index) => ({
+    machine_id: "machine-1",
+    product_id: `product-${index}`,
+    slot_code: String(index + 1).padStart(3, "0"),
+    current_qty: index < 4 ? 0 : 10,
+    capacity: 10,
+    captured_at: "2026-08-27T08:00:00.000Z",
+  }));
+  const [forecast] = buildMachineRefillForecasts({
+    machines: [{ ...baseMachine, refill_open_days: [1, 2, 3, 4, 5, 6, 7] }],
+    latestStock,
+    stockHistory: latestStock,
+    fills: [],
+    now: new Date("2026-08-27T10:00:00.000Z"),
+  });
+  assert.equal(forecast.emptyLanes, 4);
+  assert.equal(forecast.status, "fill_now");
+});
+
 test("Thursday stock that cannot survive the Friday closure is fill today", () => {
   const history = [
     ...stock(5, "2026-08-26T08:00:00.000Z"),
