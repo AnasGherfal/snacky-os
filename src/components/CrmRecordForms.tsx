@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { CrmForm } from '@/components/CrmForm';
-import { crmNames,crmOptionRows,issueCategories,issueStatuses,leadStatuses,locationTypes,taskStatuses,type CrmField,type CrmKind } from '@/lib/crm-workspace';
+import { crmOptionRows,issueCategories,issueStatuses,leadStatuses,locationTypes,taskStatuses,type CrmField,type CrmKind } from '@/lib/crm-workspace';
 
 type Context={me:string;manager:boolean;owner_admin:boolean;staff:boolean;today:string;directory:any[];options:any};
 export function CrmRecordForm({kind,row,context,userId,ar}:{kind:CrmKind;row?:any;context:Context;userId:string;ar:boolean}){
