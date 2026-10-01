@@ -213,7 +213,11 @@ export async function createCashRemoval(formData: FormData) {
   } catch (error) {
     await Promise.all(uploads.map((upload) => rollbackEvidence(upload)));
     console.error("[cash] Failed to upload grouped cash evidence", error);
-    failCashRemoval(path, error instanceof Error ? error.message : "Could not prepare cash removal evidence.", submissionId);
+    failCashRemoval(
+      path,
+      error instanceof Error ? error.message : "Could not prepare cash removal evidence.",
+      submissionId,
+    );
   }
 
   const rpcArgs = {
@@ -225,20 +229,30 @@ export async function createCashRemoval(formData: FormData) {
     p_client_submission_id: submissionId,
   };
 
-  let result: {
+  type GroupedCashResult = {
     replayed?: boolean;
     collection_ids?: string[];
-    boxes?: Array<{ box_key?: string; collection_id?: string; cash_bag_id?: string; machine_count?: number; declared_total_lyd?: string }>;
-  } | null = null;
+    boxes?: Array<{
+      box_key?: string;
+      collection_id?: string;
+      cash_bag_id?: string;
+      machine_count?: number;
+      declared_total_lyd?: string;
+    }>;
+  };
+
+  let result: GroupedCashResult | null = null;
   let rpcError: { code?: string | null; message?: string | null; details?: string | null } | null = null;
   let transportUncertain = false;
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const response = await supabase.rpc("record_standalone_cash_removal_group_v1", rpcArgs);
-      result = response.data as typeof result;
+      result = response.data as GroupedCashResult | null;
       rpcError = response.error;
+
       if (!rpcError) break;
+
       const detail = `${rpcError.message ?? ""} ${rpcError.details ?? ""}`;
       transportUncertain = !rpcError.code && /fetch failed|network|socket|connection|closed/i.test(detail);
       if (!transportUncertain) break;
@@ -246,45 +260,33 @@ export async function createCashRemoval(formData: FormData) {
       transportUncertain = true;
       rpcError = { message: error instanceof Error ? error.message : String(error) };
     }
+
     if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 180));
   }
 
-  const collectionIdsFromResponse = Array.isArray(result?.collection_ids)
+  const collectionIds = Array.isArray(result?.collection_ids)
     ? result.collection_ids.map(String).filter(Boolean)
     : [];
+  const responseUncertain = !rpcError && (!result || collectionIds.length !== plan.boxes.length);
 
-  if (rpcError || !result || collectionIdsFromResponse.length !== plan.boxes.length) {
-    if (!transportUncertain) {
+  if (rpcError || responseUncertain) {
+    if (!transportUncertain && !responseUncertain) {
       await Promise.all(uploads.map((upload) => rollbackEvidence(upload)));
     }
-    console.error("[cash] Failed to record grouped cash removal", rpcError);
+
+    console.error("[cash] Failed to confirm grouped cash removal", rpcError ?? { responseUncertain: true });
     failCashRemoval(
       path,
-      transportUncertain
+      transportUncertain || responseUncertain
         ? "Save not confirmed. Do not create a second removal. Reattach the same box photos and retry this saved removal."
         : rpcMessage(rpcError, "Could not record the machine cash amounts and physical boxes."),
       submissionId,
     );
   }
 
-  const collectionIds = Array.isArray(result?.collection_ids)
-      ? result.collection_ids.map(String).filter(Boolean)
-      : [];
-
-    if (response.error || !result || collectionIds.length !== plan.boxes.length) {
-      throw new Error(rpcMessage(response.error, "Could not record the machine cash amounts and physical boxes."));
-    }
-  } catch (error) {
-    await Promise.all(uploads.map((upload) => rollbackEvidence(upload)));
-    console.error("[cash] Failed to record grouped cash removal", error);
-    fail(path, error instanceof Error ? error.message : "Could not record cash removal.");
-  }
-
-  const collectionIds = Array.isArray(result?.collection_ids)
-    ? result.collection_ids.map(String).filter(Boolean)
-    : [];
-
   if (result?.replayed) {
+    // The original committed boxes retain their original evidence paths.
+    // New evidence uploaded only for this replay is not referenced and is safe to remove.
     await Promise.all(uploads.map((upload) => rollbackEvidence(upload)));
   }
 
@@ -319,8 +321,8 @@ export async function createCashRemoval(formData: FormData) {
       summary: `Recorded ${machineCount} machine cash amount${machineCount === 1 ? "" : "s"} into ${plan.boxes.length} physical box${plan.boxes.length === 1 ? "" : "es"}`,
     });
   } catch (error) {
-    // The cash removal is already committed. Never delete evidence or report
-    // the removal as failed merely because the secondary activity log failed.
+    // Primary cash custody is already committed. A secondary activity-log
+    // failure must never delete evidence or turn a committed removal into a false failure.
     console.error("[cash] Cash removal committed but activity logging failed", error);
   }
 
@@ -328,7 +330,9 @@ export async function createCashRemoval(formData: FormData) {
 
   const selfReceiptAllowed = hasAnyRole(profileContext(profile), ["owner", "admin"]);
   const successMessage = `Removal saved: ${machineCount} machine${machineCount === 1 ? "" : "s"} in ${plan.boxes.length} cash box${plan.boxes.length === 1 ? "" : "es"}. Each machine amount is recorded separately.${
-    selfReceiptAllowed ? " Owner/admin may continue the custody process from Cash." : " Continue the handover from Cash."
+    selfReceiptAllowed
+      ? " Owner/admin may continue the custody process from Cash."
+      : " Continue the handover from Cash."
   }`;
 
   const target = isOperatorRole(profileContext(profile))
