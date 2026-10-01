@@ -5,8 +5,8 @@ import { register } from "node:module";
 
 register("./ts-alias-loader.mjs", import.meta.url);
 const { computePurchaseList } = await import("../src/lib/purchase-list.ts");
-const { computeScheduledSiteDemand, countOperatingDays } = await import("../src/lib/purchase-scheduled-site-demand.ts");
 const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const eliteRpcMigration = read("supabase/migrations/20261001110000_purchase_list_elite_demand_rpc.sql");
 
 const products = [
   { id: "fast", name: "Fast", active: true, last_purchase_cost_lyd: 2 },
@@ -51,40 +51,20 @@ test("only previous/current-month sellers qualify and highest demand ranks first
   assert.equal(rows[0].demandBasis, "current");
 });
 
-test("22 calendar days contain 16 Elite Monday-Friday operating days from 2026-10-01", () => {
-  assert.equal(countOperatingDays("2026-10-01", 22, [1,2,3,4,5]), 16);
-});
-
-test("Elite demand learns from completed operating days and corrects for recorded fills", () => {
-  const stockRows = [];
-  for (const [day,start,end] of [
-    ["2026-09-28",30,20],
-    ["2026-09-29",20,25],
-    ["2026-09-30",25,15],
-  ]) {
-    stockRows.push(
-      { product_id:"fast", current_qty:start, captured_at:`${day}T06:00:00.000Z`, sync_run_id:`${day}-start` },
-      { product_id:"fast", current_qty:end, captured_at:`${day}T16:00:00.000Z`, sync_run_id:`${day}-end` },
-    );
-  }
-  const rows = computeScheduledSiteDemand({
-    siteName:"Elite Future School",
-    openDays:[1,2,3,4,5],
-    coverageDays:22,
-    stockRows,
-    fillRows:[{ product_id:"fast", actual_qty:15, created_at:"2026-09-29T12:00:00.000Z" }],
-    previousPeriod:{start:"2026-09-01",end:"2026-09-30"},
-    currentPeriod:{start:"2026-10-01",end:"2026-10-31"},
-    now:new Date("2026-10-01T08:00:00.000Z"),
-  });
-  assert.equal(rows.length,1);
-  assert.equal(rows[0].observed_operating_days,3);
-  assert.equal(rows[0].coverage_operating_days,16);
-  assert.equal(rows[0].observed_units,30);
-  assert.equal(rows[0].daily_rate,10);
-  assert.equal(rows[0].projected_units,160);
-  assert.equal(rows[0].previous_period_units,30);
-  assert.equal(rows[0].current_period_units,0);
+test("Elite demand RPC keeps the 22-day school calendar and corrected depletion in the database", () => {
+  assert.match(eliteRpcMigration, /p_coverage_days integer/);
+  assert.match(eliteRpcMigration, /generate_series\(0,p_coverage_days-1\)/);
+  assert.match(eliteRpcMigration, /unnest\(v_open_days\)/);
+  assert.match(eliteRpcMigration, /route_stop_fill_lines/);
+  assert.match(eliteRpcMigration, /vms_stock_snapshots/);
+  assert.match(eliteRpcMigration, /greatest\(0,d\.start_qty\+coalesce\(f\.fill_qty,0\)-d\.end_qty\)/);
+  assert.match(eliteRpcMigration, /span_hours>=6/);
+  assert.match(eliteRpcMigration, /limit 10/);
+  assert.match(eliteRpcMigration, /Scheduled purchase site needs at least two complete operating days/);
+  assert.match(eliteRpcMigration, /previous_period_units/);
+  assert.match(eliteRpcMigration, /current_period_units/);
+  assert.match(eliteRpcMigration, /array\['owner','admin','supervisor','warehouse','purchasing','finance'\]/);
+  assert.doesNotMatch(eliteRpcMigration, /array\[[^\]]*'operator'/);
 });
 
 test("scheduled-site forecast is added after removing overlapping site demand from monthly totals", () => {
@@ -158,6 +138,9 @@ test("purchase list reads active monthly product imports and live storage, not t
   assert.match(source, /eq\("status", "imported"\)/);
   assert.match(source, /from\("current_inventory_by_location"\)/);
   assert.match(source, /eq\("location_type", "storage"\)/);
+  assert.match(source, /rpc\("snacky_purchase_scheduled_site_demand_v1"/);
+  assert.doesNotMatch(source, /from\("vms_stock_snapshots"\)/);
+  assert.doesNotMatch(source, /from\("route_stop_fill_lines"\)/);
   assert.doesNotMatch(source, /kpi_product_monthly/);
 });
 
