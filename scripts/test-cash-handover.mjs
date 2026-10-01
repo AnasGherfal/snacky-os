@@ -9,6 +9,7 @@ const command = (action = 'count', payload = { amount: '120.25', cash_location: 
 const read = p => readFileSync(new URL('../' + p, import.meta.url), 'utf8');
 const sql = read('supabase/migrations/20260923120059_cash_handover_coordinator_v1.sql');
 const groupedCashSql = read('supabase/migrations/20261001090000_cash_removal_machine_amounts_multi_box.sql');
+const perMachineCountSql = read('supabase/migrations/20261001143000_cash_count_per_machine.sql');
 
 test('single-total cash uses exact integer cents, including an empty box', () => {
   assert.equal(cashCents('0'), 0); assert.equal(cashCents('0.25'), 25);
@@ -17,6 +18,26 @@ test('single-total cash uses exact integer cents, including an empty box', () =>
 for (const amount of ['NaN', 'Infinity', '-1', '1e3', '100,50', '00.25', '2.001', '100000000', '', ' 20', '.50', 20, null]) {
   test(`rejects ambiguous or invalid cash total ${JSON.stringify(amount)}`, () => assert.throws(() => validateCashCommand(command('count', { amount, cash_location: 'Safe' }))));
 }
+
+test('per-machine count payload must sum exactly to the cash-box total', () => {
+  const first=id(), second=id();
+  const good=command('count',{
+    amount:'120.25',
+    cash_location:'Storage safe A',
+    machine_counts:JSON.stringify([{machine_id:first,amount:'70.00'},{machine_id:second,amount:'50.25'}]),
+  });
+  assert.deepEqual(validateCashCommand(good),good);
+  assert.throws(()=>validateCashCommand(command('count',{
+    amount:'120.25',
+    cash_location:'Storage safe A',
+    machine_counts:JSON.stringify([{machine_id:first,amount:'70.00'},{machine_id:second,amount:'50.24'}]),
+  })));
+  assert.throws(()=>validateCashCommand(command('count',{
+    amount:'120.25',
+    cash_location:'Storage safe A',
+    machine_counts:JSON.stringify([{machine_id:first,amount:'70.00'},{machine_id:first,amount:'50.25'}]),
+  })));
+});
 test('commands cannot forge identity, revision, Finance fields or arbitrary action keys', () => {
   const c = command(); assert.deepEqual(validateCashCommand(c), c);
   for (const bad of [{ ...c, actor_id: id() }, { ...c, revision: -1 }, { ...c, revision: 1.2 }, { ...c, revision: 1000000000 }, { ...c, collection_id: null }, { ...c, payload: { ...c.payload, finance_account: 'owner_lyd' } }, { ...c, action: '__proto__' }]) assert.throws(() => validateCashCommand(bad));
@@ -107,7 +128,7 @@ test('unidentified records stay visible and never substitute a generated ID for 
   assert.match(sql, /'reference_missing',coalesce\(c\.cash_bag_id,''\)/);
 });
 
-test('cash box detail exposes machine removal amounts without changing Finance permissions', () => {
+test('cash box detail counts every machine separately while Finance keeps one summed box total', () => {
   const api = read('src/app/api/cash-handling/route.ts');
   const ui = read('src/components/CashHandlingWorkspace.tsx');
   assert.match(groupedCashSql, /cash_collection_machine_lines_v1_impl/);
@@ -115,7 +136,13 @@ test('cash box detail exposes machine removal amounts without changing Finance p
   assert.match(api, /snacky_cash_collection_machine_lines_v1/);
   assert.match(ui, /Amounts recorded at removal/);
   assert.match(ui, /machine\.removed_amount_lyd/);
-  assert.match(ui, /Count the physical box total independently/);
+  assert.match(ui, /machine_count_/);
+  assert.match(ui, /machine_counts: JSON\.stringify\(machineCountRows\)/);
+  assert.match(ui, /Enter the physical counted amount for each machine separately/);
+  assert.match(perMachineCountSql, /add column if not exists counted_amount_lyd numeric\(12,2\)/);
+  assert.match(perMachineCountSql, /Counted machines must exactly match the machines in this cash box/);
+  assert.match(perMachineCountSql, /Cash-box total does not match the per-machine count sum/);
+  assert.match(perMachineCountSql, /perform public\.confirm_cash_count_auto_period_v1\(v_id,v_amount,v_request\)/);
   assert.doesNotMatch(groupedCashSql, /insert into public\.financial_transactions/);
 });
 
