@@ -8,6 +8,7 @@ const id = () => randomUUID();
 const command = (action = 'count', payload = { amount: '120.25', cash_location: 'Storage safe A' }) => ({ request_id: id(), collection_id: id(), action, revision: 2, payload });
 const read = p => readFileSync(new URL('../' + p, import.meta.url), 'utf8');
 const sql = read('supabase/migrations/20260923120059_cash_handover_coordinator_v1.sql');
+const groupedCashSql = read('supabase/migrations/20261001090000_cash_removal_machine_amounts_multi_box.sql');
 
 test('single-total cash uses exact integer cents, including an empty box', () => {
   assert.equal(cashCents('0'), 0); assert.equal(cashCents('0.25'), 25);
@@ -104,6 +105,18 @@ test('unidentified records stay visible and never substitute a generated ID for 
   assert.match(ui, /Earlier collection record/);
   assert.match(ui, /do not invent a box number or create another collection/);
   assert.match(sql, /'reference_missing',coalesce\(c\.cash_bag_id,''\)/);
+});
+
+test('cash box detail exposes machine removal amounts without changing Finance permissions', () => {
+  const api = read('src/app/api/cash-handling/route.ts');
+  const ui = read('src/components/CashHandlingWorkspace.tsx');
+  assert.match(groupedCashSql, /snacky_cash_collection_machine_lines_v1_impl/);
+  assert.match(groupedCashSql, /removed_amount_lyd/);
+  assert.match(api, /snacky_cash_collection_machine_lines_v1/);
+  assert.match(ui, /Amounts recorded at removal/);
+  assert.match(ui, /machine\.removed_amount_lyd/);
+  assert.match(ui, /Count the physical box total independently/);
+  assert.doesNotMatch(groupedCashSql, /insert into public\.financial_transactions/);
 });
 
 test('operator sees one Cash workflow instead of duplicate cash menus', () => {
