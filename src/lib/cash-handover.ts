@@ -42,7 +42,11 @@ export function validateCashCommand(value: unknown): CashCommand {
   uuid(c.request_id);
   if (typeof c.revision !== 'number' || !Number.isSafeInteger(c.revision) || c.revision < 0 || c.revision > 999999999) throw new Error('invalid');
   if (typeof c.action !== 'string' || !Object.hasOwn(actionFields, c.action)) throw new Error('invalid');
-  const action = c.action as CashAction, p = object(c.payload); exactKeys(p, actionFields[action]);
+  const action = c.action as CashAction, p = object(c.payload);
+  const keys = action === 'count' && Object.hasOwn(p, 'machine_counts')
+    ? ['amount', 'cash_location', 'machine_counts']
+    : actionFields[action];
+  exactKeys(p, keys);
   if (['enable', 'counter'].includes(action)) {
     if (c.collection_id !== null || c.revision !== 0 || typeof p.enabled !== 'boolean') throw new Error('invalid');
   } else uuid(c.collection_id);
@@ -56,6 +60,24 @@ export function validateCashCommand(value: unknown): CashCommand {
   if (action === 'count') {
     if (typeof p.amount !== 'string' || !cashAmount.test(p.amount)) throw new Error('invalid');
     text(p.cash_location, 2, 180);
+    if (Object.hasOwn(p, 'machine_counts')) {
+      if (typeof p.machine_counts !== 'string' || p.machine_counts.length > 8000) throw new Error('invalid');
+      let rows: unknown;
+      try { rows = JSON.parse(p.machine_counts); } catch { throw new Error('invalid'); }
+      if (!Array.isArray(rows) || rows.length < 1 || rows.length > 100) throw new Error('invalid');
+      const seen = new Set<string>();
+      let totalCents = 0;
+      for (const row of rows) {
+        const item = object(row);
+        exactKeys(item, ['machine_id', 'amount']);
+        uuid(item.machine_id);
+        if (seen.has(item.machine_id as string)) throw new Error('invalid');
+        seen.add(item.machine_id as string);
+        if (typeof item.amount !== 'string' || !cashAmount.test(item.amount)) throw new Error('invalid');
+        totalCents += cashCents(item.amount);
+      }
+      if (totalCents !== cashCents(p.amount)) throw new Error('invalid');
+    }
   }
   if (JSON.stringify(c).length > 10000) throw new Error('invalid');
   return c as CashCommand;
