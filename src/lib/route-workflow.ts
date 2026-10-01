@@ -292,14 +292,18 @@ export function nextOperatorRouteHref({
     return `/operator/routes/${routeId}/pick-list${start ? "?start=1" : ""}`;
   }
 
+  // Finish the original storage pickup before routing the operator into a
+  // machine stop. A route can have one already-picked stop and other pending
+  // stops after a partial pickup; "Continue Route" must return to pickup in that
+  // state instead of skipping the remaining storage handoff.
+  const hasPendingStops = stops.some((stop) => isRouteStopPendingStatus(stop.status));
+  if (hasPendingStops) return `/operator/routes/${routeId}/pick-list${start ? "?start=1" : ""}`;
+
   const activeStop = [...stops]
     .filter((stop) => isRouteStopActiveStatus(stop.status))
     .sort((a, b) => Number(a.stop_order ?? 0) - Number(b.stop_order ?? 0))[0];
 
   if (activeStop) return `/operator/routes/${routeId}/stops/${activeStop.id}`;
-
-  const hasPendingStops = stops.some((stop) => isRouteStopPendingStatus(stop.status));
-  if (hasPendingStops) return `/operator/routes/${routeId}/pick-list${start ? "?start=1" : ""}`;
 
   const nextStop = [...stops]
     .filter((stop) => !isRouteStopDoneStatus(stop.status))

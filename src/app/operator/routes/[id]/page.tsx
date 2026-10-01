@@ -666,7 +666,7 @@ export default async function OperatorRouteDetailPage({
                     <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                       {isRouteStopPendingStatus(stop.status) ? (
                         <Link href={`/operator/routes/${routeId}/pick-list?stop=${stop.id}`} className="btn-primary w-full text-base sm:w-auto">
-                          {t("Pick this stop")}
+                          {t("View items")}
                         </Link>
                       ) : isRouteStopActiveStatus(stop.status) ? (
                         <Link

@@ -606,9 +606,18 @@ export async function GET(
       return relevantStopIds.has(String(routeStopId));
     };
 
-    const pickedByStopItem = new Map<string, { quantity: number; reason: string | null; notes: string | null; isChecked: boolean }>();
-    const pickedByStopProduct = new Map<string, { quantity: number; reason: string | null; notes: string | null; isChecked: boolean }>();
-    const legacyPickedByProduct = new Map<string, { quantity: number; reason: string | null; notes: string | null; isChecked: boolean }>();
+    type PickupHistoryRow = {
+      quantity: number;
+      originalPlannedQuantity: number;
+      originalPickedQuantity: number;
+      reason: string | null;
+      notes: string | null;
+      isChecked: boolean;
+    };
+
+    const pickedByStopItem = new Map<string, PickupHistoryRow>();
+    const pickedByStopProduct = new Map<string, PickupHistoryRow>();
+    const legacyPickedByProduct = new Map<string, PickupHistoryRow>();
     const pickedByProduct = new Map<string, number>();
     const extraItems = pickListItems
       .filter((line: any) => {
@@ -638,12 +647,22 @@ export async function GET(
       if (!includesRelevantStop(lineStopId)) return;
       const quantity = unitQuantity(line.picked_qty);
       pickedByProduct.set(productId, (pickedByProduct.get(productId) ?? 0) + quantity);
-      const next = { quantity, reason: line.reason ?? null, notes: line.notes ?? null, isChecked: Boolean(line.is_checked) };
+      const isOriginalPlannedPick = actionType === "planned_pick";
+      const next = {
+        quantity,
+        originalPlannedQuantity: isOriginalPlannedPick ? unitQuantity(line.planned_qty) : 0,
+        originalPickedQuantity: isOriginalPlannedPick ? quantity : 0,
+        reason: line.reason ?? null,
+        notes: line.notes ?? null,
+        isChecked: Boolean(line.is_checked),
+      };
       if (line.route_stop_item_id) {
         const key = String(line.route_stop_item_id);
         const current = pickedByStopItem.get(key);
         pickedByStopItem.set(key, {
           quantity: (current?.quantity ?? 0) + quantity,
+          originalPlannedQuantity: Math.max(current?.originalPlannedQuantity ?? 0, next.originalPlannedQuantity),
+          originalPickedQuantity: (current?.originalPickedQuantity ?? 0) + next.originalPickedQuantity,
           reason: next.reason ?? current?.reason ?? null,
           notes: next.notes ?? current?.notes ?? null,
           isChecked: current?.isChecked || next.isChecked,
@@ -655,6 +674,8 @@ export async function GET(
         const current = pickedByStopProduct.get(key);
         pickedByStopProduct.set(key, {
           quantity: (current?.quantity ?? 0) + quantity,
+          originalPlannedQuantity: Math.max(current?.originalPlannedQuantity ?? 0, next.originalPlannedQuantity),
+          originalPickedQuantity: (current?.originalPickedQuantity ?? 0) + next.originalPickedQuantity,
           reason: next.reason ?? current?.reason ?? null,
           notes: next.notes ?? current?.notes ?? null,
           isChecked: current?.isChecked || next.isChecked,
@@ -664,6 +685,8 @@ export async function GET(
       const current = legacyPickedByProduct.get(productId);
       legacyPickedByProduct.set(productId, {
         quantity: (current?.quantity ?? 0) + quantity,
+        originalPlannedQuantity: Math.max(current?.originalPlannedQuantity ?? 0, next.originalPlannedQuantity),
+        originalPickedQuantity: (current?.originalPickedQuantity ?? 0) + next.originalPickedQuantity,
         reason: next.reason ?? current?.reason ?? null,
         notes: next.notes ?? current?.notes ?? null,
         isChecked: current?.isChecked || next.isChecked,
@@ -678,7 +701,7 @@ export async function GET(
       return String(a.product_id ?? "").localeCompare(String(b.product_id ?? ""));
     });
 
-    const legacyAllocationByStopItem = new Map<string, { quantity: number; reason: string | null; notes: string | null; isChecked: boolean }>();
+    const legacyAllocationByStopItem = new Map<string, PickupHistoryRow>();
     legacyPickedByProduct.forEach((legacyPick, productId) => {
       const productLines = sortedStopItems.filter((line: any) => String(line.product_id ?? "") === productId);
       let remaining = legacyPick.quantity;
@@ -691,6 +714,11 @@ export async function GET(
         remaining -= allocated;
         legacyAllocationByStopItem.set(lineId, {
           quantity: allocated,
+          // Legacy route-wide pickup rows do not preserve a stop-level historical
+          // plan. Treat the current line plan as its baseline so an old short-pick
+          // is never mislabelled as a new route edit.
+          originalPlannedQuantity: plannedQty,
+          originalPickedQuantity: allocated,
           reason: legacyPick.reason,
           notes: legacyPick.notes,
           isChecked: legacyPick.isChecked,
@@ -807,8 +835,16 @@ export async function GET(
         (routeStopItemId ? legacyAllocationByStopItem.get(routeStopItemId) : undefined) ??
         null;
       const alreadyPickedQty = Math.max(unitQuantity(line.picked_quantity), savedPick?.quantity ?? 0);
+      const originalPlannedQty = savedPick?.originalPlannedQuantity ?? 0;
+      const originalPickedQty = savedPick?.originalPickedQuantity ?? 0;
+      const originalShortfallQty = Math.max(originalPlannedQty - originalPickedQty, 0);
+      // "Additional pickup" means units added to the route plan after the
+      // original pickup. A deliberate original short-pick must not keep
+      // reappearing as an additional pickup. Previously confirmed supplemental
+      // units are included in alreadyPickedQty, so they advance the covered plan.
+      const pickupCoveredPlanQty = alreadyPickedQty + originalShortfallQty;
+      const additionalPickupQty = Math.max(plannedQty - pickupCoveredPlanQty, 0);
       const stopStatus = String(stop?.status ?? "");
-      const additionalPickupQty = Math.max(plannedQty - alreadyPickedQty, 0);
       const isSupplementalPending = Boolean(
         stop &&
         stopStatus !== ROUTE_STOP_PENDING_STATUS &&
@@ -925,7 +961,19 @@ export async function GET(
     } else {
       hasAnyConfirmedPickup = Boolean(pickMovementsResult.data?.length);
     }
-    const confirmed = pendingStopCount === 0 && hasAnyConfirmedPickup && supplementalPendingUnitCount === 0;
+    const remainingPickupMode = pendingStopCount > 0 && hasAnyConfirmedPickup;
+    const supplementalMode = pendingStopCount === 0 && hasAnyConfirmedPickup && supplementalPendingItems.length > 0;
+    const visibleStopGroups = supplementalMode
+      ? stopGroups
+          .map((group: any) => ({
+            ...group,
+            items: (group.items ?? []).filter((item: any) => Boolean(item.is_supplemental_pending)),
+          }))
+          .filter((group: any) => group.items.length > 0)
+      : pendingStopCount > 0
+        ? stopGroups.filter((group: any) => String(group.stop_status ?? "") === ROUTE_STOP_PENDING_STATUS)
+        : stopGroups;
+    const confirmed = pendingStopCount === 0 && hasAnyConfirmedPickup && !supplementalMode;
     const isPrepared = Boolean(preparedBatch && !preparedBatch.confirmedAt && !preparedBatch.returnedToAssignedAt);
 
     const items = Array.from(plannedByProduct.values()).map((line: any) => ({
@@ -948,21 +996,26 @@ export async function GET(
       brand: product.brand ?? null,
       imageUrl: product.image_url ?? null,
       caseQuantity: Math.max(1, unitQuantity(product.case_quantity ?? 1)),
-      availableStorageQty: availableStorageQtyForProduct(String(product.id ?? ""), 0),
+      availableStorageQty: remainingPickupMode || supplementalMode
+        ? physicalStorageQtyForProduct(String(product.id ?? ""))
+        : availableStorageQtyForProduct(String(product.id ?? ""), 0),
     }));
 
     return NextResponse.json({
-      stopGroups,
+      stopGroups: visibleStopGroups,
       items,
       routeTotals: items,
       productOptions,
-      extraItems,
+      // Existing extras belong to an earlier confirmed pickup batch. Do not
+      // preload them while the operator is continuing the original route pickup.
+      extraItems: remainingPickupMode ? [] : extraItems,
       confirmed,
       prepared: isPrepared,
       preparedBatch,
-      supplementalMode: supplementalPendingItems.length > 0,
-      supplementalPendingItemCount: supplementalPendingItems.length,
-      supplementalPendingUnitCount,
+      remainingPickupMode,
+      supplementalMode,
+      supplementalPendingItemCount: supplementalMode ? supplementalPendingItems.length : 0,
+      supplementalPendingUnitCount: supplementalMode ? supplementalPendingUnitCount : 0,
       locked: isTerminalRouteStatus(route.status),
       routeStatus: route.status,
       pendingStopCount,
