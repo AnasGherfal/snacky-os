@@ -17,9 +17,14 @@ test('new customer issue is a five-field quick intake before optional details',(
   assert.doesNotMatch(block,/assignee/);
 });
 
-test('My Work exposes the quick complaint action prominently',()=>{
-  assert.match(workspace,/btn-primary" href="\/issues\/new"[^]*Quick customer issue[^]*بلاغ عميل سريع/);
-  assert.match(workspace,/Record only the essentials now/);
+test('My Work quick issue is inline and no longer duplicates the full issue page',()=>{
+  const quick=fs.readFileSync('src/components/CrmQuickIssueAction.tsx','utf8');
+  assert.match(quick,/CrmForm action="issue\.save"/);
+  assert.match(quick,/Quick customer issue/);
+  assert.match(quick,/Only the essentials/);
+  for(const field of ['customer_phone','location_id','issue_type','description']) assert.match(quick,new RegExp("name:'"+field+"'"));
+  assert.doesNotMatch(workspace,/btn-primary" href="\/issues\/new"[^]*Quick customer issue/);
+  assert.match(workspace,/New customer issue/);
 });
 
 test('CRM compensation is capped at 10 LYD for non-management users at UI and DB layers',()=>{
