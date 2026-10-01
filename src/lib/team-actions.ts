@@ -21,6 +21,10 @@ function teamPayload(formData: FormData) {
   }
   const role = roles[0];
   const canAddProducts = teamProductPermission(roles, String(formData.get("can_add_products") || "") === "yes");
+  const requestedCrmFocus = String(formData.get("crm_focus") || "").trim();
+  const crmFocus = roles.includes("crm") && (requestedCrmFocus === "office" || requestedCrmFocus === "field")
+    ? requestedCrmFocus
+    : null;
   return {
     full_name: String(formData.get("full_name") || "").trim(),
     email: String(formData.get("email") || "").trim() || null,
@@ -28,6 +32,7 @@ function teamPayload(formData: FormData) {
     role,
     roles,
     can_add_products: canAddProducts,
+    crm_focus: crmFocus,
     active: String(formData.get("active") || "true") === "true",
     active_status: String(formData.get("active") || "true") === "true" ? "active" : "inactive",
   };

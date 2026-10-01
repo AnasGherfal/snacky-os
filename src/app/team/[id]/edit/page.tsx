@@ -32,7 +32,7 @@ export default async function EditTeamMemberPage({
 
   const { data: member, error: memberError } = await supabase
     .from("team_members")
-    .select("id, full_name, email, phone, role, roles, can_add_products, active, active_status, auth_user_id, must_change_password")
+    .select("id, full_name, email, phone, role, roles, can_add_products, crm_focus, active, active_status, auth_user_id, must_change_password")
     .eq("id", id)
     .maybeSingle();
 
@@ -68,6 +68,7 @@ export default async function EditTeamMemberPage({
             role,
             roles,
             can_add_products: Boolean((member as any).can_add_products),
+            crm_focus: (member as any).crm_focus ?? null,
             active: member.active,
             auth_user_id: member.auth_user_id,
             must_change_password: member.must_change_password,
