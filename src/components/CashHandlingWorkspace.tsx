@@ -178,6 +178,21 @@ function CashHandlingClient({ userId }: { userId: string }) {
             <p>{text('This earlier record is not evidence of a newly collected box. Assignment, handover and counting are unavailable here. Ask the owner to review the existing cash record; do not invent a box number or create another collection.', 'هذا السجل السابق لا يثبت وجود علبة جُمعت الآن. لا يمكن إسناده أو تسليمه أو عده من هذه الصفحة. اطلب من المالك مراجعة سجل النقد الأصلي؛ لا تخترع رقماً للعلبة ولا تنشئ تحصيلاً آخر.')}</p>
           </div> : null}
           {box.amount !== null ? <p className={styles.amount}><bdi>{box.amount} LYD</bdi></p> : null}
+          {box.machines.some(machine => machine.removed_amount_lyd !== null && machine.removed_amount_lyd !== undefined) ? <section className={styles.machineAmounts}>
+            <div className={styles.machineAmountsHeader}>
+              <div>
+                <h3>{text('Amounts recorded at removal', 'المبالغ المسجلة وقت السحب')}</h3>
+                <p className={styles.hint}>{text('Each machine stays separate even when several machines share this physical box.', 'يبقى مبلغ كل ماكينة منفصلاً حتى عند وضع نقد عدة ماكينات في نفس العلبة.')}</p>
+              </div>
+              <strong><bdi>{box.machines.reduce((sum, machine) => sum + Number(machine.removed_amount_lyd ?? 0), 0).toFixed(2)} LYD</bdi></strong>
+            </div>
+            <div className={styles.machineAmountRows}>
+              {box.machines.map((machine, index) => <div key={machine.id ?? `${machine.name}-${index}`} className={styles.machineAmountRow}>
+                <div><strong>{machine.location || machine.name}</strong>{machine.location ? <span>{machine.name}</span> : null}</div>
+                <bdi>{machine.removed_amount_lyd !== null && machine.removed_amount_lyd !== undefined ? `${Number(machine.removed_amount_lyd).toFixed(2)} LYD` : text('Earlier record · amount not captured', 'سجل سابق · المبلغ غير مسجل')}</bdi>
+              </div>)}
+            </div>
+          </section> : null}
           <dl className={styles.facts}><div><dt>{text('Collector', 'المحصّل')}</dt><dd>{box.collector ?? '—'}</dd></div><div><dt>{text('Coordinator', 'المسؤول')}</dt><dd>{box.assignee ?? '—'}</dd></div>
             <div><dt>{text('Current custodian', 'المسؤول عن العهدة')}</dt><dd>{cashReferenceMissing(box) ? text('Not verified', 'غير مؤكد') : box.custodian ?? box.collector ?? '—'}</dd></div><div><dt>{text('Recorded cash location', 'موقع النقد المسجل')}</dt><dd>{box.cash_location ?? box.storage ?? '—'}</dd></div></dl>
           {box.state === 'dropped' ? <p className={styles.notice}>{text('The collector recorded a storage drop-off. The coordinator has not acknowledged pickup yet.', 'سجّل المحصّل وضع العلبة في المخزن. لم يؤكد المسؤول استلامها بعد.')}</p> : null}
@@ -202,7 +217,7 @@ function CashHandlingClient({ userId }: { userId: string }) {
               {action === 'count' ? <>
                 <label>{text('Total counted · LYD', 'إجمالي النقد المعدود · دينار')}<input name="amount" inputMode="decimal" autoComplete="off" dir="ltr" pattern="(0|[1-9][0-9]{0,7})(\.[0-9]{1,2})?" required placeholder="0.00" /></label>
                 <label>{text('Where is the counted cash now?', 'أين يوجد النقد بعد العد؟')}<input name="cash_location" required minLength={2} maxLength={180} placeholder={text('For example: storage safe, shelf A', 'مثال: خزنة المخزن، الرف أ')} /></label>
-                <p className={styles.hint}>{text('Enter the physical total only. Zero is valid only for a genuinely empty box. Do not subtract shopping or expenses. VMS checking can follow later.', 'أدخل المبلغ الفعلي فقط. الصفر صحيح فقط إذا كانت العلبة فارغة فعلاً. لا تخصم المشتريات أو المصروفات. يمكن مطابقة VMS لاحقاً.')}</p>
+                <p className={styles.hint}>{text('Count the physical box total independently. The machine amounts above are the collector’s recorded breakdown; a difference remains visible for review. Do not subtract shopping or expenses. VMS checking can follow later.', 'عُدّ إجمالي العلبة فعلياً بشكل مستقل. المبالغ أعلاه هي تفصيل السحب المسجل لكل ماكينة، وأي فرق يبقى واضحاً للمراجعة. لا تخصم المشتريات أو المصروفات. يمكن مطابقة VMS لاحقاً.')}</p>
               </> : null}
               <label className={styles.checkbox}><input type="checkbox" required />{text('I confirm this describes what I physically did and checked.', 'أؤكد أن هذا يطابق ما قمت به وتحققت منه فعلياً.')}</label>
               <div className={styles.buttons}><button className={styles.primary} type="submit">{action === 'count' ? text('Confirm count & record once', 'تأكيد العد والتسجيل مرة واحدة') : text('Confirm action', 'تأكيد الإجراء')}</button><button type="button" className={styles.secondary} onClick={() => setAction(null)}>{text('Cancel', 'إلغاء')}</button></div>
