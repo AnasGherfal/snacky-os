@@ -100,8 +100,11 @@ function CashHandlingClient({ userId }: { userId: string }) {
   function submit(event: FormEvent<HTMLFormElement>, box: CashBox) {
     event.preventDefault(); if (!action || pending || busy || cashReferenceMissing(box)) return;
     const form = new FormData(event.currentTarget), get = (key: string) => String(form.get(key) ?? '').trim();
-    const machineCountRows = action === 'count' && box.machines.length > 0 && box.machines.every(machine => Boolean(machine.id))
-      ? box.machines.map(machine => ({ machine_id: machine.id!, amount: get(`machine_count_${machine.id}`) }))
+    const usesRecordedMachineAmounts = action === 'count'
+      && box.machines.length > 0
+      && box.machines.every(machine => Boolean(machine.id) && machine.removed_amount_lyd !== null && machine.removed_amount_lyd !== undefined);
+    const machineCountRows = usesRecordedMachineAmounts
+      ? box.machines.map(machine => ({ machine_id: machine.id!, amount: Number(machine.removed_amount_lyd).toFixed(2) }))
       : null;
     const machineCountTotal = machineCountRows
       ? machineCountRows.reduce((sum, row) => {
@@ -226,29 +229,28 @@ function CashHandlingClient({ userId }: { userId: string }) {
                 <label>{text('Notes · required for an exception or takeover', 'ملاحظات · مطلوبة عند وجود ملاحظة أو نقل العهدة')}<textarea name="notes" maxLength={1000} rows={3} required={action === 'takeover'} /></label>
               </> : null}
               {action === 'count' ? <>
-                {box.machines.length > 0 && box.machines.every(machine => Boolean(machine.id)) ? (
+                {box.machines.length > 0 && box.machines.every(machine => Boolean(machine.id) && machine.removed_amount_lyd !== null && machine.removed_amount_lyd !== undefined) ? (
                   <div className={styles.machineAmountRows}>
-                    <p className={styles.hint}>{text('Enter the physical counted amount for each machine separately. Snacky adds them into the cash-box total automatically.', 'أدخل المبلغ الفعلي المعدود لكل ماكينة بشكل منفصل. يجمع سناكي المبالغ تلقائياً لإجمالي علبة النقد.')}</p>
+                    <p className={styles.hint}>{text('The machine amounts were already entered when the cash was removed. Review them below; Snacky will use their sum as the cash-box total. No second amount is required.', 'تم إدخال مبلغ كل ماكينة عند سحب النقد. راجع المبالغ أدناه؛ سيستخدم سناكي مجموعها كإجمالي علبة النقد. لا يلزم إدخال مبلغ مرة ثانية.')}</p>
                     {box.machines.map((machine, index) => (
-                      <label key={machine.id ?? index} className={styles.machineAmountRow}>
+                      <div key={machine.id ?? index} className={styles.machineAmountRow}>
                         <span><strong>{machine.location || machine.name}</strong>{machine.location ? <span>{machine.name}</span> : null}</span>
-                        <input
-                          name={`machine_count_${machine.id}`}
-                          inputMode="decimal"
-                          autoComplete="off"
-                          dir="ltr"
-                          pattern="(0|[1-9][0-9]{0,7})(\.[0-9]{1,2})?"
-                          required
-                          placeholder="0.00"
-                        />
-                      </label>
+                        <bdi>{Number(machine.removed_amount_lyd).toFixed(2)} LYD</bdi>
+                      </div>
                     ))}
+                    <div className={styles.machineAmountRow}>
+                      <strong>{text('Cash-box total', 'إجمالي علبة النقد')}</strong>
+                      <bdi>{box.machines.reduce((sum, machine) => sum + Number(machine.removed_amount_lyd ?? 0), 0).toFixed(2)} LYD</bdi>
+                    </div>
                   </div>
                 ) : (
-                  <label>{text('Total counted · LYD', 'إجمالي النقد المعدود · دينار')}<input name="amount" inputMode="decimal" autoComplete="off" dir="ltr" pattern="(0|[1-9][0-9]{0,7})(\.[0-9]{1,2})?" required placeholder="0.00" /></label>
+                  <>
+                    <label>{text('Total counted · LYD', 'إجمالي النقد المعدود · دينار')}<input name="amount" inputMode="decimal" autoComplete="off" dir="ltr" pattern="(0|[1-9][0-9]{0,7})(\.[0-9]{1,2})?" required placeholder="0.00" /></label>
+                    <p className={styles.hint}>{text('This is an older cash record without a machine-by-machine amount. Enter the physical bag total once.', 'هذا سجل نقد أقدم لا يحتوي على مبلغ لكل ماكينة. أدخل إجمالي العلبة الفعلي مرة واحدة.')}</p>
+                  </>
                 )}
                 <label>{text('Where is the counted cash now?', 'أين يوجد النقد بعد العد؟')}<input name="cash_location" required minLength={2} maxLength={180} placeholder={text('For example: storage safe, shelf A', 'مثال: خزنة المخزن، الرف أ')} /></label>
-                <p className={styles.hint}>{text('Machine counts are saved separately. Finance receives one cash-box total equal to their sum. Do not subtract shopping or expenses. VMS checking can follow later.', 'تُحفظ مبالغ العد لكل ماكينة بشكل منفصل. تستلم المالية إجمالي علبة نقد واحد يساوي مجموعها. لا تخصم المشتريات أو المصروفات. يمكن مطابقة VMS لاحقاً.')}</p>
+                <p className={styles.hint}>{text('For new collections, Finance receives one cash-box total equal to the sum of the machine amounts already recorded at removal. Any later discrepancy should be handled in reconciliation, not by entering a second unexplained number.', 'في التحصيلات الجديدة، تستلم المالية إجمالي علبة واحد يساوي مجموع مبالغ الماكينات المسجلة وقت السحب. أي فرق يظهر لاحقاً يُعالج في المطابقة، وليس بإدخال رقم ثانٍ غير مفسر.')}</p>
               </> : null}
               <label className={styles.checkbox}><input type="checkbox" required />{text('I confirm this describes what I physically did and checked.', 'أؤكد أن هذا يطابق ما قمت به وتحققت منه فعلياً.')}</label>
               <div className={styles.buttons}><button className={styles.primary} type="submit">{action === 'count' ? text('Confirm count & record once', 'تأكيد العد والتسجيل مرة واحدة') : text('Confirm action', 'تأكيد الإجراء')}</button><button type="button" className={styles.secondary} onClick={() => setAction(null)}>{text('Cancel', 'إلغاء')}</button></div>
