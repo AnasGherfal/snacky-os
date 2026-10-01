@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'src/lib/purchase-list*'
+      - 'src/lib/purchase-scheduled-site-demand.ts'
       - 'src/app/restock-priority/purchase-list/**'
       - 'src/components/module-tabs-config.ts'
       - 'src/components/CreatePurchaseListButton.tsx'
