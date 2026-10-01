@@ -996,7 +996,9 @@ export async function GET(
       brand: product.brand ?? null,
       imageUrl: product.image_url ?? null,
       caseQuantity: Math.max(1, unitQuantity(product.case_quantity ?? 1)),
-      availableStorageQty: availableStorageQtyForProduct(String(product.id ?? ""), 0),
+      availableStorageQty: remainingPickupMode || supplementalMode
+        ? physicalStorageQtyForProduct(String(product.id ?? ""))
+        : availableStorageQtyForProduct(String(product.id ?? ""), 0),
     }));
 
     return NextResponse.json({
