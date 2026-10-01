@@ -107,6 +107,7 @@ export default function PickListPage() {
 
   const [stopGroups, setStopGroups] = useState<PickStopGroup[]>([]);
   const [selectedStopIds, setSelectedStopIds] = useState<string[]>([]);
+  const [focusedStopId, setFocusedStopId] = useState<string | null>(null);
   const [productOptions, setProductOptions] = useState<ProductOption[]>([]);
   const [extras, setExtras] = useState<ExtraPickItem[]>([]);
   const [checkedPickupItemIds, setCheckedPickupItemIds] = useState<string[]>([]);
@@ -135,6 +136,11 @@ export default function PickListPage() {
             stops: "المحطات",
             selectAll: "تحديد الكل",
             clearAll: "إلغاء الكل",
+            includeInPickup: "استلام هذه المحطة",
+            viewItems: "عرض المنتجات",
+            viewing: "معروض الآن",
+            showAllItems: "عرض منتجات كل المحطات المحددة",
+            partialStopWarning: "سيتم استلام المحطات المحددة فقط. المحطات غير المحددة ستبقى بانتظار الاستلام.",
             planned: supplementalMode ? "الكمية الإضافية" : "المطلوب",
             alreadyPicked: "تم استلامه سابقًا",
             newTotal: "الإجمالي الجديد",
@@ -184,6 +190,11 @@ export default function PickListPage() {
             stops: "Stops",
             selectAll: "Select all",
             clearAll: "Clear all",
+            includeInPickup: "Pick this stop",
+            viewItems: "View items",
+            viewing: "Viewing now",
+            showAllItems: "Show all selected stops",
+            partialStopWarning: "Only checked stops will be picked now. Unchecked stops will stay waiting for pickup.",
             planned: supplementalMode ? "Additional required" : "Planned",
             alreadyPicked: "Already picked",
             newTotal: "New total",
@@ -228,6 +239,11 @@ export default function PickListPage() {
     () => stopGroups.filter((group) => selectedStopSet.has(group.routeStopId)),
     [stopGroups, selectedStopSet],
   );
+  const displayedGroups = useMemo(() => {
+    if (!focusedStopId) return selectedGroups;
+    const focused = stopGroups.find((group) => group.routeStopId === focusedStopId);
+    return focused ? [focused] : selectedGroups;
+  }, [focusedStopId, selectedGroups, stopGroups]);
   const productById = useMemo(() => new Map(productOptions.map((product) => [product.id, product])), [productOptions]);
   const selectedPickupItemIds = useMemo(
     () => selectedGroups.flatMap((group) => group.items.map((item) => item.routeStopItemId)),
@@ -356,7 +372,11 @@ export default function PickListPage() {
 
       setStopGroups(groups);
       const requestedGroup = requestedStopId ? groups.find((group) => group.routeStopId === requestedStopId) : null;
-      setSelectedStopIds(requestedGroup ? [requestedGroup.routeStopId] : groups.map((group) => group.routeStopId));
+      // A stop query parameter is a viewing/focus hint only. It must never
+      // silently narrow the pickup scope. The operator can inspect one machine
+      // while all route stops remain selected for the final pickup.
+      setSelectedStopIds(groups.map((group) => group.routeStopId));
+      setFocusedStopId(requestedGroup?.routeStopId ?? null);
       setProductOptions(products);
       setExtras(nextSupplementalMode || nextRemainingPickupMode ? [] : loadedExtras);
       setRemainingPickupMode(nextRemainingPickupMode);
@@ -588,20 +608,53 @@ export default function PickListPage() {
         </div>
         {stopGroups.length ? (
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            {stopGroups.map((group) => (
-              <label key={group.routeStopId} className="flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 p-3">
-                <input type="checkbox" className="mt-1 h-5 w-5" checked={selectedStopSet.has(group.routeStopId)} disabled={locked || confirmed} onChange={(event) => toggleStop(group.routeStopId, event.target.checked)} />
-                <span className="min-w-0">
-                  <span className="block font-semibold text-slate-900">{group.locationName}</span>
-                  <span className="block text-sm text-slate-600">{`${group.machineName}${group.machineCode !== group.machineName && group.machineCode !== "-" ? ` · ${group.machineCode}` : ""}`}</span>
-                </span>
-              </label>
-            ))}
+            {stopGroups.map((group) => {
+              const isFocused = focusedStopId === group.routeStopId;
+              return (
+                <div key={group.routeStopId} className={`rounded-xl border p-3 ${isFocused ? "border-sky-300 bg-sky-50" : "border-slate-200"}`}>
+                  <div className="flex items-start gap-3">
+                    <label className="flex shrink-0 items-center gap-2 pt-0.5 text-xs font-semibold text-slate-700">
+                      <input
+                        type="checkbox"
+                        className="h-5 w-5"
+                        checked={selectedStopSet.has(group.routeStopId)}
+                        disabled={locked || confirmed}
+                        onChange={(event) => toggleStop(group.routeStopId, event.target.checked)}
+                      />
+                      <span>{copy.includeInPickup}</span>
+                    </label>
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 text-start"
+                      onClick={() => setFocusedStopId((current) => current === group.routeStopId ? null : group.routeStopId)}
+                    >
+                      <span className="block font-semibold text-slate-900">{group.locationName}</span>
+                      <span className="block text-sm text-slate-600">{`${group.machineName}${group.machineCode !== group.machineName && group.machineCode !== "-" ? ` · ${group.machineCode}` : ""}`}</span>
+                      <span className="mt-1 block text-xs font-semibold text-sky-700">{isFocused ? copy.viewing : copy.viewItems}</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         ) : <p className="mt-3 text-sm text-slate-600">{copy.noItems}</p>}
+        {focusedStopId ? (
+          <button
+            type="button"
+            className="mt-3 text-sm font-semibold text-sky-700 underline"
+            onClick={() => setFocusedStopId(null)}
+          >
+            {copy.showAllItems}
+          </button>
+        ) : null}
+        {selectedStopIds.length > 0 && selectedStopIds.length < stopGroups.length ? (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs font-medium text-amber-900">
+            {copy.partialStopWarning}
+          </div>
+        ) : null}
       </section>
 
-      {selectedGroups.map((group) => {
+      {displayedGroups.map((group) => {
         const stopItemIds = group.items.map((item) => item.routeStopItemId);
         const stopPickedCount = stopItemIds.filter((id) => checkedPickupItemIds.includes(id)).length;
         return (
