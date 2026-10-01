@@ -10,6 +10,7 @@ type TeamMemberFormProps = {
   member?: {
     id: string; full_name: string; email: string | null; phone: string | null;
     role: AppRole; roles?: AppRole[] | null; can_add_products?: boolean | null;
+    crm_focus?: "office" | "field" | null;
     active: boolean; auth_user_id?: string | null; must_change_password?: boolean;
   };
 };
@@ -44,6 +45,13 @@ export function TeamMemberForm({ action, submitLabel, backHref = "/team", member
               <span><span className="mb-2 block"><StatusBadge status={role} />{role === "crm" ? <span className="mt-2 block font-semibold">Customer Relations &amp; Business Development<span dir="rtl" className="block">علاقات العملاء وتطوير الأعمال</span></span> : null}</span><span className="block text-xs leading-5 text-slate-600">{roleDescriptions[role]}</span></span>
             </label>)}
           </div>
+          <FormField label="CRM work focus / نوع عمل CRM" hint="This organizes CRM work only. It does not add or remove permissions.">
+            <select name="crm_focus" defaultValue={member?.crm_focus ?? ""} className="field-input">
+              <option value="">Not set</option>
+              <option value="office">Office CRM — calls, follow-up, relationships</option>
+              <option value="field">Field CRM — visits, meetings, field actions</option>
+            </select>
+          </FormField>
           <label className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
             <input name="can_add_products" type="checkbox" value="yes" defaultChecked={Boolean(member?.can_add_products)} className="mt-1" />
             <span><span className="block font-semibold">Allow creating products</span>Additional product permission for staff. This is always disabled for an investor-only account.</span>
