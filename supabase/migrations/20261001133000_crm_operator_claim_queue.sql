@@ -5,6 +5,7 @@ begin;
 set local lock_timeout='5s';
 set local statement_timeout='60s';
 
+alter table public.crm_tasks alter column assigned_to drop not null;
 alter table public.crm_tasks drop constraint if exists crm_tasks_dispatch_state_check;
 alter table public.crm_tasks add constraint crm_tasks_dispatch_state_check
  check (dispatch_state is null or dispatch_state in ('available','assigned','accepted','en_route','working','blocked','fixed'));
@@ -276,7 +277,7 @@ begin
  begin rid:=(p_request->>'request_id')::uuid;v_issue_id:=(p_request->>'issue_id')::uuid;due_date:=(p_request->>'due_date')::date;
  exception when others then raise exception 'Valid request, issue and date are required' using errcode='22023';end;
  title:=trim(coalesce(p_request->>'title',''));priority:=lower(trim(coalesce(p_request->>'priority','normal')));notes:=nullif(trim(coalesce(p_request->>'notes','')),'');
- if rid is null or v_issue_id is null or length(title)<3 or length(title)>300 or priority not in ('low','normal','high','urgent') or length(coalesce(notes,''))>3000
+ if rid is null or v_issue_id is null or length(title)<3 or length(title)>240 or priority not in ('low','normal','high','urgent') or length(coalesce(notes,''))>3000
  then raise exception 'Invalid field broadcast' using errcode='22023';end if;
  req:=p_request;
  perform pg_advisory_xact_lock(hashtext('crm-field-broadcast'),hashtext(rid::text));
