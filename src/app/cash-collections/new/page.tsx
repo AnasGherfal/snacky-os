@@ -5,20 +5,22 @@ import { createCashRemoval } from "@/lib/cash-actions";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
 import { canRecordCashRemoval, canViewFinancials, isOperatorRole } from "@/lib/authz";
+import { cashUuid } from "@/lib/cash-handover";
 
 export const dynamic = "force-dynamic";
 
-export default async function NewCashCollectionPage({ searchParams }: { searchParams: Promise<{ error?: string; machine_id?: string }> }) {
+export default async function NewCashCollectionPage({ searchParams }: { searchParams: Promise<{ error?: string; machine_id?: string; submission_id?: string }> }) {
   const profile = await getCurrentProfile();
   if (!profile || !canRecordCashRemoval({ id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status })) {
     redirect("/unauthorized");
   }
   const profileContext = { id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status };
-  const { error = "", machine_id: selectedMachineId } = await searchParams;
+  const { error = "", machine_id: selectedMachineId, submission_id: submissionId } = await searchParams;
   if (isOperatorRole(profileContext)) {
     const params = new URLSearchParams({ collect: "1" });
     if (selectedMachineId) params.set("machine_id", selectedMachineId);
     if (error) params.set("error", error);
+    if (submissionId && cashUuid.test(submissionId)) params.set("submission_id", submissionId);
     redirect(`/cash-handling?${params.toString()}`);
   }
   const backHref = canViewFinancials(profileContext) ? "/cash-collections" : "/operator/routes";
@@ -59,9 +61,9 @@ export default async function NewCashCollectionPage({ searchParams }: { searchPa
         {error ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{error}</div> : null}
         <CashRemovalForm
           action={createCashRemoval}
-          machines={(machines ?? []).map((machine: any) => ({ id: machine.id, label: formatMachineDisplayName(machine, { includeArea: true }) }))}
+          machines={(machines ?? []).map((machine) => ({ id: machine.id, label: formatMachineDisplayName(machine, { includeArea: true }) }))}
           selectedMachineId={selectedMachineId}
-          clientSubmissionId={crypto.randomUUID()}
+          clientSubmissionId={submissionId && cashUuid.test(submissionId) ? submissionId : crypto.randomUUID()}
           cancelHref={backHref}
         />
       </FormPageLayout>
