@@ -17,8 +17,9 @@ test('new customer issue is a five-field quick intake before optional details',(
   assert.doesNotMatch(block,/assignee/);
 });
 
-test('My Work exposes the quick complaint action prominently',()=>{
-  assert.match(workspace,/btn-primary" href="\/issues\/new"[^]*Quick customer issue[^]*بلاغ عميل سريع/);
+test('customer issue creation has one quick intake entry instead of duplicate actions',()=>{
+  assert.match(workspace,/section==='issue'\?tr\('Quick customer issue','بلاغ عميل سريع'\)/);
+  assert.doesNotMatch(workspace,/btn-primary" href="\/issues\/new"[^]*Quick customer issue/);
   assert.match(workspace,/Record only the essentials now/);
 });
 
