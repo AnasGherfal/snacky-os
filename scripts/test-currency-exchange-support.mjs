@@ -98,7 +98,7 @@ test('database migration guards exact amounts, replay, privacy, and immutable ex
   const page = read('src/app/issues/page.tsx');
   const workspace = read('src/components/CrmWorkspace.tsx');
   assert.match(page, /CrmWorkspace section="issue"/);
-  assert.match(workspace, /href="\/issues\/new"/);
+  assert.match(workspace, /section==='issue'\?tr\('Quick customer issue','بلاغ عميل سريع'\)/);
   assert.match(workspace, /profile.active_status!==?'active'|profile.active_status !== 'active'/);
   assert.equal(authz.canAccessPath({id:'viewer',role:'viewer',activeStatus:'active'},'/issues'),false);
   assert.equal(authz.canAccessPath({id:'crm',role:'crm',activeStatus:'active'},'/issues/new'),true);
