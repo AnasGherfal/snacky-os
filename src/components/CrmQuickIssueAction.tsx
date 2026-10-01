@@ -20,7 +20,7 @@ export async function CrmQuickIssueAction() {
    <Link href="/issues/new" className="btn-secondary mt-3">{tr('Open customer issue form','فتح نموذج بلاغ العميل')}</Link>
   </section>;
  }
- const context=data as any;
+ const context=data as {options?:{locations?:Array<{id:string;name:string}>}};
  const locations=Array.isArray(context.options?.locations)?context.options.locations:[];
  return <section data-crm-quick-issue dir={ar?'rtl':'ltr'} className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
   <div className="mb-4">
@@ -29,7 +29,7 @@ export async function CrmQuickIssueAction() {
   </div>
   <CrmForm action="issue.save" userId={profile.id} hidden={{contact_channel:'whatsapp'}} fields={[
    {name:'customer_phone',label:tr('Customer phone / WhatsApp','هاتف / واتساب العميل'),type:'tel',required:true},
-   {name:'location_id',label:tr('Location','الموقع'),type:'select',required:true,options:[{value:'',label:tr('Choose location','اختر الموقع')},...locations.map((x:any)=>({value:String(x.id),label:String(x.name)}))]},
+   {name:'location_id',label:tr('Location','الموقع'),type:'select',required:true,options:[{value:'',label:tr('Choose location','اختر الموقع')},...locations.map(x=>({value:String(x.id),label:String(x.name)}))]},
    {name:'issue_type',label:tr('Problem type','نوع المشكلة'),type:'select',value:'other',required:true,options:crmOptionRows(issueCategories,ar)},
    {name:'description',label:tr('What happened?','ماذا حدث؟'),type:'textarea',required:true},
   ]} submitLabel={tr('Save quick issue','حفظ البلاغ السريع')}/>
