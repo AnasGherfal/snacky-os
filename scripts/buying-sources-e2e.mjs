@@ -14,8 +14,8 @@ const pg={...process.env,PGHOST:'127.0.0.1',PGPORT:'54322',PGUSER:'postgres',PGP
 function sql(q){const r=spawnSync('psql',['-X','-At','-v','ON_ERROR_STOP=1','-c',q],{env:pg,encoding:'utf8'});assert.equal(r.status,0,r.stderr);return r.stdout.trim();}
 const admin=createClient(cfg.API_URL,cfg.SERVICE_ROLE_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
 const accounts={},password=`Only-local-${randomUUID()}-A9!`,app='http://localhost:3000';
-for(const role of ['owner','operator','other','warehouse','crm']){
- const actual=role==='other'?'operator':role,email=`store-guidance-${role}@example.invalid`;
+for(const role of ['owner','warehouse','purchasing','operator','crm']){
+ const actual=role,email=`store-guidance-${role}@example.invalid`;
  const result=await admin.auth.admin.createUser({email,password,email_confirm:true});assert.ifError(result.error);
  const id=result.data.user.id,member=randomUUID();
  assert.ifError((await admin.from('team_members').insert({id:member,auth_user_id:id,full_name:`Guidance ${role}`,email,role:actual,roles:[actual],active:true,active_status:'active'})).error);
@@ -36,15 +36,15 @@ async function sources(role,id=listId){const r=await accounts[role].client.rpc('
 async function legacy(role,action,payload={},id=listId){const revision=action==='create'?0:(await workspace(role,id)).record.revision;const r=await accounts[role].client.rpc('snacky_buying_command_v1',{p_command:{request_id:randomUUID(),list_id:id,revision,action,payload}});assert.ifError(r.error);return r.data;}
 async function sourceCommand(product=0,primary=0,alternative=1){return {request_id:randomUUID(),list_id:listId,product_id:products[product].id,revision:(await workspace('owner')).record.revision,primary_supplier_id:stores[primary].id,alternative_supplier_id:alternative===null?null:stores[alternative].id,note:'Main entrance branch. Contact management if the price changes.'};}
 const save=(role,c)=>accounts[role].client.rpc('snacky_buying_source_save_v1',{p_command:c});
-await legacy('owner','create',{title:'Store-guided buying — الشراء حسب المورد',instructions:'Sample order for testing only',assigned_to:accounts.operator.member,due_on:date,items:products.map(p=>({product_id:p.id,boxes:2,units_per_box:12}))});
+await legacy('owner','create',{title:'Store-guided buying — الشراء حسب المورد',instructions:'Sample order for testing only',assigned_to:accounts.warehouse.member,due_on:date,items:products.map(p=>({product_id:p.id,boxes:2,units_per_box:12}))});
 const results=[],errors=[];let browser,server;
 async function check(name,fn){try{await fn();results.push({name,status:'passed'});console.log('PASS '+name);}catch(e){results.push({name,status:'failed',message:String(e.message).slice(0,2000)});for(const c of browser?.contexts()??[])for(const p of c.pages())try{await p.screenshot({path:`${out}/failed-${results.length}-${randomUUID().slice(0,6)}.png`,fullPage:true});}catch{}console.error('FAIL '+name+': '+e.message);}finally{writeFileSync(out+'/results.json',JSON.stringify({results,errors},null,2));}}
 await check('selected supplier uses its latest received LYD price, not a newer USD/draft/voided or another store',async()=>{
- const c=await sourceCommand(),r=await save('owner',c);assert.ifError(r.error);const s=(await sources('operator')).sources[0];assert.equal(s.primary.unit_cost_lyd,3);assert.equal(s.primary.purchased_on,'2026-09-02');assert.equal(s.alternative.unit_cost_lyd,4);assert.equal(s.primary.historical_units_per_box,24);assert.equal((await workspace('operator')).record.items[0].units_per_box,12);
+ const c=await sourceCommand(),r=await save('owner',c);assert.ifError(r.error);const s=(await sources('warehouse')).sources[0];assert.equal(s.primary.unit_cost_lyd,3);assert.equal(s.primary.purchased_on,'2026-09-02');assert.equal(s.alternative.unit_cost_lyd,4);assert.equal(s.primary.historical_units_per_box,24);assert.equal((await workspace('warehouse')).record.items[0].units_per_box,12);
 });
 await check('buyer gets only assigned snapshots, without global supplier prices or Finance access',async()=>{
- const s=await sources('operator');assert.deepEqual(s.stores,[]);assert.deepEqual(s.options,[]);assert.equal(s.can_edit,false);
- assert.ok((await accounts.other.client.rpc('snacky_buying_sources_v1',{p_id:listId})).error);
+ const s=await sources('warehouse');assert.deepEqual(s.stores,[]);assert.deepEqual(s.options,[]);assert.equal(s.can_edit,false);
+ assert.ok((await accounts.operator.client.rpc('snacky_buying_sources_v1',{p_id:listId})).error);
  assert.ok((await accounts.crm.client.rpc('snacky_buying_sources_v1',{p_id:listId})).error);
  for(const role of ['operator','warehouse','crm'])assert.equal((await save(role,await sourceCommand())).error?.code,'42501');
  assert.equal(sql("select has_function_privilege('anon','public.snacky_buying_sources_v1(uuid)','EXECUTE')"),'f');
@@ -58,10 +58,10 @@ await check('different concurrent store edits cannot overwrite one another',asyn
  const c=await sourceCommand(),other={...c,request_id:randomUUID(),primary_supplier_id:stores[2].id,alternative_supplier_id:null};const r=await Promise.all([save('owner',c),save('owner',other)]);assert.equal(r.filter(x=>!x.error).length,1);assert.equal(r.find(x=>x.error).error.code,'40001');assert.ifError((await save('owner',await sourceCommand())).error);
 });
 await check('missing history is explicitly unknown and does not borrow product cost',async()=>{
- const r=await save('owner',await sourceCommand(1,2,null));assert.ifError(r.error);const s=(await sources('operator')).sources.find(x=>x.product_id===products[1].id);assert.equal(s.primary.unit_cost_lyd,null);assert.equal(s.primary.purchased_on,null);
+ const r=await save('owner',await sourceCommand(1,2,null));assert.ifError(r.error);const s=(await sources('warehouse')).sources.find(x=>x.product_id===products[1].id);assert.equal(s.primary.unit_cost_lyd,null);assert.equal(s.primary.purchased_on,null);
 });
 await check('instructions keep their saved reference after purchase history changes',async()=>{
- const before=(await sources('owner')).sources[0];sql(`update public.purchase_order_lines set unit_cost=5,unit_cost_lyd=5 where product_id='${products[0].id}' and unit_cost=3`);const after=(await sources('operator')).sources[0];assert.deepEqual(after,before);baseline=ledgers();
+ const before=(await sources('owner')).sources[0];sql(`update public.purchase_order_lines set unit_cost=5,unit_cost_lyd=5 where product_id='${products[0].id}' and unit_cost=3`);const after=(await sources('warehouse')).sources[0];assert.deepEqual(after,before);baseline=ledgers();
 });
 await check('an injected audit failure rolls back the source, revision and receipt together',async()=>{
  const c=await sourceCommand(2,0,null),before=(await workspace('owner')).record.revision;
@@ -70,7 +70,7 @@ await check('an injected audit failure rolls back the source, revision and recei
  assert.ifError((await save('owner',c)).error);assert.equal((await workspace('owner')).record.revision,before+1);
 });
 await check('inactive accounts lose read and replay access',async()=>{
- sql(`update public.profiles set active_status='inactive' where id='${accounts.operator.id}'`);try{assert.equal((await accounts.operator.client.rpc('snacky_buying_sources_v1',{p_id:listId})).error?.code,'42501');}finally{sql(`update public.profiles set active_status='active' where id='${accounts.operator.id}'`);}
+ sql(`update public.profiles set active_status='inactive' where id='${accounts.warehouse.id}'`);try{assert.equal((await accounts.warehouse.client.rpc('snacky_buying_sources_v1',{p_id:listId})).error?.code,'42501');}finally{sql(`update public.profiles set active_status='active' where id='${accounts.warehouse.id}'`);}
 });
 const env={...process.env,NEXT_PUBLIC_SUPABASE_URL:cfg.API_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY:cfg.ANON_KEY,SUPABASE_SERVICE_ROLE_KEY:cfg.SERVICE_ROLE_KEY,NEXT_PUBLIC_APP_URL:app};
 const build=spawnSync('npm',['run','build'],{env,encoding:'utf8',maxBuffer:35e6});writeFileSync('diagnostics/buying-sources-build.log',build.stdout+'\n'+build.stderr);assert.equal(build.status,0,'Production build failed');
@@ -79,7 +79,7 @@ try{
  for(let i=0;i<60;i++){try{if((await fetch(app+'/login')).ok)break;}catch{}await new Promise(r=>setTimeout(r,500));if(i===59)throw Error('App unavailable');}
  browser=await chromium.launch({headless:true});
  async function session(role,locale='en',width=1440){const c=await browser.newContext({viewport:{width,height:960}});await c.addCookies([{name:'snacky_os_language',value:locale,url:app}]);const p=await c.newPage();p.setDefaultTimeout(20000);p.setDefaultNavigationTimeout(45000);p.on('pageerror',e=>errors.push(e.message));await p.goto(app+'/login');await p.locator('input[name=email]').fill(accounts[role].email);await p.locator('input[name=password]').fill(password);await Promise.all([p.waitForURL(u=>!u.pathname.startsWith('/login')),p.locator('form button[type=submit]').click()]);await p.goto(app+'/buying-lists/'+listId);await p.locator('#buying-list-detail').waitFor();return p;}
- const owner=await session('owner'),buyer=await session('operator','ar',390);
+ const owner=await session('owner'),buyer=await session('warehouse','ar',390);
  const card=(p,n)=>p.locator('details').filter({has:p.locator('summary strong',{hasText:products[n].name})});
  await check('owner edits store instructions in the existing item; lost response recovers after reload',async()=>{
   const row=card(owner,0);await row.locator(':scope > summary').click();await row.getByText('Edit store instructions',{exact:true}).click();await row.getByRole('textbox',{name:'Exact shop / branch and buying instructions',exact:true}).fill('Use the side entrance — المدخل الجانبي');let request,receipt;
@@ -99,19 +99,23 @@ try{
   const c=await sourceCommand();const r=await owner.request.post(app+'/api/buying-lists',{headers:{Origin:'https://untrusted.example'},data:{request_id:c.request_id,list_id:c.list_id,action:'source',revision:c.revision,payload:{product_id:c.product_id,primary_supplier_id:c.primary_supplier_id,alternative_supplier_id:c.alternative_supplier_id,note:c.note}}});assert.equal(r.status(),403);await buyer.goto(app+'/finance');await buyer.waitForURL(/\/unauthorized/);await buyer.goto(app+'/buying-lists/'+listId);
  });
  await check('legacy progress still works and completed items cannot have instructions rewritten',async()=>{
-  await legacy('operator','item',{product_id:products[0].id,outcome:'bought',bought_boxes:2,note:'Bought from instructed store'});assert.equal((await save('owner',await sourceCommand())).error?.code,'22023');
-  for(const n of [1,2])await legacy('operator','item',{product_id:products[n].id,outcome:'unavailable',bought_boxes:0,note:'Not available'});await legacy('operator','complete');assert.equal((await save('owner',await sourceCommand(1,2,null))).error?.code,'22023');assert.equal((await workspace('operator')).record.status,'completed');assert.equal(ledgers(),baseline);
+  await legacy('warehouse','item',{product_id:products[0].id,outcome:'bought',bought_boxes:2,note:'Bought from instructed store'});assert.equal((await save('owner',await sourceCommand())).error?.code,'22023');
+  for(const n of [1,2])await legacy('warehouse','item',{product_id:products[n].id,outcome:'unavailable',bought_boxes:0,note:'Not available'});await legacy('warehouse','complete');assert.equal((await save('owner',await sourceCommand(1,2,null))).error?.code,'22023');assert.equal((await workspace('warehouse')).record.status,'completed');assert.equal(ledgers(),baseline);
  });
- await check('CRM-only assignment is rejected; reassignment to warehouse retires the old buyer access',async()=>{
+ await check('CRM and operator assignments are rejected; purchasing becomes buyer while warehouse keeps planner access',async()=>{
   await legacy('owner','reopen');
   const before=(await workspace('owner')).record;
-  const denied=await accounts.owner.client.rpc('snacky_buying_command_v1',{p_command:{request_id:randomUUID(),list_id:listId,revision:before.revision,action:'assign',payload:{assigned_to:accounts.crm.member}}});
-  assert.equal(denied.error?.code,'22023');
+  for (const target of [accounts.crm.member, accounts.operator.member]) {
+    const denied=await accounts.owner.client.rpc('snacky_buying_command_v1',{p_command:{request_id:randomUUID(),list_id:listId,revision:before.revision,action:'assign',payload:{assigned_to:target}}});
+    assert.equal(denied.error?.code,'22023');
+  }
   const unchanged=(await workspace('owner')).record;assert.equal(unchanged.revision,before.revision);assert.equal(unchanged.assigned_to,before.assigned_to);
   assert.equal((await accounts.crm.client.rpc('snacky_buying_sources_v1',{p_id:listId})).error?.code,'42501');
-  await legacy('owner','assign',{assigned_to:accounts.warehouse.member});
   assert.equal((await accounts.operator.client.rpc('snacky_buying_sources_v1',{p_id:listId})).error?.code,'42501');
-  const s=await sources('warehouse');assert.equal(s.sources.length,3);assert.deepEqual(s.options,[]);assert.deepEqual(s.stores,[]);assert.equal(ledgers(),baseline);
+  await legacy('owner','assign',{assigned_to:accounts.purchasing.member});
+  const warehouseView=await workspace('warehouse');assert.equal(warehouseView.planner,true);assert.equal(warehouseView.record.assigned_to,accounts.purchasing.member);
+  assert.equal((await accounts.operator.client.rpc('snacky_buying_sources_v1',{p_id:listId})).error?.code,'42501');
+  const s=await sources('purchasing');assert.equal(s.sources.length,3);assert.deepEqual(s.options,[]);assert.deepEqual(s.stores,[]);assert.equal(ledgers(),baseline);
  });
  await check('new source tables have RLS, no raw grants, and definer helpers are private',async()=>{
   assert.equal(sql("select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='buying_private' and c.relname in ('sources','source_commands') and c.relrowsecurity"),'2');

@@ -4,7 +4,7 @@ import { ErrorState, FormPageLayout, PageHeader, SecondaryButton } from "@/compo
 import { createCashRemoval } from "@/lib/cash-actions";
 import { formatMachineDisplayName } from "@/lib/machine-site-display";
 import { getAuthenticatedSupabaseServerClient, getCurrentProfile } from "@/lib/auth";
-import { canRecordCashRemoval, canViewFinancials } from "@/lib/authz";
+import { canRecordCashRemoval, canViewFinancials, isOperatorRole } from "@/lib/authz";
 
 export const dynamic = "force-dynamic";
 
@@ -14,9 +14,14 @@ export default async function NewCashCollectionPage({ searchParams }: { searchPa
     redirect("/unauthorized");
   }
   const profileContext = { id: profile.id, role: profile.role, roles: profile.roles, canAddProducts: profile.can_add_products, teamMemberId: profile.team_member_id, activeStatus: profile.active_status };
-  const backHref = canViewFinancials(profileContext) ? "/cash-collections" : "/operator/routes";
-
   const { error = "", machine_id: selectedMachineId } = await searchParams;
+  if (isOperatorRole(profileContext)) {
+    const params = new URLSearchParams({ collect: "1" });
+    if (selectedMachineId) params.set("machine_id", selectedMachineId);
+    if (error) params.set("error", error);
+    redirect(`/cash-handling?${params.toString()}`);
+  }
+  const backHref = canViewFinancials(profileContext) ? "/cash-collections" : "/operator/routes";
   const supabase = await getAuthenticatedSupabaseServerClient();
   if (!supabase) {
     return (

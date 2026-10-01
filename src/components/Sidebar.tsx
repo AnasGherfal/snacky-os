@@ -144,12 +144,6 @@ const financeItem: NavItem = {
   icon: Banknote,
   moduleKey: "finance",
 };
-const cashRemovalItem: NavItem = {
-  label: { en: "Remove Cash", ar: "سحب النقد" },
-  href: "/cash-collections/new",
-  icon: HandCoins,
-  moduleKey: "cash",
-};
 const cashCustodyItem: NavItem = {
   label: { en: "Cash", ar: "النقدية" },
   href: "/cash-collections",
@@ -170,6 +164,7 @@ const adminItem: NavItem = {
 };
 
 const cashHandlingItem: NavItem = { label: { en: "Cash handling", ar: "تسليم وعد النقد" }, href: "/cash-handling", icon: HandCoins, activePrefixes: ["/cash-handling"] };
+const operatorCashItem: NavItem = { label: { en: "Cash", ar: "النقدية" }, href: "/cash-handling", icon: HandCoins, activePrefixes: ["/cash-handling"] };
 
 const buyingListsItem: NavItem = { label: {en:"My buying lists", ar:"قوائم الشراء المسندة"}, href:"/buying-lists", icon:ClipboardList, activePrefixes:["/buying-lists"] };
 
@@ -200,7 +195,7 @@ const investorNav: NavSection[] = [
 const operatorNavItems: NavItem[] = [
   operatorOperationsItem,
   operatorAvailableRoutesItem,
-  cashRemovalItem,
+  operatorCashItem,
   operatorIssuesItem,
   operatorTasksItem,
 ];
@@ -227,7 +222,7 @@ function sectionsForRoles(role: AppRole, roles?: AppRole[] | null): NavSection[]
   const effectiveRoles = roles?.length ? roles : [role];
   if (effectiveRoles.length === 1 && effectiveRoles[0] === "investor") return investorNav;
 
-  const primary: NavItem[] = hasAnyRole(context, ["operator", "warehouse", "purchasing"]) ? [personalWorkItem] : [];
+  const primary: NavItem[] = hasAnyRole(context, ["warehouse", "purchasing"]) ? [personalWorkItem] : [];
   const work: NavItem[] = [];
   const business: NavItem[] = [];
 
@@ -262,8 +257,8 @@ function sectionsForRoles(role: AppRole, roles?: AppRole[] | null): NavSection[]
     business.push(financeItem);
     work.push(cashCustodyItem);
   }
-  if (hasAnyRole(context, ["operator", "finance"]) && !hasAnyRole(context, ["warehouse", "purchasing"])) work.push(buyingListsItem);
-  if (hasAnyRole(context, ["operator", "warehouse", "purchasing", "finance"])) work.push(cashHandlingItem);
+  if (hasAnyRole(context, ["warehouse", "purchasing", "finance"])) work.push(buyingListsItem);
+  if (!isOperatorRole(context) && hasAnyRole(context, ["warehouse", "purchasing", "finance"])) work.push(cashHandlingItem);
   if (companyHubEnabled && hasAnyRole(context, companyRoles)) work.push(companyItem);
   if (hasPermission(context, "reports.view")) business.push(reportsItem);
   if (hasPermission(context, "investor.view")) business.push(investorPortalItem);

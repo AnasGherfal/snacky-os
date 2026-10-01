@@ -1,5 +1,5 @@
 /** Personal work reads only. No commands, balances or employee selector. */
-export const personalWorkRoles = ['owner','admin','supervisor','operator','warehouse','purchasing'] as const;
+export const personalWorkRoles = ['owner','admin','supervisor','warehouse','purchasing'] as const;
 export const personalSections = ['cash','buying','storage','stocktakes'] as const;
 export const personalViews = ['active','upcoming','history'] as const;
 export type PersonalSection = typeof personalSections[number];

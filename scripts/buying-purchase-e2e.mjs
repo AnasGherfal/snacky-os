@@ -31,7 +31,18 @@ async function ordinary(product=products[0]){
 }
 await ordinary();
 const regularWorkspace=async(id,role='owner')=>{const r=await accounts[role].client.rpc('snacky_buying_workspace_v1',{p_id:id});assert.ifError(r.error);return r.data;};
-async function legacy(id,role,action,payload){const revision=action==='create'?0:(await regularWorkspace(id,role)).record.revision;const r=await accounts[role].client.rpc('snacky_buying_command_v1',{p_command:{request_id:randomUUID(),list_id:id,revision,action,payload}});assert.ifError(r.error);return r.data;}
+function transientRpcError(error){return Boolean(error&&(!error.code||error.code==='')&&/fetch failed|other side closed|UND_ERR_SOCKET|network/i.test(String(error.message??'')+' '+String(error.details??'')));}
+async function legacy(id,role,action,payload){
+ const revision=action==='create'?0:(await regularWorkspace(id,role)).record.revision;
+ const command={request_id:randomUUID(),list_id:id,revision,action,payload};
+ let r;
+ for(let attempt=0;attempt<3;attempt++){
+  r=await accounts[role].client.rpc('snacky_buying_command_v1',{p_command:command});
+  if(!r.error||!transientRpcError(r.error))break;
+  await new Promise(resolve=>setTimeout(resolve,150*(attempt+1)));
+ }
+ assert.ifError(r.error);return r.data;
+}
 async function seedList(title){
  const id=randomUUID();await legacy(id,'owner','create',{title,instructions:'Synthetic acceptance only',assigned_to:accounts.buyer.member,due_on:today,items:products.map((p,n)=>({product_id:p.id,boxes:n===0?3:2,units_per_box:12}))});
  for(const product of products){const r=await accounts.owner.client.rpc('snacky_buying_source_save_v1',{p_command:{request_id:randomUUID(),list_id:id,product_id:product.id,revision:(await regularWorkspace(id)).record.revision,primary_supplier_id:stores[0].id,alternative_supplier_id:stores[1].id,note:'Use approved stores only'}});assert.ifError(r.error);}

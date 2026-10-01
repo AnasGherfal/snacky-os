@@ -12,6 +12,7 @@ import {
   canReconcileCash,
   canViewFinancials,
   hasAnyRole,
+  isOperatorRole,
   type AuthUserContext,
 } from "@/lib/authz";
 import { logActivity } from "@/lib/activity-log";
@@ -107,8 +108,9 @@ async function rollbackEvidence(upload: CashEvidenceUpload | null | undefined) {
 }
 
 export async function createCashRemoval(formData: FormData) {
-  const path = "/cash-collections/new";
-  const { profile, supabase } = await requireCapability(path, canRecordCashRemoval);
+  const legacyPath = "/cash-collections/new";
+  const { profile, supabase } = await requireCapability(legacyPath, canRecordCashRemoval);
+  const path = isOperatorRole(profileContext(profile)) ? "/cash-handling" : legacyPath;
   const machineIds = Array.from(new Set(formData.getAll("machine_ids").map(clean).filter(Boolean)));
   const compartments = Array.from(new Set(formData.getAll("compartments").map(clean).filter(Boolean)));
   const removalType = clean(formData.get("removal_type"));
@@ -153,9 +155,13 @@ export async function createCashRemoval(formData: FormData) {
 
   revalidateCashPaths(String(collectionId));
   const selfReceiptAllowed = hasAnyRole(profileContext(profile), ["owner", "admin"]);
-  redirect(`/cash-collections/${collectionId}?success=${encodeURIComponent(selfReceiptAllowed
+  const successMessage = selfReceiptAllowed
     ? "Removal saved. As owner/admin, you may receive this bag into storage yourself; the self-receipt will be logged."
-    : "Removal saved. A different authorized person must now receive the sealed bag into storage.")}`);
+    : "Removal saved. Hand over the sealed bag from this same Cash workspace.";
+  if (isOperatorRole(profileContext(profile))) {
+    redirect(`/cash-handling?id=${collectionId}&success=${encodeURIComponent(successMessage)}`);
+  }
+  redirect(`/cash-collections/${collectionId}?success=${encodeURIComponent(successMessage)}`);
 }
 
 export async function receiveCashIntoStorage(formData: FormData) {

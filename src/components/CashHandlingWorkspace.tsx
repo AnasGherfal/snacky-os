@@ -117,9 +117,9 @@ function CashHandlingClient({ userId }: { userId: string }) {
   return <section className={styles.workspace} dir={ar ? 'rtl' : 'ltr'} data-testid="cash-handling">
     <header className={styles.header}>
       <div><p className={styles.eyebrow}>{text('SNACKY · TEAM OPERATIONS', 'سناكي · عمليات الفريق')}</p>
-        <h1>{text('Cash handling', 'تسليم وعد النقد')}</h1>
-        <p>{text('One box. One history. A named person at every handover.', 'كل علبة لها سجل واحد، ومسؤول واضح في كل مرحلة.')}</p></div>
-      <div className={styles.buttons}>{view?.can_remove ? <Link className={styles.secondary} href="/cash-collections/new">{text('Record machine collection', 'تسجيل سحب من آلة')}</Link> : null}
+        <h1>{text('Cash', 'النقدية')}</h1>
+        <p>{text('Collect from machines, hand it over, and follow the same cash box in one place.', 'اسحب النقد من الماكينات وسلمه وتابع نفس العلبة في مكان واحد.')}</p></div>
+      <div className={styles.buttons}>{view?.can_remove ? <Link className={styles.secondary} href="/cash-handling?collect=1">{text('Record machine collection', 'تسجيل سحب من آلة')}</Link> : null}
         <button className={styles.secondary} disabled={busy} onClick={() => { setError(''); setLoading(true); void load(); }}>{text('Refresh', 'تحديث')}</button></div>
     </header>
     <p className={styles.privacy}>{text('Cash handling does not grant access to company balances or the Finance dashboard.', 'تسليم وعد النقد لا يمنح الوصول إلى أرصدة الشركة أو لوحة المالية.')}</p>

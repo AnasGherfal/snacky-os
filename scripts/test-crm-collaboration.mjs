@@ -18,7 +18,8 @@ test('CRM-only buying access removed while additive operating roles are retained
  const pure={id:actor,role:'crm',roles:['crm'],activeStatus:'active'};
  assert.equal(authz.canAccessPath(pure,'/buying-lists'),false);assert.equal(authz.canAccessPath(pure,'/buying-lists/'+id),false);
  assert.equal(authz.canAccessPath({...pure,roles:['crm','warehouse']},'/buying-lists'),true);
- for(const role of ['owner','admin','operator','warehouse','purchasing','finance'])assert.equal(authz.canAccessPath({id:actor,role,roles:[role]},'/buying-lists'),true);
+ for(const role of ['owner','admin','warehouse','purchasing','finance'])assert.equal(authz.canAccessPath({id:actor,role,roles:[role]},'/buying-lists'),true);
+ assert.equal(authz.canAccessPath({id:actor,role:'operator',roles:['operator']},'/buying-lists'),false);
  for(const role of ['operator','warehouse','supervisor','finance','investor'])assert.equal(authz.canAccessPath({id:actor,role,roles:[role]},'/my-work/notes'),false);
  for(const role of ['owner','admin','crm'])assert.equal(authz.canAccessPath({id:actor,role,roles:[role]},'/my-work/notes'),true);
 });
