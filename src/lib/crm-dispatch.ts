@@ -1,6 +1,6 @@
-export const crmDispatchActions=['accept','en_route','start','block','fix'] as const;
+export const crmDispatchActions=['claim','accept','en_route','start','block','fix'] as const;
 export type CrmDispatchAction=typeof crmDispatchActions[number];
-export type CrmDispatchState='assigned'|'accepted'|'en_route'|'working'|'blocked'|'fixed';
+export type CrmDispatchState='available'|'assigned'|'accepted'|'en_route'|'working'|'blocked'|'fixed';
 export type CrmDispatchCommand={
   request_id:string;
   task_id:string;
@@ -52,7 +52,7 @@ export function crmDispatchReceiptMatches(command:CrmDispatchCommand,result:unkn
 }
 export function crmDispatchError(code:string,ar:boolean){
  const labels:Record<string,[string,string]>={
-  denied:['This field action is not assigned to you.','هذا الإجراء الميداني غير مسند لك.'],
+  denied:['This field action is not available to you.','هذا الإجراء الميداني غير متاح لك.'],
   conflict:['This task changed. Reload before continuing.','تغيّرت المهمة. أعد تحميل الصفحة قبل المتابعة.'],
   invalid:['Check the action, note and required field photo.','راجع الإجراء والملاحظة والصورة الميدانية المطلوبة.'],
   uncertain:['The result is uncertain. Retry the saved action before doing anything else.','النتيجة غير مؤكدة. أعد نفس الإجراء المحفوظ قبل أي خطوة أخرى.'],
@@ -62,6 +62,7 @@ export function crmDispatchError(code:string,ar:boolean){
 }
 export function crmDispatchLabel(state:string|null|undefined,ar:boolean){
  const labels:Record<string,[string,string]>={
+  available:['Available to claim','متاح للاستلام'],
   assigned:['Awaiting acceptance','بانتظار القبول'],
   accepted:['Accepted','تم القبول'],
   en_route:['On the way','في الطريق'],
