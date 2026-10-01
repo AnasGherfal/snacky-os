@@ -139,6 +139,7 @@ test("purchase list reads active monthly product imports and live storage, not t
   assert.match(source, /from\("current_inventory_by_location"\)/);
   assert.match(source, /eq\("location_type", "storage"\)/);
   assert.match(source, /rpc\("snacky_purchase_scheduled_site_demand_v1"/);
+  assert.match(source, /const scheduled = await supabase\.rpc\("snacky_purchase_scheduled_site_demand_v1"/);
   assert.doesNotMatch(source, /from\("vms_stock_snapshots"\)/);
   assert.doesNotMatch(source, /from\("route_stop_fill_lines"\)/);
   assert.doesNotMatch(source, /kpi_product_monthly/);
