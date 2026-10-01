@@ -185,6 +185,12 @@ export async function createCashRemoval(formData: FormData) {
   if (removalType === "partial" && !notes) fail(path, "Explain what cash remained inside the machine.");
 
   const uploads: CashEvidenceUpload[] = [];
+  let result: {
+    replayed?: boolean;
+    collection_ids?: string[];
+    boxes?: Array<{ box_key?: string; collection_id?: string; cash_bag_id?: string; machine_count?: number; declared_total_lyd?: string }>;
+  } | null = null;
+
   try {
     const boxesWithEvidence = [];
     for (const box of plan.boxes) {
@@ -202,7 +208,7 @@ export async function createCashRemoval(formData: FormData) {
       });
     }
 
-    const { data, error } = await supabase.rpc("record_standalone_cash_removal_group_v1", {
+    const response = await supabase.rpc("record_standalone_cash_removal_group_v1", {
       p_boxes: boxesWithEvidence,
       p_removed_at: removedAt,
       p_removal_type: removalType,
@@ -211,29 +217,35 @@ export async function createCashRemoval(formData: FormData) {
       p_client_submission_id: submissionId,
     });
 
-    const result = data as {
-      replayed?: boolean;
-      collection_ids?: string[];
-      boxes?: Array<{ box_key?: string; collection_id?: string; cash_bag_id?: string; machine_count?: number; declared_total_lyd?: string }>;
-    } | null;
+    result = response.data as typeof result;
     const collectionIds = Array.isArray(result?.collection_ids)
       ? result.collection_ids.map(String).filter(Boolean)
       : [];
 
-    if (error || !result || collectionIds.length !== plan.boxes.length) {
-      throw new Error(rpcMessage(error, "Could not record the machine cash amounts and physical boxes."));
+    if (response.error || !result || collectionIds.length !== plan.boxes.length) {
+      throw new Error(rpcMessage(response.error, "Could not record the machine cash amounts and physical boxes."));
     }
+  } catch (error) {
+    await Promise.all(uploads.map((upload) => rollbackEvidence(upload)));
+    console.error("[cash] Failed to record grouped cash removal", error);
+    fail(path, error instanceof Error ? error.message : "Could not record cash removal.");
+  }
 
-    if (result.replayed) {
-      await Promise.all(uploads.map((upload) => rollbackEvidence(upload)));
-    }
+  const collectionIds = Array.isArray(result?.collection_ids)
+    ? result.collection_ids.map(String).filter(Boolean)
+    : [];
 
-    const machineCount = plan.boxes.reduce((sum, box) => sum + box.machines.length, 0);
-    const declaredTotal = plan.boxes.reduce(
-      (sum, box) => sum + box.machines.reduce((boxSum, machine) => boxSum + Number(machine.removed_amount_lyd), 0),
-      0,
-    );
+  if (result?.replayed) {
+    await Promise.all(uploads.map((upload) => rollbackEvidence(upload)));
+  }
 
+  const machineCount = plan.boxes.reduce((sum, box) => sum + box.machines.length, 0);
+  const declaredTotal = plan.boxes.reduce(
+    (sum, box) => sum + box.machines.reduce((boxSum, machine) => boxSum + Number(machine.removed_amount_lyd), 0),
+    0,
+  );
+
+  try {
     await logActivity({
       profile,
       action: "record_cash_removal",
@@ -249,35 +261,36 @@ export async function createCashRemoval(formData: FormData) {
         collected_at: removedAt,
       },
       metadata: {
-        boxes: result.boxes ?? null,
+        boxes: result?.boxes ?? null,
         removal_type: removalType,
         compartments,
         route_id: null,
-        replayed: Boolean(result.replayed),
+        replayed: Boolean(result?.replayed),
       },
       summary: `Recorded ${machineCount} machine cash amount${machineCount === 1 ? "" : "s"} into ${plan.boxes.length} physical box${plan.boxes.length === 1 ? "" : "es"}`,
     });
-
-    for (const id of collectionIds) revalidateCashPaths(id);
-
-    const selfReceiptAllowed = hasAnyRole(profileContext(profile), ["owner", "admin"]);
-    const successMessage = `Removal saved: ${machineCount} machine${machineCount === 1 ? "" : "s"} in ${plan.boxes.length} cash box${plan.boxes.length === 1 ? "" : "es"}. Each machine amount is recorded separately.${
-      selfReceiptAllowed ? " Owner/admin may continue the custody process from Cash." : " Continue the handover from Cash."
-    }`;
-
-    if (isOperatorRole(profileContext(profile))) {
-      redirect(collectionIds.length === 1
-        ? `/cash-handling?id=${collectionIds[0]}&success=${encodeURIComponent(successMessage)}`
-        : `/cash-handling?success=${encodeURIComponent(successMessage)}`);
-    }
-    redirect(collectionIds.length === 1
-      ? `/cash-collections/${collectionIds[0]}?success=${encodeURIComponent(successMessage)}`
-      : `/cash-collections?success=${encodeURIComponent(successMessage)}`);
   } catch (error) {
-    await Promise.all(uploads.map((upload) => rollbackEvidence(upload)));
-    console.error("[cash] Failed to record grouped cash removal", error);
-    fail(path, error instanceof Error ? error.message : "Could not record cash removal.");
+    // The cash removal is already committed. Never delete evidence or report
+    // the removal as failed merely because the secondary activity log failed.
+    console.error("[cash] Cash removal committed but activity logging failed", error);
   }
+
+  for (const id of collectionIds) revalidateCashPaths(id);
+
+  const selfReceiptAllowed = hasAnyRole(profileContext(profile), ["owner", "admin"]);
+  const successMessage = `Removal saved: ${machineCount} machine${machineCount === 1 ? "" : "s"} in ${plan.boxes.length} cash box${plan.boxes.length === 1 ? "" : "es"}. Each machine amount is recorded separately.${
+    selfReceiptAllowed ? " Owner/admin may continue the custody process from Cash." : " Continue the handover from Cash."
+  }`;
+
+  const target = isOperatorRole(profileContext(profile))
+    ? collectionIds.length === 1
+      ? `/cash-handling?id=${collectionIds[0]}&success=${encodeURIComponent(successMessage)}`
+      : `/cash-handling?success=${encodeURIComponent(successMessage)}`
+    : collectionIds.length === 1
+      ? `/cash-collections/${collectionIds[0]}?success=${encodeURIComponent(successMessage)}`
+      : `/cash-collections?success=${encodeURIComponent(successMessage)}`;
+
+  redirect(target);
 }
 
 export async function receiveCashIntoStorage(formData: FormData) {
