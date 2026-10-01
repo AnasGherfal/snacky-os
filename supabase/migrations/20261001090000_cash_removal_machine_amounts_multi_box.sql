@@ -331,7 +331,7 @@ begin
       v_collection_id,
       'removed',
       v_removed_at,
-      v_declared_total,
+      null,
       'intact',
       v_evidence_path,
       v_evidence_file_name,
