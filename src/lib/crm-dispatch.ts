@@ -1,6 +1,6 @@
 export const crmDispatchActions=['accept','en_route','start','block','fix'] as const;
 export type CrmDispatchAction=typeof crmDispatchActions[number];
-export type CrmDispatchState='assigned'|'accepted'|'en_route'|'working'|'blocked'|'fixed';
+export type CrmDispatchState='available'|'assigned'|'accepted'|'en_route'|'working'|'blocked'|'fixed';
 export type CrmDispatchCommand={
   request_id:string;
   task_id:string;
@@ -62,6 +62,7 @@ export function crmDispatchError(code:string,ar:boolean){
 }
 export function crmDispatchLabel(state:string|null|undefined,ar:boolean){
  const labels:Record<string,[string,string]>={
+  available:['Available to operators','متاح للمشغّلين'],
   assigned:['Awaiting acceptance','بانتظار القبول'],
   accepted:['Accepted','تم القبول'],
   en_route:['On the way','في الطريق'],
