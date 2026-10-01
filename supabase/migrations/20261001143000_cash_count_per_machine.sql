@@ -70,12 +70,7 @@ begin
   if a in ('pickup','direct_pickup','takeover') and length(trim(p->>'confirm_bag_id')) not between 1 and 120 then
     raise exception 'Confirm the physical box reference' using errcode='22023';
   end if;
-  if a='count' and ((p->>'amount') !~ '^(0|[1-9][0-9]{0,7})(\.[0-9]{1,2})?
-end;
-$$;
-revoke all on function snacky_private.cash_handover_validate_v1(jsonb) from public,anon,authenticated;
-
-
+  if a='count' and ((p->>'amount') !~ '^(0|[1-9][0-9]{0,7})(\.[0-9]{1,2})?$'
     or length(trim(p->>'cash_location')) not between 2 and 180
     or (p ? 'machine_counts' and length(p->>'machine_counts') > 8000)) then
     raise exception 'Enter valid per-machine cash amounts and where the counted cash will be kept' using errcode='22023';
@@ -244,38 +239,8 @@ begin
           where jsonb_typeof(x.value) is distinct from 'object'
              or (select count(*) from jsonb_object_keys(x.value))<>2
              or exists(select 1 from jsonb_object_keys(x.value) k where k not in ('machine_id','amount'))
-             or coalesce(x.value->>'machine_id','') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}
-  end case;
-
-  insert into snacky_private.cash_handover_events(collection_id,event_type,actor_user_id,event_at,detail)
-    values(v_id,v_action,v_actor,v_now,v_event_detail);
-  v_result:=jsonb_build_object('ok',true,'request_id',v_request,'collection_id',v_id,'action',v_action,
-    'revision',case when v_id is null then 0 else (select revision from snacky_private.cash_handovers where collection_id=v_id) end);
-  if v_action='count' then v_result:=v_result||jsonb_build_object('amount',v_amount::text,'finance_posted',true); end if;
-  update snacky_private.cash_handover_requests set result=v_result where request_id=v_request;
-  return v_result;
-end;
-$$;
-revoke all on function snacky_private.cash_handover_command_v1_impl(jsonb,text) from public,anon;
-grant execute on function snacky_private.cash_handover_command_v1_impl(jsonb,text) to authenticated;
-
-
-             or coalesce(x.value->>'amount','') !~ '^(0|[1-9][0-9]{0,7})(\.[0-9]{1,2})?
-  end case;
-
-  insert into snacky_private.cash_handover_events(collection_id,event_type,actor_user_id,event_at,detail)
-    values(v_id,v_action,v_actor,v_now,v_event_detail);
-  v_result:=jsonb_build_object('ok',true,'request_id',v_request,'collection_id',v_id,'action',v_action,
-    'revision',case when v_id is null then 0 else (select revision from snacky_private.cash_handovers where collection_id=v_id) end);
-  if v_action='count' then v_result:=v_result||jsonb_build_object('amount',v_amount::text,'finance_posted',true); end if;
-  update snacky_private.cash_handover_requests set result=v_result where request_id=v_request;
-  return v_result;
-end;
-$$;
-revoke all on function snacky_private.cash_handover_command_v1_impl(jsonb,text) from public,anon;
-grant execute on function snacky_private.cash_handover_command_v1_impl(jsonb,text) to authenticated;
-
-
+             or coalesce(x.value->>'machine_id','') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+             or coalesce(x.value->>'amount','') !~ '^(0|[1-9][0-9]{0,7})(\.[0-9]{1,2})?$'
         ) then
           raise exception 'Every selected machine needs one valid counted LYD amount' using errcode='22023';
         end if;
