@@ -76,6 +76,9 @@ end
 $function$;
 
 alter table public.crm_tasks alter column assigned_to drop not null;
+alter table public.crm_tasks drop constraint if exists crm_tasks_dispatch_state_check;
+alter table public.crm_tasks add constraint crm_tasks_dispatch_state_check
+check (dispatch_state is null or dispatch_state in ('available','assigned','accepted','en_route','working','blocked','fixed'));
 
 create or replace function public.snacky_crm_validate_record()
 returns trigger
